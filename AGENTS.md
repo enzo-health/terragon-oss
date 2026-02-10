@@ -13,8 +13,6 @@
 - **CLI Tool**: Interactive CLI application (`apps/cli`) for pulling threads and creating tasks
 - **Agent Daemon**: A node js script we run on all sandboxes to coordinate the coding agent
 - **Shared Packages**: Core libraries, database models, and utilities (`packages/`)
-- **Desktop App**: Electron-based desktop wrapper (`apps/desktop`)
-- **VS Code Extension**: Sidebar extension with webview UI (`apps/vscode-extension`) - Uses TanStack Router, never use regular links, always use TanStack Router hooks (`useNavigate`) and components (`Link`) as regular links don't work in VS Code webview iframes
 - **Status Microsite**: Anthropic uptime microsite (`apps/isanthropicdown`)
 
 ## Key Commands
@@ -224,8 +222,6 @@ pnpm -C apps/cli uninstall:dev
 - **`apps/broadcast`**: PartyKit WebSocket service for real-time features
 - **`apps/docs`**: Fumadocs-based documentation site
 - **`apps/cli`**: Terry CLI tool for pulling threads (uses Ink for terminal UI)
-- **`apps/desktop`**: Electron desktop app wrapper around the web UI
-- **`apps/vscode-extension`**: VS Code sidebar extension (React + Tailwind webview with TanStack Router - never use regular HTML links, always use TanStack Router's `useNavigate` hook or `Link` component as regular links don't work in VS Code webview iframes)
 - **`apps/isanthropicdown`**: Status microsite (Vite + Cloudflare Workers)
 
 ### Shared Packages
@@ -295,8 +291,6 @@ pnpm -C packages/debug-scripts e2b-ssh <sandbox-id>
 - **Automations**: Scheduled and PR-triggered automations with cron validation, next-run calculation, and admin visibility
 - **Daytona Provider**: Optional Daytona sandbox provider behind feature flag with `DAYTONA_API_KEY`
 - **MCP Permission Prompt**: Internal MCP tool to handle permission requests in plan mode
-- **Desktop App**: Electron-based desktop app for quick access and deep linking
-- **VS Code Extension**: Sidebar extension with webview, packaged via `vsce`
 - **Credentials UI**: Gemini and Amp API key storage; OpenAI OAuth and ChatGPT auth.json support
 - **CLI Additions**: `auth`, `list`, and `mcp` commands, plus `--resume` option for `pull`
 
