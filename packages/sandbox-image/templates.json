@@ -666,5 +666,14 @@
     "provider": "e2b",
     "size": "large",
     "createdAt": "2025-12-20T16:07:42.884Z"
+  },
+  {
+    "name": "terry-vCPU-2-RAM-4GB-2026-02-24-20-22-40-tq1wl6",
+    "dockerfileHash": "40725b7db4611fff01aad593597e3a6f17f462d4ccc52a01e722bca2220745a0",
+    "cpuCount": 2,
+    "memoryGB": 4,
+    "provider": "daytona",
+    "size": "small",
+    "createdAt": "2026-02-24T20:22:40.000Z"
   }
 ]
