@@ -21,6 +21,7 @@ r2_secret_access_key = ""
 better_auth_secret     = ""
 encryption_master_key  = ""       # openssl rand -hex 16
 internal_shared_secret = ""
+cron_secret            = ""       # openssl rand -hex 32
 
 # ── AI providers ──────────────────────────────────
 anthropic_api_key = ""

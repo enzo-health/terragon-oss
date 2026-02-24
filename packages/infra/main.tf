@@ -74,6 +74,9 @@ locals {
     ENCRYPTION_MASTER_KEY  = var.encryption_master_key
     INTERNAL_SHARED_SECRET = var.internal_shared_secret
 
+    # Cron
+    CRON_SECRET = var.cron_secret
+
     # AI
     ANTHROPIC_API_KEY = var.anthropic_api_key
     OPENAI_API_KEY    = var.openai_api_key
@@ -107,6 +110,7 @@ locals {
     "BETTER_AUTH_SECRET",
     "ENCRYPTION_MASTER_KEY",
     "INTERNAL_SHARED_SECRET",
+    "CRON_SECRET",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "DAYTONA_API_KEY",

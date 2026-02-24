@@ -29,9 +29,13 @@ export const env = envsafe({
   }),
   IS_ANTHROPIC_DOWN_URL: str({
     devDefault: devDefaultIsAnthropicDownUrl,
+    default: "",
+    allowEmpty: true,
   }),
   IS_ANTHROPIC_DOWN_API_SECRET: str({
     devDefault: devDefaultIsAnthropicDownApiSecret,
+    default: "",
+    allowEmpty: true,
   }),
   // Used to authenticate internal request between services (eg. www -> broadcast)
   INTERNAL_SHARED_SECRET: str({
@@ -40,6 +44,8 @@ export const env = envsafe({
   // Vercel cron jobs
   CRON_SECRET: str({
     devDefault: devDefaultCronSecret,
+    default: "",
+    allowEmpty: true,
   }),
   // Master key for encrypting sensitive user data at rest (e.g. user credentials)
   ENCRYPTION_MASTER_KEY: str({
@@ -47,8 +53,8 @@ export const env = envsafe({
   }),
 
   // AI Providers
-  ANTHROPIC_API_KEY: str(),
-  OPENAI_API_KEY: str(),
+  ANTHROPIC_API_KEY: str({ default: "", allowEmpty: true }),
+  OPENAI_API_KEY: str({ default: "", allowEmpty: true }),
   OPENROUTER_API_KEY: str({ allowEmpty: true, default: "" }),
   GOOGLE_AI_STUDIO_API_KEY: str({ allowEmpty: true, default: "" }),
 
@@ -57,16 +63,16 @@ export const env = envsafe({
   LOCALHOST_PUBLIC_DOMAIN: str({ allowEmpty: true, default: "" }),
 
   // R2
-  R2_ACCESS_KEY_ID: str(),
-  R2_SECRET_ACCESS_KEY: str(),
-  R2_ACCOUNT_ID: str(),
-  R2_BUCKET_NAME: str(),
-  R2_PRIVATE_BUCKET_NAME: str(),
-  R2_PUBLIC_URL: str(),
+  R2_ACCESS_KEY_ID: str({ allowEmpty: true, default: "" }),
+  R2_SECRET_ACCESS_KEY: str({ allowEmpty: true, default: "" }),
+  R2_ACCOUNT_ID: str({ allowEmpty: true, default: "" }),
+  R2_BUCKET_NAME: str({ allowEmpty: true, default: "" }),
+  R2_PRIVATE_BUCKET_NAME: str({ allowEmpty: true, default: "" }),
+  R2_PUBLIC_URL: str({ allowEmpty: true, default: "" }),
   R2_ENDPOINT: str({ allowEmpty: true, default: "" }),
 
   // Sandbox providers
-  E2B_API_KEY: str(),
+  E2B_API_KEY: str({ allowEmpty: true, default: "" }),
   DAYTONA_API_KEY: str({ default: "", allowEmpty: true }),
 
   // GitHub App

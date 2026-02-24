@@ -132,6 +132,11 @@ variable "github_webhook_secret" {
   sensitive = true
 }
 
+variable "cron_secret" {
+  type      = string
+  sensitive = true
+}
+
 # ── Broadcast (PartyKit) ─────────────────────────
 
 variable "broadcast_host" {
