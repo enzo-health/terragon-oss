@@ -123,6 +123,40 @@ export async function deleteLinearAccount({
     );
 }
 
+export async function disconnectLinearAccountAndSettings({
+  db,
+  userId,
+  organizationId,
+}: {
+  db: DB;
+  userId: string;
+  organizationId: string;
+}) {
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(schema.linearSettings)
+      .where(
+        and(
+          eq(schema.linearSettings.userId, userId),
+          eq(schema.linearSettings.organizationId, organizationId),
+        ),
+      );
+    await tx
+      .delete(schema.linearAccount)
+      .where(
+        and(
+          eq(schema.linearAccount.userId, userId),
+          eq(schema.linearAccount.organizationId, organizationId),
+        ),
+      );
+  });
+  await publishBroadcastUserMessage({
+    type: "user",
+    id: userId,
+    data: { linear: true },
+  });
+}
+
 export async function getLinearSettingsForUserAndOrg({
   db,
   userId,

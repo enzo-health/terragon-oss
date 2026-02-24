@@ -4,8 +4,7 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
   upsertLinearAccount,
-  deleteLinearAccount,
-  deleteLinearSettings,
+  disconnectLinearAccountAndSettings,
   upsertLinearSettings,
 } from "@terragon/shared/model/linear";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
@@ -44,10 +43,7 @@ export const disconnectLinearAccount = userOnlyAction(
     userId: string,
     { organizationId }: { organizationId: string },
   ): Promise<void> {
-    await Promise.all([
-      deleteLinearAccount({ db, userId, organizationId }),
-      deleteLinearSettings({ db, userId, organizationId }),
-    ]);
+    await disconnectLinearAccountAndSettings({ db, userId, organizationId });
   },
   { defaultErrorMessage: "Failed to disconnect Linear account" },
 );
