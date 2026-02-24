@@ -57,4 +57,10 @@ Add the foundation layer for Linear integration: DB schema (2 new tables), type 
 
 ## Done summary
 
+Added Linear integration foundation: linearAccount and linearSettings DB tables with proper indexes, "linear-mention" thread source type with metadata, LINEAR_WEBHOOK_SECRET/LINEAR_API_KEY/LINEAR_MENTION_HANDLE env vars, linearIntegration feature flag, CRUD model layer with broadcast support, comprehensive tests (18 passing), and @linear/sdk dependency.
+
 ## Evidence
+
+- Commits: 7536be0df3d9117a20e7b4472f16c0bcaaceca9b
+- Tests: pnpm -C packages/shared test, pnpm tsc-check
+- PRs:
