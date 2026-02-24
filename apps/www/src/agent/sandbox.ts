@@ -409,7 +409,7 @@ export async function getSandboxProvider({
 
   switch (userSetting) {
     case "default":
-      return "e2b";
+      return "daytona";
     case "e2b":
       return "e2b";
     case "daytona":
