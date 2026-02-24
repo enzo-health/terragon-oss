@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { env } from "@terragon/env/apps-www";
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
@@ -8,10 +9,22 @@ import {
   LINEAR_WEBHOOK_TS_HEADER,
 } from "@linear/sdk/webhooks";
 
+/**
+ * Returns true if verification passes, false if it fails.
+ * In dev (no secret configured), logs a warning and allows through.
+ * In production (VERCEL_ENV set), fails closed if secret is missing.
+ */
 function verifyLinearSignature(req: NextRequest, rawBody: string): boolean {
   if (!env.LINEAR_WEBHOOK_SECRET) {
+    // Fail closed in production; allow in development for testing
+    if (process.env.VERCEL_ENV) {
+      console.error(
+        "[linear webhook] LINEAR_WEBHOOK_SECRET is not set in production, rejecting",
+      );
+      return false;
+    }
     console.warn(
-      "[linear webhook] LINEAR_WEBHOOK_SECRET is not set, skipping verification",
+      "[linear webhook] LINEAR_WEBHOOK_SECRET is not set, skipping verification (dev only)",
     );
     return true;
   }
@@ -30,9 +43,20 @@ function verifyLinearSignature(req: NextRequest, rawBody: string): boolean {
       signature,
       timestamp ?? undefined,
     );
-  } catch {
-    // Fallback to manual HMAC-SHA256 verification
-    return verifyLinearSignatureManual(rawBody, signature);
+  } catch (error) {
+    // Only fallback to manual verification for SDK runtime incompatibility
+    // (e.g. constructor/method not available), NOT for signature validation failures.
+    if (
+      error instanceof TypeError ||
+      (error instanceof Error && error.message.includes("is not a function"))
+    ) {
+      console.warn(
+        "[linear webhook] SDK verification not available, using manual HMAC fallback",
+      );
+      return verifyLinearSignatureManual(rawBody, signature);
+    }
+    // Verification failed (bad signature, timestamp, etc) - reject
+    return false;
   }
 }
 
@@ -40,7 +64,6 @@ function verifyLinearSignatureManual(
   rawBody: string,
   signature: string,
 ): boolean {
-  const crypto = require("crypto") as typeof import("crypto");
   const hmac = crypto
     .createHmac("sha256", env.LINEAR_WEBHOOK_SECRET)
     .update(rawBody, "utf-8")
@@ -64,7 +87,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const payload = JSON.parse(rawBody);
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    console.error("[linear webhook] Invalid JSON payload");
+    return NextResponse.json(
+      { success: false, error: "Invalid JSON" },
+      { status: 400 },
+    );
+  }
 
   console.log(
     "[linear webhook] Received event type:",

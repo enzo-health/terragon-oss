@@ -1,4 +1,12 @@
-import { describe, expect, it, vi, beforeEach, beforeAll } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+  vi,
+  beforeEach,
+  beforeAll,
+  afterAll,
+} from "vitest";
 import { handleCommentCreated, buildLinearMentionMessage } from "./handlers";
 import { User } from "@terragon/shared";
 import {
@@ -12,12 +20,10 @@ import { env } from "@terragon/env/apps-www";
 
 // Mock newThreadInternal
 vi.mock("@/server-lib/new-thread-internal", () => ({
-  newThreadInternal: vi
-    .fn()
-    .mockResolvedValue({
-      threadId: "test-thread-id",
-      threadChatId: "test-chat-id",
-    }),
+  newThreadInternal: vi.fn().mockResolvedValue({
+    threadId: "test-thread-id",
+    threadChatId: "test-chat-id",
+  }),
 }));
 
 // Mock Linear SDK
@@ -117,8 +123,15 @@ describe("handlers", () => {
 
   describe("handleCommentCreated", () => {
     let user: User;
+    let originalApiKey: string;
 
     beforeAll(async () => {
+      // Set a dummy API key so getLinearClient() doesn't throw
+      // (LinearClient is mocked, so the actual value doesn't matter)
+      originalApiKey = env.LINEAR_API_KEY;
+      // @ts-expect-error - modifying env for test
+      env.LINEAR_API_KEY = "test-linear-api-key";
+
       const testUserResult = await createTestUser({ db });
       user = testUserResult.user;
 
@@ -141,6 +154,11 @@ describe("handlers", () => {
         name: "linearIntegration",
         value: true,
       });
+    });
+
+    afterAll(() => {
+      // @ts-expect-error - restoring env for test
+      env.LINEAR_API_KEY = originalApiKey;
     });
 
     beforeEach(() => {
