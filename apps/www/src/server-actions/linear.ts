@@ -2,6 +2,7 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
+import { UserFacingError } from "@/lib/server-actions";
 import {
   getLinearAccountForLinearUserId,
   upsertLinearAccount,
@@ -37,7 +38,7 @@ export const connectLinearAccount = userOnlyAction(
       linearUserId,
     });
     if (existing && existing.userId !== userId) {
-      throw new Error(
+      throw new UserFacingError(
         "This Linear user ID is already linked to another Terragon account",
       );
     }
