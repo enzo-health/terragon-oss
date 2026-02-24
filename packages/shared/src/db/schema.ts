@@ -716,6 +716,63 @@ export const slackSettings = pgTable(
   ],
 );
 
+export const linearAccount = pgTable(
+  "linear_account",
+  {
+    id: text("id")
+      .default(sql`gen_random_uuid()`)
+      .primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    linearUserId: text("linear_user_id").notNull(),
+    linearUserName: text("linear_user_name").notNull(),
+    linearUserEmail: text("linear_user_email").notNull(),
+    organizationId: text("organization_id").notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("linear_account_user_org_unique").on(
+      table.userId,
+      table.organizationId,
+    ),
+    uniqueIndex("linear_account_linear_user_org_unique").on(
+      table.linearUserId,
+      table.organizationId,
+    ),
+  ],
+);
+
+export const linearSettings = pgTable(
+  "linear_settings",
+  {
+    id: text("id")
+      .default(sql`gen_random_uuid()`)
+      .primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull(),
+    defaultRepoFullName: text("default_repo_full_name"),
+    defaultModel: text("default_model").$type<AIModel>(),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("linear_settings_user_org_unique").on(
+      table.userId,
+      table.organizationId,
+    ),
+  ],
+);
+
 export const threadReadStatus = pgTable(
   "thread_read_status",
   {

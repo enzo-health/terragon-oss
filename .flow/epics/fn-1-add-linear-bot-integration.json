@@ -1,0 +1,18 @@
+{
+  "branch_name": "fn-1-add-linear-bot-integration",
+  "completion_review_status": "unknown",
+  "completion_reviewed_at": null,
+  "created_at": "2026-02-24T22:15:36.699642Z",
+  "default_impl": null,
+  "default_review": null,
+  "default_sync": null,
+  "depends_on_epics": [],
+  "id": "fn-1-add-linear-bot-integration",
+  "next_task": 1,
+  "plan_review_status": "unknown",
+  "plan_reviewed_at": null,
+  "spec_path": ".flow/specs/fn-1-add-linear-bot-integration.md",
+  "status": "open",
+  "title": "Add Linear bot integration",
+  "updated_at": "2026-02-24T22:28:15.574226Z"
+}
