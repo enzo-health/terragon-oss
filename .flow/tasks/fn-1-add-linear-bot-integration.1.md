@@ -54,3 +54,5 @@ Add the foundation layer for Linear integration: DB schema (2 new tables), type 
 - [ ] `@linear/sdk` added to apps/www dependencies (pinned version)
 - [ ] Type check passes: `pnpm tsc-check`
 - [ ] Schema pushed: `pnpm -C packages/shared drizzle-kit-push-dev`
+
+## Done summary
