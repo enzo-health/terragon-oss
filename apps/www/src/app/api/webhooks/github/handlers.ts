@@ -27,6 +27,7 @@ import {
   runIssueAutomation,
 } from "@/server-lib/automations";
 import { Automation } from "@terragon/shared/db/types";
+import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -37,6 +38,41 @@ export type PullRequestReviewEvent =
   EmitterWebhookEvent<"pull_request_review">["payload"];
 export type CheckRunEvent = EmitterWebhookEvent<"check_run">["payload"];
 export type CheckSuiteEvent = EmitterWebhookEvent<"check_suite">["payload"];
+
+function isActionableCheckRunFailure(conclusion: string | null): boolean {
+  if (!conclusion) {
+    return false;
+  }
+  return [
+    "failure",
+    "timed_out",
+    "cancelled",
+    "action_required",
+    "startup_failure",
+    "stale",
+  ].includes(conclusion);
+}
+
+function getCheckRunFailureDetails(
+  checkRun: CheckRunEvent["check_run"],
+): string {
+  const sections = [
+    `Check run "${checkRun.name}" finished with conclusion "${checkRun.conclusion ?? "unknown"}".`,
+  ];
+  if (checkRun.output.title?.trim()) {
+    sections.push(`Title: ${checkRun.output.title.trim()}`);
+  }
+  if (checkRun.output.summary?.trim()) {
+    sections.push(`Summary: ${checkRun.output.summary.trim()}`);
+  }
+  if (checkRun.output.text?.trim()) {
+    sections.push(`Details: ${checkRun.output.text.trim()}`);
+  }
+  if (checkRun.details_url) {
+    sections.push(`Details URL: ${checkRun.details_url}`);
+  }
+  return sections.join("\n");
+}
 
 // Handle pull request events
 export async function handlePullRequestStatusChange(
@@ -274,9 +310,27 @@ export async function handlePullRequestReviewCommentEvent(
     const repoFullName = event.repository.full_name;
     const commentUsername = event.comment.user.login;
     const commentUserId = event.comment.user.id;
+    const isMention = isAppMentioned(commentBody);
+
+    const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
+      repoFullName,
+      prNumber,
+      eventType: "pull_request_review_comment.created",
+      reviewBody: commentBody,
+      commentId: event.comment.id,
+      sourceType: isMention ? "github-mention" : "automation",
+      authorGitHubAccountId: event.pull_request.user?.id,
+      baseBranchName: event.pull_request.base?.ref,
+      headBranchName: event.pull_request.head?.ref,
+    });
+    console.log("GitHub feedback routed from review comment", {
+      repoFullName,
+      prNumber,
+      ...feedbackRoutingResult,
+    });
 
     // Check if the comment mentions our app
-    if (!isAppMentioned(commentBody)) {
+    if (!isMention) {
       console.log(
         `Review comment on PR #${prNumber} in ${repoFullName} does not mention the app`,
       );
@@ -344,9 +398,29 @@ export async function handlePullRequestReviewEvent(
     const repoFullName = event.repository.full_name;
     const reviewUsername = event.review.user.login;
     const reviewUserId = event.review.user.id;
+    const isMention = !!reviewBody && isAppMentioned(reviewBody);
+
+    const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
+      repoFullName,
+      prNumber,
+      eventType: "pull_request_review.submitted",
+      reviewBody: reviewBody ?? undefined,
+      commentId: event.review.id,
+      failureDetails: `Review state: ${event.review.state}`,
+      sourceType: isMention ? "github-mention" : "automation",
+      authorGitHubAccountId: event.pull_request.user?.id,
+      baseBranchName: event.pull_request.base?.ref,
+      headBranchName: event.pull_request.head?.ref,
+    });
+    console.log("GitHub feedback routed from review", {
+      repoFullName,
+      prNumber,
+      reviewState: event.review.state,
+      ...feedbackRoutingResult,
+    });
 
     // Check if the review body exists and mentions our app
-    if (!reviewBody || !isAppMentioned(reviewBody)) {
+    if (!isMention) {
       console.log(
         `Review on PR #${prNumber} in ${repoFullName} does not mention the app or has no body`,
       );
@@ -398,6 +472,34 @@ export async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
         });
       }),
     );
+
+    if (
+      event.action === "completed" &&
+      isActionableCheckRunFailure(checkRun.conclusion)
+    ) {
+      const failureDetails = getCheckRunFailureDetails(checkRun);
+      await Promise.all(
+        prNumbers.map(async (prNumber) => {
+          const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
+            repoFullName,
+            prNumber,
+            eventType: "check_run.completed",
+            checkSummary: `${checkRun.name} (${checkRun.status})`,
+            failureDetails,
+            checkRunId: checkRun.id,
+            sourceType: "automation",
+          });
+          console.log("GitHub feedback routed from check run", {
+            repoFullName,
+            prNumber,
+            checkRunId: checkRun.id,
+            conclusion: checkRun.conclusion,
+            ...feedbackRoutingResult,
+          });
+        }),
+      );
+    }
+
     console.log(
       `Successfully updated check status for PRs: ${prNumbers.map((pr) => `#${pr}`).join(", ")} in ${repoFullName}`,
     );

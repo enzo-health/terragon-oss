@@ -6,6 +6,7 @@ import { createMockNextRequest } from "@/test-helpers/mock-next";
 import { db } from "@/lib/db";
 import { updateGitHubPR } from "@/lib/github";
 import { handleAppMention } from "./handle-app-mention";
+import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import {
   createTestUser,
   createTestGitHubPR,
@@ -14,6 +15,14 @@ import { env } from "@terragon/env/apps-www";
 
 vi.mock("./handle-app-mention", () => ({
   handleAppMention: vi.fn(),
+}));
+
+vi.mock("./route-feedback", () => ({
+  routeGithubFeedbackOrSpawnThread: vi.fn().mockResolvedValue({
+    threadId: "feedback-thread-id",
+    threadChatId: "feedback-thread-chat-id",
+    mode: "reused_existing",
+  }),
 }));
 
 function createSignature(payload: string, secret: string): string {
@@ -580,6 +589,9 @@ describe("GitHub webhook route", () => {
           number: prNumber,
           title: prTitle,
           body: prBody,
+          user: {
+            id: githubAccountId ?? undefined,
+          },
         },
         repository: {
           full_name: repoFullName,
@@ -619,6 +631,16 @@ describe("GitHub webhook route", () => {
         commentBody: "@test-app please take a look at this PR",
         commentGitHubAccountId: githubAccountId,
       });
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review.submitted",
+          reviewBody: "@test-app please take a look at this PR",
+          sourceType: "github-mention",
+          authorGitHubAccountId: githubAccountId,
+        }),
+      );
     });
 
     it("should ignore reviews without app mention", async () => {
@@ -640,6 +662,16 @@ describe("GitHub webhook route", () => {
       expect(response.status).toBe(200);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review.submitted",
+          reviewBody: "LGTM!",
+          sourceType: "automation",
+          authorGitHubAccountId: githubAccountId,
+        }),
+      );
     });
 
     it("should ignore reviews with null body", async () => {
@@ -835,6 +867,9 @@ describe("GitHub webhook route", () => {
           number: prNumber,
           title: prTitle,
           body: prBody,
+          user: {
+            id: githubAccountId ?? undefined,
+          },
         },
         comment: {
           body: commentBody,
@@ -885,6 +920,16 @@ describe("GitHub webhook route", () => {
         diffContext: "",
         commentContext: undefined,
       });
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review_comment.created",
+          reviewBody: "@test-app please review this code",
+          sourceType: "github-mention",
+          authorGitHubAccountId: githubAccountId,
+        }),
+      );
     });
 
     it("should ignore review comments without app mention", async () => {
@@ -906,6 +951,16 @@ describe("GitHub webhook route", () => {
       expect(response.status).toBe(200);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review_comment.created",
+          reviewBody: "This code looks good",
+          sourceType: "automation",
+          authorGitHubAccountId: githubAccountId,
+        }),
+      );
     });
 
     it("should ignore edited or deleted review comments", async () => {
@@ -1018,8 +1073,15 @@ describe("GitHub webhook route", () => {
         action,
         check_run: {
           id: checkRunId,
+          name: "CI / tests",
           status,
           conclusion,
+          output: {
+            title: "Test suite failed",
+            summary: "2 tests failed",
+            text: "See failing tests in logs.",
+          },
+          details_url: "https://github.com/owner/repo/actions/runs/1",
           pull_requests: prNumbers.map((num) => ({ number: num })),
         },
         repository: {
@@ -1087,6 +1149,50 @@ describe("GitHub webhook route", () => {
         prNumber: pr2.number,
         createIfNotFound: false,
       });
+    });
+
+    it("should route actionable failed check runs for each associated PR", async () => {
+      const pr1 = await createTestGitHubPR({ db });
+      const pr2 = await createTestGitHubPR({
+        db,
+        overrides: {
+          number: pr1.number + 1,
+          repoFullName: pr1.repoFullName,
+        },
+      });
+      const body = createCheckRunBody({
+        repoFullName: pr1.repoFullName,
+        prNumbers: [pr1.number, pr2.number],
+        conclusion: "failure",
+      });
+      const request = await createMockRequest(body, {
+        "x-github-event": "check_run",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: pr1.repoFullName,
+          prNumber: pr1.number,
+          eventType: "check_run.completed",
+          sourceType: "automation",
+          checkRunId: 1,
+        }),
+      );
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: pr2.repoFullName,
+          prNumber: pr2.number,
+          eventType: "check_run.completed",
+          sourceType: "automation",
+          checkRunId: 1,
+        }),
+      );
     });
 
     it("should handle check runs with no associated PRs", async () => {
