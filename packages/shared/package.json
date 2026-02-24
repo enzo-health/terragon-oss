@@ -7,9 +7,13 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "test": "vitest --no-file-parallelism",
+    "drizzle-kit-generate": "drizzle-kit generate --config drizzle.config.ts",
+    "drizzle-kit-migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "drizzle-kit-push-test": "drizzle-kit push --config drizzle.config.ts",
     "drizzle-kit-push-dev": "dotenv -e .env.development.local -- drizzle-kit push",
     "drizzle-kit-push-prod": "dotenv -e .env.production.local -- drizzle-kit push",
+    "drizzle-kit-migrate-dev": "dotenv -e .env.development.local -- drizzle-kit migrate",
+    "drizzle-kit-migrate-prod": "dotenv -e .env.production.local -- drizzle-kit migrate",
     "drizzle-kit-studio-dev": "dotenv -e .env.development.local -- drizzle-kit studio",
     "drizzle-kit-studio-prod": "dotenv -e .env.production.local -- drizzle-kit studio",
     "dev-env": "dotenv -e .env.development.local --",
