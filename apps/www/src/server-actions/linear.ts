@@ -3,12 +3,18 @@
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
+  getLinearAccountForLinearUserId,
   upsertLinearAccount,
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
 } from "@terragon/shared/model/linear";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
 
+// v1: Manual account linking (no OAuth). The DB unique index on
+// (linearUserId, organizationId) prevents duplicate claims. We add an
+// explicit pre-check here to surface a clear error message rather than
+// a raw DB constraint violation. A challenge-based ownership proof
+// flow is planned for v2.
 export const connectLinearAccount = userOnlyAction(
   async function connectLinearAccount(
     userId: string,
@@ -24,6 +30,18 @@ export const connectLinearAccount = userOnlyAction(
       linearUserEmail: string;
     },
   ): Promise<void> {
+    // Check if this Linear identity is already claimed by another user
+    const existing = await getLinearAccountForLinearUserId({
+      db,
+      organizationId,
+      linearUserId,
+    });
+    if (existing && existing.userId !== userId) {
+      throw new Error(
+        "This Linear user ID is already linked to another Terragon account",
+      );
+    }
+
     await upsertLinearAccount({
       db,
       userId,
