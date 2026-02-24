@@ -80,6 +80,10 @@ export type SlackAccountWithMetadata = SlackAccount & {
   settings: SlackSettings | null;
 };
 
+export type LinearAccountWithSettings = LinearAccount & {
+  settings: LinearSettings | null;
+};
+
 export type ThreadSource =
   | "www"
   | "www-redo"

@@ -1,9 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, getTableColumns } from "drizzle-orm";
 import * as schema from "../db/schema";
 import type { DB } from "../db";
 import type {
   LinearAccount,
   LinearAccountInsert,
+  LinearAccountWithSettings,
   LinearSettings,
   LinearSettingsInsert,
 } from "../db/types";
@@ -37,6 +38,33 @@ export async function getLinearAccounts({
   const result = await db
     .select()
     .from(schema.linearAccount)
+    .where(eq(schema.linearAccount.userId, userId));
+  return result;
+}
+
+export async function getLinearAccountsWithSettings({
+  db,
+  userId,
+}: {
+  db: DB;
+  userId: string;
+}): Promise<LinearAccountWithSettings[]> {
+  const result = await db
+    .select({
+      ...getTableColumns(schema.linearAccount),
+      settings: schema.linearSettings,
+    })
+    .from(schema.linearAccount)
+    .leftJoin(
+      schema.linearSettings,
+      and(
+        eq(schema.linearAccount.userId, schema.linearSettings.userId),
+        eq(
+          schema.linearAccount.organizationId,
+          schema.linearSettings.organizationId,
+        ),
+      ),
+    )
     .where(eq(schema.linearAccount.userId, userId));
   return result;
 }
