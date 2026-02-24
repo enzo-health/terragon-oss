@@ -51,7 +51,7 @@ function getDaytonaBuildFlags({ cpuCount, memoryGB }: TemplateArgs) {
       "--cpu",
       cpuCount.toString(),
       "--disk",
-      "20",
+      "10",
       "--memory",
       memoryGB.toString(),
     ],
