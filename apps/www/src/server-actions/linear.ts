@@ -11,11 +11,11 @@ import {
 } from "@terragon/shared/model/linear";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
 
-// v1: Manual account linking (no OAuth). The DB unique index on
-// (linearUserId, organizationId) prevents duplicate claims. We add an
-// explicit pre-check here to surface a clear error message rather than
-// a raw DB constraint violation. A challenge-based ownership proof
-// flow is planned for v2.
+// v1 DESIGN DECISION: Manual account linking without OAuth/ownership proof.
+// This is an accepted limitation documented in the epic spec. The
+// linearIntegration feature flag gates access to trusted users only.
+// The DB unique index on (linearUserId, organizationId) prevents duplicate
+// claims. A challenge-based ownership verification flow is planned for v2.
 export const connectLinearAccount = userOnlyAction(
   async function connectLinearAccount(
     userId: string,
@@ -31,7 +31,7 @@ export const connectLinearAccount = userOnlyAction(
       linearUserEmail: string;
     },
   ): Promise<void> {
-    // Check if this Linear identity is already claimed by another user
+    // Pre-check for friendly error message (non-atomic, see catch below)
     const existing = await getLinearAccountForLinearUserId({
       db,
       organizationId,
@@ -43,16 +43,26 @@ export const connectLinearAccount = userOnlyAction(
       );
     }
 
-    await upsertLinearAccount({
-      db,
-      userId,
-      organizationId,
-      account: {
-        linearUserId,
-        linearUserName,
-        linearUserEmail,
-      },
-    });
+    try {
+      await upsertLinearAccount({
+        db,
+        userId,
+        organizationId,
+        account: {
+          linearUserId,
+          linearUserName,
+          linearUserEmail,
+        },
+      });
+    } catch (error: any) {
+      // Handle race condition: concurrent claim slipping past pre-check
+      if (error?.code === "23505") {
+        throw new UserFacingError(
+          "This Linear user ID is already linked to another Terragon account",
+        );
+      }
+      throw error;
+    }
   },
   { defaultErrorMessage: "Failed to connect Linear account" },
 );
