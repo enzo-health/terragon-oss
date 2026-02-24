@@ -7,8 +7,10 @@ import * as schema from "../db/schema";
 import {
   getLinearAccountForLinearUserId,
   getLinearAccounts,
+  getLinearAccountsWithSettings,
   upsertLinearAccount,
   deleteLinearAccount,
+  disconnectLinearAccountAndSettings,
   getLinearSettingsForUserAndOrg,
   upsertLinearSettings,
   deleteLinearSettings,
@@ -436,6 +438,195 @@ describe("linear", () => {
         userId: user.id,
         organizationId,
       });
+
+      const otherSettings = await getLinearSettingsForUserAndOrg({
+        db,
+        userId: otherUser.id,
+        organizationId,
+      });
+      expect(otherSettings).not.toBeNull();
+    });
+  });
+
+  describe("getLinearAccountsWithSettings", () => {
+    it("should return empty array when user has no accounts", async () => {
+      const accounts = await getLinearAccountsWithSettings({
+        db,
+        userId: user.id,
+      });
+      expect(accounts).toEqual([]);
+    });
+
+    it("should return account with null settings when no settings exist", async () => {
+      await db.insert(schema.linearAccount).values({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "Test User",
+        linearUserEmail: "test@example.com",
+        organizationId,
+      });
+
+      const accounts = await getLinearAccountsWithSettings({
+        db,
+        userId: user.id,
+      });
+
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]).toMatchObject({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "Test User",
+        linearUserEmail: "test@example.com",
+        organizationId,
+      });
+      expect(accounts[0]?.settings).toBeNull();
+    });
+
+    it("should return account with joined settings", async () => {
+      await db.insert(schema.linearAccount).values({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "Test User",
+        linearUserEmail: "test@example.com",
+        organizationId,
+      });
+
+      await db.insert(schema.linearSettings).values({
+        userId: user.id,
+        organizationId,
+        defaultRepoFullName: "test/repo",
+        defaultModel: "sonnet",
+      });
+
+      const accounts = await getLinearAccountsWithSettings({
+        db,
+        userId: user.id,
+      });
+
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.settings).toMatchObject({
+        userId: user.id,
+        organizationId,
+        defaultRepoFullName: "test/repo",
+        defaultModel: "sonnet",
+      });
+    });
+
+    it("should only return accounts for the specified user", async () => {
+      await db.insert(schema.linearAccount).values({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "User",
+        linearUserEmail: "user@example.com",
+        organizationId,
+      });
+
+      await db.insert(schema.linearAccount).values({
+        userId: otherUser.id,
+        linearUserId: otherLinearUserId,
+        linearUserName: "Other",
+        linearUserEmail: "other@example.com",
+        organizationId: otherOrganizationId,
+      });
+
+      const accounts = await getLinearAccountsWithSettings({
+        db,
+        userId: user.id,
+      });
+
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.userId).toBe(user.id);
+    });
+  });
+
+  describe("disconnectLinearAccountAndSettings", () => {
+    it("should delete both account and settings in a single transaction", async () => {
+      await db.insert(schema.linearAccount).values({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "Test User",
+        linearUserEmail: "test@example.com",
+        organizationId,
+      });
+
+      await db.insert(schema.linearSettings).values({
+        userId: user.id,
+        organizationId,
+        defaultRepoFullName: "test/repo",
+        defaultModel: "sonnet",
+      });
+
+      await disconnectLinearAccountAndSettings({
+        db,
+        userId: user.id,
+        organizationId,
+      });
+
+      const accounts = await getLinearAccounts({ db, userId: user.id });
+      expect(accounts).toHaveLength(0);
+
+      const settings = await getLinearSettingsForUserAndOrg({
+        db,
+        userId: user.id,
+        organizationId,
+      });
+      expect(settings).toBeNull();
+    });
+
+    it("should succeed even when no settings exist", async () => {
+      await db.insert(schema.linearAccount).values({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "Test User",
+        linearUserEmail: "test@example.com",
+        organizationId,
+      });
+
+      await disconnectLinearAccountAndSettings({
+        db,
+        userId: user.id,
+        organizationId,
+      });
+
+      const accounts = await getLinearAccounts({ db, userId: user.id });
+      expect(accounts).toHaveLength(0);
+    });
+
+    it("should not affect other users' accounts and settings", async () => {
+      await db.insert(schema.linearAccount).values({
+        userId: user.id,
+        linearUserId,
+        linearUserName: "User",
+        linearUserEmail: "user@example.com",
+        organizationId,
+      });
+
+      await db.insert(schema.linearAccount).values({
+        userId: otherUser.id,
+        linearUserId: otherLinearUserId,
+        linearUserName: "Other",
+        linearUserEmail: "other@example.com",
+        organizationId,
+      });
+
+      await db.insert(schema.linearSettings).values({
+        userId: otherUser.id,
+        organizationId,
+        defaultRepoFullName: "other/repo",
+        defaultModel: "opus",
+      });
+
+      await disconnectLinearAccountAndSettings({
+        db,
+        userId: user.id,
+        organizationId,
+      });
+
+      const otherAccounts = await getLinearAccounts({
+        db,
+        userId: otherUser.id,
+      });
+      expect(otherAccounts).toHaveLength(1);
 
       const otherSettings = await getLinearSettingsForUserAndOrg({
         db,
