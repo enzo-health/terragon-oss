@@ -72,3 +72,13 @@ Create the webhook endpoint and mention handler for Linear Comment.create events
 - [ ] Acknowledgment comment posted to Linear with task link (no mention handle in body)
 - [ ] Handler tests pass: `pnpm -C apps/www test`
 - [ ] Entire flow completes within waitUntil() (non-blocking to webhook response)
+
+## Done summary
+
+Implemented webhook route and mention handler for Linear integration.
+
+## Evidence
+
+- Commits: 768859b53706712d49da2541661a038b30130a11
+- Tests: pnpm -C apps/www test, pnpm tsc-check
+- PRs:
