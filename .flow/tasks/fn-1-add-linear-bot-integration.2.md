@@ -75,10 +75,10 @@ Create the webhook endpoint and mention handler for Linear Comment.create events
 
 ## Done summary
 
-Implemented webhook route and mention handler for Linear integration.
+Implemented webhook route at POST /api/webhooks/linear with HMAC-SHA256 signature verification (SDK + manual fallback) and mention handler that detects @mentions via LINEAR_MENTION_HANDLE, resolves Linear users to Terragon users, checks feature flags and access tiers, fetches issue details/attachments, auto-extracts GitHub repos from attachments, creates threads via newThreadInternal, and posts acknowledgment comments back to Linear. Includes 12 handler tests.
 
 ## Evidence
 
-- Commits: 768859b53706712d49da2541661a038b30130a11
-- Tests: pnpm -C apps/www test, pnpm tsc-check
+- Commits: 6fd6442, 768859b
+- Tests: pnpm -C apps/www test -- --run src/app/api/webhooks/linear/handlers.test.ts, pnpm tsc-check
 - PRs:
