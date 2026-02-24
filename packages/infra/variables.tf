@@ -30,10 +30,15 @@ variable "upstash_email" {
 
 # ── App config ────────────────────────────────────
 
+variable "app_url" {
+  type        = string
+  description = "Full app URL, e.g. https://terragon-abc123-team.vercel.app (find in Vercel dashboard > Domains)"
+}
+
 variable "domain" {
   type        = string
   default     = ""
-  description = "Custom domain, e.g. app.yourdomain.com. Leave empty to use Vercel's auto-generated domain."
+  description = "Custom domain, e.g. app.yourdomain.com. Leave empty if not using a custom domain."
 }
 
 variable "docs_domain" {

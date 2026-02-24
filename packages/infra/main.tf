@@ -35,7 +35,7 @@ resource "vercel_project" "www" {
   name            = "terragon"
   framework       = "nextjs"
   root_directory  = "apps/www"
-  build_command   = "turbo run build --filter=bundled && next build"
+  build_command   = "turbo run build --filter=@terragon/bundled && next build"
   install_command = "pnpm install --frozen-lockfile"
 
   resource_config = {
@@ -55,9 +55,9 @@ resource "vercel_project_domain" "www" {
   domain     = var.domain
 }
 
-# Derive the app URL: custom domain if set, otherwise Vercel's auto-generated URL
+# Derive the app URL: custom domain > explicit app_url > auto-generated
 locals {
-  app_url = var.domain != "" ? "https://${var.domain}" : "https://${vercel_project.www.name}.vercel.app"
+  app_url = var.domain != "" ? "https://${var.domain}" : var.app_url
 }
 
 # ── Vercel env vars for apps/www ──────────────────

@@ -7,7 +7,8 @@ upstash_api_key       = ""
 upstash_email         = ""
 
 # ── App config ────────────────────────────────────
-domain       = ""                      # leave empty to use terragon.vercel.app
+app_url      = "https://your-project.vercel.app"  # find in Vercel dashboard > Domains
+domain       = ""                      # custom domain, leave empty if not using one
 docs_domain  = ""                      # leave empty to use terragon-docs.vercel.app
 github_repo  = "your-org/terragon"
 r2_public_url = "https://pub-xxxxx.r2.dev"
