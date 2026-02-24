@@ -35,7 +35,7 @@ resource "vercel_project" "www" {
   name            = "terragon"
   framework       = "nextjs"
   root_directory  = "apps/www"
-  build_command   = "turbo run build --filter=@terragon/bundled && next build"
+  build_command   = "turbo run build --filter=@terragon/bundled --filter=@terragon/sandbox-image && next build"
   install_command = "pnpm install --frozen-lockfile"
 
   resource_config = {
