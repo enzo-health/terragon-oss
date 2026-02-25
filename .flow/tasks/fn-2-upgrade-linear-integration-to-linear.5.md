@@ -92,10 +92,10 @@ Rewrite the Linear settings UI to use OAuth install button, separate "disconnect
 
 ## Done summary
 
-TBD
+Rewrote Linear settings UI with OAuth install button, workspace panel, and separate "disconnect account" vs "uninstall workspace" actions (with confirmation dialog and installer-or-admin guard). Added LinearInstallationPublic type (strips token fields for safe RSC→client serialization), getLinearInstallation() model function, updated docs for agent-based flow, added release notes entry, bumped RELEASE_NOTES_VERSION to 20, and updated AGENTS.md and .env.example.
 
 ## Evidence
 
-- Commits:
-- Tests:
+- Commits: e59e96e, c27c592, aa00f56
+- Tests: pnpm tsc-check, pnpm -C apps/www test src/server-actions/linear.test.ts
 - PRs:
