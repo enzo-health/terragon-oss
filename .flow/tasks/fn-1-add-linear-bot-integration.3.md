@@ -43,3 +43,5 @@ Add a "Linear" section to the integrations settings page, gated behind the `line
 - [ ] Disconnect button removes BOTH linearAccount AND linearSettings records (single transaction)
 - [ ] UI updates reactively after connect/disconnect (via broadcast message)
 - [ ] Type check passes: `pnpm tsc-check`
+
+## Done summary
