@@ -23,6 +23,8 @@ import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import type { LinearClientFactory } from "@/server-lib/linear-agent-activity";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
+import { encryptValue } from "@terragon/utils/encryption";
+import { env } from "@terragon/env/apps-www";
 
 // Mock newThreadInternal
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -165,16 +167,17 @@ describe("handlers", () => {
       },
     });
 
-    // Create a linear installation for the org
-    // Note: accessTokenEncrypted must be a real encrypted value in tests
-    // that call refreshLinearTokenIfNeeded (which we mock), so any string is fine.
+    // Create a linear installation for the org.
+    // accessTokenEncrypted must be a real encrypted value so that
+    // the reinstall_required path (which calls decryptValue directly) works.
+    const masterKey = env.ENCRYPTION_MASTER_KEY;
     await upsertLinearInstallation({
       db,
       installation: {
         organizationId: "org-123",
         organizationName: "Test Org",
-        accessTokenEncrypted: "mock-encrypted-token",
-        refreshTokenEncrypted: "mock-encrypted-refresh-token",
+        accessTokenEncrypted: encryptValue("stale-access-token", masterKey),
+        refreshTokenEncrypted: encryptValue("mock-refresh-token", masterKey),
         tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h from now
         scope: "read,write",
         installerUserId: user.id,
@@ -296,7 +299,10 @@ describe("handlers", () => {
         "session-abc",
         expect.objectContaining({
           externalUrls: expect.arrayContaining([
-            expect.stringContaining("test-thread-id"),
+            expect.objectContaining({
+              label: "Terragon Task",
+              url: expect.stringContaining("test-thread-id"),
+            }),
           ]),
         }),
       );
@@ -381,6 +387,76 @@ describe("handlers", () => {
       });
 
       expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    });
+
+    it("queues follow-up when thread found for agentSessionId (happy path)", async () => {
+      const threadsModule = await import("@terragon/shared/model/threads");
+      const threadUtilsModule = await import(
+        "@terragon/shared/utils/thread-utils"
+      );
+
+      // Stub thread lookup to return a fake thread with agentSessionId in metadata
+      const fakeThread = {
+        id: "prompted-thread-id",
+        userId: user.id,
+        sourceMetadata: {
+          type: "linear-mention",
+          agentSessionId: "session-abc",
+          organizationId: "org-123",
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+      >;
+
+      const fakeThreadFull = {
+        id: "prompted-thread-id",
+        userId: user.id,
+        threadChats: [{ id: "prompted-chat-id" }],
+      } as unknown as Awaited<ReturnType<typeof threadsModule.getThread>>;
+
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValueOnce(fakeThread);
+      const spyGetThread = vi
+        .spyOn(threadsModule, "getThread")
+        .mockResolvedValueOnce(fakeThreadFull);
+      const spyGetPrimary = vi
+        .spyOn(threadUtilsModule, "getPrimaryThreadChat")
+        .mockReturnValueOnce({ id: "prompted-chat-id" } as ReturnType<
+          typeof threadUtilsModule.getPrimaryThreadChat
+        >);
+
+      const payload = makePromptedPayload({
+        data: {
+          id: "session-abc",
+          agentActivity: { body: "Please continue with the task." },
+        },
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(queueFollowUpInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: user.id,
+          threadId: "prompted-thread-id",
+          threadChatId: "prompted-chat-id",
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              parts: expect.arrayContaining([
+                expect.objectContaining({
+                  text: "Please continue with the task.",
+                }),
+              ]),
+            }),
+          ]),
+        }),
+      );
+
+      spyBySessionId.mockRestore();
+      spyGetThread.mockRestore();
+      spyGetPrimary.mockRestore();
     });
   });
 

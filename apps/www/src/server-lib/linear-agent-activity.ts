@@ -11,6 +11,17 @@
 
 import { LinearClient } from "@linear/sdk";
 
+/**
+ * Input shape for an external URL on a Linear agent session.
+ * Mirrors AgentSessionExternalUrlInput from @linear/sdk (not publicly exported).
+ */
+export type AgentSessionExternalUrlInput = {
+  /** Human-readable label for the external URL. */
+  label: string;
+  /** The external URL. */
+  url: string;
+};
+
 /** Injectable factory type for testability. */
 export type LinearClientFactory = (accessToken: string) => LinearClient;
 
@@ -67,7 +78,7 @@ export async function emitAgentActivity({
  *
  * @param opts.sessionId - Linear agent session ID
  * @param opts.accessToken - OAuth access token for the workspace installation
- * @param opts.externalUrls - Array of external URLs to set on the session
+ * @param opts.externalUrls - Array of { label, url } objects to set on the session
  * @param opts.createClient - Injectable factory for testability
  */
 export async function updateAgentSession({
@@ -78,17 +89,12 @@ export async function updateAgentSession({
 }: {
   sessionId: string;
   accessToken: string;
-  externalUrls: string[];
+  externalUrls: AgentSessionExternalUrlInput[];
   createClient?: LinearClientFactory;
 }): Promise<void> {
   try {
     const client = createClient(accessToken);
-    // externalUrls is typed as AgentSessionExternalUrlInput[] in the SDK,
-    // but runtime behavior accepts plain string URLs. Cast via unknown to satisfy TypeScript.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await client.updateAgentSession(sessionId, {
-      externalUrls: externalUrls as any,
-    });
+    await client.updateAgentSession(sessionId, { externalUrls });
   } catch (error) {
     console.error("[linear-agent-activity] Failed to update agent session", {
       sessionId,

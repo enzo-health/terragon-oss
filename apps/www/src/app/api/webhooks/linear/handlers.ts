@@ -21,10 +21,13 @@ import {
   emitAgentActivity,
   updateAgentSession,
   type LinearClientFactory,
+  type AgentSessionExternalUrlInput,
 } from "@/server-lib/linear-agent-activity";
 import { getEnvironments } from "@terragon/shared/model/environments";
 import { waitUntil } from "@vercel/functions";
-import { LinearClient } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
+import { LinearClient, type RepositorySuggestionsPayload } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
+import { decryptValue } from "@terragon/utils/encryption";
+import { env } from "@terragon/env/apps-www";
 
 // ---------------------------------------------------------------------------
 // Webhook payload types
@@ -157,7 +160,7 @@ async function handleAgentSessionCreated(
     return;
   }
 
-  // 2. Token refresh with 2-3s hard budget
+  // 2. Token refresh with 2.5s hard budget
   let accessToken: string;
   try {
     const result = await Promise.race([
@@ -165,13 +168,18 @@ async function handleAgentSessionCreated(
       timeout(2500),
     ]);
     if (result.status !== "ok") {
-      // Reinstall required — emit error activity and return
+      // Reinstall required — emit error activity using the installation's
+      // existing (possibly stale) token as best-effort, then return.
       console.error("[linear webhook] Token refresh: reinstall required", {
         organizationId,
       });
+      const fallbackToken = decryptValue(
+        installation.accessTokenEncrypted,
+        env.ENCRYPTION_MASTER_KEY,
+      );
       await emitAgentActivity({
         agentSessionId,
-        accessToken: "", // will fail silently, that's ok
+        accessToken: fallbackToken,
         content: {
           type: "error",
           body: "Authentication failure — please reinstall the Linear Agent",
@@ -182,18 +190,20 @@ async function handleAgentSessionCreated(
     }
     accessToken = result.accessToken;
   } catch (err) {
-    // Timeout or other error — log, skip thread creation, return 200
+    // Timeout or other error — log, skip thread creation, return 200.
+    // We have no valid token to emit an error activity with.
     console.error(
       "[linear webhook] Token refresh timed out or failed, returning 200",
       { agentSessionId, err },
     );
-    // Cannot emit activity without a valid token on timeout — just return
     return;
   }
 
-  // 3. Synchronously emit `thought` activity BEFORE returning HTTP 200 (<10s SLA)
-  try {
-    await emitAgentActivity({
+  // 3. Synchronously emit `thought` activity BEFORE returning HTTP 200 (<10s SLA).
+  // emitAgentActivity catches all errors internally, so this call never throws.
+  // We race against a 3s timeout to guard the remaining webhook budget.
+  await Promise.race([
+    emitAgentActivity({
       agentSessionId,
       accessToken,
       content: {
@@ -201,14 +211,14 @@ async function handleAgentSessionCreated(
         body: "Starting work on this issue...",
       },
       createClient: opts?.createClient,
-    });
-  } catch (err) {
-    // 4. 10s SLA failure: if thought emission fails, log error and return 200 anyway
-    console.error(
-      "[linear webhook] Failed to emit thought activity (SLA failure), continuing",
-      { agentSessionId, err },
-    );
-  }
+    }),
+    timeout(3000).catch(() => {
+      console.error(
+        "[linear webhook] Thought emission timed out (SLA guard), continuing",
+        { agentSessionId },
+      );
+    }),
+  ]);
 
   // 5-7. Async thread creation via waitUntil
   waitUntil(
@@ -356,19 +366,13 @@ async function createThreadForAgentSession({
         opts?.createClient ??
         ((t: string) => new LinearClient({ accessToken: t }));
       const client = createClient(accessToken);
-      const suggestionsPayload = await client.issueRepositorySuggestions(
-        candidateRepositories,
-        issueId,
-        { agentSessionId },
-      );
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const suggestions: Array<{
-        repositoryFullName: string;
-        hostname: string;
-        confidence: number;
-      }> =
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (suggestionsPayload as any).suggestions ?? [];
+      const suggestionsPayload: RepositorySuggestionsPayload =
+        await client.issueRepositorySuggestions(
+          candidateRepositories,
+          issueId,
+          { agentSessionId },
+        );
+      const suggestions = suggestionsPayload.suggestions ?? [];
       if (suggestions.length > 0) {
         const best = suggestions.reduce((a, b) =>
           b.confidence > a.confidence ? b : a,
@@ -452,11 +456,14 @@ async function createThreadForAgentSession({
   const taskUrl = `${publicAppUrl()}/task/${threadId}`;
   console.log("[linear webhook] Created thread", { threadId, taskUrl });
 
-  // Update agent session with external URL
+  // Update agent session with external URL (typed as { label, url } per Linear SDK)
+  const externalUrls: AgentSessionExternalUrlInput[] = [
+    { label: "Terragon Task", url: taskUrl },
+  ];
   await updateAgentSession({
     sessionId: agentSessionId,
     accessToken,
-    externalUrls: [taskUrl],
+    externalUrls,
     createClient: opts?.createClient,
   });
 }
