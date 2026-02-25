@@ -1634,3 +1634,52 @@ export async function getScheduledThreadChatsDueToRun({
     return dueToRun;
   });
 }
+
+/**
+ * Look up a thread by its Linear agent session ID.
+ * Queries the `sourceMetadata` JSONB column using a JSON path expression.
+ * Optionally scoped by `organizationId` for defensive safety.
+ */
+export async function getThreadByLinearAgentSessionId({
+  db,
+  agentSessionId,
+  organizationId,
+}: {
+  db: DB;
+  agentSessionId: string;
+  organizationId?: string;
+}): Promise<Thread | null> {
+  const conditions = [
+    sql`${schema.thread.sourceMetadata}->>'agentSessionId' = ${agentSessionId}`,
+    eq(schema.thread.sourceType, "linear-mention"),
+  ];
+  if (organizationId) {
+    conditions.push(
+      sql`${schema.thread.sourceMetadata}->>'organizationId' = ${organizationId}`,
+    );
+  }
+  const result = await db.query.thread.findFirst({
+    where: and(...conditions),
+  });
+  return result ?? null;
+}
+
+/**
+ * Look up a thread by its Linear webhook delivery ID.
+ * Used for idempotency checks before creating a new thread.
+ */
+export async function getThreadByLinearDeliveryId({
+  db,
+  deliveryId,
+}: {
+  db: DB;
+  deliveryId: string;
+}): Promise<Thread | null> {
+  const result = await db.query.thread.findFirst({
+    where: and(
+      sql`${schema.thread.sourceMetadata}->>'linearDeliveryId' = ${deliveryId}`,
+      eq(schema.thread.sourceType, "linear-mention"),
+    ),
+  });
+  return result ?? null;
+}

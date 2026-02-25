@@ -14,7 +14,15 @@ import {
   getLinearSettingsForUserAndOrg,
   upsertLinearSettings,
   deleteLinearSettings,
+  getLinearInstallationForOrg,
+  upsertLinearInstallation,
+  deactivateLinearInstallation,
+  updateLinearInstallationTokens,
 } from "./linear";
+import {
+  getThreadByLinearAgentSessionId,
+  getThreadByLinearDeliveryId,
+} from "./threads";
 import { nanoid } from "nanoid/non-secure";
 
 const db = createDb(env.DATABASE_URL!);
@@ -635,5 +643,347 @@ describe("linear", () => {
       });
       expect(otherSettings).not.toBeNull();
     });
+  });
+});
+
+// ── LinearInstallation tests ─────────────────────────────────────────────────
+
+describe("linearInstallation", () => {
+  let user: User;
+  const orgId = `org_${nanoid(8)}`;
+  const otherOrgId = `org_${nanoid(8)}`;
+
+  beforeEach(async () => {
+    await db.delete(schema.linearInstallation);
+    const { user: u } = await createTestUser({ db });
+    user = u;
+  });
+
+  describe("upsertLinearInstallation", () => {
+    it("inserts a new installation", async () => {
+      const installation = await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "enc-access-token",
+          refreshTokenEncrypted: "enc-refresh-token",
+          tokenExpiresAt: new Date("2099-01-01"),
+          scope: "read,write",
+          installerUserId: user.id,
+        },
+      });
+
+      expect(installation.organizationId).toBe(orgId);
+      expect(installation.organizationName).toBe("Acme Corp");
+      expect(installation.isActive).toBe(true);
+    });
+
+    it("upserts on conflict (same organizationId)", async () => {
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Old Name",
+          accessTokenEncrypted: "old-token",
+          scope: "read",
+        },
+      });
+
+      const updated = await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "New Name",
+          accessTokenEncrypted: "new-token",
+          scope: "read,write",
+        },
+      });
+
+      expect(updated.organizationName).toBe("New Name");
+      expect(updated.accessTokenEncrypted).toBe("new-token");
+    });
+
+    it("allows null refreshTokenEncrypted", async () => {
+      const installation = await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "enc-access-token",
+          refreshTokenEncrypted: null,
+          scope: "read",
+        },
+      });
+
+      expect(installation.refreshTokenEncrypted).toBeNull();
+    });
+  });
+
+  describe("getLinearInstallationForOrg", () => {
+    it("returns null when not found", async () => {
+      const result = await getLinearInstallationForOrg({
+        db,
+        organizationId: "nonexistent",
+      });
+      expect(result).toBeNull();
+    });
+
+    it("returns the installation for the org", async () => {
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "token",
+          scope: "read",
+        },
+      });
+
+      const result = await getLinearInstallationForOrg({
+        db,
+        organizationId: orgId,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.organizationId).toBe(orgId);
+    });
+
+    it("does not return installation for another org", async () => {
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "token",
+          scope: "read",
+        },
+      });
+
+      const result = await getLinearInstallationForOrg({
+        db,
+        organizationId: otherOrgId,
+      });
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("deactivateLinearInstallation", () => {
+    it("sets isActive to false", async () => {
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "token",
+          scope: "read",
+        },
+      });
+
+      await deactivateLinearInstallation({ db, organizationId: orgId });
+
+      const result = await getLinearInstallationForOrg({
+        db,
+        organizationId: orgId,
+      });
+      expect(result!.isActive).toBe(false);
+    });
+  });
+
+  describe("updateLinearInstallationTokens", () => {
+    it("updates tokens when CAS condition matches", async () => {
+      const expiresAt = new Date("2099-01-01T00:00:00Z");
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "old-token",
+          tokenExpiresAt: expiresAt,
+          scope: "read",
+        },
+      });
+
+      const { updated } = await updateLinearInstallationTokens({
+        db,
+        organizationId: orgId,
+        accessTokenEncrypted: "new-token",
+        tokenExpiresAt: new Date("2099-02-01T00:00:00Z"),
+        previousTokenExpiresAt: expiresAt,
+      });
+
+      expect(updated).toBe(true);
+      const result = await getLinearInstallationForOrg({
+        db,
+        organizationId: orgId,
+      });
+      expect(result!.accessTokenEncrypted).toBe("new-token");
+    });
+
+    it("does not update when CAS condition does not match (concurrent refresh)", async () => {
+      const expiresAt = new Date("2099-01-01T00:00:00Z");
+      const differentExpiresAt = new Date("2099-01-02T00:00:00Z");
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "current-token",
+          tokenExpiresAt: expiresAt,
+          scope: "read",
+        },
+      });
+
+      const { updated } = await updateLinearInstallationTokens({
+        db,
+        organizationId: orgId,
+        accessTokenEncrypted: "stale-token",
+        tokenExpiresAt: new Date("2099-03-01T00:00:00Z"),
+        previousTokenExpiresAt: differentExpiresAt, // doesn't match current
+      });
+
+      expect(updated).toBe(false);
+      const result = await getLinearInstallationForOrg({
+        db,
+        organizationId: orgId,
+      });
+      expect(result!.accessTokenEncrypted).toBe("current-token");
+    });
+
+    it("updates without CAS guard when previousTokenExpiresAt is omitted", async () => {
+      await upsertLinearInstallation({
+        db,
+        installation: {
+          organizationId: orgId,
+          organizationName: "Acme Corp",
+          accessTokenEncrypted: "old-token",
+          scope: "read",
+        },
+      });
+
+      const { updated } = await updateLinearInstallationTokens({
+        db,
+        organizationId: orgId,
+        accessTokenEncrypted: "new-token",
+        tokenExpiresAt: new Date("2099-01-01T00:00:00Z"),
+      });
+
+      expect(updated).toBe(true);
+    });
+  });
+});
+
+// ── Thread JSONB query helpers ───────────────────────────────────────────────
+
+describe("getThreadByLinearAgentSessionId / getThreadByLinearDeliveryId", () => {
+  let user: User;
+
+  beforeEach(async () => {
+    await db.delete(schema.thread);
+    const { user: u } = await createTestUser({ db });
+    user = u;
+  });
+
+  it("returns null when no thread has the agentSessionId", async () => {
+    const result = await getThreadByLinearAgentSessionId({
+      db,
+      agentSessionId: "session-xyz",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("finds a thread by agentSessionId", async () => {
+    const agentSessionId = `session-${nanoid(8)}`;
+    await db.insert(schema.thread).values({
+      userId: user.id,
+      name: "Linear thread",
+      githubRepoFullName: "acme/repo",
+      repoBaseBranchName: "main",
+      sourceType: "linear-mention",
+      sourceMetadata: {
+        type: "linear-mention",
+        agentSessionId,
+        organizationId: "org-123",
+        issueId: "issue-1",
+        issueIdentifier: "ENG-1",
+        issueUrl: "https://linear.app/acme/issue/ENG-1",
+      },
+    });
+
+    const result = await getThreadByLinearAgentSessionId({
+      db,
+      agentSessionId,
+    });
+    expect(result).not.toBeNull();
+    expect((result!.sourceMetadata as any).agentSessionId).toBe(agentSessionId);
+  });
+
+  it("scopes lookup by organizationId when provided", async () => {
+    const agentSessionId = `session-${nanoid(8)}`;
+    await db.insert(schema.thread).values({
+      userId: user.id,
+      name: "Linear thread",
+      githubRepoFullName: "acme/repo",
+      repoBaseBranchName: "main",
+      sourceType: "linear-mention",
+      sourceMetadata: {
+        type: "linear-mention",
+        agentSessionId,
+        organizationId: "org-correct",
+        issueId: "issue-1",
+        issueIdentifier: "ENG-1",
+        issueUrl: "https://linear.app/acme/issue/ENG-1",
+      },
+    });
+
+    const found = await getThreadByLinearAgentSessionId({
+      db,
+      agentSessionId,
+      organizationId: "org-correct",
+    });
+    expect(found).not.toBeNull();
+
+    const notFound = await getThreadByLinearAgentSessionId({
+      db,
+      agentSessionId,
+      organizationId: "org-wrong",
+    });
+    expect(notFound).toBeNull();
+  });
+
+  it("returns null when no thread has the deliveryId", async () => {
+    const result = await getThreadByLinearDeliveryId({
+      db,
+      deliveryId: "delivery-xyz",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("finds a thread by linearDeliveryId", async () => {
+    const linearDeliveryId = `delivery-${nanoid(8)}`;
+    await db.insert(schema.thread).values({
+      userId: user.id,
+      name: "Linear thread",
+      githubRepoFullName: "acme/repo",
+      repoBaseBranchName: "main",
+      sourceType: "linear-mention",
+      sourceMetadata: {
+        type: "linear-mention",
+        linearDeliveryId,
+        organizationId: "org-123",
+        issueId: "issue-1",
+        issueIdentifier: "ENG-1",
+        issueUrl: "https://linear.app/acme/issue/ENG-1",
+      },
+    });
+
+    const result = await getThreadByLinearDeliveryId({
+      db,
+      deliveryId: linearDeliveryId,
+    });
+    expect(result).not.toBeNull();
+    expect((result!.sourceMetadata as any).linearDeliveryId).toBe(
+      linearDeliveryId,
+    );
   });
 });

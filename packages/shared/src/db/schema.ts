@@ -773,6 +773,31 @@ export const linearSettings = pgTable(
   ],
 );
 
+export const linearInstallation = pgTable(
+  "linear_installation",
+  {
+    id: text("id")
+      .default(sql`gen_random_uuid()`)
+      .primaryKey(),
+    organizationId: text("organization_id").notNull().unique(), // Linear workspace/org ID
+    organizationName: text("organization_name").notNull(),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"), // nullable — some installs may not receive refresh token
+    tokenExpiresAt: timestamp("token_expires_at", { mode: "date" }),
+    scope: text("scope").notNull(),
+    installerUserId: text("installer_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [index("linear_installation_org_id").on(table.organizationId)],
+);
+
 export const threadReadStatus = pgTable(
   "thread_read_status",
   {

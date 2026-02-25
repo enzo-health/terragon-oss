@@ -63,6 +63,9 @@ export type LinearAccount = typeof schema.linearAccount.$inferSelect;
 export type LinearAccountInsert = typeof schema.linearAccount.$inferInsert;
 export type LinearSettings = typeof schema.linearSettings.$inferSelect;
 export type LinearSettingsInsert = typeof schema.linearSettings.$inferInsert;
+export type LinearInstallation = typeof schema.linearInstallation.$inferSelect;
+export type LinearInstallationInsert =
+  typeof schema.linearInstallation.$inferInsert;
 export type ThreadReadStatus = typeof schema.threadReadStatus.$inferSelect;
 export type ThreadReadStatusInsert =
   typeof schema.threadReadStatus.$inferInsert;
@@ -118,11 +121,20 @@ export type ThreadSourceMetadata =
     }
   | {
       type: "linear-mention";
+      /**
+       * Linear agent session ID — required on new records (fn-2+).
+       * Legacy fn-1 threads may not have this field. Guards:
+       *   if (!thread.sourceMetadata?.agentSessionId) { log("legacy thread, skipping"); return; }
+       */
+      agentSessionId?: string;
       organizationId: string;
       issueId: string;
       issueIdentifier: string;
-      commentId: string;
       issueUrl: string;
+      /** Optional — agent sessions from delegation/assignment have no comment */
+      commentId?: string;
+      /** Webhook delivery ID for idempotency */
+      linearDeliveryId?: string;
     }
   | {
       type: "www-multi-agent";

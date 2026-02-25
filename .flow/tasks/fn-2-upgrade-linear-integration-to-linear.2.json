@@ -1,0 +1,14 @@
+{
+  "assignee": null,
+  "claim_note": "",
+  "claimed_at": null,
+  "created_at": "2026-02-25T01:41:40.108671Z",
+  "depends_on": ["fn-2-upgrade-linear-integration-to-linear.1"],
+  "epic": "fn-2-upgrade-linear-integration-to-linear",
+  "id": "fn-2-upgrade-linear-integration-to-linear.2",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-2-upgrade-linear-integration-to-linear.2.md",
+  "status": "todo",
+  "title": "OAuth flow and callback route",
+  "updated_at": "2026-02-25T05:35:48.448362Z"
+}

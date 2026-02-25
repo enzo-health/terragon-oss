@@ -1,10 +1,12 @@
-import { and, eq, getTableColumns } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull } from "drizzle-orm";
 import * as schema from "../db/schema";
 import type { DB } from "../db";
 import type {
   LinearAccount,
   LinearAccountInsert,
   LinearAccountWithSettings,
+  LinearInstallation,
+  LinearInstallationInsert,
   LinearSettings,
   LinearSettingsInsert,
 } from "../db/types";
@@ -227,4 +229,105 @@ export async function deleteLinearSettings({
         eq(schema.linearSettings.organizationId, organizationId),
       ),
     );
+}
+
+// ── LinearInstallation CRUD ──────────────────────────────────────────────────
+
+export async function getLinearInstallationForOrg({
+  db,
+  organizationId,
+}: {
+  db: DB;
+  organizationId: string;
+}): Promise<LinearInstallation | null> {
+  const result = await db.query.linearInstallation.findFirst({
+    where: eq(schema.linearInstallation.organizationId, organizationId),
+  });
+  return result ?? null;
+}
+
+export async function upsertLinearInstallation({
+  db,
+  installation,
+}: {
+  db: DB;
+  installation: LinearInstallationInsert;
+}): Promise<LinearInstallation> {
+  const [result] = await db
+    .insert(schema.linearInstallation)
+    .values(installation)
+    .onConflictDoUpdate({
+      target: [schema.linearInstallation.organizationId],
+      set: {
+        organizationName: installation.organizationName,
+        accessTokenEncrypted: installation.accessTokenEncrypted,
+        refreshTokenEncrypted: installation.refreshTokenEncrypted,
+        tokenExpiresAt: installation.tokenExpiresAt,
+        scope: installation.scope,
+        installerUserId: installation.installerUserId,
+        isActive: true,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  return result!;
+}
+
+export async function deactivateLinearInstallation({
+  db,
+  organizationId,
+}: {
+  db: DB;
+  organizationId: string;
+}): Promise<void> {
+  await db
+    .update(schema.linearInstallation)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(eq(schema.linearInstallation.organizationId, organizationId));
+}
+
+export async function updateLinearInstallationTokens({
+  db,
+  organizationId,
+  accessTokenEncrypted,
+  refreshTokenEncrypted,
+  tokenExpiresAt,
+  /** The previous tokenExpiresAt value for optimistic CAS guard */
+  previousTokenExpiresAt,
+}: {
+  db: DB;
+  organizationId: string;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted?: string | null;
+  tokenExpiresAt: Date | null;
+  previousTokenExpiresAt?: Date | null;
+}): Promise<{ updated: boolean }> {
+  const conditions = [
+    eq(schema.linearInstallation.organizationId, organizationId),
+  ];
+
+  // DB-level optimistic CAS: only update if tokenExpiresAt hasn't changed
+  // (another instance may have already refreshed it)
+  if (previousTokenExpiresAt !== undefined) {
+    if (previousTokenExpiresAt === null) {
+      conditions.push(isNull(schema.linearInstallation.tokenExpiresAt));
+    } else {
+      conditions.push(
+        eq(schema.linearInstallation.tokenExpiresAt, previousTokenExpiresAt),
+      );
+    }
+  }
+
+  const result = await db
+    .update(schema.linearInstallation)
+    .set({
+      accessTokenEncrypted,
+      ...(refreshTokenEncrypted !== undefined ? { refreshTokenEncrypted } : {}),
+      tokenExpiresAt,
+      updatedAt: new Date(),
+    })
+    .where(and(...conditions))
+    .returning({ id: schema.linearInstallation.id });
+
+  return { updated: result.length > 0 };
 }
