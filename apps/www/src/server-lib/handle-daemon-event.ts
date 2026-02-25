@@ -271,31 +271,6 @@ export async function handleDaemonEvent({
     }
   }
 
-  // Emit Linear agent activities for linear-sourced threads (fn-2+).
-  // Guard: only proceed if thread is a Linear mention with a valid agentSessionId.
-  if (thread.sourceType === "linear-mention" && thread.sourceMetadata != null) {
-    const linearMeta = thread.sourceMetadata as Extract<
-      ThreadSourceMetadata,
-      { type: "linear-mention" }
-    >;
-    if (!linearMeta.agentSessionId) {
-      // Legacy fn-1 thread without agentSessionId — log and skip
-      console.warn(
-        "[handle-daemon-event] Skipping Linear activity: legacy fn-1 thread missing agentSessionId",
-        { threadId },
-      );
-    } else {
-      waitUntil(
-        emitLinearActivitiesForDaemonEvent(linearMeta, messages, {
-          isDone: isDone && !isError,
-          isError,
-          customErrorMessage,
-          costUsd,
-        }),
-      );
-    }
-  }
-
   // If it's a stop or error message, we need to append messages that update pending
   // tool calls to the error state.
   const messagesToAppend =
@@ -499,6 +474,33 @@ export async function handleDaemonEvent({
           threadId,
         },
       });
+    }
+  }
+
+  // Emit Linear agent activities for linear-sourced threads (fn-2+).
+  // NOTE: Placed after all auto-recovery blocks (auto-compact, OAuth retry) so that
+  // isDone/isError reflect the post-recovery state. Terminal activities are only
+  // emitted when the session is truly finishing, not when a "Continue" was queued.
+  if (thread.sourceType === "linear-mention" && thread.sourceMetadata != null) {
+    const linearMeta = thread.sourceMetadata as Extract<
+      ThreadSourceMetadata,
+      { type: "linear-mention" }
+    >;
+    if (!linearMeta.agentSessionId) {
+      // Legacy fn-1 thread without agentSessionId — log and skip
+      console.warn(
+        "[handle-daemon-event] Skipping Linear activity: legacy fn-1 thread missing agentSessionId",
+        { threadId },
+      );
+    } else {
+      waitUntil(
+        emitLinearActivitiesForDaemonEvent(linearMeta, messages, {
+          isDone: isDone && !isError,
+          isError,
+          customErrorMessage,
+          costUsd,
+        }),
+      );
     }
   }
 

@@ -201,13 +201,68 @@ export async function emitLinearActivitiesForDaemonEvent(
   const nowFn = opts?.now ?? (() => Date.now());
   const createClient = opts?.createClient ?? defaultClientFactory;
 
-  // Refresh token before emitting
+  const isDone = opts?.isDone ?? false;
+  const isError = opts?.isError ?? false;
+
+  // For non-terminal action events, do all cheap checks BEFORE the token refresh
+  // to avoid unnecessary DB reads on throttled/empty batches.
+  if (!isDone && !isError) {
+    // Check throttle first (cheap in-memory lookup)
+    const now = nowFn();
+    const lastEmit = lastActionEmitMap.get(agentSessionId);
+    if (lastEmit !== undefined && now - lastEmit < ACTION_THROTTLE_MS) {
+      // Throttled — skip this batch without hitting the DB
+      return;
+    }
+
+    // Check for assistant text (cheap CPU work)
+    const summary = extractLastAssistantText(messages);
+    if (!summary) {
+      // No assistant text in this batch — nothing useful to emit
+      return;
+    }
+
+    // Passed all cheap checks — refresh token and emit
+    let accessToken: string;
+    try {
+      const tokenResult = await refreshLinearTokenIfNeeded(organizationId, db);
+      if (tokenResult.status !== "ok") {
+        console.warn(
+          "[linear-agent-activity] Skipping activity: token not available",
+          { organizationId, status: tokenResult.status },
+        );
+        return;
+      }
+      accessToken = tokenResult.accessToken;
+    } catch (error) {
+      console.error(
+        "[linear-agent-activity] Token refresh failed, skipping activity",
+        { organizationId, error },
+      );
+      return;
+    }
+
+    // Set throttle timestamp BEFORE awaiting the network call to prevent concurrent
+    // invocations for the same session from both passing the throttle check.
+    lastActionEmitMap.set(agentSessionId, now);
+
+    await emitAgentActivity({
+      agentSessionId,
+      accessToken,
+      content: { type: "action", action: summary },
+      createClient,
+    });
+    return;
+  }
+
+  // Terminal events (response or error) — always emit, bypass throttle.
+  // Refresh token for terminal events too.
   let accessToken: string;
   try {
     const tokenResult = await refreshLinearTokenIfNeeded(organizationId, db);
     if (tokenResult.status !== "ok") {
       console.warn(
-        "[linear-agent-activity] Skipping activity: token not available",
+        "[linear-agent-activity] Skipping terminal activity: token not available",
         { organizationId, status: tokenResult.status },
       );
       return;
@@ -215,16 +270,12 @@ export async function emitLinearActivitiesForDaemonEvent(
     accessToken = tokenResult.accessToken;
   } catch (error) {
     console.error(
-      "[linear-agent-activity] Token refresh failed, skipping activity",
+      "[linear-agent-activity] Token refresh failed for terminal activity",
       { organizationId, error },
     );
     return;
   }
 
-  const isDone = opts?.isDone ?? false;
-  const isError = opts?.isError ?? false;
-
-  // Terminal events: response or error — always emit (bypass throttle)
   if (isDone && !isError) {
     // Build a brief result summary
     const lastText = extractLastAssistantText(messages);
@@ -254,30 +305,5 @@ export async function emitLinearActivitiesForDaemonEvent(
       content: { type: "error", body: errorMsg },
       createClient,
     });
-    return;
   }
-
-  // Non-terminal: emit `action` activity if throttle allows
-  const now = nowFn();
-  const lastEmit = lastActionEmitMap.get(agentSessionId);
-  if (lastEmit !== undefined && now - lastEmit < ACTION_THROTTLE_MS) {
-    // Throttled — skip this batch
-    return;
-  }
-
-  const summary = extractLastAssistantText(messages);
-  if (!summary) {
-    // No assistant text in this batch — nothing useful to emit
-    return;
-  }
-
-  await emitAgentActivity({
-    agentSessionId,
-    accessToken,
-    content: { type: "action", action: summary },
-    createClient,
-  });
-
-  // Update throttle map
-  lastActionEmitMap.set(agentSessionId, now);
 }
