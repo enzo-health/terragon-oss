@@ -66,6 +66,14 @@ export type LinearSettingsInsert = typeof schema.linearSettings.$inferInsert;
 export type LinearInstallation = typeof schema.linearInstallation.$inferSelect;
 export type LinearInstallationInsert =
   typeof schema.linearInstallation.$inferInsert;
+
+// Token-free projection safe to serialize across the RSC → client boundary.
+// Never pass the full LinearInstallation to client components — it contains
+// encrypted token ciphertext that should remain server-side only.
+export type LinearInstallationPublic = Omit<
+  LinearInstallation,
+  "accessTokenEncrypted" | "refreshTokenEncrypted" | "scope"
+>;
 export type ThreadReadStatus = typeof schema.threadReadStatus.$inferSelect;
 export type ThreadReadStatusInsert =
   typeof schema.threadReadStatus.$inferInsert;
@@ -89,7 +97,7 @@ export type LinearAccountWithSettings = LinearAccount & {
 
 export type LinearAccountWithSettingsAndInstallation =
   LinearAccountWithSettings & {
-    installation: LinearInstallation | null;
+    installation: LinearInstallationPublic | null;
   };
 
 export type ThreadSource =

@@ -20,7 +20,7 @@ import { RepoSelector } from "../../repo-branch-selector";
 import { useRealtimeUser } from "@/hooks/useRealtime";
 import {
   LinearAccountWithSettingsAndInstallation,
-  LinearInstallation,
+  LinearInstallationPublic,
 } from "@terragon/shared/db/types";
 import { AIModel } from "@terragon/agent/types";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
@@ -37,7 +37,7 @@ import {
 function LinearWorkspacePanel({
   installation,
 }: {
-  installation: LinearInstallation | null;
+  installation: LinearInstallationPublic | null;
 }) {
   const router = useRouter();
   const [showUninstallDialog, setShowUninstallDialog] = useState(false);
@@ -391,7 +391,7 @@ export function LinearAccountSettings({
   installation,
 }: {
   accounts: LinearAccountWithSettingsAndInstallation[];
-  installation: LinearInstallation | null;
+  installation: LinearInstallationPublic | null;
 }) {
   const router = useRouter();
   useRealtimeUser({

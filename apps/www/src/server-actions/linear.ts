@@ -7,11 +7,13 @@ import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import {
   getLinearAccountForLinearUserId,
+  getLinearInstallationForOrg,
   upsertLinearAccount,
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
   deactivateLinearInstallation,
 } from "@terragon/shared/model/linear";
+import { getUserOrNull } from "@/lib/auth-server";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
 import { encryptValue } from "@terragon/utils/encryption";
@@ -137,15 +139,33 @@ export const disconnectLinearAccount = userOnlyAction(
 );
 
 // Workspace uninstall: deactivates the linearInstallation record for the
-// given organization. This removes the agent from the workspace.
-// TODO: restrict to admin role in a future iteration.
-// Requires UI confirmation before calling (see task 5).
+// given organization. This removes the agent from the workspace for all users.
+// Access guard: only the original installer or an admin may uninstall.
+// This prevents arbitrary feature-flag users from causing workspace-wide DoS.
+// TODO v2: gate fully on admin role via adminOnlyAction.
 export const uninstallLinearWorkspace = userOnlyAction(
   async function uninstallLinearWorkspace(
     userId: string,
     { organizationId }: { organizationId: string },
   ): Promise<void> {
     await assertLinearEnabled(userId);
+
+    // Enforce installer-or-admin guard
+    const [user, installation] = await Promise.all([
+      getUserOrNull(),
+      getLinearInstallationForOrg({ db, organizationId }),
+    ]);
+    if (!installation) {
+      throw new UserFacingError("No active Linear installation found");
+    }
+    const isAdmin = user?.role === "admin";
+    const isInstaller = installation.installerUserId === userId;
+    if (!isAdmin && !isInstaller) {
+      throw new UserFacingError(
+        "Only the workspace installer or an admin can uninstall the Linear agent",
+      );
+    }
+
     await deactivateLinearInstallation({ db, organizationId });
   },
   { defaultErrorMessage: "Failed to uninstall Linear workspace" },

@@ -7,6 +7,7 @@ import type {
   LinearAccountWithSettings,
   LinearInstallation,
   LinearInstallationInsert,
+  LinearInstallationPublic,
   LinearSettings,
   LinearSettingsInsert,
 } from "../db/types";
@@ -233,18 +234,30 @@ export async function deleteLinearSettings({
 
 // ── LinearInstallation CRUD ──────────────────────────────────────────────────
 
-// Returns the single workspace-level installation (Terragon deploys one Linear
-// Agent per installation). Fetches the most recently updated record to handle
-// edge-cases where multiple records exist during migration.
+// Returns the single workspace-level installation as a UI-safe projection that
+// omits encrypted token fields. Safe to pass across the RSC → client boundary.
+// Fetches the most recently updated record to handle edge-cases where multiple
+// records exist during migration.
 export async function getLinearInstallation({
   db,
 }: {
   db: DB;
-}): Promise<LinearInstallation | null> {
-  const result = await db.query.linearInstallation.findFirst({
-    orderBy: desc(schema.linearInstallation.updatedAt),
-  });
-  return result ?? null;
+}): Promise<LinearInstallationPublic | null> {
+  const result = await db
+    .select({
+      id: schema.linearInstallation.id,
+      organizationId: schema.linearInstallation.organizationId,
+      organizationName: schema.linearInstallation.organizationName,
+      tokenExpiresAt: schema.linearInstallation.tokenExpiresAt,
+      installerUserId: schema.linearInstallation.installerUserId,
+      isActive: schema.linearInstallation.isActive,
+      createdAt: schema.linearInstallation.createdAt,
+      updatedAt: schema.linearInstallation.updatedAt,
+    })
+    .from(schema.linearInstallation)
+    .orderBy(desc(schema.linearInstallation.updatedAt))
+    .limit(1);
+  return result[0] ?? null;
 }
 
 export async function getLinearInstallationForOrg({

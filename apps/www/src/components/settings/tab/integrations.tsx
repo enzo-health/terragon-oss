@@ -8,7 +8,7 @@ import { LinearAccountSettings } from "../linear";
 import {
   SlackAccountWithMetadata,
   LinearAccountWithSettingsAndInstallation,
-  LinearInstallation,
+  LinearInstallationPublic,
 } from "@terragon/shared/db/types";
 import { SettingsSection } from "../settings-row";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
@@ -17,7 +17,7 @@ import Link from "next/link";
 interface IntegrationsSettingsProps {
   slackAccounts?: SlackAccountWithMetadata[];
   linearAccounts?: LinearAccountWithSettingsAndInstallation[];
-  linearInstallation?: LinearInstallation | null;
+  linearInstallation?: LinearInstallationPublic | null;
 }
 
 export function IntegrationsSettings({
@@ -61,8 +61,8 @@ export function IntegrationsSettings({
           label="Linear"
           description={
             <>
-              Link your Linear account to interact with Terragon through Linear
-              issue comments.{" "}
+              Install the Linear Agent in your workspace, then link your account
+              so Terragon can respond to mentions on your behalf.{" "}
               <Link
                 href="https://docs.terragonlabs.com/docs/integrations/linear-integration"
                 target="_blank"

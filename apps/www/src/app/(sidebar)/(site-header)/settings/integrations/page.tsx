@@ -22,8 +22,10 @@ export default async function IntegrationsSettingsPage() {
       getLinearInstallation({ db }),
     ]);
 
-  // Join: accounts whose organizationId matches the active installation get it
-  // populated; all others get null. Supports multi-org scenario.
+  // Join: accounts whose organizationId matches the installation (active or
+  // inactive) get it populated; others get null. Inactive installations are
+  // surfaced deliberately to drive the "Reinstall required" UI state.
+  // Supports multi-org scenario (one Terragon deployment, multiple accounts).
   const linearAccounts: LinearAccountWithSettingsAndInstallation[] =
     linearAccountsWithSettings.map((account) => ({
       ...account,
