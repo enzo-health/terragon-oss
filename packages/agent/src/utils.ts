@@ -66,7 +66,14 @@ export function modelToAgent(model: AIModel | null): AIAgent {
     case "gpt-5.2-codex-low":
     case "gpt-5.2-codex-medium":
     case "gpt-5.2-codex-high":
-    case "gpt-5.2-codex-xhigh": {
+    case "gpt-5.2-codex-xhigh":
+    case "gpt-5.3-codex-low":
+    case "gpt-5.3-codex-medium":
+    case "gpt-5.3-codex-high":
+    case "gpt-5.3-codex-xhigh":
+    case "gpt-5.3-codex-spark-low":
+    case "gpt-5.3-codex-spark-medium":
+    case "gpt-5.3-codex-spark-high": {
       return "codex";
     }
     case "opus":
@@ -150,6 +157,17 @@ export function agentToModels(
           "gpt-5.2-xhigh",
         );
       }
+      if (options.agentVersion === "latest" || options.agentVersion >= 4) {
+        models.unshift(
+          "gpt-5.3-codex-low",
+          "gpt-5.3-codex-medium",
+          "gpt-5.3-codex-high",
+          "gpt-5.3-codex-xhigh",
+          "gpt-5.3-codex-spark-low",
+          "gpt-5.3-codex-spark-medium",
+          "gpt-5.3-codex-spark-high",
+        );
+      }
       return models;
     }
     case "opencode": {
@@ -191,7 +209,10 @@ export function getDefaultModelForAgent({
     case "claudeCode":
       return "sonnet";
     case "codex":
-      if (agentVersion === "latest" || agentVersion >= 2) {
+      if (agentVersion === "latest" || agentVersion >= 4) {
+        return "gpt-5.3-codex-medium";
+      }
+      if (agentVersion >= 2) {
         return "gpt-5.1-codex-medium";
       }
       return "gpt-5-codex-medium";
@@ -321,15 +342,15 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
   switch (model) {
     case "opus":
       return {
-        fullName: "Opus 4.5",
+        fullName: "Opus 4.6",
         mainName: "Opus",
-        subName: "4.5",
+        subName: "4.6",
       };
     case "sonnet":
       return {
-        fullName: "Sonnet 4.5",
+        fullName: "Sonnet 4.6",
         mainName: "Sonnet",
-        subName: "4.5",
+        subName: "4.6",
       };
     case "haiku":
       return {
@@ -499,6 +520,48 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
         mainName: "GPT-5.2 Codex",
         subName: "X-High",
       };
+    case "gpt-5.3-codex-low":
+      return {
+        fullName: "GPT-5.3 Codex Low",
+        mainName: "GPT-5.3 Codex",
+        subName: "Low",
+      };
+    case "gpt-5.3-codex-medium":
+      return {
+        fullName: "GPT-5.3 Codex Medium",
+        mainName: "GPT-5.3 Codex",
+        subName: "Medium",
+      };
+    case "gpt-5.3-codex-high":
+      return {
+        fullName: "GPT-5.3 Codex High",
+        mainName: "GPT-5.3 Codex",
+        subName: "High",
+      };
+    case "gpt-5.3-codex-xhigh":
+      return {
+        fullName: "GPT-5.3 Codex X-High",
+        mainName: "GPT-5.3 Codex",
+        subName: "X-High",
+      };
+    case "gpt-5.3-codex-spark-low":
+      return {
+        fullName: "GPT-5.3 Codex Spark Low",
+        mainName: "GPT-5.3 Codex Spark",
+        subName: "Low",
+      };
+    case "gpt-5.3-codex-spark-medium":
+      return {
+        fullName: "GPT-5.3 Codex Spark Medium",
+        mainName: "GPT-5.3 Codex Spark",
+        subName: "Medium",
+      };
+    case "gpt-5.3-codex-spark-high":
+      return {
+        fullName: "GPT-5.3 Codex Spark High",
+        mainName: "GPT-5.3 Codex Spark",
+        subName: "High",
+      };
     case "opencode/grok-code":
       return {
         fullName: "Grok Code Fast 1",
@@ -549,9 +612,9 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
       };
     case "opencode-ant/sonnet":
       return {
-        fullName: "Sonnet 4.5",
+        fullName: "Sonnet 4.6",
         mainName: "Sonnet",
-        subName: "4.5",
+        subName: "4.6",
       };
     default:
       const _exhaustiveCheck: never = model;
@@ -726,6 +789,14 @@ export function isModelEnabledByDefault({
     case "gpt-5.2-codex-high":
     case "gpt-5.2-codex-xhigh":
       return true;
+    case "gpt-5.3-codex-low":
+    case "gpt-5.3-codex-medium":
+    case "gpt-5.3-codex-high":
+    case "gpt-5.3-codex-xhigh":
+    case "gpt-5.3-codex-spark-low":
+    case "gpt-5.3-codex-spark-medium":
+    case "gpt-5.3-codex-spark-high":
+      return true;
     case "opencode/kimi-k2":
     case "opencode/glm-4.6":
       return true;
@@ -798,6 +869,10 @@ export function parseModelOrNull({
       return "gpt-5.1-codex-medium";
     case "gpt-5.2-codex":
       return "gpt-5.2-codex-medium";
+    case "gpt-5.3-codex":
+      return "gpt-5.3-codex-medium";
+    case "gpt-5.3-codex-spark":
+      return "gpt-5.3-codex-spark-medium";
     case "grok-code":
       return "opencode/grok-code";
     case "qwen3-coder":
@@ -856,6 +931,13 @@ export function modelRequiresChatGptOAuth(model: AIModel | null): boolean {
     case "gpt-5.2-codex-medium":
     case "gpt-5.2-codex-high":
     case "gpt-5.2-codex-xhigh":
+    case "gpt-5.3-codex-low":
+    case "gpt-5.3-codex-medium":
+    case "gpt-5.3-codex-high":
+    case "gpt-5.3-codex-xhigh":
+    case "gpt-5.3-codex-spark-low":
+    case "gpt-5.3-codex-spark-medium":
+    case "gpt-5.3-codex-spark-high":
       return true;
     default:
       return false;

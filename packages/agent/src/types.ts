@@ -38,6 +38,13 @@ export const AIModelSchema = z.enum([
   "gpt-5.2-codex-medium",
   "gpt-5.2-codex-high",
   "gpt-5.2-codex-xhigh",
+  "gpt-5.3-codex-low",
+  "gpt-5.3-codex-medium",
+  "gpt-5.3-codex-high",
+  "gpt-5.3-codex-xhigh",
+  "gpt-5.3-codex-spark-low",
+  "gpt-5.3-codex-spark-medium",
+  "gpt-5.3-codex-spark-high",
 
   // opencode
   "opencode/grok-code",
@@ -61,6 +68,8 @@ export const AIModelExternalSchema = z.enum([
   "gpt-5.1-codex",
   "gpt-5.1-codex-max-medium",
   "gpt-5.2-codex",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
   "grok-code",
   "qwen3-coder",
   "kimi-k2",
