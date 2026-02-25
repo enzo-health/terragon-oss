@@ -27,7 +27,6 @@ function LinearAccountItem({
 }) {
   const router = useRouter();
   const updateMutation = useUpdateLinearSettings();
-  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [defaultRepo, setDefaultRepo] = useState(
     account.settings?.defaultRepoFullName || "",
   );
@@ -35,21 +34,13 @@ function LinearAccountItem({
     account.settings?.defaultModel || null,
   );
 
-  const handleDisconnect = async () => {
-    try {
-      setIsDisconnecting(true);
-      await disconnectLinearAccount({
-        organizationId: account.organizationId,
-      });
+  const disconnectMutation = useServerActionMutation({
+    mutationFn: disconnectLinearAccount,
+    onSuccess: () => {
       toast.success("Linear account disconnected");
       router.refresh();
-    } catch (error) {
-      console.error("Failed to disconnect Linear:", error);
-      toast.error("Failed to disconnect Linear account");
-    } finally {
-      setIsDisconnecting(false);
-    }
-  };
+    },
+  });
 
   return (
     <div className="space-y-4 rounded-lg border p-4">
@@ -113,13 +104,17 @@ function LinearAccountItem({
       </div>
       <div className="space-x-2">
         <Button
-          onClick={handleDisconnect}
-          disabled={isDisconnecting}
+          onClick={() =>
+            disconnectMutation.mutate({
+              organizationId: account.organizationId,
+            })
+          }
+          disabled={disconnectMutation.isPending}
           size="sm"
           variant="link"
           className="text-muted-foreground font-normal underline px-0 opacity-50 hover:opacity-100"
         >
-          {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+          {disconnectMutation.isPending ? "Disconnecting..." : "Disconnect"}
         </Button>
       </div>
     </div>

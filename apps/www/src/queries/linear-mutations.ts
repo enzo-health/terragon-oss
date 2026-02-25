@@ -1,12 +1,12 @@
-import { useMutation } from "@tanstack/react-query";
 import { updateLinearSettings } from "@/server-actions/linear";
 import { toast } from "sonner";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
 import { useRouter } from "next/navigation";
+import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 export function useUpdateLinearSettings() {
   const router = useRouter();
-  return useMutation({
+  return useServerActionMutation({
     mutationFn: async ({
       organizationId,
       settings,
@@ -14,7 +14,7 @@ export function useUpdateLinearSettings() {
       organizationId: string;
       settings: Omit<LinearSettingsInsert, "userId" | "organizationId">;
     }) => {
-      await updateLinearSettings({
+      return await updateLinearSettings({
         organizationId,
         settings,
       });
@@ -22,10 +22,6 @@ export function useUpdateLinearSettings() {
     onSuccess: () => {
       toast.success("Linear settings saved");
       router.refresh();
-    },
-    onError: (error) => {
-      console.error("Failed to save Linear settings:", error);
-      toast.error("Failed to save settings");
     },
   });
 }
