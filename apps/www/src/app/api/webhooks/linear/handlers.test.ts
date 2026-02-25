@@ -534,6 +534,13 @@ describe("handlers", () => {
 
       // Thread should NOT have been created
       expect(newThreadInternal).not.toHaveBeenCalled();
+      // Error activity MUST be emitted using the stale installation token
+      expect(mockCreateAgentActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentSessionId: "session-abc",
+          content: expect.objectContaining({ type: "error" }),
+        }),
+      );
     });
 
     it("returns without creating thread when reinstall_required", async () => {

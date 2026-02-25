@@ -190,19 +190,44 @@ async function handleAgentSessionCreated(
     }
     accessToken = result.accessToken;
   } catch (err) {
-    // Timeout or other error — log, skip thread creation, return 200.
-    // We have no valid token to emit an error activity with.
+    // Timeout or other error — emit error activity using stale installation
+    // token as best-effort, then return 200.
     console.error(
       "[linear webhook] Token refresh timed out or failed, returning 200",
       { agentSessionId, err },
     );
+    const fallbackToken = decryptValue(
+      installation.accessTokenEncrypted,
+      env.ENCRYPTION_MASTER_KEY,
+    );
+    await emitAgentActivity({
+      agentSessionId,
+      accessToken: fallbackToken,
+      content: {
+        type: "error",
+        body: "Authentication failure — please reinstall the Linear Agent",
+      },
+      createClient: opts?.createClient,
+    });
     return;
   }
 
   // 3. Synchronously emit `thought` activity BEFORE returning HTTP 200 (<10s SLA).
   // emitAgentActivity catches all errors internally, so this call never throws.
-  // We race against a 3s timeout to guard the remaining webhook budget.
-  await Promise.race([
+  // Use a cancellable timeout guard to avoid false-positive timeout logs when
+  // the activity resolves quickly.
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        console.error(
+          "[linear webhook] Thought emission timed out (SLA guard), continuing",
+          { agentSessionId },
+        );
+        resolve();
+      }
+    }, 3000);
     emitAgentActivity({
       agentSessionId,
       accessToken,
@@ -211,14 +236,14 @@ async function handleAgentSessionCreated(
         body: "Starting work on this issue...",
       },
       createClient: opts?.createClient,
-    }),
-    timeout(3000).catch(() => {
-      console.error(
-        "[linear webhook] Thought emission timed out (SLA guard), continuing",
-        { agentSessionId },
-      );
-    }),
-  ]);
+    }).then(() => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
 
   // 5-7. Async thread creation via waitUntil
   waitUntil(
