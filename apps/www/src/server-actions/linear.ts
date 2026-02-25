@@ -9,7 +9,19 @@ import {
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
 } from "@terragon/shared/model/linear";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
+
+async function assertLinearEnabled(userId: string) {
+  const enabled = await getFeatureFlagForUser({
+    db,
+    userId,
+    flagName: "linearIntegration",
+  });
+  if (!enabled) {
+    throw new UserFacingError("Linear integration is not enabled");
+  }
+}
 
 // v1 DESIGN DECISION: Manual account linking without OAuth/ownership proof.
 // This is an accepted limitation documented in the epic spec. The
@@ -31,6 +43,8 @@ export const connectLinearAccount = userOnlyAction(
       linearUserEmail: string;
     },
   ): Promise<void> {
+    await assertLinearEnabled(userId);
+
     // Pre-check for friendly error message (non-atomic, see catch below)
     const existing = await getLinearAccountForLinearUserId({
       db,
@@ -72,6 +86,7 @@ export const disconnectLinearAccount = userOnlyAction(
     userId: string,
     { organizationId }: { organizationId: string },
   ): Promise<void> {
+    await assertLinearEnabled(userId);
     await disconnectLinearAccountAndSettings({ db, userId, organizationId });
   },
   { defaultErrorMessage: "Failed to disconnect Linear account" },
@@ -88,6 +103,7 @@ export const updateLinearSettings = userOnlyAction(
       settings: Omit<LinearSettingsInsert, "userId" | "organizationId">;
     },
   ): Promise<void> {
+    await assertLinearEnabled(userId);
     await upsertLinearSettings({ db, userId, organizationId, settings });
   },
   { defaultErrorMessage: "Failed to update Linear settings" },
