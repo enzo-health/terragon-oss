@@ -1,0 +1,71 @@
+---
+title: Linear Integration
+description: Interact with Terragon directly from Linear using the Linear Agent
+---
+
+import { House } from "lucide-react";
+import { Steps, Step } from "fumadocs-ui/components/steps";
+import { Callout } from "fumadocs-ui/components/callout";
+
+## @Terragon on Linear
+
+<Callout type="info">
+  The Linear integration is currently in [early access](/docs/resources/early-access-features). To use it, enable early access in [Settings](https://www.terragonlabs.com/settings) and install the Linear Agent in [Settings > Integrations](https://www.terragonlabs.com/settings/integrations).
+</Callout>
+
+### How It Works
+
+Mention `@Terragon` in a Linear issue to trigger the Terragon agent. Linear fires an agent session event, Terragon creates a task in an isolated sandbox, and progress is streamed back to Linear as agent activities. The task link appears directly in Linear so you can follow along in real time.
+
+### What Happens
+
+When you mention `@Terragon` in a Linear issue:
+
+<Steps>
+  <Step>Linear delivers an agent session event to Terragon's webhook.</Step>
+  <Step>Terragon verifies the signature and resolves your Linear account to your linked Terragon user.</Step>
+  <Step>Issue details, description, and attachments are fetched for context.</Step>
+  <Step>Terragon suggests the best repository using Linear's repository suggestions API, falling back to your configured default repository.</Step>
+  <Step>A new task is created and work begins in an isolated sandbox.</Step>
+  <Step>Agent activities (thoughts, actions, results) are streamed back to the Linear issue in real time.</Step>
+  <Step>The task link is attached to the Linear agent session so you can follow progress from both Linear and Terragon.</Step>
+  <Step>
+    You'll see the task appear in [<House className="inline-block w-4 h-4 mx-1" /> **Home**](https://www.terragonlabs.com).
+  </Step>
+</Steps>
+
+### Setup
+
+<Steps>
+  <Step>
+    **Enable early access**: Navigate to [Settings](https://www.terragonlabs.com/settings) and enable early access features to access the Linear integration.
+  </Step>
+  <Step>
+    **Register a Linear OAuth application**: Go to [linear.app/settings/api/applications](https://linear.app/settings/api/applications) and create a new OAuth application. Set the redirect URI to `https://www.terragonlabs.com/api/auth/linear/callback`. Copy the Client ID and Client Secret and add them to your environment as `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET`.
+  </Step>
+  <Step>
+    **Install the Linear Agent**: Go to [Settings > Integrations](https://www.terragonlabs.com/settings/integrations) and click **Install Linear Agent**. Authorize the app in Linear to grant Terragon agent permissions (`read`, `write`, `app:assignable`, `app:mentionable`).
+  </Step>
+  <Step>
+    **Link your Linear account**: After the agent is installed, link your personal Linear account by entering your Linear user ID, display name, and email. This maps Linear mentions to your Terragon user so tasks are created on your behalf.
+  </Step>
+  <Step>
+    **Configure defaults**: Set a default repository and model for tasks created from Linear mentions.
+  </Step>
+  <Step>
+    **Test it**: Mention `@Terragon` in any Linear issue. You should see agent activities appear within seconds.
+  </Step>
+</Steps>
+
+<Callout type="info">
+  The Linear Agent uses OAuth 2.0 with `actor=app`, meaning it acts as a first-class workspace participant rather than a personal user. It can be mentioned and assigned to issues natively in Linear.
+</Callout>
+
+### Configuration
+
+Configure the default repository and model for each linked account in [Settings > Integrations](https://www.terragonlabs.com/settings/integrations).
+
+### Disconnecting
+
+- **Disconnect my account**: Removes your personal Linear account link. Other users and the workspace agent installation are unaffected.
+- **Uninstall workspace**: Disables the Linear agent for all users in the workspace. Individual account links remain intact and can be reconnected after reinstalling.

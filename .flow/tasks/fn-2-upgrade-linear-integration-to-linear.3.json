@@ -1,0 +1,14 @@
+{
+  "assignee": null,
+  "claim_note": "",
+  "claimed_at": null,
+  "created_at": "2026-02-25T01:41:40.238468Z",
+  "depends_on": ["fn-2-upgrade-linear-integration-to-linear.1"],
+  "epic": "fn-2-upgrade-linear-integration-to-linear",
+  "id": "fn-2-upgrade-linear-integration-to-linear.3",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-2-upgrade-linear-integration-to-linear.3.md",
+  "status": "todo",
+  "title": "Webhook handler rewrite for agent events",
+  "updated_at": "2026-02-25T05:36:29.925881Z"
+}

@@ -1,0 +1,14 @@
+{
+  "assignee": null,
+  "claim_note": "",
+  "claimed_at": null,
+  "created_at": "2026-02-25T01:41:40.349502Z",
+  "depends_on": ["fn-2-upgrade-linear-integration-to-linear.3"],
+  "epic": "fn-2-upgrade-linear-integration-to-linear",
+  "id": "fn-2-upgrade-linear-integration-to-linear.4",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-2-upgrade-linear-integration-to-linear.4.md",
+  "status": "todo",
+  "title": "Agent activity lifecycle during thread execution",
+  "updated_at": "2026-02-25T05:37:01.205934Z"
+}

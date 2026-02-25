@@ -59,6 +59,22 @@ export type SlackAccount = typeof schema.slackAccount.$inferSelect;
 export type SlackAccountInsert = typeof schema.slackAccount.$inferInsert;
 export type SlackSettings = typeof schema.slackSettings.$inferSelect;
 export type SlackSettingsInsert = typeof schema.slackSettings.$inferInsert;
+export type LinearAccount = typeof schema.linearAccount.$inferSelect;
+export type LinearAccountInsert = typeof schema.linearAccount.$inferInsert;
+export type LinearSettings = typeof schema.linearSettings.$inferSelect;
+export type LinearSettingsInsert = typeof schema.linearSettings.$inferInsert;
+export type LinearInstallation = typeof schema.linearInstallation.$inferSelect;
+export type LinearInstallationInsert =
+  typeof schema.linearInstallation.$inferInsert;
+
+// Token-free projection safe to serialize across the RSC → client boundary.
+// Never pass the full LinearInstallation to client components — it contains
+// encrypted token ciphertext and internal user identifiers that should remain
+// server-side only.
+export type LinearInstallationPublic = Omit<
+  LinearInstallation,
+  "accessTokenEncrypted" | "refreshTokenEncrypted" | "scope" | "installerUserId"
+>;
 export type ThreadReadStatus = typeof schema.threadReadStatus.$inferSelect;
 export type ThreadReadStatusInsert =
   typeof schema.threadReadStatus.$inferInsert;
@@ -76,6 +92,15 @@ export type SlackAccountWithMetadata = SlackAccount & {
   settings: SlackSettings | null;
 };
 
+export type LinearAccountWithSettings = LinearAccount & {
+  settings: LinearSettings | null;
+};
+
+export type LinearAccountWithSettingsAndInstallation =
+  LinearAccountWithSettings & {
+    installation: LinearInstallationPublic | null;
+  };
+
 export type ThreadSource =
   | "www"
   | "www-redo"
@@ -86,6 +111,7 @@ export type ThreadSource =
   | "automation"
   | "slack-mention"
   | "github-mention"
+  | "linear-mention"
   | "cli";
 
 export type ThreadSourceMetadata =
@@ -108,9 +134,36 @@ export type ThreadSourceMetadata =
       parentThreadChatId: string;
     }
   | {
+      type: "linear-mention";
+      /**
+       * Linear agent session ID — required on new records (fn-2+).
+       * Legacy fn-1 threads may not have this field. Guards:
+       *   if (!thread.sourceMetadata?.agentSessionId) { log("legacy thread, skipping"); return; }
+       */
+      agentSessionId?: string;
+      organizationId: string;
+      issueId: string;
+      issueIdentifier: string;
+      issueUrl: string;
+      /** Optional — agent sessions from delegation/assignment have no comment */
+      commentId?: string;
+      /** Webhook delivery ID for idempotency */
+      linearDeliveryId?: string;
+    }
+  | {
       type: "www-multi-agent";
       models: SelectedAIModels;
     };
+
+/**
+ * Write-time metadata type for new linear-mention threads (fn-2+).
+ * Requires agentSessionId — use this when creating threads from AgentSessionEvent webhooks.
+ * The read-time ThreadSourceMetadata keeps agentSessionId optional for legacy fn-1 compatibility.
+ */
+export type LinearMentionSourceMetadataInsert = Omit<
+  Extract<ThreadSourceMetadata, { type: "linear-mention" }>,
+  "agentSessionId"
+> & { agentSessionId: string };
 
 export type ThreadStatusDeprecated =
   | "queued-blocked"
@@ -304,6 +357,17 @@ export type ThreadInsert = Omit<
   | "contextLength"
   | "permissionMode"
 >;
+
+/**
+ * Typed insert for new Linear-agent threads (fn-2+).
+ * Constrains sourceType to "linear-mention" and requires agentSessionId in
+ * sourceMetadata, preventing accidental omission at compile time.
+ * Use this in webhook handlers instead of raw ThreadInsert.
+ */
+export type LinearMentionThreadInsert = Omit<ThreadInsert, "sourceMetadata"> & {
+  sourceType: "linear-mention";
+  sourceMetadata: LinearMentionSourceMetadataInsert;
+};
 
 export type GitHubPR = typeof schema.githubPR.$inferSelect;
 export type GitHubPRInsert = typeof schema.githubPR.$inferInsert;

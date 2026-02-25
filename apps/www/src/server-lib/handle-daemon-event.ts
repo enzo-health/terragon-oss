@@ -37,6 +37,13 @@ import { getEligibleQueuedThreadChats } from "./process-queued-thread";
 import { trackUsageEvents } from "./usage-events";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { compactThreadChat } from "./compact";
+import {
+  emitLinearActivitiesForDaemonEvent,
+  updateAgentSession,
+} from "./linear-agent-activity";
+import { refreshLinearTokenIfNeeded } from "./linear-oauth";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import { publicAppUrl } from "@terragon/env/next-public";
 
 export async function handleDaemonEvent({
   messages,
@@ -470,6 +477,41 @@ export async function handleDaemonEvent({
     }
   }
 
+  // Emit Linear agent activities for linear-sourced threads (fn-2+).
+  // NOTE: Placed after all auto-recovery blocks (auto-compact, OAuth retry) so that
+  // isDone/isError reflect the post-recovery state.
+  // Terminal activities are suppressed when the recovery path queued a "Continue"
+  // (appendQueuedMessages) — in that case the session is continuing, not finishing.
+  if (thread.sourceType === "linear-mention" && thread.sourceMetadata != null) {
+    const linearMeta = thread.sourceMetadata as Extract<
+      ThreadSourceMetadata,
+      { type: "linear-mention" }
+    >;
+    if (!linearMeta.agentSessionId) {
+      // Legacy fn-1 thread without agentSessionId — log and skip
+      console.warn(
+        "[handle-daemon-event] Skipping Linear activity: legacy fn-1 thread missing agentSessionId",
+        { threadId },
+      );
+    } else {
+      // Suppress terminal emissions when recovery queued a "Continue" (auto-compact,
+      // OAuth retry). The session is continuing, not ending.
+      const hasQueuedFollowUp =
+        (threadChatUpdates.appendQueuedMessages?.length ?? 0) > 0;
+      const effectivelyDone = isDone && !isError && !hasQueuedFollowUp;
+      const effectivelyError = isError && !hasQueuedFollowUp;
+
+      waitUntil(
+        emitLinearActivitiesForDaemonEvent(linearMeta, messages, {
+          isDone: effectivelyDone,
+          isError: effectivelyError,
+          customErrorMessage,
+          costUsd,
+        }),
+      );
+    }
+  }
+
   // Check if we should skip checkpoint when done
   let shouldSkipCheckpoint = false;
   if (isDone && !isError) {
@@ -508,6 +550,8 @@ export async function handleDaemonEvent({
         statusBeforeUpdate: threadChat.status,
         isRateLimited,
         shouldSkipCheckpoint,
+        sourceType: thread.sourceType ?? null,
+        sourceMetadata: thread.sourceMetadata ?? null,
       }),
     );
   }
@@ -522,6 +566,8 @@ async function handleThreadFinish({
   statusBeforeUpdate,
   isRateLimited,
   shouldSkipCheckpoint,
+  sourceType,
+  sourceMetadata,
 }: {
   userId: string;
   threadId: string;
@@ -530,7 +576,42 @@ async function handleThreadFinish({
   statusBeforeUpdate: ThreadStatus;
   isRateLimited: boolean;
   shouldSkipCheckpoint: boolean;
+  sourceType: string | null;
+  sourceMetadata: ThreadSourceMetadata | null;
 }) {
+  // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
+  if (sourceType === "linear-mention" && sourceMetadata != null) {
+    const linearMeta = sourceMetadata as Extract<
+      ThreadSourceMetadata,
+      { type: "linear-mention" }
+    >;
+    if (linearMeta.agentSessionId) {
+      waitUntil(
+        (async () => {
+          try {
+            const tokenResult = await refreshLinearTokenIfNeeded(
+              linearMeta.organizationId,
+              db,
+            );
+            if (tokenResult.status === "ok") {
+              const taskUrl = `${publicAppUrl()}/task/${threadId}`;
+              await updateAgentSession({
+                sessionId: linearMeta.agentSessionId!,
+                accessToken: tokenResult.accessToken,
+                externalUrls: [{ label: "Terragon Task", url: taskUrl }],
+              });
+            }
+          } catch (error) {
+            console.error(
+              "[handle-daemon-event] Failed to update Linear agent session externalUrls",
+              { threadId, error },
+            );
+          }
+        })(),
+      );
+    }
+  }
+
   let shouldProcessFollowUpQueue = !isRateLimited;
   if (shouldProcessFollowUpQueue) {
     const threadChat = await getThreadChat({

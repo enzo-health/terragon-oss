@@ -33,6 +33,7 @@ import {
   ThreadInfoFull,
   ThreadInfo,
   ThreadChatInsertRaw,
+  LinearMentionThreadInsert,
 } from "../db/types";
 import { BroadcastMessageThreadData } from "@terragon/types/broadcast";
 import { sanitizeForJson } from "../utils/sanitize-json";
@@ -825,6 +826,33 @@ export async function createThread({
     dataByThreadId,
   });
   return { threadId, threadChatId };
+}
+
+/**
+ * Typed variant of createThread for Linear Agent webhook threads (fn-2+).
+ * Enforces LinearMentionThreadInsert at compile-time so agentSessionId is
+ * required, preventing silent omission in webhook handlers.
+ */
+export async function createLinearMentionThread({
+  db,
+  userId,
+  threadValues,
+  initialChatValues,
+  enableThreadChatCreation,
+}: {
+  db: DB;
+  userId: string;
+  threadValues: Omit<LinearMentionThreadInsert, "userId">;
+  initialChatValues: Omit<ThreadChatInsert, "userId" | "threadId">;
+  enableThreadChatCreation?: boolean;
+}): Promise<{ threadId: string; threadChatId: string }> {
+  return createThread({
+    db,
+    userId,
+    threadValues,
+    initialChatValues,
+    enableThreadChatCreation,
+  });
 }
 
 export async function updateThreadChat({
@@ -1633,4 +1661,53 @@ export async function getScheduledThreadChatsDueToRun({
     }
     return dueToRun;
   });
+}
+
+/**
+ * Look up a thread by its Linear agent session ID.
+ * Queries the `sourceMetadata` JSONB column using a JSON path expression.
+ * Optionally scoped by `organizationId` for defensive safety.
+ */
+export async function getThreadByLinearAgentSessionId({
+  db,
+  agentSessionId,
+  organizationId,
+}: {
+  db: DB;
+  agentSessionId: string;
+  organizationId?: string;
+}): Promise<Thread | null> {
+  const conditions = [
+    sql`${schema.thread.sourceMetadata}->>'agentSessionId' = ${agentSessionId}`,
+    eq(schema.thread.sourceType, "linear-mention"),
+  ];
+  if (organizationId) {
+    conditions.push(
+      sql`${schema.thread.sourceMetadata}->>'organizationId' = ${organizationId}`,
+    );
+  }
+  const result = await db.query.thread.findFirst({
+    where: and(...conditions),
+  });
+  return result ?? null;
+}
+
+/**
+ * Look up a thread by its Linear webhook delivery ID.
+ * Used for idempotency checks before creating a new thread.
+ */
+export async function getThreadByLinearDeliveryId({
+  db,
+  deliveryId,
+}: {
+  db: DB;
+  deliveryId: string;
+}): Promise<Thread | null> {
+  const result = await db.query.thread.findFirst({
+    where: and(
+      sql`${schema.thread.sourceMetadata}->>'linearDeliveryId' = ${deliveryId}`,
+      eq(schema.thread.sourceType, "linear-mention"),
+    ),
+  });
+  return result ?? null;
 }

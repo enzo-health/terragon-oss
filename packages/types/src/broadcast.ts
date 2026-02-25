@@ -42,6 +42,7 @@ const BroadcastMessageDataSchema = BroadcastMessageThreadDataSchema.extend({
   userCredentials: z.boolean().optional(),
   userCredits: z.boolean().optional(),
   slack: z.boolean().optional(),
+  linear: z.boolean().optional(),
 });
 
 export type BroadcastMessageData = z.infer<typeof BroadcastMessageDataSchema>;
