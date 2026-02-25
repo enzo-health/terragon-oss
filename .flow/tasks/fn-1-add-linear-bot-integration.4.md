@@ -43,4 +43,10 @@ Update documentation across the project for the new Linear integration: env exam
 
 ## Done summary
 
+Added Linear integration documentation: .env.example with LINEAR_WEBHOOK_SECRET/LINEAR_API_KEY/LINEAR_MENTION_HANDLE, AGENTS.md updates (DB schema + recent features), new linear-integration.mdx guide, sidebar navigation entry, release notes entry with early-access format, early-access features list entry, and RELEASE_NOTES_VERSION bump to 19.
+
 ## Evidence
+
+- Commits: c0473821c4d4c89ccf2d6a0fd65c23a9fc2322c6
+- Tests: pnpm tsc-check
+- PRs:
