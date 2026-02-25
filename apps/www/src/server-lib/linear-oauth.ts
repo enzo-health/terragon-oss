@@ -34,6 +34,29 @@ export type LinearTokenRefreshResult =
   | { status: "not_found" };
 
 /**
+ * Helper: re-read the installation and return the current token (or reinstall_required).
+ * Used after a CAS-guarded deactivation no-op, indicating a concurrent reinstall.
+ */
+async function readCurrentToken({
+  db,
+  organizationId,
+  masterKey,
+}: {
+  db: DB;
+  organizationId: string;
+  masterKey: string;
+}): Promise<LinearTokenRefreshResult> {
+  const current = await getLinearInstallationForOrg({ db, organizationId });
+  if (!current || !current.isActive) {
+    return { status: "reinstall_required" };
+  }
+  return {
+    status: "ok",
+    accessToken: decryptValue(current.accessTokenEncrypted, masterKey),
+  };
+}
+
+/**
  * Ensures the Linear installation's access token is valid, refreshing it if
  * needed. Uses DB-level optimistic CAS so concurrent calls are safe.
  *
@@ -85,11 +108,16 @@ export async function refreshLinearTokenIfNeeded(
   const refreshTokenEncrypted = installation.refreshTokenEncrypted;
   if (!refreshTokenEncrypted) {
     // No refresh token — CAS-guarded deactivation so concurrent reinstall wins
-    await deactivateLinearInstallation({
+    const { deactivated } = await deactivateLinearInstallation({
       db,
       organizationId,
       ifAccessTokenEncrypted: installation.accessTokenEncrypted,
     });
+    if (!deactivated) {
+      // CAS guard prevented deactivation — a concurrent reinstall succeeded.
+      // Re-read and return the fresh token.
+      return readCurrentToken({ db, organizationId, masterKey });
+    }
     return { status: "reinstall_required" };
   }
 
@@ -145,11 +173,15 @@ export async function refreshLinearTokenIfNeeded(
         };
       }
       // Truly invalid — CAS-guarded deactivation so concurrent reinstall wins
-      await deactivateLinearInstallation({
+      const { deactivated } = await deactivateLinearInstallation({
         db,
         organizationId,
         ifAccessTokenEncrypted: installation.accessTokenEncrypted,
       });
+      if (!deactivated) {
+        // Another instance reinstalled/refreshed concurrently — use their token
+        return readCurrentToken({ db, organizationId, masterKey });
+      }
       return { status: "reinstall_required" };
     }
 
