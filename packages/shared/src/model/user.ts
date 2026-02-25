@@ -3,16 +3,23 @@ import { DB } from "../db";
 import * as schema from "../db/schema";
 import { publishBroadcastUserMessage } from "../broadcast-server";
 import { UserInfoServerSide, UserSettings } from "../db/types";
-import { decryptTokenWithBackwardsCompatibility } from "@terragon/utils/encryption";
+import {
+  decryptTokenWithBackwardsCompatibility,
+  encryptToken,
+} from "@terragon/utils/encryption";
 
 export async function getGitHubUserAccessTokenOrThrow({
   db,
   userId,
   encryptionKey,
+  clientId,
+  clientSecret,
 }: {
   db: DB;
   userId: string;
   encryptionKey: string;
+  clientId?: string;
+  clientSecret?: string;
 }) {
   const githubAccounts = await db
     .select()
@@ -31,6 +38,66 @@ export async function getGitHubUserAccessTokenOrThrow({
 
   if (!githubAccount.accessToken) {
     throw new Error("No GitHub access token found");
+  }
+
+  // Check if token is expired (or expiring within 5 minutes) and refresh if possible
+  const isExpired =
+    githubAccount.accessTokenExpiresAt != null &&
+    githubAccount.accessTokenExpiresAt.getTime() < Date.now() + 5 * 60 * 1000;
+
+  if (isExpired && clientId && clientSecret && githubAccount.refreshToken) {
+    try {
+      const refreshToken = decryptTokenWithBackwardsCompatibility(
+        githubAccount.refreshToken,
+        encryptionKey,
+      );
+      const response = await fetch(
+        "https://github.com/login/oauth/access_token",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            grant_type: "refresh_token",
+            refresh_token: refreshToken,
+          }).toString(),
+        },
+      );
+      const data = (await response.json()) as {
+        access_token?: string;
+        expires_in?: number;
+        refresh_token?: string;
+        refresh_token_expires_in?: number;
+      };
+      if (data.access_token) {
+        await db
+          .update(schema.account)
+          .set({
+            accessToken: encryptToken(data.access_token, encryptionKey),
+            ...(data.refresh_token && {
+              refreshToken: encryptToken(data.refresh_token, encryptionKey),
+            }),
+            ...(data.expires_in && {
+              accessTokenExpiresAt: new Date(
+                Date.now() + data.expires_in * 1000,
+              ),
+            }),
+            ...(data.refresh_token_expires_in && {
+              refreshTokenExpiresAt: new Date(
+                Date.now() + data.refresh_token_expires_in * 1000,
+              ),
+            }),
+          })
+          .where(eq(schema.account.id, githubAccount.id));
+        return data.access_token;
+      }
+    } catch (refreshError) {
+      console.error("Failed to refresh GitHub token:", refreshError);
+    }
   }
 
   // Decrypt the token if it's encrypted, otherwise return as-is (backwards compatibility)

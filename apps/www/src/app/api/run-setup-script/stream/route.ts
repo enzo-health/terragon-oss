@@ -102,6 +102,8 @@ export async function POST(request: NextRequest) {
           db,
           userId,
           encryptionKey: env.ENCRYPTION_MASTER_KEY,
+          clientId: env.GITHUB_CLIENT_ID,
+          clientSecret: env.GITHUB_CLIENT_SECRET,
         }),
         getSandboxSizeForUser(userId),
         getFeatureFlagsForUser({ db, userId }),

@@ -253,6 +253,8 @@ export async function getOctokitForUser({
       db,
       userId,
       encryptionKey: env.ENCRYPTION_MASTER_KEY,
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
     });
     if (userAccessToken) {
       return new Octokit({ auth: userAccessToken });
