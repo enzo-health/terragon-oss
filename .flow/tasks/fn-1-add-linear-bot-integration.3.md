@@ -46,4 +46,10 @@ Add a "Linear" section to the integrations settings page, gated behind the `line
 
 ## Done summary
 
+Added Linear account linking UI to Settings > Integrations page, gated behind linearIntegration feature flag. Users can enter Linear org ID, user ID, display name, and email to connect; configure default repo and model; and disconnect (atomic transaction removing both account and settings records). Server actions enforce feature flag server-side, handle duplicate identity claims with UserFacingError, and use proper ServerActionResult unwrapping. Added 9 new model-layer tests.
+
 ## Evidence
+
+- Commits: 8ba3e6cb5d1e3ced3757d6a43b152c12c6edf138
+- Tests: pnpm tsc-check, pnpm -C packages/shared test src/model/linear.test.ts
+- PRs:
