@@ -6,4 +6,5 @@
 // 1: codex support resume
 // 2: gpt-5.1 support
 // 3: gpt-5.2 support
-export const AGENT_VERSION = 3;
+// 4: gpt-5.3-codex and gpt-5.3-codex-spark support
+export const AGENT_VERSION = 4;

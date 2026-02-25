@@ -357,6 +357,41 @@ export function codexCommand({
         "--model gpt-5.2-codex --config model_reasoning_effort=xhigh",
       );
       break;
+    case "gpt-5.3-codex-low":
+      commandParts.push(
+        "--model gpt-5.3-codex --config model_reasoning_effort=low",
+      );
+      break;
+    case "gpt-5.3-codex-medium":
+      commandParts.push(
+        "--model gpt-5.3-codex --config model_reasoning_effort=medium",
+      );
+      break;
+    case "gpt-5.3-codex-high":
+      commandParts.push(
+        "--model gpt-5.3-codex --config model_reasoning_effort=high",
+      );
+      break;
+    case "gpt-5.3-codex-xhigh":
+      commandParts.push(
+        "--model gpt-5.3-codex --config model_reasoning_effort=xhigh",
+      );
+      break;
+    case "gpt-5.3-codex-spark-low":
+      commandParts.push(
+        "--model gpt-5.3-codex-spark --config model_reasoning_effort=low",
+      );
+      break;
+    case "gpt-5.3-codex-spark-medium":
+      commandParts.push(
+        "--model gpt-5.3-codex-spark --config model_reasoning_effort=medium",
+      );
+      break;
+    case "gpt-5.3-codex-spark-high":
+      commandParts.push(
+        "--model gpt-5.3-codex-spark --config model_reasoning_effort=high",
+      );
+      break;
     default: {
       commandParts.push("--model gpt-5");
     }
