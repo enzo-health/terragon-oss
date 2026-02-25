@@ -69,10 +69,11 @@ export type LinearInstallationInsert =
 
 // Token-free projection safe to serialize across the RSC → client boundary.
 // Never pass the full LinearInstallation to client components — it contains
-// encrypted token ciphertext that should remain server-side only.
+// encrypted token ciphertext and internal user identifiers that should remain
+// server-side only.
 export type LinearInstallationPublic = Omit<
   LinearInstallation,
-  "accessTokenEncrypted" | "refreshTokenEncrypted" | "scope"
+  "accessTokenEncrypted" | "refreshTokenEncrypted" | "scope" | "installerUserId"
 >;
 export type ThreadReadStatus = typeof schema.threadReadStatus.$inferSelect;
 export type ThreadReadStatusInsert =

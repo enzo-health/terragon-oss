@@ -249,7 +249,6 @@ export async function getLinearInstallation({
       organizationId: schema.linearInstallation.organizationId,
       organizationName: schema.linearInstallation.organizationName,
       tokenExpiresAt: schema.linearInstallation.tokenExpiresAt,
-      installerUserId: schema.linearInstallation.installerUserId,
       isActive: schema.linearInstallation.isActive,
       createdAt: schema.linearInstallation.createdAt,
       updatedAt: schema.linearInstallation.updatedAt,
