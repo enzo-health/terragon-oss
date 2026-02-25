@@ -37,6 +37,13 @@ import { getEligibleQueuedThreadChats } from "./process-queued-thread";
 import { trackUsageEvents } from "./usage-events";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { compactThreadChat } from "./compact";
+import {
+  emitLinearActivitiesForDaemonEvent,
+  updateAgentSession,
+} from "./linear-agent-activity";
+import { refreshLinearTokenIfNeeded } from "./linear-oauth";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import { publicAppUrl } from "@terragon/env/next-public";
 
 export async function handleDaemonEvent({
   messages,
@@ -261,6 +268,31 @@ export async function handleDaemonEvent({
           mcpToolName: toolCall.toolName,
         },
       });
+    }
+  }
+
+  // Emit Linear agent activities for linear-sourced threads (fn-2+).
+  // Guard: only proceed if thread is a Linear mention with a valid agentSessionId.
+  if (thread.sourceType === "linear-mention" && thread.sourceMetadata != null) {
+    const linearMeta = thread.sourceMetadata as Extract<
+      ThreadSourceMetadata,
+      { type: "linear-mention" }
+    >;
+    if (!linearMeta.agentSessionId) {
+      // Legacy fn-1 thread without agentSessionId — log and skip
+      console.warn(
+        "[handle-daemon-event] Skipping Linear activity: legacy fn-1 thread missing agentSessionId",
+        { threadId },
+      );
+    } else {
+      waitUntil(
+        emitLinearActivitiesForDaemonEvent(linearMeta, messages, {
+          isDone: isDone && !isError,
+          isError,
+          customErrorMessage,
+          costUsd,
+        }),
+      );
     }
   }
 
@@ -508,6 +540,8 @@ export async function handleDaemonEvent({
         statusBeforeUpdate: threadChat.status,
         isRateLimited,
         shouldSkipCheckpoint,
+        sourceType: thread.sourceType ?? null,
+        sourceMetadata: thread.sourceMetadata ?? null,
       }),
     );
   }
@@ -522,6 +556,8 @@ async function handleThreadFinish({
   statusBeforeUpdate,
   isRateLimited,
   shouldSkipCheckpoint,
+  sourceType,
+  sourceMetadata,
 }: {
   userId: string;
   threadId: string;
@@ -530,7 +566,42 @@ async function handleThreadFinish({
   statusBeforeUpdate: ThreadStatus;
   isRateLimited: boolean;
   shouldSkipCheckpoint: boolean;
+  sourceType: string | null;
+  sourceMetadata: ThreadSourceMetadata | null;
 }) {
+  // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
+  if (sourceType === "linear-mention" && sourceMetadata != null) {
+    const linearMeta = sourceMetadata as Extract<
+      ThreadSourceMetadata,
+      { type: "linear-mention" }
+    >;
+    if (linearMeta.agentSessionId) {
+      waitUntil(
+        (async () => {
+          try {
+            const tokenResult = await refreshLinearTokenIfNeeded(
+              linearMeta.organizationId,
+              db,
+            );
+            if (tokenResult.status === "ok") {
+              const taskUrl = `${publicAppUrl()}/task/${threadId}`;
+              await updateAgentSession({
+                sessionId: linearMeta.agentSessionId!,
+                accessToken: tokenResult.accessToken,
+                externalUrls: [{ label: "Terragon Task", url: taskUrl }],
+              });
+            }
+          } catch (error) {
+            console.error(
+              "[handle-daemon-event] Failed to update Linear agent session externalUrls",
+              { threadId, error },
+            );
+          }
+        })(),
+      );
+    }
+  }
+
   let shouldProcessFollowUpQueue = !isRateLimited;
   if (shouldProcessFollowUpQueue) {
     const threadChat = await getThreadChat({
