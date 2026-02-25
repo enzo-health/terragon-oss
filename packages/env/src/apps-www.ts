@@ -122,6 +122,11 @@ export const env = envsafe(
     SLACK_CLIENT_ID: str({ allowEmpty: true, default: "" }),
     SLACK_CLIENT_SECRET: str({ allowEmpty: true, default: "" }),
 
+    // Linear Integration
+    LINEAR_WEBHOOK_SECRET: str({ allowEmpty: true, default: "" }),
+    LINEAR_API_KEY: str({ allowEmpty: true, default: "" }),
+    LINEAR_MENTION_HANDLE: str({ allowEmpty: true, default: "" }),
+
     // Port used by the CLI tool for auth
     CLI_PORT: num({ default: 8742 }),
 

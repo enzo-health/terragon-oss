@@ -11,6 +11,7 @@
     "automations",
     "integrations/github-integration",
     "integrations/slack-integration",
+    "integrations/linear-integration",
     "integrations/cli",
     "mobile",
 

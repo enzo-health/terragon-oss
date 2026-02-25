@@ -26,6 +26,7 @@
     "@git-diff-view/core": "^0.0.35",
     "@hookform/resolvers": "^5.2.2",
     "@icons-pack/react-simple-icons": "^13.3.0",
+    "@linear/sdk": "^75.0.0",
     "@octokit/types": "^14.0.0",
     "@octokit/webhooks": "^14.1.0",
     "@orpc/server": "1.6.0",

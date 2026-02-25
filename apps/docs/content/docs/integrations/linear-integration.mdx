@@ -1,0 +1,56 @@
+---
+title: Linear Integration
+description: Interact with Terragon directly from Linear
+---
+
+import { House } from "lucide-react";
+import { Steps, Step } from "fumadocs-ui/components/steps";
+import { Callout } from "fumadocs-ui/components/callout";
+
+## @Terragon on Linear
+
+<Callout type="info">
+  The Linear integration is currently in [early access](/docs/resources/early-access-features). To use it, you must first link your Linear account in [Settings](https://www.terragonlabs.com/settings/integrations).
+</Callout>
+
+### How It Works
+
+Mention `@Terragon` in a Linear issue comment to create a new Terragon task. Terragon will fetch the issue context including title, description, and any linked GitHub repositories, then spin up a sandbox and begin working. An acknowledgment comment is posted back to the Linear issue with a link to the task.
+
+### What Happens
+
+When you mention `@Terragon` in a Linear issue comment:
+
+<Steps>
+  <Step>The webhook receives the comment and verifies the mention trigger.</Step>
+  <Step>Terragon resolves your Linear account to your linked Terragon user.</Step>
+  <Step>Issue details and attachments are fetched for context.</Step>
+  <Step>If the issue has linked GitHub pull requests or branches, Terragon automatically detects the repository. Otherwise, your configured default repository is used.</Step>
+  <Step>A new task is created and work begins in an isolated sandbox.</Step>
+  <Step>An acknowledgment comment is posted back to the Linear issue with a link to the task.</Step>
+  <Step>
+    You'll see the task appear in [<House className="inline-block w-4 h-4 mx-1" /> **Home**](https://www.terragonlabs.com).
+  </Step>
+</Steps>
+
+### Setup
+
+<Steps>
+  <Step>
+    **Enable early access**: Navigate to [Settings](https://www.terragonlabs.com/settings) and enable early access features to access the Linear integration.
+  </Step>
+  <Step>
+    **Link your Linear account**: Go to [Settings > Integrations](https://www.terragonlabs.com/settings/integrations) and enter your Linear user ID, display name, and email to link your account.
+  </Step>
+  <Step>
+    **Configure defaults**: Set a default repository and model for tasks created from Linear mentions.
+  </Step>
+</Steps>
+
+<Callout type="warn">
+  The Linear integration uses a single API key configured by the Terragon administrator. Acknowledgment comments will appear as the API key owner, not as a bot. For best results, use a dedicated service account for the API key.
+</Callout>
+
+### Configuration
+
+You can configure the default repository and model for Terragon to use when creating tasks from Linear after linking your account in [Settings](https://www.terragonlabs.com/settings/integrations).
