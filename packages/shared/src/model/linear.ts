@@ -304,6 +304,8 @@ export async function updateLinearInstallationTokens({
 }): Promise<{ updated: boolean }> {
   const conditions = [
     eq(schema.linearInstallation.organizationId, organizationId),
+    // Only refresh active installations — a concurrent deactivation must win
+    eq(schema.linearInstallation.isActive, true),
   ];
 
   // DB-level optimistic CAS: only update if tokenExpiresAt hasn't changed

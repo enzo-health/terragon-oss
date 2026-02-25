@@ -968,6 +968,7 @@ describe("getThreadByLinearAgentSessionId / getThreadByLinearDeliveryId", () => 
 
   it("finds a thread by linearDeliveryId", async () => {
     const linearDeliveryId = `delivery-${nanoid(8)}`;
+    const agentSessionId = `session-${nanoid(8)}`;
     await db.insert(schema.thread).values({
       userId: user.id,
       name: "Linear thread",
@@ -976,6 +977,7 @@ describe("getThreadByLinearAgentSessionId / getThreadByLinearDeliveryId", () => 
       sourceType: "linear-mention",
       sourceMetadata: {
         type: "linear-mention",
+        agentSessionId,
         linearDeliveryId,
         organizationId: "org-123",
         issueId: "issue-1",
