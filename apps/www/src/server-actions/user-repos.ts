@@ -45,6 +45,13 @@ export const getUserRepos = userOnlyAction(
         const repoArrays = await Promise.all(repoPromises);
         const allRepos = repoArrays.flat();
 
+        console.log("[getUserRepos] installations:", data.installations.length);
+        console.log("[getUserRepos] allRepos:", allRepos.length);
+        console.log(
+          "[getUserRepos] sample permissions:",
+          allRepos[0]?.permissions,
+        );
+
         if (allRepos.length > 0) {
           const filteredRepos = allRepos
             .filter(
@@ -63,12 +70,14 @@ export const getUserRepos = userOnlyAction(
               return bPushedAt - aPushedAt;
             });
 
+          console.log("[getUserRepos] filteredRepos:", filteredRepos.length);
           return { repos: filteredRepos };
         }
       }
     } catch (appError) {
-      console.warn("Failed to get app installations or user info:", appError);
+      console.error("[getUserRepos] CAUGHT ERROR:", appError);
     }
+    console.log("[getUserRepos] returning empty repos");
     return { repos: [] };
   },
   { defaultErrorMessage: "An unexpected error occurred" },
