@@ -5,6 +5,7 @@ import {
   getLinearSettingsForUserAndOrg,
   getLinearInstallationForOrg,
   claimLinearWebhookDelivery,
+  completeLinearWebhookDelivery,
 } from "@terragon/shared/model/linear";
 import {
   getThreadByLinearAgentSessionId,
@@ -90,11 +91,39 @@ interface AppUserNotificationPayload {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Simple timeout promise that rejects after `ms` milliseconds. */
-function timeout(ms: number): Promise<never> {
-  return new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
-  );
+/**
+ * Race a promise against a cancellable timeout budget.
+ * Unlike `Promise.race([p, new Promise(setTimeout)])`, this clears the timer
+ * on success so it does not linger in the event loop.
+ *
+ * Rejects with the timeout error if `p` does not settle within `ms`.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error(`Timeout after ${ms}ms`));
+      }
+    }, ms);
+    p.then(
+      (v) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(v);
+        }
+      },
+      (e) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(e);
+        }
+      },
+    );
+  });
 }
 
 /**
@@ -223,13 +252,36 @@ async function handleAgentSessionCreated(
     return;
   }
 
-  // 2. Token refresh with 2.5s hard budget
+  // 1b. Pre-flight: validate payload fields that require no DB before emitting thought.
+  // This prevents optimistic "Starting work..." from appearing when we will silently skip.
+  const promptContext = payload.data.agentSession.promptContext;
+  const preflightIssueId = promptContext?.issueId;
+  const preflightActorId =
+    payload.data.agentSession.actorId ??
+    payload.data.agentSession.promptContext?.actorId;
+
+  if (!preflightIssueId) {
+    console.error(
+      "[linear webhook] Pre-flight: no issueId in agentSession promptContext, skipping",
+      { agentSessionId },
+    );
+    return;
+  }
+  if (!preflightActorId) {
+    console.error(
+      "[linear webhook] Pre-flight: no actorId in agentSession, skipping",
+      { agentSessionId },
+    );
+    return;
+  }
+
+  // 2. Token refresh with 2.5s hard budget (cancellable — timer is cleared on success)
   let accessToken: string;
   try {
-    const result = await Promise.race([
+    const result = await withTimeout(
       refreshLinearTokenIfNeeded(organizationId, db),
-      timeout(2500),
-    ]);
+      2500,
+    );
     if (result.status !== "ok") {
       // Reinstall required — best-effort error activity, bounded + guarded.
       console.error("[linear webhook] Token refresh: reinstall required", {
@@ -325,23 +377,14 @@ async function createThreadForAgentSession({
   agentSessionId: string;
   opts?: { createClient?: LinearClientFactory };
 }): Promise<void> {
-  // 5. Idempotency: atomically claim the Delivery-Id before creating a thread.
-  // INSERT ... ON CONFLICT DO NOTHING ensures only the first caller proceeds.
-  // This is safe under any connection-pool configuration because it relies on
-  // DB-level uniqueness rather than session-level advisory locks (which can
-  // silently break if lock/unlock execute on different pool connections).
-  //
-  // Trade-off: the claim is recorded before thread creation completes.
-  // If the first attempt crashes mid-creation, subsequent retries for the
-  // same deliveryId will skip (claimed: false) rather than retry.
-  // In practice this is acceptable: Linear webhooks return 200 immediately
-  // (thought activity is emitted synchronously) so the window for a
-  // mid-creation crash before the delivery claim is extremely narrow.
+  // 5. Idempotency: claim the Delivery-Id before creating a thread.
+  // If the previous handler crashed mid-creation (completedAt=NULL), retries are allowed.
+  // Only when completedAt IS NOT NULL (thread created successfully) do we skip.
   if (deliveryId) {
     const { claimed } = await claimLinearWebhookDelivery({ db, deliveryId });
     if (!claimed) {
       console.log(
-        "[linear webhook] Idempotent: deliveryId already claimed, skipping",
+        "[linear webhook] Idempotent: deliveryId already completed, skipping",
         { deliveryId },
       );
       return;
@@ -578,6 +621,22 @@ async function createThreadRecord({
     externalUrls,
     createClient: opts?.createClient,
   });
+
+  // Mark delivery as completed — retries will now skip via completedAt IS NOT NULL.
+  if (deliveryId) {
+    await completeLinearWebhookDelivery({
+      db,
+      deliveryId,
+      threadId,
+    }).catch((err) => {
+      // Non-fatal: the thread exists, so a retry would just re-emit thought and skip.
+      console.error("[linear webhook] Failed to mark delivery as completed", {
+        deliveryId,
+        threadId,
+        err,
+      });
+    });
+  }
 }
 
 async function handleAgentSessionPrompted(

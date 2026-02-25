@@ -1249,11 +1249,18 @@ export const agentProviderCredentials = pgTable(
 
 /**
  * Idempotency store for Linear webhook deliveries.
- * Each row represents a Delivery-Id that has been (or is being) processed.
- * The primary-key uniqueness constraint ensures only one thread is ever created
- * per delivery, even under concurrent retries — via INSERT ON CONFLICT DO NOTHING.
+ *
+ * Lifecycle:
+ *   INSERT with completedAt=NULL → delivery claimed by first handler
+ *   UPDATE SET completedAt=now(), threadId=<id> → thread creation succeeded
+ *
+ * On retry (INSERT ON CONFLICT):
+ *   - completedAt IS NOT NULL → already processed; skip.
+ *   - completedAt IS NULL     → first handler crashed mid-creation; allow retry.
  */
 export const linearWebhookDeliveries = pgTable("linear_webhook_deliveries", {
   deliveryId: text("delivery_id").primaryKey(),
+  completedAt: timestamp("completed_at", { mode: "date" }), // null = in-progress/failed
+  threadId: text("thread_id"), // set once thread is created
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });

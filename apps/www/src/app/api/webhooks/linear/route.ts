@@ -103,9 +103,23 @@ function verifyLinearSignatureManual(
     .createHmac("sha256", secret)
     .update(rawBody, "utf-8")
     .digest("hex");
-  const a = Buffer.from(hmac);
-  const b = Buffer.from(signature);
-  if (a.length !== b.length) {
+
+  // Normalise: strip optional "sha256=" prefix (defensive; Linear sends raw hex).
+  const normSignature = signature.startsWith("sha256=")
+    ? signature.slice(7)
+    : signature;
+
+  // Compare as hex-decoded bytes for constant-time safety.
+  // Both strings must be valid hex; if not, bail early.
+  let a: Buffer;
+  let b: Buffer;
+  try {
+    a = Buffer.from(hmac, "hex");
+    b = Buffer.from(normSignature, "hex");
+  } catch {
+    return false;
+  }
+  if (a.length === 0 || a.length !== b.length) {
     return false;
   }
   return crypto.timingSafeEqual(a, b);

@@ -355,16 +355,18 @@ export async function updateLinearInstallationTokens({
 }
 
 /**
- * Atomically claim a Linear webhook delivery ID for processing.
+ * Attempt to claim a Linear webhook delivery ID for processing.
  *
- * Uses INSERT ... ON CONFLICT DO NOTHING so that the first caller to arrive
- * "wins" the delivery ID and receives `{ claimed: true }`.
- * Any concurrent or subsequent caller for the same ID receives `{ claimed: false }`,
- * which the handler should treat as "already processed — skip".
+ * Inserts a row with `completedAt = NULL` (in-progress marker).
+ * On conflict (duplicate delivery ID):
+ *   - If the existing row has `completedAt IS NOT NULL` → already processed; `{ claimed: false }`.
+ *   - If the existing row has `completedAt IS NULL`    → previous attempt crashed mid-creation;
+ *     allow retry: delete the stale row and re-insert → `{ claimed: true }`.
  *
- * This is the recommended idempotency primitive for Linear webhook handlers
- * because it is safe under any connection-pool configuration and does not
- * rely on advisory locks being issued on the same physical connection.
+ * Returns `{ claimed: true }` if the caller should proceed with thread creation.
+ * Returns `{ claimed: false }` if the delivery was already completed and should be skipped.
+ *
+ * This approach is safe under any connection-pool configuration (no advisory locks).
  */
 export async function claimLinearWebhookDelivery({
   db,
@@ -373,11 +375,69 @@ export async function claimLinearWebhookDelivery({
   db: DB;
   deliveryId: string;
 }): Promise<{ claimed: boolean }> {
-  const result = await db
+  // Attempt fresh insert
+  const inserted = await db
     .insert(schema.linearWebhookDeliveries)
     .values({ deliveryId })
     .onConflictDoNothing()
     .returning({ deliveryId: schema.linearWebhookDeliveries.deliveryId });
 
-  return { claimed: result.length > 0 };
+  if (inserted.length > 0) {
+    // New row — this caller owns the delivery.
+    return { claimed: true };
+  }
+
+  // Row already exists — check if it was completed or just claimed (and possibly crashed)
+  const existing = await db.query.linearWebhookDeliveries.findFirst({
+    where: eq(schema.linearWebhookDeliveries.deliveryId, deliveryId),
+  });
+
+  if (!existing) {
+    // Race: deleted between our insert attempt and this read — treat as claimable
+    return { claimed: true };
+  }
+
+  if (existing.completedAt !== null) {
+    // Already successfully processed — skip
+    return { claimed: false };
+  }
+
+  // completedAt is null → previous handler crashed mid-creation; allow retry.
+  // Delete the stale row so this caller can proceed.
+  await db
+    .delete(schema.linearWebhookDeliveries)
+    .where(
+      and(
+        eq(schema.linearWebhookDeliveries.deliveryId, deliveryId),
+        isNull(schema.linearWebhookDeliveries.completedAt),
+      ),
+    );
+
+  // Re-insert for this attempt
+  await db
+    .insert(schema.linearWebhookDeliveries)
+    .values({ deliveryId })
+    .onConflictDoNothing();
+
+  return { claimed: true };
+}
+
+/**
+ * Mark a Linear webhook delivery as successfully completed.
+ * Call this AFTER thread creation succeeds.
+ * Subsequent retries for the same deliveryId will see `completedAt IS NOT NULL` and skip.
+ */
+export async function completeLinearWebhookDelivery({
+  db,
+  deliveryId,
+  threadId,
+}: {
+  db: DB;
+  deliveryId: string;
+  threadId: string;
+}): Promise<void> {
+  await db
+    .update(schema.linearWebhookDeliveries)
+    .set({ completedAt: new Date(), threadId })
+    .where(eq(schema.linearWebhookDeliveries.deliveryId, deliveryId));
 }

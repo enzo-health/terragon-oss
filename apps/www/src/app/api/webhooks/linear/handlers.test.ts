@@ -547,16 +547,9 @@ describe("handlers", () => {
         "@/server-lib/linear-oauth"
       );
 
-      // Make token refresh hang for longer than our 2.5s budget.
-      // We use a real delay longer than the 2.5s budget to trigger the timeout path.
+      // Make token refresh hang indefinitely — the handler's 2.5s budget will fire.
       vi.mocked(refreshLinearTokenIfNeeded).mockImplementationOnce(
-        () =>
-          new Promise((resolve) =>
-            setTimeout(
-              () => resolve({ status: "ok", accessToken: "late-token" }),
-              10000,
-            ),
-          ),
+        () => new Promise(() => {}), // never resolves
       );
 
       const payload = makeCreatedPayload();
