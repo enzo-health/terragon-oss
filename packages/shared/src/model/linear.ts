@@ -276,14 +276,34 @@ export async function upsertLinearInstallation({
 export async function deactivateLinearInstallation({
   db,
   organizationId,
+  /** CAS guard: only deactivate if access token matches observed value */
+  ifAccessTokenEncrypted,
 }: {
   db: DB;
   organizationId: string;
-}): Promise<void> {
-  await db
+  ifAccessTokenEncrypted?: string;
+}): Promise<{ deactivated: boolean }> {
+  const conditions = [
+    eq(schema.linearInstallation.organizationId, organizationId),
+    eq(schema.linearInstallation.isActive, true),
+  ];
+  if (ifAccessTokenEncrypted !== undefined) {
+    // CAS guard: only deactivate if the observed token still matches.
+    // A concurrent reinstall/refresh will have updated the token, so this
+    // stale-read deactivation will become a no-op.
+    conditions.push(
+      eq(
+        schema.linearInstallation.accessTokenEncrypted,
+        ifAccessTokenEncrypted,
+      ),
+    );
+  }
+  const result = await db
     .update(schema.linearInstallation)
     .set({ isActive: false, updatedAt: new Date() })
-    .where(eq(schema.linearInstallation.organizationId, organizationId));
+    .where(and(...conditions))
+    .returning({ id: schema.linearInstallation.id });
+  return { deactivated: result.length > 0 };
 }
 
 export async function updateLinearInstallationTokens({

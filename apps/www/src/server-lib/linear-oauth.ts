@@ -84,8 +84,12 @@ export async function refreshLinearTokenIfNeeded(
   // Token is expired, about to expire, or expiry unknown — attempt refresh
   const refreshTokenEncrypted = installation.refreshTokenEncrypted;
   if (!refreshTokenEncrypted) {
-    // No refresh token available — deactivate and signal reinstall needed
-    await deactivateLinearInstallation({ db, organizationId });
+    // No refresh token — CAS-guarded deactivation so concurrent reinstall wins
+    await deactivateLinearInstallation({
+      db,
+      organizationId,
+      ifAccessTokenEncrypted: installation.accessTokenEncrypted,
+    });
     return { status: "reinstall_required" };
   }
 
@@ -140,8 +144,12 @@ export async function refreshLinearTokenIfNeeded(
           accessToken: decryptValue(latest.accessTokenEncrypted, masterKey),
         };
       }
-      // Truly invalid — deactivate
-      await deactivateLinearInstallation({ db, organizationId });
+      // Truly invalid — CAS-guarded deactivation so concurrent reinstall wins
+      await deactivateLinearInstallation({
+        db,
+        organizationId,
+        ifAccessTokenEncrypted: installation.accessTokenEncrypted,
+      });
       return { status: "reinstall_required" };
     }
 

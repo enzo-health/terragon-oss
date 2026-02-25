@@ -33,6 +33,7 @@ import {
   ThreadInfoFull,
   ThreadInfo,
   ThreadChatInsertRaw,
+  LinearMentionThreadInsert,
 } from "../db/types";
 import { BroadcastMessageThreadData } from "@terragon/types/broadcast";
 import { sanitizeForJson } from "../utils/sanitize-json";
@@ -825,6 +826,33 @@ export async function createThread({
     dataByThreadId,
   });
   return { threadId, threadChatId };
+}
+
+/**
+ * Typed variant of createThread for Linear Agent webhook threads (fn-2+).
+ * Enforces LinearMentionThreadInsert at compile-time so agentSessionId is
+ * required, preventing silent omission in webhook handlers.
+ */
+export async function createLinearMentionThread({
+  db,
+  userId,
+  threadValues,
+  initialChatValues,
+  enableThreadChatCreation,
+}: {
+  db: DB;
+  userId: string;
+  threadValues: Omit<LinearMentionThreadInsert, "userId">;
+  initialChatValues: Omit<ThreadChatInsert, "userId" | "threadId">;
+  enableThreadChatCreation?: boolean;
+}): Promise<{ threadId: string; threadChatId: string }> {
+  return createThread({
+    db,
+    userId,
+    threadValues,
+    initialChatValues,
+    enableThreadChatCreation,
+  });
 }
 
 export async function updateThreadChat({
