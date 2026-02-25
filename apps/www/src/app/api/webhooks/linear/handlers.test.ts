@@ -7,16 +7,22 @@ import {
   beforeAll,
   afterAll,
 } from "vitest";
-import { handleCommentCreated, buildLinearMentionMessage } from "./handlers";
+import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
 import { User } from "@terragon/shared";
 import {
   createTestUser,
   setFeatureFlagOverrideForTest,
 } from "@terragon/shared/model/test-helpers";
-import { upsertLinearAccount } from "@terragon/shared/model/linear";
+import {
+  upsertLinearAccount,
+  upsertLinearInstallation,
+  upsertLinearSettings,
+} from "@terragon/shared/model/linear";
 import { db } from "@/lib/db";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { env } from "@terragon/env/apps-www";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import type { LinearClientFactory } from "@/server-lib/linear-agent-activity";
+import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
 
 // Mock newThreadInternal
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -26,40 +32,91 @@ vi.mock("@/server-lib/new-thread-internal", () => ({
   }),
 }));
 
-// Mock Linear SDK
-const mockCreateComment = vi.fn().mockResolvedValue({ success: true });
-const mockIssue = vi.fn().mockResolvedValue({
-  identifier: "ENG-123",
-  title: "Fix the bug",
-  description: "Something is broken",
-  url: "https://linear.app/team/issue/ENG-123",
-  branchName: "fix-the-bug",
-  attachments: vi.fn().mockResolvedValue({
-    nodes: [],
-  }),
-});
-
-vi.mock("@linear/sdk", () => ({
-  LinearClient: vi.fn().mockImplementation(() => ({
-    createComment: mockCreateComment,
-    issue: mockIssue,
-  })),
+// Mock queueFollowUpInternal
+vi.mock("@/server-lib/follow-up", () => ({
+  queueFollowUpInternal: vi.fn().mockResolvedValue(undefined),
 }));
 
-function makeCommentPayload(overrides: Record<string, unknown> = {}) {
+// Mock waitUntil — using mockWaitUntil so we can await waitUntilResolved()
+vi.mock("@vercel/functions", () => ({
+  waitUntil: vi.fn(),
+}));
+
+// Mock refreshLinearTokenIfNeeded
+vi.mock("@/server-lib/linear-oauth", () => ({
+  refreshLinearTokenIfNeeded: vi.fn().mockResolvedValue({
+    status: "ok",
+    accessToken: "test-access-token",
+  }),
+}));
+
+// Mock Linear SDK
+const mockCreateAgentActivity = vi.fn().mockResolvedValue({ success: true });
+const mockUpdateAgentSession = vi.fn().mockResolvedValue({ success: true });
+const mockIssueRepositorySuggestions = vi.fn().mockResolvedValue({
+  suggestions: [
+    {
+      repositoryFullName: "owner/repo",
+      hostname: "github.com",
+      confidence: 0.9,
+    },
+  ],
+});
+
+const mockLinearClientInstance = {
+  createAgentActivity: mockCreateAgentActivity,
+  updateAgentSession: mockUpdateAgentSession,
+  issueRepositorySuggestions: mockIssueRepositorySuggestions,
+};
+
+vi.mock("@linear/sdk", () => ({
+  LinearClient: vi.fn().mockImplementation(() => mockLinearClientInstance),
+}));
+
+// ---------------------------------------------------------------------------
+// Test injectable LinearClient factory
+// ---------------------------------------------------------------------------
+
+/** Factory that returns our mock client (bypasses the LinearClient constructor mock) */
+const mockClientFactory: LinearClientFactory = (_token: string) =>
+  mockLinearClientInstance as unknown as import("@linear/sdk").LinearClient;
+
+// ---------------------------------------------------------------------------
+// Payload factories
+// ---------------------------------------------------------------------------
+
+function makeCreatedPayload(overrides: Record<string, unknown> = {}) {
   return {
-    action: "create",
-    type: "Comment",
+    type: "AgentSessionEvent" as const,
+    action: "created" as const,
     organizationId: "org-123",
-    webhookId: "webhook-456",
-    webhookTimestamp: Date.now(),
-    actor: { id: "actor-1", name: "Test User", type: "user" },
     data: {
-      id: "comment-789",
-      body: `Hey @terragon please fix this`,
-      createdAt: new Date().toISOString(),
-      issueId: "issue-abc",
-      userId: "linear-user-1",
+      id: "session-abc",
+      agentSession: {
+        id: "session-abc",
+        actorId: "linear-user-1",
+        promptContext: {
+          issueId: "issue-xyz",
+          issueIdentifier: "ENG-42",
+          issueTitle: "Fix the bug",
+          issueDescription: "Something is broken",
+          issueUrl: "https://linear.app/team/issue/ENG-42",
+          actorId: "linear-user-1",
+        },
+      },
+    },
+    ...overrides,
+  };
+}
+
+function makePromptedPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    type: "AgentSessionEvent" as const,
+    action: "prompted" as const,
+    organizationId: "org-123",
+    data: {
+      id: "session-abc",
+      agentActivity: { body: "Continue the work please" },
       ...((overrides.data as Record<string, unknown>) ?? {}),
     },
     ...Object.fromEntries(
@@ -68,362 +125,364 @@ function makeCommentPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeAppUserNotificationPayload(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    type: "AppUserNotification" as const,
+    organizationId: "org-123",
+    notification: {
+      type: "issueMention",
+      user: { id: "linear-user-1" },
+      issue: { id: "issue-xyz" },
+    },
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Test setup
+// ---------------------------------------------------------------------------
+
 describe("handlers", () => {
-  describe("buildLinearMentionMessage", () => {
-    it("should build a message with issue context", () => {
-      const message = buildLinearMentionMessage({
-        issueIdentifier: "ENG-123",
-        issueTitle: "Fix the bug",
-        issueDescription: "Something is broken",
-        issueUrl: "https://linear.app/team/issue/ENG-123",
-        commentBody: "Hey @terragon fix this",
-        attachments: [],
-      });
+  let user: User;
 
-      expect(message).toContain("ENG-123");
-      expect(message).toContain("Fix the bug");
-      expect(message).toContain("Something is broken");
-      expect(message).toContain("Hey @terragon fix this");
-      expect(message).toContain("https://linear.app/team/issue/ENG-123");
+  beforeAll(async () => {
+    await mockWaitUntil();
+
+    const testUserResult = await createTestUser({ db });
+    user = testUserResult.user;
+
+    // Link a linear account
+    await upsertLinearAccount({
+      db,
+      userId: user.id,
+      organizationId: "org-123",
+      account: {
+        linearUserId: "linear-user-1",
+        linearUserName: "Test User",
+        linearUserEmail: "test@linear.app",
+      },
     });
 
-    it("should include attachments when present", () => {
-      const message = buildLinearMentionMessage({
-        issueIdentifier: "ENG-123",
-        issueTitle: "Fix the bug",
-        issueDescription: null,
-        issueUrl: "https://linear.app/team/issue/ENG-123",
-        commentBody: "Fix it",
-        attachments: [
-          {
-            title: "PR #42",
-            url: "https://github.com/owner/repo/pull/42",
-            sourceType: "github",
-          },
-        ],
-      });
-
-      expect(message).toContain("PR #42");
-      expect(message).toContain("https://github.com/owner/repo/pull/42");
+    // Create a linear installation for the org
+    // Note: accessTokenEncrypted must be a real encrypted value in tests
+    // that call refreshLinearTokenIfNeeded (which we mock), so any string is fine.
+    await upsertLinearInstallation({
+      db,
+      installation: {
+        organizationId: "org-123",
+        organizationName: "Test Org",
+        accessTokenEncrypted: "mock-encrypted-token",
+        refreshTokenEncrypted: "mock-encrypted-refresh-token",
+        tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h from now
+        scope: "read,write",
+        installerUserId: user.id,
+        isActive: true,
+      },
     });
 
-    it("should omit description when null", () => {
-      const message = buildLinearMentionMessage({
-        issueIdentifier: "ENG-123",
-        issueTitle: "Fix the bug",
-        issueDescription: null,
-        issueUrl: "https://linear.app/team/issue/ENG-123",
-        commentBody: "Fix it",
-        attachments: [],
-      });
+    // Create linear settings with a default repo
+    await upsertLinearSettings({
+      db,
+      userId: user.id,
+      organizationId: "org-123",
+      settings: {
+        defaultRepoFullName: "owner/default-repo",
+        defaultModel: "sonnet",
+      },
+    });
 
-      expect(message).not.toContain("Issue description");
+    // Enable the feature flag
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "linearIntegration",
+      value: true,
     });
   });
 
-  describe("handleCommentCreated", () => {
-    let user: User;
-    let originalApiKey: string;
+  afterAll(() => {
+    // nothing to tear down
+  });
 
-    beforeAll(async () => {
-      // Set a dummy API key so getLinearClient() doesn't throw
-      // (LinearClient is mocked, so the actual value doesn't matter)
-      originalApiKey = env.LINEAR_API_KEY;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_API_KEY = "test-linear-api-key";
-
-      const testUserResult = await createTestUser({ db });
-      user = testUserResult.user;
-
-      // Link a linear account
-      await upsertLinearAccount({
-        db,
-        userId: user.id,
-        organizationId: "org-123",
-        account: {
-          linearUserId: "linear-user-1",
-          linearUserName: "Test User",
-          linearUserEmail: "test@linear.app",
+  beforeEach(async () => {
+    // Drain any leftover promises from previous tests before clearing mocks
+    await waitUntilResolved();
+    vi.clearAllMocks();
+    // Re-register mockWaitUntil after clearAllMocks resets the implementation
+    await mockWaitUntil();
+    vi.mocked(newThreadInternal).mockResolvedValue({
+      threadId: "test-thread-id",
+      threadChatId: "test-chat-id",
+    });
+    vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
+    mockCreateAgentActivity.mockResolvedValue({ success: true });
+    mockUpdateAgentSession.mockResolvedValue({ success: true });
+    mockIssueRepositorySuggestions.mockResolvedValue({
+      suggestions: [
+        {
+          repositoryFullName: "owner/repo",
+          hostname: "github.com",
+          confidence: 0.9,
         },
-      });
-
-      // Enable the feature flag
-      await setFeatureFlagOverrideForTest({
-        db,
-        userId: user.id,
-        name: "linearIntegration",
-        value: true,
-      });
+      ],
     });
-
-    afterAll(() => {
-      // @ts-expect-error - restoring env for test
-      env.LINEAR_API_KEY = originalApiKey;
+    // Restore refreshLinearTokenIfNeeded mock after clearAllMocks
+    const { refreshLinearTokenIfNeeded } = await import(
+      "@/server-lib/linear-oauth"
+    );
+    vi.mocked(refreshLinearTokenIfNeeded).mockResolvedValue({
+      status: "ok",
+      accessToken: "test-access-token",
     });
+  });
 
-    beforeEach(() => {
-      vi.clearAllMocks();
-      vi.mocked(newThreadInternal).mockResolvedValue({
-        threadId: "test-thread-id",
-        threadChatId: "test-chat-id",
+  // -------------------------------------------------------------------------
+  // AgentSessionEvent.created
+  // -------------------------------------------------------------------------
+
+  describe("handleAgentSessionEvent (created)", () => {
+    it("emits thought activity synchronously before returning", async () => {
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-1", {
+        createClient: mockClientFactory,
       });
-      mockIssue.mockResolvedValue({
-        identifier: "ENG-123",
-        title: "Fix the bug",
-        description: "Something is broken",
-        url: "https://linear.app/team/issue/ENG-123",
-        branchName: "fix-the-bug",
-        attachments: vi.fn().mockResolvedValue({
-          nodes: [],
+      // Flush async waitUntil work
+      await waitUntilResolved();
+
+      // thought activity MUST have been emitted
+      expect(mockCreateAgentActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentSessionId: "session-abc",
+          content: expect.objectContaining({ type: "thought" }),
         }),
+      );
+    });
+
+    it("creates a thread via newThreadInternal with correct sourceMetadata", async () => {
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-2", {
+        createClient: mockClientFactory,
       });
+      await waitUntilResolved();
+
+      expect(newThreadInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: user.id,
+          sourceType: "linear-mention",
+          sourceMetadata: expect.objectContaining({
+            type: "linear-mention",
+            agentSessionId: "session-abc",
+            organizationId: "org-123",
+            issueId: "issue-xyz",
+            linearDeliveryId: "delivery-2",
+          }),
+        }),
+      );
     });
 
-    it("should skip processing when LINEAR_MENTION_HANDLE is empty", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "";
-      try {
-        await handleCommentCreated(makeCommentPayload());
-        expect(newThreadInternal).not.toHaveBeenCalled();
-        expect(mockCreateComment).not.toHaveBeenCalled();
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
-    });
+    it("updates the agent session with the Terragon task URL", async () => {
+      const payload = makeCreatedPayload();
 
-    it("should skip non-mention comments", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        await handleCommentCreated(
-          makeCommentPayload({
-            data: { body: "This comment has no mention at all" },
-          }),
-        );
-        expect(newThreadInternal).not.toHaveBeenCalled();
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
-    });
-
-    it("should detect mentions case-insensitively", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        // Provide a GitHub attachment so we have a repo
-        mockIssue.mockResolvedValue({
-          identifier: "ENG-123",
-          title: "Fix the bug",
-          description: "Something is broken",
-          url: "https://linear.app/team/issue/ENG-123",
-          branchName: "fix-the-bug",
-          attachments: vi.fn().mockResolvedValue({
-            nodes: [
-              {
-                title: "PR #42",
-                url: "https://github.com/owner/repo/pull/42",
-                sourceType: "github",
-              },
-            ],
-          }),
-        });
-
-        await handleCommentCreated(
-          makeCommentPayload({
-            data: { body: "Hey @TERRAGON please fix this" },
-          }),
-        );
-        expect(newThreadInternal).toHaveBeenCalled();
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
-    });
-
-    it("should post error comment when no linked account found", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        await handleCommentCreated(
-          makeCommentPayload({
-            data: { userId: "unknown-linear-user" },
-          }),
-        );
-        expect(newThreadInternal).not.toHaveBeenCalled();
-        expect(mockCreateComment).toHaveBeenCalledWith(
-          expect.objectContaining({
-            issueId: "issue-abc",
-            body: expect.stringContaining("connect your Linear account"),
-          }),
-        );
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
-    });
-
-    it("should silently ignore when feature flag is disabled", async () => {
-      // Create a user with disabled feature flag
-      const testUser2 = await createTestUser({ db });
-      await upsertLinearAccount({
-        db,
-        userId: testUser2.user.id,
-        organizationId: "org-disabled",
-        account: {
-          linearUserId: "linear-user-disabled",
-          linearUserName: "Disabled User",
-          linearUserEmail: "disabled@linear.app",
-        },
+      await handleAgentSessionEvent(payload, "delivery-3", {
+        createClient: mockClientFactory,
       });
-      // Feature flag is off by default
+      await waitUntilResolved();
 
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        await handleCommentCreated(
-          makeCommentPayload({
-            organizationId: "org-disabled",
-            data: { userId: "linear-user-disabled" },
-          }),
-        );
-        expect(newThreadInternal).not.toHaveBeenCalled();
-        // Should NOT post any comment (silently ignore)
-        expect(mockCreateComment).not.toHaveBeenCalled();
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
+      expect(mockUpdateAgentSession).toHaveBeenCalledWith(
+        "session-abc",
+        expect.objectContaining({
+          externalUrls: expect.arrayContaining([
+            expect.stringContaining("test-thread-id"),
+          ]),
+        }),
+      );
     });
 
-    it("should post error when no default repo and no GitHub attachment", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        // No linear settings means no default repo; issue has no attachments
-        await handleCommentCreated(makeCommentPayload());
-        expect(newThreadInternal).not.toHaveBeenCalled();
-        expect(mockCreateComment).toHaveBeenCalledWith(
-          expect.objectContaining({
-            body: expect.stringContaining("No default repository configured"),
-          }),
-        );
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
+    it("still returns (without crashing) if thought emission fails (SLA failure path)", async () => {
+      // emitAgentActivity catches errors internally, so SLA failure means
+      // the createAgentActivity mock rejects but handler continues
+      mockCreateAgentActivity.mockRejectedValueOnce(
+        new Error("Linear API down"),
+      );
+
+      const payload = makeCreatedPayload();
+
+      // Should not throw
+      await expect(
+        handleAgentSessionEvent(payload, "delivery-sla", {
+          createClient: mockClientFactory,
+        }),
+      ).resolves.not.toThrow();
     });
 
-    it("should extract GitHub repo from attachment and create thread", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        mockIssue.mockResolvedValue({
-          identifier: "ENG-123",
-          title: "Fix the bug",
-          description: "Something is broken",
-          url: "https://linear.app/team/issue/ENG-123",
-          branchName: "fix-the-bug",
-          attachments: vi.fn().mockResolvedValue({
-            nodes: [
-              {
-                title: "PR #42",
-                url: "https://github.com/owner/repo/pull/42",
-                sourceType: "github",
-              },
-            ],
-          }),
-        });
+    it("skips if no linearInstallation found for org", async () => {
+      const payload = makeCreatedPayload({ organizationId: "org-unknown" });
 
-        await handleCommentCreated(makeCommentPayload());
+      await handleAgentSessionEvent(payload, "delivery-no-org", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
 
-        expect(newThreadInternal).toHaveBeenCalledWith(
-          expect.objectContaining({
-            userId: user.id,
-            githubRepoFullName: "owner/repo",
-            sourceType: "linear-mention",
-            sourceMetadata: expect.objectContaining({
-              type: "linear-mention",
-              organizationId: "org-123",
-              issueId: "issue-abc",
-              issueIdentifier: "ENG-123",
-              commentId: "comment-789",
+      expect(newThreadInternal).not.toHaveBeenCalled();
+    });
+
+    it("is idempotent: does not create a second thread for same deliveryId", async () => {
+      // We test idempotency by spying on getThreadByLinearDeliveryId to simulate
+      // a thread already existing (since newThreadInternal is mocked and doesn't write to DB)
+      const threadsModule = await import("@terragon/shared/model/threads");
+      const spy = vi
+        .spyOn(threadsModule, "getThreadByLinearDeliveryId")
+        .mockResolvedValueOnce(null) // First call: no thread → create
+        .mockResolvedValueOnce({
+          id: "existing-thread-id",
+        } as unknown as Awaited<
+          ReturnType<typeof threadsModule.getThreadByLinearDeliveryId>
+        >); // Second call: found → skip
+
+      const payload = makeCreatedPayload();
+
+      // First call creates the thread
+      await handleAgentSessionEvent(payload, "delivery-idempotent-mock", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+      expect(newThreadInternal).toHaveBeenCalledTimes(1);
+
+      vi.mocked(newThreadInternal).mockClear();
+
+      // Second call with same deliveryId should be idempotent (thread found → skip)
+      await handleAgentSessionEvent(payload, "delivery-idempotent-mock", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+      expect(newThreadInternal).not.toHaveBeenCalled();
+
+      spy.mockRestore();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AgentSessionEvent.prompted
+  // -------------------------------------------------------------------------
+
+  describe("handleAgentSessionEvent (prompted)", () => {
+    it("logs warning and skips if no thread found for agentSessionId", async () => {
+      const payload = makePromptedPayload({
+        data: { id: "session-no-thread", agentActivity: { body: "Continue" } },
+      });
+
+      // Should not throw and should not queue follow-up
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AppUserNotification
+  // -------------------------------------------------------------------------
+
+  describe("handleAppUserNotification", () => {
+    it("logs the notification but does NOT create a thread", async () => {
+      const payload = makeAppUserNotificationPayload();
+
+      await handleAppUserNotification(payload);
+
+      expect(newThreadInternal).not.toHaveBeenCalled();
+    });
+
+    it("handles all notification types without throwing", async () => {
+      for (const type of [
+        "issueMention",
+        "issueCommentMention",
+        "issueAssignedToYou",
+      ]) {
+        await expect(
+          handleAppUserNotification(
+            makeAppUserNotificationPayload({
+              notification: { type, user: { id: "u1" }, issue: { id: "i1" } },
             }),
-          }),
-        );
-
-        // Ack comment posted
-        expect(mockCreateComment).toHaveBeenCalledWith(
-          expect.objectContaining({
-            issueId: "issue-abc",
-            body: expect.stringContaining("Task created"),
-          }),
-        );
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
+          ),
+        ).resolves.not.toThrow();
       }
+
+      expect(newThreadInternal).not.toHaveBeenCalled();
     });
 
-    it("should ensure ack comments never contain the mention handle", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        mockIssue.mockResolvedValue({
-          identifier: "ENG-123",
-          title: "Fix the bug",
-          description: "Something is broken",
-          url: "https://linear.app/team/issue/ENG-123",
-          branchName: "fix-the-bug",
-          attachments: vi.fn().mockResolvedValue({
-            nodes: [
-              {
-                title: "PR #42",
-                url: "https://github.com/owner/repo/pull/42",
-                sourceType: "github",
-              },
-            ],
-          }),
-        });
+    it("does not throw on missing notification fields", async () => {
+      await expect(
+        handleAppUserNotification({
+          type: "AppUserNotification",
+          organizationId: "org-xyz",
+        }),
+      ).resolves.not.toThrow();
+    });
+  });
 
-        await handleCommentCreated(makeCommentPayload());
+  // -------------------------------------------------------------------------
+  // Token refresh timeout path
+  // -------------------------------------------------------------------------
 
-        // Verify no ack/error comment contains the mention handle
-        for (const call of mockCreateComment.mock.calls) {
-          const commentBody = call[0]?.body as string;
-          expect(commentBody).not.toContain("@terragon");
-        }
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
+  describe("token refresh handling", () => {
+    it("returns without creating thread when token refresh times out", async () => {
+      const { refreshLinearTokenIfNeeded } = await import(
+        "@/server-lib/linear-oauth"
+      );
+
+      // Make token refresh hang for longer than our 2.5s budget
+      vi.mocked(refreshLinearTokenIfNeeded).mockImplementationOnce(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () => resolve({ status: "ok", accessToken: "late-token" }),
+              10000,
+            ),
+          ),
+      );
+
+      const payload = makeCreatedPayload();
+
+      // Should not throw
+      await expect(
+        handleAgentSessionEvent(payload, "delivery-timeout", {
+          createClient: mockClientFactory,
+        }),
+      ).resolves.not.toThrow();
+      await waitUntilResolved();
+
+      // Thread should NOT have been created
+      expect(newThreadInternal).not.toHaveBeenCalled();
     });
 
-    it("should skip when issueId is missing from comment data", async () => {
-      const originalHandle = env.LINEAR_MENTION_HANDLE;
-      // @ts-expect-error - modifying env for test
-      env.LINEAR_MENTION_HANDLE = "@terragon";
-      try {
-        await handleCommentCreated(
-          makeCommentPayload({
-            data: { issueId: undefined },
-          }),
-        );
-        expect(newThreadInternal).not.toHaveBeenCalled();
-        expect(mockCreateComment).not.toHaveBeenCalled();
-      } finally {
-        // @ts-expect-error - restoring env for test
-        env.LINEAR_MENTION_HANDLE = originalHandle;
-      }
+    it("returns without creating thread when reinstall_required", async () => {
+      const { refreshLinearTokenIfNeeded } = await import(
+        "@/server-lib/linear-oauth"
+      );
+
+      vi.mocked(refreshLinearTokenIfNeeded).mockResolvedValueOnce({
+        status: "reinstall_required",
+      });
+
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-reinstall", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+
+      expect(newThreadInternal).not.toHaveBeenCalled();
+      // Should emit error activity
+      expect(mockCreateAgentActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.objectContaining({ type: "error" }),
+        }),
+      );
     });
   });
 });

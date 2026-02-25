@@ -1,315 +1,439 @@
-import { LinearClient } from "@linear/sdk";
-import { env } from "@terragon/env/apps-www";
-import { publicAppUrl } from "@terragon/env/next-public";
 import { db } from "@/lib/db";
+import { publicAppUrl } from "@terragon/env/next-public";
 import {
   getLinearAccountForLinearUserId,
   getLinearSettingsForUserAndOrg,
+  getLinearInstallationForOrg,
 } from "@terragon/shared/model/linear";
+import {
+  getThreadByLinearAgentSessionId,
+  getThreadByLinearDeliveryId,
+  getThread,
+} from "@terragon/shared/model/threads";
+import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { getUserFlags } from "@terragon/shared/model/user-flags";
 import { getAccessInfoForUser } from "@/lib/subscription";
-import { getUserCredentials } from "@/server-lib/user-credentials";
-import { getDefaultModel } from "@/lib/default-ai-model";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { formatThreadContext } from "@/server-lib/ext-thread-context";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import { getDefaultModel } from "@/server-lib/default-ai-model";
+import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
+import {
+  emitAgentActivity,
+  updateAgentSession,
+  type LinearClientFactory,
+} from "@/server-lib/linear-agent-activity";
+import { getEnvironments } from "@terragon/shared/model/environments";
+import { waitUntil } from "@vercel/functions";
+import { LinearClient } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
 
-/**
- * Webhook payload shape for Linear Comment.create events.
- * SDK-generated types don't match webhook payloads exactly (flat IDs vs nested objects),
- * so we define a minimal shape here.
- */
-interface LinearCommentWebhookPayload {
-  action: string;
-  type: string;
+// ---------------------------------------------------------------------------
+// Webhook payload types
+// ---------------------------------------------------------------------------
+
+interface AgentSessionCreatedPayload {
+  type: "AgentSessionEvent";
+  action: "created";
   organizationId: string;
-  webhookId?: string;
-  webhookTimestamp?: number;
-  actor?: {
-    id: string;
-    name?: string;
-    type?: string;
-  };
   data: {
     id: string;
-    body: string;
-    createdAt: string;
-    issueId?: string;
-    userId?: string;
+    agentSession: {
+      id: string;
+      promptContext?: {
+        issueId?: string;
+        issueIdentifier?: string;
+        issueTitle?: string;
+        issueDescription?: string;
+        issueUrl?: string;
+        actorId?: string;
+      };
+      actorId?: string;
+    };
   };
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+interface AgentSessionPromptedPayload {
+  type: "AgentSessionEvent";
+  action: "prompted";
+  organizationId: string;
+  data: {
+    id: string;
+    agentActivity?: {
+      body?: string;
+    };
+  };
 }
 
-/**
- * Detect if the comment body contains the mention handle.
- * Case-insensitive, regex-escaped.
- */
-function containsMention(commentBody: string, handle: string): boolean {
-  const pattern = new RegExp(escapeRegex(handle), "i");
-  return pattern.test(commentBody);
+type AgentSessionEventPayload =
+  | AgentSessionCreatedPayload
+  | AgentSessionPromptedPayload
+  | {
+      type: "AgentSessionEvent";
+      action: string;
+      organizationId: string;
+      data: { id: string };
+    };
+
+interface AppUserNotificationPayload {
+  type: "AppUserNotification";
+  organizationId: string;
+  notification?: {
+    type?: string;
+    user?: { id?: string };
+    issue?: { id?: string };
+  };
 }
 
-/**
- * Extract GitHub repo full name from a GitHub attachment URL.
- * e.g. "https://github.com/owner/repo/pull/123" -> "owner/repo"
- */
-function extractGitHubRepoFromUrl(url: string): string | null {
-  const match = url.match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)(?:\/|$)/);
-  return match?.[1] ?? null;
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-function getLinearClient(): LinearClient {
-  if (!env.LINEAR_API_KEY) {
-    throw new Error("LINEAR_API_KEY is not configured");
-  }
-  return new LinearClient({ apiKey: env.LINEAR_API_KEY });
-}
-
-/**
- * Post a comment to a Linear issue.
- * The body must NEVER contain the mention handle to prevent self-triggering loops.
- */
-async function postLinearComment(
-  linearClient: LinearClient,
-  issueId: string,
-  body: string,
-): Promise<void> {
-  await linearClient.createComment({ issueId, body });
-}
-
-/**
- * Build the message to send to the Terragon thread with issue context.
- */
-export function buildLinearMentionMessage({
-  issueIdentifier,
-  issueTitle,
-  issueDescription,
-  issueUrl,
-  commentBody,
-  attachments,
-}: {
-  issueIdentifier: string;
-  issueTitle: string;
-  issueDescription: string | null | undefined;
-  issueUrl: string;
-  commentBody: string;
-  attachments: Array<{
-    title: string;
-    url: string;
-    sourceType: string | null | undefined;
-  }>;
-}): string {
-  const messageParts: string[] = [];
-
-  // Issue context
-  messageParts.push(
-    `You were mentioned in Linear issue ${issueIdentifier}: ${issueTitle}`,
+/** Simple timeout promise that rejects after `ms` milliseconds. */
+function timeout(ms: number): Promise<never> {
+  return new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
   );
+}
 
-  if (issueDescription) {
-    messageParts.push(`**Issue description:**\n${issueDescription}`);
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle AgentSessionEvent webhooks.
+ * `created` events are the primary trigger for thread creation.
+ * `prompted` events route follow-up input to existing threads.
+ */
+export async function handleAgentSessionEvent(
+  payload: AgentSessionEventPayload,
+  deliveryId: string | undefined,
+  opts?: { createClient?: LinearClientFactory },
+): Promise<void> {
+  const { organizationId } = payload;
+  const agentSessionId = payload.data.id;
+
+  console.log("[linear webhook] AgentSessionEvent", {
+    action: payload.action,
+    agentSessionId,
+    organizationId,
+  });
+
+  if (payload.action === "created") {
+    await handleAgentSessionCreated(
+      payload as AgentSessionCreatedPayload,
+      deliveryId,
+      opts,
+    );
+  } else if (payload.action === "prompted") {
+    await handleAgentSessionPrompted(
+      payload as AgentSessionPromptedPayload,
+      opts,
+    );
+  } else {
+    console.log("[linear webhook] Unknown AgentSessionEvent action, skipping", {
+      action: payload.action,
+      agentSessionId,
+    });
+  }
+}
+
+async function handleAgentSessionCreated(
+  payload: AgentSessionCreatedPayload,
+  deliveryId: string | undefined,
+  opts?: { createClient?: LinearClientFactory },
+): Promise<void> {
+  const { organizationId } = payload;
+  const agentSessionId = payload.data.agentSession.id;
+
+  // 1. Look up linearInstallation by organizationId
+  const installation = await getLinearInstallationForOrg({
+    db,
+    organizationId,
+  });
+  if (!installation || !installation.isActive) {
+    console.error(
+      "[linear webhook] No active linearInstallation for org, skipping",
+      { organizationId },
+    );
+    return;
   }
 
-  // Comment that triggered the mention
-  messageParts.push(`**Comment:**\n${commentBody}`);
+  // 2. Token refresh with 2-3s hard budget
+  let accessToken: string;
+  try {
+    const result = await Promise.race([
+      refreshLinearTokenIfNeeded(organizationId, db),
+      timeout(2500),
+    ]);
+    if (result.status !== "ok") {
+      // Reinstall required — emit error activity and return
+      console.error("[linear webhook] Token refresh: reinstall required", {
+        organizationId,
+      });
+      await emitAgentActivity({
+        agentSessionId,
+        accessToken: "", // will fail silently, that's ok
+        content: {
+          type: "error",
+          body: "Authentication failure — please reinstall the Linear Agent",
+        },
+        createClient: opts?.createClient,
+      });
+      return;
+    }
+    accessToken = result.accessToken;
+  } catch (err) {
+    // Timeout or other error — log, skip thread creation, return 200
+    console.error(
+      "[linear webhook] Token refresh timed out or failed, returning 200",
+      { agentSessionId, err },
+    );
+    // Cannot emit activity without a valid token on timeout — just return
+    return;
+  }
 
-  // Attachments
-  if (attachments.length > 0) {
-    const attachmentEntries = attachments.map((a) => ({
-      author: a.sourceType ?? "attachment",
-      body: `[${a.title}](${a.url})`,
-    }));
-    const formattedAttachments = formatThreadContext(attachmentEntries);
-    if (formattedAttachments) {
-      messageParts.push(`**Attachments:**\n${formattedAttachments}`);
+  // 3. Synchronously emit `thought` activity BEFORE returning HTTP 200 (<10s SLA)
+  try {
+    await emitAgentActivity({
+      agentSessionId,
+      accessToken,
+      content: {
+        type: "thought",
+        body: "Starting work on this issue...",
+      },
+      createClient: opts?.createClient,
+    });
+  } catch (err) {
+    // 4. 10s SLA failure: if thought emission fails, log error and return 200 anyway
+    console.error(
+      "[linear webhook] Failed to emit thought activity (SLA failure), continuing",
+      { agentSessionId, err },
+    );
+  }
+
+  // 5-7. Async thread creation via waitUntil
+  waitUntil(
+    createThreadForAgentSession({
+      payload,
+      deliveryId,
+      accessToken,
+      organizationId,
+      agentSessionId,
+      opts,
+    }).catch((err) => {
+      console.error("[linear webhook] Error in async thread creation", {
+        agentSessionId,
+        err,
+      });
+    }),
+  );
+}
+
+async function createThreadForAgentSession({
+  payload,
+  deliveryId,
+  accessToken,
+  organizationId,
+  agentSessionId,
+  opts,
+}: {
+  payload: AgentSessionCreatedPayload;
+  deliveryId: string | undefined;
+  accessToken: string;
+  organizationId: string;
+  agentSessionId: string;
+  opts?: { createClient?: LinearClientFactory };
+}): Promise<void> {
+  // 5. Idempotency check: skip if thread already exists with this deliveryId
+  if (deliveryId) {
+    const existing = await getThreadByLinearDeliveryId({ db, deliveryId });
+    if (existing) {
+      console.log(
+        "[linear webhook] Idempotent: thread already exists for deliveryId, skipping",
+        { deliveryId, threadId: existing.id },
+      );
+      return;
     }
   }
 
-  messageParts.push(
-    "Please work on this task. Your work will be sent to the user once you're done.",
-  );
-  messageParts.push(issueUrl);
+  const promptContext = payload.data.agentSession.promptContext;
+  const issueId = promptContext?.issueId;
+  const issueIdentifier = promptContext?.issueIdentifier ?? "";
+  const issueTitle = promptContext?.issueTitle ?? "Untitled Issue";
+  const issueUrl = promptContext?.issueUrl ?? "";
 
-  return messageParts.join("\n\n");
-}
-
-export async function handleCommentCreated(
-  payload: LinearCommentWebhookPayload,
-): Promise<void> {
-  console.log("[linear webhook] Processing comment created", {
-    commentId: payload.data.id,
-    organizationId: payload.organizationId,
-  });
-
-  // Empty handle guard: skip all processing if handle is empty
-  const mentionHandle = env.LINEAR_MENTION_HANDLE?.trim();
-  if (!mentionHandle) {
-    console.warn(
-      "[linear webhook] LINEAR_MENTION_HANDLE is empty, skipping processing",
+  if (!issueId) {
+    console.error(
+      "[linear webhook] No issueId in agentSession promptContext, skipping",
+      {
+        agentSessionId,
+      },
     );
     return;
   }
 
-  // Check for mention in comment body
-  const commentBody = payload.data.body;
-  if (!containsMention(commentBody, mentionHandle)) {
+  // Resolve user from agentSession.actorId → linearAccount.linearUserId → Terragon userId
+  const actorId =
+    payload.data.agentSession.actorId ??
+    payload.data.agentSession.promptContext?.actorId;
+
+  if (!actorId) {
+    console.error("[linear webhook] No actorId in agentSession, skipping", {
+      agentSessionId,
+    });
     return;
   }
 
-  const organizationId = payload.organizationId;
-  const issueId = payload.data.issueId;
-  const commentId = payload.data.id;
-  const linearUserId = payload.data.userId;
-
-  if (!issueId) {
-    console.error("[linear webhook] No issueId in comment data");
-    return;
-  }
-
-  if (!linearUserId) {
-    console.error("[linear webhook] No userId in comment data");
-    return;
-  }
-
-  const linearClient = getLinearClient();
-
-  // Resolve Linear user to Terragon user
   const linearAccount = await getLinearAccountForLinearUserId({
     db,
     organizationId,
-    linearUserId,
+    linearUserId: actorId,
   });
 
   if (!linearAccount) {
-    console.error(
-      `[linear webhook] No linked account for Linear user ${linearUserId} in org ${organizationId}`,
-    );
-    // Post error comment - must NOT contain mention handle
-    await postLinearComment(
-      linearClient,
-      issueId,
-      `Could not find a linked Terragon account for this Linear user. Please connect your Linear account in settings: ${publicAppUrl()}/settings/integrations`,
-    );
+    console.error("[linear webhook] No linked account for actor", {
+      actorId,
+      organizationId,
+    });
     return;
   }
 
-  // Check feature flag for resolved user
+  const userId = linearAccount.userId;
+
+  // Check feature flag
   const linearIntegrationEnabled = await getFeatureFlagForUser({
     db,
-    userId: linearAccount.userId,
+    userId,
     flagName: "linearIntegration",
   });
   if (!linearIntegrationEnabled) {
     console.log(
-      `[linear webhook] linearIntegration feature flag disabled for user ${linearAccount.userId}`,
+      "[linear webhook] linearIntegration feature flag disabled for user",
+      { userId },
     );
     return;
   }
 
   // Check user access tier
-  const accessInfo = await getAccessInfoForUser(linearAccount.userId);
+  const accessInfo = await getAccessInfoForUser(userId);
   if (accessInfo.tier === "none") {
-    console.log(
-      `[linear webhook] User ${linearAccount.userId} has no access tier`,
-    );
-    await postLinearComment(
-      linearClient,
-      issueId,
-      `To use Terragon from Linear, please set up billing here: ${publicAppUrl()}/settings/billing`,
-    );
+    console.log("[linear webhook] User has no access tier", { userId });
     return;
   }
 
   // Get Linear settings for default repo and model
   const linearSettings = await getLinearSettingsForUserAndOrg({
     db,
-    userId: linearAccount.userId,
+    userId,
     organizationId,
   });
 
-  // Fetch issue details and attachments in parallel
-  const issue = await linearClient.issue(issueId);
-  const attachmentsConnection = await issue.attachments({ first: 20 });
-  const attachments = attachmentsConnection?.nodes ?? [];
-
-  // Try to extract GitHub repo from attachments
-  let githubRepoFullName: string | null = null;
-  for (const attachment of attachments) {
-    if (attachment.sourceType === "github" && attachment.url) {
-      const repo = extractGitHubRepoFromUrl(attachment.url);
-      if (repo) {
-        githubRepoFullName = repo;
-        break;
-      }
+  // Determine candidate repos for issueRepositorySuggestions
+  const defaultRepo = linearSettings?.defaultRepoFullName;
+  const userEnvironments = await getEnvironments({
+    db,
+    userId,
+    includeGlobal: false,
+  });
+  const candidateRepoNames = new Set<string>();
+  if (defaultRepo) candidateRepoNames.add(defaultRepo);
+  for (const env of userEnvironments) {
+    if (env.repoFullName && candidateRepoNames.size < 10) {
+      candidateRepoNames.add(env.repoFullName);
     }
   }
 
-  // Fall back to settings default
+  // issueRepositorySuggestions — pick highest confidence
+  let githubRepoFullName: string | null = null;
+  if (candidateRepoNames.size > 0) {
+    try {
+      const candidateRepositories = [...candidateRepoNames].map(
+        (repositoryFullName) => ({
+          repositoryFullName,
+          hostname: "github.com",
+        }),
+      );
+      const createClient =
+        opts?.createClient ??
+        ((t: string) => new LinearClient({ accessToken: t }));
+      const client = createClient(accessToken);
+      const suggestionsPayload = await client.issueRepositorySuggestions(
+        candidateRepositories,
+        issueId,
+        { agentSessionId },
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const suggestions: Array<{
+        repositoryFullName: string;
+        hostname: string;
+        confidence: number;
+      }> =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (suggestionsPayload as any).suggestions ?? [];
+      if (suggestions.length > 0) {
+        const best = suggestions.reduce((a, b) =>
+          b.confidence > a.confidence ? b : a,
+        );
+        githubRepoFullName = best.repositoryFullName;
+      }
+    } catch (err) {
+      console.warn(
+        "[linear webhook] issueRepositorySuggestions failed, falling back",
+        {
+          agentSessionId,
+          err,
+        },
+      );
+    }
+  }
+
+  // Fall back to defaultRepoFullName
   if (!githubRepoFullName) {
-    githubRepoFullName = linearSettings?.defaultRepoFullName ?? null;
+    githubRepoFullName = defaultRepo ?? null;
   }
 
   if (!githubRepoFullName) {
-    console.error(
-      `[linear webhook] No GitHub repo for user ${linearAccount.userId}`,
-    );
-    await postLinearComment(
-      linearClient,
-      issueId,
-      `No default repository configured and no GitHub attachment found on this issue. Please set a default repository in settings: ${publicAppUrl()}/settings/integrations`,
-    );
+    console.error("[linear webhook] No GitHub repo for user, skipping", {
+      userId,
+    });
     return;
   }
 
   // Determine model
-  const defaultModel = await (async () => {
-    if (linearSettings?.defaultModel) {
-      return linearSettings.defaultModel;
-    }
-    const [userFlags, userCredentials] = await Promise.all([
-      getUserFlags({ db, userId: linearAccount.userId }),
-      getUserCredentials({ userId: linearAccount.userId }),
-    ]);
-    return getDefaultModel({ userFlags, userCredentials });
-  })();
+  const defaultModel = linearSettings?.defaultModel
+    ? linearSettings.defaultModel
+    : await getDefaultModel({ userId });
 
   // Build message
-  const formattedMessage = buildLinearMentionMessage({
-    issueIdentifier: issue.identifier,
-    issueTitle: issue.title,
-    issueDescription: issue.description,
-    issueUrl: issue.url,
-    commentBody,
-    attachments: attachments.map((a) => ({
-      title: a.title,
-      url: a.url,
-      sourceType: a.sourceType,
-    })),
+  const messageParts: string[] = [];
+  messageParts.push(
+    `You were assigned a Linear issue ${issueIdentifier}: ${issueTitle}`,
+  );
+  if (promptContext?.issueDescription) {
+    messageParts.push(
+      `**Issue description:**\n${promptContext.issueDescription}`,
+    );
+  }
+  messageParts.push(
+    "Please work on this task. Your work will be sent to the user once you're done.",
+  );
+  if (issueUrl) {
+    messageParts.push(issueUrl);
+  }
+  const formattedMessage = messageParts.join("\n\n");
+
+  console.log("[linear webhook] Creating thread for user", {
+    userId,
+    agentSessionId,
   });
 
-  console.log(
-    "[linear webhook] Creating thread for user",
-    linearAccount.userId,
-  );
-
   const { threadId } = await newThreadInternal({
-    userId: linearAccount.userId,
+    userId,
     message: {
       type: "user",
       model: defaultModel,
-      parts: [
-        {
-          type: "text",
-          text: formattedMessage,
-        },
-      ],
+      parts: [{ type: "text", text: formattedMessage }],
       timestamp: new Date().toISOString(),
     },
-    parentThreadId: undefined,
-    parentToolId: undefined,
     githubRepoFullName,
     baseBranchName: null,
     headBranchName: null,
@@ -318,18 +442,123 @@ export async function handleCommentCreated(
       type: "linear-mention",
       organizationId,
       issueId,
-      issueIdentifier: issue.identifier,
-      commentId,
-      issueUrl: issue.url,
+      issueIdentifier,
+      issueUrl,
+      agentSessionId,
+      ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
     },
   });
 
-  // Post acknowledgment comment - body must NOT contain the mention handle
-  await postLinearComment(
-    linearClient,
-    issueId,
-    `Task created: ${publicAppUrl()}/task/${threadId}`,
-  );
+  const taskUrl = `${publicAppUrl()}/task/${threadId}`;
+  console.log("[linear webhook] Created thread", { threadId, taskUrl });
 
-  console.log("[linear webhook] Successfully created thread", threadId);
+  // Update agent session with external URL
+  await updateAgentSession({
+    sessionId: agentSessionId,
+    accessToken,
+    externalUrls: [taskUrl],
+    createClient: opts?.createClient,
+  });
+}
+
+async function handleAgentSessionPrompted(
+  payload: AgentSessionPromptedPayload,
+  opts?: { createClient?: LinearClientFactory },
+): Promise<void> {
+  const { organizationId } = payload;
+  const agentSessionId = payload.data.id;
+
+  // Look up thread by agentSessionId
+  const thread = await getThreadByLinearAgentSessionId({
+    db,
+    agentSessionId,
+    organizationId,
+  });
+  if (!thread) {
+    console.warn(
+      "[linear webhook] No thread found for agentSessionId on prompted event",
+      { agentSessionId },
+    );
+    return;
+  }
+
+  // Backward compat: skip legacy fn-1 threads that have no agentSessionId in metadata
+  const meta = thread.sourceMetadata as { agentSessionId?: string } | null;
+  if (!meta?.agentSessionId) {
+    console.log(
+      "[linear webhook] Legacy thread without agentSessionId, skipping prompted event",
+      { threadId: thread.id },
+    );
+    return;
+  }
+
+  const promptBody =
+    (payload.data as AgentSessionPromptedPayload["data"]).agentActivity?.body ??
+    "";
+
+  // Get full thread to find primary threadChat
+  const threadFull = await getThread({
+    db,
+    threadId: thread.id,
+    userId: thread.userId,
+  });
+  if (!threadFull) {
+    console.warn("[linear webhook] Thread not found in getThread", {
+      threadId: thread.id,
+    });
+    return;
+  }
+
+  let threadChatId: string;
+  try {
+    threadChatId = getPrimaryThreadChat(threadFull).id;
+  } catch (err) {
+    console.warn("[linear webhook] No thread chat found for thread", {
+      threadId: thread.id,
+      err,
+    });
+    return;
+  }
+
+  const defaultModel = await getDefaultModel({ userId: thread.userId });
+
+  console.log("[linear webhook] Queuing follow-up for prompted event", {
+    agentSessionId,
+    threadId: thread.id,
+  });
+
+  await queueFollowUpInternal({
+    userId: thread.userId,
+    threadId: thread.id,
+    threadChatId,
+    messages: [
+      {
+        type: "user",
+        model: defaultModel,
+        parts: [{ type: "text", text: promptBody }],
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    appendOrReplace: "append",
+    source: "www",
+  });
+}
+
+/**
+ * Handle AppUserNotification webhooks.
+ * These are logged only — no thread creation (they lack agentSessionId).
+ */
+export async function handleAppUserNotification(
+  payload: AppUserNotificationPayload,
+): Promise<void> {
+  const { organizationId } = payload;
+  const notificationType = payload.notification?.type ?? "unknown";
+  const linearUserId = payload.notification?.user?.id;
+
+  console.log("[linear] AppUserNotification", {
+    organizationId,
+    notificationType,
+    userId: linearUserId,
+  });
+  // Log only — do NOT create threads (AppUserNotification lacks agentSessionId)
 }

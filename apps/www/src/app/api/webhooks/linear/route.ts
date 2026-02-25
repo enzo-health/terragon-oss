@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { env } from "@terragon/env/apps-www";
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
-import { handleCommentCreated } from "./handlers";
+import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
 import {
   LinearWebhookClient,
   LINEAR_WEBHOOK_SIGNATURE_HEADER,
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let payload;
+  let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(rawBody);
   } catch {
@@ -98,23 +98,41 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const deliveryId = req.headers.get("Linear-Delivery-Id") ?? undefined;
+
   console.log(
     "[linear webhook] Received event type:",
     payload.type,
     payload.action,
+    { deliveryId },
   );
 
-  // Only process Comment create events
-  if (payload.type !== "Comment" || payload.action !== "create") {
+  if (payload.type === "AgentSessionEvent") {
+    // Primary trigger: AgentSessionEvent
+    // `created` → create thread (emits thought synchronously within 10s SLA)
+    // `prompted` → route follow-up to existing thread
+    await handleAgentSessionEvent(
+      payload as unknown as Parameters<typeof handleAgentSessionEvent>[0],
+      deliveryId,
+    );
     return new Response("ok", { status: 200 });
   }
 
-  // Return 200 immediately, process asynchronously
-  waitUntil(
-    handleCommentCreated(payload).catch((error) => {
-      console.error("[linear webhook] Error processing comment:", error);
-    }),
-  );
+  if (payload.type === "AppUserNotification") {
+    // Log only — do NOT create threads (no agentSessionId available)
+    waitUntil(
+      handleAppUserNotification(
+        payload as unknown as Parameters<typeof handleAppUserNotification>[0],
+      ).catch((err) => {
+        console.error(
+          "[linear webhook] Error handling AppUserNotification",
+          err,
+        );
+      }),
+    );
+    return new Response("ok", { status: 200 });
+  }
 
+  // Other event types — return 200, skip
   return new Response("ok", { status: 200 });
 }
