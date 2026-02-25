@@ -1,5 +1,7 @@
 "use server";
 
+import { env } from "@terragon/env/apps-www";
+import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
@@ -8,9 +10,11 @@ import {
   upsertLinearAccount,
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
+  deactivateLinearInstallation,
 } from "@terragon/shared/model/linear";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { LinearSettingsInsert } from "@terragon/shared/db/types";
+import { encryptValue } from "@terragon/utils/encryption";
 
 async function assertLinearEnabled(userId: string) {
   const enabled = await getFeatureFlagForUser({
@@ -22,6 +26,42 @@ async function assertLinearEnabled(userId: string) {
     throw new UserFacingError("Linear integration is not enabled");
   }
 }
+
+// Generates the OAuth 2.0 authorization URL for installing the Linear Agent.
+// Uses actor=app so the agent is a first-class workspace participant
+// (mentionable, assignable). Mirrors getSlackAppInstallUrl pattern with
+// encrypted CSRF state.
+export const getLinearAgentInstallUrl = userOnlyAction(
+  async function getLinearAgentInstallUrl(userId: string): Promise<string> {
+    if (!env.LINEAR_CLIENT_ID) {
+      throw new Error("Linear OAuth is not configured");
+    }
+    const redirectUri = `${nonLocalhostPublicAppUrl()}/api/auth/linear/callback`;
+    const linearAuthUrl = new URL("https://linear.app/oauth/authorize");
+    linearAuthUrl.searchParams.set("client_id", env.LINEAR_CLIENT_ID);
+    linearAuthUrl.searchParams.set("redirect_uri", redirectUri);
+    linearAuthUrl.searchParams.set("response_type", "code");
+    // Comma-separated scopes (Linear requires comma, not space)
+    linearAuthUrl.searchParams.set(
+      "scope",
+      "read,write,app:assignable,app:mentionable",
+    );
+    // actor=app makes the OAuth token act as the app, not a user
+    linearAuthUrl.searchParams.set("actor", "app");
+    // Encrypted CSRF state with userId, timestamp, and type
+    const state = encryptValue(
+      JSON.stringify({
+        userId,
+        timestamp: Date.now(),
+        type: "agent_install",
+      }),
+      env.ENCRYPTION_MASTER_KEY,
+    );
+    linearAuthUrl.searchParams.set("state", state);
+    return linearAuthUrl.toString();
+  },
+  { defaultErrorMessage: "Failed to get Linear agent install URL" },
+);
 
 // v1 DESIGN DECISION: Manual account linking without OAuth/ownership proof.
 // This is an accepted limitation documented in the epic spec. The
@@ -81,6 +121,9 @@ export const connectLinearAccount = userOnlyAction(
   { defaultErrorMessage: "Failed to connect Linear account" },
 );
 
+// Per-user disconnect: removes linearAccount + linearSettings for the current
+// user only. Does NOT touch linearInstallation (workspace-level OAuth tokens).
+// To remove the workspace agent installation, use uninstallLinearWorkspace.
 export const disconnectLinearAccount = userOnlyAction(
   async function disconnectLinearAccount(
     userId: string,
@@ -90,6 +133,20 @@ export const disconnectLinearAccount = userOnlyAction(
     await disconnectLinearAccountAndSettings({ db, userId, organizationId });
   },
   { defaultErrorMessage: "Failed to disconnect Linear account" },
+);
+
+// Workspace uninstall: deactivates the linearInstallation record for the
+// given organization. This removes the agent from the workspace.
+// TODO: restrict to admin role in a future iteration.
+// Requires UI confirmation before calling (see task 5).
+export const uninstallLinearWorkspace = userOnlyAction(
+  async function uninstallLinearWorkspace(
+    _userId: string,
+    { organizationId }: { organizationId: string },
+  ): Promise<void> {
+    await deactivateLinearInstallation({ db, organizationId });
+  },
+  { defaultErrorMessage: "Failed to uninstall Linear workspace" },
 );
 
 export const updateLinearSettings = userOnlyAction(

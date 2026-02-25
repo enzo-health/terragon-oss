@@ -26,16 +26,48 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
   const state = searchParams.get("state");
   const error = searchParams.get("error");
-  // Validate required parameters
-  if (!code || !state) {
+
+  // Handle OAuth errors FIRST — access_denied may omit code entirely,
+  // causing a crash if we check code/state before the error param
+  if (error) {
+    console.error("Slack OAuth error:", error);
+    if (error === "access_denied") {
+      redirect(
+        "/settings/integrations?integration=slack&status=error&code=auth_cancelled",
+      );
+      return;
+    }
     redirect(
-      "/settings/integrations?integration=slack&status=error&code=invalid_params",
+      "/settings/integrations?integration=slack&status=error&code=auth_error",
     );
     return;
   }
 
-  const decryptedState = decryptValue(state!, env.ENCRYPTION_MASTER_KEY);
-  const { userId: stateUserId, timestamp, type } = JSON.parse(decryptedState);
+  // Validate state exists, then wrap decrypt + JSON.parse in try/catch
+  // to redirect gracefully on tampered state instead of throwing a 500
+  if (!state) {
+    redirect(
+      "/settings/integrations?integration=slack&status=error&code=invalid_state",
+    );
+    return;
+  }
+
+  let stateUserId: string;
+  let timestamp: number;
+  let type: string;
+  try {
+    const decryptedState = decryptValue(state, env.ENCRYPTION_MASTER_KEY);
+    const parsed = JSON.parse(decryptedState);
+    stateUserId = parsed.userId;
+    timestamp = parsed.timestamp;
+    type = parsed.type;
+  } catch {
+    redirect(
+      "/settings/integrations?integration=slack&status=error&code=invalid_state",
+    );
+    return;
+  }
+
   if (stateUserId !== userId) {
     redirect(
       "/settings/integrations?integration=slack&status=error&code=invalid_state",
@@ -49,17 +81,11 @@ export async function GET(request: NextRequest) {
     );
     return;
   }
-  // Handle OAuth errors
-  if (error) {
-    console.error("Slack OAuth error:", error);
-    if (error === "access_denied") {
-      redirect(
-        "/settings/integrations?integration=slack&status=error&code=auth_cancelled",
-      );
-      return;
-    }
+
+  // Validate required parameters
+  if (!code) {
     redirect(
-      "/settings/integrations?integration=slack&status=error&code=auth_error",
+      "/settings/integrations?integration=slack&status=error&code=invalid_params",
     );
     return;
   }
