@@ -47,7 +47,11 @@ export const getUserRepos = userOnlyAction(
 
         if (allRepos.length > 0) {
           const filteredRepos = allRepos
-            .filter((repo) => repo && repo.permissions?.push === true)
+            .filter(
+              (repo) =>
+                repo &&
+                (repo.permissions?.push === true || repo.permissions == null),
+            )
             .sort((a, b) => {
               // Sort by most recently pushed (descending order)
               const aPushedAt = a.pushed_at
