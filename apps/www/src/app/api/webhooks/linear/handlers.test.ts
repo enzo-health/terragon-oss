@@ -458,6 +458,42 @@ describe("handlers", () => {
       spyGetThread.mockRestore();
       spyGetPrimary.mockRestore();
     });
+
+    it("skips follow-up when prompted body is empty or whitespace", async () => {
+      const threadsModule = await import("@terragon/shared/model/threads");
+
+      const fakeThread = {
+        id: "prompted-thread-id",
+        userId: user.id,
+        sourceMetadata: {
+          type: "linear-mention",
+          agentSessionId: "session-empty-body",
+          organizationId: "org-123",
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+      >;
+
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValue(fakeThread);
+
+      for (const body of ["", "   ", "\t\n"]) {
+        vi.mocked(queueFollowUpInternal).mockClear();
+        const payload = makePromptedPayload({
+          data: {
+            id: "session-empty-body",
+            agentActivity: { body },
+          },
+        });
+        await handleAgentSessionEvent(payload, undefined, {
+          createClient: mockClientFactory,
+        });
+        expect(queueFollowUpInternal).not.toHaveBeenCalled();
+      }
+
+      spyBySessionId.mockRestore();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -511,7 +547,8 @@ describe("handlers", () => {
         "@/server-lib/linear-oauth"
       );
 
-      // Make token refresh hang for longer than our 2.5s budget
+      // Make token refresh hang for longer than our 2.5s budget.
+      // We use a real delay longer than the 2.5s budget to trigger the timeout path.
       vi.mocked(refreshLinearTokenIfNeeded).mockImplementationOnce(
         () =>
           new Promise((resolve) =>
@@ -573,7 +610,7 @@ describe("handlers", () => {
         "@/server-lib/linear-oauth"
       );
 
-      // Timeout path: token refresh hangs
+      // Timeout path: token refresh hangs indefinitely
       vi.mocked(refreshLinearTokenIfNeeded).mockImplementationOnce(
         () => new Promise(() => {}), // never resolves
       );
@@ -594,6 +631,6 @@ describe("handlers", () => {
       // Handler must resolve well within 10s even with hanging emission
       expect(elapsed).toBeLessThan(6000);
       expect(newThreadInternal).not.toHaveBeenCalled();
-    });
+    }, 10000);
   });
 });

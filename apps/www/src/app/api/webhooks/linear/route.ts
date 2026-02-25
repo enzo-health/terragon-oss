@@ -53,19 +53,54 @@ function verifyLinearSignature(req: NextRequest, rawBody: string): boolean {
       console.warn(
         "[linear webhook] SDK verification not available, using manual HMAC fallback",
       );
-      return verifyLinearSignatureManual(rawBody, signature);
+      return verifyLinearSignatureManual(
+        rawBody,
+        signature,
+        env.LINEAR_WEBHOOK_SECRET,
+        timestamp,
+      );
     }
     // Verification failed (bad signature, timestamp, etc) - reject
     return false;
   }
 }
 
+/**
+ * Manual HMAC fallback for environments where the LinearWebhookClient is unavailable.
+ * Mirrors Linear's signature scheme: HMAC-SHA256 over rawBody, with timestamp replay
+ * protection (rejects if timestamp is absent or outside ±5 minutes).
+ */
 function verifyLinearSignatureManual(
   rawBody: string,
   signature: string,
+  secret: string,
+  timestamp: string | null,
 ): boolean {
+  // Enforce timestamp presence and replay window
+  if (!timestamp) {
+    console.warn(
+      "[linear webhook] Manual verification: missing timestamp header, rejecting",
+    );
+    return false;
+  }
+  const tsMs = Number(timestamp) * 1000;
+  if (isNaN(tsMs)) {
+    console.warn(
+      "[linear webhook] Manual verification: non-numeric timestamp, rejecting",
+    );
+    return false;
+  }
+  const skewMs = Math.abs(Date.now() - tsMs);
+  if (skewMs > 5 * 60 * 1000) {
+    console.warn(
+      "[linear webhook] Manual verification: timestamp outside ±5 min window, rejecting",
+      { skewMs },
+    );
+    return false;
+  }
+
   const hmac = crypto
-    .createHmac("sha256", env.LINEAR_WEBHOOK_SECRET)
+    .createHmac("sha256", secret)
     .update(rawBody, "utf-8")
     .digest("hex");
   const a = Buffer.from(hmac);

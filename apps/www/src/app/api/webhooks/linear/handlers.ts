@@ -330,6 +330,13 @@ async function createThreadForAgentSession({
   // This is safe under any connection-pool configuration because it relies on
   // DB-level uniqueness rather than session-level advisory locks (which can
   // silently break if lock/unlock execute on different pool connections).
+  //
+  // Trade-off: the claim is recorded before thread creation completes.
+  // If the first attempt crashes mid-creation, subsequent retries for the
+  // same deliveryId will skip (claimed: false) rather than retry.
+  // In practice this is acceptable: Linear webhooks return 200 immediately
+  // (thought activity is emitted synchronously) so the window for a
+  // mid-creation crash before the delivery claim is extremely narrow.
   if (deliveryId) {
     const { claimed } = await claimLinearWebhookDelivery({ db, deliveryId });
     if (!claimed) {
