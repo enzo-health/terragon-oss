@@ -20,7 +20,6 @@ import {
   getGitHubAccountIdForUser,
   getUserSettings,
 } from "@terragon/shared/model/user";
-import { env } from "@terragon/env/apps-www";
 import { UserFacingError } from "./server-actions";
 
 export function parseRepoFullName(repoFullName: string): [string, string] {
