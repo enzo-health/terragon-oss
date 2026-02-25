@@ -222,7 +222,13 @@ export async function emitLinearActivitiesForDaemonEvent(
       return;
     }
 
-    // Passed all cheap checks — refresh token and emit
+    // Reserve the throttle slot BEFORE the first await so concurrent invocations
+    // for the same session can't both pass the throttle check. Worst case: if the
+    // emission fails below, the slot is "wasted" for up to 30s — acceptable tradeoff
+    // vs. allowing duplicate emissions.
+    lastActionEmitMap.set(agentSessionId, now);
+
+    // Refresh token and emit
     let accessToken: string;
     try {
       const tokenResult = await refreshLinearTokenIfNeeded(organizationId, db);
@@ -241,10 +247,6 @@ export async function emitLinearActivitiesForDaemonEvent(
       );
       return;
     }
-
-    // Set throttle timestamp BEFORE awaiting the network call to prevent concurrent
-    // invocations for the same session from both passing the throttle check.
-    lastActionEmitMap.set(agentSessionId, now);
 
     await emitAgentActivity({
       agentSessionId,

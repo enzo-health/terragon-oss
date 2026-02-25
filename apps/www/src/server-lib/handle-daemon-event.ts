@@ -479,8 +479,9 @@ export async function handleDaemonEvent({
 
   // Emit Linear agent activities for linear-sourced threads (fn-2+).
   // NOTE: Placed after all auto-recovery blocks (auto-compact, OAuth retry) so that
-  // isDone/isError reflect the post-recovery state. Terminal activities are only
-  // emitted when the session is truly finishing, not when a "Continue" was queued.
+  // isDone/isError reflect the post-recovery state.
+  // Terminal activities are suppressed when the recovery path queued a "Continue"
+  // (appendQueuedMessages) — in that case the session is continuing, not finishing.
   if (thread.sourceType === "linear-mention" && thread.sourceMetadata != null) {
     const linearMeta = thread.sourceMetadata as Extract<
       ThreadSourceMetadata,
@@ -493,10 +494,17 @@ export async function handleDaemonEvent({
         { threadId },
       );
     } else {
+      // Suppress terminal emissions when recovery queued a "Continue" (auto-compact,
+      // OAuth retry). The session is continuing, not ending.
+      const hasQueuedFollowUp =
+        (threadChatUpdates.appendQueuedMessages?.length ?? 0) > 0;
+      const effectivelyDone = isDone && !isError && !hasQueuedFollowUp;
+      const effectivelyError = isError && !hasQueuedFollowUp;
+
       waitUntil(
         emitLinearActivitiesForDaemonEvent(linearMeta, messages, {
-          isDone: isDone && !isError,
-          isError,
+          isDone: effectivelyDone,
+          isError: effectivelyError,
           customErrorMessage,
           costUsd,
         }),

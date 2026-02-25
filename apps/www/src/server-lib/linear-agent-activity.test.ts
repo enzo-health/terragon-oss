@@ -321,4 +321,47 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
 
     expect(mockCreateAgentActivity).not.toHaveBeenCalled();
   });
+
+  it("concurrent invocations for same session only emit one action (throttle slot reserved before first await)", async () => {
+    // Simulate two concurrent invocations by using a deferred token refresh:
+    // both invocations pass the throttle check nearly simultaneously, but only
+    // the first should reserve the slot before the async gap.
+    const meta = makeMeta({ agentSessionId: "session-concurrent" });
+    const messages = [makeAssistantMessage("concurrent work")];
+
+    let fakeNow = 9_000_000;
+
+    // Track how many token refreshes fire (to confirm both invocations reached the async gap)
+    const { refreshLinearTokenIfNeeded } = await import(
+      "@/server-lib/linear-oauth"
+    );
+    let refreshCount = 0;
+    (refreshLinearTokenIfNeeded as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        refreshCount++;
+        // Simulate async gap
+        await Promise.resolve();
+        return { status: "ok", accessToken: "test-access-token" };
+      },
+    );
+
+    // Fire both invocations "simultaneously" (before either can advance the event loop)
+    const p1 = emitLinearActivitiesForDaemonEvent(meta, messages, {
+      now: () => fakeNow,
+      createClient: testClientFactory,
+    });
+    const p2 = emitLinearActivitiesForDaemonEvent(meta, messages, {
+      now: () => fakeNow,
+      createClient: testClientFactory,
+    });
+
+    await Promise.all([p1, p2]);
+
+    // Only one emission should have fired — second invocation was blocked by the
+    // throttle slot reserved synchronously before the first await
+    expect(mockCreateAgentActivity).toHaveBeenCalledOnce();
+    // Both could reach refresh (throttle slot reserved but second sees reserved slot)
+    // OR second is blocked before refresh — both are acceptable outcomes
+    expect(refreshCount).toBeGreaterThanOrEqual(1);
+  });
 });
