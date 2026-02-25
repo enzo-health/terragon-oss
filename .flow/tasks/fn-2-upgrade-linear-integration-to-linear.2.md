@@ -59,10 +59,10 @@ Implement the OAuth 2.0 install flow for the Linear Agent: a server action that 
 
 ## Done summary
 
-TBD
+Implemented Linear Agent OAuth install flow: added `getLinearAgentInstallUrl` server action with actor=app, encrypted CSRF state, and feature-flag gating; created `/api/auth/linear/callback` route with error-first handling, try/catch state validation, token exchange, org fetch, and encrypted token storage; added `uninstallLinearWorkspace` server action; fixed Slack callback ordering bug (error-first, try/catch state decrypt, type validation).
 
 ## Evidence
 
-- Commits:
-- Tests:
+- Commits: f53f883, 84b4ba5
+- Tests: pnpm tsc-check
 - PRs:
