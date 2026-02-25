@@ -567,5 +567,33 @@ describe("handlers", () => {
         }),
       );
     });
+
+    it("handler resolves promptly even when error activity emission hangs (bounded latency)", async () => {
+      const { refreshLinearTokenIfNeeded } = await import(
+        "@/server-lib/linear-oauth"
+      );
+
+      // Timeout path: token refresh hangs
+      vi.mocked(refreshLinearTokenIfNeeded).mockImplementationOnce(
+        () => new Promise(() => {}), // never resolves
+      );
+
+      // Error activity emission also hangs — handler must still return promptly
+      mockCreateAgentActivity.mockImplementationOnce(
+        () => new Promise(() => {}), // never resolves
+      );
+
+      const payload = makeCreatedPayload();
+
+      const start = Date.now();
+      await handleAgentSessionEvent(payload, "delivery-bounded", {
+        createClient: mockClientFactory,
+      });
+      const elapsed = Date.now() - start;
+
+      // Handler must resolve well within 10s even with hanging emission
+      expect(elapsed).toBeLessThan(6000);
+      expect(newThreadInternal).not.toHaveBeenCalled();
+    });
   });
 });

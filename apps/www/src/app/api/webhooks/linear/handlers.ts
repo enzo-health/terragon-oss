@@ -97,6 +97,69 @@ function timeout(ms: number): Promise<never> {
   );
 }
 
+/**
+ * Emit an error agent activity using the installation's stale access token
+ * as a best-effort fallback. Guards against:
+ *   - decryptValue throwing (invalid ciphertext / wrong key)
+ *   - emitAgentActivity hanging indefinitely (bounded by `budgetMs`)
+ *
+ * Never throws — always resolves.
+ */
+async function emitErrorActivityBestEffort({
+  agentSessionId,
+  accessTokenEncrypted,
+  body,
+  budgetMs = 2000,
+  createClient,
+}: {
+  agentSessionId: string;
+  accessTokenEncrypted: string;
+  body: string;
+  budgetMs?: number;
+  createClient?: LinearClientFactory;
+}): Promise<void> {
+  let fallbackToken: string;
+  try {
+    fallbackToken = decryptValue(
+      accessTokenEncrypted,
+      env.ENCRYPTION_MASTER_KEY,
+    );
+  } catch (decryptErr) {
+    console.error(
+      "[linear webhook] Could not decrypt fallback token for error activity",
+      { agentSessionId, decryptErr },
+    );
+    return;
+  }
+
+  // Bounded emission — do not block the webhook response beyond budgetMs.
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        console.error(
+          "[linear webhook] Error activity emission timed out (best-effort)",
+          { agentSessionId },
+        );
+        resolve();
+      }
+    }, budgetMs);
+    emitAgentActivity({
+      agentSessionId,
+      accessToken: fallbackToken,
+      content: { type: "error", body },
+      createClient,
+    }).then(() => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -168,45 +231,29 @@ async function handleAgentSessionCreated(
       timeout(2500),
     ]);
     if (result.status !== "ok") {
-      // Reinstall required — emit error activity using the installation's
-      // existing (possibly stale) token as best-effort, then return.
+      // Reinstall required — best-effort error activity, bounded + guarded.
       console.error("[linear webhook] Token refresh: reinstall required", {
         organizationId,
       });
-      const fallbackToken = decryptValue(
-        installation.accessTokenEncrypted,
-        env.ENCRYPTION_MASTER_KEY,
-      );
-      await emitAgentActivity({
+      await emitErrorActivityBestEffort({
         agentSessionId,
-        accessToken: fallbackToken,
-        content: {
-          type: "error",
-          body: "Authentication failure — please reinstall the Linear Agent",
-        },
+        accessTokenEncrypted: installation.accessTokenEncrypted,
+        body: "Authentication failure — please reinstall the Linear Agent",
         createClient: opts?.createClient,
       });
       return;
     }
     accessToken = result.accessToken;
   } catch (err) {
-    // Timeout or other error — emit error activity using stale installation
-    // token as best-effort, then return 200.
+    // Timeout or other error — best-effort error activity, bounded + guarded.
     console.error(
       "[linear webhook] Token refresh timed out or failed, returning 200",
       { agentSessionId, err },
     );
-    const fallbackToken = decryptValue(
-      installation.accessTokenEncrypted,
-      env.ENCRYPTION_MASTER_KEY,
-    );
-    await emitAgentActivity({
+    await emitErrorActivityBestEffort({
       agentSessionId,
-      accessToken: fallbackToken,
-      content: {
-        type: "error",
-        body: "Authentication failure — please reinstall the Linear Agent",
-      },
+      accessTokenEncrypted: installation.accessTokenEncrypted,
+      body: "Authentication failure — please reinstall the Linear Agent",
       createClient: opts?.createClient,
     });
     return;
