@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { codexCommand, parseCodexLine } from "./codex";
+import { codexCommand, createCodexParserState, parseCodexLine } from "./codex";
 import type { IDaemonRuntime } from "./runtime";
 
 describe("parseCodexLine", () => {
@@ -552,6 +552,108 @@ describe("parseCodexLine", () => {
       duration_ms: 0,
     });
   });
+
+  test("should parse collab send_input events into Task tool events", () => {
+    const state = createCodexParserState();
+    const startedLine =
+      '{"type":"item.started","item":{"id":"item_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{},"status":"in_progress"}}';
+    const completedLine =
+      '{"type":"item.completed","item":{"id":"item_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{"thread_child":{"status":"completed","message":"done"}},"status":"completed"}}';
+
+    const started = parseCodexLine({
+      line: startedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    const completed = parseCodexLine({
+      line: completedLine,
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(started).toHaveLength(1);
+    expect(started[0]?.type).toBe("assistant");
+    if (started[0]?.type === "assistant") {
+      const content = started[0].message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_use",
+          name: "Task",
+          id: "item_collab",
+          input: {
+            prompt: "Investigate deployment failure",
+            subagent_type: "codex-subagent",
+          },
+        });
+      }
+    }
+
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.type).toBe("user");
+    if (completed[0]?.type === "user") {
+      const content = completed[0].message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_collab",
+          is_error: false,
+        });
+      }
+    }
+  });
+
+  test("should nest child tool events under active collab Task", () => {
+    const state = createCodexParserState();
+    parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Debug flaky test","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    const commandStarted = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_cmd","type":"command_execution","command":"bash -lc ls","aggregated_output":"","status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const commandCompleted = parseCodexLine({
+      line: '{"type":"item.completed","item":{"id":"item_cmd","type":"command_execution","command":"bash -lc ls","aggregated_output":"apps\\npackages\\n","exit_code":0,"status":"completed"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(commandStarted).toHaveLength(1);
+    expect(
+      commandStarted[0] && "parent_tool_use_id" in commandStarted[0]
+        ? commandStarted[0].parent_tool_use_id
+        : null,
+    ).toBe("item_collab");
+    expect(commandCompleted).toHaveLength(1);
+    expect(
+      commandCompleted[0] && "parent_tool_use_id" in commandCompleted[0]
+        ? commandCompleted[0].parent_tool_use_id
+        : null,
+    ).toBe("item_collab");
+
+    parseCodexLine({
+      line: '{"type":"item.completed","item":{"id":"item_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Debug flaky test","agents_states":{"thread_child":{"status":"completed"}},"status":"completed"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    const nextCommand = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_cmd_2","type":"command_execution","command":"bash -lc pwd","aggregated_output":"","status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(nextCommand).toHaveLength(1);
+    expect(
+      nextCommand[0] && "parent_tool_use_id" in nextCommand[0]
+        ? nextCommand[0].parent_tool_use_id
+        : null,
+    ).toBeNull();
+  });
 });
 
 describe("codexCommand", () => {
@@ -578,7 +680,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5"`,
     );
   });
 
@@ -592,7 +694,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5 --config model_reasoning_effort=low"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5 --config model_reasoning_effort=low"`,
     );
   });
 
@@ -606,7 +708,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5 --config model_reasoning_effort=high"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5 --config model_reasoning_effort=high"`,
     );
   });
 
@@ -620,7 +722,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5-codex --config model_reasoning_effort=low"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5-codex --config model_reasoning_effort=low"`,
     );
   });
 
@@ -634,7 +736,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5-codex --config model_reasoning_effort=medium"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5-codex --config model_reasoning_effort=medium"`,
     );
   });
 
@@ -648,7 +750,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5-codex --config model_reasoning_effort=high"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5-codex --config model_reasoning_effort=high"`,
     );
   });
 
@@ -662,7 +764,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5.1-codex-max --config model_reasoning_effort=low"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5.1-codex-max --config model_reasoning_effort=low"`,
     );
   });
 
@@ -676,7 +778,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5.1-codex-max --config model_reasoning_effort=medium"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5.1-codex-max --config model_reasoning_effort=medium"`,
     );
   });
 
@@ -690,7 +792,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5.1-codex-max --config model_reasoning_effort=xhigh"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5.1-codex-max --config model_reasoning_effort=xhigh"`,
     );
   });
 
@@ -705,8 +807,28 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5 -c model_provider="terry""`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5 -c model_provider="terry""`,
     );
+  });
+
+  test("should disable multi-agent flags when CODEX_DISABLE_MULTI_AGENT is set", () => {
+    const previousValue = process.env.CODEX_DISABLE_MULTI_AGENT;
+    process.env.CODEX_DISABLE_MULTI_AGENT = "true";
+    const command = codexCommand({
+      runtime: mockRuntime,
+      prompt: "test prompt",
+      model: "gpt-5",
+      sessionId: null,
+    });
+    if (previousValue === undefined) {
+      delete process.env.CODEX_DISABLE_MULTI_AGENT;
+    } else {
+      process.env.CODEX_DISABLE_MULTI_AGENT = previousValue;
+    }
+
+    expect(command).not.toContain("features.multi_agent=true");
+    expect(command).not.toContain("features.child_agents_md=true");
+    expect(command).not.toContain("agents.max_threads=6");
   });
 
   test("should write prompt to temporary file", () => {
@@ -732,7 +854,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json --model gpt-5"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5"`,
     );
   });
 });

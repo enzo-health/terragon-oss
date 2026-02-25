@@ -32,7 +32,7 @@ import {
   parseOpencodeLine,
 } from "./opencode";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
-import { codexCommand, parseCodexLine } from "./codex";
+import { codexCommand, createCodexParserState, parseCodexLine } from "./codex";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
 
 function formatError(error: unknown): object {
@@ -771,6 +771,7 @@ export class TerragonDaemon {
   }
 
   private async runCodexCommand(input: DaemonMessageClaude): Promise<void> {
+    const parserState = createCodexParserState();
     return this.spawnAgentProcess({
       agentName: "Codex",
       input,
@@ -787,6 +788,7 @@ export class TerragonDaemon {
         const parsedMessages = parseCodexLine({
           line,
           runtime: this.runtime,
+          state: parserState,
         });
         const activeProcessState = this.activeProcesses.get(input.threadChatId);
         for (const parsedMessage of parsedMessages) {
@@ -907,7 +909,6 @@ export class TerragonDaemon {
     entries: MessageBufferEntry[],
   ): MessageBufferEntry[] {
     if (entries.find((e) => e.agent === "gemini" || e.agent === "codex")) {
-      // Check for error results and kill process if needed
       const errorEntry = entries.find(
         (e) => e.message.type === "result" && e.message.is_error,
       );
@@ -917,22 +918,22 @@ export class TerragonDaemon {
         });
         this.killActiveProcess(errorEntry.threadChatId);
       }
-      return entries;
     }
-    // Enrich Claude messages with agent metadata
-    if (entries.find((e) => e.agent === "claudeCode")) {
+
+    if (entries.find((e) => e.agent === "claudeCode" || e.agent === "codex")) {
       this.runtime.logger.info(
-        "Processing Claude messages for agent metadata enrichment",
+        "Processing Task messages for agent metadata enrichment",
         {
           messageCount: entries.length,
           claudeMessageCount: entries.filter((e) => e.agent === "claudeCode")
             .length,
+          codexMessageCount: entries.filter((e) => e.agent === "codex").length,
         },
       );
 
       return entries.map((entry) => {
         if (
-          entry.agent === "claudeCode" &&
+          (entry.agent === "claudeCode" || entry.agent === "codex") &&
           entry.message.type === "assistant"
         ) {
           const message = entry.message.message;
