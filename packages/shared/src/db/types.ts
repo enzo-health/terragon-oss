@@ -142,13 +142,13 @@ export type ThreadSourceMetadata =
     };
 
 /**
- * Write-time type for new linear-mention threads (fn-2+).
+ * Write-time metadata type for new linear-mention threads (fn-2+).
  * Requires agentSessionId — use this when creating threads from AgentSessionEvent webhooks.
  * The read-time ThreadSourceMetadata keeps agentSessionId optional for legacy fn-1 compatibility.
  */
-export type LinearMentionSourceMetadataInsert = Extract<
-  ThreadSourceMetadata,
-  { type: "linear-mention" }
+export type LinearMentionSourceMetadataInsert = Omit<
+  Extract<ThreadSourceMetadata, { type: "linear-mention" }>,
+  "agentSessionId"
 > & { agentSessionId: string };
 
 export type ThreadStatusDeprecated =
@@ -343,6 +343,17 @@ export type ThreadInsert = Omit<
   | "contextLength"
   | "permissionMode"
 >;
+
+/**
+ * Typed insert for new Linear-agent threads (fn-2+).
+ * Constrains sourceType to "linear-mention" and requires agentSessionId in
+ * sourceMetadata, preventing accidental omission at compile time.
+ * Use this in webhook handlers instead of raw ThreadInsert.
+ */
+export type LinearMentionThreadInsert = Omit<ThreadInsert, "sourceMetadata"> & {
+  sourceType: "linear-mention";
+  sourceMetadata: LinearMentionSourceMetadataInsert;
+};
 
 export type GitHubPR = typeof schema.githubPR.$inferSelect;
 export type GitHubPRInsert = typeof schema.githubPR.$inferInsert;
