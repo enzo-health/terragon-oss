@@ -7,7 +7,8 @@ import { SlackAuthToasts } from "../slack-auth-toasts";
 import { LinearAccountSettings } from "../linear";
 import {
   SlackAccountWithMetadata,
-  LinearAccountWithSettings,
+  LinearAccountWithSettingsAndInstallation,
+  LinearInstallation,
 } from "@terragon/shared/db/types";
 import { SettingsSection } from "../settings-row";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
@@ -15,12 +16,14 @@ import Link from "next/link";
 
 interface IntegrationsSettingsProps {
   slackAccounts?: SlackAccountWithMetadata[];
-  linearAccounts?: LinearAccountWithSettings[];
+  linearAccounts?: LinearAccountWithSettingsAndInstallation[];
+  linearInstallation?: LinearInstallation | null;
 }
 
 export function IntegrationsSettings({
   slackAccounts = [],
   linearAccounts = [],
+  linearInstallation = null,
 }: IntegrationsSettingsProps) {
   const user = useAtomValue(userAtom);
   const isLinearEnabled = useFeatureFlag("linearIntegration");
@@ -71,7 +74,10 @@ export function IntegrationsSettings({
             </>
           }
         >
-          <LinearAccountSettings accounts={linearAccounts} />
+          <LinearAccountSettings
+            accounts={linearAccounts}
+            installation={linearInstallation}
+          />
         </SettingsSection>
       )}
     </div>

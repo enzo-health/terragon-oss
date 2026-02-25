@@ -103,10 +103,10 @@ Rewrite the Linear webhook route and handlers to process `AgentSessionEvent` as 
 
 ## Done summary
 
-TBD
+Rewrote the Linear webhook handler for AgentSessionEvent support with robust idempotency, token refresh with proper timer cleanup, pre-flight payload eligibility checks before thought emission, and a hardened manual HMAC fallback with timestamp replay protection. The `linear_webhook_deliveries` table uses TTL-based steal logic to prevent concurrent duplicate thread creation while still allowing crash recovery on Linear retries.
 
 ## Evidence
 
-- Commits:
-- Tests:
+- Commits: 1d0c1a247a84a1fbdfc535e477b9478de0d39093
+- Tests: pnpm -C apps/www test --run (810 tests, 46 files passed)
 - PRs:

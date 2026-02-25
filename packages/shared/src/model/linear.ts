@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, isNull, lt } from "drizzle-orm";
 import * as schema from "../db/schema";
 import type { DB } from "../db";
 import type {
@@ -232,6 +232,20 @@ export async function deleteLinearSettings({
 }
 
 // ── LinearInstallation CRUD ──────────────────────────────────────────────────
+
+// Returns the single workspace-level installation (Terragon deploys one Linear
+// Agent per installation). Fetches the most recently updated record to handle
+// edge-cases where multiple records exist during migration.
+export async function getLinearInstallation({
+  db,
+}: {
+  db: DB;
+}): Promise<LinearInstallation | null> {
+  const result = await db.query.linearInstallation.findFirst({
+    orderBy: desc(schema.linearInstallation.updatedAt),
+  });
+  return result ?? null;
+}
 
 export async function getLinearInstallationForOrg({
   db,

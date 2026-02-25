@@ -87,6 +87,11 @@ export type LinearAccountWithSettings = LinearAccount & {
   settings: LinearSettings | null;
 };
 
+export type LinearAccountWithSettingsAndInstallation =
+  LinearAccountWithSettings & {
+    installation: LinearInstallation | null;
+  };
+
 export type ThreadSource =
   | "www"
   | "www-redo"

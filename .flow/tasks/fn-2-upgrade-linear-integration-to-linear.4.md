@@ -77,10 +77,10 @@ Hook into the daemon event processing pipeline to emit Linear agent activities d
 
 ## Done summary
 
-TBD
+Added `emitLinearActivitiesForDaemonEvent()` orchestrator to `linear-agent-activity.ts` with time-based throttling (max 1 action/30s per agentSessionId), injectable clock seam for testing, and correct Linear API activity shapes. Hooked into `handleDaemonEvent()` after all auto-recovery blocks with guards for sourceType/agentSessionId and suppression of terminal emissions when recovery queued a Continue. Added fallback `externalUrls` update in `handleThreadFinish()` and 13 tests covering throttle behavior, concurrency safety, terminal bypass, legacy skip, and token failure.
 
 ## Evidence
 
-- Commits:
-- Tests:
+- Commits: 0e8e49e9eab5491168b20acd8a4d835e88d05d3c
+- Tests: pnpm -C apps/www test src/server-lib/linear-agent-activity.test.ts, pnpm -C apps/www test, pnpm tsc-check
 - PRs:
