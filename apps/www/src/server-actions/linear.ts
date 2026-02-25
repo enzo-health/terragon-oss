@@ -33,7 +33,8 @@ async function assertLinearEnabled(userId: string) {
 // encrypted CSRF state.
 export const getLinearAgentInstallUrl = userOnlyAction(
   async function getLinearAgentInstallUrl(userId: string): Promise<string> {
-    if (!env.LINEAR_CLIENT_ID) {
+    await assertLinearEnabled(userId);
+    if (!env.LINEAR_CLIENT_ID || !env.LINEAR_CLIENT_SECRET) {
       throw new Error("Linear OAuth is not configured");
     }
     const redirectUri = `${nonLocalhostPublicAppUrl()}/api/auth/linear/callback`;
@@ -141,9 +142,10 @@ export const disconnectLinearAccount = userOnlyAction(
 // Requires UI confirmation before calling (see task 5).
 export const uninstallLinearWorkspace = userOnlyAction(
   async function uninstallLinearWorkspace(
-    _userId: string,
+    userId: string,
     { organizationId }: { organizationId: string },
   ): Promise<void> {
+    await assertLinearEnabled(userId);
     await deactivateLinearInstallation({ db, organizationId });
   },
   { defaultErrorMessage: "Failed to uninstall Linear workspace" },

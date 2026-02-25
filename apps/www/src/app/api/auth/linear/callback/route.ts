@@ -53,6 +53,18 @@ export async function GET(request: NextRequest) {
     const parsed = JSON.parse(decryptedState);
     stateUserId = parsed.userId;
     timestamp = parsed.timestamp;
+    // Validate shape: prevent cross-flow state reuse and bypass via missing
+    // or non-finite timestamp (NaN < cutoff is false — expiry skipped)
+    if (
+      typeof stateUserId !== "string" ||
+      !Number.isFinite(timestamp) ||
+      parsed.type !== "agent_install"
+    ) {
+      redirect(
+        "/settings/integrations?integration=linear&status=error&code=invalid_state",
+      );
+      return;
+    }
   } catch {
     redirect(
       "/settings/integrations?integration=linear&status=error&code=invalid_state",
@@ -99,32 +111,35 @@ export async function GET(request: NextRequest) {
     refresh_token?: string;
   };
 
+  // Separate fetch from redirect to avoid calling redirect() inside try/catch
+  // (Next.js redirect() throws NEXT_REDIRECT which would be swallowed by catch)
+  let tokenResponse: Response;
   try {
-    const tokenResponse = await fetch("https://api.linear.app/oauth/token", {
+    tokenResponse = await fetch("https://api.linear.app/oauth/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: params.toString(),
     });
-
-    if (!tokenResponse.ok) {
-      const errorBody = await tokenResponse.text();
-      console.error("Linear token exchange failed:", errorBody);
-      redirect(
-        "/settings/integrations?integration=linear&status=error&code=auth_error",
-      );
-      return;
-    }
-
-    tokenData = await tokenResponse.json();
   } catch (err) {
-    console.error("Linear token exchange error:", err);
+    console.error("Linear token exchange network error:", err);
     redirect(
       "/settings/integrations?integration=linear&status=error&code=auth_error",
     );
     return;
   }
+
+  if (!tokenResponse.ok) {
+    const errorBody = await tokenResponse.text();
+    console.error("Linear token exchange failed:", errorBody);
+    redirect(
+      "/settings/integrations?integration=linear&status=error&code=auth_error",
+    );
+    return;
+  }
+
+  tokenData = await tokenResponse.json();
 
   // 7. tokenExpiresAt computed from expires_in (seconds)
   const tokenExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000);

@@ -90,6 +90,15 @@ export async function GET(request: NextRequest) {
     return;
   }
 
+  // Validate type is one of the known values — prevents fall-through with
+  // unknown/migrated state where neither branch below returns a response
+  if (type !== "app_install" && type !== "openid") {
+    redirect(
+      "/settings/integrations?integration=slack&status=error&code=invalid_state",
+    );
+    return;
+  }
+
   // Exchange authorization code for access token
   const tokenUrl =
     type === "app_install"
