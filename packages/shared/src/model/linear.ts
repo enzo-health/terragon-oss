@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, isNull } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull, lt } from "drizzle-orm";
 import * as schema from "../db/schema";
 import type { DB } from "../db";
 import type {
@@ -355,18 +355,32 @@ export async function updateLinearInstallationTokens({
 }
 
 /**
+ * Claim window: how long a non-completed row must be "stale" before another
+ * handler is allowed to steal it (i.e. assume the original crashed).
+ * Linear's minimum retry interval is ~5 minutes, so any in-progress row
+ * younger than this is almost certainly a concurrent delivery — not a crash.
+ */
+const CLAIM_STEAL_AFTER_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
  * Attempt to claim a Linear webhook delivery ID for processing.
  *
  * Inserts a row with `completedAt = NULL` (in-progress marker).
- * On conflict (duplicate delivery ID):
- *   - If the existing row has `completedAt IS NOT NULL` → already processed; `{ claimed: false }`.
- *   - If the existing row has `completedAt IS NULL`    → previous attempt crashed mid-creation;
- *     allow retry: delete the stale row and re-insert → `{ claimed: true }`.
+ * On conflict (duplicate delivery ID), applies TTL-based steal logic:
+ *
+ *   - `completedAt IS NOT NULL`                     → already processed; `{ claimed: false }`.
+ *   - `completedAt IS NULL`, `createdAt` < 5 min ago → concurrent in-progress handler;
+ *                                                      yield to it: `{ claimed: false }`.
+ *   - `completedAt IS NULL`, `createdAt` ≥ 5 min ago → stale/crashed handler;
+ *                                                      steal: delete + re-insert → `{ claimed: true }`.
+ *
+ * The TTL threshold prevents two concurrent handlers (arriving within seconds of each
+ * other) from both claiming the same delivery.  Linear retries are spaced at least
+ * 5 minutes apart, so a legitimate retry from a crashed handler will always see a
+ * sufficiently old row.
  *
  * Returns `{ claimed: true }` if the caller should proceed with thread creation.
- * Returns `{ claimed: false }` if the delivery was already completed and should be skipped.
- *
- * This approach is safe under any connection-pool configuration (no advisory locks).
+ * Returns `{ claimed: false }` if processing should be skipped (already done or concurrent).
  */
 export async function claimLinearWebhookDelivery({
   db,
@@ -387,39 +401,58 @@ export async function claimLinearWebhookDelivery({
     return { claimed: true };
   }
 
-  // Row already exists — check if it was completed or just claimed (and possibly crashed)
+  // Row already exists — check completedAt and age.
   const existing = await db.query.linearWebhookDeliveries.findFirst({
     where: eq(schema.linearWebhookDeliveries.deliveryId, deliveryId),
   });
 
   if (!existing) {
-    // Race: deleted between our insert attempt and this read — treat as claimable
-    return { claimed: true };
-  }
-
-  if (existing.completedAt !== null) {
-    // Already successfully processed — skip
+    // Race: row was deleted between our conflict and this read.
+    // Another handler cleaned it up; treat as not-our-problem.
     return { claimed: false };
   }
 
-  // completedAt is null → previous handler crashed mid-creation; allow retry.
-  // Delete the stale row so this caller can proceed.
-  await db
+  if (existing.completedAt !== null) {
+    // Already successfully processed — skip.
+    return { claimed: false };
+  }
+
+  // Row is in-progress (completedAt IS NULL).
+  // Only steal if the row is old enough to indicate a crashed handler.
+  const staleThreshold = new Date(Date.now() - CLAIM_STEAL_AFTER_MS);
+  if (existing.createdAt >= staleThreshold) {
+    // Row is fresh — a concurrent handler is actively processing this delivery.
+    // Yield to it to prevent duplicate thread creation.
+    return { claimed: false };
+  }
+
+  // Row is stale (≥ 5 min old, completedAt still NULL) → the original handler crashed.
+  // Steal: delete the stale row (CAS on completedAt IS NULL to guard against a
+  // late-arriving completion from the original handler) then re-insert.
+  const deleted = await db
     .delete(schema.linearWebhookDeliveries)
     .where(
       and(
         eq(schema.linearWebhookDeliveries.deliveryId, deliveryId),
         isNull(schema.linearWebhookDeliveries.completedAt),
+        lt(schema.linearWebhookDeliveries.createdAt, staleThreshold),
       ),
-    );
+    )
+    .returning({ deliveryId: schema.linearWebhookDeliveries.deliveryId });
 
-  // Re-insert for this attempt
-  await db
+  if (deleted.length === 0) {
+    // Another handler raced us to claim or complete between our read and delete.
+    return { claimed: false };
+  }
+
+  // Re-insert for this attempt; if we lose a tight race here, yield.
+  const reinserted = await db
     .insert(schema.linearWebhookDeliveries)
     .values({ deliveryId })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ deliveryId: schema.linearWebhookDeliveries.deliveryId });
 
-  return { claimed: true };
+  return { claimed: reinserted.length > 0 };
 }
 
 /**
