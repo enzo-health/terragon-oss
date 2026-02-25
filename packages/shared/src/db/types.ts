@@ -141,6 +141,16 @@ export type ThreadSourceMetadata =
       models: SelectedAIModels;
     };
 
+/**
+ * Write-time type for new linear-mention threads (fn-2+).
+ * Requires agentSessionId — use this when creating threads from AgentSessionEvent webhooks.
+ * The read-time ThreadSourceMetadata keeps agentSessionId optional for legacy fn-1 compatibility.
+ */
+export type LinearMentionSourceMetadataInsert = Extract<
+  ThreadSourceMetadata,
+  { type: "linear-mention" }
+> & { agentSessionId: string };
+
 export type ThreadStatusDeprecated =
   | "queued-blocked"
   | "error"
