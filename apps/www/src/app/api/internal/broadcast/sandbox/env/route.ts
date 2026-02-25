@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     message: "ok",
     environmentVariables: getEnv({
       userEnv: environmentVariables,
-      githubAccessToken,
+      githubAccessToken: githubAccessToken ?? "",
       agentCredentials,
     }),
   });
