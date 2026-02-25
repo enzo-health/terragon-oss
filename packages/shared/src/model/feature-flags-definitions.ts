@@ -125,6 +125,11 @@ export const featureFlagsDefinitions = {
     description:
       "Enables the image diff view for binary image file changes in git diffs, showing a side-by-side comparison of before/after images.",
   },
+  linearIntegration: {
+    defaultValue: false,
+    description:
+      "Enables the Linear bot integration, allowing users to @mention Terragon in Linear issue comments to spin up a sandbox.",
+  },
   shutdownMode: {
     defaultValue: false,
     description:

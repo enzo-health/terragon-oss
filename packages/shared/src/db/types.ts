@@ -59,6 +59,10 @@ export type SlackAccount = typeof schema.slackAccount.$inferSelect;
 export type SlackAccountInsert = typeof schema.slackAccount.$inferInsert;
 export type SlackSettings = typeof schema.slackSettings.$inferSelect;
 export type SlackSettingsInsert = typeof schema.slackSettings.$inferInsert;
+export type LinearAccount = typeof schema.linearAccount.$inferSelect;
+export type LinearAccountInsert = typeof schema.linearAccount.$inferInsert;
+export type LinearSettings = typeof schema.linearSettings.$inferSelect;
+export type LinearSettingsInsert = typeof schema.linearSettings.$inferInsert;
 export type ThreadReadStatus = typeof schema.threadReadStatus.$inferSelect;
 export type ThreadReadStatusInsert =
   typeof schema.threadReadStatus.$inferInsert;
@@ -76,6 +80,10 @@ export type SlackAccountWithMetadata = SlackAccount & {
   settings: SlackSettings | null;
 };
 
+export type LinearAccountWithSettings = LinearAccount & {
+  settings: LinearSettings | null;
+};
+
 export type ThreadSource =
   | "www"
   | "www-redo"
@@ -86,6 +94,7 @@ export type ThreadSource =
   | "automation"
   | "slack-mention"
   | "github-mention"
+  | "linear-mention"
   | "cli";
 
 export type ThreadSourceMetadata =
@@ -106,6 +115,14 @@ export type ThreadSourceMetadata =
       type: "www-fork";
       parentThreadId: string;
       parentThreadChatId: string;
+    }
+  | {
+      type: "linear-mention";
+      organizationId: string;
+      issueId: string;
+      issueIdentifier: string;
+      commentId: string;
+      issueUrl: string;
     }
   | {
       type: "www-multi-agent";

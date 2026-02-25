@@ -186,6 +186,8 @@ pnpm -C apps/cli uninstall:dev
 - **Waitlist**: Early access signup management
 - **Allowed Signups**: Whitelist for user registration
 - **Access Codes**: Controlled signup system with optional email binding and expiration
+- **Linear Accounts**: Linear user to Terragon user account linking per organization
+- **Linear Settings**: Per-user Linear integration defaults (default repo, model)
 
 ### GitHub Integration (`apps/www/src/server-actions/`)
 
@@ -213,6 +215,7 @@ pnpm -C apps/cli uninstall:dev
 - **Development**: ngrok for local tunnel, sandbox provider configs
 - **Sandbox Providers**: `DAYTONA_API_KEY` for Daytona provider
 - **Optional Providers**: Gemini API key, Amp API key, OpenAI OAuth/ChatGPT auth.json
+- **Linear Integration**: `LINEAR_WEBHOOK_SECRET`, `LINEAR_API_KEY`, `LINEAR_MENTION_HANDLE`
 
 ## Package Structure
 
@@ -293,6 +296,7 @@ pnpm -C packages/debug-scripts e2b-ssh <sandbox-id>
 - **MCP Permission Prompt**: Internal MCP tool to handle permission requests in plan mode
 - **Credentials UI**: Gemini and Amp API key storage; OpenAI OAuth and ChatGPT auth.json support
 - **CLI Additions**: `auth`, `list`, and `mcp` commands, plus `--resume` option for `pull`
+- **Linear Integration**: Linear bot @mention integration for creating tasks from Linear issue comments, feature-flagged behind `linearIntegration`
 
 ## Release Notes
 
