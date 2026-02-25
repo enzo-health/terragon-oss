@@ -200,6 +200,9 @@ async function getOrCreateSandboxForThread({
     }),
     getGitHubUserAccessToken({ userId }),
   ]);
+  if (!githubAccessToken) {
+    throw new Error("No GitHub access token found");
+  }
 
   // Merge global and environment-specific variables
   // Environment-specific variables take precedence over global ones
