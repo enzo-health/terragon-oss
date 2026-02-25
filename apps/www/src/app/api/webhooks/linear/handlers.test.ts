@@ -340,17 +340,14 @@ describe("handlers", () => {
     });
 
     it("is idempotent: does not create a second thread for same deliveryId", async () => {
-      // We test idempotency by spying on getThreadByLinearDeliveryId to simulate
-      // a thread already existing (since newThreadInternal is mocked and doesn't write to DB)
-      const threadsModule = await import("@terragon/shared/model/threads");
+      // Mock claimLinearWebhookDelivery to simulate the DB-level idempotency gate:
+      // first call claims the delivery (claimed: true), second call finds it already
+      // claimed (claimed: false) and skips thread creation.
+      const linearModule = await import("@terragon/shared/model/linear");
       const spy = vi
-        .spyOn(threadsModule, "getThreadByLinearDeliveryId")
-        .mockResolvedValueOnce(null) // First call: no thread → create
-        .mockResolvedValueOnce({
-          id: "existing-thread-id",
-        } as unknown as Awaited<
-          ReturnType<typeof threadsModule.getThreadByLinearDeliveryId>
-        >); // Second call: found → skip
+        .spyOn(linearModule, "claimLinearWebhookDelivery")
+        .mockResolvedValueOnce({ claimed: true }) // First call: claim succeeds → create
+        .mockResolvedValueOnce({ claimed: false }); // Second call: already claimed → skip
 
       const payload = makeCreatedPayload();
 
@@ -363,7 +360,7 @@ describe("handlers", () => {
 
       vi.mocked(newThreadInternal).mockClear();
 
-      // Second call with same deliveryId should be idempotent (thread found → skip)
+      // Second call with same deliveryId should be idempotent (claim fails → skip)
       await handleAgentSessionEvent(payload, "delivery-idempotent-mock", {
         createClient: mockClientFactory,
       });

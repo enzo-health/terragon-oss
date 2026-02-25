@@ -1,14 +1,13 @@
 import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
 import { publicAppUrl } from "@terragon/env/next-public";
 import {
   getLinearAccountForLinearUserId,
   getLinearSettingsForUserAndOrg,
   getLinearInstallationForOrg,
+  claimLinearWebhookDelivery,
 } from "@terragon/shared/model/linear";
 import {
   getThreadByLinearAgentSessionId,
-  getThreadByLinearDeliveryId,
   getThread,
 } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
@@ -326,41 +325,22 @@ async function createThreadForAgentSession({
   agentSessionId: string;
   opts?: { createClient?: LinearClientFactory };
 }): Promise<void> {
-  // 5. Idempotency: serialise concurrent deliveries with the same Delivery-Id
-  // using a PostgreSQL session-level advisory lock keyed by the delivery ID.
-  // pg_advisory_lock blocks until acquired; pg_advisory_unlock releases it.
-  // The lock + check + create are executed as a critical section, preventing
-  // duplicate threads when Linear retries a delivery before the first completes.
+  // 5. Idempotency: atomically claim the Delivery-Id before creating a thread.
+  // INSERT ... ON CONFLICT DO NOTHING ensures only the first caller proceeds.
+  // This is safe under any connection-pool configuration because it relies on
+  // DB-level uniqueness rather than session-level advisory locks (which can
+  // silently break if lock/unlock execute on different pool connections).
   if (deliveryId) {
-    // Acquire session-level advisory lock (blocks until available)
-    await db.execute(sql`SELECT pg_advisory_lock(hashtext(${deliveryId}))`);
-    try {
-      const existing = await getThreadByLinearDeliveryId({ db, deliveryId });
-      if (existing) {
-        console.log(
-          "[linear webhook] Idempotent: thread already exists for deliveryId, skipping",
-          { deliveryId, threadId: existing.id },
-        );
-        return;
-      }
-      // Proceed with thread creation while holding the lock.
-      // The lock prevents a concurrent delivery from passing the check above
-      // before we finish writing the thread record below.
-      await createThreadRecord({
-        payload,
-        deliveryId,
-        accessToken,
-        organizationId,
-        agentSessionId,
-        opts,
-      });
-    } finally {
-      await db.execute(sql`SELECT pg_advisory_unlock(hashtext(${deliveryId}))`);
+    const { claimed } = await claimLinearWebhookDelivery({ db, deliveryId });
+    if (!claimed) {
+      console.log(
+        "[linear webhook] Idempotent: deliveryId already claimed, skipping",
+        { deliveryId },
+      );
+      return;
     }
-    return;
   }
 
-  // No deliveryId — proceed without idempotency guard.
   await createThreadRecord({
     payload,
     deliveryId,
@@ -372,9 +352,8 @@ async function createThreadForAgentSession({
 }
 
 /**
- * The core thread creation logic, extracted so it can be called both inside the
- * advisory-lock critical section (when deliveryId is present) and directly
- * (when deliveryId is absent).
+ * The core thread creation logic. Called after the idempotency claim succeeds
+ * (or when deliveryId is absent and no claim is needed).
  */
 async function createThreadRecord({
   payload,

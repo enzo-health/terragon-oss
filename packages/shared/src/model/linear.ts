@@ -353,3 +353,31 @@ export async function updateLinearInstallationTokens({
 
   return { updated: result.length > 0 };
 }
+
+/**
+ * Atomically claim a Linear webhook delivery ID for processing.
+ *
+ * Uses INSERT ... ON CONFLICT DO NOTHING so that the first caller to arrive
+ * "wins" the delivery ID and receives `{ claimed: true }`.
+ * Any concurrent or subsequent caller for the same ID receives `{ claimed: false }`,
+ * which the handler should treat as "already processed — skip".
+ *
+ * This is the recommended idempotency primitive for Linear webhook handlers
+ * because it is safe under any connection-pool configuration and does not
+ * rely on advisory locks being issued on the same physical connection.
+ */
+export async function claimLinearWebhookDelivery({
+  db,
+  deliveryId,
+}: {
+  db: DB;
+  deliveryId: string;
+}): Promise<{ claimed: boolean }> {
+  const result = await db
+    .insert(schema.linearWebhookDeliveries)
+    .values({ deliveryId })
+    .onConflictDoNothing()
+    .returning({ deliveryId: schema.linearWebhookDeliveries.deliveryId });
+
+  return { claimed: result.length > 0 };
+}
