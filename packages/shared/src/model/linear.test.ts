@@ -23,6 +23,12 @@ import {
   getThreadByLinearAgentSessionId,
   getThreadByLinearDeliveryId,
 } from "./threads";
+import type { ThreadSourceMetadata } from "../db/types";
+
+type LinearMentionMetadata = Extract<
+  ThreadSourceMetadata,
+  { type: "linear-mention" }
+>;
 import { nanoid } from "nanoid/non-secure";
 
 const db = createDb(env.DATABASE_URL!);
@@ -915,7 +921,8 @@ describe("getThreadByLinearAgentSessionId / getThreadByLinearDeliveryId", () => 
       agentSessionId,
     });
     expect(result).not.toBeNull();
-    expect((result!.sourceMetadata as any).agentSessionId).toBe(agentSessionId);
+    const meta = result!.sourceMetadata as LinearMentionMetadata;
+    expect(meta.agentSessionId).toBe(agentSessionId);
   });
 
   it("scopes lookup by organizationId when provided", async () => {
@@ -982,8 +989,7 @@ describe("getThreadByLinearAgentSessionId / getThreadByLinearDeliveryId", () => 
       deliveryId: linearDeliveryId,
     });
     expect(result).not.toBeNull();
-    expect((result!.sourceMetadata as any).linearDeliveryId).toBe(
-      linearDeliveryId,
-    );
+    const meta = result!.sourceMetadata as LinearMentionMetadata;
+    expect(meta.linearDeliveryId).toBe(linearDeliveryId);
   });
 });

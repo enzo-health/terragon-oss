@@ -5,10 +5,10 @@
  * multiple Vercel serverless instances (in-memory mutex is insufficient).
  *
  * Linear access tokens expire after 24 hours. We refresh proactively when
- * within 5 minutes of expiry.
+ * within 5 minutes of expiry, or when tokenExpiresAt is null (unknown expiry).
  *
- * If the refresh token is null and the access token is expired, we
- * deactivate the installation and surface a "reinstall required" state.
+ * If the refresh token is null and the token needs refresh, we deactivate
+ * the installation and surface a "reinstall required" state.
  */
 
 import { env } from "@terragon/env/apps-www";
@@ -25,11 +25,13 @@ const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";
 /** Refresh proactively if token expires within this many ms */
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
 
+/** Timeout for Linear token refresh HTTP call */
+const REFRESH_TIMEOUT_MS = 8_000; // 8s — safe within 10s webhook SLA
+
 export type LinearTokenRefreshResult =
   | { status: "ok"; accessToken: string }
   | { status: "reinstall_required" }
-  | { status: "not_found" }
-  | { status: "not_expired" };
+  | { status: "not_found" };
 
 /**
  * Ensures the Linear installation's access token is valid, refreshing it if
@@ -52,8 +54,13 @@ export async function refreshLinearTokenIfNeeded(
     organizationId,
   });
 
-  if (!installation || !installation.isActive) {
+  if (!installation) {
     return { status: "not_found" };
+  }
+
+  if (!installation.isActive) {
+    // Row exists but was previously deactivated — reinstall required
+    return { status: "reinstall_required" };
   }
 
   const masterKey = env.ENCRYPTION_MASTER_KEY;
@@ -62,17 +69,19 @@ export async function refreshLinearTokenIfNeeded(
     masterKey,
   );
 
-  // Check if token needs refresh
+  // Check if token needs refresh:
+  // - tokenExpiresAt is null → expiry unknown, treat as needing refresh
+  // - token expires within REFRESH_BUFFER_MS → proactive refresh
   const expiresAt = installation.tokenExpiresAt;
   const needsRefresh =
-    expiresAt !== null &&
+    expiresAt === null ||
     expiresAt.getTime() - now().getTime() < REFRESH_BUFFER_MS;
 
   if (!needsRefresh) {
     return { status: "ok", accessToken: currentAccessToken };
   }
 
-  // Token is expired or about to expire — attempt refresh
+  // Token is expired, about to expire, or expiry unknown — attempt refresh
   const refreshTokenEncrypted = installation.refreshTokenEncrypted;
   if (!refreshTokenEncrypted) {
     // No refresh token available — deactivate and signal reinstall needed
@@ -89,35 +98,66 @@ export async function refreshLinearTokenIfNeeded(
     token_type?: string;
   };
 
-  try {
-    const response = await fetch(LINEAR_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: env.LINEAR_CLIENT_ID,
-        client_secret: env.LINEAR_CLIENT_SECRET,
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      }),
-    });
+  const response = await fetch(LINEAR_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.LINEAR_CLIENT_ID,
+      client_secret: env.LINEAR_CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+  });
 
-    if (!response.ok) {
-      const body = await response.text();
-      // invalid_grant means the refresh token is no longer valid
-      if (body.includes("invalid_grant") || response.status === 400) {
-        await deactivateLinearInstallation({ db, organizationId });
-        return { status: "reinstall_required" };
+  if (!response.ok) {
+    const bodyText = await response.text();
+
+    // Parse the OAuth error code from JSON body if present
+    let oauthError: string | null = null;
+    try {
+      const parsed = JSON.parse(bodyText) as { error?: string };
+      oauthError = parsed.error ?? null;
+    } catch {
+      // Body is not JSON — check plain text
+      if (bodyText.includes("invalid_grant")) {
+        oauthError = "invalid_grant";
       }
-      throw new Error(
-        `Linear token refresh failed: ${response.status} ${body}`,
-      );
     }
 
-    tokenResponse = await response.json();
-  } catch (err) {
-    // Re-throw non-invalid_grant errors; caller handles retry logic
-    throw err;
+    if (oauthError === "invalid_grant") {
+      // Refresh token is revoked/expired. Before deactivating, re-read to
+      // check if another concurrent refresh already succeeded (token rotation).
+      const latest = await getLinearInstallationForOrg({ db, organizationId });
+      if (
+        latest &&
+        latest.isActive &&
+        latest.accessTokenEncrypted !== installation.accessTokenEncrypted
+      ) {
+        // Another instance refreshed successfully — use their token
+        return {
+          status: "ok",
+          accessToken: decryptValue(latest.accessTokenEncrypted, masterKey),
+        };
+      }
+      // Truly invalid — deactivate
+      await deactivateLinearInstallation({ db, organizationId });
+      return { status: "reinstall_required" };
+    }
+
+    // For other errors (invalid_client, transient 5xx, etc.) — throw so
+    // caller can retry. Do NOT deactivate; this may be a config issue.
+    throw new Error(
+      `Linear token refresh failed (${oauthError ?? response.status}): ${bodyText}`,
+    );
   }
+
+  tokenResponse = (await response.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: string;
+  };
 
   const newAccessToken = tokenResponse.access_token;
   const newRefreshToken = tokenResponse.refresh_token ?? null;
@@ -146,11 +186,10 @@ export async function refreshLinearTokenIfNeeded(
     if (!refreshed || !refreshed.isActive) {
       return { status: "reinstall_required" };
     }
-    const freshAccessToken = decryptValue(
-      refreshed.accessTokenEncrypted,
-      masterKey,
-    );
-    return { status: "ok", accessToken: freshAccessToken };
+    return {
+      status: "ok",
+      accessToken: decryptValue(refreshed.accessTokenEncrypted, masterKey),
+    };
   }
 
   return { status: "ok", accessToken: newAccessToken };

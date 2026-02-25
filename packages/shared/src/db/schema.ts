@@ -795,7 +795,8 @@ export const linearInstallation = pgTable(
       .notNull()
       .$onUpdate(() => new Date()),
   },
-  (table) => [index("linear_installation_org_id").on(table.organizationId)],
+  // organizationId already has a unique constraint — no need for an extra index
+  () => [],
 );
 
 export const threadReadStatus = pgTable(
