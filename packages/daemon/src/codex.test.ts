@@ -140,6 +140,30 @@ describe("parseCodexLine", () => {
     }
   });
 
+  test("should parse command_execution with declined status as error", () => {
+    const line =
+      '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"bash -lc dangerous","aggregated_output":"Command was denied","status":"declined"}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+
+    expect(results).toHaveLength(1);
+    const result = results[0];
+
+    expect(result).toBeDefined();
+    expect(result?.type).toBe("user");
+    if (result?.type === "user") {
+      const content = result.message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_3",
+          content: "Command was denied",
+          is_error: true,
+        });
+      }
+    }
+  });
+
   test("should return null for turn.started", () => {
     const line = '{"type":"turn.started"}';
     const results = parseCodexLine({ line, runtime: mockRuntime });
@@ -604,6 +628,64 @@ describe("parseCodexLine", () => {
     }
   });
 
+  test("should parse failed collab send_input events with error flag", () => {
+    const state = createCodexParserState();
+    const startedLine =
+      '{"type":"item.started","item":{"id":"item_collab_failed","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{},"status":"in_progress"}}';
+    const failedLine =
+      '{"type":"item.completed","item":{"id":"item_collab_failed","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{"thread_child":{"status":"failed","message":"Something went wrong"}},"status":"failed"}}';
+
+    parseCodexLine({
+      line: startedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    const failed = parseCodexLine({
+      line: failedLine,
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.type).toBe("user");
+    if (failed[0]?.type === "user") {
+      const content = failed[0].message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_collab_failed",
+          is_error: true,
+        });
+        if (
+          content[0] &&
+          typeof content[0] === "object" &&
+          "content" in content[0] &&
+          typeof content[0].content === "string"
+        ) {
+          expect(content[0].content).toContain("Something went wrong");
+        }
+      }
+    }
+  });
+
+  test("should not emit duplicate Task start if item.updated arrives before item.started", () => {
+    const state = createCodexParserState();
+    const updated = parseCodexLine({
+      line: '{"type":"item.updated","item":{"id":"item_collab_dup","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate race condition","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const started = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_collab_dup","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate race condition","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(updated).toHaveLength(1);
+    expect(started).toHaveLength(0);
+  });
+
   test("should nest child tool events under active collab Task", () => {
     const state = createCodexParserState();
     parseCodexLine({
@@ -653,6 +735,79 @@ describe("parseCodexLine", () => {
         ? nextCommand[0].parent_tool_use_id
         : null,
     ).toBeNull();
+  });
+
+  test("should preserve active collab task parent context across turn boundaries", () => {
+    const state = createCodexParserState();
+    parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_cross_turn","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Long-running delegated task","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    parseCodexLine({
+      line: '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    const commandStarted = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_cross_turn_cmd","type":"command_execution","command":"bash -lc ls","aggregated_output":"","status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(commandStarted).toHaveLength(1);
+    expect(
+      commandStarted[0] && "parent_tool_use_id" in commandStarted[0]
+        ? commandStarted[0].parent_tool_use_id
+        : null,
+    ).toBe("item_cross_turn");
+  });
+
+  test("should nest delegated collab tasks under parent collab task", () => {
+    const state = createCodexParserState();
+    const parentStart = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_parent_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child_1"],"prompt":"Parent delegation","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const childStart = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_child_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_child_1","receiver_thread_ids":["thread_child_2"],"prompt":"Child delegation","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const childCommand = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_child_cmd","type":"command_execution","command":"bash -lc pwd","aggregated_output":"","status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const childComplete = parseCodexLine({
+      line: '{"type":"item.completed","item":{"id":"item_child_collab","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_child_1","receiver_thread_ids":["thread_child_2"],"prompt":"Child delegation","agents_states":{"thread_child_2":{"status":"completed"}},"status":"completed"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(parentStart).toHaveLength(1);
+    expect(childStart).toHaveLength(1);
+    expect(childCommand).toHaveLength(1);
+    expect(childComplete).toHaveLength(1);
+
+    expect(
+      childStart[0] && "parent_tool_use_id" in childStart[0]
+        ? childStart[0].parent_tool_use_id
+        : null,
+    ).toBe("item_parent_collab");
+    expect(
+      childCommand[0] && "parent_tool_use_id" in childCommand[0]
+        ? childCommand[0].parent_tool_use_id
+        : null,
+    ).toBe("item_child_collab");
+    expect(
+      childComplete[0] && "parent_tool_use_id" in childComplete[0]
+        ? childComplete[0].parent_tool_use_id
+        : null,
+    ).toBe("item_parent_collab");
   });
 });
 
@@ -814,6 +969,26 @@ describe("codexCommand", () => {
   test("should disable multi-agent flags when CODEX_DISABLE_MULTI_AGENT is set", () => {
     const previousValue = process.env.CODEX_DISABLE_MULTI_AGENT;
     process.env.CODEX_DISABLE_MULTI_AGENT = "true";
+    const command = codexCommand({
+      runtime: mockRuntime,
+      prompt: "test prompt",
+      model: "gpt-5",
+      sessionId: null,
+    });
+    if (previousValue === undefined) {
+      delete process.env.CODEX_DISABLE_MULTI_AGENT;
+    } else {
+      process.env.CODEX_DISABLE_MULTI_AGENT = previousValue;
+    }
+
+    expect(command).not.toContain("features.multi_agent=true");
+    expect(command).not.toContain("features.child_agents_md=true");
+    expect(command).not.toContain("agents.max_threads=6");
+  });
+
+  test("should disable multi-agent flags for common truthy env values", () => {
+    const previousValue = process.env.CODEX_DISABLE_MULTI_AGENT;
+    process.env.CODEX_DISABLE_MULTI_AGENT = "yes";
     const command = codexCommand({
       runtime: mockRuntime,
       prompt: "test prompt",

@@ -121,13 +121,14 @@ function transformCollabToolCall({
   const taskPrompt =
     item.prompt?.trim() || "Complete the delegated sub-agent task.";
   const status = item.status;
+  const activeParentToolUseId = getActiveTaskToolUseId(state);
 
-  if (
-    codexMsg.type === "item.started" ||
-    (codexMsg.type === "item.updated" &&
-      status === "in_progress" &&
-      !state.activeTaskToolUseIds.includes(toolUseId))
-  ) {
+  const shouldEmitTaskStart =
+    !state.activeTaskToolUseIds.includes(toolUseId) &&
+    (codexMsg.type === "item.started" ||
+      (codexMsg.type === "item.updated" && status === "in_progress"));
+
+  if (shouldEmitTaskStart) {
     addActiveTaskToolUseId({ state, toolUseId });
     return [
       {
@@ -147,7 +148,7 @@ function transformCollabToolCall({
             },
           ],
         },
-        parent_tool_use_id: null,
+        parent_tool_use_id: activeParentToolUseId,
         session_id: "",
       },
     ];
@@ -159,6 +160,7 @@ function transformCollabToolCall({
     status === "failed"
   ) {
     removeActiveTaskToolUseId({ state, toolUseId });
+    const completionParentToolUseId = getActiveTaskToolUseId(state);
     const { content, isError } = formatCollabToolCallResult(item);
     return [
       {
@@ -174,7 +176,7 @@ function transformCollabToolCall({
             },
           ],
         },
-        parent_tool_use_id: null,
+        parent_tool_use_id: completionParentToolUseId,
         session_id: "",
       },
     ];
@@ -439,8 +441,8 @@ export function codexCommand({
     "--dangerously-bypass-approvals-and-sandbox",
     "--json",
   ];
-  const isMultiAgentDisabled = ["1", "true"].includes(
-    (process.env.CODEX_DISABLE_MULTI_AGENT || "").toLowerCase(),
+  const isMultiAgentDisabled = isTruthyEnv(
+    process.env.CODEX_DISABLE_MULTI_AGENT,
   );
   if (!isMultiAgentDisabled) {
     commandParts.push("-c", "features.multi_agent=true");
@@ -601,6 +603,11 @@ export function codexCommand({
   return commandParts.join(" ");
 }
 
+function isTruthyEnv(value: string | undefined): boolean {
+  const normalizedValue = (value || "").trim().toLowerCase();
+  return ["1", "true", "yes", "on", "enabled"].includes(normalizedValue);
+}
+
 /**
  * Parse a single line of Codex JSON output into ClaudeMessage format
  *
@@ -650,7 +657,6 @@ export function parseCodexLine({
       return messages;
     }
     case "turn.completed": {
-      parserState.activeTaskToolUseIds = [];
       runtime.logger.debug("Codex token usage", {
         input_tokens: (codexMsg as { usage?: { input_tokens?: number } }).usage
           ?.input_tokens,
@@ -663,7 +669,6 @@ export function parseCodexLine({
       return messages;
     }
     case "turn.failed": {
-      parserState.activeTaskToolUseIds = [];
       return messages;
     }
     case "item.started":
