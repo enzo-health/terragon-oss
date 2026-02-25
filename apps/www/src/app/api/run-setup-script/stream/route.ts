@@ -5,10 +5,8 @@ import {
   getEnvironment,
 } from "@terragon/shared/model/environments";
 import { db } from "@/lib/db";
-import {
-  getGitHubUserAccessTokenOrThrow,
-  getUserSettings,
-} from "@terragon/shared/model/user";
+import { getUserSettings } from "@terragon/shared/model/user";
+import { getGitHubUserAccessToken } from "@/lib/github";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { env } from "@terragon/env/apps-www";
 import { getOrCreateSandbox, getSandboxProvider } from "@/agent/sandbox";
@@ -98,11 +96,7 @@ export async function POST(request: NextRequest) {
         defaultBranch,
       ] = await Promise.all([
         getUserSettings({ db, userId }),
-        getGitHubUserAccessTokenOrThrow({
-          db,
-          userId,
-          encryptionKey: env.ENCRYPTION_MASTER_KEY,
-        }),
+        getGitHubUserAccessToken({ userId }),
         getSandboxSizeForUser(userId),
         getFeatureFlagsForUser({ db, userId }),
         getDefaultBranchForRepo({
