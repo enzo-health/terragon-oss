@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { auth } from "./auth";
 import {
   getGithubPR,
   getThreadsForGithubPR,
@@ -17,7 +18,6 @@ import { BroadcastMessageThreadData } from "@terragon/types/broadcast";
 import { updateThread } from "@terragon/shared/model/threads";
 import {
   getGitHubAccountIdForUser,
-  getGitHubUserAccessTokenOrThrow,
   getUserSettings,
 } from "@terragon/shared/model/user";
 import { env } from "@terragon/env/apps-www";
@@ -243,24 +243,29 @@ export async function getOctokitForApp({
   return new Octokit({ auth: githubAccessToken });
 }
 
+export async function getGitHubUserAccessToken({
+  userId,
+}: {
+  userId: string;
+}): Promise<string | null> {
+  try {
+    const result = await auth.api.getAccessToken({
+      body: { providerId: "github", userId },
+    });
+    return result?.accessToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getOctokitForUser({
   userId,
 }: {
   userId: string;
 }): Promise<Octokit | null> {
-  try {
-    const userAccessToken = await getGitHubUserAccessTokenOrThrow({
-      db,
-      userId,
-      encryptionKey: env.ENCRYPTION_MASTER_KEY,
-    });
-    if (userAccessToken) {
-      return new Octokit({ auth: userAccessToken });
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
+  const token = await getGitHubUserAccessToken({ userId });
+  if (!token) return null;
+  return new Octokit({ auth: token });
 }
 
 export async function getOctokitForUserOrThrow({

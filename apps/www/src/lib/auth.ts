@@ -12,7 +12,6 @@ import { stripe as createStripePlugin } from "@better-auth/stripe";
 import { db } from "./db";
 import { env } from "@terragon/env/apps-www";
 import { Resend } from "resend";
-import { encryptToken } from "@terragon/utils/encryption";
 import { getPostHogServer } from "./posthog-server";
 import { nonLocalhostPublicAppUrl } from "./server-utils";
 import { publicAppUrl } from "@terragon/env/next-public";
@@ -125,6 +124,9 @@ const stripePlugins = (() => {
 })();
 
 export const auth = betterAuth({
+  account: {
+    encryptOAuthTokens: true,
+  },
   baseUrl:
     process.env.NEXT_PUBLIC_VERCEL_ENV !== "preview"
       ? env.BETTER_AUTH_URL
@@ -208,58 +210,8 @@ export const auth = betterAuth({
     },
     account: {
       create: {
-        before: async (account) => {
-          const accountWithEncryptedTokens = { ...account };
-          if (account.accessToken) {
-            accountWithEncryptedTokens.accessToken = encryptToken(
-              account.accessToken,
-              env.ENCRYPTION_MASTER_KEY,
-            );
-          }
-          if (account.refreshToken) {
-            accountWithEncryptedTokens.refreshToken = encryptToken(
-              account.refreshToken,
-              env.ENCRYPTION_MASTER_KEY,
-            );
-          }
-          if (account.idToken) {
-            accountWithEncryptedTokens.idToken = encryptToken(
-              account.idToken,
-              env.ENCRYPTION_MASTER_KEY,
-            );
-          }
-          return {
-            data: accountWithEncryptedTokens,
-          };
-        },
         after: async (account) => {
           await maybeGrantSignupBonus({ db, userId: account.userId });
-        },
-      },
-      update: {
-        before: async (account) => {
-          const accountWithEncryptedTokens = { ...account };
-          if (account.accessToken) {
-            accountWithEncryptedTokens.accessToken = encryptToken(
-              account.accessToken,
-              env.ENCRYPTION_MASTER_KEY,
-            );
-          }
-          if (account.refreshToken) {
-            accountWithEncryptedTokens.refreshToken = encryptToken(
-              account.refreshToken,
-              env.ENCRYPTION_MASTER_KEY,
-            );
-          }
-          if (account.idToken) {
-            accountWithEncryptedTokens.idToken = encryptToken(
-              account.idToken,
-              env.ENCRYPTION_MASTER_KEY,
-            );
-          }
-          return {
-            data: accountWithEncryptedTokens,
-          };
         },
       },
     },
