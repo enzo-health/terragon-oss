@@ -448,6 +448,7 @@ export function codexCommand({
     commandParts.push("-c", "features.multi_agent=true");
     commandParts.push("-c", "features.child_agents_md=true");
     commandParts.push("-c", "agents.max_threads=6");
+    commandParts.push("-c", "suppress_unstable_features_warning=true");
   } else {
     runtime.logger.info(
       "Codex multi-agent disabled via CODEX_DISABLE_MULTI_AGENT",
@@ -631,6 +632,11 @@ export function parseCodexLine({
   try {
     codexMsg = JSON.parse(line);
   } catch (e) {
+    if (isNonFatalCodexWarning(line)) {
+      runtime.logger.warn("Ignoring non-fatal Codex warning", { line });
+      return messages;
+    }
+
     // Not JSON, treat as regular assistant text
     messages.push({
       type: "assistant",
@@ -681,12 +687,22 @@ export function parseCodexLine({
       });
     }
     case "error": {
+      const errorMessage =
+        (codexMsg as { message?: string }).message ||
+        "Codex reported an error.";
+      if (isNonFatalCodexWarning(errorMessage)) {
+        runtime.logger.warn("Ignoring non-fatal Codex error warning", {
+          message: errorMessage,
+        });
+        return messages;
+      }
+
       parserState.activeTaskToolUseIds = [];
       messages.push({
         type: "result",
         subtype: "error_during_execution",
         session_id: "",
-        error: (codexMsg as { message: string }).message,
+        error: errorMessage,
         is_error: true,
         num_turns: 0,
         duration_ms: 0,
@@ -712,6 +728,21 @@ export function parseCodexLine({
 
 const CONVERSATION_LENGTH_WARNING_MESSAGE =
   "Long conversations and multiple compactions can cause the model to be less accurate";
+const UNSTABLE_FEATURES_WARNING_MESSAGE = "Under-development features enabled";
+
+function isNonFatalCodexWarning(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes(
+      CONVERSATION_LENGTH_WARNING_MESSAGE.toLowerCase(),
+    ) ||
+    normalizedMessage.includes(UNSTABLE_FEATURES_WARNING_MESSAGE.toLowerCase())
+  );
+}
 
 function parseCodexItem({
   codexMsg,
@@ -942,14 +973,12 @@ function parseCodexItem({
     case "error": {
       const message = item.message || "Codex reported an error.";
 
-      // Check if this is just a warning about long conversations, not an actual error
-      // There's a bug in codex where warning are logged as errors in json mode.
-      const isConversationLengthWarning = message
-        .toLowerCase()
-        .includes(CONVERSATION_LENGTH_WARNING_MESSAGE.toLowerCase());
-      if (isConversationLengthWarning) {
+      // There's a bug in codex where warnings are logged as errors in json mode.
+      if (isNonFatalCodexWarning(message)) {
         // Log the warning but don't create an error result
-        runtime.logger.warn("Codex conversation length warning", { message });
+        runtime.logger.warn("Ignoring non-fatal Codex item warning", {
+          message,
+        });
         return messages;
       }
 
