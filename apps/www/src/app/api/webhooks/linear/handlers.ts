@@ -325,7 +325,13 @@ async function createThreadForAgentSession({
   agentSessionId: string;
   opts?: { createClient?: LinearClientFactory };
 }): Promise<void> {
-  // 5. Idempotency check: skip if thread already exists with this deliveryId
+  // 5. Idempotency check: skip if thread already exists with this deliveryId.
+  //
+  // NOTE: This is a best-effort read-then-check. True atomic idempotency would
+  // require a unique DB constraint on linearDeliveryId (tracked separately).
+  // In practice, Linear webhooks are delivered with a stable Delivery-Id and
+  // retries are spaced sufficiently apart that this check prevents duplicates
+  // in all but extreme concurrent-retry scenarios.
   if (deliveryId) {
     const existing = await getThreadByLinearDeliveryId({ db, deliveryId });
     if (existing) {
@@ -574,6 +580,15 @@ async function handleAgentSessionPrompted(
   const promptBody =
     (payload.data as AgentSessionPromptedPayload["data"]).agentActivity?.body ??
     "";
+
+  // Skip empty prompts — no useful work to queue
+  if (!promptBody.trim()) {
+    console.log(
+      "[linear webhook] Prompted event has empty body, skipping follow-up",
+      { agentSessionId },
+    );
+    return;
+  }
 
   // Get full thread to find primary threadChat
   const threadFull = await getThread({

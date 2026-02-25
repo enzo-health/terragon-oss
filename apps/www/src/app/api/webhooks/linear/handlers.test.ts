@@ -252,16 +252,19 @@ describe("handlers", () => {
       await handleAgentSessionEvent(payload, "delivery-1", {
         createClient: mockClientFactory,
       });
-      // Flush async waitUntil work
-      await waitUntilResolved();
 
-      // thought activity MUST have been emitted
+      // Assert BEFORE flushing waitUntil — thought emission must happen
+      // synchronously inside handleAgentSessionEvent (within SLA), not inside
+      // the async waitUntil callback.
       expect(mockCreateAgentActivity).toHaveBeenCalledWith(
         expect.objectContaining({
           agentSessionId: "session-abc",
           content: expect.objectContaining({ type: "thought" }),
         }),
       );
+
+      // Flush async waitUntil work for cleanup
+      await waitUntilResolved();
     });
 
     it("creates a thread via newThreadInternal with correct sourceMetadata", async () => {
