@@ -46,6 +46,7 @@ export function Dashboard({
       disableGitCheckpointing,
       skipSetup,
       createNewBranch,
+      runInSdlcLoop,
     }) => {
       try {
         unwrapResult(
@@ -57,6 +58,7 @@ export function Dashboard({
             disableGitCheckpointing,
             skipSetup,
             createNewBranch,
+            runInSdlcLoop,
             scheduleAt,
             selectedModels,
           }),

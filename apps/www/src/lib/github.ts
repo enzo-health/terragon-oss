@@ -441,7 +441,7 @@ export async function findAndAssociatePR({
   repoFullName: string;
   headBranchName: string;
   baseBranchName: string;
-}) {
+}): Promise<number | null> {
   console.log("findAndAssociatePR", {
     userId,
     threadId,
@@ -455,7 +455,7 @@ export async function findAndAssociatePR({
     baseBranchName,
   });
   if (!existingPr) {
-    return;
+    return null;
   }
   await Promise.all([
     updateThread({
@@ -475,4 +475,5 @@ export async function findAndAssociatePR({
       },
     }),
   ]);
+  return existingPr.number;
 }

@@ -24,6 +24,10 @@ import {
 } from "@/lib/github";
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
+import {
+  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
+} from "@/server-lib/sdlc-loop/enrollment";
 
 export async function openPullRequestForThread({
   threadId,
@@ -60,6 +64,34 @@ export async function openPullRequestForThread({
     getCurrentBranchName(session),
     getGitDefaultBranch(session),
   ]);
+  const sdlcLoopOptIn = isSdlcLoopEnrollmentAllowedForThread({
+    sourceType: thread.sourceType,
+    sourceMetadata: thread.sourceMetadata ?? null,
+  });
+  const maybeEnsureSdlcLoopEnrollment = async (prNumber: number) => {
+    if (!sdlcLoopOptIn) {
+      return;
+    }
+    try {
+      await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+        userId,
+        repoFullName: thread.githubRepoFullName,
+        prNumber,
+        threadId,
+      });
+    } catch (error) {
+      console.warn(
+        "[openPullRequestForThread] failed to ensure SDLC loop enrollment",
+        {
+          userId,
+          threadId,
+          repoFullName: thread.githubRepoFullName,
+          prNumber,
+          error,
+        },
+      );
+    }
+  };
   // Make sure we're not on the main branch
   if (currentBranch === defaultBranch) {
     throw new ThreadError(
@@ -129,6 +161,7 @@ export async function openPullRequestForThread({
         },
       }),
     ]);
+    await maybeEnsureSdlcLoopEnrollment(existingPr.number);
     await updatePullRequestForThread({
       threadId,
       userId,
@@ -199,6 +232,7 @@ export async function openPullRequestForThread({
       },
     }),
   ]);
+  await maybeEnsureSdlcLoopEnrollment(pr.data.number);
 }
 
 async function updatePullRequestForThread({

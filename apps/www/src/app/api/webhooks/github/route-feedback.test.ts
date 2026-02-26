@@ -13,6 +13,7 @@ import { getOctokitForApp } from "@/lib/github";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/sdlc-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
 import { buildSdlcCanonicalCause } from "@terragon/shared/model/sdlc-loop";
@@ -94,6 +95,7 @@ vi.mock("@/lib/posthog-server", () => ({
 vi.mock("@/server-lib/sdlc-loop/enrollment", () => ({
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled: vi.fn(),
   getActiveSdlcLoopForGithubPRIfEnabled: vi.fn(),
+  isSdlcLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
 vi.mock("@/server-lib/sdlc-loop/signal-inbox", () => ({
@@ -127,6 +129,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).mockResolvedValue(
       null,
     );
+    vi.mocked(isSdlcLoopEnrollmentAllowedForThread).mockReturnValue(true);
     vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
       processed: false,
       reason: "no_unprocessed_signal",
@@ -202,6 +205,37 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     expect(routedPart.text).toContain("[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]");
     expect(routedPart.text).toContain("[END_UNTRUSTED_GITHUB_FEEDBACK]");
     expect(maybeBatchThreads).not.toHaveBeenCalled();
+  });
+
+  it("skips SDLC enrollment for existing threads when enrollment is disallowed", async () => {
+    vi.mocked(getThreadsForGithubPR).mockResolvedValue([
+      { id: "thread-1", userId: "user-1", archived: false },
+    ]);
+    vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
+      id: "thread-1",
+      threadChats: [{ id: "chat-1" }],
+      sourceType: "www",
+      sourceMetadata: { type: "www", sdlcLoopOptIn: false },
+    } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
+    vi.mocked(isSdlcLoopEnrollmentAllowedForThread).mockReturnValue(false);
+
+    const result = await routeGithubFeedbackOrSpawnThread({
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "pull_request_review.submitted",
+      reviewBody: "Please use the shared helper.",
+      baseBranchName: "main",
+      headBranchName: "feature/feedback",
+    });
+
+    expect(result).toEqual({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      mode: "reused_existing",
+      reason: "existing-unarchived-thread",
+    });
+    expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
+    expect(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).not.toHaveBeenCalled();
   });
 
   it("deduplicates non-enrolled delivery retries for existing threads", async () => {

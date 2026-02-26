@@ -134,6 +134,10 @@ export type ThreadSource =
 
 export type ThreadSourceMetadata =
   | {
+      type: "www";
+      sdlcLoopOptIn: boolean;
+    }
+  | {
       type: "github-mention";
       repoFullName: string;
       issueOrPrNumber: number;

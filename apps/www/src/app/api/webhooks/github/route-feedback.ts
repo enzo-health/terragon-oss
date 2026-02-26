@@ -1,4 +1,8 @@
-import { DBUserMessage, ThreadSource } from "@terragon/shared";
+import {
+  DBUserMessage,
+  ThreadSource,
+  ThreadSourceMetadata,
+} from "@terragon/shared";
 import { db } from "@/lib/db";
 import {
   getGithubPR,
@@ -17,6 +21,7 @@ import { getPostHogServer } from "@/lib/posthog-server";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/sdlc-loop/enrollment";
 import { buildSdlcCanonicalCause } from "@terragon/shared/model/sdlc-loop";
 import {
@@ -866,24 +871,31 @@ export async function routeGithubFeedbackOrSpawnThread(
           appendOrReplace: "append",
           source: "github",
         });
-        try {
-          await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
-            userId: canonicalFallbackThreadMeta.userId,
-            repoFullName: input.repoFullName,
-            prNumber: input.prNumber,
-            threadId: fallbackThread.id,
-          });
-        } catch (error) {
-          console.warn(
-            "[github feedback routing] failed to ensure SDLC enrollment for owner-resolution fallback thread",
-            {
+        if (
+          isSdlcLoopEnrollmentAllowedForThread({
+            sourceType: fallbackThread.sourceType,
+            sourceMetadata: fallbackThread.sourceMetadata ?? null,
+          })
+        ) {
+          try {
+            await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
               userId: canonicalFallbackThreadMeta.userId,
               repoFullName: input.repoFullName,
               prNumber: input.prNumber,
               threadId: fallbackThread.id,
-              error,
-            },
-          );
+            });
+          } catch (error) {
+            console.warn(
+              "[github feedback routing] failed to ensure SDLC enrollment for owner-resolution fallback thread",
+              {
+                userId: canonicalFallbackThreadMeta.userId,
+                repoFullName: input.repoFullName,
+                prNumber: input.prNumber,
+                threadId: fallbackThread.id,
+                error,
+              },
+            );
+          }
         }
         captureFeedbackRouting({
           userId: canonicalFallbackThreadMeta.userId,
@@ -921,7 +933,19 @@ export async function routeGithubFeedbackOrSpawnThread(
   const userId = ownerResolution.userId;
   const maybeEnsureSdlcEnrollmentForFeedbackThread = async (
     threadId: string,
+    threadSource: {
+      sourceType: ThreadSource | null;
+      sourceMetadata: ThreadSourceMetadata | null;
+    },
   ) => {
+    if (
+      !isSdlcLoopEnrollmentAllowedForThread({
+        sourceType: threadSource.sourceType,
+        sourceMetadata: threadSource.sourceMetadata,
+      })
+    ) {
+      return;
+    }
     try {
       await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
         userId,
@@ -1113,7 +1137,10 @@ export async function routeGithubFeedbackOrSpawnThread(
         appendOrReplace: "append",
         source: "github",
       });
-      await maybeEnsureSdlcEnrollmentForFeedbackThread(existingThread.id);
+      await maybeEnsureSdlcEnrollmentForFeedbackThread(existingThread.id, {
+        sourceType: existingThread.sourceType,
+        sourceMetadata: existingThread.sourceMetadata ?? null,
+      });
       captureFeedbackRouting({
         userId,
         input,
@@ -1182,7 +1209,16 @@ export async function routeGithubFeedbackOrSpawnThread(
     const reason = didCreateNewThread
       ? ownerResolution.reason
       : "batched-existing-thread";
-    await maybeEnsureSdlcEnrollmentForFeedbackThread(threadId);
+    await maybeEnsureSdlcEnrollmentForFeedbackThread(threadId, {
+      sourceType,
+      sourceMetadata:
+        getSourceMetadataForFeedback({
+          sourceType,
+          repoFullName: input.repoFullName,
+          prNumber: input.prNumber,
+          commentId: input.commentId,
+        }) ?? null,
+    });
     captureFeedbackRouting({
       userId,
       input,
