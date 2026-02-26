@@ -71,10 +71,16 @@ Publish implementation and operational docs for run identity, auth/proxy constra
 
 ## Done summary
 
-TBD
+Documented the preview architecture/security rollout and published release notes:
+
+- Added docs coverage for canonical `runId` identity, immutable `thread_run` vs pointer `thread_run_context`, and explicit daemon propagation path.
+- Documented API-only preview routing scope, preview lifecycle states, strict-vs-legacy daemon behavior, dedupe/ordering, endSha fallback/backstop, quarantine retention, and ready-guard no-bypass posture.
+- Documented preview auth/proxy security contracts (namespaced keys/audiences, replay/fail-closed semantics, proxy hardening, ws_required behavior, and repo-access cache key/TTL/invalidation contract).
+- Added February 26, 2026 release notes entry for sandbox preview correlation hardening + observability.
+- Bumped `RELEASE_NOTES_VERSION` to `21`.
 
 ## Evidence
 
 - Commits:
-- Tests:
+- Tests: pnpm -C apps/www tsc-check, pnpm -C apps/www lint
 - PRs:

@@ -74,3 +74,52 @@ This is useful for:
 - Debugging issues in the sandbox environment
 - Inspecting the state of your code and dependencies
 - Running ad-hoc commands
+
+## Preview Security Contracts (Internal)
+
+Preview routing is API-only:
+
+- `/api/internal/preview/*`
+- `/api/preview/*`
+
+No dedicated preview page routes are added under `apps/www/src/app/**/page.tsx`.
+
+### Preview Config and Lifecycle
+
+- Preview startup requires explicit config (`command`, `port`, `healthPath`, `requiresWebsocket`).
+- Missing or invalid config resolves to `unsupported` with `missing_config`.
+- Session lifecycle is deterministic: `pending -> initializing -> ready|unsupported|error`.
+- Route-level feature-flag gating returns `404` when `sandboxPreview` is disabled.
+
+### Token and Keystore Rules
+
+- Bootstrap/exchange/cookie/origin tokens are HS256 JWTs with `kid`.
+- Key material is namespaced per audience (`exchange`, `broadcast`, `cookie`, `origin`).
+- Active/previous key pointers (`active_kid`, `prev_kid`) support rotation grace windows.
+- Replay protection is enforced with single-use cache keys (`jti`/`nonce`).
+- Cache outage behavior is fail-closed (`cache_unavailable` + retry payload), including exchange/proxy/subscription paths.
+
+### Proxy Hardening
+
+- Proxy enforces origin binding, revocation-version checks, SSRF/private IP blocking, path normalization, and header allowlists.
+- `proxyReqId` is attached to responses for request tracing.
+- WebSocket-required previews return `501` with `ws_required`; SSE uses no-cache streaming headers.
+- Canonical denied/security reason enums live in `packages/shared/src/types/preview.ts`.
+
+### Repo Access Cache Contract
+
+- Key: `terragon:v1:preview:repo-access:{env}:{userId}:{repoFullName}`.
+- Positive TTL: `min(60s, previewSessionTTLSeconds)`.
+- Negative TTL: `5s`.
+- Invalidation helper: `invalidateRepoAccess(userId, repoFullName, reason)`.
+
+### Daemon + Validation Correlation
+
+- Canonical propagation path: `startAgentMessage -> sendDaemonMessage -> daemon envelope v2 -> /api/daemon-event`.
+- Mixed payload versions for one run are quarantined (`payload_version_mismatch`).
+- Missing terminal `endSha` is quarantined; maintenance sweeps stale runs every minute.
+- If terminal SHA cannot be trusted against sandbox HEAD, validation falls back to `working-tree-fallback`.
+
+### Naming Guidance
+
+Use canonical `codesandboxId` in persisted payloads and contracts. If `sandboxInstanceId` aliases are used in UI/helpers, convert through shared utility paths only (no ad-hoc aliasing).

@@ -1,14 +1,24 @@
 {
-  "assignee": null,
+  "assignee": "tbsheff@byu.edu",
   "claim_note": "",
-  "claimed_at": null,
+  "claimed_at": "2026-02-26T07:26:03.205485Z",
   "created_at": "2026-02-25T22:45:02.264719Z",
   "depends_on": ["fn-2.3", "fn-2.4", "fn-2.5"],
   "epic": "fn-2",
+  "evidence": {
+    "docs": [
+      "apps/docs/content/docs/tasks/creating-tasks.mdx",
+      "apps/docs/content/docs/tasks/managing-tasks.mdx",
+      "apps/docs/content/docs/configuration/environment-setup/sandbox.mdx",
+      "apps/docs/content/docs/resources/release-notes.mdx"
+    ],
+    "release_notes_version": "apps/www/src/lib/constants.ts: RELEASE_NOTES_VERSION=21",
+    "tests": ["pnpm -C apps/www tsc-check", "pnpm -C apps/www lint"]
+  },
   "id": "fn-2.6",
   "priority": null,
   "spec_path": ".flow/tasks/fn-2.6.md",
-  "status": "todo",
+  "status": "done",
   "title": "Document preview workflows and publish release notes",
-  "updated_at": "2026-02-25T23:55:49.802951Z"
+  "updated_at": "2026-02-26T07:27:47.511467Z"
 }

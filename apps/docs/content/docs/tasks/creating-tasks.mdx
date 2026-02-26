@@ -118,3 +118,17 @@ Your task will:
   <Step>Run tests if specified</Step>
   <Step>Create a pull request when complete</Step>
 </Steps>
+
+### Preview Validation Runs (Internal)
+
+Terragon now treats every execution as a canonical `runId`.
+
+- `thread_run` stores immutable run facts (start request, frozen flags, SHAs, terminal metadata).
+- `thread_run_context` stores only the active pointer for `{threadId,threadChatId}`.
+- Propagation path is explicit: `startAgentMessage` -> daemon start payload -> daemon envelope v2 -> `/api/daemon-event`.
+
+When preview is enabled, session startup is API-only (`/api/internal/preview/*`, `/api/preview/*`) and follows:
+
+`pending -> initializing -> ready | unsupported | error`
+
+Preview routes are gated by `sandboxPreview`; disabled environments return `404` instead of partial behavior.
