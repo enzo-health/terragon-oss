@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
@@ -95,10 +94,6 @@ vi.mock("@/lib/db", () => ({
   db: dbMocks.db,
 }));
 
-vi.mock("@terragon/shared/model/feature-flags", () => ({
-  getFeatureFlagForUser: vi.fn(),
-}));
-
 vi.mock("@terragon/shared/model/sdlc-loop", () => ({
   getActiveSdlcLoopForThread: vi.fn(),
   SDLC_CAUSE_IDENTITY_VERSION: 1,
@@ -130,7 +125,6 @@ describe("daemon-event route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getUserIdOrNullFromDaemonToken).mockResolvedValue("user-1");
-    vi.mocked(getFeatureFlagForUser).mockResolvedValue(true);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
     vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
@@ -245,8 +239,7 @@ describe("daemon-event route", () => {
     expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
-  it("allows legacy envelopes when coordinator routing flag is disabled", async () => {
-    vi.mocked(getFeatureFlagForUser).mockResolvedValue(false);
+  it("requires v2 envelopes for enrolled loops even without capability headers", async () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
@@ -261,8 +254,11 @@ describe("daemon-event route", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
     expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
     expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
