@@ -235,8 +235,8 @@ export function getGithubWebhookClaimHttpStatus(
     case "already_completed":
       return 200;
     case "claimed_new":
-    case "in_progress_fresh":
     case "stale_stolen":
+    case "in_progress_fresh":
       return 202;
     default: {
       const _exhaustive: never = outcome;
@@ -322,6 +322,25 @@ export async function getActiveSdlcLoopForGithubPRAndUser({
   });
 }
 
+export async function getActiveSdlcLoopsForGithubPR({
+  db,
+  repoFullName,
+  prNumber,
+}: {
+  db: DB;
+  repoFullName: string;
+  prNumber: number;
+}) {
+  return await db.query.sdlcLoop.findMany({
+    where: and(
+      eq(schema.sdlcLoop.repoFullName, repoFullName),
+      eq(schema.sdlcLoop.prNumber, prNumber),
+      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+    ),
+    orderBy: [schema.sdlcLoop.updatedAt, schema.sdlcLoop.id],
+  });
+}
+
 export async function getActiveSdlcLoopForGithubPR({
   db,
   repoFullName,
@@ -331,14 +350,12 @@ export async function getActiveSdlcLoopForGithubPR({
   repoFullName: string;
   prNumber: number;
 }) {
-  return await db.query.sdlcLoop.findFirst({
-    where: and(
-      eq(schema.sdlcLoop.repoFullName, repoFullName),
-      eq(schema.sdlcLoop.prNumber, prNumber),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
-    ),
-    orderBy: [schema.sdlcLoop.updatedAt],
+  const activeLoops = await getActiveSdlcLoopsForGithubPR({
+    db,
+    repoFullName,
+    prNumber,
   });
+  return activeLoops[0];
 }
 
 export async function enrollSdlcLoopForGithubPR({
@@ -356,6 +373,7 @@ export async function enrollSdlcLoopForGithubPR({
   threadId: string;
   currentHeadSha?: string | null;
 }) {
+  const now = new Date();
   const inserted = await db
     .insert(schema.sdlcLoop)
     .values({
@@ -364,6 +382,7 @@ export async function enrollSdlcLoopForGithubPR({
       prNumber,
       threadId,
       currentHeadSha: currentHeadSha ?? null,
+      updatedAt: now,
     })
     .onConflictDoNothing()
     .returning();
@@ -382,14 +401,43 @@ export async function enrollSdlcLoopForGithubPR({
     return activeLoop;
   }
 
-  // If insert conflict came from a non-active historical row (for example
-  // thread uniqueness on a previously terminated loop), return the latest
-  // deterministic enrollment row instead of null.
+  const reactivationSet: {
+    state: "enrolled";
+    stopReason: null;
+    updatedAt: Date;
+    currentHeadSha?: string | null;
+  } = {
+    state: "enrolled",
+    stopReason: null,
+    updatedAt: now,
+  };
+  if (currentHeadSha !== undefined) {
+    reactivationSet.currentHeadSha = currentHeadSha;
+  }
+
+  const [reactivated] = await db
+    .update(schema.sdlcLoop)
+    .set(reactivationSet)
+    .where(
+      and(
+        eq(schema.sdlcLoop.threadId, threadId),
+        eq(schema.sdlcLoop.userId, userId),
+        eq(schema.sdlcLoop.repoFullName, repoFullName),
+        eq(schema.sdlcLoop.prNumber, prNumber),
+        notInArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+      ),
+    )
+    .returning();
+  if (reactivated) {
+    return reactivated;
+  }
+
   return await db.query.sdlcLoop.findFirst({
     where: and(
       eq(schema.sdlcLoop.userId, userId),
       eq(schema.sdlcLoop.repoFullName, repoFullName),
       eq(schema.sdlcLoop.prNumber, prNumber),
+      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
     ),
     orderBy: [desc(schema.sdlcLoop.updatedAt)],
   });
@@ -641,6 +689,7 @@ export async function enqueueSdlcOutboxAction({
           supersessionGroup,
           payload,
           status: "pending",
+          attemptCount: 0,
           nextRetryAt: null,
           lastErrorClass: null,
           lastErrorCode: null,
@@ -1504,6 +1553,84 @@ function resolveRequiredCheckSource({
   return { source: "no_required", requiredChecks: [] };
 }
 
+export type SdlcGateLoopUpdateOutcome =
+  | "updated"
+  | "terminal_noop"
+  | "stale_noop";
+
+async function persistGuardedGateLoopState({
+  tx,
+  loopId,
+  headSha,
+  loopVersion,
+  nextState,
+  now = new Date(),
+}: {
+  tx: Pick<DB, "query" | "update">;
+  loopId: string;
+  headSha: string;
+  loopVersion: number;
+  nextState: SdlcLoopState;
+  now?: Date;
+}): Promise<SdlcGateLoopUpdateOutcome> {
+  const [updated] = await tx
+    .update(schema.sdlcLoop)
+    .set({
+      state: nextState,
+      currentHeadSha: headSha,
+      loopVersion,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoop.id, loopId),
+        inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+        lte(schema.sdlcLoop.loopVersion, loopVersion),
+        or(
+          lte(schema.sdlcLoop.loopVersion, loopVersion - 1),
+          isNull(schema.sdlcLoop.currentHeadSha),
+          eq(schema.sdlcLoop.currentHeadSha, headSha),
+        ),
+      ),
+    )
+    .returning({ id: schema.sdlcLoop.id });
+
+  if (updated) {
+    return "updated";
+  }
+
+  const loop = await tx.query.sdlcLoop.findFirst({
+    where: eq(schema.sdlcLoop.id, loopId),
+    columns: {
+      state: true,
+      loopVersion: true,
+      currentHeadSha: true,
+    },
+  });
+
+  if (!loop) {
+    return "stale_noop";
+  }
+
+  if (!activeSdlcLoopStates.includes(loop.state)) {
+    return "terminal_noop";
+  }
+
+  if (loop.loopVersion > loopVersion) {
+    return "stale_noop";
+  }
+
+  if (
+    loop.loopVersion === loopVersion &&
+    loop.currentHeadSha !== null &&
+    loop.currentHeadSha !== headSha
+  ) {
+    return "stale_noop";
+  }
+
+  return "stale_noop";
+}
+
 export type PersistSdlcCiGateEvaluationResult = {
   runId: string;
   status: SdlcCiGateStatus;
@@ -1512,6 +1639,7 @@ export type PersistSdlcCiGateEvaluationResult = {
   requiredChecks: string[];
   failingRequiredChecks: string[];
   shouldQueueFollowUp: boolean;
+  loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
 };
 
 export async function persistSdlcCiGateEvaluation({
@@ -1619,14 +1747,14 @@ export async function persistSdlcCiGateEvaluation({
       throw new Error("Failed to persist CI gate run");
     }
 
-    await tx
-      .update(schema.sdlcLoop)
-      .set({
-        state: gatePassed ? "gates_running" : "blocked_on_ci",
-        currentHeadSha: headSha,
-        updatedAt: now,
-      })
-      .where(eq(schema.sdlcLoop.id, loopId));
+    const loopUpdateOutcome = await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      headSha,
+      loopVersion,
+      nextState: gatePassed ? "gates_running" : "blocked_on_ci",
+      now,
+    });
 
     return {
       runId: run.id,
@@ -1635,7 +1763,8 @@ export async function persistSdlcCiGateEvaluation({
       requiredCheckSource: source,
       requiredChecks,
       failingRequiredChecks: relevantFailingChecks,
-      shouldQueueFollowUp: !gatePassed,
+      shouldQueueFollowUp: !gatePassed && loopUpdateOutcome === "updated",
+      loopUpdateOutcome,
     };
   });
 }
@@ -1646,6 +1775,7 @@ export type PersistSdlcReviewThreadGateResult = {
   gatePassed: boolean;
   unresolvedThreadCount: number;
   shouldQueueFollowUp: boolean;
+  loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
 };
 
 export async function persistSdlcReviewThreadGateEvaluation({
@@ -1722,21 +1852,22 @@ export async function persistSdlcReviewThreadGateEvaluation({
       throw new Error("Failed to persist review-thread gate run");
     }
 
-    await tx
-      .update(schema.sdlcLoop)
-      .set({
-        state: gatePassed ? "gates_running" : "blocked_on_review_threads",
-        currentHeadSha: headSha,
-        updatedAt: now,
-      })
-      .where(eq(schema.sdlcLoop.id, loopId));
+    const loopUpdateOutcome = await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      headSha,
+      loopVersion,
+      nextState: gatePassed ? "gates_running" : "blocked_on_review_threads",
+      now,
+    });
 
     return {
       runId: run.id,
       status,
       gatePassed,
       unresolvedThreadCount,
-      shouldQueueFollowUp: !gatePassed,
+      shouldQueueFollowUp: !gatePassed && loopUpdateOutcome === "updated",
+      loopUpdateOutcome,
     };
   });
 }
@@ -1778,6 +1909,7 @@ export type PersistDeepReviewGateResult = {
   errorCode: string | null;
   unresolvedBlockingFindings: number;
   shouldQueueFollowUp: boolean;
+  loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
   findings: NormalizedDeepReviewFinding[];
 };
 
@@ -1913,14 +2045,14 @@ export async function persistDeepReviewGateResult({
           ),
         );
 
-      await tx
-        .update(schema.sdlcLoop)
-        .set({
-          currentHeadSha: headSha,
-          loopVersion,
-          state: "blocked_on_agent_fixes",
-        })
-        .where(eq(schema.sdlcLoop.id, loopId));
+      const loopUpdateOutcome = await persistGuardedGateLoopState({
+        tx,
+        loopId,
+        headSha,
+        loopVersion,
+        nextState: "blocked_on_agent_fixes",
+        now: new Date(),
+      });
 
       return {
         runId: run.id,
@@ -1930,6 +2062,7 @@ export async function persistDeepReviewGateResult({
         errorCode: parsed.errorCode,
         unresolvedBlockingFindings: 0,
         shouldQueueFollowUp: false,
+        loopUpdateOutcome,
         findings: [],
       };
     }
@@ -2042,15 +2175,15 @@ export async function persistDeepReviewGateResult({
       }
     }
 
-    await tx
-      .update(schema.sdlcLoop)
-      .set({
-        currentHeadSha: headSha,
-        loopVersion,
-        state:
-          status === "blocked" ? "blocked_on_agent_fixes" : "gates_running",
-      })
-      .where(eq(schema.sdlcLoop.id, loopId));
+    const loopUpdateOutcome = await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      headSha,
+      loopVersion,
+      nextState:
+        status === "blocked" ? "blocked_on_agent_fixes" : "gates_running",
+      now: new Date(),
+    });
 
     const unresolvedBlockingFindings = (
       await tx
@@ -2073,7 +2206,9 @@ export async function persistDeepReviewGateResult({
       invalidOutput: false,
       errorCode: null,
       unresolvedBlockingFindings,
-      shouldQueueFollowUp: unresolvedBlockingFindings > 0,
+      shouldQueueFollowUp:
+        loopUpdateOutcome === "updated" && unresolvedBlockingFindings > 0,
+      loopUpdateOutcome,
       findings,
     };
   });
@@ -2192,6 +2327,7 @@ export type PersistCarmackReviewGateResult = {
   errorCode: string | null;
   unresolvedBlockingFindings: number;
   shouldQueueFollowUp: boolean;
+  loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
   findings: NormalizedCarmackReviewFinding[];
 };
 
@@ -2349,14 +2485,14 @@ export async function persistCarmackReviewGateResult({
           ),
         );
 
-      await tx
-        .update(schema.sdlcLoop)
-        .set({
-          currentHeadSha: headSha,
-          loopVersion,
-          state: "blocked_on_agent_fixes",
-        })
-        .where(eq(schema.sdlcLoop.id, loopId));
+      const loopUpdateOutcome = await persistGuardedGateLoopState({
+        tx,
+        loopId,
+        headSha,
+        loopVersion,
+        nextState: "blocked_on_agent_fixes",
+        now: new Date(),
+      });
 
       return {
         runId: run.id,
@@ -2366,6 +2502,7 @@ export async function persistCarmackReviewGateResult({
         errorCode: parsed.errorCode,
         unresolvedBlockingFindings: 0,
         shouldQueueFollowUp: false,
+        loopUpdateOutcome,
         findings: [],
       };
     }
@@ -2479,15 +2616,15 @@ export async function persistCarmackReviewGateResult({
       }
     }
 
-    await tx
-      .update(schema.sdlcLoop)
-      .set({
-        currentHeadSha: headSha,
-        loopVersion,
-        state:
-          status === "blocked" ? "blocked_on_agent_fixes" : "gates_running",
-      })
-      .where(eq(schema.sdlcLoop.id, loopId));
+    const loopUpdateOutcome = await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      headSha,
+      loopVersion,
+      nextState:
+        status === "blocked" ? "blocked_on_agent_fixes" : "gates_running",
+      now: new Date(),
+    });
 
     const unresolvedBlockingFindings = (
       await tx
@@ -2510,7 +2647,9 @@ export async function persistCarmackReviewGateResult({
       invalidOutput: false,
       errorCode: null,
       unresolvedBlockingFindings,
-      shouldQueueFollowUp: unresolvedBlockingFindings > 0,
+      shouldQueueFollowUp:
+        loopUpdateOutcome === "updated" && unresolvedBlockingFindings > 0,
+      loopUpdateOutcome,
       findings,
     };
   });

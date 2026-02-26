@@ -20,6 +20,7 @@ import {
   getUnresolvedBlockingCarmackReviewFindings,
   getActiveSdlcLoopForGithubPRAndUser,
   getActiveSdlcLoopForGithubPR,
+  getActiveSdlcLoopsForGithubPR,
   claimNextSdlcOutboxActionForExecution,
   classifySdlcVideoCaptureFailure,
   clearSdlcCanonicalStatusCommentReference,
@@ -121,6 +122,55 @@ describe("sdlc loop model", () => {
 
     expect(byRepoPr?.id).toBe(loop?.id);
     expect(byRepoPr?.currentHeadSha).toBe("sha-lookup");
+  });
+
+  it("returns all active enrollments for repo/pr across users", async () => {
+    const { user: userA } = await createTestUser({ db });
+    const { user: userB } = await createTestUser({ db });
+    const { threadId: threadIdA } = await createTestThread({
+      db,
+      userId: userA.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const { threadId: threadIdB } = await createTestThread({
+      db,
+      userId: userB.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+
+    await enrollSdlcLoopForGithubPR({
+      db,
+      userId: userA.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId: threadIdA,
+      currentHeadSha: "sha-user-a",
+    });
+    await enrollSdlcLoopForGithubPR({
+      db,
+      userId: userB.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId: threadIdB,
+      currentHeadSha: "sha-user-b",
+    });
+
+    const loops = await getActiveSdlcLoopsForGithubPR({
+      db,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+    });
+
+    expect(loops).toHaveLength(2);
+    expect(loops.map((loop) => loop.userId).sort()).toEqual(
+      [userA.id, userB.id].sort(),
+    );
   });
 
   it("ignores non-active states", async () => {
@@ -230,6 +280,80 @@ describe("sdlc loop model", () => {
     expect(second).toBeDefined();
     expect(second?.id).not.toBe(first?.id);
     expect(second?.state).toBe("enrolled");
+  });
+
+  it("reactivates a terminal enrollment when thread uniqueness prevents reinsert", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+
+    const first = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "terminated_pr_closed", stopReason: "test-terminal" })
+      .where(eq(schema.sdlcLoop.id, first!.id));
+
+    const reenrolled = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-reactivated",
+    });
+
+    expect(reenrolled?.id).toBe(first?.id);
+    expect(reenrolled?.state).toBe("enrolled");
+    expect(reenrolled?.currentHeadSha).toBe("sha-reactivated");
+    expect(reenrolled?.stopReason).toBeNull();
+  });
+
+  it("does not return non-active historical rows on thread conflict for another repo/pr", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+
+    const enrolled = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "terminated_pr_closed" })
+      .where(eq(schema.sdlcLoop.id, enrolled!.id));
+
+    const conflictResult = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/other-repo",
+      prNumber: 99,
+      threadId,
+    });
+
+    expect(conflictResult).toBeUndefined();
   });
 
   it("returns active enrollment by thread", async () => {
@@ -674,6 +798,224 @@ describe("sdlc loop model", () => {
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
     expect(reloadedLoop?.state).toBe("gates_running");
+  });
+
+  it("does not resurrect terminal loops from gate persistence replays", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-terminal",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "stopped",
+        loopVersion: 10,
+        currentHeadSha: "sha-terminal",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const ciResult = await persistSdlcCiGateEvaluation({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-old",
+      loopVersion: 9,
+      triggerEventType: "check_run.completed",
+      capabilityState: "supported",
+      rulesetChecks: ["tests"],
+      failingChecks: ["tests"],
+    });
+    expect(ciResult.loopUpdateOutcome).toBe("terminal_noop");
+    expect(ciResult.shouldQueueFollowUp).toBe(false);
+
+    const reviewResult = await persistSdlcReviewThreadGateEvaluation({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-old",
+      loopVersion: 9,
+      triggerEventType: "review-thread-poll-synthetic",
+      evaluationSource: "polling",
+      unresolvedThreadCount: 2,
+    });
+    expect(reviewResult.loopUpdateOutcome).toBe("terminal_noop");
+    expect(reviewResult.shouldQueueFollowUp).toBe(false);
+
+    const deepResult = await persistDeepReviewGateResult({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-old",
+      loopVersion: 9,
+      model: "gpt-test",
+      rawOutput: {
+        gatePassed: false,
+        blockingFindings: [
+          {
+            stableFindingId: "terminal-deep-1",
+            title: "Replay",
+            severity: "high",
+            category: "state",
+            detail: "Replay should not mutate terminal loops",
+            suggestedFix: null,
+            isBlocking: true,
+          },
+        ],
+      },
+    });
+    expect(deepResult.loopUpdateOutcome).toBe("terminal_noop");
+    expect(deepResult.shouldQueueFollowUp).toBe(false);
+
+    const carmackResult = await persistCarmackReviewGateResult({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-old",
+      loopVersion: 9,
+      model: "gpt-test",
+      rawOutput: {
+        gatePassed: false,
+        blockingFindings: [
+          {
+            stableFindingId: "terminal-carmack-1",
+            title: "Replay",
+            severity: "high",
+            category: "state",
+            detail: "Replay should not mutate terminal loops",
+            suggestedFix: null,
+            isBlocking: true,
+          },
+        ],
+      },
+    });
+    expect(carmackResult.loopUpdateOutcome).toBe("terminal_noop");
+    expect(carmackResult.shouldQueueFollowUp).toBe(false);
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("stopped");
+    expect(reloadedLoop?.loopVersion).toBe(10);
+    expect(reloadedLoop?.currentHeadSha).toBe("sha-terminal");
+  });
+
+  it("treats stale gate updates as no-op when loop has moved forward", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-current",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "gates_running",
+        loopVersion: 20,
+        currentHeadSha: "sha-current",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const ciResult = await persistSdlcCiGateEvaluation({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-stale",
+      loopVersion: 19,
+      triggerEventType: "check_run.completed",
+      capabilityState: "supported",
+      rulesetChecks: ["tests"],
+      failingChecks: ["tests"],
+    });
+    expect(ciResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(ciResult.shouldQueueFollowUp).toBe(false);
+
+    const reviewResult = await persistSdlcReviewThreadGateEvaluation({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-stale",
+      loopVersion: 20,
+      triggerEventType: "review-thread-poll-synthetic",
+      evaluationSource: "polling",
+      unresolvedThreadCount: 2,
+    });
+    expect(reviewResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(reviewResult.shouldQueueFollowUp).toBe(false);
+
+    const deepResult = await persistDeepReviewGateResult({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-stale",
+      loopVersion: 19,
+      model: "gpt-test",
+      rawOutput: {
+        gatePassed: false,
+        blockingFindings: [
+          {
+            stableFindingId: "stale-deep-1",
+            title: "Stale replay",
+            severity: "high",
+            category: "state",
+            detail: "Older loop version should not move loop state",
+            suggestedFix: null,
+            isBlocking: true,
+          },
+        ],
+      },
+    });
+    expect(deepResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(deepResult.shouldQueueFollowUp).toBe(false);
+
+    const carmackResult = await persistCarmackReviewGateResult({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-stale",
+      loopVersion: 20,
+      model: "gpt-test",
+      rawOutput: {
+        gatePassed: false,
+        blockingFindings: [
+          {
+            stableFindingId: "stale-carmack-1",
+            title: "Stale replay",
+            severity: "high",
+            category: "state",
+            detail: "Equal version with different head should no-op",
+            suggestedFix: null,
+            isBlocking: true,
+          },
+        ],
+      },
+    });
+    expect(carmackResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(carmackResult.shouldQueueFollowUp).toBe(false);
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("gates_running");
+    expect(reloadedLoop?.loopVersion).toBe(20);
+    expect(reloadedLoop?.currentHeadSha).toBe("sha-current");
   });
 
   it("stores deterministic invalid-output deep review state", async () => {
@@ -1278,6 +1620,62 @@ describe("sdlc loop model", () => {
       "retry_scheduled",
       "completed",
     ]);
+  });
+
+  it("resets outbox retry debt when superseding an action via conflict update", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 101,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 101,
+      threadId,
+    });
+
+    await db.insert(schema.sdlcLoopOutbox).values({
+      loopId: loop!.id,
+      transitionSeq: 1,
+      actionType: "publish_status_comment",
+      supersessionGroup: "publication_status",
+      actionKey: "publication:primary",
+      payload: { body: "old" },
+      status: "pending",
+      attemptCount: 3,
+      nextRetryAt: new Date("2026-01-01T00:10:00.000Z"),
+      lastErrorClass: "infra",
+      lastErrorCode: "github_5xx",
+      lastErrorMessage: "GitHub temporary outage",
+    });
+
+    const result = await enqueueSdlcOutboxAction({
+      db,
+      loopId: loop!.id,
+      transitionSeq: 2,
+      actionType: "publish_check_summary",
+      actionKey: "publication:primary",
+      payload: { body: "new" },
+      now: new Date("2026-01-01T00:20:00.000Z"),
+    });
+
+    const reloadedOutbox = await db.query.sdlcLoopOutbox.findFirst({
+      where: eq(schema.sdlcLoopOutbox.id, result.outboxId),
+    });
+
+    expect(result.supersededOutboxCount).toBe(0);
+    expect(reloadedOutbox?.attemptCount).toBe(0);
+    expect(reloadedOutbox?.status).toBe("pending");
+    expect(reloadedOutbox?.nextRetryAt).toBeNull();
+    expect(reloadedOutbox?.lastErrorClass).toBeNull();
+    expect(reloadedOutbox?.lastErrorCode).toBeNull();
+    expect(reloadedOutbox?.lastErrorMessage).toBeNull();
   });
 
   it("persists canonical GitHub publication references for loop status surfaces", async () => {

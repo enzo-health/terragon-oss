@@ -369,6 +369,58 @@ describe("handlers", () => {
 
       spy.mockRestore();
     });
+
+    it("throws when delivery completion persistence fails so webhook delivery can retry", async () => {
+      const linearModule = await import("@terragon/shared/model/linear");
+      const completeSpy = vi
+        .spyOn(linearModule, "completeLinearWebhookDelivery")
+        .mockRejectedValueOnce(new Error("completion write failed"));
+
+      const payload = makeCreatedPayload();
+
+      await expect(
+        handleAgentSessionEvent(payload, "delivery-complete-fail", {
+          createClient: mockClientFactory,
+        }),
+      ).rejects.toThrow("completion write failed");
+
+      completeSpy.mockRestore();
+    });
+
+    it("reconciles retries to an existing delivery-mapped thread without creating a duplicate", async () => {
+      const linearModule = await import("@terragon/shared/model/linear");
+      const threadsModule = await import("@terragon/shared/model/threads");
+      const byDeliverySpy = vi
+        .spyOn(threadsModule, "getThreadByLinearDeliveryId")
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: "existing-thread-id",
+        } as Awaited<
+          ReturnType<typeof threadsModule.getThreadByLinearDeliveryId>
+        >);
+      const completeSpy = vi
+        .spyOn(linearModule, "completeLinearWebhookDelivery")
+        .mockRejectedValueOnce(new Error("completion write failed"))
+        .mockResolvedValueOnce(undefined);
+
+      const payload = makeCreatedPayload();
+
+      await expect(
+        handleAgentSessionEvent(payload, "delivery-reconcile", {
+          createClient: mockClientFactory,
+        }),
+      ).rejects.toThrow("completion write failed");
+      expect(newThreadInternal).toHaveBeenCalledTimes(1);
+
+      await handleAgentSessionEvent(payload, "delivery-reconcile", {
+        createClient: mockClientFactory,
+      });
+      expect(newThreadInternal).toHaveBeenCalledTimes(1);
+      expect(completeSpy).toHaveBeenCalledTimes(2);
+
+      byDeliverySpy.mockRestore();
+      completeSpy.mockRestore();
+    });
   });
 
   // -------------------------------------------------------------------------

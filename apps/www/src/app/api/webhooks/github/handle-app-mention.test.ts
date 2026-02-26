@@ -208,6 +208,56 @@ describe("handleAppMention", () => {
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
+  it("enrolls an existing PR thread into SDLC loop when coordinator routing is enabled", async () => {
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "sdlcLoopCoordinatorRouting",
+      value: true,
+    });
+    await updateUserSettings({
+      db,
+      userId: user.id,
+      updates: {
+        singleThreadForGitHubMentions: true,
+      },
+    });
+
+    await handleAppMention({
+      repoFullName: pr.repoFullName,
+      issueOrPrNumber: pr.number,
+      issueOrPrType: "pull_request",
+      commentId: 999123,
+      commentGitHubUsername: "commenter",
+      commentBody: "Please route through coordinator",
+      commentGitHubAccountId: githubAccountId,
+    });
+
+    const enrolledLoop = await db.query.sdlcLoop.findFirst({
+      where: (loop, { and, eq }) =>
+        and(
+          eq(loop.userId, user.id),
+          eq(loop.repoFullName, pr.repoFullName),
+          eq(loop.prNumber, pr.number),
+        ),
+    });
+
+    expect(enrolledLoop).toMatchObject({
+      userId: user.id,
+      repoFullName: pr.repoFullName,
+      prNumber: pr.number,
+      threadId: threadIdWithPR,
+      state: "enrolled",
+    });
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: threadIdWithPR,
+        threadChatId: threadChatIdWithPR,
+      }),
+    );
+    expect(newThreadInternal).not.toHaveBeenCalled();
+  });
+
   it("falls back to standard routing when enrolled loop thread is not routable", async () => {
     await setFeatureFlagOverrideForTest({
       db,

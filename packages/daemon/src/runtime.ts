@@ -9,8 +9,85 @@ import net from "node:net";
 import readline from "node:readline";
 import stripAnsi from "strip-ansi";
 import { Logger, OutputFormat } from "./logger";
-import { DaemonEventAPIBody } from "./shared";
+import {
+  DaemonEventAPIBody,
+  DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  DAEMON_EVENT_CAPABILITIES_HEADER,
+  DAEMON_EVENT_VERSION_HEADER,
+  DAEMON_VERSION,
+} from "./shared";
 import { nanoid } from "nanoid/non-secure";
+
+function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
+  if (body.payloadVersion !== 2) {
+    return false;
+  }
+  if (typeof body.eventId !== "string" || body.eventId.length === 0) {
+    return false;
+  }
+  if (typeof body.runId !== "string" || body.runId.length === 0) {
+    return false;
+  }
+  if (typeof body.seq !== "number" || !Number.isInteger(body.seq)) {
+    return false;
+  }
+  return body.seq >= 0;
+}
+
+function extractDaemonServerErrorCode(body: unknown): string | null {
+  if (!body || typeof body !== "object" || !("error" in body)) {
+    return null;
+  }
+  const errorCode = (body as { error?: unknown }).error;
+  return typeof errorCode === "string" ? errorCode : null;
+}
+
+function parseDaemonEventEnvelopeAck(
+  body: unknown,
+): { acknowledgedEventId: string; acknowledgedSeq: number } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const acknowledgedEventId = (body as { acknowledgedEventId?: unknown })
+    .acknowledgedEventId;
+  const acknowledgedSeq = (body as { acknowledgedSeq?: unknown })
+    .acknowledgedSeq;
+  if (
+    typeof acknowledgedEventId !== "string" ||
+    acknowledgedEventId.length === 0
+  ) {
+    return null;
+  }
+  if (
+    typeof acknowledgedSeq !== "number" ||
+    !Number.isInteger(acknowledgedSeq)
+  ) {
+    return null;
+  }
+  return { acknowledgedEventId, acknowledgedSeq };
+}
+
+export class DaemonServerPostError extends Error {
+  readonly status: number;
+  readonly errorCode: string | null;
+  readonly responseBody: unknown;
+
+  constructor({
+    status,
+    errorCode,
+    responseBody,
+  }: {
+    status: number;
+    errorCode: string | null;
+    responseBody: unknown;
+  }) {
+    super(`HTTP error! status: ${status}${errorCode ? ` (${errorCode})` : ""}`);
+    this.name = "DaemonServerPostError";
+    this.status = status;
+    this.errorCode = errorCode;
+    this.responseBody = responseBody;
+  }
+}
 
 export interface IDaemonRuntime {
   url: string;
@@ -176,7 +253,7 @@ export class DaemonRuntime implements IDaemonRuntime {
     this.eventEmitter.on("teardown", callback);
   }
 
-  async serverPost(body: any, token: string) {
+  async serverPost(body: DaemonEventAPIBody, token: string) {
     const url = `${this.url}/api/daemon-event`;
     const logArgs = { url, body: JSON.stringify(body) };
     if (this.skipReportingDaemonEvents) {
@@ -184,16 +261,56 @@ export class DaemonRuntime implements IDaemonRuntime {
       return;
     }
     this.logger.info(`POST to ${url}`, logArgs);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-Daemon-Token": token,
+      [DAEMON_EVENT_VERSION_HEADER]: DAEMON_VERSION,
+    };
+    if (hasDaemonEventEnvelopeV2(body)) {
+      headers[DAEMON_EVENT_CAPABILITIES_HEADER] =
+        DAEMON_CAPABILITY_EVENT_ENVELOPE_V2;
+    }
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Daemon-Token": token,
-      },
+      headers,
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      let responseBody: unknown = null;
+      try {
+        responseBody = await response.json();
+      } catch {
+        try {
+          responseBody = await response.text();
+        } catch {
+          responseBody = null;
+        }
+      }
+      const errorCode = extractDaemonServerErrorCode(responseBody);
+      throw new DaemonServerPostError({
+        status: response.status,
+        errorCode,
+        responseBody,
+      });
+    }
+
+    if (hasDaemonEventEnvelopeV2(body)) {
+      let responseBody: unknown = null;
+      try {
+        responseBody = await response.json();
+      } catch {
+        responseBody = null;
+      }
+      const envelopeAck = parseDaemonEventEnvelopeAck(responseBody);
+      if (
+        !envelopeAck ||
+        envelopeAck.acknowledgedEventId !== body.eventId ||
+        envelopeAck.acknowledgedSeq !== body.seq
+      ) {
+        throw new Error(
+          `Daemon event ack mismatch for ${body.eventId}:${body.seq}`,
+        );
+      }
     }
   }
 

@@ -1,5 +1,9 @@
 import { AIAgent } from "@terragon/agent/types";
-import { IDaemonRuntime, writeToUnixSocket } from "./runtime";
+import {
+  DaemonServerPostError,
+  IDaemonRuntime,
+  writeToUnixSocket,
+} from "./runtime";
 import {
   DaemonMessageClaude,
   DaemonMessageSchema,
@@ -34,6 +38,9 @@ import {
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
 import { codexCommand, parseCodexLine } from "./codex";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
+import { createHash, randomUUID } from "node:crypto";
+
+const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 
 function formatError(error: unknown): object {
   if (error instanceof Error) {
@@ -44,6 +51,26 @@ function formatError(error: unknown): object {
     };
   }
   return { value: error };
+}
+
+function isDaemonEventClaimInProgressError(error: unknown): boolean {
+  if (error instanceof DaemonServerPostError) {
+    return (
+      error.status === 409 &&
+      error.errorCode === "daemon_event_claim_in_progress"
+    );
+  }
+
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  if (!("status" in error) || !("errorCode" in error)) {
+    return false;
+  }
+
+  const status = (error as { status?: unknown }).status;
+  const errorCode = (error as { errorCode?: unknown }).errorCode;
+  return status === 409 && errorCode === "daemon_event_claim_in_progress";
 }
 
 type ActiveProcessState = {
@@ -61,6 +88,26 @@ type ActiveProcessState = {
   pollInterval: NodeJS.Timeout | null;
 };
 
+type DaemonEventRunState = {
+  runId: string;
+  nextSeq: number;
+  coordinatorRoutingEnabled: boolean;
+  cleanupRequested: boolean;
+  pendingEnvelope: {
+    messagesFingerprint: string;
+    eventId: string;
+    seq: number;
+    entryCount: number;
+  } | null;
+};
+
+type DaemonEventEnvelopePayload = {
+  payloadVersion: 2;
+  eventId: string;
+  runId: string;
+  seq: number;
+};
+
 export class TerragonDaemon {
   private startTime: number = 0;
   private messageBuffer: MessageBufferEntry[] = [];
@@ -68,6 +115,7 @@ export class TerragonDaemon {
   private mcpConfigPath: string | undefined;
 
   private activeProcesses: Map<string, ActiveProcessState> = new Map();
+  private daemonEventRunStates: Map<string, DaemonEventRunState> = new Map();
 
   private messageHandleDelay: number = 0;
   private messageFlushDelay: number = 0;
@@ -231,6 +279,7 @@ export class TerragonDaemon {
               { threadChatId: parsedMessage.threadChatId },
             );
           }
+          this.markDaemonEventRunStateForCleanup(parsedMessage.threadChatId);
           this.addMessageToBuffer({
             agent: null,
             message: {
@@ -298,6 +347,7 @@ export class TerragonDaemon {
         maybeFixLogsForSessionId(this.runtime, activeProcessState.sessionId);
       }
       this.activeProcesses.delete(threadChatId);
+      this.markDaemonEventRunStateForCleanup(threadChatId);
     }
   }
 
@@ -305,6 +355,45 @@ export class TerragonDaemon {
     for (const threadChatId of this.activeProcesses.keys()) {
       this.killActiveProcess(threadChatId);
     }
+  }
+
+  private hasBufferedEntriesForThread(threadChatId: string): boolean {
+    return this.messageBuffer.some(
+      (entry) => entry.threadChatId === threadChatId,
+    );
+  }
+
+  private initializeDaemonEventRunStateForNewRun({
+    threadChatId,
+    coordinatorRoutingEnabled,
+  }: {
+    threadChatId: string;
+    coordinatorRoutingEnabled: boolean;
+  }): void {
+    const existingRunState = this.daemonEventRunStates.get(threadChatId);
+    if (
+      existingRunState &&
+      (existingRunState.pendingEnvelope ||
+        this.hasBufferedEntriesForThread(threadChatId))
+    ) {
+      this.runtime.logger.debug(
+        "Preserving daemon event run state due to pending envelope or buffered entries",
+        {
+          threadChatId,
+          hasPendingEnvelope: existingRunState.pendingEnvelope != null,
+          hasBufferedEntries: this.hasBufferedEntriesForThread(threadChatId),
+        },
+      );
+      return;
+    }
+
+    this.daemonEventRunStates.set(threadChatId, {
+      runId: randomUUID(),
+      nextSeq: 0,
+      coordinatorRoutingEnabled,
+      cleanupRequested: false,
+      pendingEnvelope: null,
+    });
   }
 
   private async runCommand(input: DaemonMessageClaude): Promise<void> {
@@ -317,6 +406,9 @@ export class TerragonDaemon {
     }
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
+    const coordinatorRoutingEnabled = this.getFeatureFlag(
+      "sdlcLoopCoordinatorRouting",
+    );
     // Create new process state for this threadChatId
     const newProcessState: ActiveProcessState = {
       processId: null,
@@ -333,6 +425,10 @@ export class TerragonDaemon {
       pollInterval: null,
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
+    this.initializeDaemonEventRunStateForNewRun({
+      threadChatId: input.threadChatId,
+      coordinatorRoutingEnabled,
+    });
     switch (input.agent) {
       case "claudeCode":
         await this.runClaudeCodeCommand(input);
@@ -360,6 +456,172 @@ export class TerragonDaemon {
         throw new Error(`Unknown agent: ${input.agent}`);
       }
     }
+  }
+
+  private shouldEmitDaemonEventEnvelopeV2(threadChatId: string): boolean {
+    const runState = this.daemonEventRunStates.get(threadChatId);
+    if (runState) {
+      return runState.coordinatorRoutingEnabled;
+    }
+    return this.getFeatureFlag("sdlcLoopCoordinatorRouting");
+  }
+
+  private getMessageFingerprint(messages: ClaudeMessage[]): string {
+    return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
+  }
+
+  private getOrCreateDaemonEventRunState(
+    threadChatId: string,
+  ): DaemonEventRunState {
+    const existing = this.daemonEventRunStates.get(threadChatId);
+    if (existing) {
+      return existing;
+    }
+    const created: DaemonEventRunState = {
+      runId: randomUUID(),
+      nextSeq: 0,
+      coordinatorRoutingEnabled: this.getFeatureFlag(
+        "sdlcLoopCoordinatorRouting",
+      ),
+      cleanupRequested: false,
+      pendingEnvelope: null,
+    };
+    this.daemonEventRunStates.set(threadChatId, created);
+    return created;
+  }
+
+  private createDaemonEventEnvelope({
+    threadChatId,
+    messages,
+    entryCount,
+  }: {
+    threadChatId: string;
+    messages: ClaudeMessage[];
+    entryCount: number;
+  }): DaemonEventEnvelopePayload {
+    const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+    const messagesFingerprint = this.getMessageFingerprint(messages);
+    const pendingEnvelope = runState.pendingEnvelope;
+    if (pendingEnvelope) {
+      if (pendingEnvelope.messagesFingerprint !== messagesFingerprint) {
+        this.runtime.logger.warn(
+          "Pending daemon envelope fingerprint mismatch; reusing pending identity until ack",
+          {
+            threadChatId,
+            expectedFingerprint: pendingEnvelope.messagesFingerprint,
+            actualFingerprint: messagesFingerprint,
+          },
+        );
+      }
+      return {
+        payloadVersion: 2,
+        eventId: pendingEnvelope.eventId,
+        runId: runState.runId,
+        seq: pendingEnvelope.seq,
+      };
+    }
+
+    const seq = runState.nextSeq;
+    runState.nextSeq += 1;
+    const eventId = createHash("sha256")
+      .update(`${runState.runId}:${seq}`)
+      .digest("hex");
+    runState.pendingEnvelope = {
+      messagesFingerprint,
+      eventId,
+      seq,
+      entryCount,
+    };
+    this.daemonEventRunStates.set(threadChatId, runState);
+
+    return {
+      payloadVersion: 2,
+      eventId,
+      runId: runState.runId,
+      seq,
+    };
+  }
+
+  private markDaemonEventEnvelopeDelivered({
+    threadChatId,
+    eventId,
+  }: {
+    threadChatId: string;
+    eventId: string;
+  }): void {
+    const runState = this.daemonEventRunStates.get(threadChatId);
+    if (!runState?.pendingEnvelope) {
+      return;
+    }
+    if (runState.pendingEnvelope.eventId !== eventId) {
+      return;
+    }
+    runState.pendingEnvelope = null;
+    this.daemonEventRunStates.set(threadChatId, runState);
+    this.maybeCleanupDaemonEventRunState(threadChatId);
+  }
+
+  private markDaemonEventRunStateForCleanup(threadChatId: string): void {
+    const runState = this.daemonEventRunStates.get(threadChatId);
+    if (!runState) {
+      return;
+    }
+    runState.cleanupRequested = true;
+    this.daemonEventRunStates.set(threadChatId, runState);
+  }
+
+  private maybeCleanupDaemonEventRunState(threadChatId: string): void {
+    const runState = this.daemonEventRunStates.get(threadChatId);
+    if (!runState?.cleanupRequested) {
+      return;
+    }
+    if (this.activeProcesses.has(threadChatId)) {
+      return;
+    }
+    if (runState.pendingEnvelope) {
+      return;
+    }
+    if (
+      this.messageBuffer.some((entry) => entry.threadChatId === threadChatId)
+    ) {
+      return;
+    }
+    this.daemonEventRunStates.delete(threadChatId);
+  }
+
+  private maybeCleanupAllDaemonEventRunStates(): void {
+    for (const threadChatId of this.daemonEventRunStates.keys()) {
+      this.maybeCleanupDaemonEventRunState(threadChatId);
+    }
+  }
+
+  private getPendingBatchEntriesForThread({
+    threadChatId,
+    entries,
+  }: {
+    threadChatId: string;
+    entries: MessageBufferEntry[];
+  }): MessageBufferEntry[] {
+    const runState = this.daemonEventRunStates.get(threadChatId);
+    const pendingEntryCount = runState?.pendingEnvelope?.entryCount ?? null;
+    if (pendingEntryCount == null) {
+      return entries;
+    }
+    if (pendingEntryCount <= 0) {
+      return entries;
+    }
+    if (entries.length < pendingEntryCount) {
+      this.runtime.logger.warn(
+        "Pending daemon envelope entry count exceeded available buffered entries; retrying with available entries",
+        {
+          threadChatId,
+          pendingEntryCount,
+          availableEntries: entries.length,
+        },
+      );
+      return entries;
+    }
+    return entries.slice(0, pendingEntryCount);
   }
 
   private onProcessStderr = (
@@ -486,6 +748,7 @@ export class TerragonDaemon {
     }
     // Remove this process from the map
     this.activeProcesses.delete(threadChatId);
+    this.markDaemonEventRunStateForCleanup(threadChatId);
   };
 
   private async spawnAgentProcess({
@@ -1038,6 +1301,7 @@ export class TerragonDaemon {
     }
 
     if (this.messageBuffer.length === 0) {
+      this.maybeCleanupAllDaemonEventRunStates();
       return;
     }
 
@@ -1070,79 +1334,131 @@ export class TerragonDaemon {
     }
 
     const handledEntries = new Set<MessageBufferEntry>();
-    let hasFailure = false;
+    const failedGroups: Array<{
+      threadId: string;
+      threadChatId: string;
+      messageCount: number;
+      error: unknown;
+    }> = [];
     const timezone = this.getCurrentTimezone();
 
     for (const group of groupsOrdered) {
-      const processedEntries = this.processMessagesForSending(group.entries);
-      // No messages to send for this group (e.g., all filtered out)
-      if (processedEntries.length === 0) {
-        for (const entry of group.entries) {
+      const entriesToSend = this.getPendingBatchEntriesForThread({
+        threadChatId: group.threadChatId,
+        entries: group.entries,
+      });
+      if (entriesToSend.length === 0) {
+        continue;
+      }
+      const lastEntry = entriesToSend[entriesToSend.length - 1]!;
+      const threadId = lastEntry.threadId;
+      const threadChatId = lastEntry.threadChatId;
+      const token = lastEntry.token;
+      const processedEntriesToSend =
+        this.processMessagesForSending(entriesToSend);
+      if (processedEntriesToSend.length === 0) {
+        for (const entry of entriesToSend) {
           handledEntries.add(entry);
+        }
+        if (entriesToSend.length < group.entries.length) {
+          this.pendingFlushRequired = true;
         }
         continue;
       }
 
-      const lastEntry = processedEntries[processedEntries.length - 1]!;
-      const threadId = lastEntry.threadId;
-      const threadChatId = lastEntry.threadChatId;
-      const token = lastEntry.token;
-
       try {
         await this.sendMessagesToAPI({
-          messages: processedEntries.map((e) => e.message),
+          messages: processedEntriesToSend.map((e) => e.message),
+          entryCount: entriesToSend.length,
           timezone,
           token,
           threadId,
           threadChatId,
         });
-        for (const entry of group.entries) {
+        for (const entry of entriesToSend) {
           handledEntries.add(entry);
         }
-      } catch (error) {
-        hasFailure = true;
-        this.retryBackoff.increment();
-
-        const remainingEntries = messageBufferCopy.filter(
-          (entry) => !handledEntries.has(entry),
-        );
-        // Always put the remaining messages back in the buffer (preserving original order)
-        this.messageBuffer = [...remainingEntries, ...this.messageBuffer];
-
-        const retryInOrNull = this.retryBackoff.retryIn();
-        if (retryInOrNull === null) {
-          this.runtime.logger.error(
-            "Max retries reached for this message group, will wait for next trigger",
-            {
-              error: formatError(error),
-              messageCount: processedEntries.length,
-              threadId,
-              threadChatId,
-              attempt: this.retryBackoff.retryAttempt,
-            },
-          );
-          // Don't set pendingFlushRequired - wait for next natural trigger
-        } else {
-          this.runtime.logger.error(
-            "API call failed for message group, will retry messages",
-            {
-              error: formatError(error),
-              messageCount: processedEntries.length,
-              threadId,
-              threadChatId,
-              retryingIn: retryInOrNull,
-              attempt: this.retryBackoff.retryAttempt,
-            },
-          );
+        if (entriesToSend.length < group.entries.length) {
           this.pendingFlushRequired = true;
         }
-        break;
+      } catch (error) {
+        failedGroups.push({
+          threadId,
+          threadChatId,
+          messageCount: processedEntriesToSend.length,
+          error,
+        });
       }
     }
 
-    if (!hasFailure && handledEntries.size > 0) {
+    const unsentEntries = messageBufferCopy.filter(
+      (entry) => !handledEntries.has(entry),
+    );
+    if (unsentEntries.length > 0) {
+      this.messageBuffer = [...unsentEntries, ...this.messageBuffer];
+      if (failedGroups.length === 0) {
+        this.pendingFlushRequired = true;
+      }
+    }
+
+    let retryDelayOverrideMs: number | null = null;
+    if (failedGroups.length > 0) {
+      const allClaimInProgress = failedGroups.every((failedGroup) =>
+        isDaemonEventClaimInProgressError(failedGroup.error),
+      );
+      if (allClaimInProgress) {
+        this.retryBackoff.reset();
+        retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
+        for (const failedGroup of failedGroups) {
+          this.runtime.logger.warn(
+            "Daemon event claim is in progress; preserving payload identity and retrying",
+            {
+              error: formatError(failedGroup.error),
+              messageCount: failedGroup.messageCount,
+              threadId: failedGroup.threadId,
+              threadChatId: failedGroup.threadChatId,
+              retryingIn: retryDelayOverrideMs,
+            },
+          );
+        }
+        this.pendingFlushRequired = true;
+      } else {
+        this.retryBackoff.increment();
+        const retryInOrNull = this.retryBackoff.retryIn();
+        if (retryInOrNull === null) {
+          for (const failedGroup of failedGroups) {
+            this.runtime.logger.error(
+              "Max retries reached for this message group, will wait for next trigger",
+              {
+                error: formatError(failedGroup.error),
+                messageCount: failedGroup.messageCount,
+                threadId: failedGroup.threadId,
+                threadChatId: failedGroup.threadChatId,
+                attempt: this.retryBackoff.retryAttempt,
+              },
+            );
+          }
+          // Don't set pendingFlushRequired - wait for next natural trigger
+        } else {
+          for (const failedGroup of failedGroups) {
+            this.runtime.logger.error(
+              "API call failed for message group, will retry messages",
+              {
+                error: formatError(failedGroup.error),
+                messageCount: failedGroup.messageCount,
+                threadId: failedGroup.threadId,
+                threadChatId: failedGroup.threadChatId,
+                retryingIn: retryInOrNull,
+                attempt: this.retryBackoff.retryAttempt,
+              },
+            );
+          }
+          this.pendingFlushRequired = true;
+        }
+      }
+    } else if (handledEntries.size > 0) {
       this.retryBackoff.reset();
-    } else if (!hasFailure && handledEntries.size === 0) {
+    } else if (handledEntries.size === 0) {
       this.runtime.logger.info("All messages filtered out, nothing to send");
     }
 
@@ -1150,11 +1466,13 @@ export class TerragonDaemon {
     // If new messages arrived while we were flushing, or if we need to retry
     if (this.pendingFlushRequired && this.messageBuffer.length > 0) {
       const retryInOrNull = this.retryBackoff.retryIn();
-      const delay = retryInOrNull ?? this.messageFlushDelay;
+      const delay =
+        retryDelayOverrideMs ?? retryInOrNull ?? this.messageFlushDelay;
       this.messageFlushTimer = setTimeout(() => {
         this.flushMessageBuffer();
       }, delay);
     }
+    this.maybeCleanupAllDaemonEventRunStates();
   }
 
   /**
@@ -1162,12 +1480,14 @@ export class TerragonDaemon {
    */
   private async sendMessagesToAPI({
     messages,
+    entryCount,
     timezone,
     token,
     threadId,
     threadChatId,
   }: {
     messages: ClaudeMessage[];
+    entryCount: number;
     timezone: string;
     token: string;
     threadId: string;
@@ -1178,14 +1498,28 @@ export class TerragonDaemon {
         messageCount: messages.length,
         threadId,
       });
+      const envelopeV2 = this.shouldEmitDaemonEventEnvelopeV2(threadChatId)
+        ? this.createDaemonEventEnvelope({
+            threadChatId,
+            messages,
+            entryCount,
+          })
+        : null;
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
         timezone,
         threadChatId,
+        ...(envelopeV2 ?? {}),
       };
 
       await this.runtime.serverPost(payload, token);
+      if (envelopeV2) {
+        this.markDaemonEventEnvelopeDelivered({
+          threadChatId,
+          eventId: envelopeV2.eventId,
+        });
+      }
       this.runtime.logger.info("Messages sent successfully", {
         messageCount: messages.length,
       });

@@ -4,13 +4,14 @@ import crypto from "crypto";
 import { POST } from "./route";
 import { createMockNextRequest } from "@/test-helpers/mock-next";
 import { db } from "@/lib/db";
-import { updateGitHubPR } from "@/lib/github";
+import { getOctokitForApp, updateGitHubPR } from "@/lib/github";
 import { handleAppMention } from "./handle-app-mention";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import {
   createTestUser,
   createTestGitHubPR,
 } from "@terragon/shared/model/test-helpers";
+import { getActiveSdlcLoopsForGithubPR } from "@terragon/shared/model/sdlc-loop";
 import * as schema from "@terragon/shared/db/schema";
 import { eq } from "drizzle-orm";
 import { env } from "@terragon/env/apps-www";
@@ -26,6 +27,16 @@ vi.mock("./route-feedback", () => ({
     mode: "reused_existing",
   }),
 }));
+
+vi.mock("@terragon/shared/model/sdlc-loop", async () => {
+  const actual = await vi.importActual<
+    typeof import("@terragon/shared/model/sdlc-loop")
+  >("@terragon/shared/model/sdlc-loop");
+  return {
+    ...actual,
+    getActiveSdlcLoopsForGithubPR: vi.fn(),
+  };
+});
 
 function createSignature(payload: string, secret: string): string {
   const hmac = crypto.createHmac("sha256", secret);
@@ -93,6 +104,10 @@ describe("GitHub webhook route", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.mocked(updateGitHubPR).mockResolvedValue();
+    vi.mocked(getOctokitForApp).mockResolvedValue(
+      undefined as unknown as Awaited<ReturnType<typeof getOctokitForApp>>,
+    );
+    vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValue([]);
   });
 
   describe("webhook validation", () => {
@@ -142,6 +157,38 @@ describe("GitHub webhook route", () => {
       expect(firstData.claimOutcome).toBe("claimed_new");
       expect(secondResponse.status).toBe(200);
       expect(secondData.claimOutcome).toBe("already_completed");
+    });
+
+    it("returns accepted no-op while a matching delivery is still in progress", async () => {
+      const now = new Date();
+      await db.insert(schema.githubWebhookDeliveries).values({
+        deliveryId: "delivery-in-progress",
+        claimantToken: "claimer-1",
+        claimExpiresAt: new Date(now.getTime() + 5 * 60 * 1000),
+        eventType: "pull_request.opened",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const request = await createMockRequest(
+        {
+          action: "opened",
+          pull_request: { number: 123 },
+          repository: { full_name: "owner/repo" },
+        },
+        {
+          "x-github-delivery": "delivery-in-progress",
+        },
+      );
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data).toEqual({
+        success: true,
+        claimOutcome: "in_progress_fresh",
+      });
+      expect(updateGitHubPR).not.toHaveBeenCalled();
     });
   });
 
@@ -696,10 +743,11 @@ describe("GitHub webhook route", () => {
       };
     }
 
-    it("should process app mentions in PR reviews", async () => {
+    it("should process app mentions in PR reviews without duplicate feedback routing when not enrolled", async () => {
       vi.mocked(handleAppMention).mockResolvedValue();
 
       const githubPR = await createTestGitHubPR({ db });
+      const deliveryId = "delivery-pr-review-mention";
       const request = await createMockRequest(
         createValidPullRequestReviewBody({
           repoFullName: githubPR.repoFullName,
@@ -709,6 +757,7 @@ describe("GitHub webhook route", () => {
         }),
         {
           "x-github-event": "pull_request_review",
+          "x-github-delivery": deliveryId,
         },
       );
 
@@ -724,14 +773,188 @@ describe("GitHub webhook route", () => {
         commentBody: "@test-app please take a look at this PR",
         commentGitHubAccountId: githubAccountId,
       });
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+    });
+
+    it("fans out review feedback routing to each enrolled loop user on the PR", async () => {
+      const githubPR = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        { id: "loop-1", userId: "loop-user-a" },
+        { id: "loop-2", userId: "loop-user-b" },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const request = await createMockRequest(
+        createValidPullRequestReviewBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          githubAccountId,
+          commentBody: "LGTM!",
+        }),
+        {
+          "x-github-event": "pull_request_review",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-a",
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review.submitted",
+        }),
+      );
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-b",
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review.submitted",
+        }),
+      );
+      expect(handleAppMention).not.toHaveBeenCalled();
+    });
+
+    it("passes authoritative unresolved review-thread count when GraphQL data is available", async () => {
+      const graphqlMock = vi.fn().mockResolvedValue({
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              pageInfo: {
+                hasNextPage: false,
+                endCursor: null,
+              },
+              nodes: [{ isResolved: true }, { isResolved: true }],
+            },
+          },
+        },
+      });
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        graphql: graphqlMock,
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+
+      const githubPR = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createValidPullRequestReviewBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          githubAccountId,
+          commentBody: "LGTM!",
+          state: "approved",
+        }),
+        {
+          "x-github-event": "pull_request_review",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review.submitted",
-          reviewBody: "@test-app please take a look at this PR",
-          sourceType: "github-mention",
-          authorGitHubAccountId: githubAccountId,
+          unresolvedThreadCount: 0,
+          unresolvedThreadCountSource: "github_graphql",
+        }),
+      );
+    });
+
+    it("falls back to review-state heuristic when GraphQL review-thread payload is missing", async () => {
+      const graphqlMock = vi.fn().mockResolvedValue({
+        repository: {
+          pullRequest: null,
+        },
+      });
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        graphql: graphqlMock,
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+
+      const githubPR = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createValidPullRequestReviewBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          githubAccountId,
+          commentBody: "Please address feedback",
+          state: "changes_requested",
+        }),
+        {
+          "x-github-event": "pull_request_review",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review.submitted",
+          unresolvedThreadCount: 1,
+          unresolvedThreadCountSource: "review_state_heuristic",
+        }),
+      );
+    });
+
+    it("treats review-thread pagination cap as non-authoritative and falls back to review-state heuristic", async () => {
+      let callCount = 0;
+      const graphqlMock = vi.fn().mockImplementation(async () => {
+        callCount += 1;
+        return {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: {
+                  hasNextPage: true,
+                  endCursor: `cursor-${callCount}`,
+                },
+                nodes: [{ isResolved: true }],
+              },
+            },
+          },
+        };
+      });
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        graphql: graphqlMock,
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+
+      const githubPR = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createValidPullRequestReviewBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          githubAccountId,
+          commentBody: "LGTM!",
+          state: "approved",
+        }),
+        {
+          "x-github-event": "pull_request_review",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review.submitted",
+          unresolvedThreadCount: 0,
+          unresolvedThreadCountSource: "review_state_heuristic",
         }),
       );
     });
@@ -819,7 +1042,7 @@ describe("GitHub webhook route", () => {
         "commented",
       ] as const;
       for (const state of reviewStates) {
-        vi.resetAllMocks();
+        vi.clearAllMocks();
         const body = createValidPullRequestReviewBody({
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
@@ -981,10 +1204,11 @@ describe("GitHub webhook route", () => {
       };
     }
 
-    it("should process app mentions in PR review comments", async () => {
+    it("should process app mentions in PR review comments without duplicate feedback routing when not enrolled", async () => {
       vi.mocked(handleAppMention).mockResolvedValue();
 
       const githubPR = await createTestGitHubPR({ db });
+      const deliveryId = "delivery-pr-review-comment-mention";
       const request = await createMockRequest(
         createValidPullRequestReviewCommentBody({
           repoFullName: githubPR.repoFullName,
@@ -994,6 +1218,7 @@ describe("GitHub webhook route", () => {
         }),
         {
           "x-github-event": "pull_request_review_comment",
+          "x-github-delivery": deliveryId,
         },
       );
 
@@ -1013,16 +1238,50 @@ describe("GitHub webhook route", () => {
         diffContext: "",
         commentContext: undefined,
       });
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+    });
+
+    it("fans out review-comment feedback routing to each enrolled loop user on the PR", async () => {
+      const githubPR = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        { id: "loop-1", userId: "loop-user-a" },
+        { id: "loop-2", userId: "loop-user-b" },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const request = await createMockRequest(
+        createValidPullRequestReviewCommentBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          commentBody: "This code looks good",
+          githubAccountId,
+        }),
+        {
+          "x-github-event": "pull_request_review_comment",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
+          userId: "loop-user-a",
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review_comment.created",
-          reviewBody: "@test-app please review this code",
-          sourceType: "github-mention",
-          authorGitHubAccountId: githubAccountId,
         }),
       );
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-b",
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          eventType: "pull_request_review_comment.created",
+        }),
+      );
+      expect(handleAppMention).not.toHaveBeenCalled();
     });
 
     it("should ignore review comments without app mention", async () => {
@@ -1152,6 +1411,7 @@ describe("GitHub webhook route", () => {
       repoFullName = "owner/repo",
       prNumbers = [123],
       checkRunId = 1,
+      headSha = "head-sha-1",
       conclusion = "success",
       status = "completed",
     }: {
@@ -1159,6 +1419,7 @@ describe("GitHub webhook route", () => {
       repoFullName?: string;
       prNumbers?: number[];
       checkRunId?: number;
+      headSha?: string;
       conclusion?: string | null;
       status?: string;
     }) {
@@ -1174,6 +1435,7 @@ describe("GitHub webhook route", () => {
             summary: "2 tests failed",
             text: "See failing tests in logs.",
           },
+          head_sha: headSha,
           details_url: "https://github.com/owner/repo/actions/runs/1",
           pull_requests: prNumbers.map((num) => ({ number: num })),
         },
@@ -1206,6 +1468,293 @@ describe("GitHub webhook route", () => {
         prNumber: pr.number,
         createIfNotFound: false,
       });
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+    });
+
+    it("routes successful check runs only when an SDLC loop is enrolled", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-id",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const deliveryId = "delivery-check-run-success-enrolled";
+      const body = createCheckRunBody({
+        repoFullName: pr.repoFullName,
+        prNumbers: [pr.number],
+        checkRunId: 123,
+        conclusion: "success",
+      });
+      const request = await createMockRequest(body, {
+        "x-github-event": "check_run",
+        "x-github-delivery": deliveryId,
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-id",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_run.completed",
+          deliveryId,
+          sourceType: "automation",
+          checkRunId: 123,
+          checkSummary: "CI / tests (completed:pass)",
+        }),
+      );
+    });
+
+    it("attaches trusted CI snapshot metadata for successful check runs", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-id",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      vi.mocked(getOctokitForApp).mockResolvedValueOnce({
+        rest: {
+          checks: {
+            listForRef: vi.fn().mockResolvedValue({
+              data: {
+                check_runs: [
+                  {
+                    name: "CI / lint",
+                    status: "completed",
+                    conclusion: "success",
+                  },
+                  {
+                    name: "CI / tests",
+                    status: "completed",
+                    conclusion: "success",
+                  },
+                ],
+              },
+            }),
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+      const body = createCheckRunBody({
+        repoFullName: pr.repoFullName,
+        prNumbers: [pr.number],
+        checkRunId: 123,
+        conclusion: "success",
+      });
+      const request = await createMockRequest(body, {
+        "x-github-event": "check_run",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_run.completed",
+          ciSnapshotSource: "github_check_runs",
+          ciSnapshotCheckNames: ["CI / lint", "CI / tests"],
+          ciSnapshotFailingChecks: [],
+          ciSnapshotComplete: true,
+        }),
+      );
+    });
+
+    it("skips CI snapshot metadata when check-runs response is truncated", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-id",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      vi.mocked(getOctokitForApp).mockResolvedValueOnce({
+        rest: {
+          checks: {
+            listForRef: vi
+              .fn()
+              .mockResolvedValueOnce({
+                data: {
+                  total_count: 101,
+                  check_runs: Array.from({ length: 100 }, (_value, index) => ({
+                    name: `CI / shard-${index}`,
+                    status: "completed",
+                    conclusion: "success",
+                  })),
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  check_runs: [],
+                },
+              }),
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: pr.repoFullName,
+          prNumbers: [pr.number],
+          checkRunId: 321,
+          conclusion: "success",
+        }),
+        {
+          "x-github-event": "check_run",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
+      const routedPayload = vi.mocked(routeGithubFeedbackOrSpawnThread).mock
+        .calls[0]?.[0];
+      expect(routedPayload?.ciSnapshotSource).toBeUndefined();
+      expect(routedPayload?.ciSnapshotCheckNames).toBeUndefined();
+      expect(routedPayload?.ciSnapshotFailingChecks).toBeUndefined();
+      expect(routedPayload?.ciSnapshotComplete).toBeUndefined();
+    });
+
+    it("hydrates CI snapshot metadata across paginated check-runs responses", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-id",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const listForRef = vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: {
+            total_count: 101,
+            check_runs: Array.from({ length: 100 }, (_unused, index) => ({
+              name: `CI / shard-${index}`,
+              status: "completed",
+              conclusion: "success",
+            })),
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            check_runs: [
+              {
+                name: "CI / lint",
+                status: "completed",
+                conclusion: "success",
+              },
+              {
+                name: "CI / tests",
+                status: "completed",
+                conclusion: "success",
+              },
+            ],
+          },
+        });
+      vi.mocked(getOctokitForApp).mockResolvedValueOnce({
+        rest: {
+          checks: {
+            listForRef,
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: pr.repoFullName,
+          prNumbers: [pr.number],
+          checkRunId: 333,
+          conclusion: "success",
+        }),
+        {
+          "x-github-event": "check_run",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(listForRef).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_run.completed",
+          ciSnapshotSource: "github_check_runs",
+          ciSnapshotCheckNames: expect.arrayContaining([
+            "CI / lint",
+            "CI / tests",
+          ]),
+          ciSnapshotFailingChecks: [],
+          ciSnapshotComplete: true,
+        }),
+      );
+    });
+
+    it("routes successful check runs to each enrolled loop user", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-a",
+        },
+        {
+          id: "loop-2",
+          userId: "loop-user-b",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const deliveryId = "delivery-check-run-success-multi-loop";
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: pr.repoFullName,
+          prNumbers: [pr.number],
+          checkRunId: 222,
+          conclusion: "success",
+        }),
+        {
+          "x-github-event": "check_run",
+          "x-github-delivery": deliveryId,
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-a",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_run.completed",
+          deliveryId,
+          checkRunId: 222,
+        }),
+      );
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-b",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_run.completed",
+          deliveryId,
+          checkRunId: 222,
+        }),
+      );
     });
 
     it("should handle check runs with multiple PRs", async () => {
@@ -1258,8 +1807,10 @@ describe("GitHub webhook route", () => {
         prNumbers: [pr1.number, pr2.number],
         conclusion: "failure",
       });
+      const deliveryId = "delivery-check-run-failure";
       const request = await createMockRequest(body, {
         "x-github-event": "check_run",
+        "x-github-delivery": deliveryId,
       });
 
       const response = await POST(request);
@@ -1270,18 +1821,22 @@ describe("GitHub webhook route", () => {
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
+          userId: undefined,
           repoFullName: pr1.repoFullName,
           prNumber: pr1.number,
           eventType: "check_run.completed",
+          deliveryId,
           sourceType: "automation",
           checkRunId: 1,
         }),
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
+          userId: undefined,
           repoFullName: pr2.repoFullName,
           prNumber: pr2.number,
           eventType: "check_run.completed",
+          deliveryId,
           sourceType: "automation",
           checkRunId: 1,
         }),
@@ -1409,6 +1964,152 @@ describe("GitHub webhook route", () => {
         prNumber: pr.number,
         createIfNotFound: false,
       });
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+    });
+
+    it("routes successful check suites only when an SDLC loop is enrolled", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-id",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const deliveryId = "delivery-check-suite-success-enrolled";
+      const body = createCheckSuiteBody({
+        repoFullName: pr.repoFullName,
+        prNumbers: [pr.number],
+        checkSuiteId: 456,
+        conclusion: "success",
+      });
+      const request = await createMockRequest(body, {
+        "x-github-event": "check_suite",
+        "x-github-delivery": deliveryId,
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-id",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_suite.completed",
+          deliveryId,
+          sourceType: "automation",
+          checkSuiteId: 456,
+          checkSummary: "Check suite (completed:pass)",
+        }),
+      );
+    });
+
+    it("routes successful check suites to each enrolled loop user", async () => {
+      const pr = await createTestGitHubPR({ db });
+      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+        {
+          id: "loop-1",
+          userId: "loop-user-a",
+        },
+        {
+          id: "loop-2",
+          userId: "loop-user-b",
+        },
+      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      const deliveryId = "delivery-check-suite-success-multi-loop";
+      const request = await createMockRequest(
+        createCheckSuiteBody({
+          repoFullName: pr.repoFullName,
+          prNumbers: [pr.number],
+          checkSuiteId: 654,
+          conclusion: "success",
+        }),
+        {
+          "x-github-event": "check_suite",
+          "x-github-delivery": deliveryId,
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-a",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_suite.completed",
+          deliveryId,
+          checkSuiteId: 654,
+        }),
+      );
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "loop-user-b",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_suite.completed",
+          deliveryId,
+          checkSuiteId: 654,
+        }),
+      );
+    });
+
+    it("should route actionable failed check suites for each associated PR", async () => {
+      const pr1 = await createTestGitHubPR({ db });
+      const pr2 = await createTestGitHubPR({
+        db,
+        overrides: {
+          number: pr1.number + 1,
+          repoFullName: pr1.repoFullName,
+        },
+      });
+      const body = createCheckSuiteBody({
+        repoFullName: pr1.repoFullName,
+        prNumbers: [pr1.number, pr2.number],
+        checkSuiteId: 987,
+        conclusion: "failure",
+      });
+      const deliveryId = "delivery-check-suite-failure";
+      const request = await createMockRequest(body, {
+        "x-github-event": "check_suite",
+        "x-github-delivery": deliveryId,
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: undefined,
+          repoFullName: pr1.repoFullName,
+          prNumber: pr1.number,
+          eventType: "check_suite.completed",
+          deliveryId,
+          sourceType: "automation",
+          checkSuiteId: 987,
+        }),
+      );
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: undefined,
+          repoFullName: pr2.repoFullName,
+          prNumber: pr2.number,
+          eventType: "check_suite.completed",
+          deliveryId,
+          sourceType: "automation",
+          checkSuiteId: 987,
+        }),
+      );
     });
 
     it("should handle check suites with multiple PRs", async () => {

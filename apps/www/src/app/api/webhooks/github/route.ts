@@ -90,21 +90,21 @@ export async function POST(request: NextRequest) {
     await handleIssueCommentEvent(payload);
   });
   webhooks.on("pull_request_review.submitted", async ({ payload }) => {
-    await handlePullRequestReviewEvent(payload);
+    await handlePullRequestReviewEvent(payload, requestId);
   });
   webhooks.on("pull_request_review_comment.created", async ({ payload }) => {
-    await handlePullRequestReviewCommentEvent(payload);
+    await handlePullRequestReviewCommentEvent(payload, requestId);
   });
   webhooks.on(
     ["check_run.completed", "check_run.created", "check_run.rerequested"],
     async ({ payload }) => {
-      await handleCheckRunEvent(payload);
+      await handleCheckRunEvent(payload, requestId);
     },
   );
   webhooks.on(
     ["check_suite.completed", "check_suite.rerequested"],
     async ({ payload }) => {
-      await handleCheckSuiteEvent(payload);
+      await handleCheckSuiteEvent(payload, requestId);
     },
   );
   webhooks.on(["issues.opened"], async ({ payload }) => {

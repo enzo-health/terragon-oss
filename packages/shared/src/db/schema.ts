@@ -1385,6 +1385,7 @@ export const sdlcLoopSignalInbox = pgTable(
     receivedAt: timestamp("received_at", { mode: "date" })
       .notNull()
       .defaultNow(),
+    committedAt: timestamp("committed_at", { mode: "date" }),
     processedAt: timestamp("processed_at", { mode: "date" }),
   },
   (table) => [
