@@ -17,6 +17,7 @@
  *      • Pull requests: Read (minimum)
  *      • Issues: Read (to read PR comments)
  *      • Contents: Read (if you need to access code)
+ *      • Actions: Read (for reruns and job logs)
  *      • Metadata: Read (always required)
  *
  * 5. Set environment variable:
