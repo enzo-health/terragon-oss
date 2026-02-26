@@ -40,6 +40,10 @@ import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
 import { getSandboxSizeForUser } from "@/lib/subscription-tiers";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getThreadChatHistory } from "./compact";
+import {
+  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
+} from "./sdlc-loop/enrollment";
 
 export interface CreateThreadOptions {
   userId: string;
@@ -57,6 +61,7 @@ export interface CreateThreadOptions {
   scheduleAt?: number | null;
   disableGitCheckpointing?: boolean;
   skipSetup?: boolean;
+  runInSdlcLoop?: boolean;
   sourceType: ThreadSource;
   sourceMetadata?: ThreadSourceMetadata;
   delayMs?: number;
@@ -82,6 +87,7 @@ export async function createNewThread({
   scheduleAt = null,
   disableGitCheckpointing = false,
   skipSetup = false,
+  runInSdlcLoop = false,
   sourceType,
   sourceMetadata,
   delayMs = 0,
@@ -236,6 +242,35 @@ export async function createNewThread({
   }
 
   const updateThreadMetadata = () => {
+    const maybeEnsureSdlcLoopEnrollment = async (prNumber: number) => {
+      const enrollmentAllowedForThread = isSdlcLoopEnrollmentAllowedForThread({
+        sourceType,
+        sourceMetadata: sourceMetadata ?? null,
+      });
+      if (!runInSdlcLoop || !enrollmentAllowedForThread) {
+        return;
+      }
+      try {
+        await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+          userId,
+          repoFullName: githubRepoFullName,
+          prNumber,
+          threadId,
+        });
+      } catch (error) {
+        console.warn(
+          "[createNewThread] failed to ensure SDLC loop enrollment for opted-in thread",
+          {
+            userId,
+            threadId,
+            repoFullName: githubRepoFullName,
+            prNumber,
+            error,
+          },
+        );
+      }
+    };
+
     if (shouldGenerateName) {
       waitUntil(
         generateAndUpdateThreadName({
@@ -247,21 +282,29 @@ export async function createNewThread({
     }
     if (githubPRNumber) {
       waitUntil(
-        updateGitHubPR({
-          repoFullName: githubRepoFullName,
-          prNumber: githubPRNumber,
-          createIfNotFound: true,
-        }),
+        (async () => {
+          await updateGitHubPR({
+            repoFullName: githubRepoFullName,
+            prNumber: githubPRNumber,
+            createIfNotFound: true,
+          });
+          await maybeEnsureSdlcLoopEnrollment(githubPRNumber);
+        })(),
       );
     } else if (headBranchName) {
       waitUntil(
-        findAndAssociatePR({
-          userId,
-          threadId,
-          repoFullName: githubRepoFullName,
-          headBranchName,
-          baseBranchName,
-        }),
+        (async () => {
+          const associatedPrNumber = await findAndAssociatePR({
+            userId,
+            threadId,
+            repoFullName: githubRepoFullName,
+            headBranchName,
+            baseBranchName,
+          });
+          if (associatedPrNumber) {
+            await maybeEnsureSdlcLoopEnrollment(associatedPrNumber);
+          }
+        })(),
       );
     }
   };

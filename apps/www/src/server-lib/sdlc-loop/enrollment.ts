@@ -4,6 +4,31 @@ import {
   enrollSdlcLoopForGithubPR,
   getActiveSdlcLoopForGithubPRAndUser,
 } from "@terragon/shared/model/sdlc-loop";
+import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
+
+export function isSdlcLoopEnrollmentAllowedForThread({
+  sourceType,
+  sourceMetadata,
+}: {
+  sourceType: ThreadSource | null;
+  sourceMetadata: ThreadSourceMetadata | null;
+}) {
+  if (!sourceType) {
+    return false;
+  }
+
+  // Dashboard-created web tasks must explicitly opt in.
+  if (sourceType === "www") {
+    return sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn;
+  }
+
+  // GitHub webhook/automation-driven tasks keep existing auto-enrollment behavior.
+  if (sourceType === "github-mention" || sourceType === "automation") {
+    return true;
+  }
+
+  return false;
+}
 
 export async function getActiveSdlcLoopForGithubPRIfEnabled({
   userId,

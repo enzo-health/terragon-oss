@@ -19,6 +19,7 @@ import { getGitHubMentionAutomationsForRepo } from "@terragon/shared/model/autom
 import { GitHubMentionTriggerConfig } from "@terragon/shared/automations";
 import { Automation } from "@terragon/shared/db/types";
 import { DBUserMessage } from "@terragon/shared/db/db-message";
+import type { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import {
   addEyesReactionToComment,
   getAccessInfoForGitHubAccount,
@@ -35,6 +36,7 @@ import { modelToAgent } from "@terragon/agent/utils";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/sdlc-loop/enrollment";
 
 // Handle app mention by adding to existing thread or creating a new one
@@ -388,13 +390,30 @@ async function triggerTasksForUser({
       threadIdOrNull,
       threadChatIdOrNull,
       forcedAgent,
+      threadSourceType,
+      threadSourceMetadata,
     }: {
       threadIdOrNull: string | null;
       threadChatIdOrNull: string | null;
       forcedAgent: AIAgent | null;
+      threadSourceType?: ThreadSource | null;
+      threadSourceMetadata?: ThreadSourceMetadata | null;
     }): Promise<{ threadId: string; threadChatId: string }> => {
-      const maybeEnsureSdlcEnrollment = async (threadId: string) => {
+      const maybeEnsureSdlcEnrollment = async ({
+        threadId,
+        sourceType,
+        sourceMetadata,
+      }: {
+        threadId: string;
+        sourceType: ThreadSource | null;
+        sourceMetadata: ThreadSourceMetadata | null;
+      }) => {
         if (issueOrPrType !== "pull_request") {
+          return;
+        }
+        if (
+          !isSdlcLoopEnrollmentAllowedForThread({ sourceType, sourceMetadata })
+        ) {
           return;
         }
         try {
@@ -435,7 +454,22 @@ async function triggerTasksForUser({
           source: "github",
           appendOrReplace: "append",
         });
-        await maybeEnsureSdlcEnrollment(threadIdOrNull);
+        let sourceType = threadSourceType ?? null;
+        let sourceMetadata = threadSourceMetadata ?? null;
+        if (!sourceType && !sourceMetadata) {
+          const existingThread = await getThread({
+            db,
+            userId,
+            threadId: threadIdOrNull,
+          });
+          sourceType = existingThread?.sourceType ?? null;
+          sourceMetadata = existingThread?.sourceMetadata ?? null;
+        }
+        await maybeEnsureSdlcEnrollment({
+          threadId: threadIdOrNull,
+          sourceType,
+          sourceMetadata,
+        });
         return { threadId: threadIdOrNull, threadChatId: threadChatIdOrNull };
       }
       console.log(`Creating new thread`, {
@@ -444,6 +478,12 @@ async function triggerTasksForUser({
         repoFullName,
         userId,
       });
+      const mentionSourceMetadata: ThreadSourceMetadata = {
+        type: "github-mention",
+        repoFullName,
+        issueOrPrNumber,
+        commentId,
+      };
       const { threadId, threadChatId } = await newThreadInternal({
         userId,
         message: getUserMessageToSend({ forcedAgent: null, isFollowUp: false }),
@@ -459,12 +499,7 @@ async function triggerTasksForUser({
         githubIssueNumber:
           issueOrPrType === "issue" ? issueOrPrNumber : undefined,
         sourceType: "github-mention",
-        sourceMetadata: {
-          type: "github-mention",
-          repoFullName,
-          issueOrPrNumber,
-          commentId,
-        },
+        sourceMetadata: mentionSourceMetadata,
       });
       console.log(`Created new thread`, {
         threadId,
@@ -474,7 +509,11 @@ async function triggerTasksForUser({
         repoFullName,
         userId,
       });
-      await maybeEnsureSdlcEnrollment(threadId);
+      await maybeEnsureSdlcEnrollment({
+        threadId,
+        sourceType: "github-mention",
+        sourceMetadata: mentionSourceMetadata,
+      });
       return { threadId, threadChatId };
     };
 
@@ -506,6 +545,8 @@ async function triggerTasksForUser({
             threadIdOrNull: activeSdlcLoop.threadId,
             threadChatIdOrNull: enrolledThreadChat.id,
             forcedAgent: enrolledThreadChat.agent,
+            threadSourceType: enrolledThread?.sourceType ?? null,
+            threadSourceMetadata: enrolledThread?.sourceMetadata ?? null,
           });
           return;
         }
@@ -537,6 +578,8 @@ async function triggerTasksForUser({
           threadIdOrNull: threadOrNull.id,
           threadChatIdOrNull: threadChat.id,
           forcedAgent: threadChat.agent,
+          threadSourceType: threadOrNull.sourceType,
+          threadSourceMetadata: threadOrNull.sourceMetadata,
         });
         return;
       }
@@ -572,10 +615,17 @@ async function triggerTasksForUser({
         threadChatId,
         userId,
       });
+      const threadOrNull = await getThread({
+        db,
+        userId,
+        threadId,
+      });
       await queueOrCreateThreadForGitHubMention({
         threadIdOrNull: threadId,
         threadChatIdOrNull: threadChatId,
         forcedAgent: threadChat?.agent ?? null,
+        threadSourceType: threadOrNull?.sourceType ?? null,
+        threadSourceMetadata: threadOrNull?.sourceMetadata ?? null,
       });
     }
   } catch (error) {

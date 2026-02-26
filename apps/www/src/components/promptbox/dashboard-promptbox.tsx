@@ -24,12 +24,14 @@ import {
 } from "./prompt-box-tool-belt";
 import { useAccessInfo } from "@/queries/subscription";
 import { modelToAgent } from "@terragon/agent/utils";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 
 export type DashboardPromptBoxHandleSubmit = (
   args: UsePromptBoxHandleSubmitArgs & {
     disableGitCheckpointing: boolean;
     skipSetup: boolean;
     createNewBranch: boolean;
+    runInSdlcLoop: boolean;
   },
 ) => Promise<void>;
 
@@ -47,6 +49,10 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const [repoFullName, setRepoFullName] = useSelectedRepo();
   const [branchName, setBranchName] = useSelectedBranch();
   const [isRecording, setIsRecording] = useState(false);
+  const [runInSdlcLoop, setRunInSdlcLoop] = useState(false);
+  const sdlcLoopCoordinatorRoutingEnabled = useFeatureFlag(
+    "sdlcLoopCoordinatorRouting",
+  );
   const onRepoBranchChange = useCallback(
     (repo: string | null, branch: string | null) => {
       setRepoFullName(repo);
@@ -100,9 +106,10 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         disableGitCheckpointing,
         skipSetup,
         createNewBranch,
+        runInSdlcLoop,
       });
     },
-    [props, disableGitCheckpointing, skipSetup, createNewBranch],
+    [props, disableGitCheckpointing, skipSetup, createNewBranch, runInSdlcLoop],
   );
 
   const {
@@ -205,6 +212,10 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
           createNewBranchValue={createNewBranch}
           onCreateNewBranchChange={setCreateNewBranch}
           createNewBranchDisabled={!repoFullName}
+          showSdlcLoopOptIn={sdlcLoopCoordinatorRoutingEnabled}
+          sdlcLoopOptInValue={runInSdlcLoop}
+          onSdlcLoopOptInChange={setRunInSdlcLoop}
+          sdlcLoopOptInDisabled={!repoFullName}
         />
       </div>
     </div>
