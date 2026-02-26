@@ -8,7 +8,6 @@ import {
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
@@ -359,11 +358,6 @@ export async function POST(request: Request) {
     threadId,
   });
 
-  const coordinatorRoutingEnabled = await getFeatureFlagForUser({
-    db,
-    userId,
-    flagName: "sdlcLoopCoordinatorRouting",
-  });
   let claimedSignalInboxId: string | null = null;
 
   const rollbackClaimedSignal = async ({
@@ -413,7 +407,7 @@ export async function POST(request: Request) {
     }
   };
 
-  if (enrolledLoop && coordinatorRoutingEnabled) {
+  if (enrolledLoop) {
     if (!envelopeV2) {
       console.error(
         "[sdlc-loop] rejecting daemon event for enrolled loop without v2 envelope",
@@ -554,12 +548,7 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
-  if (
-    enrolledLoop &&
-    coordinatorRoutingEnabled &&
-    envelopeV2 &&
-    claimedSignalInboxId
-  ) {
+  if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {
     const commitResult = await commitEnrolledLoopDaemonEventClaim({
       signalInboxId: claimedSignalInboxId,
       loopId: enrolledLoop.id,
@@ -597,7 +586,7 @@ export async function POST(request: Request) {
     }
   }
 
-  if (enrolledLoop && coordinatorRoutingEnabled && envelopeV2) {
+  if (enrolledLoop && envelopeV2) {
     try {
       const guardrailRuntime = buildCoordinatorGuardrailRuntime(
         enrolledLoop.loopVersion,
