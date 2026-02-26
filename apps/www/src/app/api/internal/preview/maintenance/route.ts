@@ -4,14 +4,16 @@ import {
   PreviewMaintenanceAuthError,
 } from "@/server-lib/preview-validation";
 import {
+  daemonEventQuarantine,
   threadRun,
   threadRunContext,
   threadUiValidation,
 } from "@terragon/shared/db/schema";
 import { getFeatureFlagsGlobal } from "@terragon/shared/model/feature-flags";
-import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod/v4";
+import { getPostHogServer } from "@/lib/posthog-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,6 +75,7 @@ export async function POST(request: Request) {
   const limit = parsedBody.data.limit ?? 100;
   const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000);
   const now = new Date();
+  const quarantineCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const staleRuns = await db.query.threadRun.findMany({
     where: and(
@@ -144,9 +147,35 @@ export async function POST(request: Request) {
     });
   }
 
+  const [quarantineCountRow] = await db
+    .select({
+      count: sql<number>`count(*)`,
+    })
+    .from(daemonEventQuarantine)
+    .where(lt(daemonEventQuarantine.createdAt, quarantineCutoff));
+  const purgedQuarantineRows = Number(quarantineCountRow?.count ?? 0);
+
+  if (purgedQuarantineRows > 0) {
+    getPostHogServer().capture({
+      distinctId: "preview-system",
+      event: "preview.quarantine.purge",
+      properties: {
+        schemaVersion: 1,
+        origin: "preview_maintenance",
+        tsServer: new Date().toISOString(),
+        traceId: crypto.randomUUID(),
+        purgedQuarantineRows,
+      },
+    });
+    await db
+      .delete(daemonEventQuarantine)
+      .where(lt(daemonEventQuarantine.createdAt, quarantineCutoff));
+  }
+
   return NextResponse.json({
     staleMinutes,
     processed: staleRuns.length,
     cutoff: cutoff.toISOString(),
+    purgedQuarantineRows,
   });
 }

@@ -156,7 +156,17 @@ export async function POST(
       exitCode: body.exitCode ?? null,
       capabilities,
     });
-    const diffSource: PreviewValidationDiffSource = body.diffSource ?? "sha";
+    const fallbackDiffSourceContext =
+      runContext.runEndSha === null
+        ? {
+            reason: "missing_end_sha",
+            runStartSha: runContext.runStartSha,
+            runEndSha: runContext.runEndSha,
+          }
+        : null;
+    const diffSource: PreviewValidationDiffSource =
+      body.diffSource ??
+      (fallbackDiffSourceContext ? "working-tree-fallback" : "sha");
 
     const artifacts = await persistValidationArtifacts({
       threadId,
@@ -201,7 +211,8 @@ export async function POST(
       exitCode: body.exitCode ?? null,
       durationMs: body.durationMs ?? null,
       diffSource,
-      diffSourceContextJson: body.diffSourceContextJson ?? null,
+      diffSourceContextJson:
+        body.diffSourceContextJson ?? fallbackDiffSourceContext,
       matchedUiRulesJson: body.matchedUiRulesJson ?? null,
       capabilitySnapshotJson: capabilities as Record<string, unknown>,
       artifacts,

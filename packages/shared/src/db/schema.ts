@@ -41,6 +41,7 @@ import {
   AgentProviderMetadata,
 } from "./types";
 import type {
+  DaemonEventQuarantineReason,
   FrozenRunFlagSnapshot,
   PreviewOpenMode,
   PreviewPinnedUpstreamIps,
@@ -409,6 +410,7 @@ export const threadRun = pgTable(
       .notNull(),
     terminalEventId: text("terminal_event_id"),
     lastAcceptedSeq: integer("last_accepted_seq"),
+    daemonPayloadVersion: integer("daemon_payload_version"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     endedAt: timestamp("ended_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -651,6 +653,34 @@ export const previewValidationAttempt = pgTable(
     }),
     index("preview_validation_attempt_run_id_index").on(table.runId),
     index("preview_validation_attempt_thread_created_at_index").on(
+      table.threadId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const daemonEventQuarantine = pgTable(
+  "daemon_event_quarantine",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    runIdOrNull: text("run_id_or_null"),
+    activeRunId: text("active_run_id"),
+    reason: text("reason").$type<DaemonEventQuarantineReason>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    payloadPrefix2k: text("payload_prefix_2k").notNull(),
+    payloadR2Key: text("payload_r2_key"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("daemon_event_quarantine_thread_created_at_index").on(
       table.threadId,
       table.createdAt,
     ),

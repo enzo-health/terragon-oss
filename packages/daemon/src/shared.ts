@@ -4,6 +4,7 @@ import { AIAgentSchema } from "@terragon/agent/types";
 
 export const defaultPipePath = "/tmp/terragon-daemon.pipe";
 export const defaultUnixSocketPath = "/tmp/terragon-daemon.sock";
+export const DAEMON_EVENT_PAYLOAD_VERSION = 2 as const;
 
 // Increment this when you make a breaking change to the daemon.
 // 1: Supports the --version flag
@@ -24,6 +25,7 @@ export const DaemonMessageClaudeSchema = z.object({
   sessionId: z.string().nullable(),
   threadId: z.string(),
   threadChatId: z.string(),
+  runId: z.string().nullable().optional(),
   featureFlags: z.record(z.string(), z.boolean()).optional() as z.ZodOptional<
     z.ZodType<FeatureFlags>
   >,
@@ -149,4 +151,9 @@ export type DaemonEventAPIBody = {
   threadChatId: string;
   messages: ClaudeMessage[];
   timezone: string;
+  payloadVersion?: 1 | 2;
+  runId?: string;
+  eventId?: string;
+  seq?: number;
+  endSha?: string | null;
 };

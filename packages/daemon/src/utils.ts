@@ -8,6 +8,7 @@ export type MessageBufferEntry = {
   agent: AIAgent | null;
   threadId: string;
   threadChatId: string;
+  runId: string | null;
   token: string;
 };
 

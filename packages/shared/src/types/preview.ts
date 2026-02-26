@@ -144,6 +144,38 @@ export const previewEventNames = [
 
 export type PreviewEventName = (typeof previewEventNames)[number];
 
+export const previewMetricNames = [
+  "preview.strict_mismatch",
+  "preview.legacy_mode",
+  "preview.missing_end_sha",
+] as const;
+
+export type PreviewMetricName = (typeof previewMetricNames)[number];
+
+export const previewObservabilitySchemaVersion = 1 as const;
+
+export const previewEventOrigins = [
+  "daemon_event",
+  "preview_proxy",
+  "preview_exchange",
+  "preview_session_start",
+  "preview_maintenance",
+] as const;
+
+export type PreviewEventOrigin = (typeof previewEventOrigins)[number];
+
+export type PreviewObservabilityEventBase = {
+  schemaVersion: typeof previewObservabilitySchemaVersion;
+  origin: PreviewEventOrigin;
+  tsServer: string;
+  traceId: string;
+  threadId?: string;
+  threadChatId?: string;
+  runId?: string;
+  previewSessionId?: string;
+  proxyReqId?: string;
+};
+
 export const previewSessionTTLSeconds = 1800;
 export const previewBroadcastSchemaVersion = 1;
 export const previewTokenIssuer = "terragon-preview" as const;

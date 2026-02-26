@@ -1168,6 +1168,8 @@ export async function findThreadContextForRun({
   threadId: string;
   threadChatId: string;
   runId: string;
+  runStartSha: string | null;
+  runEndSha: string | null;
   userId: string;
   sandboxProvider: string;
   githubRepoFullName: string;
@@ -1178,6 +1180,8 @@ export async function findThreadContextForRun({
       threadId: threadRun.threadId,
       threadChatId: threadRun.threadChatId,
       runId: threadRun.runId,
+      runStartSha: threadRun.runStartSha,
+      runEndSha: threadRun.runEndSha,
       userId: thread.userId,
       sandboxProvider: threadRun.sandboxProvider,
       githubRepoFullName: thread.githubRepoFullName,

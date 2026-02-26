@@ -28,6 +28,8 @@ const PREVIEW_KEY_ROOT = "terragon:v1:preview:keys";
 const PREVIEW_EXCHANGE_JTI_PREFIX = "terragon:v1:preview:exchange:jti:";
 const PREVIEW_EXCHANGE_NONCE_PREFIX = "terragon:v1:preview:exchange:nonce:";
 const PREVIEW_BROADCAST_JTI_PREFIX = "terragon:v1:preview:broadcast:jti:";
+const PREVIEW_REPO_ACCESS_PREFIX = "terragon:v1:preview:repo-access";
+const PREVIEW_REPO_ACCESS_NEGATIVE_TTL_SECONDS = 5;
 
 export class PreviewAuthError extends Error {
   constructor(
@@ -550,6 +552,103 @@ export function mapPreviewAuthError(error: unknown): {
 
 export function getPreviewCookieName(previewSessionId: string): string {
   return `terragon_preview_${previewSessionId}`;
+}
+
+function previewRepoAccessEnvSegment(): string {
+  return (
+    process.env.VERCEL_ENV ??
+    process.env.NEXT_PUBLIC_VERCEL_ENV ??
+    process.env.NODE_ENV ??
+    "unknown"
+  );
+}
+
+function buildPreviewRepoAccessKey({
+  userId,
+  repoFullName,
+}: {
+  userId: string;
+  repoFullName: string;
+}): string {
+  return `${PREVIEW_REPO_ACCESS_PREFIX}:${previewRepoAccessEnvSegment()}:${userId}:${repoFullName}`;
+}
+
+export async function assertPreviewRepoAccess({
+  userId,
+  repoFullName,
+  accessCheck,
+}: {
+  userId: string;
+  repoFullName: string;
+  accessCheck: () => Promise<boolean>;
+}): Promise<boolean> {
+  const key = buildPreviewRepoAccessKey({ userId, repoFullName });
+
+  try {
+    const cached = await redis.get<string>(key);
+    if (cached === "allow") {
+      return true;
+    }
+    if (cached === "deny") {
+      return false;
+    }
+  } catch (error) {
+    console.error("Preview repo access cache read failed", {
+      userId,
+      repoFullName,
+      error,
+    });
+    throw new PreviewAuthError(
+      "cache_unavailable",
+      503,
+      "Preview access cache is unavailable",
+    );
+  }
+
+  const allowed = await accessCheck();
+
+  try {
+    await redis.set(key, allowed ? "allow" : "deny", {
+      ex: allowed
+        ? Math.min(60, previewSessionTTLSeconds)
+        : PREVIEW_REPO_ACCESS_NEGATIVE_TTL_SECONDS,
+    });
+  } catch (error) {
+    console.error("Preview repo access cache write failed", {
+      userId,
+      repoFullName,
+      error,
+    });
+    throw new PreviewAuthError(
+      "cache_unavailable",
+      503,
+      "Preview access cache is unavailable",
+    );
+  }
+
+  return allowed;
+}
+
+export async function invalidateRepoAccess({
+  userId,
+  repoFullName,
+  reason,
+}: {
+  userId: string;
+  repoFullName: string;
+  reason: string;
+}): Promise<void> {
+  const key = buildPreviewRepoAccessKey({ userId, repoFullName });
+  try {
+    await redis.del(key);
+  } catch (error) {
+    console.error("Failed to invalidate preview repo access cache", {
+      userId,
+      repoFullName,
+      reason,
+      error,
+    });
+  }
 }
 
 export function isPreviewSessionExpired(expiresAt: Date | null): boolean {

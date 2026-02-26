@@ -24,6 +24,7 @@ import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
 import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
+  getSandboxOrNull as getSandboxOrNullInternal,
 } from "@terragon/sandbox";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
@@ -357,6 +358,42 @@ export async function maybeHibernateSandboxInternal({
   }
   await hibernateSandboxInternal({ sandboxProvider, sandboxId });
   return true;
+}
+
+export async function readSandboxHeadSha({
+  sandboxId,
+  sandboxProvider,
+}: {
+  sandboxId: string | null | undefined;
+  sandboxProvider: SandboxProvider | null | undefined;
+}): Promise<string | null> {
+  if (!sandboxId || !sandboxProvider) {
+    return null;
+  }
+
+  const session = await getSandboxOrNullInternal({
+    sandboxId,
+    sandboxProvider,
+  });
+  if (!session) {
+    return null;
+  }
+
+  try {
+    const repoDirArg = JSON.stringify(session.repoDir);
+    const output = await session.runCommand(
+      `git -C ${repoDirArg} rev-parse HEAD`,
+    );
+    const sha = output.trim().split("\n").at(-1)?.trim() ?? "";
+    return sha || null;
+  } catch (error) {
+    console.warn("Failed to resolve sandbox HEAD SHA", {
+      sandboxId,
+      sandboxProvider,
+      error,
+    });
+    return null;
+  }
 }
 
 export async function maybeHibernateSandboxById({

@@ -92,10 +92,21 @@ Harden run correlation and security posture with strict/legacy daemon handling, 
 
 ## Done summary
 
-TBD
+Implemented daemon correlation hardening and preview security lifecycle reliability for fn-2.5:
+
+- Added explicit daemon envelope v2 support (`payloadVersion`, `runId`, `eventId`, `seq`, terminal `endSha`) from run start through daemon flush and daemon-event ingestion.
+- Added runId propagation from `startAgentMessage` to daemon start payload and runtime buffer metadata.
+- Added strict/legacy handling in daemon-event ingestion with deterministic `202` quarantine behavior for missing/mismatched runId, payload-version mismatch, missing terminal endSha, duplicate eventId, and out-of-order seq.
+- Added run sequencing and event dedupe (`lastAcceptedSeq` CAS + Redis event id reservation) with no-op ack behavior.
+- Added run terminal correlation updates (`thread_run` + `thread_run_context`) and fallback behavior when terminal endSha cannot be trusted.
+- Added daemon quarantine persistence with payload hash/prefix, optional R2 offload for oversized payloads, and retention purge in maintenance route.
+- Added preview observability helpers and emitted required `preview.*` counters plus access-denied telemetry.
+- Added preview repo-access cache contract helpers with invalidation helper and fail-closed behavior in exchange/proxy paths.
+- Added validation fallback defaulting to `working-tree-fallback` when terminal runEndSha is unavailable.
+- Added/updated tests for daemon envelope behavior and regenerated shared DB migration artifacts.
 
 ## Evidence
 
 - Commits:
-- Tests:
+- Tests: pnpm -C apps/www tsc-check, pnpm -C packages/shared tsc-check, pnpm -C packages/daemon tsc-check, pnpm -C apps/www lint, pnpm -C apps/www test src/server-lib/preview-auth.test.ts, pnpm -C apps/www test src/server-lib/run-context.test.ts, pnpm -C packages/daemon exec vitest src/daemon.test.ts, pnpm -C packages/daemon build
 - PRs:

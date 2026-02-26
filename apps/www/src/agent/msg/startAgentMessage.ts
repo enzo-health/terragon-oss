@@ -492,6 +492,7 @@ export async function startAgentMessage({
           await sendDaemonMessage({
             message: {
               type: "claude",
+              runId,
               model: normalizedModelForDaemon(model),
               agent: threadChat.agent,
               agentVersion: threadChat.agentVersion,

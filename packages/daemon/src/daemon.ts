@@ -8,6 +8,7 @@ import {
   ClaudeMessage,
   DaemonMessage,
   DAEMON_VERSION,
+  DAEMON_EVENT_PAYLOAD_VERSION,
 } from "./shared";
 import { performance } from "node:perf_hooks";
 import { RetryBackoff, RetryConfig, DEFAULT_RETRY_CONFIG } from "./retry";
@@ -50,6 +51,7 @@ type ActiveProcessState = {
   agent: AIAgent;
   threadId: string;
   threadChatId: string;
+  runId: string | null;
   token: string;
   processId: number | null;
   sessionId: string | null;
@@ -68,6 +70,7 @@ export class TerragonDaemon {
   private mcpConfigPath: string | undefined;
 
   private activeProcesses: Map<string, ActiveProcessState> = new Map();
+  private sequenceByRun: Map<string, number> = new Map();
 
   private messageHandleDelay: number = 0;
   private messageFlushDelay: number = 0;
@@ -240,6 +243,7 @@ export class TerragonDaemon {
             },
             threadId: parsedMessage.threadId,
             threadChatId: parsedMessage.threadChatId,
+            runId: processToStop?.runId ?? null,
             token: parsedMessage.token,
           });
           this.flushMessageBuffer();
@@ -329,6 +333,7 @@ export class TerragonDaemon {
       isWorking: false,
       threadId: input.threadId,
       threadChatId: input.threadChatId,
+      runId: input.runId ?? null,
       token: input.token,
       pollInterval: null,
     };
@@ -462,6 +467,7 @@ export class TerragonDaemon {
         },
         threadId: activeState.threadId,
         threadChatId: activeState.threadChatId,
+        runId: activeState.runId,
         token: activeState.token,
       });
     }
@@ -481,6 +487,7 @@ export class TerragonDaemon {
         },
         threadId: activeState.threadId,
         threadChatId: activeState.threadChatId,
+        runId: activeState.runId,
         token: activeState.token,
       });
     }
@@ -546,6 +553,7 @@ export class TerragonDaemon {
             },
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
           this.killActiveProcess(input.threadChatId);
@@ -660,6 +668,7 @@ export class TerragonDaemon {
             message: outputMessage,
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
         } catch (e) {
@@ -717,6 +726,7 @@ export class TerragonDaemon {
             message: parsedMessage,
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
         }
@@ -758,6 +768,7 @@ export class TerragonDaemon {
             message: outputMessage,
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
         } catch (e) {
@@ -810,6 +821,7 @@ export class TerragonDaemon {
             message: parsedMessage,
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
           if (parsedMessage.type === "result") {
@@ -873,6 +885,7 @@ export class TerragonDaemon {
             message: parsedMessage,
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
         }
@@ -898,6 +911,7 @@ export class TerragonDaemon {
             },
             threadId: input.threadId,
             threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
             token: input.token,
           });
         }
@@ -1056,16 +1070,22 @@ export class TerragonDaemon {
     // Group messages by threadChatId so each thread flushes independently
     const groupsOrdered: Array<{
       threadChatId: string;
+      runId: string | null;
       entries: MessageBufferEntry[];
     }> = [];
     const groupMap = new Map<string, MessageBufferEntry[]>();
     for (const entry of messageBufferCopy) {
       const threadChatId = entry.threadChatId;
-      let group = groupMap.get(threadChatId);
+      const groupKey = `${threadChatId}::${entry.runId ?? "legacy"}`;
+      let group = groupMap.get(groupKey);
       if (!group) {
         group = [];
-        groupMap.set(threadChatId, group);
-        groupsOrdered.push({ threadChatId, entries: group });
+        groupMap.set(groupKey, group);
+        groupsOrdered.push({
+          threadChatId,
+          runId: entry.runId,
+          entries: group,
+        });
       }
       group.push(entry);
     }
@@ -1088,14 +1108,36 @@ export class TerragonDaemon {
       const threadId = lastEntry.threadId;
       const threadChatId = lastEntry.threadChatId;
       const token = lastEntry.token;
+      const runId = group.runId;
+      const messages = processedEntries.map((entry) => entry.message);
+      const isTerminalBatch = messages.some((message) =>
+        this.isTerminalMessage(message),
+      );
+      const seq =
+        runId === null
+          ? undefined
+          : this.nextSequence({
+              threadId,
+              threadChatId,
+              runId,
+            });
+      const payloadVersion: 1 | 2 = runId ? DAEMON_EVENT_PAYLOAD_VERSION : 1;
+      const eventId = runId ? crypto.randomUUID() : undefined;
+      const endSha =
+        isTerminalBatch && runId ? this.resolveRunEndSha() : undefined;
 
       try {
         await this.sendMessagesToAPI({
-          messages: processedEntries.map((e) => e.message),
+          messages,
           timezone,
           token,
           threadId,
           threadChatId,
+          payloadVersion,
+          runId: runId ?? undefined,
+          eventId,
+          seq,
+          endSha,
         });
         for (const entry of group.entries) {
           handledEntries.add(entry);
@@ -1119,6 +1161,7 @@ export class TerragonDaemon {
               messageCount: processedEntries.length,
               threadId,
               threadChatId,
+              runId,
               attempt: this.retryBackoff.retryAttempt,
             },
           );
@@ -1131,6 +1174,7 @@ export class TerragonDaemon {
               messageCount: processedEntries.length,
               threadId,
               threadChatId,
+              runId,
               retryingIn: retryInOrNull,
               attempt: this.retryBackoff.retryAttempt,
             },
@@ -1167,12 +1211,22 @@ export class TerragonDaemon {
     token,
     threadId,
     threadChatId,
+    payloadVersion,
+    runId,
+    eventId,
+    seq,
+    endSha,
   }: {
     messages: ClaudeMessage[];
     timezone: string;
     token: string;
     threadId: string;
     threadChatId: string;
+    payloadVersion: 1 | 2;
+    runId?: string;
+    eventId?: string;
+    seq?: number;
+    endSha?: string | null;
   }): Promise<void> {
     try {
       this.runtime.logger.info("Sending messages to API", {
@@ -1184,6 +1238,11 @@ export class TerragonDaemon {
         threadId,
         timezone,
         threadChatId,
+        payloadVersion,
+        runId,
+        eventId,
+        seq,
+        endSha,
       };
 
       await this.runtime.serverPost(payload, token);
@@ -1205,6 +1264,59 @@ export class TerragonDaemon {
    */
   public getFeatureFlag(name: keyof FeatureFlags): boolean {
     return this.featureFlags[name] ?? false;
+  }
+
+  private buildRunSequenceKey({
+    threadId,
+    threadChatId,
+    runId,
+  }: {
+    threadId: string;
+    threadChatId: string;
+    runId: string;
+  }): string {
+    return `${threadId}::${threadChatId}::${runId}`;
+  }
+
+  private nextSequence({
+    threadId,
+    threadChatId,
+    runId,
+  }: {
+    threadId: string;
+    threadChatId: string;
+    runId: string;
+  }): number {
+    const key = this.buildRunSequenceKey({
+      threadId,
+      threadChatId,
+      runId,
+    });
+    const current = this.sequenceByRun.get(key) ?? 0;
+    const next = current + 1;
+    this.sequenceByRun.set(key, next);
+    return next;
+  }
+
+  private isTerminalMessage(message: ClaudeMessage): boolean {
+    return (
+      message.type === "custom-stop" ||
+      message.type === "custom-error" ||
+      message.type === "result"
+    );
+  }
+
+  private resolveRunEndSha(): string | null {
+    try {
+      const output = this.runtime.execSync("git rev-parse HEAD");
+      const sha = output.trim().split("\n").at(-1)?.trim() ?? "";
+      return sha || null;
+    } catch (error) {
+      this.runtime.logger.warn("Unable to resolve run end SHA", {
+        error: formatError(error),
+      });
+      return null;
+    }
   }
 
   private async teardown(): Promise<void> {

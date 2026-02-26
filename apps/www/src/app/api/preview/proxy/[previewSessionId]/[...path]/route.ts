@@ -5,12 +5,14 @@ import {
 } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
 import {
+  assertPreviewRepoAccess,
   getClientIpFromRequest,
   getPreviewCookieName,
   mapPreviewAuthError,
   verifyPreviewCookieToken,
   verifyPreviewUpstreamOriginToken,
 } from "@/server-lib/preview-auth";
+import { emitPreviewAccessDenied } from "@/server-lib/preview-observability";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { previewSession } from "@terragon/shared/db/schema";
@@ -350,6 +352,7 @@ export async function ALL(
 ) {
   const { previewSessionId, path } = await params;
   const proxyReqId = crypto.randomUUID();
+  const traceId = crypto.randomUUID();
 
   const normalizedPath = normalizePath(path);
   if (!normalizedPath) {
@@ -406,6 +409,21 @@ export async function ALL(
   const cookieName = getPreviewCookieName(previewSessionId);
   const cookieToken = getCookieValue(request, cookieName);
   if (!cookieToken) {
+    emitPreviewAccessDenied({
+      reason: "permission_denied",
+      status: 401,
+      base: {
+        origin: "preview_proxy",
+        traceId,
+        previewSessionId,
+        proxyReqId,
+      },
+      dimensions: {
+        userId: session.userId,
+        repoFullName: session.repoFullName,
+        sandboxProvider: session.sandboxProvider,
+      },
+    });
     return NextResponse.json(
       { code: "permission_denied", error: "Missing preview session cookie" },
       { status: 401, headers: { "x-proxy-req-id": proxyReqId } },
@@ -432,6 +450,24 @@ export async function ALL(
     cookieClaims.codesandboxId !== session.codesandboxId ||
     cookieClaims.sandboxProvider !== session.sandboxProvider
   ) {
+    emitPreviewAccessDenied({
+      reason: "binding_mismatch",
+      status: 403,
+      base: {
+        origin: "preview_proxy",
+        traceId,
+        previewSessionId,
+        threadId: session.threadId,
+        threadChatId: session.threadChatId,
+        runId: session.runId,
+        proxyReqId,
+      },
+      dimensions: {
+        userId: session.userId,
+        repoFullName: session.repoFullName,
+        sandboxProvider: session.sandboxProvider,
+      },
+    });
     return NextResponse.json(
       {
         code: "binding_mismatch",
@@ -448,6 +484,47 @@ export async function ALL(
         error: "Preview session cookie has been revoked",
       },
       { status: 401, headers: { "x-proxy-req-id": proxyReqId } },
+    );
+  }
+
+  try {
+    const hasAccess = await assertPreviewRepoAccess({
+      userId: cookieClaims.userId,
+      repoFullName: session.repoFullName,
+      accessCheck: async () => session.userId === cookieClaims.userId,
+    });
+    if (!hasAccess) {
+      emitPreviewAccessDenied({
+        reason: "permission_denied",
+        status: 403,
+        base: {
+          origin: "preview_proxy",
+          traceId,
+          previewSessionId,
+          threadId: session.threadId,
+          threadChatId: session.threadChatId,
+          runId: session.runId,
+          proxyReqId,
+        },
+        dimensions: {
+          userId: session.userId,
+          repoFullName: session.repoFullName,
+          sandboxProvider: session.sandboxProvider,
+        },
+      });
+      return NextResponse.json(
+        {
+          code: "permission_denied",
+          error: "Preview repo access denied",
+        },
+        { status: 403, headers: { "x-proxy-req-id": proxyReqId } },
+      );
+    }
+  } catch (error) {
+    const mapped = mapPreviewAuthError(error);
+    return NextResponse.json(
+      { code: mapped.code, error: mapped.message },
+      { status: mapped.status, headers: { "x-proxy-req-id": proxyReqId } },
     );
   }
 

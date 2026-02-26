@@ -9,6 +9,11 @@ export async function POST(request: Request) {
     messages,
     threadId,
     threadChatId = LEGACY_THREAD_CHAT_ID,
+    payloadVersion = 1,
+    runId = null,
+    eventId = null,
+    seq = null,
+    endSha = null,
     // Old clients don't send the timezone, so we fallback to UTC
     timezone = "UTC",
   } = json;
@@ -46,10 +51,20 @@ export async function POST(request: Request) {
     userId,
     timezone,
     contextUsage: computedContextUsage ?? null,
+    payloadVersion,
+    runId,
+    eventId,
+    seq,
+    endSha,
+    traceId: crypto.randomUUID(),
   });
 
   if (!result.success) {
     return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (result.ackStatus === 202) {
+    return new Response("Accepted", { status: 202 });
   }
 
   return new Response("OK");

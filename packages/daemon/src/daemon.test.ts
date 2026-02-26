@@ -243,6 +243,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -268,6 +269,69 @@ describe("daemon", () => {
       "http://localhost:3000/api/proxy/anthropic",
     );
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("TEST_TOKEN_STRING");
+  });
+
+  it("emits daemon envelope v2 metadata when runId is provided", async () => {
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        runId: "RUN_1",
+      }),
+    });
+    await sleep();
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "TEST_RESPONSE_STRING",
+    });
+    await sleep();
+
+    expect(serverPostMock).toHaveBeenCalledTimes(1);
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "TEST_THREAD_ID_STRING",
+        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
+        runId: "RUN_1",
+        payloadVersion: 2,
+        seq: 1,
+        eventId: expect.any(String),
+      }),
+      "TEST_TOKEN_STRING",
+    );
+  });
+
+  it("includes endSha on terminal daemon envelope v2 events", async () => {
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        runId: "RUN_TERMINAL",
+      }),
+    });
+    await sleep();
+    mockSpawnCommandStdoutLine({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0,
+      duration_ms: 10,
+      duration_api_ms: 10,
+      is_error: false,
+      num_turns: 1,
+      result: "ok",
+      session_id: "session",
+    });
+    await sleep(20);
+
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "RUN_TERMINAL",
+        payloadVersion: 2,
+        endSha: "NOT_EXISTS",
+      }),
+      "TEST_TOKEN_STRING",
+    );
   });
 
   it("should spawn the claude command and batch messages to the API", async () => {
@@ -334,6 +398,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -344,6 +409,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -354,6 +420,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -441,6 +508,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -456,6 +524,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -550,6 +619,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -563,6 +633,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -617,6 +688,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
+        payloadVersion: 1,
       },
       "TEST_TOKEN_STRING",
     );
@@ -662,6 +734,7 @@ describe("daemon", () => {
           threadId: "TEST_THREAD_ID_STRING",
           threadChatId: "TEST_THREAD_CHAT_ID_STRING",
           timezone: "America/New_York",
+          payloadVersion: 1,
         },
         "TEST_TOKEN_STRING",
       );
@@ -875,6 +948,7 @@ describe("daemon", () => {
           threadId: "TEST_THREAD_ID_STRING",
           threadChatId: "TEST_THREAD_CHAT_ID_STRING",
           timezone: "America/New_York",
+          payloadVersion: 1,
         },
         "TEST_TOKEN_STRING",
       );

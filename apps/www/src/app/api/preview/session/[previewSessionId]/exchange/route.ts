@@ -4,6 +4,7 @@ import {
   PreviewRateLimitError,
 } from "@/lib/rate-limit";
 import {
+  assertPreviewRepoAccess,
   createPreviewServiceUnavailablePayload,
   getClientIpFromRequest,
   getPreviewCookieName,
@@ -136,6 +137,7 @@ export async function POST(
       threadChatId: true,
       runId: true,
       userId: true,
+      repoFullName: true,
       codesandboxId: true,
       sandboxProvider: true,
       state: true,
@@ -168,6 +170,35 @@ export async function POST(
       },
       { status: 403 },
     );
+  }
+
+  try {
+    const hasAccess = await assertPreviewRepoAccess({
+      userId: exchangeClaims.userId,
+      repoFullName: session.repoFullName,
+      accessCheck: async () => session.userId === exchangeClaims.userId,
+    });
+    if (!hasAccess) {
+      return NextResponse.json(
+        {
+          code: "permission_denied",
+          error: "Preview repo access denied",
+        },
+        { status: 403 },
+      );
+    }
+  } catch (error) {
+    const mapped = mapPreviewAuthError(error);
+    if (mapped.code === "cache_unavailable") {
+      const payload = createPreviewServiceUnavailablePayload();
+      return NextResponse.json(payload, {
+        status: 503,
+        headers: {
+          "Retry-After": `${Math.ceil(payload.retryAfterMs / 1000)}`,
+        },
+      });
+    }
+    throw error;
   }
 
   if (

@@ -59,6 +59,10 @@ export type PreviewValidationAttempt =
   typeof schema.previewValidationAttempt.$inferSelect;
 export type PreviewValidationAttemptInsert =
   typeof schema.previewValidationAttempt.$inferInsert;
+export type DaemonEventQuarantine =
+  typeof schema.daemonEventQuarantine.$inferSelect;
+export type DaemonEventQuarantineInsert =
+  typeof schema.daemonEventQuarantine.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
