@@ -5,10 +5,31 @@
   "created_at": "2026-02-25T22:44:04.228235Z",
   "depends_on": ["fn-2.1"],
   "epic": "fn-2",
+  "evidence": {
+    "taskId": "fn-2.2",
+    "validations": [
+      {
+        "command": "pnpm -C apps/www test src/server-lib/preview-auth.test.ts",
+        "status": "passed"
+      },
+      {
+        "command": "pnpm -C apps/www test src/app/api/webhooks/github/route.test.ts",
+        "status": "passed"
+      },
+      {
+        "command": "pnpm -C apps/www lint",
+        "status": "passed"
+      },
+      {
+        "command": "pnpm -C apps/www tsc-check",
+        "status": "passed"
+      }
+    ]
+  },
   "id": "fn-2.2",
   "priority": null,
   "spec_path": ".flow/tasks/fn-2.2.md",
-  "status": "todo",
+  "status": "done",
   "title": "Implement preview lifecycle orchestration and realtime updates",
-  "updated_at": "2026-02-25T23:55:49.060025Z"
+  "updated_at": "2026-02-26T07:04:24.677990Z"
 }

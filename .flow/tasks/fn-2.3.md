@@ -55,7 +55,7 @@ Ship deterministic preview panel behavior for explicit startup lifecycle states,
 
 ## Done summary
 
-- Task completed
+Task completed
 
 ## Evidence
 

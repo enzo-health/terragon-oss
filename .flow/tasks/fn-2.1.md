@@ -66,7 +66,7 @@ Create immutable `runId` records plus pointer-only active context storage with r
 
 ## Done summary
 
-- Task completed
+Task completed
 
 ## Evidence
 
