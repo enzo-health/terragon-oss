@@ -125,7 +125,9 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       threadChats: [{ id: "loop-chat-id" }],
     } as Awaited<ReturnType<typeof getThread>>);
     signalInboxInsertReturning.mockResolvedValue([{ id: "signal-inbox-1" }]);
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue(null);
+    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue(
+      undefined,
+    );
     vi.mocked(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).mockResolvedValue(
       null,
     );

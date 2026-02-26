@@ -1,5 +1,4 @@
 import { db } from "@/lib/db";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   enrollSdlcLoopForGithubPR,
   getActiveSdlcLoopForGithubPRAndUser,
@@ -39,15 +38,6 @@ export async function getActiveSdlcLoopForGithubPRIfEnabled({
   repoFullName: string;
   prNumber: number;
 }) {
-  const enabled = await getFeatureFlagForUser({
-    db,
-    userId,
-    flagName: "sdlcLoopCoordinatorRouting",
-  });
-  if (!enabled) {
-    return null;
-  }
-
   return await getActiveSdlcLoopForGithubPRAndUser({
     db,
     userId,
@@ -67,15 +57,6 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   prNumber: number;
   threadId: string;
 }) {
-  const enabled = await getFeatureFlagForUser({
-    db,
-    userId,
-    flagName: "sdlcLoopCoordinatorRouting",
-  });
-  if (!enabled) {
-    return null;
-  }
-
   const activeLoop = await getActiveSdlcLoopForGithubPRAndUser({
     db,
     userId,
