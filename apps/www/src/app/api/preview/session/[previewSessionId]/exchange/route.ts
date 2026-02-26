@@ -239,7 +239,7 @@ export async function POST(
     {
       httpOnly: true,
       secure: true,
-      path: `/api/preview/proxy/${session.previewSessionId}`,
+      path: "/api/preview",
       sameSite: openMode === "iframe" ? "none" : "lax",
       maxAge: previewSessionTTLSeconds,
     },

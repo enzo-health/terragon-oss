@@ -8,6 +8,7 @@ import { useResizablePanel } from "@/hooks/use-resizable-panel";
 import { GitDiffView } from "./git-diff-view";
 import { usePlatform } from "@/hooks/use-platform";
 import { useSecondaryPanel } from "./hooks";
+import { PreviewPanel } from "./preview-panel";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
@@ -64,8 +65,12 @@ export function SecondaryPanel({
 }
 
 function SecondaryPanelContent({ thread }: { thread?: ThreadInfoFull }) {
+  const { secondaryPanelMode } = useSecondaryPanel();
   if (!thread) {
     return null;
+  }
+  if (secondaryPanelMode === "preview") {
+    return <PreviewPanel thread={thread} />;
   }
   return <GitDiffView thread={thread} />;
 }

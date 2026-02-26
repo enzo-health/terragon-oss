@@ -4,6 +4,7 @@ import { bearerTokenAtom, userAtom } from "@/atoms/user";
 import {
   type BroadcastClientMessage,
   type BroadcastMessage,
+  type BroadcastPreviewMessage,
   type BroadcastMessageThreadData,
   BroadcastSandboxMessage,
   type BroadcastUserMessage,
@@ -283,4 +284,89 @@ export function useRealtimeSandbox({
     },
     disconnectOnDismount: true,
   });
+}
+
+function isPreviewMessage(
+  message: unknown,
+): message is BroadcastPreviewMessage {
+  if (typeof message !== "object" || message === null) {
+    return false;
+  }
+  const candidate = message as Record<string, unknown>;
+  return (
+    candidate.type === "preview" &&
+    typeof candidate.previewSessionId === "string" &&
+    typeof candidate.threadId === "string" &&
+    typeof candidate.threadChatId === "string" &&
+    typeof candidate.runId === "string" &&
+    typeof candidate.userId === "string" &&
+    candidate.schemaVersion === 1 &&
+    typeof candidate.eventName === "string"
+  );
+}
+
+export function useRealtimePreview({
+  channel,
+  authToken,
+  enabled,
+  onMessage,
+}: {
+  channel: string | null;
+  authToken: string | null;
+  enabled: boolean;
+  onMessage: (message: BroadcastPreviewMessage) => void;
+}) {
+  const [socketReadyState, setSocketReadyState] = useState<number>(
+    WebSocket.CLOSED,
+  );
+
+  useEffect(() => {
+    if (!enabled || !channel || !authToken) {
+      setSocketReadyState(WebSocket.CLOSED);
+      return;
+    }
+
+    // Preview subscription tokens are single-use, so reconnects require reminting.
+    const socket = new PartySocket({
+      host: publicBroadcastHost(),
+      party: "main",
+      room: channel,
+      maxRetries: 0,
+      maxReconnectionDelay: 0,
+      query: () => ({
+        token: authToken,
+      }),
+    });
+
+    const onReadyStateChange = () => {
+      setSocketReadyState(socket.readyState);
+    };
+
+    const onSocketMessage = (event: MessageEvent) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        if (isPreviewMessage(parsed)) {
+          onMessage(parsed);
+        }
+      } catch (error) {
+        console.error("[broadcast] error parsing preview message", error);
+      }
+    };
+
+    socket.addEventListener("open", onReadyStateChange);
+    socket.addEventListener("close", onReadyStateChange);
+    socket.addEventListener("error", onReadyStateChange);
+    socket.addEventListener("message", onSocketMessage);
+    setSocketReadyState(socket.readyState);
+
+    return () => {
+      socket.removeEventListener("open", onReadyStateChange);
+      socket.removeEventListener("close", onReadyStateChange);
+      socket.removeEventListener("error", onReadyStateChange);
+      socket.removeEventListener("message", onSocketMessage);
+      socket.close();
+    };
+  }, [authToken, channel, enabled, onMessage]);
+
+  return { socketReadyState };
 }

@@ -33,7 +33,7 @@ export const dynamic = "force-dynamic";
 const startPreviewBodySchema = z.object({
   threadId: z.string().min(1),
   threadChatId: z.string().min(1),
-  runId: z.string().min(1),
+  runId: z.string().min(1).optional(),
   openMode: z.enum(["iframe", "new_tab"]).optional(),
 });
 
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  const [thread, matchingThreadChat, runContext, run] = await Promise.all([
+  const [thread, matchingThreadChat, runContext] = await Promise.all([
     getThreadMinimal({
       db,
       userId,
@@ -111,28 +111,39 @@ export async function POST(request: Request) {
         activeRunId: true,
       },
     }),
-    db.query.threadRun.findFirst({
-      where: and(
-        eq(threadRun.runId, body.runId),
-        eq(threadRun.threadId, body.threadId),
-        eq(threadRun.threadChatId, body.threadChatId),
-      ),
-      columns: {
-        runId: true,
-        codesandboxId: true,
-        sandboxProvider: true,
-      },
-    }),
   ]);
 
   if (!thread || !matchingThreadChat) {
     return NextResponse.json({ error: "Thread not found" }, { status: 404 });
   }
 
-  if (!run || !runContext || runContext.activeRunId !== body.runId) {
+  const runId = body.runId ?? runContext?.activeRunId;
+  if (!runId || !runContext || runContext.activeRunId !== runId) {
     return NextResponse.json(
       {
         error: "Run is not active for this thread chat",
+      },
+      { status: 409 },
+    );
+  }
+
+  const run = await db.query.threadRun.findFirst({
+    where: and(
+      eq(threadRun.runId, runId),
+      eq(threadRun.threadId, body.threadId),
+      eq(threadRun.threadChatId, body.threadChatId),
+    ),
+    columns: {
+      runId: true,
+      codesandboxId: true,
+      sandboxProvider: true,
+    },
+  });
+
+  if (!run) {
+    return NextResponse.json(
+      {
+        error: "Run context was not found",
       },
       { status: 409 },
     );
@@ -157,7 +168,7 @@ export async function POST(request: Request) {
     .values({
       threadId: body.threadId,
       threadChatId: body.threadChatId,
-      runId: body.runId,
+      runId,
       userId,
       codesandboxId: run.codesandboxId,
       sandboxProvider: run.sandboxProvider,
@@ -240,7 +251,7 @@ export async function POST(request: Request) {
         previewSessionId,
         threadId: body.threadId,
         threadChatId: body.threadChatId,
-        runId: body.runId,
+        runId,
         userId,
         codesandboxId: run.codesandboxId,
         sandboxProvider: run.sandboxProvider,
@@ -269,7 +280,7 @@ export async function POST(request: Request) {
       previewSessionId,
       threadId: body.threadId,
       threadChatId: body.threadChatId,
-      runId: body.runId,
+      runId,
       error,
     });
 

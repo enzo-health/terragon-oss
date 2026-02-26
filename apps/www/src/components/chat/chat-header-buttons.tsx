@@ -16,6 +16,7 @@ import {
   Loader2,
   Globe,
   MoreHorizontal,
+  MonitorPlay,
 } from "lucide-react";
 import { PanelRight, PanelBottom } from "@/components/icons/panels";
 import { openPullRequest } from "@/server-actions/pull-request";
@@ -34,6 +35,7 @@ import posthog from "posthog-js";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { useThread } from "./thread-context";
 import { useSecondaryPanel } from "./hooks";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 
 export const ChatHeaderButtons = memo(function ChatHeaderButtons({
   thread,
@@ -48,10 +50,26 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
 }) {
   const isSmallScreen = useIsSmallScreen();
   const [shareDrawerOpen, setShareDrawerOpen] = useState(false);
-  const { isSecondaryPanelOpen, setIsSecondaryPanelOpen } = useSecondaryPanel();
+  const {
+    isSecondaryPanelOpen,
+    setIsSecondaryPanelOpen,
+    setSecondaryPanelMode,
+  } = useSecondaryPanel();
+  const isSandboxPreviewEnabled = useFeatureFlag("sandboxPreview");
 
   const handleShareClick = () => {
     setShareDrawerOpen(true);
+  };
+  const handleToggleSecondaryPanel = () => {
+    const nextOpen = !isSecondaryPanelOpen;
+    if (nextOpen) {
+      setSecondaryPanelMode("diff");
+    }
+    setIsSecondaryPanelOpen(nextOpen);
+  };
+  const handleOpenPreviewPanel = () => {
+    setSecondaryPanelMode("preview");
+    setIsSecondaryPanelOpen(true);
   };
 
   return (
@@ -75,10 +93,22 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
             isReadOnly={isReadOnly}
           />
         )}
+        {isSandboxPreviewEnabled && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleOpenPreviewPanel}
+            aria-label="Open preview panel"
+            className="gap-2"
+          >
+            <MonitorPlay className="size-4" />
+            <span className="hidden sm:inline">Preview</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => setIsSecondaryPanelOpen(!isSecondaryPanelOpen)}
+          onClick={handleToggleSecondaryPanel}
           aria-label="Toggle secondary panel"
         >
           {isSmallScreen ? (
