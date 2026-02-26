@@ -5,6 +5,7 @@ import { setActiveThreadChat } from "@/agent/sandbox-resource";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { env } from "@terragon/env/apps-www";
 import {
+  getCurrentBranchName,
   getGitDiffMaybeCutoff,
   gitDiffStats,
   gitCommitAndPushBranch,
@@ -12,11 +13,16 @@ import {
 import { ISandboxSession } from "@terragon/sandbox/types";
 import {
   DBMessage,
+  DBUserMessage,
   DBSystemMessage,
   GitDiffStats,
   ThreadInsert,
   ThreadChatInsert,
 } from "@terragon/shared";
+import type {
+  CarmackReviewGateOutput,
+  DeepReviewGateOutput,
+} from "@terragon/shared/model/sdlc-loop";
 import {
   getThread,
   getThreadChat,
@@ -28,6 +34,308 @@ import { createGitDiffCheckpoint } from "@terragon/shared/utils/git-diff";
 import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
 import { generateCommitMessage } from "./generate-commit-message";
 import { sendSystemMessage } from "./send-system-message";
+import { queueFollowUpInternal } from "./follow-up";
+import { runDeepReviewGate } from "./sdlc-loop/deep-review-gate";
+import { runCarmackReviewGate } from "./sdlc-loop/carmack-review-gate";
+import { isSdlcLoopEnrollmentAllowedForThread } from "./sdlc-loop/enrollment";
+
+const SDLC_PRE_PR_MAX_FINDINGS_PER_GATE = 5;
+const SDLC_PRE_PR_HEAD_SHA_FALLBACK = "unknown-head-sha";
+
+type ExistingThread = NonNullable<Awaited<ReturnType<typeof getThread>>>;
+
+type SdlcPrePrFinding = {
+  title: string;
+  severity: "critical" | "high" | "medium" | "low";
+  category: string;
+  detail: string;
+  suggestedFix?: string | null;
+  isBlocking?: boolean;
+};
+
+function getBlockingFindings(
+  findings: readonly SdlcPrePrFinding[],
+): SdlcPrePrFinding[] {
+  return findings.filter((finding) => finding.isBlocking !== false);
+}
+
+function formatSdlcPrePrFinding(
+  finding: SdlcPrePrFinding,
+  index: number,
+): string {
+  const suggestedFix = finding.suggestedFix?.trim();
+  return [
+    `${index + 1}. [${finding.severity.toUpperCase()}] ${finding.title}`,
+    `Category: ${finding.category}`,
+    `Detail: ${finding.detail}`,
+    suggestedFix ? `Suggested fix: ${suggestedFix}` : null,
+  ]
+    .filter((line): line is string => !!line)
+    .join("\n");
+}
+
+function buildSdlcPrePrReviewSummary({
+  repoFullName,
+  branchName,
+  headSha,
+  deepReviewFindings,
+  carmackReviewFindings,
+  deepReviewReturnedNoFindings,
+  carmackReviewReturnedNoFindings,
+}: {
+  repoFullName: string;
+  branchName: string;
+  headSha: string;
+  deepReviewFindings: readonly SdlcPrePrFinding[];
+  carmackReviewFindings: readonly SdlcPrePrFinding[];
+  deepReviewReturnedNoFindings: boolean;
+  carmackReviewReturnedNoFindings: boolean;
+}): string {
+  const sections: string[] = [
+    "SDLC pre-PR review found blocking issues, so PR creation is paused.",
+    "Please fix the findings below and continue. A PR will be opened after these checks pass.",
+    `Repository: ${repoFullName}`,
+    `Branch: ${branchName}`,
+    `Head SHA: ${headSha}`,
+  ];
+
+  if (deepReviewFindings.length > 0 || deepReviewReturnedNoFindings) {
+    sections.push(
+      "Deep review findings:",
+      deepReviewFindings.length > 0
+        ? deepReviewFindings
+            .slice(0, SDLC_PRE_PR_MAX_FINDINGS_PER_GATE)
+            .map(formatSdlcPrePrFinding)
+            .join("\n\n")
+        : "The deep review gate reported failure without structured findings.",
+    );
+  }
+
+  if (carmackReviewFindings.length > 0 || carmackReviewReturnedNoFindings) {
+    sections.push(
+      "Carmack review findings:",
+      carmackReviewFindings.length > 0
+        ? carmackReviewFindings
+            .slice(0, SDLC_PRE_PR_MAX_FINDINGS_PER_GATE)
+            .map(formatSdlcPrePrFinding)
+            .join("\n\n")
+        : "The Carmack review gate reported failure without structured findings.",
+    );
+  }
+
+  return sections.join("\n\n");
+}
+
+function buildSdlcPrePrTaskContext({
+  thread,
+  branchName,
+}: {
+  thread: ExistingThread;
+  branchName: string;
+}): string {
+  return [
+    `Thread ID: ${thread.id}`,
+    `Task name: ${thread.name ?? "Untitled task"}`,
+    `Branch: ${branchName}`,
+  ].join("\n");
+}
+
+async function getHeadShaOrNull({
+  session,
+}: {
+  session: ISandboxSession;
+}): Promise<string | null> {
+  try {
+    const headSha = (
+      await session.runCommand("git rev-parse HEAD", {
+        cwd: session.repoDir,
+      })
+    ).trim();
+    return headSha.length > 0 ? headSha : null;
+  } catch (error) {
+    console.warn("[checkpoint-thread] failed to resolve head SHA", { error });
+    return null;
+  }
+}
+
+async function queueSdlcPrePrFollowUp({
+  userId,
+  threadId,
+  threadChatId,
+  messageText,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  messageText: string;
+}) {
+  const followUpMessage: DBUserMessage = {
+    type: "user",
+    model: null,
+    parts: [{ type: "text", text: messageText }],
+    timestamp: new Date().toISOString(),
+  };
+
+  await queueFollowUpInternal({
+    userId,
+    threadId,
+    threadChatId,
+    messages: [followUpMessage],
+    appendOrReplace: "append",
+    source: "www",
+  });
+}
+
+async function maybeRunSdlcPrePrReview({
+  thread,
+  userId,
+  threadChatId,
+  session,
+  diffOutput,
+}: {
+  thread: ExistingThread;
+  userId: string;
+  threadChatId: string;
+  session: ISandboxSession;
+  diffOutput: string;
+}): Promise<boolean> {
+  if (thread.githubPRNumber) {
+    return true;
+  }
+
+  if (thread.sourceType !== "www") {
+    return true;
+  }
+
+  const enrollmentAllowed = isSdlcLoopEnrollmentAllowedForThread({
+    sourceType: thread.sourceType,
+    sourceMetadata: thread.sourceMetadata ?? null,
+  });
+  if (!enrollmentAllowed) {
+    return true;
+  }
+
+  if (diffOutput === "too-large") {
+    await queueSdlcPrePrFollowUp({
+      userId,
+      threadId: thread.id,
+      threadChatId,
+      messageText: [
+        "SDLC pre-PR review is required before opening a PR, but the current diff is too large to evaluate.",
+        "Please reduce the change scope (or split changes) and continue. PR creation is paused until pre-PR review can run.",
+      ].join("\n\n"),
+    });
+    console.warn(
+      "[checkpoint-thread] blocked PR creation because SDLC pre-PR review diff is too large",
+      {
+        userId,
+        threadId: thread.id,
+        repoFullName: thread.githubRepoFullName,
+      },
+    );
+    return false;
+  }
+
+  const branchName =
+    (await getCurrentBranchName(session, session.repoDir).catch(() => null)) ??
+    thread.branchName ??
+    "unknown-branch";
+  const headSha =
+    (await getHeadShaOrNull({ session })) ?? SDLC_PRE_PR_HEAD_SHA_FALLBACK;
+  const taskContext = buildSdlcPrePrTaskContext({ thread, branchName });
+
+  const [deepReviewResult, carmackReviewResult] = await Promise.allSettled([
+    runDeepReviewGate({
+      repoFullName: thread.githubRepoFullName,
+      prNumber: null,
+      headSha,
+      taskContext,
+      gitDiff: diffOutput,
+    }),
+    runCarmackReviewGate({
+      repoFullName: thread.githubRepoFullName,
+      prNumber: null,
+      headSha,
+      taskContext,
+      gitDiff: diffOutput,
+    }),
+  ]);
+
+  const deepReviewOutput: DeepReviewGateOutput | null =
+    deepReviewResult.status === "fulfilled" ? deepReviewResult.value : null;
+  const carmackReviewOutput: CarmackReviewGateOutput | null =
+    carmackReviewResult.status === "fulfilled"
+      ? carmackReviewResult.value
+      : null;
+
+  const deepReviewFindings = deepReviewOutput
+    ? getBlockingFindings(deepReviewOutput.blockingFindings)
+    : [];
+  const carmackReviewFindings = carmackReviewOutput
+    ? getBlockingFindings(carmackReviewOutput.blockingFindings)
+    : [];
+  const isDeepReviewBlocked = deepReviewOutput
+    ? !deepReviewOutput.gatePassed || deepReviewFindings.length > 0
+    : false;
+  const isCarmackReviewBlocked = carmackReviewOutput
+    ? !carmackReviewOutput.gatePassed || carmackReviewFindings.length > 0
+    : false;
+
+  if (!isDeepReviewBlocked && !isCarmackReviewBlocked) {
+    if (deepReviewResult.status === "rejected") {
+      console.warn("[checkpoint-thread] deep review gate failed; proceeding", {
+        userId,
+        threadId: thread.id,
+        repoFullName: thread.githubRepoFullName,
+        error: deepReviewResult.reason,
+      });
+    }
+    if (carmackReviewResult.status === "rejected") {
+      console.warn(
+        "[checkpoint-thread] carmack review gate failed; proceeding",
+        {
+          userId,
+          threadId: thread.id,
+          repoFullName: thread.githubRepoFullName,
+          error: carmackReviewResult.reason,
+        },
+      );
+    }
+    return true;
+  }
+
+  await queueSdlcPrePrFollowUp({
+    userId,
+    threadId: thread.id,
+    threadChatId,
+    messageText: buildSdlcPrePrReviewSummary({
+      repoFullName: thread.githubRepoFullName,
+      branchName,
+      headSha,
+      deepReviewFindings: isDeepReviewBlocked ? deepReviewFindings : [],
+      carmackReviewFindings: isCarmackReviewBlocked
+        ? carmackReviewFindings
+        : [],
+      deepReviewReturnedNoFindings:
+        isDeepReviewBlocked && deepReviewFindings.length === 0,
+      carmackReviewReturnedNoFindings:
+        isCarmackReviewBlocked && carmackReviewFindings.length === 0,
+    }),
+  });
+
+  console.log(
+    "[checkpoint-thread] blocked PR creation due to SDLC pre-PR review findings",
+    {
+      userId,
+      threadId: thread.id,
+      repoFullName: thread.githubRepoFullName,
+      deepReviewFindings: deepReviewFindings.length,
+      carmackReviewFindings: carmackReviewFindings.length,
+    },
+  );
+
+  return false;
+}
 
 export async function checkpointThreadAndPush({
   threadId,
@@ -169,6 +477,16 @@ export async function checkpointThreadAndPush({
     //    (handles the case where git push failed after diff was captured)
     if (diffOutput && (diffOutputHasChanged || !thread.githubPRNumber)) {
       if (createPR) {
+        const shouldCreatePr = await maybeRunSdlcPrePrReview({
+          thread,
+          userId,
+          threadChatId,
+          session,
+          diffOutput,
+        });
+        if (!shouldCreatePr) {
+          return;
+        }
         try {
           await openPullRequestForThread({
             userId,

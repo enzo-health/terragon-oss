@@ -21,12 +21,13 @@ export function buildCarmackReviewGatePrompt({
   gitDiff,
 }: {
   repoFullName: string;
-  prNumber: number;
+  prNumber: number | null;
   headSha: string;
   taskContext: string;
   gitDiff: string;
 }) {
-  return `Repository: ${repoFullName}\nPR: #${prNumber}\nHead SHA: ${headSha}\nPrompt Version: ${CARMACK_REVIEW_GATE_PROMPT_VERSION}\n\nTask context:\n${taskContext}\n\nGit diff:\n<git-diff>\n${gitDiff}\n</git-diff>\n\nReturn JSON with shape:\n{\n  "gatePassed": boolean,\n  "blockingFindings": [\n    {\n      "stableFindingId": string (optional),\n      "title": string,\n      "severity": "critical"|"high"|"medium"|"low",\n      "category": string,\n      "detail": string,\n      "suggestedFix": string | null,\n      "isBlocking": boolean\n    }\n  ]\n}`;
+  const prLabel = prNumber === null ? "not-created-yet" : `#${prNumber}`;
+  return `Repository: ${repoFullName}\nPR: ${prLabel}\nHead SHA: ${headSha}\nPrompt Version: ${CARMACK_REVIEW_GATE_PROMPT_VERSION}\n\nTask context:\n${taskContext}\n\nGit diff:\n<git-diff>\n${gitDiff}\n</git-diff>\n\nReturn JSON with shape:\n{\n  "gatePassed": boolean,\n  "blockingFindings": [\n    {\n      "stableFindingId": string (optional),\n      "title": string,\n      "severity": "critical"|"high"|"medium"|"low",\n      "category": string,\n      "detail": string,\n      "suggestedFix": string | null,\n      "isBlocking": boolean\n    }\n  ]\n}`;
 }
 
 export async function runCarmackReviewGate({
@@ -38,7 +39,7 @@ export async function runCarmackReviewGate({
   model = "gpt-4.1-mini",
 }: {
   repoFullName: string;
-  prNumber: number;
+  prNumber: number | null;
   headSha: string;
   taskContext: string;
   gitDiff: string;
