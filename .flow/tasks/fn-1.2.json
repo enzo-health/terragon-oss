@@ -1,0 +1,23 @@
+{
+  "assignee": "tbsheff@byu.edu",
+  "claim_note": "",
+  "claimed_at": "2026-02-25T23:31:45.811999Z",
+  "created_at": "2026-02-25T21:36:04.115710Z",
+  "depends_on": ["fn-1.1"],
+  "epic": "fn-1",
+  "evidence": {
+    "commits": [],
+    "prs": [],
+    "tests": [
+      "pnpm -C packages/shared test -- src/model/sdlc-loop.test.ts (pass)",
+      "pnpm -C packages/shared exec vitest src/model/sdlc-loop.test.ts --run (pass)",
+      "pnpm -C apps/www test (fails: 19 pre-existing e2e/thread-resource failures)"
+    ]
+  },
+  "id": "fn-1.2",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-1.2.md",
+  "status": "done",
+  "title": "Deep Review gate agent and blocking findings",
+  "updated_at": "2026-02-25T23:40:09.869971Z"
+}

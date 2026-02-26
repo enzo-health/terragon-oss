@@ -47,6 +47,14 @@ import {
 } from "./handlers";
 import { Webhooks } from "@octokit/webhooks";
 import { env } from "@terragon/env/apps-www";
+import { randomUUID } from "crypto";
+import {
+  claimGithubWebhookDelivery,
+  completeGithubWebhookDelivery,
+  getGithubWebhookClaimHttpStatus,
+  releaseGithubWebhookDeliveryClaim,
+} from "@terragon/shared/model/sdlc-loop";
+import { db } from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   const webhooks = new Webhooks({
@@ -124,12 +132,87 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
-    await webhooks.receive({
-      id: requestId,
-      name: eventType as any,
-      payload: JSON.parse(body),
+
+    if (!requestId) {
+      return NextResponse.json(
+        { success: false, error: "Missing GitHub delivery ID" },
+        { status: 400 },
+      );
+    }
+
+    const claimantToken = `github-webhook:${randomUUID()}`;
+    const claim = await claimGithubWebhookDelivery({
+      db,
+      deliveryId: requestId,
+      claimantToken,
+      eventType,
     });
-    return NextResponse.json({ success: true });
+
+    if (!claim.shouldProcess) {
+      return NextResponse.json(
+        {
+          success: true,
+          claimOutcome: claim.outcome,
+        },
+        { status: getGithubWebhookClaimHttpStatus(claim.outcome) },
+      );
+    }
+
+    try {
+      await webhooks.receive({
+        id: requestId,
+        name: eventType as any,
+        payload: JSON.parse(body),
+      });
+    } catch (error) {
+      try {
+        const released = await releaseGithubWebhookDeliveryClaim({
+          db,
+          deliveryId: requestId,
+          claimantToken,
+        });
+        if (!released) {
+          console.warn(
+            "[github webhook] failed to release delivery claim after receive error",
+            {
+              deliveryId: requestId,
+              claimOutcome: claim.outcome,
+            },
+          );
+        }
+      } catch (releaseError) {
+        console.error(
+          "[github webhook] error releasing delivery claim after receive error",
+          releaseError,
+        );
+      }
+      throw error;
+    }
+
+    const completed = await completeGithubWebhookDelivery({
+      db,
+      deliveryId: requestId,
+      claimantToken,
+    });
+
+    if (!completed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Failed to complete GitHub webhook delivery claim",
+          claimOutcome: claim.outcome,
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        claimOutcome: claim.outcome,
+      },
+      { status: getGithubWebhookClaimHttpStatus(claim.outcome) },
+    );
   } catch (error) {
     console.error("[github webhook] error", error);
     return NextResponse.json(

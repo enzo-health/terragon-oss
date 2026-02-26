@@ -336,6 +336,12 @@ export async function handlePullRequestReviewCommentEvent(
       );
       return;
     }
+    if (feedbackRoutingResult?.mode === "suppressed_enrolled_loop") {
+      console.log(
+        `Skipping app-mention direct routing for enrolled SDLC loop on PR #${prNumber} in ${repoFullName}`,
+      );
+      return;
+    }
     console.log(
       `Processing app mention in review comment on PR #${prNumber} in ${repoFullName} by ${commentUsername}`,
     );
@@ -423,6 +429,12 @@ export async function handlePullRequestReviewEvent(
     if (!isMention) {
       console.log(
         `Review on PR #${prNumber} in ${repoFullName} does not mention the app or has no body`,
+      );
+      return;
+    }
+    if (feedbackRoutingResult?.mode === "suppressed_enrolled_loop") {
+      console.log(
+        `Skipping app-mention direct routing for enrolled SDLC loop on PR #${prNumber} in ${repoFullName}`,
       );
       return;
     }

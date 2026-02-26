@@ -15,6 +15,34 @@
       "when": 1772054027892,
       "tag": "0001_flat_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772059161767,
+      "tag": "0002_solid_sasquatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1772060707347,
+      "tag": "0003_complete_gravity",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1772087484523,
+      "tag": "0004_smooth_zombie",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1772089864235,
+      "tag": "0005_acoustic_ken_ellis",
+      "breakpoints": true
     }
   ]
 }

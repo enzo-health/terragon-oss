@@ -135,6 +135,12 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
+  sdlcLoopCoordinatorRouting: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Routes GitHub webhook feedback for enrolled PR loops to the SDLC coordinator instead of direct follow-up queueing.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

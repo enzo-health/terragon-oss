@@ -149,4 +149,8 @@ export type DaemonEventAPIBody = {
   threadChatId: string;
   messages: ClaudeMessage[];
   timezone: string;
+  payloadVersion?: number;
+  eventId?: string;
+  runId?: string;
+  seq?: number;
 };

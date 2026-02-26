@@ -5,6 +5,7 @@ import {
   getThreadForGithubPRAndUser,
   getThreadsForGithubPR,
 } from "@terragon/shared/model/github";
+import { getThread } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { maybeBatchThreads } from "@/lib/batch-threads";
@@ -12,15 +13,26 @@ import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { getPostHogServer } from "@/lib/posthog-server";
+import { getActiveSdlcLoopForGithubPRIfEnabled } from "@/server-lib/sdlc-loop/enrollment";
 
-export type FeedbackRoutingMode = "reused_existing" | "spawned_new";
+export type FeedbackRoutingMode =
+  | "reused_existing"
+  | "spawned_new"
+  | "suppressed_enrolled_loop";
 
-export type FeedbackRoutingResult = {
-  threadId: string;
-  threadChatId: string;
-  mode: FeedbackRoutingMode;
-  reason?: string;
-};
+export type FeedbackRoutingResult =
+  | {
+      threadId: string;
+      threadChatId: string;
+      mode: Extract<FeedbackRoutingMode, "reused_existing" | "spawned_new">;
+      reason?: string;
+    }
+  | {
+      mode: "suppressed_enrolled_loop";
+      reason: "sdlc-loop-enrolled";
+      sdlcLoopId: string;
+      threadId: string;
+    };
 
 type GithubFeedbackSourceType = Extract<
   ThreadSource,
@@ -48,6 +60,19 @@ type PullRequestContext = {
   headBranchName: string;
   authorGitHubAccountId: number | null;
 };
+
+function getPrimaryThreadChatIdOrNull(
+  threadOrNull: Awaited<ReturnType<typeof getThread>>,
+): string | null {
+  if (!threadOrNull) {
+    return null;
+  }
+  try {
+    return getPrimaryThreadChat(threadOrNull).id;
+  } catch (_error) {
+    return null;
+  }
+}
 
 function buildFeedbackMessage({
   repoFullName,
@@ -326,6 +351,47 @@ export async function routeGithubFeedbackOrSpawnThread(
   }
 
   const userId = ownerResolution.userId;
+
+  const activeSdlcLoop = await getActiveSdlcLoopForGithubPRIfEnabled({
+    userId,
+    repoFullName: input.repoFullName,
+    prNumber: input.prNumber,
+  });
+  if (activeSdlcLoop) {
+    const enrolledThread = await getThread({
+      db,
+      userId,
+      threadId: activeSdlcLoop.threadId,
+    });
+    const enrolledThreadChatId = getPrimaryThreadChatIdOrNull(enrolledThread);
+
+    if (enrolledThreadChatId) {
+      captureFeedbackRouting({
+        userId,
+        input,
+        mode: "suppressed_enrolled_loop",
+        reason: "sdlc-loop-enrolled",
+        threadId: activeSdlcLoop.threadId,
+      });
+      return {
+        mode: "suppressed_enrolled_loop",
+        reason: "sdlc-loop-enrolled",
+        sdlcLoopId: activeSdlcLoop.id,
+        threadId: activeSdlcLoop.threadId,
+      };
+    }
+
+    console.warn(
+      "[github feedback routing] enrolled SDLC loop thread is not routable; falling back to direct routing",
+      {
+        userId,
+        repoFullName: input.repoFullName,
+        prNumber: input.prNumber,
+        sdlcLoopId: activeSdlcLoop.id,
+        sdlcLoopThreadId: activeSdlcLoop.threadId,
+      },
+    );
+  }
 
   const existingThread = await getThreadForGithubPRAndUser({
     db,

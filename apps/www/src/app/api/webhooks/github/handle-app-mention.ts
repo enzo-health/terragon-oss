@@ -30,8 +30,9 @@ import { maybeBatchThreads } from "@/lib/batch-threads";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { AIAgent, AIModel } from "@terragon/agent/types";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { getThread, getThreadChat } from "@terragon/shared/model/threads";
 import { modelToAgent } from "@terragon/agent/utils";
+import { getActiveSdlcLoopForGithubPRIfEnabled } from "@/server-lib/sdlc-loop/enrollment";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({
@@ -446,6 +447,52 @@ async function triggerTasksForUser({
       });
       return { threadId, threadChatId };
     };
+
+    if (issueOrPrType === "pull_request") {
+      const activeSdlcLoop = await getActiveSdlcLoopForGithubPRIfEnabled({
+        userId,
+        repoFullName,
+        prNumber: issueOrPrNumber,
+      });
+
+      if (activeSdlcLoop) {
+        const enrolledThread = await getThread({
+          db,
+          userId,
+          threadId: activeSdlcLoop.threadId,
+        });
+        let enrolledThreadChat: ReturnType<typeof getPrimaryThreadChat> | null =
+          null;
+        if (enrolledThread) {
+          try {
+            enrolledThreadChat = getPrimaryThreadChat(enrolledThread);
+          } catch (_error) {
+            enrolledThreadChat = null;
+          }
+        }
+
+        if (enrolledThreadChat) {
+          await queueOrCreateThreadForGitHubMention({
+            threadIdOrNull: activeSdlcLoop.threadId,
+            threadChatIdOrNull: enrolledThreadChat.id,
+            forcedAgent: enrolledThreadChat.agent,
+          });
+          return;
+        }
+
+        console.warn(
+          "SDLC loop enrollment found but thread/chat is not routable; falling back to standard mention routing",
+          {
+            userId,
+            repoFullName,
+            issueOrPrNumber,
+            sdlcLoopId: activeSdlcLoop.id,
+            sdlcLoopThreadId: activeSdlcLoop.threadId,
+            hasThread: !!enrolledThread,
+          },
+        );
+      }
+    }
 
     if (userSettings.singleThreadForGitHubMentions) {
       const threadOrNull = await getThreadForGithubPRAndUser({

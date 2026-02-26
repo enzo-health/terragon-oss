@@ -11,6 +11,8 @@ import {
   createTestUser,
   createTestGitHubPR,
 } from "@terragon/shared/model/test-helpers";
+import * as schema from "@terragon/shared/db/schema";
+import { eq } from "drizzle-orm";
 import { env } from "@terragon/env/apps-www";
 
 vi.mock("./handle-app-mention", () => ({
@@ -35,11 +37,12 @@ async function createMockRequest(
   customHeaders: Record<string, string> = {},
 ): Promise<NextRequest> {
   const payload = JSON.stringify(body);
+  const deliveryId = customHeaders["x-github-delivery"] ?? crypto.randomUUID();
   const signature =
     customHeaders["x-hub-signature-256"] ||
     createSignature(payload, env.GITHUB_WEBHOOK_SECRET);
   return await createMockNextRequest(body, {
-    "x-github-delivery": "123",
+    "x-github-delivery": deliveryId,
     "x-hub-signature-256": signature,
     "x-github-event": "pull_request",
     ...customHeaders,
@@ -111,7 +114,34 @@ describe("GitHub webhook route", () => {
         repository: { full_name: "owner/repo" },
       });
       const response = await POST(request);
-      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(response.status).toBe(202);
+      expect(data.claimOutcome).toBe("claimed_new");
+    });
+
+    it("should return already_completed for duplicate delivery IDs", async () => {
+      const body = {
+        action: "opened",
+        pull_request: { number: 123 },
+        repository: { full_name: "owner/repo" },
+      };
+
+      const firstRequest = await createMockRequest(body, {
+        "x-github-delivery": "duplicate-delivery-id",
+      });
+      const firstResponse = await POST(firstRequest);
+      const firstData = await firstResponse.json();
+
+      const secondRequest = await createMockRequest(body, {
+        "x-github-delivery": "duplicate-delivery-id",
+      });
+      const secondResponse = await POST(secondRequest);
+      const secondData = await secondResponse.json();
+
+      expect(firstResponse.status).toBe(202);
+      expect(firstData.claimOutcome).toBe("claimed_new");
+      expect(secondResponse.status).toBe(200);
+      expect(secondData.claimOutcome).toBe("already_completed");
     });
   });
 
@@ -137,7 +167,7 @@ describe("GitHub webhook route", () => {
         const response = await POST(request);
         const data = await response.json();
 
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(202);
         expect(data.success).toBe(true);
         expect(updateGitHubPR).toHaveBeenCalledWith({
           repoFullName: pr.repoFullName,
@@ -159,7 +189,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).toHaveBeenCalledWith({
         repoFullName: pr.repoFullName,
@@ -179,7 +209,7 @@ describe("GitHub webhook route", () => {
       const request = await createMockRequest(nonExistentPRBody);
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).not.toHaveBeenCalled();
     });
@@ -198,6 +228,69 @@ describe("GitHub webhook route", () => {
       const data = await response.json();
       expect(response.status).toBe(500);
       expect(data.error).toBe("Internal server error");
+    });
+
+    it("releases failed claims so duplicate delivery retries can process immediately", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const deliveryId = "retry-after-receive-error";
+      const body = createPullRequestBody({
+        action: "opened",
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+
+      vi.mocked(updateGitHubPR)
+        .mockRejectedValueOnce(new Error("handler exploded"))
+        .mockResolvedValueOnce();
+
+      const firstRequest = await createMockRequest(body, {
+        "x-github-delivery": deliveryId,
+      });
+      const firstResponse = await POST(firstRequest);
+      const firstData = await firstResponse.json();
+      expect(firstResponse.status).toBe(500);
+      expect(firstData.error).toBe("Internal server error");
+
+      const secondRequest = await createMockRequest(body, {
+        "x-github-delivery": deliveryId,
+      });
+      const secondResponse = await POST(secondRequest);
+      const secondData = await secondResponse.json();
+
+      expect(secondResponse.status).toBe(202);
+      expect(secondData.success).toBe(true);
+      expect(secondData.claimOutcome).toBe("stale_stolen");
+      expect(updateGitHubPR).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns 500 when webhook delivery completion loses claim ownership", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const deliveryId = "claim-lost-before-complete";
+      const body = createPullRequestBody({
+        action: "opened",
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+
+      vi.mocked(updateGitHubPR).mockImplementationOnce(async () => {
+        await db
+          .update(schema.githubWebhookDeliveries)
+          .set({ claimantToken: "different-claimer-token" })
+          .where(eq(schema.githubWebhookDeliveries.deliveryId, deliveryId));
+      });
+
+      const request = await createMockRequest(body, {
+        "x-github-delivery": deliveryId,
+      });
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(data).toEqual({
+        success: false,
+        error: "Failed to complete GitHub webhook delivery claim",
+        claimOutcome: "claimed_new",
+      });
     });
   });
 
@@ -269,7 +362,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: "owner/repo",
@@ -300,7 +393,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
     });
@@ -318,7 +411,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
     });
@@ -338,7 +431,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: "owner/repo",
@@ -369,7 +462,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: "owner/repo",
@@ -399,7 +492,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: "owner/repo",
@@ -429,7 +522,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledTimes(1);
       expect(handleAppMention).toHaveBeenCalledWith({
@@ -460,7 +553,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       // This will trigger because the regex only has word boundary at the end
       expect(handleAppMention).toHaveBeenCalledWith({
@@ -491,7 +584,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
     });
@@ -540,7 +633,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -621,7 +714,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
@@ -659,7 +752,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
@@ -691,7 +784,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
     });
@@ -713,7 +806,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
     });
@@ -740,7 +833,7 @@ describe("GitHub webhook route", () => {
 
         const response = await POST(request);
         const data = await response.json();
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(202);
         expect(data.success).toBe(true);
         expect(handleAppMention).toHaveBeenCalledWith({
           repoFullName: githubPR.repoFullName,
@@ -770,7 +863,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
@@ -799,7 +892,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
@@ -906,7 +999,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
@@ -948,7 +1041,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
@@ -980,7 +1073,7 @@ describe("GitHub webhook route", () => {
 
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).not.toHaveBeenCalled();
     });
@@ -1003,7 +1096,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
@@ -1036,7 +1129,7 @@ describe("GitHub webhook route", () => {
       );
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(handleAppMention).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
@@ -1106,7 +1199,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).toHaveBeenCalledWith({
         repoFullName: pr.repoFullName,
@@ -1136,7 +1229,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).toHaveBeenCalledTimes(2);
       expect(updateGitHubPR).toHaveBeenCalledWith({
@@ -1172,7 +1265,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
@@ -1206,7 +1299,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).not.toHaveBeenCalled();
     });
@@ -1229,7 +1322,7 @@ describe("GitHub webhook route", () => {
         const response = await POST(request);
         const data = await response.json();
 
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(202);
         expect(data.success).toBe(true);
         expect(updateGitHubPR).toHaveBeenCalledWith({
           repoFullName: pr.repoFullName,
@@ -1309,7 +1402,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).toHaveBeenCalledWith({
         repoFullName: pr.repoFullName,
@@ -1339,7 +1432,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).toHaveBeenCalledTimes(2);
       expect(updateGitHubPR).toHaveBeenCalledWith({
@@ -1365,7 +1458,7 @@ describe("GitHub webhook route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(202);
       expect(data.success).toBe(true);
       expect(updateGitHubPR).not.toHaveBeenCalled();
     });
@@ -1388,7 +1481,7 @@ describe("GitHub webhook route", () => {
         const response = await POST(request);
         const data = await response.json();
 
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(202);
         expect(data.success).toBe(true);
         expect(updateGitHubPR).toHaveBeenCalledWith({
           repoFullName: pr.repoFullName,

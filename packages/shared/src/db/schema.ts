@@ -38,6 +38,24 @@ import {
   ThreadSourceMetadata,
   UserCreditGrantType,
   AgentProviderMetadata,
+  SdlcCarmackReviewSeverity,
+  SdlcCarmackReviewStatus,
+  SdlcCiCapabilityState,
+  SdlcCiGateStatus,
+  SdlcCiRequiredCheckSource,
+  SdlcDeepReviewSeverity,
+  SdlcDeepReviewStatus,
+  SdlcLoopCauseType,
+  SdlcLoopOutboxActionType,
+  SdlcLoopOutboxStatus,
+  SdlcLoopOutboxSupersessionGroup,
+  SdlcLoopState,
+  SdlcOutboxAttemptStatus,
+  SdlcParityTargetClass,
+  SdlcReviewThreadEvaluationSource,
+  SdlcReviewThreadGateStatus,
+  SdlcVideoCaptureStatus,
+  SdlcVideoFailureClass,
 } from "./types";
 import {
   AutomationAction,
@@ -1246,6 +1264,549 @@ export const agentProviderCredentials = pgTable(
     ),
   ],
 );
+
+export const sdlcLoop = pgTable(
+  "sdlc_loop",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    repoFullName: text("repo_full_name").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    state: text("state").$type<SdlcLoopState>().notNull().default("enrolled"),
+    currentHeadSha: text("current_head_sha"),
+    loopVersion: integer("loop_version").notNull().default(0),
+    stopReason: text("stop_reason"),
+    canonicalStatusCommentId: text("canonical_status_comment_id"),
+    canonicalStatusCommentNodeId: text("canonical_status_comment_node_id"),
+    canonicalStatusCommentUpdatedAt: timestamp(
+      "canonical_status_comment_updated_at",
+      {
+        mode: "date",
+      },
+    ),
+    canonicalCheckRunId: bigint("canonical_check_run_id", { mode: "number" }),
+    canonicalCheckRunUpdatedAt: timestamp("canonical_check_run_updated_at", {
+      mode: "date",
+    }),
+    videoCaptureStatus: text("video_capture_status")
+      .$type<SdlcVideoCaptureStatus>()
+      .notNull()
+      .default("not_started"),
+    latestVideoArtifactR2Key: text("latest_video_artifact_r2_key"),
+    latestVideoArtifactMimeType: text("latest_video_artifact_mime_type"),
+    latestVideoArtifactBytes: integer("latest_video_artifact_bytes"),
+    latestVideoCapturedAt: timestamp("latest_video_captured_at", {
+      mode: "date",
+    }),
+    latestVideoFailureClass: text(
+      "latest_video_failure_class",
+    ).$type<SdlcVideoFailureClass>(),
+    latestVideoFailureCode: text("latest_video_failure_code"),
+    latestVideoFailureMessage: text("latest_video_failure_message"),
+    latestVideoFailedAt: timestamp("latest_video_failed_at", { mode: "date" }),
+    enrolledAt: timestamp("enrolled_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_loop_user_repo_pr_unique")
+      .on(table.userId, table.repoFullName, table.prNumber)
+      .where(
+        sql`${table.state} in (
+        'enrolled',
+        'implementing',
+        'gates_running',
+        'blocked_on_agent_fixes',
+        'blocked_on_ci',
+        'blocked_on_review_threads',
+        'video_pending',
+        'human_review_ready',
+        'video_degraded_ready',
+        'blocked_on_human_feedback'
+      )`,
+      ),
+    uniqueIndex("sdlc_loop_thread_unique").on(table.threadId),
+    index("sdlc_loop_repo_pr_index").on(table.repoFullName, table.prNumber),
+    index("sdlc_loop_user_index").on(table.userId),
+  ],
+);
+
+export const sdlcLoopLease = pgTable(
+  "sdlc_loop_lease",
+  {
+    loopId: text("loop_id")
+      .primaryKey()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    leaseOwner: text("lease_owner"),
+    leaseEpoch: integer("lease_epoch").notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("sdlc_loop_lease_owner_expires_index").on(
+      table.leaseOwner,
+      table.leaseExpiresAt,
+    ),
+  ],
+);
+
+export const sdlcLoopSignalInbox = pgTable(
+  "sdlc_loop_signal_inbox",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    causeType: text("cause_type").$type<SdlcLoopCauseType>().notNull(),
+    canonicalCauseId: text("canonical_cause_id").notNull(),
+    signalHeadShaOrNull: text("signal_head_sha_or_null"),
+    causeIdentityVersion: integer("cause_identity_version")
+      .notNull()
+      .default(1),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    receivedAt: timestamp("received_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+    processedAt: timestamp("processed_at", { mode: "date" }),
+  },
+  (table) => [
+    uniqueIndex("sdlc_loop_signal_inbox_dedupe_unique").on(
+      table.loopId,
+      table.causeType,
+      table.canonicalCauseId,
+      table.signalHeadShaOrNull,
+      table.causeIdentityVersion,
+    ),
+    uniqueIndex("sdlc_loop_signal_inbox_dedupe_null_head_unique")
+      .on(
+        table.loopId,
+        table.causeType,
+        table.canonicalCauseId,
+        table.causeIdentityVersion,
+      )
+      .where(sql`${table.signalHeadShaOrNull} is null`),
+    index("sdlc_loop_signal_inbox_loop_received_index").on(
+      table.loopId,
+      table.receivedAt,
+    ),
+  ],
+);
+
+export const sdlcLoopOutbox = pgTable(
+  "sdlc_loop_outbox",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    transitionSeq: bigint("transition_seq", { mode: "number" }).notNull(),
+    actionType: text("action_type").$type<SdlcLoopOutboxActionType>().notNull(),
+    supersessionGroup: text("supersession_group")
+      .$type<SdlcLoopOutboxSupersessionGroup>()
+      .notNull(),
+    actionKey: text("action_key").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status")
+      .$type<SdlcLoopOutboxStatus>()
+      .notNull()
+      .default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextRetryAt: timestamp("next_retry_at", { mode: "date" }),
+    supersededByOutboxId: text("superseded_by_outbox_id"),
+    canceledReason: text("canceled_reason"),
+    claimedBy: text("claimed_by"),
+    claimedAt: timestamp("claimed_at", { mode: "date" }),
+    completedAt: timestamp("completed_at", { mode: "date" }),
+    lastErrorClass: text("last_error_class"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_loop_outbox_loop_action_key_unique").on(
+      table.loopId,
+      table.actionKey,
+    ),
+    index("sdlc_loop_outbox_loop_status_transition_index").on(
+      table.loopId,
+      table.status,
+      table.transitionSeq,
+    ),
+    index("sdlc_loop_outbox_loop_group_transition_index").on(
+      table.loopId,
+      table.supersessionGroup,
+      table.transitionSeq,
+    ),
+    index("sdlc_loop_outbox_loop_status_retry_index").on(
+      table.loopId,
+      table.status,
+      table.nextRetryAt,
+    ),
+  ],
+);
+
+export const sdlcLoopOutboxAttempt = pgTable(
+  "sdlc_loop_outbox_attempt",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    outboxId: text("outbox_id")
+      .notNull()
+      .references(() => sdlcLoopOutbox.id, { onDelete: "cascade" }),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    actionType: text("action_type").$type<SdlcLoopOutboxActionType>().notNull(),
+    attempt: integer("attempt").notNull(),
+    status: text("status").$type<SdlcOutboxAttemptStatus>().notNull(),
+    errorClass: text("error_class"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    retryAt: timestamp("retry_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sdlc_loop_outbox_attempt_outbox_attempt_unique").on(
+      table.outboxId,
+      table.attempt,
+    ),
+    index("sdlc_loop_outbox_attempt_loop_created_index").on(
+      table.loopId,
+      table.createdAt,
+    ),
+    index("sdlc_loop_outbox_attempt_status_retry_index").on(
+      table.status,
+      table.retryAt,
+    ),
+  ],
+);
+
+export const sdlcDeepReviewRun = pgTable(
+  "sdlc_deep_review_run",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    headSha: text("head_sha").notNull(),
+    loopVersion: integer("loop_version").notNull(),
+    status: text("status")
+      .$type<SdlcDeepReviewStatus>()
+      .notNull()
+      .default("invalid_output"),
+    gatePassed: boolean("gate_passed").notNull().default(false),
+    invalidOutput: boolean("invalid_output").notNull().default(false),
+    model: text("model").notNull(),
+    promptVersion: integer("prompt_version").notNull().default(1),
+    rawOutput: jsonb("raw_output"),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_deep_review_run_loop_head_unique").on(
+      table.loopId,
+      table.headSha,
+    ),
+    index("sdlc_deep_review_run_loop_created_index").on(
+      table.loopId,
+      table.createdAt,
+    ),
+    index("sdlc_deep_review_run_status_index").on(table.status),
+  ],
+);
+
+export const sdlcDeepReviewFinding = pgTable(
+  "sdlc_deep_review_finding",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    reviewRunId: text("review_run_id")
+      .notNull()
+      .references(() => sdlcDeepReviewRun.id, { onDelete: "cascade" }),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    headSha: text("head_sha").notNull(),
+    stableFindingId: text("stable_finding_id").notNull(),
+    title: text("title").notNull(),
+    severity: text("severity").$type<SdlcDeepReviewSeverity>().notNull(),
+    category: text("category").notNull(),
+    detail: text("detail").notNull(),
+    suggestedFix: text("suggested_fix"),
+    isBlocking: boolean("is_blocking").notNull().default(true),
+    resolvedAt: timestamp("resolved_at", { mode: "date" }),
+    resolvedByEventId: text("resolved_by_event_id"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_deep_review_finding_loop_head_stable_unique").on(
+      table.loopId,
+      table.headSha,
+      table.stableFindingId,
+    ),
+    index("sdlc_deep_review_finding_loop_head_blocking_index").on(
+      table.loopId,
+      table.headSha,
+      table.isBlocking,
+      table.resolvedAt,
+    ),
+    index("sdlc_deep_review_finding_run_id_index").on(table.reviewRunId),
+  ],
+);
+
+export const sdlcCarmackReviewRun = pgTable(
+  "sdlc_carmack_review_run",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    headSha: text("head_sha").notNull(),
+    loopVersion: integer("loop_version").notNull(),
+    status: text("status")
+      .$type<SdlcCarmackReviewStatus>()
+      .notNull()
+      .default("invalid_output"),
+    gatePassed: boolean("gate_passed").notNull().default(false),
+    invalidOutput: boolean("invalid_output").notNull().default(false),
+    model: text("model").notNull(),
+    promptVersion: integer("prompt_version").notNull().default(1),
+    rawOutput: jsonb("raw_output"),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_carmack_review_run_loop_head_unique").on(
+      table.loopId,
+      table.headSha,
+    ),
+    index("sdlc_carmack_review_run_loop_created_index").on(
+      table.loopId,
+      table.createdAt,
+    ),
+    index("sdlc_carmack_review_run_status_index").on(table.status),
+  ],
+);
+
+export const sdlcCarmackReviewFinding = pgTable(
+  "sdlc_carmack_review_finding",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    reviewRunId: text("review_run_id")
+      .notNull()
+      .references(() => sdlcCarmackReviewRun.id, { onDelete: "cascade" }),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    headSha: text("head_sha").notNull(),
+    stableFindingId: text("stable_finding_id").notNull(),
+    title: text("title").notNull(),
+    severity: text("severity").$type<SdlcCarmackReviewSeverity>().notNull(),
+    category: text("category").notNull(),
+    detail: text("detail").notNull(),
+    suggestedFix: text("suggested_fix"),
+    isBlocking: boolean("is_blocking").notNull().default(true),
+    resolvedAt: timestamp("resolved_at", { mode: "date" }),
+    resolvedByEventId: text("resolved_by_event_id"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_carmack_review_finding_loop_head_stable_unique").on(
+      table.loopId,
+      table.headSha,
+      table.stableFindingId,
+    ),
+    index("sdlc_carmack_review_finding_loop_head_blocking_index").on(
+      table.loopId,
+      table.headSha,
+      table.isBlocking,
+      table.resolvedAt,
+    ),
+    index("sdlc_carmack_review_finding_run_id_index").on(table.reviewRunId),
+  ],
+);
+
+export const sdlcCiGateRun = pgTable(
+  "sdlc_ci_gate_run",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    headSha: text("head_sha").notNull(),
+    loopVersion: integer("loop_version").notNull(),
+    status: text("status").$type<SdlcCiGateStatus>().notNull(),
+    gatePassed: boolean("gate_passed").notNull().default(false),
+    actorType: text("actor_type").notNull().default("installation_app"),
+    capabilityState: text("capability_state")
+      .$type<SdlcCiCapabilityState>()
+      .notNull(),
+    requiredCheckSource: text("required_check_source")
+      .$type<SdlcCiRequiredCheckSource>()
+      .notNull(),
+    requiredChecks: jsonb("required_checks")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    failingRequiredChecks: jsonb("failing_required_checks")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    provenance: jsonb("provenance").$type<Record<string, unknown>>(),
+    normalizationVersion: integer("normalization_version").notNull().default(1),
+    triggerEventType: text("trigger_event_type").notNull(),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_ci_gate_run_loop_head_unique").on(
+      table.loopId,
+      table.headSha,
+    ),
+    index("sdlc_ci_gate_run_loop_created_index").on(
+      table.loopId,
+      table.createdAt,
+    ),
+    index("sdlc_ci_gate_run_status_index").on(table.status),
+  ],
+);
+
+export const sdlcReviewThreadGateRun = pgTable(
+  "sdlc_review_thread_gate_run",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    headSha: text("head_sha").notNull(),
+    loopVersion: integer("loop_version").notNull(),
+    status: text("status").$type<SdlcReviewThreadGateStatus>().notNull(),
+    gatePassed: boolean("gate_passed").notNull().default(false),
+    evaluationSource: text("evaluation_source")
+      .$type<SdlcReviewThreadEvaluationSource>()
+      .notNull(),
+    unresolvedThreadCount: integer("unresolved_thread_count")
+      .notNull()
+      .default(0),
+    timeoutMs: integer("timeout_ms"),
+    triggerEventType: text("trigger_event_type").notNull(),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_review_thread_gate_run_loop_head_unique").on(
+      table.loopId,
+      table.headSha,
+    ),
+    index("sdlc_review_thread_gate_run_loop_created_index").on(
+      table.loopId,
+      table.createdAt,
+    ),
+    index("sdlc_review_thread_gate_run_status_index").on(table.status),
+  ],
+);
+
+export const sdlcParityMetricSample = pgTable(
+  "sdlc_parity_metric_sample",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    causeType: text("cause_type").$type<SdlcLoopCauseType>().notNull(),
+    targetClass: text("target_class").$type<SdlcParityTargetClass>().notNull(),
+    eligible: boolean("eligible").notNull().default(true),
+    matched: boolean("matched").notNull(),
+    observedAt: timestamp("observed_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sdlc_parity_metric_sample_bucket_index").on(
+      table.causeType,
+      table.targetClass,
+      table.observedAt,
+    ),
+    index("sdlc_parity_metric_sample_observed_index").on(table.observedAt),
+    index("sdlc_parity_metric_sample_eligible_index").on(
+      table.eligible,
+      table.observedAt,
+    ),
+  ],
+);
+
+export const githubWebhookDeliveries = pgTable("github_webhook_deliveries", {
+  deliveryId: text("delivery_id").primaryKey(),
+  claimantToken: text("claimant_token").notNull(),
+  claimExpiresAt: timestamp("claim_expires_at", { mode: "date" }).notNull(),
+  completedAt: timestamp("completed_at", { mode: "date" }),
+  eventType: text("event_type"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
 
 /**
  * Idempotency store for Linear webhook deliveries.
