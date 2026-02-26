@@ -1,5 +1,6 @@
 import type * as Party from "partykit/server";
 import { validateRequest } from "./auth";
+import { parseBroadcastChannel } from "@terragon/types/broadcast";
 
 export default class BroadcastServer implements Party.Server {
   options: Party.ServerOptions = {
@@ -47,6 +48,27 @@ export default class BroadcastServer implements Party.Server {
       // Make sure we consume the body otherwise cloudflare
       // will throw an unhandled promise rejection.
       const message = await req.json();
+
+      const parsedChannel = parseBroadcastChannel(this.room.id);
+      if (parsedChannel?.type === "preview") {
+        const previewMessage =
+          typeof message === "object" && message !== null
+            ? (message as Record<string, unknown>)
+            : null;
+        if (
+          !previewMessage ||
+          previewMessage.type !== "preview" ||
+          previewMessage.previewSessionId !== parsedChannel.previewSessionId ||
+          previewMessage.threadId !== parsedChannel.threadId ||
+          previewMessage.threadChatId !== parsedChannel.threadChatId ||
+          previewMessage.runId !== parsedChannel.runId ||
+          previewMessage.userId !== parsedChannel.userId ||
+          previewMessage.schemaVersion !== parsedChannel.schemaVersion
+        ) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+      }
+
       this.room.broadcast(JSON.stringify(message));
       return new Response("OK");
     }

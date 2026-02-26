@@ -105,7 +105,7 @@ Build secure preview session bootstrap/startup and catchall proxy behavior with 
 
 ## Done summary
 
-TBD
+- Task completed
 
 ## Evidence
 

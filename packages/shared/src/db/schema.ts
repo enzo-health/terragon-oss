@@ -42,6 +42,10 @@ import {
 } from "./types";
 import type {
   FrozenRunFlagSnapshot,
+  PreviewOpenMode,
+  PreviewPinnedUpstreamIps,
+  PreviewSessionState,
+  PreviewUnsupportedReason,
   ThreadRunStatus,
   ThreadRunTriggerSource,
   ThreadUiReadyDowngradeState,
@@ -504,6 +508,77 @@ export const threadUiValidation = pgTable(
       name: "thread_ui_validation_thread_chat_pk",
     }),
     index("thread_ui_validation_latest_run_id_index").on(table.latestRunId),
+  ],
+);
+
+export const previewSession = pgTable(
+  "preview_session",
+  {
+    previewSessionId: text("preview_session_id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => threadRun.runId, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    codesandboxId: text("codesandbox_id").notNull(),
+    sandboxProvider: text("sandbox_provider")
+      .$type<SandboxProvider>()
+      .notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    previewCommand: text("preview_command"),
+    previewPort: integer("preview_port"),
+    previewHealthPath: text("preview_health_path"),
+    previewRequiresWebsocket: boolean("preview_requires_websocket")
+      .notNull()
+      .default(false),
+    previewOpenMode: text("preview_open_mode")
+      .$type<PreviewOpenMode>()
+      .notNull()
+      .default("iframe"),
+    upstreamOrigin: text("upstream_origin"),
+    upstreamOriginToken: text("upstream_origin_token"),
+    providerAuthHeadersJson: jsonb("provider_auth_headers_json").$type<
+      Record<string, string>
+    >(),
+    pinnedUpstreamIpsJson: jsonb(
+      "pinned_upstream_ips_json",
+    ).$type<PreviewPinnedUpstreamIps>(),
+    revocationVersion: integer("revocation_version").notNull().default(1),
+    lastDnsCheckAt: timestamp("last_dns_check_at"),
+    dnsRefreshedOnce: boolean("dns_refreshed_once").notNull().default(false),
+    state: text("state")
+      .$type<PreviewSessionState>()
+      .notNull()
+      .default("pending"),
+    unsupportedReason:
+      text("unsupported_reason").$type<PreviewUnsupportedReason>(),
+    expiresAt: timestamp("expires_at"),
+    revokedAt: timestamp("revoked_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("preview_session_run_created_at_index").on(
+      table.runId,
+      table.createdAt,
+    ),
+    index("preview_session_thread_created_at_index").on(
+      table.threadId,
+      table.createdAt,
+    ),
+    index("preview_session_state_index").on(table.state),
   ],
 );
 

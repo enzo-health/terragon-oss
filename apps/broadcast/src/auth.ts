@@ -33,8 +33,11 @@ export async function validateRequest(
     return;
   }
 
-  const token =
-    url.searchParams.get("token") ?? request.headers.get("Authorization") ?? "";
+  const authorizationHeader = request.headers.get("Authorization") ?? "";
+  const bearerToken = authorizationHeader.toLowerCase().startsWith("bearer ")
+    ? authorizationHeader.slice(7).trim()
+    : authorizationHeader.trim();
+  const token = url.searchParams.get("token") ?? bearerToken;
   if (token) {
     const response = await fetch(
       `${getPublicAppUrl(env)}/api/internal/broadcast?channel=${channel}`,

@@ -74,6 +74,18 @@ export const previewUnsupportedReasons = [
 export type PreviewUnsupportedReason =
   (typeof previewUnsupportedReasons)[number];
 
+export const previewOpenModes = ["iframe", "new_tab"] as const;
+
+export type PreviewOpenMode = (typeof previewOpenModes)[number];
+
+export const previewPinningModes = [
+  "strict_ip",
+  "provider_asn",
+  "tls_sni_host",
+] as const;
+
+export type PreviewPinningMode = (typeof previewPinningModes)[number];
+
 export const previewValidationAttemptStatuses = [
   "pending",
   "running",
@@ -131,6 +143,33 @@ export type PreviewEventName = (typeof previewEventNames)[number];
 
 export const previewSessionTTLSeconds = 1800;
 export const previewBroadcastSchemaVersion = 1;
+export const previewTokenIssuer = "terragon-preview" as const;
+export const previewTokenAudiences = {
+  exchange: "preview-session-exchange",
+  broadcast: "preview-session-broadcast",
+  cookie: "preview-session-cookie",
+  origin: "preview-upstream-origin",
+} as const;
+export const previewKeyNamespaces = {
+  exchange: "exchange",
+  broadcast: "broadcast",
+  cookie: "cookie",
+  origin: "origin",
+} as const;
+
+export type PreviewTokenNamespace =
+  (typeof previewKeyNamespaces)[keyof typeof previewKeyNamespaces];
+export type PreviewTokenAudience =
+  (typeof previewTokenAudiences)[keyof typeof previewTokenAudiences];
+
+export type PreviewPinnedUpstreamIps = {
+  addressesV4: string[];
+  addressesV6: string[];
+  cnameChain: string[];
+  ttlSeconds: number;
+  resolvedAt: string;
+  pinningMode: PreviewPinningMode;
+};
 
 export type PreviewAuthClaimTuple = {
   previewSessionId: string;
@@ -153,4 +192,14 @@ export type PreviewCookieAuthClaimTuple = PreviewAuthClaimTuple & {
 export type PreviewBroadcastAuthClaimTuple = PreviewAuthClaimTuple & {
   schemaVersion: number;
   channelType: "preview";
+};
+
+export type PreviewUpstreamOriginClaims = {
+  scheme: "http" | "https";
+  host: string;
+  port: number;
+  pinningMode: PreviewPinningMode;
+  exp: number;
+  previewSessionId: string;
+  revocationVersion: number;
 };
