@@ -91,6 +91,32 @@ class R2Client {
     }
   }
 
+  public async generatePresignedDownloadUrl(
+    r2Key: string,
+    expiresInSeconds: number = 15 * 60,
+  ): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: r2Key,
+    });
+
+    try {
+      return await getSignedUrl(this.s3Client, command, {
+        expiresIn: expiresInSeconds,
+      });
+    } catch (error) {
+      console.error(
+        `Error generating pre-signed download URL for ${r2Key}:`,
+        error,
+      );
+      throw new Error(
+        `Failed to generate R2 pre-signed download URL: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   /**
    * Gets the content type of an object stored in the R2 bucket
    * @param r2Key The key of the object in the R2 bucket

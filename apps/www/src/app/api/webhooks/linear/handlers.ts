@@ -9,6 +9,7 @@ import {
 } from "@terragon/shared/model/linear";
 import {
   getThreadByLinearAgentSessionId,
+  getThreadByLinearDeliveryId,
   getThread,
 } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
@@ -25,7 +26,6 @@ import {
   type AgentSessionExternalUrlInput,
 } from "@/server-lib/linear-agent-activity";
 import { getEnvironments } from "@terragon/shared/model/environments";
-import { waitUntil } from "@vercel/functions";
 import { LinearClient, type RepositorySuggestionsPayload } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
 import { decryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
@@ -344,22 +344,16 @@ async function handleAgentSessionCreated(
     });
   });
 
-  // 5-7. Async thread creation via waitUntil
-  waitUntil(
-    createThreadForAgentSession({
-      payload,
-      deliveryId,
-      accessToken,
-      organizationId,
-      agentSessionId,
-      opts,
-    }).catch((err) => {
-      console.error("[linear webhook] Error in async thread creation", {
-        agentSessionId,
-        err,
-      });
-    }),
-  );
+  // 5-7. Create thread in-band so failures surface to the webhook response path
+  // and can be retried by Linear delivery retries.
+  await createThreadForAgentSession({
+    payload,
+    deliveryId,
+    accessToken,
+    organizationId,
+    agentSessionId,
+    opts,
+  });
 }
 
 async function createThreadForAgentSession({
@@ -377,6 +371,30 @@ async function createThreadForAgentSession({
   agentSessionId: string;
   opts?: { createClient?: LinearClientFactory };
 }): Promise<void> {
+  if (deliveryId) {
+    const existingThread = await getThreadByLinearDeliveryId({
+      db,
+      deliveryId,
+    });
+    if (existingThread) {
+      // Recovery path: prior attempt created a thread but failed to persist
+      // completion marker. Reconcile and skip duplicate thread creation.
+      await completeLinearWebhookDelivery({
+        db,
+        deliveryId,
+        threadId: existingThread.id,
+      });
+      console.log(
+        "[linear webhook] Reconciled delivery using existing thread mapping",
+        {
+          deliveryId,
+          threadId: existingThread.id,
+        },
+      );
+      return;
+    }
+  }
+
   // 5. Idempotency: claim the Delivery-Id before creating a thread.
   // If the previous handler crashed mid-creation (completedAt=NULL), retries are allowed.
   // Only when completedAt IS NOT NULL (thread created successfully) do we skip.
@@ -628,13 +646,6 @@ async function createThreadRecord({
       db,
       deliveryId,
       threadId,
-    }).catch((err) => {
-      // Non-fatal: the thread exists, so a retry would just re-emit thought and skip.
-      console.error("[linear webhook] Failed to mark delivery as completed", {
-        deliveryId,
-        threadId,
-        err,
-      });
     });
   }
 }

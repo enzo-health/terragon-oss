@@ -30,8 +30,12 @@ import { maybeBatchThreads } from "@/lib/batch-threads";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { AIAgent, AIModel } from "@terragon/agent/types";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { getThread, getThreadChat } from "@terragon/shared/model/threads";
 import { modelToAgent } from "@terragon/agent/utils";
+import {
+  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
+  getActiveSdlcLoopForGithubPRIfEnabled,
+} from "@/server-lib/sdlc-loop/enrollment";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({
@@ -389,6 +393,31 @@ async function triggerTasksForUser({
       threadChatIdOrNull: string | null;
       forcedAgent: AIAgent | null;
     }): Promise<{ threadId: string; threadChatId: string }> => {
+      const maybeEnsureSdlcEnrollment = async (threadId: string) => {
+        if (issueOrPrType !== "pull_request") {
+          return;
+        }
+        try {
+          await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+            userId,
+            repoFullName,
+            prNumber: issueOrPrNumber,
+            threadId,
+          });
+        } catch (error) {
+          console.warn(
+            "SDLC enrollment wiring failed for PR mention routing; continuing with standard thread flow",
+            {
+              userId,
+              repoFullName,
+              issueOrPrNumber,
+              threadId,
+              error,
+            },
+          );
+        }
+      };
+
       if (threadIdOrNull && threadChatIdOrNull) {
         console.log(`Queuing follow-up to existing thread`, {
           threadId: threadIdOrNull,
@@ -406,6 +435,7 @@ async function triggerTasksForUser({
           source: "github",
           appendOrReplace: "append",
         });
+        await maybeEnsureSdlcEnrollment(threadIdOrNull);
         return { threadId: threadIdOrNull, threadChatId: threadChatIdOrNull };
       }
       console.log(`Creating new thread`, {
@@ -444,8 +474,55 @@ async function triggerTasksForUser({
         repoFullName,
         userId,
       });
+      await maybeEnsureSdlcEnrollment(threadId);
       return { threadId, threadChatId };
     };
+
+    if (issueOrPrType === "pull_request") {
+      const activeSdlcLoop = await getActiveSdlcLoopForGithubPRIfEnabled({
+        userId,
+        repoFullName,
+        prNumber: issueOrPrNumber,
+      });
+
+      if (activeSdlcLoop) {
+        const enrolledThread = await getThread({
+          db,
+          userId,
+          threadId: activeSdlcLoop.threadId,
+        });
+        let enrolledThreadChat: ReturnType<typeof getPrimaryThreadChat> | null =
+          null;
+        if (enrolledThread) {
+          try {
+            enrolledThreadChat = getPrimaryThreadChat(enrolledThread);
+          } catch (_error) {
+            enrolledThreadChat = null;
+          }
+        }
+
+        if (enrolledThreadChat) {
+          await queueOrCreateThreadForGitHubMention({
+            threadIdOrNull: activeSdlcLoop.threadId,
+            threadChatIdOrNull: enrolledThreadChat.id,
+            forcedAgent: enrolledThreadChat.agent,
+          });
+          return;
+        }
+
+        console.warn(
+          "SDLC loop enrollment found but thread/chat is not routable; falling back to standard mention routing",
+          {
+            userId,
+            repoFullName,
+            issueOrPrNumber,
+            sdlcLoopId: activeSdlcLoop.id,
+            sdlcLoopThreadId: activeSdlcLoop.threadId,
+            hasThread: !!enrolledThread,
+          },
+        );
+      }
+    }
 
     if (userSettings.singleThreadForGitHubMentions) {
       const threadOrNull = await getThreadForGithubPRAndUser({

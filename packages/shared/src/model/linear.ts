@@ -495,8 +495,19 @@ export async function completeLinearWebhookDelivery({
   deliveryId: string;
   threadId: string;
 }): Promise<void> {
+  const completedAt = new Date();
   await db
-    .update(schema.linearWebhookDeliveries)
-    .set({ completedAt: new Date(), threadId })
-    .where(eq(schema.linearWebhookDeliveries.deliveryId, deliveryId));
+    .insert(schema.linearWebhookDeliveries)
+    .values({
+      deliveryId,
+      completedAt,
+      threadId,
+    })
+    .onConflictDoUpdate({
+      target: schema.linearWebhookDeliveries.deliveryId,
+      set: {
+        completedAt,
+        threadId,
+      },
+    });
 }

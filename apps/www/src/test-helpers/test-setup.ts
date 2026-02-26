@@ -29,6 +29,7 @@ vi.mock("@/lib/github", async (importOriginal) => {
   const actual = (await importOriginal()) as any;
   return {
     ...actual,
+    getGitHubUserAccessToken: vi.fn().mockResolvedValue("mock-github-token"),
     ensureBranchExists: vi.fn().mockResolvedValue(undefined),
     updateGitHubPR: vi.fn(),
     getOctokitForApp: vi.fn(),

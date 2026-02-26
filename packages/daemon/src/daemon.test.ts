@@ -1,6 +1,18 @@
-import { DaemonMessageStop, DaemonMessageClaude } from "./shared";
-import { DaemonRuntime, writeToUnixSocket } from "./runtime";
+import {
+  DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  DAEMON_EVENT_CAPABILITIES_HEADER,
+  DAEMON_EVENT_VERSION_HEADER,
+  DAEMON_VERSION,
+  DaemonMessageStop,
+  DaemonMessageClaude,
+} from "./shared";
+import {
+  DaemonRuntime,
+  DaemonServerPostError,
+  writeToUnixSocket,
+} from "./runtime";
 import { TerragonDaemon } from "./daemon";
+import { createHash } from "node:crypto";
 import {
   describe,
   it,
@@ -248,6 +260,288 @@ describe("daemon", () => {
     );
   });
 
+  it("sends daemon version header without v2 capability when payload has no v2 envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const localRuntime = new DaemonRuntime({
+      url: "http://localhost:3000",
+      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      outputFormat: "text",
+    });
+    vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
+
+    try {
+      await localRuntime.serverPost(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          timezone: "UTC",
+          messages: [],
+        },
+        "token-1",
+      );
+    } finally {
+      await localRuntime.teardown();
+    }
+
+    const fetchOptions = fetchMock.mock.calls[0]?.[1];
+    const headers = fetchOptions?.headers as Record<string, string>;
+    expect(fetchOptions?.method).toBe("POST");
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(headers["X-Daemon-Token"]).toBe("token-1");
+    expect(headers[DAEMON_EVENT_VERSION_HEADER]).toBe(DAEMON_VERSION);
+    expect(headers[DAEMON_EVENT_CAPABILITIES_HEADER]).toBeUndefined();
+  });
+
+  it("sends v2 capability header when payload includes a v2 envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        acknowledgedEventId: "event-1",
+        acknowledgedSeq: 0,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const localRuntime = new DaemonRuntime({
+      url: "http://localhost:3000",
+      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      outputFormat: "text",
+    });
+    vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
+
+    try {
+      await localRuntime.serverPost(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          timezone: "UTC",
+          messages: [],
+          payloadVersion: 2,
+          eventId: "event-1",
+          runId: "run-1",
+          seq: 0,
+        },
+        "token-1",
+      );
+    } finally {
+      await localRuntime.teardown();
+    }
+
+    const fetchOptions = fetchMock.mock.calls[0]?.[1];
+    const headers = fetchOptions?.headers as Record<string, string>;
+    expect(fetchOptions?.method).toBe("POST");
+    expect(headers[DAEMON_EVENT_CAPABILITIES_HEADER]).toBe(
+      DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+    );
+  });
+
+  it("throws when v2 daemon event ack does not match the emitted envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        acknowledgedEventId: "wrong-event-id",
+        acknowledgedSeq: 999,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const localRuntime = new DaemonRuntime({
+      url: "http://localhost:3000",
+      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      outputFormat: "text",
+    });
+    vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
+
+    try {
+      await expect(
+        localRuntime.serverPost(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            timezone: "UTC",
+            messages: [],
+            payloadVersion: 2,
+            eventId: "event-1",
+            runId: "run-1",
+            seq: 0,
+          },
+          "token-1",
+        ),
+      ).rejects.toThrow("Daemon event ack mismatch");
+    } finally {
+      await localRuntime.teardown();
+    }
+  });
+
+  it("emits v2 daemon envelopes with stable runId and monotonic seq when coordinator routing is enabled", async () => {
+    const inputMessage: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      featureFlags: {
+        sdlcLoopCoordinatorRouting: true,
+      },
+    };
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(inputMessage),
+    });
+    await sleep();
+    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
+
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "SEQ_0",
+    });
+    await sleep(20);
+
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "SEQ_1",
+    });
+    await sleep(20);
+
+    expect(serverPostMock).toHaveBeenCalledTimes(2);
+    const firstPayload = serverPostMock.mock.calls[0]![0];
+    const secondPayload = serverPostMock.mock.calls[1]![0];
+
+    expect(firstPayload.payloadVersion).toBe(2);
+    expect(secondPayload.payloadVersion).toBe(2);
+    expect(firstPayload.runId).toBeTypeOf("string");
+    expect(firstPayload.runId).toBe(secondPayload.runId);
+    expect(firstPayload.seq).toBe(0);
+    expect(secondPayload.seq).toBe(1);
+    expect(firstPayload.eventId).toBe(
+      createHash("sha256").update(`${firstPayload.runId}:0`).digest("hex"),
+    );
+    expect(secondPayload.eventId).toBe(
+      createHash("sha256").update(`${firstPayload.runId}:1`).digest("hex"),
+    );
+  });
+
+  it("reuses the same v2 envelope identity when retrying the same payload", async () => {
+    let apiCallCount = 0;
+    serverPostMock.mockImplementation(async () => {
+      apiCallCount++;
+      if (apiCallCount === 1) {
+        throw new Error("transient failure");
+      }
+    });
+
+    const inputMessage: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      featureFlags: {
+        sdlcLoopCoordinatorRouting: true,
+      },
+    };
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(inputMessage),
+    });
+    await sleep();
+
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "RETRY_ME",
+    });
+
+    await sleep(40);
+    expect(serverPostMock).toHaveBeenCalledTimes(2);
+    const firstPayload = serverPostMock.mock.calls[0]![0];
+    const secondPayload = serverPostMock.mock.calls[1]![0];
+
+    expect(firstPayload.payloadVersion).toBe(2);
+    expect(secondPayload.payloadVersion).toBe(2);
+    expect(firstPayload.runId).toBe(secondPayload.runId);
+    expect(firstPayload.seq).toBe(secondPayload.seq);
+    expect(firstPayload.eventId).toBe(secondPayload.eventId);
+  });
+
+  it("keeps coordinator routing behavior pinned to the run snapshot even when other runs update feature flags", async () => {
+    await daemon.start();
+
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        threadId: "THREAD_WITH_V2",
+        threadChatId: "CHAT_WITH_V2",
+        token: "TOKEN_WITH_V2",
+        featureFlags: {
+          sdlcLoopCoordinatorRouting: true,
+        },
+      } satisfies DaemonMessageClaude),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+    const chatWithV2Stdout =
+      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
+    expect(chatWithV2Stdout).toBeTypeOf("function");
+
+    chatWithV2Stdout?.(
+      JSON.stringify({
+        role: "assistant",
+        content: "THREAD_A_MESSAGE_1",
+      }),
+    );
+    await sleep(20);
+
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        prompt: "second thread",
+        threadId: "THREAD_NO_V2",
+        threadChatId: "CHAT_NO_V2",
+        token: "TOKEN_NO_V2",
+        featureFlags: {
+          sdlcLoopCoordinatorRouting: false,
+        },
+      } satisfies DaemonMessageClaude),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
+
+    chatWithV2Stdout?.(
+      JSON.stringify({
+        role: "assistant",
+        content: "THREAD_A_MESSAGE_2",
+      }),
+    );
+
+    const chatWithoutV2Stdout =
+      spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
+    expect(chatWithoutV2Stdout).toBeTypeOf("function");
+    chatWithoutV2Stdout?.(
+      JSON.stringify({
+        role: "assistant",
+        content: "THREAD_B_MESSAGE_1",
+      }),
+    );
+    await sleep(30);
+
+    const chatWithV2Payloads = serverPostMock.mock.calls
+      .map((call) => call[0])
+      .filter((payload) => payload.threadChatId === "CHAT_WITH_V2");
+    expect(chatWithV2Payloads).toHaveLength(2);
+    expect(chatWithV2Payloads[0]?.payloadVersion).toBe(2);
+    expect(chatWithV2Payloads[1]?.payloadVersion).toBe(2);
+    expect(chatWithV2Payloads[0]?.runId).toBe(chatWithV2Payloads[1]?.runId);
+    expect(chatWithV2Payloads[0]?.seq).toBe(0);
+    expect(chatWithV2Payloads[1]?.seq).toBe(1);
+
+    const chatWithoutV2Payloads = serverPostMock.mock.calls
+      .map((call) => call[0])
+      .filter((payload) => payload.threadChatId === "CHAT_NO_V2");
+    expect(chatWithoutV2Payloads).toHaveLength(1);
+    expect(chatWithoutV2Payloads[0]?.payloadVersion).toBeUndefined();
+  });
+
   it("sets Anthropic proxy environment variables when using built-in credits", async () => {
     await daemon.start();
     await writeToUnixSocket({
@@ -489,7 +783,17 @@ describe("daemon", () => {
     // All messages should be sent, none should be lost
     const allMessagesSent = serverPostMock.mock.calls
       .flatMap((call) => call[0].messages)
-      .map((msg) => msg.content);
+      .flatMap((msg) => {
+        if (
+          typeof msg === "object" &&
+          msg !== null &&
+          "content" in msg &&
+          typeof msg.content === "string"
+        ) {
+          return [msg.content];
+        }
+        return [];
+      });
 
     expect(allMessagesSent).toHaveLength(10);
     for (let i = 1; i <= 10; i++) {
@@ -568,7 +872,67 @@ describe("daemon", () => {
     );
   });
 
-  it("should preserve message order when retrying after API failure", async () => {
+  it("keeps retrying daemon claim-in-progress responses even when normal retry budget is exhausted", async () => {
+    daemon = new TerragonDaemon({
+      runtime,
+      messageHandleDelay: 5,
+      messageFlushDelay: 10,
+      retryConfig: {
+        baseDelayMs: 10,
+        maxDelayMs: 100,
+        maxAttempts: 1,
+        backoffMultiplier: 2,
+        jitterFactor: 0,
+      },
+    });
+
+    let apiCallCount = 0;
+    serverPostMock.mockImplementation(async () => {
+      apiCallCount += 1;
+      if (apiCallCount === 1) {
+        throw new DaemonServerPostError({
+          status: 409,
+          errorCode: "daemon_event_claim_in_progress",
+          responseBody: {
+            error: "daemon_event_claim_in_progress",
+          },
+        });
+      }
+    });
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        featureFlags: {
+          sdlcLoopCoordinatorRouting: true,
+        },
+      } satisfies DaemonMessageClaude),
+    });
+    await sleep();
+
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "CLAIM_IN_PROGRESS_RETRY",
+    });
+
+    await sleep(40);
+    expect(apiCallCount).toBe(1);
+
+    await sleep(5_200);
+    expect(apiCallCount).toBe(2);
+    expect(serverPostMock).toHaveBeenCalledTimes(2);
+
+    const firstPayload = serverPostMock.mock.calls[0]?.[0];
+    const secondPayload = serverPostMock.mock.calls[1]?.[0];
+    expect(secondPayload?.payloadVersion).toBe(2);
+    expect(secondPayload?.runId).toBe(firstPayload?.runId);
+    expect(secondPayload?.seq).toBe(firstPayload?.seq);
+    expect(secondPayload?.eventId).toBe(firstPayload?.eventId);
+  }, 20_000);
+
+  it("pins pending retry identity and defers newly buffered messages to the next batch", async () => {
     let apiCallCount = 0;
 
     // Make the first API call fail
@@ -583,7 +947,12 @@ describe("daemon", () => {
     await daemon.start();
     await writeToUnixSocket({
       unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        featureFlags: {
+          sdlcLoopCoordinatorRouting: true,
+        },
+      } satisfies DaemonMessageClaude),
     });
     await sleep();
 
@@ -599,26 +968,149 @@ describe("daemon", () => {
     mockSpawnCommandStdoutLine({ role: "assistant", content: "BATCH_2_MSG_2" });
 
     // Wait for everything to complete
-    await sleep(100);
+    await sleep(140);
 
-    // Should have 2 successful API calls
-    expect(serverPostMock).toHaveBeenCalledTimes(2);
+    // Should have 3 calls: initial failure, retry of pinned batch, then next batch
+    expect(serverPostMock).toHaveBeenCalledTimes(3);
+    expect(apiCallCount).toBe(3);
 
-    // First call fails, second call should contain all messages in order
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      2,
-      {
-        messages: [
-          { role: "assistant", content: "BATCH_1_MSG_1" },
-          { role: "assistant", content: "BATCH_1_MSG_2" },
-          { role: "assistant", content: "BATCH_2_MSG_1" },
-          { role: "assistant", content: "BATCH_2_MSG_2" },
-        ],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
+    // First and second call are the same batch identity
+    const firstPayload = serverPostMock.mock.calls[0]![0];
+    const secondPayload = serverPostMock.mock.calls[1]![0];
+    const thirdPayload = serverPostMock.mock.calls[2]![0];
+
+    expect(firstPayload.messages).toEqual([
+      { role: "assistant", content: "BATCH_1_MSG_1" },
+      { role: "assistant", content: "BATCH_1_MSG_2" },
+    ]);
+    expect(secondPayload.messages).toEqual(firstPayload.messages);
+    expect(secondPayload.eventId).toBe(firstPayload.eventId);
+    expect(secondPayload.seq).toBe(firstPayload.seq);
+    expect(secondPayload.runId).toBe(firstPayload.runId);
+
+    // Newly buffered messages are deferred to the next envelope/batch
+    expect(thirdPayload.messages).toEqual([
+      { role: "assistant", content: "BATCH_2_MSG_1" },
+      { role: "assistant", content: "BATCH_2_MSG_2" },
+    ]);
+    expect(thirdPayload.payloadVersion).toBe(2);
+    expect(thirdPayload.runId).toBe(firstPayload.runId);
+    expect(thirdPayload.seq).toBe((firstPayload.seq as number) + 1);
+    expect(thirdPayload.eventId).toBe(
+      createHash("sha256")
+        .update(`${firstPayload.runId as string}:${thirdPayload.seq as number}`)
+        .digest("hex"),
+    );
+  });
+
+  it("preserves pending envelope identity when a same-thread run restarts before retry", async () => {
+    let apiCallCount = 0;
+    serverPostMock.mockImplementation(async () => {
+      apiCallCount += 1;
+      if (apiCallCount === 1) {
+        await sleep(40);
+        throw new Error("transient failure");
+      }
+    });
+
+    const v2InputMessage: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      featureFlags: {
+        sdlcLoopCoordinatorRouting: true,
       },
-      "TEST_TOKEN_STRING",
+    };
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(v2InputMessage),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+    const firstRunStdout =
+      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
+    expect(firstRunStdout).toBeTypeOf("function");
+    firstRunStdout?.(
+      JSON.stringify({ role: "assistant", content: "RUN_1_MSG" }),
+    );
+
+    await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
+
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...v2InputMessage,
+        prompt: "second run while retry is pending",
+      }),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
+
+    await sleepUntil(() => serverPostMock.mock.calls.length === 2);
+
+    const firstPayload = serverPostMock.mock.calls[0]![0];
+    const retryPayload = serverPostMock.mock.calls[1]![0];
+
+    expect(firstPayload.payloadVersion).toBe(2);
+    expect(retryPayload.payloadVersion).toBe(2);
+    expect(retryPayload.runId).toBe(firstPayload.runId);
+    expect(retryPayload.seq).toBe(firstPayload.seq);
+    expect(retryPayload.eventId).toBe(firstPayload.eventId);
+  });
+
+  it("cleans daemon event run state when a run exits", async () => {
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        featureFlags: {
+          sdlcLoopCoordinatorRouting: true,
+        },
+      } satisfies DaemonMessageClaude),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+    const onCloseCallback = spawnCommandLineMock.mock.calls[0]![1].onClose;
+    expect(onCloseCallback).toBeTypeOf("function");
+    onCloseCallback?.(0);
+
+    await sleep(30);
+    const daemonEventRunStates = (
+      daemon as unknown as {
+        daemonEventRunStates: Map<string, unknown>;
+      }
+    ).daemonEventRunStates;
+    expect(daemonEventRunStates.has(TEST_INPUT_MESSAGE.threadChatId)).toBe(
+      false,
+    );
+  });
+
+  it("cleans daemon event run state when a run is stopped", async () => {
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        featureFlags: {
+          sdlcLoopCoordinatorRouting: true,
+        },
+      } satisfies DaemonMessageClaude),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(TEST_STOP_MESSAGE),
+    });
+    await sleep(30);
+
+    const daemonEventRunStates = (
+      daemon as unknown as {
+        daemonEventRunStates: Map<string, unknown>;
+      }
+    ).daemonEventRunStates;
+    expect(daemonEventRunStates.has(TEST_STOP_MESSAGE.threadChatId)).toBe(
+      false,
     );
   });
 
@@ -1389,6 +1881,71 @@ describe("daemon", () => {
 
       expect(secondCall[0].messages).toHaveLength(1);
       expect(secondCall[0].messages[0]).toMatchObject(chat2Output);
+    });
+
+    it("should continue flushing healthy thread groups when another group fails", async () => {
+      let chatOneFailureCount = 0;
+      serverPostMock.mockImplementation(async (payload) => {
+        if (payload.threadChatId === "CHAT_1" && chatOneFailureCount === 0) {
+          chatOneFailureCount += 1;
+          throw new Error("CHAT_1 temporary failure");
+        }
+      });
+
+      await daemon.start();
+
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify({
+          ...TEST_INPUT_MESSAGE,
+          threadId: "TEST_THREAD_ID_ONE",
+          threadChatId: "CHAT_1",
+          token: "TOKEN_ONE",
+        }),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify({
+          ...TEST_INPUT_MESSAGE,
+          threadId: "TEST_THREAD_ID_TWO",
+          threadChatId: "CHAT_2",
+          token: "TOKEN_TWO",
+          prompt: "second prompt",
+        }),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
+
+      const chat1Stdout =
+        spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
+      const chat2Stdout =
+        spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
+      expect(chat1Stdout).toBeTypeOf("function");
+      expect(chat2Stdout).toBeTypeOf("function");
+
+      chat1Stdout?.(
+        JSON.stringify({ role: "assistant", content: "CHAT_1_MSG" }),
+      );
+      chat2Stdout?.(
+        JSON.stringify({ role: "assistant", content: "CHAT_2_MSG" }),
+      );
+
+      await sleepUntil(() => serverPostMock.mock.calls.length >= 3, 3000);
+
+      const sentThreadChatIds = serverPostMock.mock.calls.map(
+        (call) => call[0].threadChatId,
+      );
+      expect(sentThreadChatIds.slice(0, 3)).toEqual([
+        "CHAT_1",
+        "CHAT_2",
+        "CHAT_1",
+      ]);
+
+      const chatOneCalls = sentThreadChatIds.filter((id) => id === "CHAT_1");
+      const chatTwoCalls = sentThreadChatIds.filter((id) => id === "CHAT_2");
+      expect(chatOneCalls).toHaveLength(2);
+      expect(chatTwoCalls).toHaveLength(1);
     });
 
     it("should replace a process when a new message with same threadChatId is received", async () => {
