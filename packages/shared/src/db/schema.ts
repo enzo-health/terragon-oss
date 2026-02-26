@@ -7,6 +7,7 @@ import {
   integer,
   index,
   uniqueIndex,
+  primaryKey,
   AnyPgColumn,
   numeric,
   bigint,
@@ -39,6 +40,13 @@ import {
   UserCreditGrantType,
   AgentProviderMetadata,
 } from "./types";
+import type {
+  FrozenRunFlagSnapshot,
+  ThreadRunStatus,
+  ThreadRunTriggerSource,
+  ThreadUiReadyDowngradeState,
+  ThreadUiValidationOutcome,
+} from "../types/preview";
 import {
   AutomationAction,
   AutomationTriggerType,
@@ -365,6 +373,137 @@ export const threadChat = pgTable(
       table.userId,
       table.threadId,
     ),
+  ],
+);
+
+export const threadRun = pgTable(
+  "thread_run",
+  {
+    runId: text("run_id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    startRequestId: text("start_request_id").notNull(),
+    triggerSource: text("trigger_source")
+      .$type<ThreadRunTriggerSource>()
+      .notNull(),
+    status: text("status")
+      .$type<ThreadRunStatus>()
+      .notNull()
+      .default("booting"),
+    codesandboxId: text("codesandbox_id"),
+    sandboxProvider: text("sandbox_provider").$type<SandboxProvider>(),
+    runStartSha: text("run_start_sha"),
+    runEndSha: text("run_end_sha"),
+    frozenFlagSnapshotJson: jsonb("frozen_flag_snapshot_json")
+      .$type<FrozenRunFlagSnapshot>()
+      .notNull(),
+    terminalEventId: text("terminal_event_id"),
+    lastAcceptedSeq: integer("last_accepted_seq"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    endedAt: timestamp("ended_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("thread_run_thread_chat_start_request_unique").on(
+      table.threadId,
+      table.threadChatId,
+      table.startRequestId,
+    ),
+    uniqueIndex("thread_run_active_thread_chat_unique")
+      .on(table.threadId, table.threadChatId)
+      .where(sql`${table.status} in ('booting', 'running', 'validating')`),
+    uniqueIndex("thread_run_terminal_event_unique")
+      .on(table.runId, table.terminalEventId)
+      .where(sql`${table.terminalEventId} is not null`),
+    index("thread_run_thread_chat_created_at_index").on(
+      table.threadId,
+      table.threadChatId,
+      table.createdAt,
+    ),
+    index("thread_run_status_index").on(table.status),
+    index("thread_run_terminal_event_id_index").on(table.terminalEventId),
+  ],
+);
+
+export const threadRunContext = pgTable(
+  "thread_run_context",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    activeRunId: text("active_run_id")
+      .notNull()
+      .references(() => threadRun.runId, { onDelete: "cascade" }),
+    activeCodesandboxId: text("active_codesandbox_id"),
+    activeSandboxProvider: text(
+      "active_sandbox_provider",
+    ).$type<SandboxProvider>(),
+    activeStatus: text("active_status")
+      .$type<ThreadRunStatus>()
+      .notNull()
+      .default("booting"),
+    version: integer("version").notNull().default(0),
+    activeUpdatedAt: timestamp("active_updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.threadId, table.threadChatId],
+      name: "thread_run_context_thread_chat_pk",
+    }),
+    index("thread_run_context_active_run_id_index").on(table.activeRunId),
+  ],
+);
+
+export const threadUiValidation = pgTable(
+  "thread_ui_validation",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    latestRunId: text("latest_run_id").references(() => threadRun.runId, {
+      onDelete: "set null",
+    }),
+    uiValidationOutcome: text("ui_validation_outcome")
+      .$type<ThreadUiValidationOutcome>()
+      .notNull()
+      .default("not_required"),
+    readyDowngradeState: text("ready_downgrade_state")
+      .$type<ThreadUiReadyDowngradeState>()
+      .notNull()
+      .default("not_attempted"),
+    readyDowngradeLastAttemptAt: timestamp("ready_downgrade_last_attempt_at"),
+    blockingReason: text("blocking_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.threadId, table.threadChatId],
+      name: "thread_ui_validation_thread_chat_pk",
+    }),
+    index("thread_ui_validation_latest_run_id_index").on(table.latestRunId),
   ],
 );
 

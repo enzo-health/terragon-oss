@@ -62,6 +62,7 @@ export const retryThread = userOnlyAction(
     });
 
     const thread = await getThreadMinimal({ db, threadId, userId });
+    const startRequestId = crypto.randomUUID();
     waitUntil(
       startAgentMessage({
         db,
@@ -69,6 +70,8 @@ export const retryThread = userOnlyAction(
         threadId,
         threadChatId,
         isNewThread: !thread?.codesandboxId, // If the thread has a sandbox, it's not a new thread.
+        startRequestId,
+        triggerSource: "retry",
       }),
     );
   },

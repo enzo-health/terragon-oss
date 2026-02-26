@@ -1,0 +1,14 @@
+{
+  "assignee": null,
+  "claim_note": "",
+  "claimed_at": null,
+  "created_at": "2026-02-25T22:45:02.264719Z",
+  "depends_on": ["fn-2.3", "fn-2.4", "fn-2.5"],
+  "epic": "fn-2",
+  "id": "fn-2.6",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-2.6.md",
+  "status": "todo",
+  "title": "Document preview workflows and publish release notes",
+  "updated_at": "2026-02-25T23:55:49.802951Z"
+}

@@ -53,6 +53,13 @@ import {
   getThreadContextMessageToGenerate,
   generateThreadContextResult,
 } from "@/server-lib/thread-context";
+import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import {
+  bindRunSandbox,
+  buildFrozenRunFlagSnapshot,
+  createRunContext,
+} from "@/server-lib/run-context";
+import type { ThreadRunTriggerSource } from "@terragon/shared/types/preview";
 
 async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   // Task queue limiting is always enabled
@@ -79,6 +86,8 @@ export async function startAgentMessage({
   createNewBranch = true,
   branchName,
   delayMs = 0,
+  startRequestId = crypto.randomUUID(),
+  triggerSource = "ui",
 }: {
   db: DB;
   userId: string;
@@ -92,6 +101,8 @@ export async function startAgentMessage({
   createNewBranch?: boolean;
   branchName?: string;
   delayMs?: number;
+  startRequestId?: string;
+  triggerSource?: ThreadRunTriggerSource;
 }) {
   console.log("Starting agent message", { threadId, threadChatId });
   const userCredentials = await getUserCredentials({ userId });
@@ -228,6 +239,16 @@ export async function startAgentMessage({
         }
       }
 
+      const featureFlags = await getFeatureFlagsForUser({ db, userId });
+      const { runId } = await createRunContext({
+        db,
+        threadId,
+        threadChatId,
+        startRequestId,
+        triggerSource,
+        frozenFlagSnapshot: buildFrozenRunFlagSnapshot(featureFlags),
+      });
+
       // If there's a thread-context message without a thread-context-result message, we need to generate it
       let threadContextPromise: Promise<void> | null = null;
       const threadContextMessage = getThreadContextMessageToGenerate({
@@ -315,6 +336,16 @@ export async function startAgentMessage({
           if (!isNewThread) {
             await gitPullUpstream(session);
           }
+          const runStartSha = await getRunStartSha(session);
+          await bindRunSandbox({
+            db,
+            threadId,
+            threadChatId,
+            runId,
+            codesandboxId: session.sandboxId,
+            sandboxProvider: session.sandboxProvider,
+            runStartSha,
+          });
           await updateThread({
             db,
             userId,
@@ -482,6 +513,25 @@ export async function startAgentMessage({
       console.error("Error starting claude:", error);
     },
   });
+}
+
+async function getRunStartSha(
+  session: ISandboxSession,
+): Promise<string | null> {
+  try {
+    const repoDirArg = JSON.stringify(session.repoDir);
+    const output = await session.runCommand(
+      `git -C ${repoDirArg} rev-parse HEAD`,
+    );
+    const sha = output.trim().split("\n").at(-1)?.trim() ?? "";
+    return sha || null;
+  } catch (error) {
+    console.warn("Failed to resolve run start SHA", {
+      sandboxId: session.sandboxId,
+      error,
+    });
+    return null;
+  }
 }
 
 async function preparePromptForModel({

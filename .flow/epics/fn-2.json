@@ -1,0 +1,13 @@
+{
+  "branch_name": "fn-2",
+  "created_at": "2026-02-25T22:44:03.774750Z",
+  "depends_on_epics": [],
+  "id": "fn-2",
+  "next_task": 1,
+  "plan_review_status": "needs_work",
+  "plan_reviewed_at": "2026-02-26T04:33:05.370573Z",
+  "spec_path": ".flow/specs/fn-2.md",
+  "status": "open",
+  "title": "Sandbox preview sessions with human + agent browser validation",
+  "updated_at": "2026-02-26T04:33:05.370749Z"
+}

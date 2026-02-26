@@ -130,6 +130,18 @@ export const featureFlagsDefinitions = {
     description:
       "Enables the Linear bot integration, allowing users to @mention Terragon in Linear issue comments to spin up a sandbox.",
   },
+  sandboxPreview: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Enables sandbox preview session APIs for internal preview validation workflows.",
+  },
+  daemonRunIdStrict: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Enforces strict daemon runId correlation. Missing or mismatched runId payloads are quarantined instead of mutating run state.",
+  },
   shutdownMode: {
     defaultValue: false,
     description:

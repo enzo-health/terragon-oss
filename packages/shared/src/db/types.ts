@@ -45,6 +45,14 @@ export type SandboxStatus =
 
 export type Thread = typeof schema.thread.$inferSelect;
 export type ThreadChat = typeof schema.threadChat.$inferSelect;
+export type ThreadRun = typeof schema.threadRun.$inferSelect;
+export type ThreadRunInsert = typeof schema.threadRun.$inferInsert;
+export type ThreadRunContext = typeof schema.threadRunContext.$inferSelect;
+export type ThreadRunContextInsert =
+  typeof schema.threadRunContext.$inferInsert;
+export type ThreadUiValidation = typeof schema.threadUiValidation.$inferSelect;
+export type ThreadUiValidationInsert =
+  typeof schema.threadUiValidation.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;

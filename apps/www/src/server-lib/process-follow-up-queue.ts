@@ -77,6 +77,7 @@ export async function maybeProcessFollowUpQueue({
           agentVersion: threadChat.agentVersion,
         }),
     };
+    const startRequestId = crypto.randomUUID();
     await startAgentMessage({
       db,
       userId,
@@ -84,6 +85,8 @@ export async function maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
       isNewThread: false,
+      startRequestId,
+      triggerSource: "slash_command",
     });
     return;
   }
@@ -100,11 +103,14 @@ export async function maybeProcessFollowUpQueue({
   if (!didUpdateStatus) {
     throw new Error("Failed to process follow up message");
   }
+  const startRequestId = crypto.randomUUID();
   await startAgentMessage({
     db,
     userId,
     threadId,
     threadChatId,
     isNewThread: false,
+    startRequestId,
+    triggerSource: "follow_up_queue",
   });
 }

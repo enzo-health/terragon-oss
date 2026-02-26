@@ -15,6 +15,20 @@
       "when": 1772054027892,
       "tag": "0001_flat_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772083736091,
+      "tag": "0002_spotty_korvac",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1772083772825,
+      "tag": "0003_conscious_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

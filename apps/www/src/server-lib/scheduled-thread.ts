@@ -36,6 +36,7 @@ export async function runScheduledThread({
   if (!didUpdateStatus) {
     throw new Error("Failed to update thread");
   }
+  const startRequestId = crypto.randomUUID();
   waitUntil(
     startAgentMessage({
       db,
@@ -43,6 +44,8 @@ export async function runScheduledThread({
       threadId,
       threadChatId,
       isNewThread: true,
+      startRequestId,
+      triggerSource: "scheduled",
     }),
   );
 }
