@@ -44,6 +44,8 @@ import type {
   FrozenRunFlagSnapshot,
   PreviewOpenMode,
   PreviewPinnedUpstreamIps,
+  PreviewValidationAttemptStatus,
+  PreviewValidationDiffSource,
   PreviewSessionState,
   PreviewUnsupportedReason,
   ThreadRunStatus,
@@ -579,6 +581,79 @@ export const previewSession = pgTable(
       table.createdAt,
     ),
     index("preview_session_state_index").on(table.state),
+  ],
+);
+
+export const previewValidationAttempt = pgTable(
+  "preview_validation_attempt",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => threadRun.runId, { onDelete: "cascade" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    status: text("status")
+      .$type<PreviewValidationAttemptStatus>()
+      .notNull()
+      .default("pending"),
+    command: text("command"),
+    exitCode: integer("exit_code"),
+    durationMs: integer("duration_ms"),
+    diffSource: text("diff_source")
+      .$type<PreviewValidationDiffSource>()
+      .notNull()
+      .default("sha"),
+    diffSourceContextJson: jsonb("diff_source_context_json").$type<
+      Record<string, unknown>
+    >(),
+    matchedUiRulesJson: jsonb("matched_ui_rules_json").$type<
+      Record<string, unknown>
+    >(),
+    capabilitySnapshotJson: jsonb("capability_snapshot_json").$type<
+      Record<string, unknown>
+    >(),
+    summaryR2Key: text("summary_r2_key"),
+    summarySha256: text("summary_sha256"),
+    summaryBytes: integer("summary_bytes"),
+    stdoutR2Key: text("stdout_r2_key"),
+    stdoutSha256: text("stdout_sha256"),
+    stdoutBytes: integer("stdout_bytes"),
+    stderrR2Key: text("stderr_r2_key"),
+    stderrSha256: text("stderr_sha256"),
+    stderrBytes: integer("stderr_bytes"),
+    traceR2Key: text("trace_r2_key"),
+    traceSha256: text("trace_sha256"),
+    traceBytes: integer("trace_bytes"),
+    screenshotR2Key: text("screenshot_r2_key"),
+    screenshotSha256: text("screenshot_sha256"),
+    screenshotBytes: integer("screenshot_bytes"),
+    videoR2Key: text("video_r2_key"),
+    videoSha256: text("video_sha256"),
+    videoBytes: integer("video_bytes"),
+    videoUnsupportedReason: text("video_unsupported_reason"),
+    timeoutCode: text("timeout_code"),
+    timeoutReason: text("timeout_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.threadId, table.runId, table.attemptNumber],
+      name: "preview_validation_attempt_thread_run_attempt_pk",
+    }),
+    index("preview_validation_attempt_run_id_index").on(table.runId),
+    index("preview_validation_attempt_thread_created_at_index").on(
+      table.threadId,
+      table.createdAt,
+    ),
   ],
 );
 

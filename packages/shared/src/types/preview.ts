@@ -106,6 +106,9 @@ export const previewValidationDiffSources = [
 export type PreviewValidationDiffSource =
   (typeof previewValidationDiffSources)[number];
 
+export const previewValidationTimeoutCode = "ETERRAGON_TIMEOUT" as const;
+export const previewValidationTimeoutReason = "timeout_killed" as const;
+
 export const daemonEventQuarantineReasons = [
   "missing_run_id",
   "mismatch",

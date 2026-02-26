@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     [
       "pull_request.opened",
       "pull_request.reopened",
+      "pull_request.synchronize",
       "pull_request.closed",
       "pull_request.ready_for_review",
       "pull_request.converted_to_draft",

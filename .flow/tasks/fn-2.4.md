@@ -75,7 +75,13 @@ Build runId-based validation execution with immutable redacted evidence, then en
 
 ## Done summary
 
-TBD
+Implemented preview validation and guard infrastructure for sandbox preview readiness:
+
+- Added immutable `preview_validation_attempt` persistence with artifact hashes/sizes and capability snapshots.
+- Added internal preview validation executor and maintenance routes with lease handling, HMAC auth, and stale-run backstop finalization.
+- Added centralized `withUiReadyGuard` and wired it into all ready entry points (open PR ready path, mark ready action, checkpoint auto-ready path marker, reopen-after-push, and webhook auto-ready downgrade).
+- Added private R2 upload/download metadata helpers and signed URL generation used by validation artifacts.
+- Added static ready-entry marker coverage tests and validation utility tests.
 
 ## Evidence
 

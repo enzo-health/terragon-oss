@@ -17,11 +17,16 @@ import {
   updatePRContent,
 } from "@/server-lib/generate-pr-content";
 import { generateCommitMessage } from "@/server-lib/generate-commit-message";
+import { markPullRequestReadyForReview } from "@/server-lib/github-pr";
 import {
   getOctokitForUserOrThrow,
   parseRepoFullName,
   getExistingPRForBranch,
 } from "@/lib/github";
+import {
+  convertToDraftOnceForUiGuard,
+  withUiReadyGuard,
+} from "@/server-lib/preview-validation";
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
 
@@ -55,6 +60,31 @@ export async function openPullRequestForThread({
   const thread = await getThread({ db, threadId, userId });
   if (!thread) {
     throw new ThreadError("unknown-error", "Thread not found", null);
+  }
+  let effectivePrType: "draft" | "ready" = prType;
+  if (prType === "ready") {
+    // UI_READY_GUARD:openPullRequestForThread
+    effectivePrType = await withUiReadyGuard<"draft" | "ready">({
+      entrypoint: "openPullRequestForThread",
+      threadId,
+      action: async () => "ready" as const,
+      onBlocked: async (decision) => {
+        if (thread.githubPRNumber && decision.runId && decision.threadChatId) {
+          const octokitForDowngrade = await getOctokitForUserOrThrow({
+            userId,
+          });
+          await convertToDraftOnceForUiGuard({
+            threadId,
+            runId: decision.runId,
+            threadChatId: decision.threadChatId,
+            repoFullName: thread.githubRepoFullName,
+            prNumber: thread.githubPRNumber,
+            octokit: octokitForDowngrade,
+          });
+        }
+        return "draft" as const;
+      },
+    });
   }
   const [currentBranch, defaultBranch] = await Promise.all([
     getCurrentBranchName(session),
@@ -134,6 +164,41 @@ export async function openPullRequestForThread({
       userId,
       octokit: octokitToCreatePR,
     });
+    if (effectivePrType === "ready") {
+      // UI_READY_GUARD:reopenAfterPush
+      await withUiReadyGuard({
+        entrypoint: "reopenAfterPush",
+        threadId,
+        action: async () => {
+          await markPullRequestReadyForReview({
+            octokit: octokitToCreatePR,
+            owner,
+            repo,
+            prNumber: existingPr.number,
+          });
+        },
+        onBlocked: async (decision) => {
+          if (decision.runId && decision.threadChatId) {
+            await convertToDraftOnceForUiGuard({
+              threadId,
+              runId: decision.runId,
+              threadChatId: decision.threadChatId,
+              repoFullName: thread.githubRepoFullName,
+              prNumber: existingPr.number,
+              octokit: octokitToCreatePR,
+            });
+          }
+        },
+      });
+      await upsertGithubPR({
+        db,
+        repoFullName: thread.githubRepoFullName,
+        number: existingPr.number,
+        updates: {
+          status: "open",
+        },
+      });
+    }
     return;
   }
 
@@ -176,7 +241,7 @@ export async function openPullRequestForThread({
     body: prBody,
     head: currentBranch,
     base: baseBranch,
-    draft: prType === "draft",
+    draft: effectivePrType === "draft",
   });
 
   await Promise.all([

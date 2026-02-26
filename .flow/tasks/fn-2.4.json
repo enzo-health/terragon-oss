@@ -5,10 +5,31 @@
   "created_at": "2026-02-25T22:45:02.056376Z",
   "depends_on": ["fn-2.2"],
   "epic": "fn-2",
+  "evidence": {
+    "taskId": "fn-2.4",
+    "validations": [
+      {
+        "command": "pnpm -C apps/www lint",
+        "status": "passed"
+      },
+      {
+        "command": "pnpm -C apps/www tsc-check",
+        "status": "passed"
+      },
+      {
+        "command": "pnpm tsc-check",
+        "status": "passed"
+      },
+      {
+        "command": "pnpm -C apps/www test src/server-lib/preview-validation.test.ts src/server-lib/preview-auth.test.ts src/app/api/webhooks/github/route.test.ts",
+        "status": "passed"
+      }
+    ]
+  },
   "id": "fn-2.4",
   "priority": null,
   "spec_path": ".flow/tasks/fn-2.4.md",
-  "status": "todo",
+  "status": "done",
   "title": "Add agent browser validation receipts and artifact wiring",
-  "updated_at": "2026-02-25T23:55:49.432698Z"
+  "updated_at": "2026-02-26T06:53:47.838028Z"
 }

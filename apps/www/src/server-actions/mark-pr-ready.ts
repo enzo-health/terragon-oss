@@ -10,6 +10,11 @@ import {
 } from "@/lib/github";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { UserFacingError } from "@/lib/server-actions";
+import { markPullRequestReadyForReview } from "@/server-lib/github-pr";
+import {
+  convertToDraftOnceForUiGuard,
+  withUiReadyGuard,
+} from "@/server-lib/preview-validation";
 
 export const markPRReadyForReview = userOnlyAction(
   async function markPRReadyForReview(
@@ -25,49 +30,56 @@ export const markPRReadyForReview = userOnlyAction(
     if (!thread) {
       throw new UserFacingError("Task not found");
     }
-    if (!thread.githubPRNumber) {
+    if (thread.githubPRNumber == null) {
       throw new UserFacingError("Task has no PR number");
     }
+    const prNumber = thread.githubPRNumber;
     getPostHogServer().capture({
       distinctId: userId,
       event: "mark_pr_ready_for_review",
       properties: {
         threadId,
         githubRepoFullName: thread.githubRepoFullName,
-        prNumber: thread.githubPRNumber,
+        prNumber,
       },
     });
     const [owner, repo] = parseRepoFullName(thread.githubRepoFullName);
     const octokit = await getOctokitForUserOrThrow({ userId });
-
-    // First, get the PR's node ID using REST API
-    const { data: pr } = await octokit.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: thread.githubPRNumber,
-    });
-
-    // Use GraphQL to mark the PR as ready for review
-    await octokit.graphql(
-      `mutation ($pullRequestId: ID!) {
-        markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
-          pullRequest {
-            id
-            isDraft
-          }
-        }
-      }`,
-      {
-        pullRequestId: pr.node_id,
+    // UI_READY_GUARD:markPRReadyForReview
+    await withUiReadyGuard({
+      entrypoint: "markPRReadyForReview",
+      threadId,
+      action: async () => {
+        await markPullRequestReadyForReview({
+          octokit,
+          owner,
+          repo,
+          prNumber,
+        });
+        await updateGitHubPR({
+          repoFullName: thread.githubRepoFullName,
+          prNumber,
+          createIfNotFound: false,
+        });
+        console.log("Successfully marked PR as ready for review");
       },
-    );
-    // Update the PR status in our database
-    await updateGitHubPR({
-      repoFullName: thread.githubRepoFullName,
-      prNumber: thread.githubPRNumber,
-      createIfNotFound: false,
+      onBlocked: async (decision) => {
+        if (decision.runId && decision.threadChatId) {
+          await convertToDraftOnceForUiGuard({
+            threadId,
+            runId: decision.runId,
+            threadChatId: decision.threadChatId,
+            repoFullName: thread.githubRepoFullName,
+            prNumber,
+            octokit,
+          });
+        }
+        throw new UserFacingError(
+          decision.reason ??
+            "UI validation has not passed yet, so this PR must stay in draft.",
+        );
+      },
     });
-    console.log("Successfully marked PR as ready for review");
   },
   {
     defaultErrorMessage: "Failed to mark PR as ready for review",

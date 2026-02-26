@@ -55,6 +55,10 @@ export type ThreadUiValidationInsert =
   typeof schema.threadUiValidation.$inferInsert;
 export type PreviewSession = typeof schema.previewSession.$inferSelect;
 export type PreviewSessionInsert = typeof schema.previewSession.$inferInsert;
+export type PreviewValidationAttempt =
+  typeof schema.previewValidationAttempt.$inferSelect;
+export type PreviewValidationAttemptInsert =
+  typeof schema.previewValidationAttempt.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
