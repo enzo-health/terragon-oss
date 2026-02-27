@@ -272,7 +272,19 @@ export async function maybeRunSdlcPrePrReview({
   const hasExecutionFailure =
     deepReviewExecutionFailed || carmackReviewExecutionFailed;
 
-  if (!isDeepReviewBlocked && !isCarmackReviewBlocked && !hasExecutionFailure) {
+  if (!isDeepReviewBlocked && !isCarmackReviewBlocked) {
+    if (hasExecutionFailure) {
+      console.warn(
+        "[sdlc-pre-pr-review] gate execution failed without blocking findings; proceeding with PR",
+        {
+          userId,
+          threadId: thread.id,
+          repoFullName: thread.githubRepoFullName,
+          deepReviewExecutionFailed,
+          carmackReviewExecutionFailed,
+        },
+      );
+    }
     return true;
   }
 
