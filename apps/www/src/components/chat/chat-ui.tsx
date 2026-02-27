@@ -64,7 +64,7 @@ import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { usePlatform } from "@/hooks/use-platform";
-import { SdlcStatusCard } from "./sdlc-status-card";
+import { SdlcTopProgressStepper } from "@/components/patterns/p-stepper-7";
 
 function ChatUI({
   threadId,
@@ -100,6 +100,12 @@ function ChatUI({
 
   const threadChat = thread ? getPrimaryThreadChat(thread) : null;
   const threadChatId = threadChat?.id;
+  const isSdlcLoopOptedIn =
+    thread?.sourceType === "www" &&
+    thread.sourceMetadata?.type === "www" &&
+    thread.sourceMetadata.sdlcLoopOptIn;
+  const shouldShowSdlcLoopStatus =
+    Boolean(isSdlcLoopOptedIn) || Boolean(thread?.githubPRNumber);
 
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
   // This will set the cookie if the panel is opened automatically
@@ -260,6 +266,10 @@ function ChatUI({
           onHeaderClick={platform === "mobile" ? scrollToTop : undefined}
           onTerminalClick={() => setShowTerminal(true)}
         />
+        <SdlcTopProgressStepper
+          threadId={threadId}
+          enabled={shouldShowSdlcLoopStatus}
+        />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-hidden">
             <ScrollArea
@@ -267,10 +277,6 @@ function ChatUI({
               className="w-full h-full overflow-auto"
             >
               <div className="flex flex-col flex-1 gap-2 w-full max-w-[800px] mx-auto px-4 mt-2 mb-4">
-                <SdlcStatusCard
-                  threadId={threadId}
-                  enabled={Boolean(thread.githubPRNumber)}
-                />
                 <ChatMessages
                   messages={messages}
                   isAgentWorking={isAgentCurrentlyWorking}
