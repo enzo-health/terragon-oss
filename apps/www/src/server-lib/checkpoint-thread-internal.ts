@@ -173,6 +173,7 @@ export async function checkpointThreadAndPush({
           await openPullRequestForThread({
             userId,
             threadId,
+            threadChatId,
             prType: prType,
             skipCommitAndPush: true,
             session,
