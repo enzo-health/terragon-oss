@@ -145,6 +145,7 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
     "cat",
     bashQuote(promptFilePath),
     "|",
+    // Safe here because this executes inside an isolated remote sandbox session.
     "codex exec",
     "--dangerously-bypass-approvals-and-sandbox",
     "--json",
@@ -163,7 +164,12 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
       timeoutMs,
     });
     const latestAgentMessage = extractLatestAgentMessage(rawStdout);
-    const parsed = extractJsonFromText(latestAgentMessage ?? rawStdout);
+    if (!latestAgentMessage) {
+      throw new Error(
+        "No agent message found in Codex stdout; cannot safely parse gate output.",
+      );
+    }
+    const parsed = extractJsonFromText(latestAgentMessage);
     return schema.parse(parsed);
   } catch (error) {
     console.warn("[sdlc-pre-pr-review] sandbox Codex gate failed", {
@@ -177,6 +183,15 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
       .runCommand(`rm -f ${bashQuote(promptFilePath)}`, {
         cwd: session.repoDir,
       })
-      .catch(() => null);
+      .catch((cleanupError: unknown) => {
+        console.debug(
+          "[sdlc-pre-pr-review] failed to clean up Codex gate prompt file",
+          {
+            gateName,
+            promptFilePath,
+            cleanupError,
+          },
+        );
+      });
   }
 }
