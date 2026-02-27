@@ -14,7 +14,6 @@ import { selectedModelAtom } from "@/atoms/user-flags";
 import { useAtomValue } from "jotai";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { newThread } from "@/server-actions/new-thread";
-import { toast } from "sonner";
 
 export function SuggestFollowupTaskTool({
   toolPart,
