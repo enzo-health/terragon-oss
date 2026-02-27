@@ -570,11 +570,35 @@ describe("parseCodexLine", () => {
       type: "result",
       subtype: "error_during_execution",
       session_id: "",
-      error: undefined,
+      error: "Codex reported an error.",
       is_error: true,
       num_turns: 0,
       duration_ms: 0,
     });
+  });
+
+  test("should ignore top-level unstable feature warning error", () => {
+    const line =
+      '{"type":"error","message":"Under-development features enabled: child_agents_md."}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+
+    expect(results).toHaveLength(0);
+  });
+
+  test("should ignore non-json unstable feature warning line", () => {
+    const line =
+      "Under-development features enabled: child_agents_md. Under-development features are incomplete and may behave unpredictably.";
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+
+    expect(results).toHaveLength(0);
+  });
+
+  test("should ignore item error for unstable feature warning", () => {
+    const line =
+      '{"type":"item.completed","item":{"id":"item_warning","type":"error","message":"Under-development features enabled: child_agents_md."}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+
+    expect(results).toHaveLength(0);
   });
 
   test("should parse collab send_input events into Task tool events", () => {
@@ -835,7 +859,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5"`,
     );
   });
 
@@ -849,7 +873,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5 --config model_reasoning_effort=low"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5 --config model_reasoning_effort=low"`,
     );
   });
 
@@ -863,7 +887,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5 --config model_reasoning_effort=high"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5 --config model_reasoning_effort=high"`,
     );
   });
 
@@ -877,7 +901,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5-codex --config model_reasoning_effort=low"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5-codex --config model_reasoning_effort=low"`,
     );
   });
 
@@ -891,7 +915,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5-codex --config model_reasoning_effort=medium"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5-codex --config model_reasoning_effort=medium"`,
     );
   });
 
@@ -905,7 +929,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5-codex --config model_reasoning_effort=high"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5-codex --config model_reasoning_effort=high"`,
     );
   });
 
@@ -919,7 +943,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5.1-codex-max --config model_reasoning_effort=low"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.1-codex-max --config model_reasoning_effort=low"`,
     );
   });
 
@@ -933,7 +957,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5.1-codex-max --config model_reasoning_effort=medium"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.1-codex-max --config model_reasoning_effort=medium"`,
     );
   });
 
@@ -947,7 +971,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5.1-codex-max --config model_reasoning_effort=xhigh"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.1-codex-max --config model_reasoning_effort=xhigh"`,
     );
   });
 
@@ -962,7 +986,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5 -c model_provider="terry""`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5 -c model_provider="terry""`,
     );
   });
 
@@ -1029,7 +1053,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 --model gpt-5"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5"`,
     );
   });
 });

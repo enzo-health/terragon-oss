@@ -66,6 +66,24 @@ export type DaemonEventQuarantineInsert =
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
+export type SdlcLoop = typeof schema.sdlcLoop.$inferSelect;
+export type SdlcLoopInsert = typeof schema.sdlcLoop.$inferInsert;
+export type SdlcLoopLease = typeof schema.sdlcLoopLease.$inferSelect;
+export type SdlcLoopLeaseInsert = typeof schema.sdlcLoopLease.$inferInsert;
+export type SdlcLoopSignalInbox =
+  typeof schema.sdlcLoopSignalInbox.$inferSelect;
+export type SdlcLoopSignalInboxInsert =
+  typeof schema.sdlcLoopSignalInbox.$inferInsert;
+export type SdlcLoopOutbox = typeof schema.sdlcLoopOutbox.$inferSelect;
+export type SdlcLoopOutboxInsert = typeof schema.sdlcLoopOutbox.$inferInsert;
+export type SdlcLoopOutboxAttempt =
+  typeof schema.sdlcLoopOutboxAttempt.$inferSelect;
+export type SdlcLoopOutboxAttemptInsert =
+  typeof schema.sdlcLoopOutboxAttempt.$inferInsert;
+export type GithubWebhookDelivery =
+  typeof schema.githubWebhookDeliveries.$inferSelect;
+export type GithubWebhookDeliveryInsert =
+  typeof schema.githubWebhookDeliveries.$inferInsert;
 export type AgentProviderCredentials =
   typeof schema.agentProviderCredentials.$inferSelect;
 export type AgentProviderCredentialsInsert =
@@ -133,6 +151,10 @@ export type ThreadSource =
   | "cli";
 
 export type ThreadSourceMetadata =
+  | {
+      type: "www";
+      sdlcLoopOptIn: boolean;
+    }
   | {
       type: "github-mention";
       repoFullName: string;
@@ -515,3 +537,91 @@ export type OpenAIProviderMetadata = {
 export type AgentProviderMetadata =
   | ClaudeAgentProviderMetadata
   | OpenAIProviderMetadata;
+
+export type SdlcLoopState =
+  | "enrolled"
+  | "implementing"
+  | "gates_running"
+  | "blocked_on_agent_fixes"
+  | "blocked_on_ci"
+  | "blocked_on_review_threads"
+  | "video_pending"
+  | "human_review_ready"
+  | "video_degraded_ready"
+  | "blocked_on_human_feedback"
+  | "terminated_pr_closed"
+  | "terminated_pr_merged"
+  | "done"
+  | "stopped";
+
+export type SdlcLoopCauseType =
+  | "daemon_terminal"
+  | "check_run.completed"
+  | "check_suite.completed"
+  | "pull_request.synchronize"
+  | "pull_request.closed"
+  | "pull_request.reopened"
+  | "pull_request.edited"
+  | "pull_request_review"
+  | "pull_request_review_comment"
+  | "review-thread-poll-synthetic";
+
+export type SdlcLoopOutboxActionType =
+  | "publish_status_comment"
+  | "publish_check_summary"
+  | "enqueue_fix_task"
+  | "publish_video_link"
+  | "emit_telemetry";
+
+export type SdlcLoopOutboxSupersessionGroup =
+  | "publication_status"
+  | "fix_task_enqueue"
+  | "publication_video"
+  | "telemetry";
+
+export type SdlcLoopOutboxStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export type SdlcOutboxAttemptStatus =
+  | "completed"
+  | "retry_scheduled"
+  | "failed";
+
+export type SdlcDeepReviewSeverity = "critical" | "high" | "medium" | "low";
+
+export type SdlcDeepReviewStatus = "passed" | "blocked" | "invalid_output";
+
+export type SdlcCarmackReviewSeverity = "critical" | "high" | "medium" | "low";
+
+export type SdlcCarmackReviewStatus = "passed" | "blocked" | "invalid_output";
+
+export type SdlcCiCapabilityState =
+  | "supported"
+  | "forbidden"
+  | "unsupported"
+  | "transient_error";
+
+export type SdlcCiGateStatus = "passed" | "blocked" | "capability_error";
+
+export type SdlcCiRequiredCheckSource =
+  | "ruleset"
+  | "branch_protection"
+  | "allowlist"
+  | "no_required";
+
+export type SdlcReviewThreadGateStatus =
+  | "passed"
+  | "blocked"
+  | "transient_error";
+
+export type SdlcReviewThreadEvaluationSource = "webhook" | "polling";
+
+export type SdlcVideoCaptureStatus = "not_started" | "captured" | "failed";
+
+export type SdlcVideoFailureClass = "auth" | "quota" | "script" | "infra";
+
+export type SdlcParityTargetClass = "coordinator";

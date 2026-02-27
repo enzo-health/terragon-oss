@@ -40,6 +40,16 @@ const HOP_BY_HOP_HEADERS = new Set([
   "trailer",
 ]);
 
+const BLOCKED_UPSTREAM_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "set-cookie2",
+  "content-security-policy",
+  "content-security-policy-report-only",
+]);
+
+const PREVIEW_SANDBOX_CSP =
+  "sandbox allow-forms allow-modals allow-popups allow-scripts";
+
 const FORWARDED_HEADER_ALLOWLIST = new Set([
   "accept",
   "accept-language",
@@ -53,8 +63,44 @@ function normalizeIp(address: string): string {
   return address.trim().toLowerCase();
 }
 
-function isPrivateOrLoopbackIp(address: string): boolean {
+function parseIpv4MappedIpv6(address: string): string | null {
+  if (!address.startsWith("::ffff:")) {
+    return null;
+  }
+
+  const tail = address.slice("::ffff:".length);
+  if (isIP(tail) === 4) {
+    return tail;
+  }
+
+  const words = tail.split(":");
+  if (words.length !== 2) {
+    return null;
+  }
+
+  const [highWord, lowWord] = words;
+  if (
+    !highWord ||
+    !lowWord ||
+    !/^[\da-f]{1,4}$/i.test(highWord) ||
+    !/^[\da-f]{1,4}$/i.test(lowWord)
+  ) {
+    return null;
+  }
+
+  const high = Number.parseInt(highWord, 16);
+  const low = Number.parseInt(lowWord, 16);
+
+  return `${(high >> 8) & 255}.${high & 255}.${(low >> 8) & 255}.${low & 255}`;
+}
+
+export function isPrivateOrLoopbackIp(address: string): boolean {
   const normalized = normalizeIp(address);
+  const mappedV4 = parseIpv4MappedIpv6(normalized);
+  if (mappedV4) {
+    return isPrivateOrLoopbackIp(mappedV4);
+  }
+
   const family = isIP(normalized);
   if (family === 4) {
     const parts = normalized.split(".").map((part) => Number(part));
@@ -316,19 +362,38 @@ function buildForwardHeaders({
   return headers;
 }
 
-function sanitizeResponseHeaders(
+function enforcePreviewSandboxCsp(existing: string | null): string {
+  const directives = (existing ?? "")
+    .split(";")
+    .map((directive) => directive.trim())
+    .filter(Boolean)
+    .filter((directive) => !directive.toLowerCase().startsWith("sandbox"));
+
+  directives.push(PREVIEW_SANDBOX_CSP);
+  return directives.join("; ");
+}
+
+export function sanitizeResponseHeaders(
   headers: Headers,
   proxyReqId: string,
 ): Headers {
   const nextHeaders = new Headers();
   headers.forEach((value, key) => {
     const lowerKey = key.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(lowerKey)) {
+    if (
+      HOP_BY_HOP_HEADERS.has(lowerKey) ||
+      BLOCKED_UPSTREAM_RESPONSE_HEADERS.has(lowerKey)
+    ) {
       return;
     }
     nextHeaders.set(key, value);
   });
 
+  nextHeaders.set(
+    "content-security-policy",
+    enforcePreviewSandboxCsp(headers.get("content-security-policy")),
+  );
+  nextHeaders.set("x-content-type-options", "nosniff");
   nextHeaders.set("cache-control", "no-store");
   nextHeaders.set("x-proxy-req-id", proxyReqId);
 

@@ -89,7 +89,7 @@ export function PreviewPanel({ thread }: { thread: ThreadInfoFull }) {
         body: JSON.stringify({
           threadId: thread.id,
           threadChatId: primaryThreadChat.id,
-          openMode: "iframe",
+          openMode: "new_tab",
         }),
       });
       const startPayload = asRecord(await startResponse.json());
@@ -296,7 +296,7 @@ export function PreviewPanel({ thread }: { thread: ThreadInfoFull }) {
                 className={cn(
                   "h-[calc(100vh-220px)] w-full rounded-lg border bg-background",
                 )}
-                sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+                sandbox="allow-forms allow-modals allow-popups allow-scripts"
                 onError={() => {
                   setPreview((current) => ({
                     ...current,

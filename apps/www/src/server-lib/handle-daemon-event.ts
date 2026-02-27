@@ -673,7 +673,7 @@ export async function handleDaemonEvent({
         strictMode: strictRunId,
       },
     });
-    return { success: true, ackStatus: 202 as const };
+    forceWorkingTreeFallback = true;
   }
 
   if (resolvedRunId) {
@@ -681,14 +681,19 @@ export async function handleDaemonEvent({
     const terminalStatus = isError ? "failed" : "finished";
     let runEndShaToPersist: string | null = endSha;
 
-    if (isThreadFinished && endSha) {
+    if (isThreadFinished) {
       const liveHeadSha = await readSandboxHeadSha({
         sandboxId: thread.codesandboxId,
         sandboxProvider: thread.sandboxProvider,
       });
-      forceWorkingTreeFallback = !liveHeadSha || liveHeadSha !== endSha;
-      if (forceWorkingTreeFallback) {
-        runEndShaToPersist = null;
+      if (!endSha) {
+        runEndShaToPersist = liveHeadSha ?? null;
+        forceWorkingTreeFallback = true;
+      } else {
+        forceWorkingTreeFallback = !liveHeadSha || liveHeadSha !== endSha;
+        if (forceWorkingTreeFallback) {
+          runEndShaToPersist = liveHeadSha ?? null;
+        }
       }
     }
 

@@ -14,6 +14,7 @@ export type NewThreadArgs = {
   githubRepoFullName: string;
   branchName: string;
   createNewBranch?: boolean;
+  runInSdlcLoop?: boolean;
   parentThreadId?: string;
   parentToolId?: string;
   saveAsDraft?: boolean;
@@ -38,6 +39,7 @@ export const newThread = userOnlyAction(
       disableGitCheckpointing,
       skipSetup,
       createNewBranch = true,
+      runInSdlcLoop = true,
       scheduleAt,
       sourceType = "www",
     }: NewThreadArgs,
@@ -63,8 +65,16 @@ export const newThread = userOnlyAction(
       saveAsDraft,
       scheduleAt,
       sourceType,
+      sourceMetadata:
+        sourceType === "www"
+          ? {
+              type: "www",
+              sdlcLoopOptIn: runInSdlcLoop,
+            }
+          : undefined,
       disableGitCheckpointing,
       skipSetup,
+      runInSdlcLoop,
     });
     if (selectedModels && !saveAsDraft) {
       await newThreadsMultiModel({
@@ -79,6 +89,7 @@ export const newThread = userOnlyAction(
         scheduleAt,
         disableGitCheckpointing,
         skipSetup,
+        runInSdlcLoop,
       });
     }
     return { threadId, threadChatId };

@@ -44,8 +44,19 @@ export async function GET(request: NextRequest) {
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
+
+    const { drainDueSdlcPublicationOutboxActions } = await import(
+      "@/server-lib/sdlc-loop/publication"
+    );
+    const sdlcDrain = await drainDueSdlcPublicationOutboxActions({
+      db,
+      leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
+    });
+    console.log("SDLC publication durable drain completed", sdlcDrain);
+
     return Response.json({
       success: true,
+      sdlcPublicationDrain: sdlcDrain,
     });
   } catch (error) {
     console.error("Error in scheduled tasks cron task:", error);

@@ -85,5 +85,48 @@ describe("newThread", () => {
       expect(thread!.repoBaseBranchName).toBe("main");
       expect(thread!.branchName).toBeNull();
     });
+
+    it("should default SDLC loop opt-in metadata to true for new dashboard tasks", async () => {
+      await mockWaitUntil();
+      await mockLoggedInUser(session);
+
+      const result = await newThread({
+        message: mockMessage,
+        githubRepoFullName: repoFullName,
+        branchName: "main",
+      });
+      const { threadId } = unwrapResult(result);
+      await waitUntilResolved();
+
+      const thread = await getThread({ db, userId: user.id, threadId });
+      expect(thread).toBeDefined();
+      expect(thread!.sourceType).toBe("www");
+      expect(thread!.sourceMetadata).toEqual({
+        type: "www",
+        sdlcLoopOptIn: true,
+      });
+    });
+
+    it("should persist SDLC loop opt-in metadata for new dashboard tasks", async () => {
+      await mockWaitUntil();
+      await mockLoggedInUser(session);
+
+      const result = await newThread({
+        message: mockMessage,
+        githubRepoFullName: repoFullName,
+        branchName: "main",
+        runInSdlcLoop: true,
+      });
+      const { threadId } = unwrapResult(result);
+      await waitUntilResolved();
+
+      const thread = await getThread({ db, userId: user.id, threadId });
+      expect(thread).toBeDefined();
+      expect(thread!.sourceType).toBe("www");
+      expect(thread!.sourceMetadata).toEqual({
+        type: "www",
+        sdlcLoopOptIn: true,
+      });
+    });
   });
 });

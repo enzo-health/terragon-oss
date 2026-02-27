@@ -24,6 +24,8 @@ import { getDiffContextStr } from "./utils";
 import { createAutomation } from "@terragon/shared/model/automations";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { redis } from "@/lib/redis";
+import { enrollSdlcLoopForGithubPR } from "@terragon/shared/model/sdlc-loop";
+import * as threadModel from "@terragon/shared/model/threads";
 
 vi.mock("@/server-lib/new-thread-internal", () => ({
   newThreadInternal: vi.fn().mockResolvedValue({ id: "new-thread-created-id" }),
@@ -61,6 +63,8 @@ describe("handleAppMention", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.sdlcLoop);
+
     // Clear Redis batch keys to ensure test isolation
     const keys = await redis.keys("thread-batch:*");
     if (keys.length > 0) {
@@ -166,6 +170,227 @@ describe("handleAppMention", () => {
       }),
     ).rejects.toThrow("Invalid repository full name: invalid-repo-name");
     expect(newThreadInternal).not.toHaveBeenCalled();
+  });
+
+  it("routes to enrolled SDLC loop thread and suppresses sibling thread creation", async () => {
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "sdlcLoopCoordinatorRouting",
+      value: true,
+    });
+
+    await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: pr.repoFullName,
+      prNumber: pr.number,
+      threadId: threadIdWithPR,
+    });
+
+    await handleAppMention({
+      repoFullName: pr.repoFullName,
+      issueOrPrNumber: pr.number,
+      issueOrPrType: "pull_request",
+      commentId: 123456,
+      commentGitHubUsername: "commenter",
+      commentBody: "Hey @app, please handle this in the loop",
+      commentGitHubAccountId: githubAccountId,
+    });
+
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: user.id,
+        threadId: threadIdWithPR,
+        threadChatId: threadChatIdWithPR,
+      }),
+    );
+    expect(newThreadInternal).not.toHaveBeenCalled();
+  });
+
+  it("enrolls an existing PR thread into SDLC loop when coordinator routing is enabled", async () => {
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "sdlcLoopCoordinatorRouting",
+      value: true,
+    });
+    await updateUserSettings({
+      db,
+      userId: user.id,
+      updates: {
+        singleThreadForGitHubMentions: true,
+      },
+    });
+
+    const isolatedPr = await createTestGitHubPR({ db });
+    const mentionThread = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: isolatedPr.repoFullName,
+        githubPRNumber: isolatedPr.number,
+        sourceType: "github-mention",
+        sourceMetadata: {
+          type: "github-mention",
+          repoFullName: isolatedPr.repoFullName,
+          issueOrPrNumber: isolatedPr.number,
+        },
+      },
+    });
+
+    await handleAppMention({
+      repoFullName: isolatedPr.repoFullName,
+      issueOrPrNumber: isolatedPr.number,
+      issueOrPrType: "pull_request",
+      commentId: 999123,
+      commentGitHubUsername: "commenter",
+      commentBody: "Please route through coordinator",
+      commentGitHubAccountId: githubAccountId,
+    });
+
+    const enrolledLoop = await db.query.sdlcLoop.findFirst({
+      where: (loop, { and, eq }) =>
+        and(
+          eq(loop.userId, user.id),
+          eq(loop.repoFullName, isolatedPr.repoFullName),
+          eq(loop.prNumber, isolatedPr.number),
+        ),
+    });
+
+    expect(enrolledLoop).toMatchObject({
+      userId: user.id,
+      repoFullName: isolatedPr.repoFullName,
+      prNumber: isolatedPr.number,
+      threadId: mentionThread.threadId,
+      state: "enrolled",
+    });
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: mentionThread.threadId,
+        threadChatId: mentionThread.threadChatId,
+      }),
+    );
+    expect(newThreadInternal).not.toHaveBeenCalled();
+  });
+
+  it("does not enroll an opted-out dashboard thread when reusing single-thread mention routing", async () => {
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "sdlcLoopCoordinatorRouting",
+      value: true,
+    });
+    await updateUserSettings({
+      db,
+      userId: user.id,
+      updates: {
+        singleThreadForGitHubMentions: true,
+      },
+    });
+
+    const isolatedPr = await createTestGitHubPR({ db });
+    const optedOutThread = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: isolatedPr.repoFullName,
+        githubPRNumber: isolatedPr.number,
+        sourceType: "www",
+        sourceMetadata: { type: "www", sdlcLoopOptIn: false },
+      },
+    });
+
+    await handleAppMention({
+      repoFullName: isolatedPr.repoFullName,
+      issueOrPrNumber: isolatedPr.number,
+      issueOrPrType: "pull_request",
+      commentId: 999124,
+      commentGitHubUsername: "commenter",
+      commentBody: "Please keep this out of the loop",
+      commentGitHubAccountId: githubAccountId,
+    });
+
+    const enrolledLoop = await db.query.sdlcLoop.findFirst({
+      where: (loop, { and, eq }) =>
+        and(
+          eq(loop.userId, user.id),
+          eq(loop.repoFullName, isolatedPr.repoFullName),
+          eq(loop.prNumber, isolatedPr.number),
+        ),
+    });
+
+    expect(enrolledLoop).toBeUndefined();
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: optedOutThread.threadId,
+        threadChatId: optedOutThread.threadChatId,
+      }),
+    );
+    expect(newThreadInternal).not.toHaveBeenCalled();
+  });
+
+  it("falls back to standard routing when enrolled loop thread is not routable", async () => {
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "sdlcLoopCoordinatorRouting",
+      value: true,
+    });
+    await setFeatureFlagOverrideForTest({
+      db,
+      userId: user.id,
+      name: "batchGitHubMentions",
+      value: false,
+    });
+    await updateUserSettings({
+      db,
+      userId: user.id,
+      updates: {
+        singleThreadForGitHubMentions: false,
+      },
+    });
+
+    const isolatedPr = await createTestGitHubPR({ db });
+    const isolatedThread = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: isolatedPr.repoFullName,
+        githubPRNumber: isolatedPr.number,
+      },
+    });
+
+    await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: isolatedPr.repoFullName,
+      prNumber: isolatedPr.number,
+      threadId: isolatedThread.threadId,
+    });
+    const getThreadSpy = vi
+      .spyOn(threadModel, "getThread")
+      .mockResolvedValueOnce(undefined);
+
+    await handleAppMention({
+      repoFullName: isolatedPr.repoFullName,
+      issueOrPrNumber: isolatedPr.number,
+      issueOrPrType: "pull_request",
+      commentId: 234567,
+      commentGitHubUsername: "commenter",
+      commentBody: "Hey @app, fallback please",
+      commentGitHubAccountId: githubAccountId,
+    });
+    getThreadSpy.mockRestore();
+
+    expect(newThreadInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: user.id,
+        githubRepoFullName: isolatedPr.repoFullName,
+        githubPRNumber: isolatedPr.number,
+        sourceType: "github-mention",
+      }),
+    );
   });
 
   describe("singleThreadForGitHubMentions=true", () => {

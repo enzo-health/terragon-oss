@@ -24,18 +24,51 @@ function parseRequestMessage(error: unknown): string {
   return typeof message === "string" ? message : "";
 }
 
-function isAlreadyDraftError(error: unknown): boolean {
-  const status = parseRequestStatus(error);
-  if (status === 422) {
-    return true;
+function parseGraphqlErrorMessages(error: unknown): string[] {
+  if (typeof error !== "object" || error === null) {
+    return [];
+  }
+  const response = (error as { response?: unknown }).response;
+  if (typeof response !== "object" || response === null) {
+    return [];
+  }
+  const errors = (response as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) {
+    return [];
   }
 
-  const message = parseRequestMessage(error).toLowerCase();
+  return errors
+    .map((entry) => {
+      if (typeof entry !== "object" || entry === null) {
+        return null;
+      }
+      const message = (entry as { message?: unknown }).message;
+      return typeof message === "string" ? message : null;
+    })
+    .filter((message): message is string => message !== null);
+}
+
+function isAlreadyDraftMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
   return (
-    message.includes("already") &&
-    message.includes("draft") &&
-    message.includes("pull request")
+    normalized.includes("already") &&
+    normalized.includes("draft") &&
+    normalized.includes("pull request")
   );
+}
+
+function isAlreadyDraftError(error: unknown): boolean {
+  const status = parseRequestStatus(error);
+  if (status !== null && status !== 422) {
+    return false;
+  }
+
+  const messages = [
+    parseRequestMessage(error),
+    ...parseGraphqlErrorMessages(error),
+  ].filter((message) => message.trim().length > 0);
+
+  return messages.some(isAlreadyDraftMessage);
 }
 
 async function getPullRequestNodeId({

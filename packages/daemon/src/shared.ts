@@ -4,15 +4,18 @@ import { AIAgentSchema } from "@terragon/agent/types";
 
 export const defaultPipePath = "/tmp/terragon-daemon.pipe";
 export const defaultUnixSocketPath = "/tmp/terragon-daemon.sock";
-export const DAEMON_EVENT_PAYLOAD_VERSION = 2 as const;
 
 // Increment this when you make a breaking change to the daemon.
 // 1: Supports the --version flag
 export const DAEMON_VERSION = "1";
+export const DAEMON_EVENT_VERSION_HEADER = "X-Daemon-Version";
+export const DAEMON_EVENT_CAPABILITIES_HEADER = "X-Daemon-Capabilities";
+export const DAEMON_CAPABILITY_EVENT_ENVELOPE_V2 = "daemon_event_envelope_v2";
 
 // TODO sawyer: we don't want to depend on shared so mirror the ones we need here.
 export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
+  sdlcLoopCoordinatorRouting?: boolean;
 };
 
 export const DaemonMessageClaudeSchema = z.object({
@@ -25,7 +28,7 @@ export const DaemonMessageClaudeSchema = z.object({
   sessionId: z.string().nullable(),
   threadId: z.string(),
   threadChatId: z.string(),
-  runId: z.string().nullable().optional(),
+  runId: z.string().optional(),
   featureFlags: z.record(z.string(), z.boolean()).optional() as z.ZodOptional<
     z.ZodType<FeatureFlags>
   >,
@@ -151,9 +154,9 @@ export type DaemonEventAPIBody = {
   threadChatId: string;
   messages: ClaudeMessage[];
   timezone: string;
-  payloadVersion?: 1 | 2;
-  runId?: string;
+  payloadVersion?: number;
   eventId?: string;
+  runId?: string;
   seq?: number;
   endSha?: string | null;
 };

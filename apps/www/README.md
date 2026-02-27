@@ -30,6 +30,7 @@ Make sure you have @terragon/dev-env and @terragon/shared setup.
 4. Under **Repository permissions** grant:
    - **Contents**: **Read and write**
    - **Pull requests**: **Read and write**
+   - **Actions**: **Read** (required for Action logs and reruns)
    - **Metadata**: **Read** (always required)
 5. Under **Account permissions** grant:
    - **Email addresses**: **Read-only**

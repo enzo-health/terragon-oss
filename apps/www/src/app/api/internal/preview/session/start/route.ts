@@ -158,7 +158,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const openMode: PreviewOpenMode = body.openMode ?? "iframe";
+  const openMode: PreviewOpenMode = body.openMode ?? "new_tab";
   const now = new Date();
   const expiresAt = new Date(now.getTime() + previewSessionTTLSeconds * 1000);
   const previewRequiresWebsocket = false;

@@ -1,2 +1,0 @@
-CREATE UNIQUE INDEX "thread_run_active_thread_chat_unique" ON "thread_run" USING btree ("thread_id","thread_chat_id") WHERE "thread_run"."status" in ('booting', 'running', 'validating');--> statement-breakpoint
-CREATE UNIQUE INDEX "thread_run_terminal_event_unique" ON "thread_run" USING btree ("run_id","terminal_event_id") WHERE "thread_run"."terminal_event_id" is not null;

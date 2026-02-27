@@ -22,6 +22,7 @@ import {
   getOctokitForUserOrThrow,
   parseRepoFullName,
   getExistingPRForBranch,
+  updateGitHubPR,
 } from "@/lib/github";
 import {
   convertToDraftOnceForUiGuard,
@@ -29,16 +30,23 @@ import {
 } from "@/server-lib/preview-validation";
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
+import {
+  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
+} from "@/server-lib/sdlc-loop/enrollment";
+import { maybeRunSdlcPrePrReview } from "@/server-lib/sdlc-loop/pre-pr-review";
 
 export async function openPullRequestForThread({
   threadId,
   userId,
+  threadChatId,
   skipCommitAndPush,
   prType,
   session,
 }: {
   threadId: string;
   userId: string;
+  threadChatId?: string | null;
   skipCommitAndPush: boolean;
   prType: "draft" | "ready";
   session: ISandboxSession;
@@ -90,6 +98,34 @@ export async function openPullRequestForThread({
     getCurrentBranchName(session),
     getGitDefaultBranch(session),
   ]);
+  const sdlcLoopOptIn = isSdlcLoopEnrollmentAllowedForThread({
+    sourceType: thread.sourceType,
+    sourceMetadata: thread.sourceMetadata ?? null,
+  });
+  const maybeEnsureSdlcLoopEnrollment = async (prNumber: number) => {
+    if (!sdlcLoopOptIn) {
+      return;
+    }
+    try {
+      await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+        userId,
+        repoFullName: thread.githubRepoFullName,
+        prNumber,
+        threadId,
+      });
+    } catch (error) {
+      console.warn(
+        "[openPullRequestForThread] failed to ensure SDLC loop enrollment",
+        {
+          userId,
+          threadId,
+          repoFullName: thread.githubRepoFullName,
+          prNumber,
+          error,
+        },
+      );
+    }
+  };
   // Make sure we're not on the main branch
   if (currentBranch === defaultBranch) {
     throw new ThreadError(
@@ -118,7 +154,7 @@ export async function openPullRequestForThread({
   if (!skipCommitAndPush || thread.gitDiff === "too-large") {
     gitDiffMaybeCutOff = await getGitDiffMaybeCutoff({
       session,
-      baseBranch: thread.repoBaseBranchName,
+      baseBranch,
       allowCutoff: true,
     });
   }
@@ -127,6 +163,18 @@ export async function openPullRequestForThread({
       return;
     }
     throw new Error("No changes to PR");
+  }
+  let gitDiffForSdlcPrePr = gitDiffMaybeCutOff;
+  if (!thread.githubPRNumber && sdlcLoopOptIn) {
+    const strictDiffForSdlcPrePr = await getGitDiffMaybeCutoff({
+      session,
+      baseBranch,
+      allowCutoff: false,
+    });
+    if (!strictDiffForSdlcPrePr) {
+      throw new Error("No changes available for SDLC pre-PR review");
+    }
+    gitDiffForSdlcPrePr = strictDiffForSdlcPrePr;
   }
   // Get GitHub App installation token
   const [owner, repo] = parseRepoFullName(thread.githubRepoFullName);
@@ -139,7 +187,43 @@ export async function openPullRequestForThread({
       baseBranchName: baseBranch,
     }),
   ]);
+  const resolvedThreadChatId =
+    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
+  if (!thread.githubPRNumber && sdlcLoopOptIn) {
+    if (!resolvedThreadChatId) {
+      throw new ThreadError(
+        "unknown-error",
+        "Missing thread chat context required for SDLC pre-PR review",
+        null,
+      );
+    }
+    const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
+      thread,
+      userId,
+      threadChatId: resolvedThreadChatId,
+      session,
+      diffOutput: gitDiffForSdlcPrePr,
+    });
+    if (!shouldCreateOrLinkPr) {
+      throw new ThreadError(
+        "unknown-error",
+        "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
+        null,
+      );
+    }
+  }
+
   if (existingPr) {
+    const existingPrNumber = existingPr.number;
+    if (existingPr.state === "closed") {
+      await octokitToCreatePR.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: existingPrNumber,
+        state: "open",
+      });
+    }
+
     await Promise.all([
       updateThread({
         db,
@@ -147,18 +231,19 @@ export async function openPullRequestForThread({
         threadId,
         updates: {
           branchName: currentBranch,
-          githubPRNumber: existingPr.number,
+          githubPRNumber: existingPrNumber,
         },
       }),
       upsertGithubPR({
         db,
         repoFullName: thread.githubRepoFullName,
-        number: existingPr.number,
+        number: existingPrNumber,
         updates: {
           status: getGithubPRStatus(existingPr),
         },
       }),
     ]);
+    await maybeEnsureSdlcLoopEnrollment(existingPrNumber);
     await updatePullRequestForThread({
       threadId,
       userId,
@@ -174,7 +259,7 @@ export async function openPullRequestForThread({
             octokit: octokitToCreatePR,
             owner,
             repo,
-            prNumber: existingPr.number,
+            prNumber: existingPrNumber,
           });
         },
         onBlocked: async (decision) => {
@@ -184,24 +269,20 @@ export async function openPullRequestForThread({
               runId: decision.runId,
               threadChatId: decision.threadChatId,
               repoFullName: thread.githubRepoFullName,
-              prNumber: existingPr.number,
+              prNumber: existingPrNumber,
               octokit: octokitToCreatePR,
             });
           }
         },
       });
-      await upsertGithubPR({
-        db,
-        repoFullName: thread.githubRepoFullName,
-        number: existingPr.number,
-        updates: {
-          status: "open",
-        },
-      });
     }
+    await updateGitHubPR({
+      repoFullName: thread.githubRepoFullName,
+      prNumber: existingPrNumber,
+      createIfNotFound: false,
+    });
     return;
   }
-
   // Otherwise, generate a new PR.
   let prTitle = "Update code changes";
   let prBody = "Updates made to the codebase.";
@@ -264,6 +345,7 @@ export async function openPullRequestForThread({
       },
     }),
   ]);
+  await maybeEnsureSdlcLoopEnrollment(pr.data.number);
 }
 
 async function updatePullRequestForThread({

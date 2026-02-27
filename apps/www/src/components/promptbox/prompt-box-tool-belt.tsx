@@ -14,6 +14,7 @@ import { SkipSetupToggle } from "./skip-setup-toggle";
 import { BranchToggle } from "./branch-toggle";
 import { toast } from "sonner";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { Repeat2 } from "lucide-react";
 import {
   disableGitCheckpointingCookieAtom,
   createNewBranchCookieAtom,
@@ -59,6 +60,15 @@ interface PromptBoxToolBeltProps {
   onCreateNewBranchChange?: (value: boolean) => void;
   /** Whether to disable create new branch button */
   createNewBranchDisabled?: boolean;
+
+  /** Whether to show SDLC loop opt-in toggle */
+  showSdlcLoopOptIn?: boolean;
+  /** Value for SDLC loop opt-in toggle */
+  sdlcLoopOptInValue?: boolean;
+  /** Handler for SDLC loop opt-in toggle */
+  onSdlcLoopOptInChange?: (value: boolean) => void;
+  /** Whether to disable SDLC loop opt-in toggle */
+  sdlcLoopOptInDisabled?: boolean;
 }
 
 export function PromptBoxToolBelt({
@@ -79,6 +89,10 @@ export function PromptBoxToolBelt({
   createNewBranchValue = true,
   onCreateNewBranchChange,
   createNewBranchDisabled = false,
+  showSdlcLoopOptIn = false,
+  sdlcLoopOptInValue = false,
+  onSdlcLoopOptInChange,
+  sdlcLoopOptInDisabled = false,
 }: PromptBoxToolBeltProps) {
   const isBranchToggleEnabled = useFeatureFlag("branchCreationToggle");
 
@@ -86,6 +100,7 @@ export function PromptBoxToolBelt({
     !showSkipArchive &&
     !showSkipSetup &&
     !showCheckpoint &&
+    !showSdlcLoopOptIn &&
     (!showCreateNewBranchOption || !isBranchToggleEnabled)
   ) {
     return null;
@@ -133,6 +148,46 @@ export function PromptBoxToolBelt({
           onChange={onCheckpointChange!}
           showDialog={checkpointShowDialog}
         />
+      )}
+      {showSdlcLoopOptIn && (
+        <Button
+          variant="ghost"
+          size="icon"
+          type="button"
+          className={
+            sdlcLoopOptInValue
+              ? "text-muted-foreground hover:text-muted-foreground"
+              : "opacity-50 hover:opacity-50"
+          }
+          aria-pressed={sdlcLoopOptInValue}
+          aria-label={
+            sdlcLoopOptInValue
+              ? "Run task in SDLC loop"
+              : "Run task without SDLC loop"
+          }
+          title={
+            sdlcLoopOptInValue
+              ? "Run task in SDLC loop"
+              : "Run task without SDLC loop"
+          }
+          disabled={sdlcLoopOptInDisabled}
+          onClick={() => {
+            if (sdlcLoopOptInDisabled) {
+              return;
+            }
+            const nextValue = !sdlcLoopOptInValue;
+            onSdlcLoopOptInChange?.(nextValue);
+            toast.success(
+              nextValue
+                ? "SDLC loop will run for this task"
+                : "SDLC loop is off for this task",
+            );
+          }}
+        >
+          <Repeat2
+            className={`h-4 w-4 ${sdlcLoopOptInValue ? "" : "opacity-50"}`}
+          />
+        </Button>
       )}
     </div>
   );

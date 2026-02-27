@@ -18,6 +18,7 @@ import { maybeUpdateGitHubCheckRunForThreadChat } from "./github";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { isSdlcLoopEnrollmentAllowedForThread } from "./sdlc-loop/enrollment";
 
 export async function checkpointThread({
   userId,
@@ -47,13 +48,22 @@ export async function checkpointThread({
         throw new ThreadError("sandbox-not-found", "", null);
       }
       try {
-        const userSettings = await getUserSettings({ db, userId });
+        const [userSettings, thread] = await Promise.all([
+          getUserSettings({ db, userId }),
+          getThread({ db, threadId, userId }),
+        ]);
+        const shouldAutoCreatePrForSdlcLoop =
+          !!thread &&
+          isSdlcLoopEnrollmentAllowedForThread({
+            sourceType: thread.sourceType,
+            sourceMetadata: thread.sourceMetadata ?? null,
+          });
         await checkpointThreadAndPush({
           userId,
           threadId,
           threadChatId,
           session,
-          createPR: userSettings.autoCreatePRs,
+          createPR: userSettings.autoCreatePRs || shouldAutoCreatePrForSdlcLoop,
           prType: userSettings.prType,
         });
       } catch (e) {

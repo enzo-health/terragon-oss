@@ -214,7 +214,8 @@ export async function POST(
     );
   }
 
-  const openMode = bodyResult.data.openMode ?? session.previewOpenMode;
+  const openMode =
+    bodyResult.data.openMode ?? session.previewOpenMode ?? "new_tab";
   const cookieToken = await mintPreviewCookieToken({
     claims: {
       previewSessionId: session.previewSessionId,
@@ -271,7 +272,7 @@ export async function POST(
       httpOnly: true,
       secure: true,
       path: "/api/preview",
-      sameSite: openMode === "iframe" ? "none" : "lax",
+      sameSite: "lax",
       maxAge: previewSessionTTLSeconds,
     },
   );
