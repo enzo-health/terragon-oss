@@ -1,6 +1,5 @@
 import { getUserInfoOrRedirect } from "@/lib/auth-server";
 import { Dashboard } from "@/components/dashboard";
-import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { SiteHeader } from "@/components/system/site-header";
 import { threadListQueryOptions } from "@/queries/thread-queries";
@@ -23,10 +22,7 @@ export default async function DashboardPage({
     archived?: string;
   }>;
 }) {
-  const userInfo = await getUserInfoOrRedirect();
-  if (!userInfo.userFlags.hasSeenOnboarding) {
-    redirect("/welcome");
-  }
+  await getUserInfoOrRedirect();
   // Get the archived param
   const params = await searchParams;
   const queryClient = new QueryClient();

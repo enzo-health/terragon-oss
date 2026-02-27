@@ -2,7 +2,6 @@ import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import { User } from "@terragon/shared";
 import { inArray, eq, count, sql } from "drizzle-orm";
-import { getSignupTrialInfo } from "@terragon/shared/model/subscription";
 
 export type UserForAdminPage<T extends User = User> = T & {
   numThreads: number;
@@ -10,8 +9,6 @@ export type UserForAdminPage<T extends User = User> = T & {
   threadsCreatedPastDay: number;
   threadsCreatedPastWeek: number;
   onboardingCompleted: boolean;
-  signupTrialDaysRemaining: number;
-  accessTierInfo: string | null;
 };
 
 export async function getUserListForAdminPage<T extends User = User>(
@@ -22,7 +19,6 @@ export async function getUserListForAdminPage<T extends User = User>(
       .select({
         userId: schema.user.id,
         onboardingCompleted: schema.userFlags.hasSeenOnboarding,
-        subscription: schema.subscription,
       })
       .from(schema.user)
       .where(
@@ -31,11 +27,7 @@ export async function getUserListForAdminPage<T extends User = User>(
           users.map((user) => user.id),
         ),
       )
-      .leftJoin(schema.userFlags, eq(schema.user.id, schema.userFlags.userId))
-      .leftJoin(
-        schema.subscription,
-        eq(schema.user.id, schema.subscription.referenceId),
-      ),
+      .leftJoin(schema.userFlags, eq(schema.user.id, schema.userFlags.userId)),
     db
       .select({
         userId: schema.thread.userId,
@@ -70,22 +62,6 @@ export async function getUserListForAdminPage<T extends User = User>(
   return users.map((user) => {
     const info = userInfoMap[user.id]!;
     const infoAgg = userInfoAggMap[user.id];
-
-    let accessTierInfo: string | null = null;
-    const signupTrial = getSignupTrialInfo(user);
-    const subscription = info.subscription;
-    if (subscription) {
-      const isActive =
-        (subscription.status === "active" ||
-          subscription.status === "past_due") &&
-        subscription.periodEnd &&
-        subscription.periodEnd >= new Date();
-      accessTierInfo = isActive
-        ? subscription.plan
-        : `${subscription.plan} (${subscription.status})`;
-    } else if (signupTrial?.isActive) {
-      accessTierInfo = `${signupTrial.plan} (trial)`;
-    }
     return {
       ...user,
       mostRecentThreadDate: infoAgg?.mostRecentThreadDate ?? null,
@@ -93,8 +69,6 @@ export async function getUserListForAdminPage<T extends User = User>(
       threadsCreatedPastDay: infoAgg?.threadsCreatedPastDay ?? 0,
       threadsCreatedPastWeek: infoAgg?.threadsCreatedPastWeek ?? 0,
       onboardingCompleted: info.onboardingCompleted ?? false,
-      signupTrialDaysRemaining: signupTrial?.daysRemaining ?? 0,
-      accessTierInfo,
     };
   });
 }

@@ -5,12 +5,11 @@ import {
   CodeChallengeMethod,
 } from "arctic";
 
-export type AuthType = "subscription" | "api-key";
+export type AuthType = "account-link" | "api-key";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
 // Using this endpoint gets you a token that can be used directly with claude code.
-// Users should use this if they have a claude subscription.
 const CLAUDE_AUTH_ENDPOINT = "https://claude.ai/oauth/authorize";
 
 // Using this endpoint gets you a token that be used to create an API key.
@@ -59,7 +58,7 @@ export async function createAuthorizationURL({
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const url = claudeOAuth.createAuthorizationURLWithPKCE(
-    type === "subscription" ? CLAUDE_AUTH_ENDPOINT : ANTHROPIC_AUTH_ENDPOINT,
+    type === "account-link" ? CLAUDE_AUTH_ENDPOINT : ANTHROPIC_AUTH_ENDPOINT,
     state,
     CodeChallengeMethod.S256,
     codeVerifier,

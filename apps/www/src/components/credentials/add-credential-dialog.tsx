@@ -196,7 +196,7 @@ export function AddGeminiCredentialDialog({
   );
 }
 
-// Claude dialog with subscription OAuth or API key
+// Claude dialog with account OAuth or API key
 export function AddClaudeCredentialDialog({
   open,
   onOpenChange,
@@ -204,7 +204,7 @@ export function AddClaudeCredentialDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [mode, setMode] = useState<"api-key" | "subscription" | null>(null);
+  const [mode, setMode] = useState<"api-key" | "account-link" | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -320,7 +320,7 @@ export function AddClaudeCredentialDialog({
               ? "Choose how you'd like to add credentials for Claude."
               : mode === "api-key"
                 ? "Add a new API key for Claude."
-                : "Connect your Claude subscription."}
+                : "Connect your Claude account."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -330,14 +330,14 @@ export function AddClaudeCredentialDialog({
                 size="sm"
                 className="w-full justify-start"
                 onClick={() => {
-                  setMode("subscription");
-                  handleStartClaudeAuth("subscription");
+                  setMode("account-link");
+                  handleStartClaudeAuth("account-link");
                 }}
                 disabled={loading}
               >
-                {loading && authType === "subscription"
+                {loading && authType === "account-link"
                   ? "Opening..."
-                  : "Connect Claude subscription"}
+                  : "Connect Claude account"}
               </Button>
               <Button
                 size="sm"
@@ -417,7 +417,7 @@ export function AddClaudeCredentialDialog({
               {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
             </Button>
           )}
-          {mode === "subscription" && codeVerifier && (
+          {mode === "account-link" && codeVerifier && (
             <Button
               onClick={handleExchangeCode}
               disabled={!authCode || exchangeCodeMutation.isPending}
@@ -431,7 +431,7 @@ export function AddClaudeCredentialDialog({
   );
 }
 
-// Codex dialog with ChatGPT subscription (auth.json) or API key
+// Codex dialog with ChatGPT account (auth.json) or API key
 export function AddCodexCredentialDialog({
   open,
   onOpenChange,
@@ -439,7 +439,7 @@ export function AddCodexCredentialDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [mode, setMode] = useState<"api-key" | "subscription" | null>(null);
+  const [mode, setMode] = useState<"api-key" | "account-link" | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [authJson, setAuthJson] = useState("");
@@ -506,7 +506,7 @@ export function AddCodexCredentialDialog({
               ? "Choose how you'd like to add credentials for Codex."
               : mode === "api-key"
                 ? "Add a new API key for Codex."
-                : "Connect your ChatGPT subscription."}
+                : "Connect your ChatGPT account."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -515,9 +515,9 @@ export function AddCodexCredentialDialog({
               <Button
                 size="sm"
                 className="w-full justify-start"
-                onClick={() => setMode("subscription")}
+                onClick={() => setMode("account-link")}
               >
-                Connect ChatGPT subscription
+                Connect ChatGPT account
               </Button>
               <Button
                 size="sm"
@@ -622,7 +622,7 @@ cat ~/.codex/auth.json | pbcopy`}</code>
               {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
             </Button>
           )}
-          {mode === "subscription" && (
+          {mode === "account-link" && (
             <Button
               onClick={handleSaveCodexAuth}
               disabled={saveCodexMutation.isPending}

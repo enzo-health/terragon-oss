@@ -16,6 +16,7 @@ import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { UserCookies } from "@/lib/cookies";
 import { getUserCookies } from "./cookies-server";
 import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
 import {
   ServerActionOptions,
   wrapServerActionInternal,
@@ -23,6 +24,13 @@ import {
   ServerActionResult,
 } from "./server-actions";
 import { getUserCredentials } from "@/server-lib/user-credentials";
+import * as schema from "@terragon/shared/db/schema";
+
+const initialAdminEmails = new Set(
+  env.INITIAL_ADMIN_EMAILS.split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0),
+);
 
 export const getSessionOrNull = cache(
   async (): Promise<{
@@ -32,9 +40,37 @@ export const getSessionOrNull = cache(
     const session = await auth.api.getSession({
       headers: await headers(),
     });
-    return session ?? null;
+    if (!session?.user) {
+      return null;
+    }
+    const user = await ensureAdminBootstrap(session.user);
+    return {
+      ...session,
+      user,
+    };
   },
 );
+
+async function ensureAdminBootstrap(user: User): Promise<User> {
+  if (!user.email || user.role === "admin") {
+    return user;
+  }
+
+  const normalizedEmail = user.email.trim().toLowerCase();
+  if (!initialAdminEmails.has(normalizedEmail)) {
+    return user;
+  }
+
+  await db
+    .update(schema.user)
+    .set({ role: "admin" })
+    .where(eq(schema.user.id, user.id));
+
+  return {
+    ...user,
+    role: "admin",
+  };
+}
 
 export async function getUserIdOrNull(): Promise<User["id"] | null> {
   const session = await getSessionOrNull();
@@ -99,9 +135,7 @@ type UserInfo = {
 };
 
 export const getUserInfoOrNull = cache(async (): Promise<UserInfo | null> => {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getSessionOrNull();
   if (!session) {
     return null;
   }

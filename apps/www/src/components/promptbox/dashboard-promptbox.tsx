@@ -22,7 +22,6 @@ import {
   PromptBoxToolBelt,
   usePromptBoxToolBeltOptions,
 } from "./prompt-box-tool-belt";
-import { useAccessInfo } from "@/queries/subscription";
 import { modelToAgent } from "@terragon/agent/utils";
 
 export type DashboardPromptBoxHandleSubmit = (
@@ -73,8 +72,6 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
     branchName,
     shouldUseCookieValues: true,
   });
-  const { isActive } = useAccessInfo();
-
   const placeholderText = useMemo(() => {
     if (props.placeholder != null) return props.placeholder;
     if (!repoFullName || !branchName) {
@@ -146,9 +143,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const credentialInfo = useCredentialInfoForAgent(selectedAgent);
 
   const isSubmitDisabled =
-    baseIsSubmitDisabled ||
-    (credentialInfo && !credentialInfo.canInvokeAgent) ||
-    !isActive;
+    baseIsSubmitDisabled || (credentialInfo && !credentialInfo.canInvokeAgent);
 
   // Set content when promptText changes
   React.useEffect(() => {

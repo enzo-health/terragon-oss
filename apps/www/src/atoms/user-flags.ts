@@ -2,7 +2,6 @@ import {
   updateSelectedModel,
   updateSelectedModels,
   updateMultiAgentMode,
-  updateFeatureUpsellLastSeen,
   updateSelectedRepo,
   updateSelectedBranch,
   updateReleaseNotesLastSeen,
@@ -11,7 +10,7 @@ import {
 import type { UserFlags } from "@terragon/shared";
 import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
 import { atom, Getter, Setter } from "jotai";
-import { RELEASE_NOTES_VERSION, FEATURE_UPSELL_VERSION } from "@/lib/constants";
+import { RELEASE_NOTES_VERSION } from "@/lib/constants";
 import { userCredentialsAtom } from "./user-credentials";
 import { getDefaultModel } from "@/lib/default-ai-model";
 import { ServerActionResult, unwrapResult } from "@/lib/server-actions";
@@ -134,21 +133,6 @@ export const lastSeenReleaseNotesVersionAtom = atom<number | null, [], void>(
       set,
       { lastSeenReleaseNotesVersion: RELEASE_NOTES_VERSION },
       async () => updateReleaseNotesLastSeen(),
-    );
-  },
-);
-
-export const lastSeenFeatureUpsellVersionAtom = atom<number | null, [], void>(
-  (get) => {
-    const userFlags = get(userFlagsAtom);
-    return userFlags?.lastSeenFeatureUpsellVersion ?? null;
-  },
-  async (get, set) => {
-    await optimisticUpdateUserFlags(
-      get,
-      set,
-      { lastSeenFeatureUpsellVersion: FEATURE_UPSELL_VERSION },
-      async () => updateFeatureUpsellLastSeen(),
     );
   },
 );

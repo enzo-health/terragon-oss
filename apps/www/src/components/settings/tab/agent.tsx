@@ -93,7 +93,7 @@ function AgentProvidersSection() {
     <div id="agent-providers">
       <SettingsSection
         label="Agent Providers"
-        description="Connect your existing subscriptions to power your coding agents"
+        description="Connect provider accounts to power your coding agents"
         cta={addCredentialCTA}
       >
         <CredentialsList />

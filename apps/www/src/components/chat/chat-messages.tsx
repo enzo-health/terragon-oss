@@ -89,7 +89,7 @@ function getAgentRateLimitMessage({
           rel="noopener noreferrer"
           className="underline hover:no-underline text-sm"
         >
-          Did you just upgrade your Claude plan?
+          Troubleshoot Claude rate limits
         </Link>
       )}
     </div>

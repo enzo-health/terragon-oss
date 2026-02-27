@@ -18,8 +18,6 @@ import { maybeProcessFollowUpQueue } from "./process-follow-up-queue";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getDefaultModelForAgent, modelToAgent } from "@terragon/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
-import { getAccessInfoForUser } from "@/lib/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 
 export async function followUpInternal({
   userId,
@@ -34,10 +32,6 @@ export async function followUpInternal({
   message: DBUserMessage;
   source: "www" | "github";
 }) {
-  const { tier } = await getAccessInfoForUser(userId);
-  if (tier === "none") {
-    throw new Error(SUBSCRIPTION_MESSAGES.QUEUE_FOLLOW_UP);
-  }
   const threadChat = await getThreadChat({
     db,
     threadId,
@@ -127,10 +121,6 @@ export async function queueFollowUpInternal({
   appendOrReplace: "append" | "replace";
   source: "www" | "github";
 }) {
-  const { tier } = await getAccessInfoForUser(userId);
-  if (tier === "none") {
-    throw new Error(SUBSCRIPTION_MESSAGES.QUEUE_FOLLOW_UP);
-  }
   const threadChat = await getThreadChat({
     db,
     threadId,

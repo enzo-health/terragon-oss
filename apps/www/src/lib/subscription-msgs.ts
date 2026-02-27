@@ -5,15 +5,15 @@
 
 export const SUBSCRIPTION_MESSAGES = {
   CREATE_TASK:
-    "You need an active subscription to create a task. Visit Settings → Billing to subscribe.",
+    "Your internal account has full feature access. Contact an admin if this appears in error.",
   FOLLOW_UP:
-    "You need an active subscription to follow up on a task. Visit Settings → Billing to subscribe.",
+    "Your internal account has full feature access. Contact an admin if this appears in error.",
   QUEUE_FOLLOW_UP:
-    "You need an active subscription to queue follow-ups. Visit Settings → Billing to subscribe.",
+    "Your internal account has full feature access. Contact an admin if this appears in error.",
   RUN_TASK:
-    "You need an active subscription to run tasks. Visit Settings → Billing to subscribe.",
+    "Your internal account has full feature access. Contact an admin if this appears in error.",
   RUN_AUTOMATION:
-    "You need an active subscription to run automations. Visit Settings → Billing to subscribe.",
+    "Your internal account has full feature access. Contact an admin if this appears in error.",
   CREATE_AUTOMATION:
-    "You need an active subscription to create automations. Visit Settings → Billing to subscribe.",
+    "Your internal account has full feature access. Contact an admin if this appears in error.",
 } as const;

@@ -9,7 +9,6 @@ import {
 import { threadListQueryOptions } from "@/queries/thread-queries";
 import { getUserIdOrNull } from "@/lib/auth-server";
 import { userCreditBalanceQueryOptions } from "@/queries/user-credit-balance-queries";
-import { accessQueryOptions } from "@/queries/subscription";
 
 export default async function TaskListLayout({
   children,
@@ -22,7 +21,6 @@ export default async function TaskListLayout({
     queryClient.prefetchInfiniteQuery(
       threadListQueryOptions({ archived: false }),
     ),
-    queryClient.prefetchQuery(accessQueryOptions()),
     queryClient.prefetchQuery(userCreditBalanceQueryOptions()),
   ]);
   return (

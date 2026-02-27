@@ -104,17 +104,8 @@ export default async function AbuseDetectionPage() {
     };
   });
 
-  // Sort by active trial first, then by shared repo count descending
+  // Sort by shared repo count descending
   finalData.sort((a, b) => {
-    const aHasTrial = a.signupTrialDaysRemaining > 0 ? 1 : 0;
-    const bHasTrial = b.signupTrialDaysRemaining > 0 ? 1 : 0;
-
-    // Active trials first
-    if (aHasTrial !== bHasTrial) {
-      return bHasTrial - aHasTrial;
-    }
-
-    // Then by shared repo count descending
     return b.sharedRepoCount - a.sharedRepoCount;
   });
 
@@ -124,7 +115,7 @@ export default async function AbuseDetectionPage() {
         <h1 className="text-2xl font-bold">Abuse Detection</h1>
         <p className="text-sm text-muted-foreground">
           Users working on repositories with multiple users in the last 30 days
-          (potential free trial abuse)
+          (potential shared-repository abuse)
         </p>
       </div>
 

@@ -1,12 +1,13 @@
 import { MetadataRoute } from "next";
+import { publicAppUrl } from "@terragon/env/next-public";
 
 export default function robots(): MetadataRoute.Robots {
+  const baseUrl = publicAppUrl();
   return {
     rules: {
       userAgent: "*",
-      allow: "/",
-      disallow: ["/api/", "/internal/", "/admin/"],
+      disallow: ["/"],
     },
-    sitemap: "https://www.terragonlabs.com/sitemap.xml",
+    sitemap: `${baseUrl}/sitemap.xml`,
   };
 }

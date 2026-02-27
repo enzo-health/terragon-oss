@@ -3,14 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import {
-  Settings,
-  GitBranch,
-  Blocks,
-  Bot,
-  Package,
-  CreditCard,
-} from "lucide-react";
+import { Settings, GitBranch, Blocks, Bot, Package } from "lucide-react";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { useRealtimeUser } from "@/hooks/useRealtime";
 
@@ -50,11 +43,6 @@ export function SettingsLayout({ children }: { children: React.ReactNode }) {
       href: "/settings/integrations",
       label: "Integrations",
       icon: <Blocks className="w-4 h-4" />,
-    },
-    {
-      href: "/settings/billing",
-      label: "Billing",
-      icon: <CreditCard className="w-4 h-4" />,
     },
   ];
   if (daytonaOptionsForSandboxProviderEnabled) {

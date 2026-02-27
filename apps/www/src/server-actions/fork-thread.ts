@@ -7,8 +7,6 @@ import { getThreadMinimal } from "@terragon/shared/model/threads";
 import { createNewThread } from "../server-lib/new-thread-shared";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { UserFacingError } from "@/lib/server-actions";
-import { getAccessInfoForUser } from "@/lib/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 
 export const forkThread = userOnlyAction(
   async function forkThread(
@@ -34,11 +32,6 @@ export const forkThread = userOnlyAction(
     },
   ) {
     console.log("forkThread", { threadId, threadChatId });
-    // Gate task creation behind active access
-    const { tier } = await getAccessInfoForUser(userId);
-    if (tier === "none") {
-      throw new UserFacingError(SUBSCRIPTION_MESSAGES.CREATE_TASK);
-    }
     const thread = await getThreadMinimal({ db, threadId, userId });
     if (!thread) {
       throw new UserFacingError("Task not found");

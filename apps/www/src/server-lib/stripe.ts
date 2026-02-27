@@ -1,118 +1,95 @@
 import Stripe from "stripe";
-import { env } from "@terragon/env/apps-www";
+
+const BILLING_DISABLED_MESSAGE =
+  "Billing is disabled in internal single-tenant mode.";
 
 export function isStripeConfigured(): boolean {
-  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) {
-    console.warn(
-      "Stripe is not configured - missing STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET",
-    );
-    return false;
-  }
-  if (!env.STRIPE_PRICE_CORE_MONTHLY || !env.STRIPE_PRICE_PRO_MONTHLY) {
-    console.warn(
-      "Stripe is not configured - missing STRIPE_PRICE_CORE_MONTHLY or STRIPE_PRICE_PRO_MONTHLY",
-    );
-    return false;
-  }
-  return true;
+  return false;
 }
 
 export function isStripeConfiguredForCredits(): boolean {
-  if (!isStripeConfigured()) {
-    return false;
-  }
-  if (!env.STRIPE_PRICE_CREDIT_PACK) {
-    console.warn("Stripe is not configured - missing STRIPE_PRICE_CREDIT_PACK");
-    return false;
-  }
-  return true;
+  return false;
 }
 
 export function assertStripeConfigured(): void {
   if (!isStripeConfigured()) {
-    throw new Error("Stripe is not configured");
+    throw new Error(BILLING_DISABLED_MESSAGE);
   }
 }
 
 export function assertStripeConfiguredForCredits(): void {
   if (!isStripeConfiguredForCredits()) {
-    throw new Error("Stripe is not configured for credits");
+    throw new Error(BILLING_DISABLED_MESSAGE);
   }
 }
 
 export function getStripeClient(): Stripe {
-  if (!isStripeConfigured()) {
-    throw new Error("Stripe is not configured");
-  }
-  return new Stripe(env.STRIPE_SECRET_KEY);
+  throw new Error(BILLING_DISABLED_MESSAGE);
 }
 
-export const STRIPE_PLAN_CONFIGS = [
-  ...(env.STRIPE_PRICE_CORE_MONTHLY
-    ? [{ name: "core", priceId: env.STRIPE_PRICE_CORE_MONTHLY }]
-    : []),
-  ...(env.STRIPE_PRICE_PRO_MONTHLY
-    ? [{ name: "pro", priceId: env.STRIPE_PRICE_PRO_MONTHLY }]
-    : []),
-];
+export const STRIPE_PLAN_CONFIGS = [];
+
+function stripeDisabledError(): never {
+  throw new Error(BILLING_DISABLED_MESSAGE);
+}
 
 export function getStripeWebhookSecret(): string {
-  if (!isStripeConfigured()) {
-    throw new Error("Stripe is not configured");
-  }
-  return env.STRIPE_WEBHOOK_SECRET;
+  stripeDisabledError();
 }
 
 export function getStripeCreditPackPriceId(): string {
-  if (!isStripeConfiguredForCredits()) {
-    throw new Error("Stripe is not configured for credits");
-  }
-  return env.STRIPE_PRICE_CREDIT_PACK;
+  stripeDisabledError();
 }
 
 /**
  * Wrappers for Stripe API methods to make them easier to mock in tests
  */
 export async function stripeCheckoutSessionsCreate(
-  params: Stripe.Checkout.SessionCreateParams,
-) {
-  return getStripeClient().checkout.sessions.create(params);
+  _params: Stripe.Checkout.SessionCreateParams,
+): Promise<Stripe.Checkout.Session> {
+  stripeDisabledError();
 }
 
 export async function stripeCustomersCreate(
-  params: Stripe.CustomerCreateParams,
-) {
-  return getStripeClient().customers.create(params);
+  _params: Stripe.CustomerCreateParams,
+): Promise<Stripe.Customer> {
+  stripeDisabledError();
 }
 
-export function stripeInvoicesCreate(params: Stripe.InvoiceCreateParams) {
-  return getStripeClient().invoices.create(params);
+export function stripeInvoicesCreate(
+  _params: Stripe.InvoiceCreateParams,
+): Promise<Stripe.Invoice> {
+  stripeDisabledError();
 }
 
 export function stripeInvoiceItemsCreate(
-  params: Stripe.InvoiceItemCreateParams,
-) {
-  return getStripeClient().invoiceItems.create(params);
+  _params: Stripe.InvoiceItemCreateParams,
+): Promise<Stripe.InvoiceItem> {
+  stripeDisabledError();
 }
 
-export function stripeInvoicesFinalizeInvoice(invoiceId: string) {
-  return getStripeClient().invoices.finalizeInvoice(invoiceId);
+export function stripeInvoicesFinalizeInvoice(
+  _invoiceId: string,
+): Promise<Stripe.Invoice> {
+  stripeDisabledError();
 }
 
 export function stripeInvoicesPay(
-  invoiceId: string,
-  params: Stripe.InvoicePayParams,
-) {
-  return getStripeClient().invoices.pay(invoiceId, params);
+  _invoiceId: string,
+  _params: Stripe.InvoicePayParams,
+): Promise<Stripe.Invoice> {
+  stripeDisabledError();
 }
 
-export function stripeCouponsCreate(params: Stripe.CouponCreateParams) {
-  return getStripeClient().coupons.create(params);
+export function stripeCouponsCreate(
+  _params: Stripe.CouponCreateParams,
+): Promise<Stripe.Coupon> {
+  stripeDisabledError();
 }
 
 export function stripePromotionCodesCreate(
-  params: Stripe.PromotionCodeCreateParams,
-  options?: Stripe.RequestOptions,
-) {
-  return getStripeClient().promotionCodes.create(params, options);
+  _params: Stripe.PromotionCodeCreateParams,
+  _options?: Stripe.RequestOptions,
+): Promise<Stripe.PromotionCode> {
+  stripeDisabledError();
 }

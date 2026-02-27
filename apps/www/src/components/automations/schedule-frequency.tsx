@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { ScheduleTriggerConfig } from "@terragon/shared/automations";
-import { useAccessInfo } from "@/queries/subscription";
 import { MAX_HOURS_SCHEDULE_AUTOMATIONS } from "@terragon/shared/automations/cron";
 
 export function ScheduleTriggerForm({
@@ -32,7 +31,7 @@ export function ScheduleTriggerForm({
   value: ScheduleTriggerConfig;
   onChange: (value: ScheduleTriggerConfig) => void;
 }) {
-  const { tier } = useAccessInfo();
+  const tier = "pro" as const;
   const initialState = useMemo(
     () => parseCronToState(value.cron),
     [value.cron],
@@ -86,8 +85,6 @@ export function ScheduleTriggerForm({
     onChange({ ...value, cron });
   };
 
-  const isProTier = tier === "pro";
-  const canToggleMultipleHours = isProTier || showMultipleHoursInput;
   const { isValid, error } = validateCronExpression(value.cron, {
     accessTier: tier,
   });
@@ -222,12 +219,9 @@ export function ScheduleTriggerForm({
               type="checkbox"
               id="multiple-hours"
               checked={showMultipleHoursInput}
-              disabled={!canToggleMultipleHours}
+              disabled={false}
               onChange={(e) => {
                 const checked = e.target.checked;
-                if (!isProTier && checked) {
-                  return;
-                }
                 setShowMultipleHoursInput(checked);
                 if (!checked) {
                   // Keep only the first hour
@@ -254,21 +248,13 @@ export function ScheduleTriggerForm({
                   );
                 }
               }}
-              className={cn("h-4 w-4 rounded border-gray-300", {
-                "cursor-not-allowed opacity-50": !canToggleMultipleHours,
-              })}
+              className="h-4 w-4 rounded border-gray-300"
             />
             <label
               htmlFor="multiple-hours"
-              className={cn("text-sm flex items-center gap-2", {
-                "cursor-not-allowed opacity-50": !canToggleMultipleHours,
-                "cursor-pointer": canToggleMultipleHours,
-              })}
+              className="text-sm flex items-center gap-2 cursor-pointer"
             >
               <span>Multiple times per day</span>
-              <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
-                Pro
-              </span>
             </label>
           </div>
           {showMultipleHoursInput && (
@@ -508,8 +494,7 @@ export function ScheduleTriggerForm({
           </div>
         ) : error === "pro-only" ? (
           <div className="text-sm text-destructive">
-            This schedule is only supported on the Pro tier. Upgrade to the Pro
-            tier to enable this feature.
+            This schedule requires a higher automation access level.
           </div>
         ) : null}
       </div>

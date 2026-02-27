@@ -11,7 +11,6 @@ import {
   getFeatureFlagsForUser,
   getUserFeatureFlagOverrides,
 } from "@terragon/shared/model/feature-flags";
-import { getBillingInfoForUser } from "@/lib/subscription";
 import { getAutomations } from "@terragon/shared/model/automations";
 import { getAgentProviderCredentials } from "@/server-lib/credentials";
 import { getSlackAccounts } from "@terragon/shared/model/slack";
@@ -37,7 +36,6 @@ export default async function AdminUserPage({
     userBalance,
     userSettings,
     automations,
-    billingInfo,
     slackAccounts,
   ] = await Promise.all([
     getUserFlags({ db, userId: id }),
@@ -49,7 +47,6 @@ export default async function AdminUserPage({
     getCachedUserCreditBalance(id),
     getUserSettings({ db, userId: id }),
     getAutomations({ db, userId: id }),
-    getBillingInfoForUser({ userId: id }),
     getSlackAccounts({ db, userId: id }),
   ]);
   return (
@@ -63,7 +60,6 @@ export default async function AdminUserPage({
       recentThreads={recentThreads}
       userBalance={userBalance}
       userSettings={userSettings}
-      billingInfo={billingInfo}
       automations={automations}
       slackAccounts={slackAccounts}
     />

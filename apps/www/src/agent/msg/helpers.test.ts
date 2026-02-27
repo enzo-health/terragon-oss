@@ -496,10 +496,10 @@ describe("parseCodexRateLimitMessage", () => {
     });
   });
 
-  // Test cases for Plus plan format
-  it("should parse Plus plan 'Upgrade to Pro or try again in' format with hours and minutes", () => {
+  // Test cases for duration-based format
+  it("should parse duration-based limit message with hours and minutes", () => {
     const result = parseCodexRateLimitMessageStr(
-      "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 3 hours 52 minutes.",
+      "You've hit your usage limit. Try again in 3 hours 52 minutes.",
     );
     const expectedDuration = (3 * 60 + 52) * 60 * 1000; // 13,920,000 ms
     expect(result).toEqual({
@@ -511,7 +511,7 @@ describe("parseCodexRateLimitMessage", () => {
 
   it("should parse Plus plan format with just minutes", () => {
     const result = parseCodexRateLimitMessageStr(
-      "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 15 minutes.",
+      "You've hit your usage limit. Try again in 15 minutes.",
     );
     const expectedDuration = 15 * 60 * 1000;
     expect(result).toEqual({
@@ -523,7 +523,7 @@ describe("parseCodexRateLimitMessage", () => {
 
   it("should parse Plus plan format with 'less than a minute'", () => {
     const result = parseCodexRateLimitMessageStr(
-      "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in less than a minute.",
+      "You've hit your usage limit. Try again in less than a minute.",
     );
     expect(result).toEqual({
       isRateLimited: true,
@@ -569,10 +569,10 @@ describe("parseCodexRateLimitMessage", () => {
     });
   });
 
-  // Test cases for Free plan format (no retry time)
-  it("should parse Free plan 'Upgrade to Plus to continue using Codex' format", () => {
+  // Test cases for rate limits without retry time
+  it("should parse rate limit format without retry time", () => {
     const result = parseCodexRateLimitMessageStr(
-      "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://openai.com/chatgpt/pricing).",
+      "You've hit your usage limit. Please try again later.",
     );
     expect(result).toEqual({
       isRateLimited: true,
@@ -583,7 +583,7 @@ describe("parseCodexRateLimitMessage", () => {
 
   it("should parse Free plan format without trailing period", () => {
     const result = parseCodexRateLimitMessageStr(
-      "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://openai.com/chatgpt/pricing)",
+      "You've hit your usage limit. Please try again later",
     );
     expect(result).toEqual({
       isRateLimited: true,
@@ -594,7 +594,7 @@ describe("parseCodexRateLimitMessage", () => {
 
   it("should parse Plus plan format with days, hours, and minutes", () => {
     const result = parseCodexRateLimitMessageStr(
-      "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 4 days 19 hours 48 minutes.",
+      "You've hit your usage limit. Try again in 4 days 19 hours 48 minutes.",
     );
     const expectedDuration = (4 * 24 * 60 + 19 * 60 + 48) * 60 * 1000;
     expect(result).toEqual({
@@ -610,7 +610,7 @@ describe("parseCodexRateLimitMessage", () => {
       subtype: "error_during_execution" as const,
       session_id: "",
       error:
-        "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 4 days 19 hours 48 minutes.",
+        "You've hit your usage limit. Try again in 4 days 19 hours 48 minutes.",
       is_error: true as const,
       num_turns: 0,
       duration_ms: 0,

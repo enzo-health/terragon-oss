@@ -47,8 +47,6 @@ import { tryAutoCompactThread } from "@/server-lib/compact";
 import { waitUntil } from "@vercel/functions";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getUserCredentials } from "@/server-lib/user-credentials";
-import { getAccessInfoForUser } from "@/lib/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 import {
   getThreadContextMessageToGenerate,
   generateThreadContextResult,
@@ -118,12 +116,6 @@ export async function startAgentMessage({
     threadChatId,
     userId,
     execOrThrow: async (threadChat) => {
-      // Enforce subscription/access gating (defense-in-depth):
-      // If the user lacks active access, surface an error and halt early.
-      const { tier } = await getAccessInfoForUser(userId);
-      if (tier === "none") {
-        throw new Error(SUBSCRIPTION_MESSAGES.RUN_TASK);
-      }
       if (!threadChat) {
         throw new ThreadError("unknown-error", "Thread chat not found", null);
       }

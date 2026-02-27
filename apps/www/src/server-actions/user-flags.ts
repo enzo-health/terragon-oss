@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/db";
 import type { UserFlags } from "@terragon/shared";
 import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
-import { RELEASE_NOTES_VERSION, FEATURE_UPSELL_VERSION } from "@/lib/constants";
+import { RELEASE_NOTES_VERSION } from "@/lib/constants";
 
 export const getUserFlagsAction = userOnlyAction(
   async function getUserFlagsAction(userId: string): Promise<UserFlags | null> {
@@ -71,19 +71,6 @@ export const updateReleaseNotesLastSeen = userOnlyAction(
     });
   },
   { defaultErrorMessage: "Failed to update release notes last seen" },
-);
-
-export const updateFeatureUpsellLastSeen = userOnlyAction(
-  async function updateFeatureUpsellLastSeen(userId: string) {
-    await updateUserFlags({
-      db,
-      userId,
-      updates: {
-        lastSeenFeatureUpsellVersion: FEATURE_UPSELL_VERSION,
-      },
-    });
-  },
-  { defaultErrorMessage: "Failed to update feature upsell last seen" },
 );
 
 export const updateSelectedModels = userOnlyAction(

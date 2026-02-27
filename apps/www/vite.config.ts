@@ -36,13 +36,6 @@ export default defineConfig({
       GITHUB_WEBHOOK_SECRET: "GITHUB_WEBHOOK_SECRET_TEST",
       GITHUB_APP_ID: "GITHUB_APP_ID_TEST",
       GITHUB_APP_PRIVATE_KEY: "GITHUB_APP_PRIVATE_KEY_TEST",
-
-      // Make sure all the codepaths for isStripeConfigured are covered.
-      STRIPE_SECRET_KEY: "STRIPE_SECRET_KEY_TEST",
-      STRIPE_WEBHOOK_SECRET: "STRIPE_WEBHOOK_SECRET_TEST",
-      STRIPE_PRICE_CORE_MONTHLY: "STRIPE_PRICE_CORE_MONTHLY_TEST",
-      STRIPE_PRICE_PRO_MONTHLY: "STRIPE_PRICE_PRO_MONTHLY_TEST",
-      STRIPE_PRICE_CREDIT_PACK: "STRIPE_PRICE_CREDIT_PACK_TEST",
     },
     setupFiles: ["./src/test-helpers/test-setup.ts"],
     globalSetup: "./src/test-helpers/test-global-setup.ts",

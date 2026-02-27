@@ -64,9 +64,9 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
                 <Wordmark showText={false} />
               </div>
             </div>
-            <CardTitle>Authorize Terragon CLI</CardTitle>
+            <CardTitle>Authorize CLI</CardTitle>
             <CardDescription>
-              Click the button below to authenticate your CLI with Terragon
+              Click the button below to authenticate this CLI client
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -91,7 +91,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Loader2 className="mb-4 h-8 w-8 animate-spin" />
             <p className="text-center text-lg">
-              Please wait while we authorize the Terragon CLI
+              Please wait while we authorize the CLI client
             </p>
             <p className="mt-2 text-center text-sm text-muted-foreground">
               Connecting to CLI...

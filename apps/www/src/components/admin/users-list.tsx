@@ -91,7 +91,6 @@ export function AdminUsersList({
       "Total Threads (All Time)",
       "Total Threads (Last Day)",
       "Total Threads (Last Week)",
-      "Stripe Customer ID",
       "Role",
       "Banned",
     ];
@@ -108,7 +107,6 @@ export function AdminUsersList({
       u.numThreads.toString(),
       u.threadsCreatedPastDay.toString(),
       u.threadsCreatedPastWeek.toString(),
-      u.stripeCustomerId || "",
       u.role || "",
       u.banned ? "Yes" : "No",
     ]);
@@ -175,21 +173,6 @@ export function AdminUsersList({
     {
       accessorKey: "email",
       header: "Email",
-    },
-    {
-      accessorKey: "signupTrialDaysRemaining",
-      header: "Trial Days Left",
-      cell: ({ row }) => {
-        const days = row.getValue("signupTrialDaysRemaining") as number;
-        return days > 0 ? days.toString() : "-";
-      },
-    },
-    {
-      accessorKey: "accessTierInfo",
-      header: "Access Tier",
-      cell: ({ row }) => {
-        return row.getValue("accessTierInfo") || "-";
-      },
     },
     {
       accessorKey: "createdAt",

@@ -14,8 +14,6 @@ import { selectedModelAtom } from "@/atoms/user-flags";
 import { useAtomValue } from "jotai";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { newThread } from "@/server-actions/new-thread";
-import { useAccessInfo } from "@/queries/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 import { toast } from "sonner";
 
 export function SuggestFollowupTaskTool({
@@ -24,7 +22,6 @@ export function SuggestFollowupTaskTool({
   toolPart: Extract<AllToolParts, { name: "SuggestFollowupTask" }>;
 }) {
   const { thread } = useThread();
-  const { isActive } = useAccessInfo();
   const selectedModel = useAtomValue(selectedModelAtom);
   // Find if a child thread exists for this toolPart
   const existingChildThread = thread?.childThreads?.find(
@@ -37,10 +34,6 @@ export function SuggestFollowupTaskTool({
 
   const handleCreateFollowUpTask = async () => {
     if (!thread) {
-      return;
-    }
-    if (!isActive) {
-      toast.error(SUBSCRIPTION_MESSAGES.CREATE_TASK);
       return;
     }
     await createNewThreadMutation.mutateAsync({

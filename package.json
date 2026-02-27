@@ -4,7 +4,7 @@
   "private": true,
   "description": "",
   "scripts": {
-    "dev": "turbo dev dev:cron dev:stripe --ui tui --concurrency=5000",
+    "dev": "turbo dev dev:cron --ui tui --concurrency=5000",
     "tsc-watch": "turbo tsc-watch --concurrency=5000",
     "tsc-check": "turbo tsc-check",
     "format": "turbo format",
