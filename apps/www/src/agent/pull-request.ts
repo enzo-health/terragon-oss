@@ -28,16 +28,19 @@ import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/sdlc-loop/enrollment";
+import { maybeRunSdlcPrePrReview } from "@/server-lib/sdlc-loop/pre-pr-review";
 
 export async function openPullRequestForThread({
   threadId,
   userId,
+  threadChatId,
   skipCommitAndPush,
   prType,
   session,
 }: {
   threadId: string;
   userId: string;
+  threadChatId?: string | null;
   skipCommitAndPush: boolean;
   prType: "draft" | "ready";
   session: ISandboxSession;
@@ -120,7 +123,7 @@ export async function openPullRequestForThread({
   if (!skipCommitAndPush || thread.gitDiff === "too-large") {
     gitDiffMaybeCutOff = await getGitDiffMaybeCutoff({
       session,
-      baseBranch: thread.repoBaseBranchName,
+      baseBranch,
       allowCutoff: true,
     });
   }
@@ -129,6 +132,18 @@ export async function openPullRequestForThread({
       return;
     }
     throw new Error("No changes to PR");
+  }
+  let gitDiffForSdlcPrePr = gitDiffMaybeCutOff;
+  if (!thread.githubPRNumber && sdlcLoopOptIn) {
+    const strictDiffForSdlcPrePr = await getGitDiffMaybeCutoff({
+      session,
+      baseBranch,
+      allowCutoff: false,
+    });
+    if (!strictDiffForSdlcPrePr) {
+      throw new Error("No changes available for SDLC pre-PR review");
+    }
+    gitDiffForSdlcPrePr = strictDiffForSdlcPrePr;
   }
   // Get GitHub App installation token
   const [owner, repo] = parseRepoFullName(thread.githubRepoFullName);
@@ -141,6 +156,30 @@ export async function openPullRequestForThread({
       baseBranchName: baseBranch,
     }),
   ]);
+  const resolvedThreadChatId =
+    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
+  if (!resolvedThreadChatId) {
+    throw new ThreadError(
+      "unknown-error",
+      "Missing thread chat context required for SDLC pre-PR review",
+      null,
+    );
+  }
+  const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
+    thread,
+    userId,
+    threadChatId: resolvedThreadChatId,
+    session,
+    diffOutput: gitDiffForSdlcPrePr,
+  });
+  if (!shouldCreateOrLinkPr) {
+    throw new ThreadError(
+      "unknown-error",
+      "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
+      null,
+    );
+  }
+
   if (existingPr) {
     await Promise.all([
       updateThread({
