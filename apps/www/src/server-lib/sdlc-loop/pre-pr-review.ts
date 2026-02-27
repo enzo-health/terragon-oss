@@ -208,7 +208,7 @@ export async function maybeRunSdlcPrePrReview({
       threadChatId,
       messageText: [
         "SDLC pre-PR review is required before opening a PR, but the current diff is too large to evaluate.",
-        "The SDLC loop has queued an automatic scope-reduction pass and will retry PR creation after checkpoint.",
+        "PR creation is paused. Reduce the current diff scope, then run checkpoint again to retry pre-PR review and PR creation.",
       ].join("\n\n"),
     });
     console.warn(
@@ -232,6 +232,7 @@ export async function maybeRunSdlcPrePrReview({
 
   const [deepReviewResult, carmackReviewResult] = await Promise.allSettled([
     runDeepReviewGate({
+      session,
       repoFullName: thread.githubRepoFullName,
       prNumber: null,
       headSha,
@@ -239,6 +240,7 @@ export async function maybeRunSdlcPrePrReview({
       gitDiff: diffOutput,
     }),
     runCarmackReviewGate({
+      session,
       repoFullName: thread.githubRepoFullName,
       prNumber: null,
       headSha,
@@ -272,7 +274,19 @@ export async function maybeRunSdlcPrePrReview({
   const hasExecutionFailure =
     deepReviewExecutionFailed || carmackReviewExecutionFailed;
 
-  if (!isDeepReviewBlocked && !isCarmackReviewBlocked && !hasExecutionFailure) {
+  if (!isDeepReviewBlocked && !isCarmackReviewBlocked) {
+    if (hasExecutionFailure) {
+      console.warn(
+        "[sdlc-pre-pr-review] gate execution failed without blocking findings; proceeding with PR",
+        {
+          userId,
+          threadId: thread.id,
+          repoFullName: thread.githubRepoFullName,
+          deepReviewExecutionFailed,
+          carmackReviewExecutionFailed,
+        },
+      );
+    }
     return true;
   }
 

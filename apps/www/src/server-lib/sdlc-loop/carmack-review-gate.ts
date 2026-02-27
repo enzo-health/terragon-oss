@@ -1,9 +1,9 @@
-import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
 import {
   CarmackReviewGateOutput,
   carmackReviewGateOutputSchema,
 } from "@terragon/shared/model/sdlc-loop";
+import type { ISandboxSession } from "@terragon/sandbox/types";
+import { runStructuredCodexGateInSandbox } from "./sandbox-codex-gate";
 
 export const CARMACK_REVIEW_GATE_PROMPT_VERSION = 1;
 
@@ -31,13 +31,15 @@ export function buildCarmackReviewGatePrompt({
 }
 
 export async function runCarmackReviewGate({
+  session,
   repoFullName,
   prNumber,
   headSha,
   taskContext,
   gitDiff,
-  model = "gpt-4.1-mini",
+  model = "gpt-5.3-codex-medium",
 }: {
+  session: ISandboxSession;
   repoFullName: string;
   prNumber: number | null;
   headSha: string;
@@ -45,19 +47,21 @@ export async function runCarmackReviewGate({
   gitDiff: string;
   model?: string;
 }): Promise<CarmackReviewGateOutput> {
-  const result = await generateObject({
-    model: openai(model),
+  return await runStructuredCodexGateInSandbox({
+    session,
+    gateName: "carmack-review",
+    model,
     schema: carmackReviewGateOutputSchema,
-    system: CARMACK_REVIEW_GATE_SYSTEM_PROMPT,
-    prompt: buildCarmackReviewGatePrompt({
-      repoFullName,
-      prNumber,
-      headSha,
-      taskContext,
-      gitDiff,
-    }),
+    prompt: [
+      CARMACK_REVIEW_GATE_SYSTEM_PROMPT,
+      "",
+      buildCarmackReviewGatePrompt({
+        repoFullName,
+        prNumber,
+        headSha,
+        taskContext,
+        gitDiff,
+      }),
+    ].join("\n"),
   });
-
-  console.log("[ai/carmack-review-gate] response_id:", result.response?.id);
-  return result.object as CarmackReviewGateOutput;
 }

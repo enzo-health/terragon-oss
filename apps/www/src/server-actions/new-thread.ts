@@ -39,7 +39,7 @@ export const newThread = userOnlyAction(
       disableGitCheckpointing,
       skipSetup,
       createNewBranch = true,
-      runInSdlcLoop = false,
+      runInSdlcLoop = true,
       scheduleAt,
       sourceType = "www",
     }: NewThreadArgs,

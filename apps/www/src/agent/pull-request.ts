@@ -156,30 +156,6 @@ export async function openPullRequestForThread({
       baseBranchName: baseBranch,
     }),
   ]);
-  const resolvedThreadChatId =
-    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
-  if (!resolvedThreadChatId) {
-    throw new ThreadError(
-      "unknown-error",
-      "Missing thread chat context required for SDLC pre-PR review",
-      null,
-    );
-  }
-  const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
-    thread,
-    userId,
-    threadChatId: resolvedThreadChatId,
-    session,
-    diffOutput: gitDiffForSdlcPrePr,
-  });
-  if (!shouldCreateOrLinkPr) {
-    throw new ThreadError(
-      "unknown-error",
-      "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
-      null,
-    );
-  }
-
   if (existingPr) {
     await Promise.all([
       updateThread({
@@ -207,6 +183,29 @@ export async function openPullRequestForThread({
       octokit: octokitToCreatePR,
     });
     return;
+  }
+  const resolvedThreadChatId =
+    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
+  if (!resolvedThreadChatId) {
+    throw new ThreadError(
+      "unknown-error",
+      "Missing thread chat context required for SDLC pre-PR review",
+      null,
+    );
+  }
+  const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
+    thread,
+    userId,
+    threadChatId: resolvedThreadChatId,
+    session,
+    diffOutput: gitDiffForSdlcPrePr,
+  });
+  if (!shouldCreateOrLinkPr) {
+    throw new ThreadError(
+      "unknown-error",
+      "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
+      null,
+    );
   }
 
   // Otherwise, generate a new PR.

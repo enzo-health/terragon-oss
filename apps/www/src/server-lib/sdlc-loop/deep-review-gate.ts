@@ -1,9 +1,9 @@
-import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
 import {
   DeepReviewGateOutput,
   deepReviewGateOutputSchema,
 } from "@terragon/shared/model/sdlc-loop";
+import type { ISandboxSession } from "@terragon/sandbox/types";
+import { runStructuredCodexGateInSandbox } from "./sandbox-codex-gate";
 
 export const DEEP_REVIEW_GATE_PROMPT_VERSION = 1;
 
@@ -31,13 +31,15 @@ export function buildDeepReviewGatePrompt({
 }
 
 export async function runDeepReviewGate({
+  session,
   repoFullName,
   prNumber,
   headSha,
   taskContext,
   gitDiff,
-  model = "gpt-4.1-mini",
+  model = "gpt-5.3-codex-medium",
 }: {
+  session: ISandboxSession;
   repoFullName: string;
   prNumber: number | null;
   headSha: string;
@@ -45,19 +47,21 @@ export async function runDeepReviewGate({
   gitDiff: string;
   model?: string;
 }): Promise<DeepReviewGateOutput> {
-  const result = await generateObject({
-    model: openai(model),
+  return await runStructuredCodexGateInSandbox({
+    session,
+    gateName: "deep-review",
+    model,
     schema: deepReviewGateOutputSchema,
-    system: DEEP_REVIEW_GATE_SYSTEM_PROMPT,
-    prompt: buildDeepReviewGatePrompt({
-      repoFullName,
-      prNumber,
-      headSha,
-      taskContext,
-      gitDiff,
-    }),
+    prompt: [
+      DEEP_REVIEW_GATE_SYSTEM_PROMPT,
+      "",
+      buildDeepReviewGatePrompt({
+        repoFullName,
+        prNumber,
+        headSha,
+        taskContext,
+        gitDiff,
+      }),
+    ].join("\n"),
   });
-
-  console.log("[ai/deep-review-gate] response_id:", result.response?.id);
-  return result.object as DeepReviewGateOutput;
 }
