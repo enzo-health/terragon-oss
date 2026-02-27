@@ -1368,6 +1368,9 @@ export class TerragonDaemon {
       }
 
       try {
+        const isTerminalBatch = processedEntriesToSend.some(({ message }) =>
+          this.isTerminalMessage(message),
+        );
         await this.sendMessagesToAPI({
           messages: processedEntriesToSend.map((e) => e.message),
           entryCount: entriesToSend.length,
@@ -1375,6 +1378,7 @@ export class TerragonDaemon {
           token,
           threadId,
           threadChatId,
+          isTerminalBatch,
         });
         for (const entry of entriesToSend) {
           handledEntries.add(entry);
@@ -1486,6 +1490,7 @@ export class TerragonDaemon {
     token,
     threadId,
     threadChatId,
+    isTerminalBatch,
   }: {
     messages: ClaudeMessage[];
     entryCount: number;
@@ -1493,6 +1498,7 @@ export class TerragonDaemon {
     token: string;
     threadId: string;
     threadChatId: string;
+    isTerminalBatch: boolean;
   }): Promise<void> {
     try {
       this.runtime.logger.info("Sending messages to API", {
@@ -1506,12 +1512,15 @@ export class TerragonDaemon {
             entryCount,
           })
         : null;
+      const endSha =
+        envelopeV2 && isTerminalBatch ? this.resolveRunEndSha() : undefined;
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
         timezone,
         threadChatId,
         ...(envelopeV2 ?? {}),
+        ...(typeof endSha === "undefined" ? {} : { endSha }),
       };
 
       await this.runtime.serverPost(payload, token);
@@ -1539,6 +1548,24 @@ export class TerragonDaemon {
    */
   public getFeatureFlag(name: keyof FeatureFlags): boolean {
     return this.featureFlags[name] ?? false;
+  }
+
+  private isTerminalMessage(message: ClaudeMessage): boolean {
+    return (
+      message.type === "custom-stop" ||
+      message.type === "custom-error" ||
+      message.type === "result"
+    );
+  }
+
+  private resolveRunEndSha(): string | null {
+    try {
+      const output = this.runtime.execSync("git rev-parse HEAD");
+      const sha = output.trim().split("\n").at(-1)?.trim() ?? "";
+      return sha || null;
+    } catch {
+      return null;
+    }
   }
 
   private async teardown(): Promise<void> {

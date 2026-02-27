@@ -52,3 +52,18 @@ When a PR is open, you can monitor your continuous integration checks directly f
 | <img src="https://github.githubassets.com/favicons/favicon-pending.png" alt="Pending" className="inline w-4 h-4" /> | Pending | CI checks are currently running        |
 | <img src="https://github.githubassets.com/favicons/favicon-success.png" alt="Success" className="inline w-4 h-4" /> | Success | All CI checks have passed successfully |
 | <img src="https://github.githubassets.com/favicons/favicon-failure.png" alt="Failure" className="inline w-4 h-4" /> | Failure | One or more CI checks have failed      |
+
+### Run Correlation and Ready Guard
+
+Task execution now enforces run correlation and deterministic ready transitions:
+
+- `runId` is the canonical identity for daemon events, preview sessions, validation attempts, and ready checks.
+- Daemon envelope v2 carries `payloadVersion`, `runId`, `eventId`, `seq`, and terminal `endSha`.
+- Duplicate `eventId` and out-of-order `seq` are no-op (`202`) to prevent double-apply mutations.
+- Strict mode (`daemonRunIdStrict=true`) quarantines missing/mismatched run envelopes; legacy mode records `legacy_mode` quarantine and marks UI validation outcomes conservatively.
+- Terminal events with missing `endSha` are quarantined; stale runs are finalized by maintenance backstop to avoid hanging active runs.
+- All PR-ready transitions are wrapped by the shared UI ready guard so new entry points fail closed until explicitly wrapped.
+
+<Callout type="info" title="Retention and Debugging">
+  Quarantine rows are retained for 30 days. Oversized payloads are stored as R2 pointers to avoid row bloat, with hash + 2KB prefix retained inline for quick triage.
+</Callout>

@@ -51,6 +51,16 @@ class R2Client {
 
   // Removed static getR2Client method as client is initialized in constructor
 
+  private toBuffer(data: Buffer | Uint8Array | string): Buffer {
+    if (typeof data === "string") {
+      return Buffer.from(data);
+    }
+    if (Buffer.isBuffer(data)) {
+      return data;
+    }
+    return Buffer.from(data);
+  }
+
   public async generatePresignedUploadUrl(
     filename: string,
     contentType: string,
@@ -92,25 +102,89 @@ class R2Client {
   }
 
   public async generatePresignedDownloadUrl(
-    r2Key: string,
+    key: string,
     expiresInSeconds: number = 15 * 60,
   ): Promise<string> {
-    const command = new GetObjectCommand({
-      Bucket: this.bucketName,
-      Key: r2Key,
-    });
-
     try {
+      const command = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+      });
       return await getSignedUrl(this.s3Client, command, {
         expiresIn: expiresInSeconds,
       });
     } catch (error) {
       console.error(
-        `Error generating pre-signed download URL for ${r2Key}:`,
+        `Error generating pre-signed download URL for ${key}:`,
         error,
       );
       throw new Error(
         `Failed to generate R2 pre-signed download URL: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  public async uploadData({
+    key,
+    data,
+    contentType,
+    contentEncoding,
+    metadata,
+  }: {
+    key: string;
+    data: Buffer | Uint8Array | string;
+    contentType: string;
+    contentEncoding?: string;
+    metadata?: Record<string, string>;
+  }): Promise<{ key: string; size: number; etag: string | null }> {
+    try {
+      const body = this.toBuffer(data);
+      const command = new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+        ContentEncoding: contentEncoding,
+        Metadata: metadata,
+      });
+      const response = await this.s3Client.send(command);
+      return {
+        key,
+        size: body.byteLength,
+        etag: response.ETag ?? null,
+      };
+    } catch (error) {
+      console.error(`Error uploading data to ${key}:`, error);
+      throw new Error(
+        `Failed to upload to R2: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  public async getObjectMetadata(key: string): Promise<{
+    contentType: string | null;
+    contentLength: number;
+    metadata: Record<string, string>;
+  }> {
+    try {
+      const command = new HeadObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+      });
+      const response = await this.s3Client.send(command);
+      return {
+        contentType: response.ContentType ?? null,
+        contentLength: response.ContentLength ?? 0,
+        metadata: response.Metadata ?? {},
+      };
+    } catch (error) {
+      console.error(`Error fetching metadata for ${key}:`, error);
+      throw new Error(
+        `Failed to fetch metadata from R2: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

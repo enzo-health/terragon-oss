@@ -80,11 +80,15 @@ export function useThreadDocumentTitleAndFavicon({
 }
 
 const secondaryPanelIsOpenLocalAtom = atom<boolean>(false);
+const secondaryPanelModeAtom = atom<"diff" | "preview">("diff");
 
 export function useSecondaryPanel() {
   const platform = usePlatform();
   const [isSecondaryPanelOpenLocal, setIsSecondaryPanelOpenLocal] = useAtom(
     secondaryPanelIsOpenLocalAtom,
+  );
+  const [secondaryPanelMode, setSecondaryPanelMode] = useAtom(
+    secondaryPanelModeAtom,
   );
   const [isSecondaryPaneClosedCookie, setIsSecondaryPaneClosedCookie] = useAtom(
     secondaryPaneClosedAtom,
@@ -100,7 +104,9 @@ export function useSecondaryPanel() {
     shouldAutoOpenSecondaryPanel:
       platform === "desktop" && !isSecondaryPaneClosedCookie,
     isSecondaryPanelOpen: isSecondaryPanelOpenLocal,
+    secondaryPanelMode,
     setIsSecondaryPanelOpen,
+    setSecondaryPanelMode,
   };
 }
 

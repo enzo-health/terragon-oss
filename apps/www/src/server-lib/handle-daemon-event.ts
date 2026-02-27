@@ -1,7 +1,9 @@
 import { toDBMessage } from "@/agent/msg/toDBMessage";
+import { readSandboxHeadSha } from "@/agent/sandbox";
 import { getPendingToolCallErrorMessages } from "@/lib/db-message-helpers";
 import { db } from "@/lib/db";
 import { ClaudeMessage } from "@terragon/daemon/shared";
+import { redis } from "@/lib/redis";
 import {
   DBMessage,
   DBSystemMessage,
@@ -13,6 +15,12 @@ import {
   getThreadChat,
   getThreadMinimal,
 } from "@terragon/shared/model/threads";
+import {
+  daemonEventQuarantine,
+  threadRun,
+  threadRunContext,
+  threadUiValidation,
+} from "@terragon/shared/db/schema";
 import { waitUntil } from "@vercel/functions";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
 import { extendSandboxLife } from "@terragon/sandbox";
@@ -44,6 +52,164 @@ import {
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 import { publicAppUrl } from "@terragon/env/next-public";
+import { type DaemonEventQuarantineReason } from "@terragon/shared/types/preview";
+import { and, eq, isNull } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { updateRunLastAcceptedSeq } from "./run-context";
+import {
+  emitPreviewAccessDenied,
+  emitPreviewMetric,
+} from "./preview-observability";
+import { r2Private } from "./r2";
+
+const DAEMON_EVENT_DEDUPE_TTL_SECONDS = 24 * 60 * 60;
+const QUARANTINE_PAYLOAD_PREFIX_BYTES = 2 * 1024;
+const QUARANTINE_INLINE_MAX_BYTES = 16 * 1024;
+const QUARANTINE_OFFLOAD_MAX_PER_MINUTE = 20;
+
+function batchHasLikelyUiSignal(messages: ClaudeMessage[]): boolean {
+  const uiFilePattern = /\.(tsx?|jsx?|css|scss|less|html)\b/i;
+  for (const message of messages) {
+    if (message.type !== "assistant" && message.type !== "user") {
+      continue;
+    }
+    const content = message.message.content;
+    if (typeof content === "string") {
+      if (uiFilePattern.test(content)) {
+        return true;
+      }
+      continue;
+    }
+    for (const part of content) {
+      if (part.type === "text" && uiFilePattern.test(part.text ?? "")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function reserveDaemonEventId({
+  runId,
+  eventId,
+}: {
+  runId: string;
+  eventId: string;
+}): Promise<boolean> {
+  const key = `terragon:v1:preview:daemon-event-id:${runId}:${eventId}`;
+  const result = await redis.set(key, "1", {
+    nx: true,
+    ex: DAEMON_EVENT_DEDUPE_TTL_SECONDS,
+  });
+  return result === "OK";
+}
+
+async function shouldOffloadQuarantinePayload({
+  repoFullName,
+}: {
+  repoFullName: string;
+}): Promise<boolean> {
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  const key = `terragon:v1:preview:daemon-quarantine:offload:${repoFullName}:${minuteBucket}`;
+  const current = await redis.incr(key);
+  if (current === 1) {
+    await redis.expire(key, 120);
+  }
+  return current <= QUARANTINE_OFFLOAD_MAX_PER_MINUTE;
+}
+
+async function persistDaemonEventQuarantine({
+  threadId,
+  threadChatId,
+  runIdOrNull,
+  activeRunId,
+  reason,
+  payload,
+  repoFullName,
+}: {
+  threadId: string;
+  threadChatId: string;
+  runIdOrNull: string | null;
+  activeRunId: string | null;
+  reason: DaemonEventQuarantineReason;
+  payload: Record<string, unknown>;
+  repoFullName: string;
+}): Promise<void> {
+  const serialized = JSON.stringify(payload);
+  const payloadBuffer = Buffer.from(serialized);
+  const payloadPrefix2k = payloadBuffer
+    .subarray(0, QUARANTINE_PAYLOAD_PREFIX_BYTES)
+    .toString("utf8");
+  const payloadHash = createHash("sha256").update(payloadBuffer).digest("hex");
+
+  let payloadR2Key: string | null = null;
+  if (payloadBuffer.byteLength > QUARANTINE_INLINE_MAX_BYTES) {
+    const shouldOffload = await shouldOffloadQuarantinePayload({
+      repoFullName,
+    });
+    if (shouldOffload) {
+      payloadR2Key = [
+        "preview",
+        "daemon-quarantine",
+        threadId,
+        new Date().toISOString().slice(0, 10),
+        `${crypto.randomUUID()}.json`,
+      ].join("/");
+      await r2Private.uploadData({
+        key: payloadR2Key,
+        data: payloadBuffer,
+        contentType: "application/json",
+      });
+    }
+  }
+
+  await db.insert(daemonEventQuarantine).values({
+    threadId,
+    threadChatId,
+    runIdOrNull,
+    activeRunId,
+    reason,
+    payloadHash,
+    payloadPrefix2k,
+    payloadR2Key: payloadR2Key ?? undefined,
+  });
+}
+
+async function applyLegacyModeValidationOutcome({
+  threadId,
+  threadChatId,
+  runId,
+  messages,
+}: {
+  threadId: string;
+  threadChatId: string;
+  runId: string;
+  messages: ClaudeMessage[];
+}): Promise<void> {
+  const likelyUiSignal = batchHasLikelyUiSignal(messages);
+  const outcome = likelyUiSignal ? "inconclusive" : "not_required";
+  const blockingReason = likelyUiSignal
+    ? "Daemon event arrived without runId in legacy mode; UI validation is inconclusive."
+    : null;
+
+  await db
+    .insert(threadUiValidation)
+    .values({
+      threadId,
+      threadChatId,
+      latestRunId: runId,
+      uiValidationOutcome: outcome,
+      blockingReason,
+    })
+    .onConflictDoUpdate({
+      target: [threadUiValidation.threadId, threadUiValidation.threadChatId],
+      set: {
+        latestRunId: runId,
+        uiValidationOutcome: outcome,
+        blockingReason,
+      },
+    });
+}
 
 export async function handleDaemonEvent({
   messages,
@@ -52,6 +218,12 @@ export async function handleDaemonEvent({
   userId,
   timezone,
   contextUsage,
+  payloadVersion = 1,
+  runId = null,
+  eventId = null,
+  seq = null,
+  endSha = null,
+  traceId = crypto.randomUUID(),
 }: {
   messages: ClaudeMessage[];
   threadId: string;
@@ -59,6 +231,12 @@ export async function handleDaemonEvent({
   userId: string;
   timezone: string;
   contextUsage: number | null;
+  payloadVersion?: 1 | 2;
+  runId?: string | null;
+  eventId?: string | null;
+  seq?: number | null;
+  endSha?: string | null;
+  traceId?: string;
 }) {
   console.log(
     "Daemon event",
@@ -66,6 +244,14 @@ export async function handleDaemonEvent({
     threadId,
     "threadChatId",
     threadChatId,
+    "payloadVersion",
+    payloadVersion,
+    "runId",
+    runId,
+    "eventId",
+    eventId,
+    "seq",
+    seq,
     "timezone",
     timezone,
     "messages",
@@ -84,6 +270,264 @@ export async function handleDaemonEvent({
     return { success: false, error: "Thread chat not found", status: 404 };
   }
   console.log("Thread chat status: ", threadChat.status);
+
+  const envelopePayload = {
+    threadId,
+    threadChatId,
+    payloadVersion,
+    runId,
+    eventId,
+    seq,
+    endSha,
+    timezone,
+    messages,
+  } satisfies Record<string, unknown>;
+
+  const runContextRow = await db.query.threadRunContext.findFirst({
+    where: and(
+      eq(threadRunContext.threadId, threadId),
+      eq(threadRunContext.threadChatId, threadChatId),
+    ),
+    columns: {
+      activeRunId: true,
+    },
+  });
+
+  const activeRun =
+    runContextRow?.activeRunId == null
+      ? null
+      : await db.query.threadRun.findFirst({
+          where: and(
+            eq(threadRun.runId, runContextRow.activeRunId),
+            eq(threadRun.threadId, threadId),
+            eq(threadRun.threadChatId, threadChatId),
+          ),
+          columns: {
+            runId: true,
+            frozenFlagSnapshotJson: true,
+            daemonPayloadVersion: true,
+          },
+        });
+
+  const strictRunId = !!activeRun?.frozenFlagSnapshotJson?.daemonRunIdStrict;
+  let resolvedRunId = runId;
+
+  if (!resolvedRunId && activeRun?.runId) {
+    if (strictRunId) {
+      await persistDaemonEventQuarantine({
+        threadId,
+        threadChatId,
+        runIdOrNull: null,
+        activeRunId: activeRun.runId,
+        reason: "missing_run_id",
+        payload: envelopePayload,
+        repoFullName: thread.githubRepoFullName,
+      });
+      emitPreviewMetric({
+        metricName: "preview.strict_mismatch",
+        base: {
+          origin: "daemon_event",
+          traceId,
+          threadId,
+          threadChatId,
+          runId: activeRun.runId,
+        },
+        dimensions: {
+          userId,
+          repoFullName: thread.githubRepoFullName,
+          sandboxProvider: thread.sandboxProvider,
+        },
+        properties: {
+          reason: "missing_run_id",
+          strictMode: true,
+        },
+      });
+      emitPreviewAccessDenied({
+        reason: "binding_mismatch",
+        status: 403,
+        base: {
+          origin: "daemon_event",
+          traceId,
+          threadId,
+          threadChatId,
+          runId: activeRun.runId,
+        },
+        dimensions: {
+          userId,
+          repoFullName: thread.githubRepoFullName,
+          sandboxProvider: thread.sandboxProvider,
+        },
+        properties: {
+          reason: "missing_run_id",
+        },
+      });
+      return { success: true, ackStatus: 202 as const };
+    }
+
+    resolvedRunId = activeRun.runId;
+    await persistDaemonEventQuarantine({
+      threadId,
+      threadChatId,
+      runIdOrNull: null,
+      activeRunId: activeRun.runId,
+      reason: "legacy_mode",
+      payload: envelopePayload,
+      repoFullName: thread.githubRepoFullName,
+    });
+    emitPreviewMetric({
+      metricName: "preview.legacy_mode",
+      base: {
+        origin: "daemon_event",
+        traceId,
+        threadId,
+        threadChatId,
+        runId: activeRun.runId,
+      },
+      dimensions: {
+        userId,
+        repoFullName: thread.githubRepoFullName,
+        sandboxProvider: thread.sandboxProvider,
+      },
+      properties: {
+        reason: "legacy_mode",
+      },
+    });
+    await applyLegacyModeValidationOutcome({
+      threadId,
+      threadChatId,
+      runId: activeRun.runId,
+      messages,
+    });
+  }
+
+  if (runId && activeRun?.runId && runId !== activeRun.runId) {
+    await persistDaemonEventQuarantine({
+      threadId,
+      threadChatId,
+      runIdOrNull: runId,
+      activeRunId: activeRun.runId,
+      reason: "mismatch",
+      payload: envelopePayload,
+      repoFullName: thread.githubRepoFullName,
+    });
+    emitPreviewMetric({
+      metricName: "preview.strict_mismatch",
+      base: {
+        origin: "daemon_event",
+        traceId,
+        threadId,
+        threadChatId,
+        runId: activeRun.runId,
+      },
+      dimensions: {
+        userId,
+        repoFullName: thread.githubRepoFullName,
+        sandboxProvider: thread.sandboxProvider,
+      },
+      properties: {
+        reason: "mismatch",
+        strictMode: strictRunId,
+      },
+    });
+    if (strictRunId) {
+      emitPreviewAccessDenied({
+        reason: "binding_mismatch",
+        status: 403,
+        base: {
+          origin: "daemon_event",
+          traceId,
+          threadId,
+          threadChatId,
+          runId: activeRun.runId,
+        },
+        dimensions: {
+          userId,
+          repoFullName: thread.githubRepoFullName,
+          sandboxProvider: thread.sandboxProvider,
+        },
+        properties: {
+          reason: "mismatch",
+        },
+      });
+    }
+    return { success: true, ackStatus: 202 as const };
+  }
+
+  if (
+    resolvedRunId &&
+    activeRun?.runId === resolvedRunId &&
+    activeRun.daemonPayloadVersion !== null &&
+    activeRun.daemonPayloadVersion !== payloadVersion
+  ) {
+    await persistDaemonEventQuarantine({
+      threadId,
+      threadChatId,
+      runIdOrNull: resolvedRunId,
+      activeRunId: activeRun.runId,
+      reason: "payload_version_mismatch",
+      payload: envelopePayload,
+      repoFullName: thread.githubRepoFullName,
+    });
+    return { success: true, ackStatus: 202 as const };
+  }
+
+  if (
+    payloadVersion === 2 &&
+    resolvedRunId &&
+    (!eventId || !Number.isInteger(seq) || (seq ?? 0) <= 0)
+  ) {
+    await persistDaemonEventQuarantine({
+      threadId,
+      threadChatId,
+      runIdOrNull: resolvedRunId,
+      activeRunId: activeRun?.runId ?? null,
+      reason: "payload_version_mismatch",
+      payload: envelopePayload,
+      repoFullName: thread.githubRepoFullName,
+    });
+    return { success: true, ackStatus: 202 as const };
+  }
+
+  if (resolvedRunId && eventId) {
+    const reserved = await reserveDaemonEventId({
+      runId: resolvedRunId,
+      eventId,
+    });
+    if (!reserved) {
+      return { success: true, ackStatus: 202 as const };
+    }
+  }
+
+  if (resolvedRunId && seq !== null) {
+    const acceptedSeq = await updateRunLastAcceptedSeq({
+      db,
+      runId: resolvedRunId,
+      nextSeq: seq,
+    });
+    if (!acceptedSeq) {
+      return { success: true, ackStatus: 202 as const };
+    }
+  }
+
+  if (
+    resolvedRunId &&
+    activeRun?.runId === resolvedRunId &&
+    activeRun.daemonPayloadVersion === null
+  ) {
+    await db
+      .update(threadRun)
+      .set({
+        daemonPayloadVersion: payloadVersion,
+      })
+      .where(
+        and(
+          eq(threadRun.runId, resolvedRunId),
+          eq(threadRun.threadId, threadId),
+          eq(threadRun.threadChatId, threadChatId),
+          isNull(threadRun.daemonPayloadVersion),
+        ),
+      );
+  }
 
   let isStop = false;
   let isDone = false;
@@ -198,6 +642,94 @@ export async function handleDaemonEvent({
       }
     }
   }
+  const isThreadFinished = isStop || isDone || isError;
+  let forceWorkingTreeFallback = false;
+
+  if (isThreadFinished && payloadVersion === 2 && resolvedRunId && !endSha) {
+    await persistDaemonEventQuarantine({
+      threadId,
+      threadChatId,
+      runIdOrNull: resolvedRunId,
+      activeRunId: activeRun?.runId ?? null,
+      reason: "missing_end_sha",
+      payload: envelopePayload,
+      repoFullName: thread.githubRepoFullName,
+    });
+    emitPreviewMetric({
+      metricName: "preview.missing_end_sha",
+      base: {
+        origin: "daemon_event",
+        traceId,
+        threadId,
+        threadChatId,
+        runId: resolvedRunId,
+      },
+      dimensions: {
+        userId,
+        repoFullName: thread.githubRepoFullName,
+        sandboxProvider: thread.sandboxProvider,
+      },
+      properties: {
+        strictMode: strictRunId,
+      },
+    });
+    forceWorkingTreeFallback = true;
+  }
+
+  if (resolvedRunId) {
+    const now = new Date();
+    const terminalStatus = isError ? "failed" : "finished";
+    let runEndShaToPersist: string | null = endSha;
+
+    if (isThreadFinished) {
+      const liveHeadSha = await readSandboxHeadSha({
+        sandboxId: thread.codesandboxId,
+        sandboxProvider: thread.sandboxProvider,
+      });
+      if (!endSha) {
+        runEndShaToPersist = liveHeadSha ?? null;
+        forceWorkingTreeFallback = true;
+      } else {
+        forceWorkingTreeFallback = !liveHeadSha || liveHeadSha !== endSha;
+        if (forceWorkingTreeFallback) {
+          runEndShaToPersist = liveHeadSha ?? null;
+        }
+      }
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(threadRun)
+        .set({
+          status: isThreadFinished ? terminalStatus : "running",
+          ...(isThreadFinished ? { endedAt: now } : {}),
+          ...(isThreadFinished && eventId ? { terminalEventId: eventId } : {}),
+          ...(isThreadFinished ? { runEndSha: runEndShaToPersist } : {}),
+        })
+        .where(
+          and(
+            eq(threadRun.runId, resolvedRunId),
+            eq(threadRun.threadId, threadId),
+            eq(threadRun.threadChatId, threadChatId),
+          ),
+        );
+
+      await tx
+        .update(threadRunContext)
+        .set({
+          activeStatus: isThreadFinished ? terminalStatus : "running",
+          activeUpdatedAt: now,
+        })
+        .where(
+          and(
+            eq(threadRunContext.threadId, threadId),
+            eq(threadRunContext.threadChatId, threadChatId),
+            eq(threadRunContext.activeRunId, resolvedRunId),
+          ),
+        );
+    });
+  }
+
   waitUntil(
     trackUsageEvents({
       userId,
@@ -205,7 +737,6 @@ export async function handleDaemonEvent({
       agentDurationMs: durationMs,
     }),
   );
-  const isThreadFinished = isStop || isDone || isError;
   const statusBeforeUpdate = threadChat.status;
   if (isThreadFinished) {
     getPostHogServer().capture({
@@ -222,6 +753,7 @@ export async function handleDaemonEvent({
         isRateLimited,
         rateLimitResetTime,
         isPromptTooLong,
+        forceWorkingTreeFallback,
       },
     });
   }

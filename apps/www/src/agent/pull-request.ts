@@ -17,11 +17,17 @@ import {
   updatePRContent,
 } from "@/server-lib/generate-pr-content";
 import { generateCommitMessage } from "@/server-lib/generate-commit-message";
+import { markPullRequestReadyForReview } from "@/server-lib/github-pr";
 import {
   getOctokitForUserOrThrow,
   parseRepoFullName,
   getExistingPRForBranch,
+  updateGitHubPR,
 } from "@/lib/github";
+import {
+  convertToDraftOnceForUiGuard,
+  withUiReadyGuard,
+} from "@/server-lib/preview-validation";
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
 import {
@@ -62,6 +68,31 @@ export async function openPullRequestForThread({
   const thread = await getThread({ db, threadId, userId });
   if (!thread) {
     throw new ThreadError("unknown-error", "Thread not found", null);
+  }
+  let effectivePrType: "draft" | "ready" = prType;
+  if (prType === "ready") {
+    // UI_READY_GUARD:openPullRequestForThread
+    effectivePrType = await withUiReadyGuard<"draft" | "ready">({
+      entrypoint: "openPullRequestForThread",
+      threadId,
+      action: async () => "ready" as const,
+      onBlocked: async (decision) => {
+        if (thread.githubPRNumber && decision.runId && decision.threadChatId) {
+          const octokitForDowngrade = await getOctokitForUserOrThrow({
+            userId,
+          });
+          await convertToDraftOnceForUiGuard({
+            threadId,
+            runId: decision.runId,
+            threadChatId: decision.threadChatId,
+            repoFullName: thread.githubRepoFullName,
+            prNumber: thread.githubPRNumber,
+            octokit: octokitForDowngrade,
+          });
+        }
+        return "draft" as const;
+      },
+    });
   }
   const [currentBranch, defaultBranch] = await Promise.all([
     getCurrentBranchName(session),
@@ -156,7 +187,43 @@ export async function openPullRequestForThread({
       baseBranchName: baseBranch,
     }),
   ]);
+  const resolvedThreadChatId =
+    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
+  if (!thread.githubPRNumber && sdlcLoopOptIn) {
+    if (!resolvedThreadChatId) {
+      throw new ThreadError(
+        "unknown-error",
+        "Missing thread chat context required for SDLC pre-PR review",
+        null,
+      );
+    }
+    const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
+      thread,
+      userId,
+      threadChatId: resolvedThreadChatId,
+      session,
+      diffOutput: gitDiffForSdlcPrePr,
+    });
+    if (!shouldCreateOrLinkPr) {
+      throw new ThreadError(
+        "unknown-error",
+        "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
+        null,
+      );
+    }
+  }
+
   if (existingPr) {
+    const existingPrNumber = existingPr.number;
+    if (existingPr.state === "closed") {
+      await octokitToCreatePR.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: existingPrNumber,
+        state: "open",
+      });
+    }
+
     await Promise.all([
       updateThread({
         db,
@@ -164,50 +231,58 @@ export async function openPullRequestForThread({
         threadId,
         updates: {
           branchName: currentBranch,
-          githubPRNumber: existingPr.number,
+          githubPRNumber: existingPrNumber,
         },
       }),
       upsertGithubPR({
         db,
         repoFullName: thread.githubRepoFullName,
-        number: existingPr.number,
+        number: existingPrNumber,
         updates: {
           status: getGithubPRStatus(existingPr),
         },
       }),
     ]);
-    await maybeEnsureSdlcLoopEnrollment(existingPr.number);
+    await maybeEnsureSdlcLoopEnrollment(existingPrNumber);
     await updatePullRequestForThread({
       threadId,
       userId,
       octokit: octokitToCreatePR,
     });
+    if (effectivePrType === "ready") {
+      // UI_READY_GUARD:reopenAfterPush
+      await withUiReadyGuard({
+        entrypoint: "reopenAfterPush",
+        threadId,
+        action: async () => {
+          await markPullRequestReadyForReview({
+            octokit: octokitToCreatePR,
+            owner,
+            repo,
+            prNumber: existingPrNumber,
+          });
+        },
+        onBlocked: async (decision) => {
+          if (decision.runId && decision.threadChatId) {
+            await convertToDraftOnceForUiGuard({
+              threadId,
+              runId: decision.runId,
+              threadChatId: decision.threadChatId,
+              repoFullName: thread.githubRepoFullName,
+              prNumber: existingPrNumber,
+              octokit: octokitToCreatePR,
+            });
+          }
+        },
+      });
+    }
+    await updateGitHubPR({
+      repoFullName: thread.githubRepoFullName,
+      prNumber: existingPrNumber,
+      createIfNotFound: false,
+    });
     return;
   }
-  const resolvedThreadChatId =
-    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
-  if (!resolvedThreadChatId) {
-    throw new ThreadError(
-      "unknown-error",
-      "Missing thread chat context required for SDLC pre-PR review",
-      null,
-    );
-  }
-  const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
-    thread,
-    userId,
-    threadChatId: resolvedThreadChatId,
-    session,
-    diffOutput: gitDiffForSdlcPrePr,
-  });
-  if (!shouldCreateOrLinkPr) {
-    throw new ThreadError(
-      "unknown-error",
-      "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
-      null,
-    );
-  }
-
   // Otherwise, generate a new PR.
   let prTitle = "Update code changes";
   let prBody = "Updates made to the codebase.";
@@ -247,7 +322,7 @@ export async function openPullRequestForThread({
     body: prBody,
     head: currentBranch,
     base: baseBranch,
-    draft: prType === "draft",
+    draft: effectivePrType === "draft",
   });
 
   await Promise.all([

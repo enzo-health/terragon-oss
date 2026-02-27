@@ -125,3 +125,187 @@ export async function checkShadowBanTaskCreationRateLimit(userId: string) {
   }
   return result;
 }
+
+type PreviewRateLimitDimension = "user" | "ip" | "session";
+type PreviewRateLimitScope = "start" | "exchange" | "proxy";
+
+export class PreviewRateLimitError extends Error {
+  constructor(
+    public readonly dimension: PreviewRateLimitDimension,
+    public readonly nextAllowedAt: string,
+  ) {
+    super(`Preview rate limit exceeded for ${dimension}`);
+    this.name = "PreviewRateLimitError";
+  }
+}
+
+function createPreviewLimiter({
+  prefix,
+  max,
+  window,
+}: {
+  prefix: string;
+  max: number;
+  window: `${number}${"s" | "m" | "h" | "d"}`;
+}) {
+  return new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(max, window),
+    prefix: `${PREFIX}:${prefix}`,
+  });
+}
+
+const previewRateLimiters = {
+  start: {
+    userSustained: createPreviewLimiter({
+      prefix: "preview-start-user-sustained",
+      max: 30,
+      window: "1m",
+    }),
+    userBurst: createPreviewLimiter({
+      prefix: "preview-start-user-burst",
+      max: 10,
+      window: "10s",
+    }),
+    ipSustained: createPreviewLimiter({
+      prefix: "preview-start-ip-sustained",
+      max: 120,
+      window: "1m",
+    }),
+    ipBurst: createPreviewLimiter({
+      prefix: "preview-start-ip-burst",
+      max: 30,
+      window: "10s",
+    }),
+  },
+  exchange: {
+    userSustained: createPreviewLimiter({
+      prefix: "preview-exchange-user-sustained",
+      max: 60,
+      window: "1m",
+    }),
+    userBurst: createPreviewLimiter({
+      prefix: "preview-exchange-user-burst",
+      max: 20,
+      window: "10s",
+    }),
+    ipSustained: createPreviewLimiter({
+      prefix: "preview-exchange-ip-sustained",
+      max: 240,
+      window: "1m",
+    }),
+    ipBurst: createPreviewLimiter({
+      prefix: "preview-exchange-ip-burst",
+      max: 60,
+      window: "10s",
+    }),
+  },
+  proxy: {
+    sessionSustained: createPreviewLimiter({
+      prefix: "preview-proxy-session-sustained",
+      max: 1200,
+      window: "1m",
+    }),
+    sessionBurst: createPreviewLimiter({
+      prefix: "preview-proxy-session-burst",
+      max: 240,
+      window: "10s",
+    }),
+    ipSustained: createPreviewLimiter({
+      prefix: "preview-proxy-ip-sustained",
+      max: 3600,
+      window: "1m",
+    }),
+    ipBurst: createPreviewLimiter({
+      prefix: "preview-proxy-ip-burst",
+      max: 600,
+      window: "10s",
+    }),
+  },
+} as const;
+
+async function limitPreviewDimension({
+  limiter,
+  key,
+  dimension,
+}: {
+  limiter: Ratelimit;
+  key: string;
+  dimension: PreviewRateLimitDimension;
+}) {
+  const result = await limiter.limit(key);
+  if (result.success) {
+    return;
+  }
+
+  throw new PreviewRateLimitError(
+    dimension,
+    new Date(result.reset).toISOString(),
+  );
+}
+
+export async function enforcePreviewRateLimit({
+  scope,
+  userId,
+  ip,
+  previewSessionId,
+}: {
+  scope: PreviewRateLimitScope;
+  userId?: string;
+  ip: string;
+  previewSessionId?: string;
+}) {
+  if (scope === "start" || scope === "exchange") {
+    if (!userId) {
+      throw new Error(`Preview ${scope} rate limiting requires userId`);
+    }
+    const group = previewRateLimiters[scope];
+    await limitPreviewDimension({
+      limiter: group.userSustained,
+      key: userId,
+      dimension: "user",
+    });
+    await limitPreviewDimension({
+      limiter: group.userBurst,
+      key: userId,
+      dimension: "user",
+    });
+    await limitPreviewDimension({
+      limiter: group.ipSustained,
+      key: ip,
+      dimension: "ip",
+    });
+    await limitPreviewDimension({
+      limiter: group.ipBurst,
+      key: ip,
+      dimension: "ip",
+    });
+    return;
+  }
+
+  if (!previewSessionId) {
+    throw new Error("Preview proxy rate limiting requires previewSessionId");
+  }
+
+  const group = previewRateLimiters.proxy;
+  await limitPreviewDimension({
+    limiter: group.sessionSustained,
+    key: previewSessionId,
+    dimension: "session",
+  });
+  await limitPreviewDimension({
+    limiter: group.sessionBurst,
+    key: previewSessionId,
+    dimension: "session",
+  });
+  await limitPreviewDimension({
+    limiter: group.ipSustained,
+    key: ip,
+    dimension: "ip",
+  });
+  await limitPreviewDimension({
+    limiter: group.ipBurst,
+    key: ip,
+    dimension: "ip",
+  });
+}

@@ -6,7 +6,10 @@ import {
   getIsIssueAuthor,
   parseRepoFullName,
 } from "@/lib/github";
-import { getGithubPR } from "@terragon/shared/model/github";
+import {
+  getGithubPR,
+  getThreadsForGithubPR,
+} from "@terragon/shared/model/github";
 import { handleAppMention } from "./handle-app-mention";
 import {
   isAppMentioned,
@@ -32,6 +35,10 @@ import {
 } from "@/server-lib/automations";
 import { Automation } from "@terragon/shared/db/types";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
+import {
+  convertToDraftOnceForUiGuard,
+  withUiReadyGuard,
+} from "@/server-lib/preview-validation";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -504,6 +511,46 @@ export async function handlePullRequestStatusChange(
       prNumber,
       createIfNotFound: false,
     });
+    // UI_READY_GUARD:webhookAutoReady
+    if (
+      (event.action === "ready_for_review" ||
+        event.action === "synchronize" ||
+        event.action === "reopened") &&
+      !event.pull_request.draft
+    ) {
+      const matchingThreads = await getThreadsForGithubPR({
+        db,
+        repoFullName: repoName,
+        prNumber,
+      });
+      if (matchingThreads.length > 0) {
+        const [owner, repo] = parseRepoFullName(repoName);
+        const octokit = await getOctokitForApp({ owner, repo });
+        for (const threadRecord of matchingThreads) {
+          if (threadRecord.archived) {
+            continue;
+          }
+          await withUiReadyGuard({
+            entrypoint: "webhookAutoReady",
+            threadId: threadRecord.id,
+            action: async () => undefined,
+            onBlocked: async (decision) => {
+              if (!decision.runId || !decision.threadChatId) {
+                return;
+              }
+              await convertToDraftOnceForUiGuard({
+                threadId: threadRecord.id,
+                runId: decision.runId,
+                threadChatId: decision.threadChatId,
+                repoFullName: repoName,
+                prNumber,
+                octokit,
+              });
+            },
+          });
+        }
+      }
+    }
     await syncSdlcLoopStateForPullRequestLifecycle({
       repoFullName: repoName,
       prNumber,

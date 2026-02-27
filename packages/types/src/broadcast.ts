@@ -1,6 +1,14 @@
 import * as z from "zod/v4";
 import type { SandboxProvider } from "./sandbox";
 
+const previewBroadcastSchemaVersion = 1 as const;
+const previewEventNames = [
+  "v1.preview.session.state_changed",
+  "v1.preview.validation.attempt_started",
+  "v1.preview.validation.attempt_finished",
+  "v1.preview.access.denied",
+] as const;
+
 export type BroadcastChannelUser = {
   type: "user";
   id: string;
@@ -14,7 +22,20 @@ export type BroadcastChannelSandbox = {
   sandboxProvider: SandboxProvider;
 };
 
-export type BroadcastChannel = BroadcastChannelUser | BroadcastChannelSandbox;
+export type BroadcastChannelPreview = {
+  type: "preview";
+  previewSessionId: string;
+  threadId: string;
+  threadChatId: string;
+  runId: string;
+  userId: string;
+  schemaVersion: number;
+};
+
+export type BroadcastChannel =
+  | BroadcastChannelUser
+  | BroadcastChannelSandbox
+  | BroadcastChannelPreview;
 
 const BroadcastMessageThreadDataSchema = z.object({
   isThreadUnread: z.boolean().optional(),
@@ -95,6 +116,22 @@ export type BroadcastSandboxMessage = z.infer<
   typeof BroadcastSandboxMessageSchema
 >;
 
+const BroadcastPreviewMessageSchema = z.object({
+  type: z.literal("preview"),
+  previewSessionId: z.string(),
+  threadId: z.string(),
+  threadChatId: z.string(),
+  runId: z.string(),
+  userId: z.string(),
+  schemaVersion: z.literal(previewBroadcastSchemaVersion),
+  eventName: z.enum(previewEventNames),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type BroadcastPreviewMessage = z.infer<
+  typeof BroadcastPreviewMessageSchema
+>;
+
 export const BroadcastClientMessageSchema = z.object({
   type: z.literal("sandbox"),
   id: z.string(),
@@ -115,7 +152,10 @@ export type BroadcastClientMessage = z.infer<
   typeof BroadcastClientMessageSchema
 >;
 
-export type BroadcastMessage = BroadcastUserMessage | BroadcastSandboxMessage;
+export type BroadcastMessage =
+  | BroadcastUserMessage
+  | BroadcastSandboxMessage
+  | BroadcastPreviewMessage;
 
 export function getBroadcastChannelStr(channel: BroadcastChannel) {
   switch (channel.type) {
@@ -127,6 +167,15 @@ export function getBroadcastChannelStr(channel: BroadcastChannel) {
         threadId: channel.threadId,
         sandboxId: channel.sandboxId,
         sandboxProvider: channel.sandboxProvider,
+      })}`;
+    case "preview":
+      return `preview:${jsonToBase64({
+        previewSessionId: channel.previewSessionId,
+        threadId: channel.threadId,
+        threadChatId: channel.threadChatId,
+        runId: channel.runId,
+        userId: channel.userId,
+        schemaVersion: channel.schemaVersion,
       })}`;
     default:
       const _exhaustiveCheck: never = channel;
@@ -160,6 +209,45 @@ export function parseBroadcastChannel(
     } catch (error) {
       console.error(
         `[broadcast] error parsing broadcast channel: ${id}`,
+        error,
+      );
+      return null;
+    }
+  }
+  if (type === "preview") {
+    try {
+      const {
+        previewSessionId,
+        threadId,
+        threadChatId,
+        runId,
+        userId,
+        schemaVersion,
+      } = base64ToJson(id);
+      if (
+        !previewSessionId ||
+        !threadId ||
+        !threadChatId ||
+        !runId ||
+        !userId
+      ) {
+        return null;
+      }
+      if (schemaVersion !== previewBroadcastSchemaVersion) {
+        return null;
+      }
+      return {
+        type,
+        previewSessionId,
+        threadId,
+        threadChatId,
+        runId,
+        userId,
+        schemaVersion,
+      };
+    } catch (error) {
+      console.error(
+        `[broadcast] error parsing preview broadcast channel: ${id}`,
         error,
       );
       return null;

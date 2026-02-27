@@ -3,6 +3,21 @@ title: Release Notes
 description: Stay up to date with the latest changes and improvements to Terragon.
 ---
 
+## February 26, 2026
+
+**Features**
+
+- In [early access](/docs/resources/early-access-features):
+  - **Sandbox preview run correlation hardening**: Preview/validation execution now uses canonical `runId` propagation across start, daemon envelope v2, and daemon-event ingestion. This adds strict mismatch quarantine, payload-version negotiation, event dedupe (`eventId`) and ordering (`seq`) protections, plus terminal `endSha` correlation.
+  - **Preview security and observability contracts**: Added schema-versioned preview observability events (`schemaVersion`, `origin`, `tsServer`, `traceId`) with `preview.*` counters for strict mismatches, legacy mode handling, and missing terminal SHA.
+  - **Daemon quarantine durability improvements**: Quarantine payloads now persist hash + 2KB prefix inline, with oversized payloads offloaded to private R2 pointers and 30-day retention + maintenance purge behavior.
+  - **Preview access cache semantics**: Added explicit repo-access cache keys and TTL behavior (`60s` positive, `5s` negative), centralized invalidation helper, and fail-closed behavior for cache outages on exchange/proxy paths.
+
+**UX Improvements & Bug Fixes**
+
+- Validation now defaults to `working-tree-fallback` when terminal SHA is unavailable or cannot be trusted against live sandbox HEAD, preventing false “clean SHA diff” assumptions.
+- Maintenance finalization now includes quarantine retention purge accounting for easier on-call triage.
+
 ## February 25, 2026
 
 **Features**

@@ -28,6 +28,7 @@ export const DaemonMessageClaudeSchema = z.object({
   sessionId: z.string().nullable(),
   threadId: z.string(),
   threadChatId: z.string(),
+  runId: z.string().optional(),
   featureFlags: z.record(z.string(), z.boolean()).optional() as z.ZodOptional<
     z.ZodType<FeatureFlags>
   >,
@@ -157,4 +158,5 @@ export type DaemonEventAPIBody = {
   eventId?: string;
   runId?: string;
   seq?: number;
+  endSha?: string | null;
 };

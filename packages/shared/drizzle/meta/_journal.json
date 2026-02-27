@@ -43,6 +43,13 @@
       "when": 1772089864235,
       "tag": "0005_acoustic_ken_ellis",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1772177279306,
+      "tag": "0006_thread_run_preview_daemon",
+      "breakpoints": true
     }
   ]
 }

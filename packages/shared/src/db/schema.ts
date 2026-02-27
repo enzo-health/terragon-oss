@@ -7,6 +7,7 @@ import {
   integer,
   index,
   uniqueIndex,
+  primaryKey,
   AnyPgColumn,
   numeric,
   bigint,
@@ -57,6 +58,20 @@ import {
   SdlcVideoCaptureStatus,
   SdlcVideoFailureClass,
 } from "./types";
+import type {
+  DaemonEventQuarantineReason,
+  FrozenRunFlagSnapshot,
+  PreviewOpenMode,
+  PreviewPinnedUpstreamIps,
+  PreviewValidationAttemptStatus,
+  PreviewValidationDiffSource,
+  PreviewSessionState,
+  PreviewUnsupportedReason,
+  ThreadRunStatus,
+  ThreadRunTriggerSource,
+  ThreadUiReadyDowngradeState,
+  ThreadUiValidationOutcome,
+} from "../types/preview";
 import {
   AutomationAction,
   AutomationTriggerType,
@@ -382,6 +397,307 @@ export const threadChat = pgTable(
     index("thread_chat_user_id_thread_id_index").on(
       table.userId,
       table.threadId,
+    ),
+  ],
+);
+
+export const threadRun = pgTable(
+  "thread_run",
+  {
+    runId: text("run_id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    startRequestId: text("start_request_id").notNull(),
+    triggerSource: text("trigger_source")
+      .$type<ThreadRunTriggerSource>()
+      .notNull(),
+    status: text("status")
+      .$type<ThreadRunStatus>()
+      .notNull()
+      .default("booting"),
+    codesandboxId: text("codesandbox_id"),
+    sandboxProvider: text("sandbox_provider").$type<SandboxProvider>(),
+    runStartSha: text("run_start_sha"),
+    runEndSha: text("run_end_sha"),
+    frozenFlagSnapshotJson: jsonb("frozen_flag_snapshot_json")
+      .$type<FrozenRunFlagSnapshot>()
+      .notNull(),
+    terminalEventId: text("terminal_event_id"),
+    lastAcceptedSeq: integer("last_accepted_seq"),
+    daemonPayloadVersion: integer("daemon_payload_version"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    endedAt: timestamp("ended_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("thread_run_thread_chat_start_request_unique").on(
+      table.threadId,
+      table.threadChatId,
+      table.startRequestId,
+    ),
+    uniqueIndex("thread_run_active_thread_chat_unique")
+      .on(table.threadId, table.threadChatId)
+      .where(sql`${table.status} in ('booting', 'running', 'validating')`),
+    index("thread_run_thread_chat_created_at_index").on(
+      table.threadId,
+      table.threadChatId,
+      table.createdAt,
+    ),
+    index("thread_run_status_index").on(table.status),
+    index("thread_run_terminal_event_id_index").on(table.terminalEventId),
+  ],
+);
+
+export const threadRunContext = pgTable(
+  "thread_run_context",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    activeRunId: text("active_run_id")
+      .notNull()
+      .references(() => threadRun.runId, { onDelete: "cascade" }),
+    activeCodesandboxId: text("active_codesandbox_id"),
+    activeSandboxProvider: text(
+      "active_sandbox_provider",
+    ).$type<SandboxProvider>(),
+    activeStatus: text("active_status")
+      .$type<ThreadRunStatus>()
+      .notNull()
+      .default("booting"),
+    version: integer("version").notNull().default(0),
+    activeUpdatedAt: timestamp("active_updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.threadId, table.threadChatId],
+      name: "thread_run_context_thread_chat_pk",
+    }),
+    index("thread_run_context_active_run_id_index").on(table.activeRunId),
+  ],
+);
+
+export const threadUiValidation = pgTable(
+  "thread_ui_validation",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    latestRunId: text("latest_run_id").references(() => threadRun.runId, {
+      onDelete: "set null",
+    }),
+    uiValidationOutcome: text("ui_validation_outcome")
+      .$type<ThreadUiValidationOutcome>()
+      .notNull()
+      .default("not_required"),
+    readyDowngradeState: text("ready_downgrade_state")
+      .$type<ThreadUiReadyDowngradeState>()
+      .notNull()
+      .default("not_attempted"),
+    readyDowngradeLastAttemptAt: timestamp("ready_downgrade_last_attempt_at"),
+    blockingReason: text("blocking_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.threadId, table.threadChatId],
+      name: "thread_ui_validation_thread_chat_pk",
+    }),
+    index("thread_ui_validation_latest_run_id_index").on(table.latestRunId),
+  ],
+);
+
+export const previewSession = pgTable(
+  "preview_session",
+  {
+    previewSessionId: text("preview_session_id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => threadRun.runId, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    codesandboxId: text("codesandbox_id").notNull(),
+    sandboxProvider: text("sandbox_provider")
+      .$type<SandboxProvider>()
+      .notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    previewCommand: text("preview_command"),
+    previewPort: integer("preview_port"),
+    previewHealthPath: text("preview_health_path"),
+    previewRequiresWebsocket: boolean("preview_requires_websocket")
+      .notNull()
+      .default(false),
+    previewOpenMode: text("preview_open_mode")
+      .$type<PreviewOpenMode>()
+      .notNull()
+      .default("iframe"),
+    upstreamOrigin: text("upstream_origin"),
+    upstreamOriginToken: text("upstream_origin_token"),
+    providerAuthHeadersJson: jsonb("provider_auth_headers_json").$type<
+      Record<string, string>
+    >(),
+    pinnedUpstreamIpsJson: jsonb(
+      "pinned_upstream_ips_json",
+    ).$type<PreviewPinnedUpstreamIps>(),
+    revocationVersion: integer("revocation_version").notNull().default(1),
+    lastDnsCheckAt: timestamp("last_dns_check_at"),
+    dnsRefreshedOnce: boolean("dns_refreshed_once").notNull().default(false),
+    state: text("state")
+      .$type<PreviewSessionState>()
+      .notNull()
+      .default("pending"),
+    unsupportedReason:
+      text("unsupported_reason").$type<PreviewUnsupportedReason>(),
+    expiresAt: timestamp("expires_at"),
+    revokedAt: timestamp("revoked_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("preview_session_run_created_at_index").on(
+      table.runId,
+      table.createdAt,
+    ),
+    index("preview_session_thread_created_at_index").on(
+      table.threadId,
+      table.createdAt,
+    ),
+    index("preview_session_state_index").on(table.state),
+  ],
+);
+
+export const previewValidationAttempt = pgTable(
+  "preview_validation_attempt",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => threadRun.runId, { onDelete: "cascade" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    status: text("status")
+      .$type<PreviewValidationAttemptStatus>()
+      .notNull()
+      .default("pending"),
+    command: text("command"),
+    exitCode: integer("exit_code"),
+    durationMs: integer("duration_ms"),
+    diffSource: text("diff_source")
+      .$type<PreviewValidationDiffSource>()
+      .notNull()
+      .default("sha"),
+    diffSourceContextJson: jsonb("diff_source_context_json").$type<
+      Record<string, unknown>
+    >(),
+    matchedUiRulesJson: jsonb("matched_ui_rules_json").$type<
+      Record<string, unknown>
+    >(),
+    capabilitySnapshotJson: jsonb("capability_snapshot_json").$type<
+      Record<string, unknown>
+    >(),
+    summaryR2Key: text("summary_r2_key"),
+    summarySha256: text("summary_sha256"),
+    summaryBytes: integer("summary_bytes"),
+    stdoutR2Key: text("stdout_r2_key"),
+    stdoutSha256: text("stdout_sha256"),
+    stdoutBytes: integer("stdout_bytes"),
+    stderrR2Key: text("stderr_r2_key"),
+    stderrSha256: text("stderr_sha256"),
+    stderrBytes: integer("stderr_bytes"),
+    traceR2Key: text("trace_r2_key"),
+    traceSha256: text("trace_sha256"),
+    traceBytes: integer("trace_bytes"),
+    screenshotR2Key: text("screenshot_r2_key"),
+    screenshotSha256: text("screenshot_sha256"),
+    screenshotBytes: integer("screenshot_bytes"),
+    videoR2Key: text("video_r2_key"),
+    videoSha256: text("video_sha256"),
+    videoBytes: integer("video_bytes"),
+    videoUnsupportedReason: text("video_unsupported_reason"),
+    timeoutCode: text("timeout_code"),
+    timeoutReason: text("timeout_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.threadId, table.runId, table.attemptNumber],
+      name: "preview_validation_attempt_thread_run_attempt_pk",
+    }),
+    index("preview_validation_attempt_run_id_index").on(table.runId),
+    index("preview_validation_attempt_thread_created_at_index").on(
+      table.threadId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const daemonEventQuarantine = pgTable(
+  "daemon_event_quarantine",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id")
+      .notNull()
+      .references(() => threadChat.id, { onDelete: "cascade" }),
+    runIdOrNull: text("run_id_or_null"),
+    activeRunId: text("active_run_id"),
+    reason: text("reason").$type<DaemonEventQuarantineReason>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    payloadPrefix2k: text("payload_prefix_2k").notNull(),
+    payloadR2Key: text("payload_r2_key"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("daemon_event_quarantine_thread_created_at_index").on(
+      table.threadId,
+      table.createdAt,
     ),
   ],
 );

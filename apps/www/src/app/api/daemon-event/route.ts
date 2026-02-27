@@ -342,9 +342,15 @@ export async function POST(request: Request) {
     messages,
     threadId,
     threadChatId = LEGACY_THREAD_CHAT_ID,
+    payloadVersion: rawPayloadVersion = 1,
+    runId = null,
+    eventId = null,
+    seq = null,
+    endSha = null,
     // Old clients don't send the timezone, so we fallback to UTC
     timezone = "UTC",
   } = json;
+  const payloadVersion: 1 | 2 = rawPayloadVersion === 2 ? 2 : 1;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
   const userId = await getUserIdOrNullFromDaemonToken(request);
   if (!userId) {
@@ -530,6 +536,12 @@ export async function POST(request: Request) {
       userId,
       timezone,
       contextUsage: computedContextUsage ?? null,
+      payloadVersion,
+      runId,
+      eventId,
+      seq,
+      endSha,
+      traceId: crypto.randomUUID(),
     });
   } catch (error) {
     await rollbackClaimedSignal({
@@ -545,6 +557,20 @@ export async function POST(request: Request) {
       error: result.error,
     });
     return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (result.ackStatus === 202) {
+    await rollbackClaimedSignal({
+      reason: "handle_daemon_event_ack_202",
+    });
+    return Response.json(
+      {
+        success: true,
+        acknowledgedEventId: envelopeV2?.eventId ?? null,
+        acknowledgedSeq: envelopeV2?.seq ?? null,
+      },
+      { status: 202 },
+    );
   }
 
   if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {

@@ -170,6 +170,7 @@ export async function checkpointThreadAndPush({
     if (diffOutput && (diffOutputHasChanged || !thread.githubPRNumber)) {
       if (createPR) {
         try {
+          // UI_READY_GUARD:checkpointAutoReady
           await openPullRequestForThread({
             userId,
             threadId,
