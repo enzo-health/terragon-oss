@@ -11,6 +11,7 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
+  transitionSdlcLoopState,
 } from "@terragon/shared/model/sdlc-loop";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
@@ -142,12 +143,10 @@ async function claimEnrolledLoopDaemonEvent({
         };
       }
 
-      // Recovery path: the prior worker likely crashed after side effects but
-      // before commit. Mark this stale claim committed to avoid permanent 409
-      // loops without replaying daemon side effects.
-      const staleCommit = await tx
-        .update(schema.sdlcLoopSignalInbox)
-        .set({ committedAt: new Date() })
+      // Recovery path: stale unprocessed claims are reclaimed so the daemon
+      // event can be safely replayed and committed by the current worker.
+      const staleReclaim = await tx
+        .delete(schema.sdlcLoopSignalInbox)
         .where(
           and(
             eq(schema.sdlcLoopSignalInbox.id, existing.id),
@@ -163,9 +162,9 @@ async function claimEnrolledLoopDaemonEvent({
           ),
         )
         .returning({ id: schema.sdlcLoopSignalInbox.id });
-      if (staleCommit.length > 0) {
+      if (staleReclaim.length > 0) {
         console.warn(
-          "[sdlc-loop] recovered stale daemon signal claim by marking committed",
+          "[sdlc-loop] reclaimed stale daemon signal claim for replay",
           {
             loopId,
             threadId,
@@ -174,12 +173,12 @@ async function claimEnrolledLoopDaemonEvent({
             claimAgeMs,
           },
         );
+      } else {
+        return {
+          claimed: false,
+          reason: "claim_in_progress",
+        };
       }
-
-      return {
-        claimed: false,
-        reason: "duplicate_event",
-      };
     }
 
     const [sequenceState] = await tx
@@ -581,6 +580,50 @@ export async function POST(request: Request) {
           signalInboxId: claimedSignalInboxId,
           eventId: envelopeV2.eventId,
           seq: envelopeV2.seq,
+        },
+      );
+    }
+  }
+
+  if (enrolledLoop && envelopeV2) {
+    try {
+      const nextLoopVersion =
+        typeof enrolledLoop.loopVersion === "number" &&
+        Number.isFinite(enrolledLoop.loopVersion)
+          ? Math.max(Math.trunc(enrolledLoop.loopVersion), 0) + 1
+          : 1;
+      const transitionOutcome = await transitionSdlcLoopState({
+        db,
+        loopId: enrolledLoop.id,
+        transitionEvent: "implementation_progress",
+        loopVersion: nextLoopVersion,
+        ...(typeof enrolledLoop.currentHeadSha === "string"
+          ? { headSha: enrolledLoop.currentHeadSha }
+          : {}),
+        now: new Date(),
+      });
+      if (transitionOutcome === "updated") {
+        console.log(
+          "[sdlc-loop] transitioned enrolled loop to implementing from daemon event",
+          {
+            userId,
+            threadId,
+            loopId: enrolledLoop.id,
+            eventId: envelopeV2.eventId,
+            seq: envelopeV2.seq,
+          },
+        );
+      }
+    } catch (error) {
+      console.error(
+        "[sdlc-loop] failed to transition loop state from daemon event",
+        {
+          userId,
+          threadId,
+          loopId: enrolledLoop.id,
+          eventId: envelopeV2.eventId,
+          seq: envelopeV2.seq,
+          error,
         },
       );
     }

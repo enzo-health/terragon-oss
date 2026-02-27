@@ -22,7 +22,10 @@ import {
   PullRequestTriggerConfig,
   IssueTriggerConfig,
 } from "@terragon/shared/automations";
-import { getActiveSdlcLoopsForGithubPR } from "@terragon/shared/model/sdlc-loop";
+import {
+  getActiveSdlcLoopsForGithubPR,
+  transitionActiveSdlcLoopsForGithubPREvent,
+} from "@terragon/shared/model/sdlc-loop";
 import {
   runPullRequestAutomation,
   runIssueAutomation,
@@ -136,6 +139,52 @@ function deriveUnresolvedThreadCountFromReviewState(
   }
 
   return null;
+}
+
+async function syncSdlcLoopStateForPullRequestLifecycle({
+  repoFullName,
+  prNumber,
+  action,
+  merged,
+}: {
+  repoFullName: string;
+  prNumber: number;
+  action: string;
+  merged?: boolean;
+}) {
+  const transitionEvent =
+    action === "closed"
+      ? merged
+        ? "pr_merged"
+        : "pr_closed_unmerged"
+      : action === "opened" ||
+          action === "ready_for_review" ||
+          action === "reopened" ||
+          action === "synchronize"
+        ? "implementation_progress"
+        : null;
+
+  if (!transitionEvent) {
+    return;
+  }
+
+  const transitionResult = await transitionActiveSdlcLoopsForGithubPREvent({
+    db,
+    repoFullName,
+    prNumber,
+    transitionEvent,
+  });
+
+  if (transitionResult.totalLoops > 0) {
+    console.log("[github webhook] SDLC loop lifecycle transition applied", {
+      repoFullName,
+      prNumber,
+      action,
+      merged: merged ?? null,
+      transitionEvent,
+      ...transitionResult,
+    });
+  }
 }
 
 type CiSignalSnapshot = {
@@ -455,6 +504,12 @@ export async function handlePullRequestStatusChange(
       prNumber,
       createIfNotFound: false,
     });
+    await syncSdlcLoopStateForPullRequestLifecycle({
+      repoFullName: repoName,
+      prNumber,
+      action: event.action,
+      merged: event.pull_request.merged ?? undefined,
+    });
     console.log(`Successfully updated PR #${prNumber} status in ${repoName}`);
     return;
   } catch (error) {
@@ -472,6 +527,13 @@ export async function handlePullRequestUpdated(
     `Pull request updated: ${event.action} for PR #${prNumber} in ${repoFullName}`,
   );
   try {
+    await syncSdlcLoopStateForPullRequestLifecycle({
+      repoFullName,
+      prNumber,
+      action: event.action,
+      merged: event.pull_request.merged ?? undefined,
+    });
+
     // Get all pull request automations for this repository
     const automations = await getPullRequestAutomationsForRepo({
       db,
@@ -507,6 +569,7 @@ export async function handlePullRequestUpdated(
     }
   } catch (error) {
     console.error("Error handling pull request updated event:", error);
+    throw error;
   }
 }
 

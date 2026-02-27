@@ -7,16 +7,19 @@ import {
 import {
   classifySdlcVideoCaptureFailure,
   persistSdlcVideoCaptureOutcome,
+  transitionSdlcLoopState,
 } from "@terragon/shared/model/sdlc-loop";
 
 vi.mock("@terragon/shared/model/sdlc-loop", () => ({
   classifySdlcVideoCaptureFailure: vi.fn(),
   persistSdlcVideoCaptureOutcome: vi.fn(),
+  transitionSdlcLoopState: vi.fn(),
 }));
 
 describe("sdlc video artifact runtime", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
   });
 
   it("validates runtime contract constraints", () => {
@@ -58,6 +61,13 @@ describe("sdlc video artifact runtime", () => {
     });
 
     expect(result.status).toBe("captured");
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith({
+      db: {},
+      loopId: "loop-1",
+      transitionEvent: "video_capture_started",
+      headSha: "sha-1",
+      loopVersion: 1,
+    });
     expect(persistSdlcVideoCaptureOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
         loopId: "loop-1",
@@ -89,6 +99,13 @@ describe("sdlc video artifact runtime", () => {
 
     expect(result.status).toBe("failed");
     expect(result.failureClass).toBe("infra");
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith({
+      db: {},
+      loopId: "loop-2",
+      transitionEvent: "video_capture_started",
+      headSha: "sha-2",
+      loopVersion: 2,
+    });
     expect(persistSdlcVideoCaptureOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
         loopId: "loop-2",

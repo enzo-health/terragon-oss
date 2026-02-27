@@ -33,7 +33,7 @@ import {
   SdlcVideoFailureClass,
 } from "../db/types";
 
-const activeSdlcLoopStates: SdlcLoopState[] = [
+const activeSdlcLoopStates = [
   "enrolled",
   "implementing",
   "gates_running",
@@ -44,7 +44,123 @@ const activeSdlcLoopStates: SdlcLoopState[] = [
   "human_review_ready",
   "video_degraded_ready",
   "blocked_on_human_feedback",
-];
+] as const satisfies readonly SdlcLoopState[];
+const activeSdlcLoopStateList: SdlcLoopState[] = [...activeSdlcLoopStates];
+const activeSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
+  activeSdlcLoopStateList,
+);
+
+const terminalSdlcLoopStates = [
+  "terminated_pr_closed",
+  "terminated_pr_merged",
+  "done",
+  "stopped",
+] as const satisfies readonly SdlcLoopState[];
+const terminalSdlcLoopStateList: SdlcLoopState[] = [...terminalSdlcLoopStates];
+const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
+  terminalSdlcLoopStateList,
+);
+
+const readyForHumanReviewSdlcLoopStates = [
+  "human_review_ready",
+  "video_degraded_ready",
+] as const satisfies readonly SdlcLoopState[];
+const readyForHumanReviewSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
+  [...readyForHumanReviewSdlcLoopStates],
+);
+
+export type SdlcLoopTransitionEvent =
+  | "implementation_progress"
+  | "ci_gate_passed"
+  | "ci_gate_blocked"
+  | "review_threads_gate_passed"
+  | "review_threads_gate_blocked"
+  | "deep_review_gate_passed"
+  | "deep_review_gate_blocked"
+  | "carmack_review_gate_passed"
+  | "carmack_review_gate_blocked"
+  | "video_capture_started"
+  | "video_capture_succeeded"
+  | "video_capture_failed"
+  | "human_feedback_requested"
+  | "pr_closed_unmerged"
+  | "pr_merged"
+  | "manual_stop"
+  | "mark_done";
+
+export function isSdlcLoopTerminalState(state: SdlcLoopState): boolean {
+  return terminalSdlcLoopStateSet.has(state);
+}
+
+export function resolveSdlcLoopNextState({
+  currentState,
+  event,
+}: {
+  currentState: SdlcLoopState;
+  event: SdlcLoopTransitionEvent;
+}): SdlcLoopState | null {
+  if (currentState === "done") {
+    if (
+      event === "video_capture_succeeded" ||
+      event === "video_capture_failed" ||
+      event === "mark_done"
+    ) {
+      return "done";
+    }
+    return null;
+  }
+
+  if (isSdlcLoopTerminalState(currentState)) {
+    return null;
+  }
+
+  switch (event) {
+    case "implementation_progress":
+      return "implementing";
+    case "ci_gate_passed":
+    case "review_threads_gate_passed":
+    case "deep_review_gate_passed":
+    case "carmack_review_gate_passed":
+      return "gates_running";
+    case "ci_gate_blocked":
+      return "blocked_on_ci";
+    case "review_threads_gate_blocked":
+      return readyForHumanReviewSdlcLoopStateSet.has(currentState)
+        ? "blocked_on_human_feedback"
+        : "blocked_on_review_threads";
+    case "deep_review_gate_blocked":
+    case "carmack_review_gate_blocked":
+      return "blocked_on_agent_fixes";
+    case "video_capture_started":
+      if (
+        currentState === "gates_running" ||
+        currentState === "video_pending"
+      ) {
+        return "video_pending";
+      }
+      return null;
+    case "video_capture_succeeded":
+      return "human_review_ready";
+    case "video_capture_failed":
+      return "video_degraded_ready";
+    case "human_feedback_requested":
+      return readyForHumanReviewSdlcLoopStateSet.has(currentState)
+        ? "blocked_on_human_feedback"
+        : null;
+    case "pr_closed_unmerged":
+      return "terminated_pr_closed";
+    case "pr_merged":
+      return "terminated_pr_merged";
+    case "manual_stop":
+      return "stopped";
+    case "mark_done":
+      return readyForHumanReviewSdlcLoopStateSet.has(currentState)
+        ? "done"
+        : null;
+    default:
+      return null;
+  }
+}
 
 export const SDLC_CAUSE_IDENTITY_VERSION = 1;
 export const GITHUB_WEBHOOK_CLAIM_TTL_MS = 5 * 60 * 1000;
@@ -317,7 +433,7 @@ export async function getActiveSdlcLoopForGithubPRAndUser({
       eq(schema.sdlcLoop.userId, userId),
       eq(schema.sdlcLoop.repoFullName, repoFullName),
       eq(schema.sdlcLoop.prNumber, prNumber),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+      inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
     ),
   });
 }
@@ -335,7 +451,7 @@ export async function getActiveSdlcLoopsForGithubPR({
     where: and(
       eq(schema.sdlcLoop.repoFullName, repoFullName),
       eq(schema.sdlcLoop.prNumber, prNumber),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+      inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
     ),
     orderBy: [schema.sdlcLoop.updatedAt, schema.sdlcLoop.id],
   });
@@ -356,6 +472,44 @@ export async function getActiveSdlcLoopForGithubPR({
     prNumber,
   });
   return activeLoops[0];
+}
+
+export async function transitionActiveSdlcLoopsForGithubPREvent({
+  db,
+  repoFullName,
+  prNumber,
+  transitionEvent,
+  now = new Date(),
+}: {
+  db: DB;
+  repoFullName: string;
+  prNumber: number;
+  transitionEvent: SdlcLoopTransitionEvent;
+  now?: Date;
+}) {
+  const loops = await getActiveSdlcLoopsForGithubPR({
+    db,
+    repoFullName,
+    prNumber,
+  });
+
+  let updatedCount = 0;
+  for (const loop of loops) {
+    const result = await transitionSdlcLoopState({
+      db,
+      loopId: loop.id,
+      transitionEvent,
+      now,
+    });
+    if (result === "updated") {
+      updatedCount += 1;
+    }
+  }
+
+  return {
+    totalLoops: loops.length,
+    updatedCount,
+  };
 }
 
 export async function enrollSdlcLoopForGithubPR({
@@ -424,7 +578,7 @@ export async function enrollSdlcLoopForGithubPR({
         eq(schema.sdlcLoop.userId, userId),
         eq(schema.sdlcLoop.repoFullName, repoFullName),
         eq(schema.sdlcLoop.prNumber, prNumber),
-        notInArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+        notInArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
       ),
     )
     .returning();
@@ -437,7 +591,7 @@ export async function enrollSdlcLoopForGithubPR({
       eq(schema.sdlcLoop.userId, userId),
       eq(schema.sdlcLoop.repoFullName, repoFullName),
       eq(schema.sdlcLoop.prNumber, prNumber),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+      inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
     ),
     orderBy: [desc(schema.sdlcLoop.updatedAt)],
   });
@@ -456,7 +610,7 @@ export async function getActiveSdlcLoopForThread({
     where: and(
       eq(schema.sdlcLoop.userId, userId),
       eq(schema.sdlcLoop.threadId, threadId),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
+      inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
     ),
   });
 }
@@ -598,14 +752,21 @@ export async function transitionLoopToStoppedAndCancelPendingOutbox({
   stopReason: string;
 }) {
   return await db.transaction(async (tx) => {
-    await tx
-      .update(schema.sdlcLoop)
-      .set({
-        state: "stopped",
-        stopReason,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.sdlcLoop.id, loopId));
+    const stopTransitionOutcome = await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      transitionEvent: "manual_stop",
+      now: new Date(),
+    });
+    if (stopTransitionOutcome === "updated") {
+      await tx
+        .update(schema.sdlcLoop)
+        .set({
+          stopReason,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.sdlcLoop.id, loopId));
+    }
 
     const canceled = await tx
       .update(schema.sdlcLoopOutbox)
@@ -1194,12 +1355,27 @@ export function resolveSdlcReadyStateAfterVideoCapture({
 }): Extract<
   SdlcLoopState,
   "human_review_ready" | "video_degraded_ready" | "done"
-> {
-  if (currentState === "done") {
+> | null {
+  const transitionEvent: SdlcLoopTransitionEvent = artifactR2Key
+    ? "video_capture_succeeded"
+    : "video_capture_failed";
+  const nextState = resolveSdlcLoopNextState({
+    currentState,
+    event: transitionEvent,
+  });
+
+  if (
+    nextState === "human_review_ready" ||
+    nextState === "video_degraded_ready"
+  ) {
+    return nextState;
+  }
+
+  if (nextState === "done") {
     return "done";
   }
 
-  return artifactR2Key ? "human_review_ready" : "video_degraded_ready";
+  return null;
 }
 
 export async function persistSdlcVideoCaptureOutcome({
@@ -1241,16 +1417,42 @@ export async function persistSdlcVideoCaptureOutcome({
     throw new Error(`SDLC loop not found: ${loopId}`);
   }
 
+  const normalizedLoopVersion = Math.max(Math.trunc(loopVersion), 0);
+  if (loop.loopVersion > normalizedLoopVersion) {
+    return loop;
+  }
+  if (
+    loop.loopVersion === normalizedLoopVersion &&
+    loop.currentHeadSha !== null &&
+    loop.currentHeadSha !== headSha
+  ) {
+    return loop;
+  }
+
   const nextState = resolveSdlcReadyStateAfterVideoCapture({
     currentState: loop.state,
     artifactR2Key,
   });
+  if (!nextState) {
+    return loop;
+  }
+
+  const whereCondition = and(
+    eq(schema.sdlcLoop.id, loopId),
+    eq(schema.sdlcLoop.state, loop.state),
+    lte(schema.sdlcLoop.loopVersion, normalizedLoopVersion),
+    or(
+      lte(schema.sdlcLoop.loopVersion, normalizedLoopVersion - 1),
+      isNull(schema.sdlcLoop.currentHeadSha),
+      eq(schema.sdlcLoop.currentHeadSha, headSha),
+    ),
+  );
 
   const [updated] = await db
     .update(schema.sdlcLoop)
     .set({
       currentHeadSha: headSha,
-      loopVersion,
+      loopVersion: normalizedLoopVersion,
       state: nextState,
       videoCaptureStatus: artifactR2Key ? "captured" : "failed",
       latestVideoArtifactR2Key: artifactR2Key,
@@ -1267,10 +1469,16 @@ export async function persistSdlcVideoCaptureOutcome({
       latestVideoFailedAt: artifactR2Key ? null : now,
       updatedAt: now,
     })
-    .where(eq(schema.sdlcLoop.id, loopId))
+    .where(whereCondition)
     .returning();
 
-  return updated;
+  if (updated) {
+    return updated;
+  }
+
+  return await db.query.sdlcLoop.findFirst({
+    where: eq(schema.sdlcLoop.id, loopId),
+  });
 }
 
 export async function recordSdlcParityMetricSample({
@@ -1561,44 +1769,18 @@ export type SdlcGateLoopUpdateOutcome =
 async function persistGuardedGateLoopState({
   tx,
   loopId,
+  transitionEvent,
   headSha,
   loopVersion,
-  nextState,
   now = new Date(),
 }: {
   tx: Pick<DB, "query" | "update">;
   loopId: string;
-  headSha: string;
-  loopVersion: number;
-  nextState: SdlcLoopState;
+  transitionEvent: SdlcLoopTransitionEvent;
+  headSha?: string | null;
+  loopVersion?: number;
   now?: Date;
 }): Promise<SdlcGateLoopUpdateOutcome> {
-  const [updated] = await tx
-    .update(schema.sdlcLoop)
-    .set({
-      state: nextState,
-      currentHeadSha: headSha,
-      loopVersion,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(schema.sdlcLoop.id, loopId),
-        inArray(schema.sdlcLoop.state, activeSdlcLoopStates),
-        lte(schema.sdlcLoop.loopVersion, loopVersion),
-        or(
-          lte(schema.sdlcLoop.loopVersion, loopVersion - 1),
-          isNull(schema.sdlcLoop.currentHeadSha),
-          eq(schema.sdlcLoop.currentHeadSha, headSha),
-        ),
-      ),
-    )
-    .returning({ id: schema.sdlcLoop.id });
-
-  if (updated) {
-    return "updated";
-  }
-
   const loop = await tx.query.sdlcLoop.findFirst({
     where: eq(schema.sdlcLoop.id, loopId),
     columns: {
@@ -1612,23 +1794,126 @@ async function persistGuardedGateLoopState({
     return "stale_noop";
   }
 
-  if (!activeSdlcLoopStates.includes(loop.state)) {
+  if (!activeSdlcLoopStateSet.has(loop.state)) {
     return "terminal_noop";
   }
 
-  if (loop.loopVersion > loopVersion) {
-    return "stale_noop";
-  }
-
+  const normalizedLoopVersion =
+    typeof loopVersion === "number" && Number.isFinite(loopVersion)
+      ? Math.max(Math.trunc(loopVersion), 0)
+      : null;
   if (
-    loop.loopVersion === loopVersion &&
-    loop.currentHeadSha !== null &&
-    loop.currentHeadSha !== headSha
+    transitionEvent === "implementation_progress" &&
+    normalizedLoopVersion === null &&
+    loop.state !== "enrolled" &&
+    loop.state !== "implementing"
   ) {
     return "stale_noop";
   }
+  const nextState = resolveSdlcLoopNextState({
+    currentState: loop.state,
+    event: transitionEvent,
+  });
 
-  return "stale_noop";
+  if (!nextState) {
+    return "stale_noop";
+  }
+
+  if (normalizedLoopVersion !== null) {
+    if (loop.loopVersion > normalizedLoopVersion) {
+      return "stale_noop";
+    }
+
+    if (
+      typeof headSha === "string" &&
+      loop.loopVersion === normalizedLoopVersion &&
+      loop.currentHeadSha !== null &&
+      loop.currentHeadSha !== headSha
+    ) {
+      return "stale_noop";
+    }
+  }
+
+  const nextValues: {
+    state: SdlcLoopState;
+    updatedAt: Date;
+    currentHeadSha?: string | null;
+    loopVersion?: number;
+  } = {
+    state: nextState,
+    updatedAt: now,
+  };
+  if (
+    normalizedLoopVersion !== null &&
+    (typeof headSha === "string" || headSha === null)
+  ) {
+    nextValues.currentHeadSha = headSha;
+  }
+  if (normalizedLoopVersion !== null) {
+    nextValues.loopVersion = normalizedLoopVersion;
+  }
+
+  let whereCondition = and(
+    eq(schema.sdlcLoop.id, loopId),
+    eq(schema.sdlcLoop.state, loop.state),
+    inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
+  );
+
+  if (normalizedLoopVersion !== null && whereCondition) {
+    whereCondition = and(
+      whereCondition,
+      lte(schema.sdlcLoop.loopVersion, normalizedLoopVersion),
+    );
+    if (typeof headSha === "string" && whereCondition) {
+      const headShaGuard = or(
+        lte(schema.sdlcLoop.loopVersion, normalizedLoopVersion - 1),
+        isNull(schema.sdlcLoop.currentHeadSha),
+        eq(schema.sdlcLoop.currentHeadSha, headSha),
+      );
+      if (headShaGuard) {
+        whereCondition = and(whereCondition, headShaGuard);
+      }
+    }
+  }
+
+  if (!whereCondition) {
+    return "stale_noop";
+  }
+
+  const [updated] = await tx
+    .update(schema.sdlcLoop)
+    .set(nextValues)
+    .where(whereCondition)
+    .returning({ id: schema.sdlcLoop.id });
+
+  return updated ? "updated" : "stale_noop";
+}
+
+export async function transitionSdlcLoopState({
+  db,
+  loopId,
+  transitionEvent,
+  headSha,
+  loopVersion,
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  transitionEvent: SdlcLoopTransitionEvent;
+  headSha?: string | null;
+  loopVersion?: number;
+  now?: Date;
+}): Promise<SdlcGateLoopUpdateOutcome> {
+  return await db.transaction(async (tx) => {
+    return await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      transitionEvent,
+      headSha,
+      loopVersion,
+      now,
+    });
+  });
 }
 
 export type PersistSdlcCiGateEvaluationResult = {
@@ -1752,7 +2037,7 @@ export async function persistSdlcCiGateEvaluation({
       loopId,
       headSha,
       loopVersion,
-      nextState: gatePassed ? "gates_running" : "blocked_on_ci",
+      transitionEvent: gatePassed ? "ci_gate_passed" : "ci_gate_blocked",
       now,
     });
 
@@ -1857,7 +2142,9 @@ export async function persistSdlcReviewThreadGateEvaluation({
       loopId,
       headSha,
       loopVersion,
-      nextState: gatePassed ? "gates_running" : "blocked_on_review_threads",
+      transitionEvent: gatePassed
+        ? "review_threads_gate_passed"
+        : "review_threads_gate_blocked",
       now,
     });
 
@@ -2050,7 +2337,7 @@ export async function persistDeepReviewGateResult({
         loopId,
         headSha,
         loopVersion,
-        nextState: "blocked_on_agent_fixes",
+        transitionEvent: "deep_review_gate_blocked",
         now: new Date(),
       });
 
@@ -2180,8 +2467,10 @@ export async function persistDeepReviewGateResult({
       loopId,
       headSha,
       loopVersion,
-      nextState:
-        status === "blocked" ? "blocked_on_agent_fixes" : "gates_running",
+      transitionEvent:
+        status === "blocked"
+          ? "deep_review_gate_blocked"
+          : "deep_review_gate_passed",
       now: new Date(),
     });
 
@@ -2490,7 +2779,7 @@ export async function persistCarmackReviewGateResult({
         loopId,
         headSha,
         loopVersion,
-        nextState: "blocked_on_agent_fixes",
+        transitionEvent: "carmack_review_gate_blocked",
         now: new Date(),
       });
 
@@ -2621,8 +2910,10 @@ export async function persistCarmackReviewGateResult({
       loopId,
       headSha,
       loopVersion,
-      nextState:
-        status === "blocked" ? "blocked_on_agent_fixes" : "gates_running",
+      transitionEvent:
+        status === "blocked"
+          ? "carmack_review_gate_blocked"
+          : "carmack_review_gate_passed",
       now: new Date(),
     });
 
