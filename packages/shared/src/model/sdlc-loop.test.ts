@@ -40,6 +40,7 @@ import {
   resolveDeepReviewFinding,
   shouldQueueFollowUpForCarmackReview,
   shouldQueueFollowUpForDeepReview,
+  transitionSdlcLoopState,
   transitionLoopToStoppedAndCancelPendingOutbox,
 } from "./sdlc-loop";
 
@@ -1018,6 +1019,106 @@ describe("sdlc loop model", () => {
     expect(reloadedLoop?.currentHeadSha).toBe("sha-current");
   });
 
+  it("requires loop version for implementation_progress once loop has left early states", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-blocked",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "blocked_on_ci",
+        loopVersion: 5,
+        currentHeadSha: "sha-blocked",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const unversioned = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "implementation_progress",
+    });
+    expect(unversioned).toBe("stale_noop");
+
+    let reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("blocked_on_ci");
+    expect(reloadedLoop?.loopVersion).toBe(5);
+
+    const versioned = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "implementation_progress",
+      loopVersion: 6,
+      headSha: "sha-blocked",
+    });
+    expect(versioned).toBe("updated");
+
+    reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("implementing");
+    expect(reloadedLoop?.loopVersion).toBe(6);
+  });
+
+  it("does not rewrite current head sha on unversioned implementation transitions", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-stable",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "implementing",
+        loopVersion: 3,
+        currentHeadSha: "sha-stable",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "implementation_progress",
+      headSha: "sha-ignored",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.currentHeadSha).toBe("sha-stable");
+    expect(reloadedLoop?.loopVersion).toBe(3);
+  });
+
   it("stores deterministic invalid-output deep review state", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({
@@ -1808,6 +1909,100 @@ describe("sdlc loop model", () => {
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
     expect(reloaded?.state).toBe("done");
+  });
+
+  it("does not resurrect terminal PR-closed loops from video capture outcomes", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 202,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 202,
+      threadId,
+      currentHeadSha: "sha-closed",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "terminated_pr_closed",
+        loopVersion: 20,
+        currentHeadSha: "sha-closed",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    await persistSdlcVideoCaptureOutcome({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-video",
+      loopVersion: 21,
+      artifactR2Key: "videos/closed-loop.mp4",
+      artifactMimeType: "video/mp4",
+      artifactBytes: 4096,
+    });
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("terminated_pr_closed");
+    expect(reloadedLoop?.loopVersion).toBe(20);
+    expect(reloadedLoop?.currentHeadSha).toBe("sha-closed");
+    expect(reloadedLoop?.latestVideoArtifactR2Key).toBeNull();
+  });
+
+  it("ignores stale video capture outcomes for older loop versions", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 203,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 203,
+      threadId,
+      currentHeadSha: "sha-current",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "gates_running",
+        loopVersion: 30,
+        currentHeadSha: "sha-current",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    await persistSdlcVideoCaptureOutcome({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-stale",
+      loopVersion: 29,
+      artifactR2Key: "videos/stale.mp4",
+      artifactMimeType: "video/mp4",
+      artifactBytes: 1024,
+    });
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("gates_running");
+    expect(reloadedLoop?.loopVersion).toBe(30);
+    expect(reloadedLoop?.currentHeadSha).toBe("sha-current");
+    expect(reloadedLoop?.latestVideoArtifactR2Key).toBeNull();
   });
 
   it("computes parity buckets and evaluates cutover/rollback triggers", async () => {

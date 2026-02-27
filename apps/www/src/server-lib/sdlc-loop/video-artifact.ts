@@ -2,6 +2,7 @@ import type { DB } from "@terragon/shared/db";
 import {
   classifySdlcVideoCaptureFailure,
   persistSdlcVideoCaptureOutcome,
+  transitionSdlcLoopState,
 } from "@terragon/shared/model/sdlc-loop";
 import type { SdlcVideoFailureClass } from "@terragon/shared/db/types";
 import { z } from "zod/v4";
@@ -68,6 +69,14 @@ export async function runSdlcVideoCaptureWithAgentBrowser({
 }) {
   const validatedContract =
     validateSdlcVideoCaptureRuntimeContract(runtimeContract);
+
+  await transitionSdlcLoopState({
+    db,
+    loopId,
+    transitionEvent: "video_capture_started",
+    headSha,
+    loopVersion,
+  });
 
   try {
     const captureResult = captureResultSchema.parse(

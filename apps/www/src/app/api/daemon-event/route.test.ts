@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import {
+  getActiveSdlcLoopForThread,
+  transitionSdlcLoopState,
+} from "@terragon/shared/model/sdlc-loop";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
 import {
@@ -96,6 +99,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@terragon/shared/model/sdlc-loop", () => ({
   getActiveSdlcLoopForThread: vi.fn(),
+  transitionSdlcLoopState: vi.fn(),
   SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
@@ -126,6 +130,7 @@ describe("daemon-event route", () => {
     vi.clearAllMocks();
     vi.mocked(getUserIdOrNullFromDaemonToken).mockResolvedValue("user-1");
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+    vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
     vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
       executed: false,
@@ -301,6 +306,13 @@ describe("daemon-event route", () => {
         iterationCount: 11,
       },
     });
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith({
+      db: expect.any(Object),
+      loopId: "loop-1",
+      transitionEvent: "implementation_progress",
+      loopVersion: 12,
+      now: expect.any(Date),
+    });
     expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledWith({
       db: expect.any(Object),
       loopId: "loop-1",
@@ -453,7 +465,7 @@ describe("daemon-event route", () => {
     expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
-  it("recovers stale unprocessed daemon-event claims as duplicate events to avoid deadlock", async () => {
+  it("reclaims stale unprocessed daemon-event claims so the event is replayed", async () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
@@ -481,11 +493,11 @@ describe("daemon-event route", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(202);
-    expect(data.reason).toBe("duplicate_event");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
     expect(dbMocks.update).toHaveBeenCalledTimes(1);
-    expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
     expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
     expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
