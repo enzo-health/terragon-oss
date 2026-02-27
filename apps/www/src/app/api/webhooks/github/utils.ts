@@ -4,10 +4,8 @@ import type { EmitterWebhookEvent } from "@octokit/webhooks";
 import { getOctokitForApp } from "@/lib/github";
 import { formatThreadContext } from "@/server-lib/ext-thread-context";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { AccessInfo } from "@terragon/shared/db/types";
 import { db } from "@/lib/db";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
-import { getAccessInfoForUser } from "@/lib/subscription";
 import { AIModel } from "@terragon/agent/types";
 import { parseModelOrNull } from "@terragon/agent/utils";
 
@@ -52,32 +50,29 @@ export function extractModelFromComment({
   const modelName = match[1].trim();
   return parseModelOrNull({ modelName });
 }
-export async function getAccessInfoForGitHubAccount({
+export async function isKnownGitHubAccount({
   gitHubAccountId,
 }: {
   gitHubAccountId: number | undefined;
-}): Promise<AccessInfo | null> {
+}): Promise<boolean> {
   if (!gitHubAccountId) {
-    return null;
+    return false;
   }
   try {
     const userId = await getUserIdByGitHubAccountId({
       db,
       accountId: gitHubAccountId.toString(),
     });
-    if (!userId) {
-      return null;
-    }
-    return await getAccessInfoForUser(userId);
+    return !!userId;
   } catch (e) {
-    console.error("Error checking billing access for GitHub account:", e);
-    return null;
+    console.error("Error checking account access for GitHub comment user:", e);
+    return false;
   }
 }
 
-// Post a standardized billing link comment. If a review comment id is provided,
+// Post a standardized Terragon configuration comment. If a review comment id is provided,
 // reply in-thread; otherwise post a top-level issue/PR comment.
-export async function postBillingLinkComment({
+export async function postIntegrationSetupComment({
   octokit,
   owner,
   repo,
@@ -90,8 +85,8 @@ export async function postBillingLinkComment({
   issueNumber: number; // PR number or issue number
   reviewCommentId?: number;
 }): Promise<void> {
-  const billingUrl = `${publicAppUrl()}/settings/billing`;
-  const body = `To use Terragon from GitHub, please set up billing here: ${billingUrl}`;
+  const settingsUrl = `${publicAppUrl()}/settings`;
+  const body = `To use Terragon from GitHub, please visit the settings page and ensure your account is connected: ${settingsUrl}`;
 
   if (reviewCommentId) {
     try {
@@ -105,7 +100,7 @@ export async function postBillingLinkComment({
       return;
     } catch (err) {
       console.error(
-        "Failed to reply with billing link; falling back to PR comment:",
+        "Failed to reply with integration setup comment; falling back to PR comment:",
         err,
       );
       // Fall back to a top-level PR comment
@@ -120,7 +115,7 @@ export async function postBillingLinkComment({
       body,
     });
   } catch (err) {
-    console.error("Failed to post billing link comment:", err);
+    console.error("Failed to post integration setup comment:", err);
   }
 }
 

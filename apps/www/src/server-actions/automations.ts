@@ -18,12 +18,10 @@ import {
   validateCanRunAutomation,
   hasReachedLimitOfAutomations,
 } from "@/server-lib/automations";
-import { getAccessInfoForUser } from "@/lib/subscription";
 
 export const getHasReachedLimitOfAutomations = userOnlyAction(
   async function getHasReachedLimitOfAutomations(userId: string) {
-    const { tier } = await getAccessInfoForUser(userId);
-    return await hasReachedLimitOfAutomations({ userId, tier });
+    return await hasReachedLimitOfAutomations({ userId });
   },
   { defaultErrorMessage: "An unexpected error occurred" },
 );
@@ -49,7 +47,7 @@ export const createAutomation = userOnlyAction(
     { automation }: { automation: Omit<AutomationInsert, "userId"> },
   ) {
     console.log("createAutomation", automation);
-    const { tier } = await validateAutomationCreationOrUpdate({
+    await validateAutomationCreationOrUpdate({
       userId,
       automationId: null,
       updates: automation,
@@ -57,7 +55,7 @@ export const createAutomation = userOnlyAction(
     await createAutomationModel({
       db,
       userId,
-      accessTier: tier,
+      accessTier: "pro",
       automation,
     });
   },
@@ -76,7 +74,7 @@ export const enableOrDisableAutomation = userOnlyAction(
     userId: string,
     { automationId, enabled }: { automationId: string; enabled: boolean },
   ) {
-    const { tier } = await validateAutomationCreationOrUpdate({
+    await validateAutomationCreationOrUpdate({
       userId,
       automationId,
       updates: { enabled },
@@ -85,7 +83,7 @@ export const enableOrDisableAutomation = userOnlyAction(
       db,
       automationId,
       userId,
-      accessTier: tier,
+      accessTier: "pro",
       updates: { enabled },
     });
   },
@@ -108,7 +106,7 @@ export const updateAutomation = userOnlyAction(
       >;
     },
   ) {
-    const { tier } = await validateAutomationCreationOrUpdate({
+    await validateAutomationCreationOrUpdate({
       userId,
       automationId,
       updates,
@@ -117,7 +115,7 @@ export const updateAutomation = userOnlyAction(
       db,
       automationId,
       userId,
-      accessTier: tier,
+      accessTier: "pro",
       updates,
     });
   },

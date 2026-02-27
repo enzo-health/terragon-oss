@@ -180,11 +180,11 @@ function ChatContent({
     case "chatgpt-sub-required": {
       return (
         <ChatErrorContents
-          header="ChatGPT Subscription required"
+          header="ChatGPT account required"
           body={
             <>
-              This model requires a ChatGPT Subscription. Choose a different
-              model or connect your ChatGPT account to continue. Go to{" "}
+              This model requires a connected ChatGPT account. Choose a
+              different model or connect your ChatGPT account to continue. Go to{" "}
               <Link
                 href="/settings/agent#agent-providers"
                 className="underline"

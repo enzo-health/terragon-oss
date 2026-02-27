@@ -24,7 +24,7 @@ The key hover styles for outline variant are:
 - hover:text-muted-foreground (changes text color to muted-foreground)
 - In dark mode: dark:hover:bg-input/50
 
-So I need to update the early access button to use hover:bg-muted/50 instead of hover:bg-accent to match the Create Environment button.`;
+So I need to update the header button to use hover:bg-muted/50 instead of hover:bg-accent to match the Create Environment button.`;
 
   return (
     <div className="p-4 max-w-xl border border-red-500">

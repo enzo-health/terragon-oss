@@ -238,21 +238,10 @@ export function parseCodexRateLimitMessageStr(
     return null;
   }
 
-  // Check if this is a Free plan message (no retry time)
-  // Format: "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://openai.com/chatgpt/pricing)."
-  if (result.includes("Upgrade to Plus to continue using Codex")) {
-    return {
-      isRateLimited: true,
-      timezoneIsAmbiguous: false,
-      rateLimitResetTime: null,
-    };
-  }
-
   // Try to parse duration for other plan types
   // Formats:
-  // - Plus: "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in {duration}."
+  // - Or: "You've hit your usage limit. Try again in {duration}."
   // - Team/Business: "You've hit your usage limit. To get more access now, send a request to your admin or try again in {duration}."
-  // - Pro/Enterprise/Edu: "You've hit your usage limit. Try again in {duration}."
   const durationMs = parseCodexDuration(result);
 
   if (durationMs === null) {

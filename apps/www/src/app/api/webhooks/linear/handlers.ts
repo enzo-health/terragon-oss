@@ -14,7 +14,6 @@ import {
 } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { getAccessInfoForUser } from "@/lib/subscription";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { getDefaultModel } from "@/server-lib/default-ai-model";
@@ -493,13 +492,6 @@ async function createThreadRecord({
       "[linear webhook] linearIntegration feature flag disabled for user",
       { userId },
     );
-    return;
-  }
-
-  // Check user access tier
-  const accessInfo = await getAccessInfoForUser(userId);
-  if (accessInfo.tier === "none") {
-    console.log("[linear webhook] User has no access tier", { userId });
     return;
   }
 

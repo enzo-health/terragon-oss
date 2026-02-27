@@ -21,7 +21,6 @@ import {
   FeatureFlagName,
   UserFeatureFlag,
   UserSettings,
-  BillingInfo,
   Automation,
   SlackAccountWithMetadata,
 } from "@terragon/shared";
@@ -61,7 +60,6 @@ const userKeys: (keyof User)[] = [
   "updatedAt",
   "emailVerified",
   "image",
-  "stripeCustomerId",
 ];
 
 const userFlagSkipKeys: (keyof UserFlags)[] = [
@@ -109,7 +107,6 @@ export function AdminUserContent({
   userFeatureFlagOverrides,
   userBalance,
   userSettings,
-  billingInfo,
   slackAccounts,
 }: {
   user: User;
@@ -122,7 +119,6 @@ export function AdminUserContent({
   automations: Automation[];
   userBalance: UserBalanceSummary;
   userSettings: UserSettings;
-  billingInfo: BillingInfo;
   slackAccounts: SlackAccountWithMetadata[];
 }) {
   const router = useRouter();
@@ -291,8 +287,6 @@ export function AdminUserContent({
                 ...getAllAgentTypes()
                   .filter(isConnectedCredentialsSupported)
                   .map((agent) => `agent/${agent}`),
-                "subscription",
-                "signupTrial",
                 "slackIntegration",
               ]}
               renderKey={(key) => {
@@ -309,29 +303,6 @@ export function AdminUserContent({
                     <div className="flex items-center gap-2">
                       <ConnectionStatusPill connected={hasCredentials} />
                       {hasCredentials && <span>{credentials[0]!.type}</span>}
-                    </div>
-                  );
-                }
-                if (key === "subscription") {
-                  return (
-                    <div className="flex items-center gap-2">
-                      {billingInfo.subscription ? (
-                        <>
-                          {billingInfo.subscription.plan}
-                          {!billingInfo.hasActiveSubscription && " Inactive"}
-                        </>
-                      ) : (
-                        "None"
-                      )}
-                    </div>
-                  );
-                }
-                if (key === "signupTrial") {
-                  return (
-                    <div className="flex items-center gap-2">
-                      {billingInfo.signupTrial
-                        ? `${billingInfo.signupTrial.daysRemaining} days left`
-                        : "None"}
                     </div>
                   );
                 }

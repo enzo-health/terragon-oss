@@ -922,8 +922,7 @@ export const userFlags = pgTable(
     // @deprecated Use lastSeenReleaseNotesVersion instead
     lastSeenReleaseNotes: timestamp("last_seen_release_notes"),
     lastSeenReleaseNotesVersion: integer("last_seen_release_notes_version"),
-    // Feature upsell toast last seen version. Increment FEATURE_UPSELL_VERSION
-    // in apps/www/src/lib/constants.ts to show the upsell again.
+    // Reserved metadata for feature-upgrade notification tracking.
     lastSeenFeatureUpsellVersion: integer("last_seen_feature_upsell_version"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at")

@@ -8,14 +8,7 @@ import posthog from "posthog-js";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
-type Location =
-  | "cta_section"
-  | "cta_section_legacy"
-  | "pricing_section"
-  | "header"
-  | "header_mobile_menu"
-  | "hero_section"
-  | "login_page";
+type Location = "header" | "header_mobile_menu" | "login_page";
 
 export async function signOut() {
   await authClient.signOut({
@@ -40,12 +33,6 @@ export async function signInWithGithub({
     ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
     : "/";
 
-  // Get access code from cookie if present
-  const accessCode = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith("access_code="))
-    ?.split("=")[1];
-
   posthog.capture("signin_github_clicked", { location });
 
   await authClient.signIn.social(
@@ -53,7 +40,6 @@ export async function signInWithGithub({
       provider: "github",
       callbackURL,
       scopes: ["repo", "workflow"],
-      ...(accessCode && { state: accessCode }),
     },
     {
       onRequest: (_ctx) => {
@@ -80,13 +66,7 @@ export function SignInGithhubButton({
     await signInWithGithub({ setLoading, location });
   };
 
-  if (
-    location === "header" ||
-    location === "header_mobile_menu" ||
-    location === "hero_section" ||
-    location === "cta_section" ||
-    location === "pricing_section"
-  ) {
+  if (location === "header" || location === "header_mobile_menu") {
     return (
       <Button
         variant="default"

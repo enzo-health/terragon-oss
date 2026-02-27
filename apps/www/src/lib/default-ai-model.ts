@@ -29,10 +29,9 @@ export function getDefaultModel({
 }
 
 export function getCannotUseOpus({
-  userFlags,
+  userFlags: _userFlags,
 }: {
   userFlags: UserFlags | null;
 }): boolean {
-  // Opus is now available for all Claude Pro subscribers
   return false;
 }

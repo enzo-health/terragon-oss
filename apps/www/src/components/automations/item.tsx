@@ -1,11 +1,10 @@
 import React from "react";
-import { AccessTier, Automation } from "@terragon/shared";
+import { Automation } from "@terragon/shared";
 import {
   getCronDescription,
   validateCronExpression,
 } from "@terragon/shared/automations/cron";
 import { cn } from "@/lib/utils";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 import { usePathname, useRouter } from "next/navigation";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import Link from "next/link";
@@ -50,7 +49,6 @@ import {
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { useAccessInfo } from "@/queries/subscription";
 
 export function AutomationItem({
   automation,
@@ -169,7 +167,6 @@ function AutomationItemContents({
   automation: Automation;
   verbose: boolean;
 }) {
-  const { tier } = useAccessInfo();
   const triggerDescriptionParts = [];
   switch (automation.triggerType) {
     case "manual": {
@@ -284,7 +281,6 @@ function AutomationItemContents({
         <AutomationErrorLabel
           prefix={<span className="mx-1 flex-shrink-0">·</span>}
           automation={automation}
-          accessTier={tier}
         />
       </div>
       {verbose && (
@@ -327,18 +323,16 @@ function AutomationItemContents({
 function AutomationErrorLabel({
   prefix,
   automation,
-  accessTier,
 }: {
   prefix?: React.ReactNode;
   automation: Automation;
-  accessTier: AccessTier;
 }) {
   if (!automation.enabled) {
     return null;
   }
   if (automation.triggerType === "github_mention") {
     const config = automation.triggerConfig as GitHubMentionTriggerConfig;
-    if (config.filter.includeBotMentions && accessTier !== "pro") {
+    if (config.filter.includeBotMentions && !config.filter.botUsernames) {
       return (
         <>
           {prefix}
@@ -351,7 +345,9 @@ function AutomationErrorLabel({
   }
   if (automation.triggerType === "schedule") {
     const config = automation.triggerConfig as ScheduleTriggerConfig;
-    const { isValid } = validateCronExpression(config.cron, { accessTier });
+    const { isValid } = validateCronExpression(config.cron, {
+      accessTier: "pro",
+    });
     if (!isValid) {
       return (
         <>
@@ -449,7 +445,6 @@ function AutomationItemDropdownMenu({
 }
 
 function AutomationRunButton({ automation }: { automation: Automation }) {
-  const { isActive } = useAccessInfo();
   const runMutation = useRunAutomationMutation();
   const runPullRequestMutation = useRunPullRequestAutomationMutation();
   const runIssueMutation = useRunIssueAutomationMutation();
@@ -469,13 +464,8 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
             variant="outline"
             className="h-fit py-1 text-xs"
             onClick={() => {
-              if (!isActive) {
-                toast.error(SUBSCRIPTION_MESSAGES.RUN_AUTOMATION);
-                return;
-              }
               setPrPopoverOpen(true);
             }}
-            disabled={!isActive}
           >
             Run now
           </Button>
@@ -510,9 +500,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
                 });
                 setPrPopoverOpen(false);
               }}
-              disabled={
-                !prNumber || runPullRequestMutation.isPending || !isActive
-              }
+              disabled={!prNumber || runPullRequestMutation.isPending}
             >
               {runPullRequestMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -534,13 +522,8 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
             variant="outline"
             className="h-fit py-1 text-xs"
             onClick={() => {
-              if (!isActive) {
-                toast.error(SUBSCRIPTION_MESSAGES.RUN_AUTOMATION);
-                return;
-              }
               setIssuePopoverOpen(true);
             }}
-            disabled={!isActive}
           >
             Run now
           </Button>
@@ -575,7 +558,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
                 });
                 setIssuePopoverOpen(false);
               }}
-              disabled={!issueNumber || runIssueMutation.isPending || !isActive}
+              disabled={!issueNumber || runIssueMutation.isPending}
             >
               {runIssueMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -593,15 +576,11 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
       size="sm"
       variant="outline"
       onClick={async () => {
-        if (!isActive) {
-          toast.error(SUBSCRIPTION_MESSAGES.RUN_AUTOMATION);
-          return;
-        }
         await runMutation.mutateAsync(automation.id);
       }}
       aria-label="Run automation"
       className="h-fit py-1 text-xs"
-      disabled={runMutation.isPending || !isActive}
+      disabled={runMutation.isPending}
     >
       Run now
     </Button>

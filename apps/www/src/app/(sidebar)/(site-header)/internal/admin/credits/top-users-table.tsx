@@ -76,21 +76,6 @@ const topUsersColumns: ColumnDef<TopCreditsUser>[] = [
     },
   },
   {
-    accessorKey: "signupTrialDaysRemaining",
-    header: "Trial Days Left",
-    cell: ({ row }) => {
-      const days = row.getValue("signupTrialDaysRemaining") as number;
-      return days > 0 ? days.toString() : "-";
-    },
-  },
-  {
-    accessorKey: "accessTierInfo",
-    header: "Access Tier",
-    cell: ({ row }) => {
-      return row.getValue("accessTierInfo") || "-";
-    },
-  },
-  {
     accessorKey: "mostRecentThreadDate",
     header: "Most Recent Thread",
     cell: ({ row }) => {

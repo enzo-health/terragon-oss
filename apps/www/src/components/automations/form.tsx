@@ -16,7 +16,7 @@ import {
   isSkipSetupRelevant,
 } from "@terragon/shared/automations";
 import { AIModel } from "@terragon/agent/types";
-import { AccessTier, Automation } from "@terragon/shared";
+import { Automation } from "@terragon/shared";
 import { useAtomValue } from "jotai";
 import {
   selectedRepoAtom,
@@ -52,13 +52,8 @@ import { validateCronExpression } from "@terragon/shared/automations/cron";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
 import { PromptBoxToolBelt } from "@/components/promptbox/prompt-box-tool-belt";
-import { useAccessInfo } from "@/queries/subscription";
 
-function createAutomationFormSchema({
-  accessTier,
-}: {
-  accessTier: AccessTier;
-}) {
+function createAutomationFormSchema() {
   return z
     .object({
       name: z.string().min(1),
@@ -71,7 +66,7 @@ function createAutomationFormSchema({
         (trigger) => {
           if (trigger.type === "schedule") {
             return validateCronExpression(trigger.config.cron, {
-              accessTier,
+              accessTier: "pro",
             }).isValid;
           }
           return true;
@@ -108,7 +103,10 @@ function createAutomationFormSchema({
           (trigger) => {
             if (trigger.type === "github_mention") {
               const config = trigger.config as GitHubMentionTriggerConfig;
-              if (config.filter.includeBotMentions && accessTier !== "pro") {
+              if (
+                config.filter.includeBotMentions &&
+                !config.filter.botUsernames
+              ) {
                 return false;
               }
             }
@@ -116,7 +114,7 @@ function createAutomationFormSchema({
           },
           {
             message:
-              "Including mentions from bot users is only available on the Pro tier.",
+              "Including mentions from bot users is unavailable for this workspace.",
             path: ["config"],
           },
         )
@@ -333,8 +331,7 @@ export function AutomationEditorDialogContent({
   > | null;
 }) {
   "use no memo";
-  const { tier } = useAccessInfo();
-  const AutomationFormSchema = createAutomationFormSchema({ accessTier: tier });
+  const AutomationFormSchema = createAutomationFormSchema();
   const selectedRepo = useAtomValue(selectedRepoAtom);
   const selectedBranch = useAtomValue(selectedBranchAtom);
   const selectedModel = useAtomValue(selectedModelAtom);

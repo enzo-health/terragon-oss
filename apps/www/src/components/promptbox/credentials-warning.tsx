@@ -3,10 +3,7 @@
 import { AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { AIModel } from "@terragon/agent/types";
-import {
-  isAgentSupportedForCredits,
-  modelToAgent,
-} from "@terragon/agent/utils";
+import { modelToAgent } from "@terragon/agent/utils";
 import { useCredentialInfoForAgent } from "@/atoms/user-credentials";
 
 interface CredentialsWarningProps {
@@ -23,7 +20,7 @@ export function CredentialsWarning({ selectedModel }: CredentialsWarningProps) {
     switch (selectedAgent) {
       case "claudeCode":
         return {
-          message: "No credits and Claude credentials not configured",
+          message: "Claude credentials not configured",
           linkText: "Configure Claude",
         };
       case "gemini":
@@ -38,12 +35,12 @@ export function CredentialsWarning({ selectedModel }: CredentialsWarningProps) {
         };
       case "codex":
         return {
-          message: "No credits and OpenAI credentials not configured",
+          message: "OpenAI credentials not configured",
           linkText: "Configure OpenAI",
         };
       case "opencode":
         return {
-          message: "No more credits available",
+          message: "No more quota available for this model",
           linkText: null,
         };
       default:
@@ -55,18 +52,12 @@ export function CredentialsWarning({ selectedModel }: CredentialsWarningProps) {
   if (!credentialWarningMessage) {
     return null;
   }
-  const showTopUpLink = isAgentSupportedForCredits(selectedAgent);
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground bg-muted/50 rounded-md">
       <AlertCircle className="h-4 w-4 flex-shrink-0" />
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>{credentialWarningMessage.message}</span>
-        {showTopUpLink && (
-          <Link href="/settings/billing" className="text-foreground underline">
-            Top up credits
-          </Link>
-        )}
         {credentialWarningMessage.linkText && (
           <Link
             href="/settings/agent#agent-providers"

@@ -4,7 +4,6 @@ import { getPostHogServer } from "@/lib/posthog-server";
 import {
   getAutomation,
   incrementAutomationRunCount,
-  getAutomationCount,
 } from "@terragon/shared/model/automations";
 import { assertNever } from "@terragon/shared/utils";
 import { Automation, AutomationInsert } from "@terragon/shared/db/types";
@@ -17,7 +16,7 @@ import {
   GitHubMentionTriggerConfig,
   AutomationTriggerType,
 } from "@terragon/shared/automations";
-import { AccessTier, DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@terragon/shared";
 import {
   PullRequestEvent,
   IssueEvent,
@@ -34,9 +33,6 @@ import {
   createGitHubCheckRunForAutomation,
   updateGitHubCheckRunForAutomation,
 } from "./github";
-import { getAccessInfoForUser } from "@/lib/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
-import { getMaxAutomationsForUser } from "@/lib/subscription-tiers";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { UserFacingError } from "@/lib/server-actions";
 
@@ -56,7 +52,7 @@ export async function runAutomation({
   };
   source: "automated" | "manual";
 }): Promise<{ threadId: string; threadChatId: string } | undefined> {
-  const { automation, tier } = await validateCanRunAutomation({
+  const { automation } = await validateCanRunAutomation({
     userId,
     automationId,
     triggerTypes: null,
@@ -99,7 +95,7 @@ export async function runAutomation({
       db,
       automationId: automation.id,
       userId: automation.userId,
-      accessTier: tier,
+      accessTier: "pro",
     });
     getPostHogServer().capture({
       distinctId: automation.userId,
@@ -141,17 +137,10 @@ export async function validateCanRunAutomation({
   automationId: string;
   triggerTypes: AutomationTriggerType[] | null;
   throwOnError: boolean;
-}): Promise<{ automation: Automation; tier: AccessTier; canRun: boolean }> {
+}): Promise<{ automation: Automation; canRun: boolean }> {
   const automation = await getAutomation({ db, automationId, userId });
   if (!automation) {
     throw new UserFacingError("Automation not found");
-  }
-  const { tier } = await getAccessInfoForUser(userId);
-  if (tier === "none") {
-    if (throwOnError) {
-      throw new UserFacingError(SUBSCRIPTION_MESSAGES.RUN_AUTOMATION);
-    }
-    return { automation, tier, canRun: false };
   }
   if (triggerTypes && !triggerTypes.includes(automation.triggerType)) {
     if (throwOnError) {
@@ -159,29 +148,18 @@ export async function validateCanRunAutomation({
         `Invalid trigger type. This ${automation.triggerType} is not a valid trigger type for this action.`,
       );
     }
-    return { automation, tier, canRun: false };
+    return { automation, canRun: false };
   }
-  return { automation, tier, canRun: true };
+  return { automation, canRun: true };
 }
 
 export async function hasReachedLimitOfAutomations({
   userId,
-  tier,
 }: {
   userId: string;
-  tier: AccessTier;
-}) {
-  if (tier === "pro" || tier === "none") {
-    return false;
-  }
-  const [currentCount, maxAutomations] = await Promise.all([
-    getAutomationCount({ db, userId }),
-    getMaxAutomationsForUser(userId),
-  ]);
-  if (maxAutomations === null) {
-    return false;
-  }
-  return currentCount >= maxAutomations;
+}): Promise<boolean> {
+  void userId;
+  return false;
 }
 
 export async function validateAutomationCreationOrUpdate({
@@ -197,13 +175,8 @@ export async function validateAutomationCreationOrUpdate({
       "userId" | "createdAt" | "updatedAt" | "lastRunAt" | "runCount"
     >
   >;
-}): Promise<{ tier: AccessTier }> {
-  const { tier } = await getAccessInfoForUser(userId);
-  if (automationId === null) {
-    if (tier === "none") {
-      throw new UserFacingError(SUBSCRIPTION_MESSAGES.CREATE_AUTOMATION);
-    }
-  }
+}): Promise<void> {
+  void userId;
   const automationOrNull = automationId
     ? await getAutomation({ db, automationId, userId })
     : null;
@@ -219,7 +192,6 @@ export async function validateAutomationCreationOrUpdate({
     if (triggerType !== "manual") {
       const hasReachedLimit = await hasReachedLimitOfAutomations({
         userId,
-        tier,
       });
       if (hasReachedLimit) {
         if (automationId === null) {
@@ -241,10 +213,8 @@ export async function validateAutomationCreationOrUpdate({
     switch (triggerType) {
       case "schedule": {
         const config = triggerConfig as ScheduleTriggerConfig;
-        const accessInfo = await getAccessInfoForUser(userId);
-
         const { isValid, error } = validateCronExpression(config.cron, {
-          accessTier: accessInfo.tier,
+          accessTier: "pro",
         });
         if (!isValid) {
           if (error === "invalid-syntax") {
@@ -255,7 +225,7 @@ export async function validateAutomationCreationOrUpdate({
           }
           if (error === "pro-only") {
             throw new UserFacingError(
-              "This schedule is only supported on the Pro tier.",
+              "This schedule is not supported for this automation configuration.",
             );
           }
           throw new UserFacingError("Invalid or unsupported schedule.");
@@ -281,13 +251,6 @@ export async function validateAutomationCreationOrUpdate({
       case "github_mention": {
         const config = triggerConfig as GitHubMentionTriggerConfig;
         if (config.filter.includeBotMentions) {
-          // Check if user has Pro tier for bot mentions
-          const accessInfo = await getAccessInfoForUser(userId);
-          if (accessInfo.tier !== "pro") {
-            throw new UserFacingError(
-              "The 'Include mentions from bot users' feature is only available on the Pro tier. Upgrade to the Pro tier to enable this feature.",
-            );
-          }
           if (!config.filter.botUsernames) {
             throw new UserFacingError(
               "At least one bot username must be specified",
@@ -330,7 +293,7 @@ export async function validateAutomationCreationOrUpdate({
       }
     }
   }
-  return { tier };
+  return;
 }
 
 export async function runPullRequestAutomation({

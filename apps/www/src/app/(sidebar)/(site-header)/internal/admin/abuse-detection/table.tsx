@@ -69,33 +69,6 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
     ),
   },
   {
-    accessorKey: "signupTrialDaysRemaining",
-    header: "Trial Days Left",
-    cell: ({ row }) => {
-      const days = row.original.signupTrialDaysRemaining;
-      return (
-        <div className="text-sm">
-          {days > 0 ? (
-            <span className="text-orange-600 font-medium">{days}</span>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          )}
-        </div>
-      );
-    },
-  },
-  {
-    accessorKey: "accessTierInfo",
-    header: "Plan",
-    cell: ({ row }) => (
-      <div className="text-sm">
-        {row.original.accessTierInfo ?? (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </div>
-    ),
-  },
-  {
     accessorKey: "threadsCreatedPastWeek",
     header: "Threads (7d)",
     cell: ({ row }) => (
