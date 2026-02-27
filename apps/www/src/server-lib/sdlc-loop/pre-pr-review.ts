@@ -232,6 +232,7 @@ export async function maybeRunSdlcPrePrReview({
 
   const [deepReviewResult, carmackReviewResult] = await Promise.allSettled([
     runDeepReviewGate({
+      session,
       repoFullName: thread.githubRepoFullName,
       prNumber: null,
       headSha,
@@ -239,6 +240,7 @@ export async function maybeRunSdlcPrePrReview({
       gitDiff: diffOutput,
     }),
     runCarmackReviewGate({
+      session,
       repoFullName: thread.githubRepoFullName,
       prNumber: null,
       headSha,
