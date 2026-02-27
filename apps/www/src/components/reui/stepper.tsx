@@ -67,6 +67,34 @@ function useStepItem() {
   return ctx;
 }
 
+function isStepperItemElement(child: ReactElement): boolean {
+  return (
+    child.type === StepperItem ||
+    (typeof child.type !== "string" &&
+      (child.type as { displayName?: string }).displayName === "StepperItem")
+  );
+}
+
+function getElementChildren(child: ReactElement): React.ReactNode {
+  const props = child.props;
+  if (typeof props !== "object" || props === null || !("children" in props)) {
+    return null;
+  }
+  return (props as { children?: React.ReactNode }).children ?? null;
+}
+
+function countStepperItems(children: React.ReactNode): number {
+  return Children.toArray(children).reduce<number>((count, child) => {
+    if (!isValidElement(child)) {
+      return count;
+    }
+    const nestedChildren = getElementChildren(child);
+    const nestedCount =
+      nestedChildren !== null ? countStepperItems(nestedChildren) : 0;
+    return count + (isStepperItemElement(child) ? 1 : 0) + nestedCount;
+  }, 0);
+}
+
 interface StepperProps extends HTMLAttributes<HTMLDivElement> {
   defaultValue?: number;
   value?: number;
@@ -152,12 +180,7 @@ function Stepper({
     () => ({
       activeStep: currentStep,
       setActiveStep: handleSetActiveStep,
-      stepsCount: Children.toArray(children).filter(
-        (child): child is ReactElement =>
-          isValidElement(child) &&
-          (child.type as { displayName?: string }).displayName ===
-            "StepperItem",
-      ).length,
+      stepsCount: countStepperItems(children),
       orientation,
       registerTrigger,
       focusNext,
@@ -495,6 +518,8 @@ function StepperContent({
     </div>
   );
 }
+
+StepperItem.displayName = "StepperItem";
 
 export {
   useStepper,
