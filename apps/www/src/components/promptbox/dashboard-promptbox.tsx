@@ -48,7 +48,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const [repoFullName, setRepoFullName] = useSelectedRepo();
   const [branchName, setBranchName] = useSelectedBranch();
   const [isRecording, setIsRecording] = useState(false);
-  const [runInSdlcLoop, setRunInSdlcLoop] = useState(false);
+  const [runInSdlcLoop, setRunInSdlcLoop] = useState(true);
   const onRepoBranchChange = useCallback(
     (repo: string | null, branch: string | null) => {
       setRepoFullName(repo);
