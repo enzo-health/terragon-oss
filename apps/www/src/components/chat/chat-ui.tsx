@@ -64,7 +64,6 @@ import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { usePlatform } from "@/hooks/use-platform";
-import { SdlcStatusCard } from "./sdlc-status-card";
 import { SdlcTopProgressStepper } from "@/components/patterns/p-stepper-7";
 
 function ChatUI({
@@ -278,10 +277,6 @@ function ChatUI({
               className="w-full h-full overflow-auto"
             >
               <div className="flex flex-col flex-1 gap-2 w-full max-w-[800px] mx-auto px-4 mt-2 mb-4">
-                <SdlcStatusCard
-                  threadId={threadId}
-                  enabled={shouldShowSdlcLoopStatus}
-                />
                 <ChatMessages
                   messages={messages}
                   isAgentWorking={isAgentCurrentlyWorking}
