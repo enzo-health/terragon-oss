@@ -143,7 +143,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const credentialInfo = useCredentialInfoForAgent(selectedAgent);
 
   const isSubmitDisabled =
-    baseIsSubmitDisabled || (credentialInfo && !credentialInfo.canInvokeAgent);
+    baseIsSubmitDisabled || credentialInfo?.canInvokeAgent === false;
 
   // Set content when promptText changes
   React.useEffect(() => {
