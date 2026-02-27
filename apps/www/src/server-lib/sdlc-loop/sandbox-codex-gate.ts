@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { parseModelOrNull } from "@terragon/agent/utils";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { bashQuote } from "@terragon/sandbox/utils";
 import * as z from "zod/v4";
 
-const DEFAULT_CODEX_GATE_MODEL = "gpt-5.3-codex";
+const DEFAULT_CODEX_GATE_MODEL = "gpt-5.3-codex-medium";
 const DEFAULT_CODEX_GATE_TIMEOUT_MS = 180_000;
 
 type CodexJsonEvent = {
@@ -16,6 +17,37 @@ type CodexJsonEvent = {
     message?: string;
   };
 };
+
+type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+type CodexCliModelSpec = {
+  cliModel: string;
+  reasoningEffort: CodexReasoningEffort;
+};
+
+function resolveCodexCliModelSpec(modelName: string): CodexCliModelSpec {
+  const normalizedModel = parseModelOrNull({ modelName });
+  switch (normalizedModel) {
+    case "gpt-5.3-codex-low":
+      return { cliModel: "gpt-5.3-codex", reasoningEffort: "low" };
+    case "gpt-5.3-codex-medium":
+      return { cliModel: "gpt-5.3-codex", reasoningEffort: "medium" };
+    case "gpt-5.3-codex-high":
+      return { cliModel: "gpt-5.3-codex", reasoningEffort: "high" };
+    case "gpt-5.3-codex-xhigh":
+      return { cliModel: "gpt-5.3-codex", reasoningEffort: "xhigh" };
+    case "gpt-5.3-codex-spark-low":
+      return { cliModel: "gpt-5.3-codex-spark", reasoningEffort: "low" };
+    case "gpt-5.3-codex-spark-medium":
+      return { cliModel: "gpt-5.3-codex-spark", reasoningEffort: "medium" };
+    case "gpt-5.3-codex-spark-high":
+      return { cliModel: "gpt-5.3-codex-spark", reasoningEffort: "high" };
+    default:
+      throw new Error(
+        `Unsupported SDLC sandbox gate model "${modelName}". Use configured gpt-5.3 codex variants.`,
+      );
+  }
+}
 
 function maybeParseJsonObject(rawText: string): unknown {
   try {
@@ -107,6 +139,7 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
   model?: string;
   timeoutMs?: number;
 }): Promise<TOutput> {
+  const codexModelSpec = resolveCodexCliModelSpec(model);
   const promptFilePath = `/tmp/sdlc-${gateName}-prompt-${randomUUID()}.txt`;
   const runCommand = [
     "cat",
@@ -116,9 +149,9 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
     "--dangerously-bypass-approvals-and-sandbox",
     "--json",
     "--model",
-    bashQuote(model),
+    bashQuote(codexModelSpec.cliModel),
     "--config",
-    bashQuote("model_reasoning_effort=medium"),
+    bashQuote(`model_reasoning_effort=${codexModelSpec.reasoningEffort}`),
     "-c",
     bashQuote("suppress_unstable_features_warning=true"),
   ].join(" ");

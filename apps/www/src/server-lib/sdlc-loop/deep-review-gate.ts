@@ -37,7 +37,7 @@ export async function runDeepReviewGate({
   headSha,
   taskContext,
   gitDiff,
-  model = "gpt-5.3-codex",
+  model = "gpt-5.3-codex-medium",
 }: {
   session: ISandboxSession;
   repoFullName: string;
