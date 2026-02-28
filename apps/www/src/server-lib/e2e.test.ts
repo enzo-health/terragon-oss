@@ -114,6 +114,22 @@ describe("end-to-end", () => {
     });
   });
 
+  const expectSendDaemonMessageCalledWith = (expected: {
+    userId: string;
+    threadId: string;
+    threadChatId: string;
+    sandboxId: string;
+    session: unknown;
+    message: Record<string, unknown>;
+  }) => {
+    expect(sendDaemonMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...expected,
+        message: expect.objectContaining(expected.message),
+      }),
+    );
+  };
+
   it("new thread -> done -> follow up ", async () => {
     const testUserAndAccount = await createTestUser({ db });
     const user = testUserAndAccount.user;
@@ -149,7 +165,7 @@ describe("end-to-end", () => {
     });
     expect(threadChat).toBeDefined();
     expect(threadChat!.status).toBe("booting");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId: thread!.id,
       threadChatId: threadChat!.id,
@@ -243,7 +259,7 @@ describe("end-to-end", () => {
       threadChatId,
     });
     expect(threadChatUpdated!.status).toBe("booting");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -380,7 +396,7 @@ describe("end-to-end", () => {
       threadChatId,
     });
     expect(threadChatUpdated!.status).toBe("booting");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -432,7 +448,7 @@ describe("end-to-end", () => {
     });
     expect(threadChat!.status).toBe("booting");
 
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -488,7 +504,7 @@ describe("end-to-end", () => {
       threadChatId,
     });
     expect(threadChatUpdated!.status).toBe("stopping");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -534,7 +550,7 @@ describe("end-to-end", () => {
       threadChatId,
     });
     expect(threadChatUpdated!.status).toBe("booting");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -584,7 +600,7 @@ describe("end-to-end", () => {
       threadChatId,
     });
     expect(threadChat!.status).toBe("booting");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -722,7 +738,7 @@ describe("end-to-end", () => {
     expect(thread!.name).toBe("test-thread-name");
     expect(thread!.repoBaseBranchName).toBe("main");
     expect(thread!.githubRepoFullName).toBe("terragon/test-repo");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -830,7 +846,7 @@ describe("end-to-end", () => {
       threadChatId,
     });
     expect(threadChat!.status).toBe("booting");
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -901,7 +917,7 @@ describe("end-to-end", () => {
     // Will retry git checkpoint once
     expect(threadChatUpdated!.status).toBe("working");
     expect(threadChatUpdated!.errorMessage).toBe(null);
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -1063,7 +1079,7 @@ describe("end-to-end", () => {
     expect(threadChatUpdated!.status).toBe("working");
     expect(threadChatUpdated!.errorMessage).toBeNull();
     expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -1291,7 +1307,7 @@ describe("end-to-end", () => {
     });
     expect(threadChatUpdated!.status).toBe("booting");
     expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -1343,7 +1359,7 @@ describe("end-to-end", () => {
     expect(threadChatUpdated!.permissionMode).toBe("plan");
 
     // Verify daemon receives plan mode
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -1576,7 +1592,7 @@ describe("end-to-end", () => {
     });
     expect(threadChat!.status).toBe("booting");
     expect(threadChat!.scheduleAt).toBeNull();
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -1642,7 +1658,7 @@ describe("end-to-end", () => {
     });
     expect(threadChat!.status).toBe("booting");
     expect(threadChat!.scheduleAt).toBeNull();
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,
@@ -1746,7 +1762,7 @@ describe("end-to-end", () => {
         parts: [{ type: "text", text: "Follow up" }],
       },
     ]);
-    expect(sendDaemonMessage).toHaveBeenCalledWith({
+    expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
       threadChatId,

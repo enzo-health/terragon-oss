@@ -1,15 +1,20 @@
 import { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getUserCreditBalance } from "@terragon/shared/model/credits";
 import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
 import { logOpenRouterUsage } from "../log-usage";
 import { waitUntil } from "@vercel/functions";
 import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
+import {
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+} from "@/lib/auth-server";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 const OPENROUTER_API_BASE = "https://openrouter.ai/api/";
 const DEFAULT_PATH = "v1/chat/completions";
+const OPENROUTER_API_ORIGIN = new URL(OPENROUTER_API_BASE).origin;
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +30,12 @@ function getDaemonTokenFromHeaders(headers: Headers) {
   const authHeader = headers.get("authorization");
   if (!authHeader) {
     return null;
+  }
+
+  const daemonTokenMatch = authHeader.match(/^x-daemon-token\s+(.*)$/i);
+  if (daemonTokenMatch && daemonTokenMatch[1]) {
+    const token = daemonTokenMatch[1]!.trim();
+    return token === "" ? null : token;
   }
 
   const match = authHeader.match(/^\s*Bearer\s+(.*)$/i);
@@ -45,7 +56,17 @@ function buildTargetUrl(
       ? pathSegments.join("/")
       : DEFAULT_PATH;
 
+  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
+    throw new Error("invalid proxy path");
+  }
+
   const targetUrl = new URL(pathname, OPENROUTER_API_BASE);
+  if (targetUrl.origin !== OPENROUTER_API_ORIGIN) {
+    throw new Error("invalid proxy origin");
+  }
+  if (!targetUrl.pathname.startsWith("/api/v1/")) {
+    throw new Error("invalid proxy path");
+  }
 
   // Copy all search params
   if (request.nextUrl.searchParams.toString()) {
@@ -175,7 +196,12 @@ async function proxyRequest(
   authContext: AuthContext & { bodyBuffer?: ArrayBuffer },
 ) {
   const params = await args.params;
-  const targetUrl = buildTargetUrl(request, params.path);
+  let targetUrl: URL;
+  try {
+    targetUrl = buildTargetUrl(request, params.path);
+  } catch {
+    return new Response("Invalid proxy path", { status: 400 });
+  }
 
   const validation = await validateProxyRequestModel({
     request,
@@ -322,14 +348,53 @@ async function authorize(request: NextRequest): Promise<
   }
 
   try {
-    const { valid, error, key } = await auth.api.verifyApiKey({
-      body: { key: token },
+    const daemonAuth = await getDaemonTokenAuthContextOrNull({
+      headers: new Headers({ "X-Daemon-Token": token }),
     });
-
-    const userId = key?.userId;
-
-    if (error || !valid || !userId) {
-      console.log("Unauthorized OpenRouter proxy request", { error, valid });
+    if (!daemonAuth || !daemonAuth.claims) {
+      console.log("Unauthorized OpenRouter proxy request");
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    const userId = daemonAuth.userId;
+    const claims = daemonAuth.claims;
+    if (
+      !hasDaemonProviderScope(claims, "openrouter") ||
+      claims.exp <= Date.now()
+    ) {
+      console.log("OpenRouter proxy access denied: provider scope mismatch", {
+        userId,
+        runId: claims.runId,
+      });
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    const runContext = await getAgentRunContextByRunId({
+      db,
+      runId: claims.runId,
+      userId,
+    });
+    if (!runContext) {
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    if (
+      !daemonAuth.keyId ||
+      !runContext.daemonTokenKeyId ||
+      daemonAuth.keyId !== runContext.daemonTokenKeyId ||
+      runContext.runId !== claims.runId ||
+      runContext.threadId !== claims.threadId ||
+      runContext.threadChatId !== claims.threadChatId ||
+      runContext.sandboxId !== claims.sandboxId ||
+      runContext.agent !== claims.agent ||
+      runContext.transportMode !== claims.transportMode ||
+      runContext.protocolVersion !== claims.protocolVersion ||
+      runContext.tokenNonce !== claims.nonce ||
+      runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped"
+    ) {
+      console.log("OpenRouter proxy access denied: run context mismatch", {
+        userId,
+        runId: claims.runId,
+      });
       return { response: new Response("Unauthorized", { status: 401 }) };
     }
 

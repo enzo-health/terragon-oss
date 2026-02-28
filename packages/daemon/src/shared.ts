@@ -16,24 +16,61 @@ export const DAEMON_CAPABILITY_EVENT_ENVELOPE_V2 = "daemon_event_envelope_v2";
 export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
   sdlcLoopCoordinatorRouting?: boolean;
+  sandboxAgentAcpTransport?: boolean;
 };
 
-export const DaemonMessageClaudeSchema = z.object({
-  type: z.literal("claude"),
-  token: z.string(),
-  prompt: z.string(),
-  model: z.string(),
-  agent: AIAgentSchema,
-  agentVersion: z.number(),
-  sessionId: z.string().nullable(),
-  threadId: z.string(),
-  threadChatId: z.string(),
-  featureFlags: z.record(z.string(), z.boolean()).optional() as z.ZodOptional<
-    z.ZodType<FeatureFlags>
-  >,
-  permissionMode: z.enum(["allowAll", "plan"]).optional(),
-  useCredits: z.boolean().optional(),
-});
+export const DaemonTransportModeSchema = z.enum(["legacy", "acp"]);
+export type DaemonTransportMode = z.infer<typeof DaemonTransportModeSchema>;
+
+export const DaemonMessageClaudeSchema = z
+  .object({
+    type: z.literal("claude"),
+    token: z.string(),
+    prompt: z.string(),
+    model: z.string(),
+    agent: AIAgentSchema,
+    agentVersion: z.number(),
+    sessionId: z.string().nullable(),
+    threadId: z.string(),
+    threadChatId: z.string(),
+    featureFlags: z.record(z.string(), z.boolean()).optional() as z.ZodOptional<
+      z.ZodType<FeatureFlags>
+    >,
+    permissionMode: z.enum(["allowAll", "plan"]).optional(),
+    useCredits: z.boolean().optional(),
+    runId: z.string().optional(),
+    transportMode: DaemonTransportModeSchema.optional(),
+    protocolVersion: z.number().int().min(1).optional(),
+    acpServerId: z.string().nullable().optional(),
+    acpSessionId: z.string().nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const transportMode = value.transportMode ?? "legacy";
+    if (transportMode !== "acp") {
+      return;
+    }
+    if (!value.runId || value.runId.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["runId"],
+        message: "runId is required for ACP transport",
+      });
+    }
+    if (value.protocolVersion !== 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["protocolVersion"],
+        message: "protocolVersion must be 2 for ACP transport",
+      });
+    }
+    if (!value.acpServerId || value.acpServerId.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["acpServerId"],
+        message: "acpServerId is required for ACP transport",
+      });
+    }
+  });
 
 export const DaemonMessagePingSchema = z.object({
   type: z.literal("ping"),
@@ -153,6 +190,10 @@ export type DaemonEventAPIBody = {
   threadChatId: string;
   messages: ClaudeMessage[];
   timezone: string;
+  transportMode?: DaemonTransportMode;
+  protocolVersion?: number;
+  acpServerId?: string | null;
+  acpSessionId?: string | null;
   payloadVersion?: number;
   eventId?: string;
   runId?: string;

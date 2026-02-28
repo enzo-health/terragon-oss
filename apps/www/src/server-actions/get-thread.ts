@@ -55,6 +55,16 @@ export async function getThreadWithUserPermissions({
   return threadInfoFull ?? null;
 }
 
+Object.assign(getHasRepoPermissionsForUser, {
+  userOnly: true,
+  wrappedServerAction: true,
+});
+
+Object.assign(getThreadWithUserPermissions, {
+  userOnly: true,
+  wrappedServerAction: true,
+});
+
 export const getThreadAction = cache(
   userOnlyAction(
     async function getThreadAction(

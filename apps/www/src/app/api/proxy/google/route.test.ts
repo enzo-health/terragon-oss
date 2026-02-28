@@ -2,19 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { NextRequest } from "next/server";
 import * as googleAIStudioRoute from "./[[...path]]/route";
 import { logGoogleUsage } from "./log-google-usage";
-import { auth } from "@/lib/auth";
+import {
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+  type DaemonRunTokenClaims,
+} from "@/lib/auth-server";
 import { getUserCreditBalance } from "@terragon/shared/model/credits";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
-vi.mock("@/lib/auth", () => ({
-  auth: {
-    api: {
-      verifyApiKey: vi.fn(),
-    },
-  },
+vi.mock("@/lib/auth-server", () => ({
+  getDaemonTokenAuthContextOrNull: vi.fn(),
+  hasDaemonProviderScope: vi.fn(),
 }));
 
 vi.mock("@terragon/shared/model/credits", () => ({
   getUserCreditBalance: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getAgentRunContextByRunId: vi.fn(),
 }));
 
 vi.mock("@/server-lib/credit-auto-reload", () => ({
@@ -70,19 +76,53 @@ function createRequest({
 }
 
 describe("Google AI Studio proxy route", () => {
-  const verifyApiKeyMock = vi.mocked(auth.api.verifyApiKey);
+  const getDaemonTokenAuthContextOrNullMock = vi.mocked(
+    getDaemonTokenAuthContextOrNull,
+  );
+  const hasDaemonProviderScopeMock = vi.mocked(hasDaemonProviderScope);
   const getUserCreditBalanceMock = vi.mocked(getUserCreditBalance);
+  const getAgentRunContextByRunIdMock = vi.mocked(getAgentRunContextByRunId);
   const logUsageMock = vi.mocked(logGoogleUsage);
   const { POST } = googleAIStudioRoute;
 
   beforeEach(async () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
-    verifyApiKeyMock.mockResolvedValue({
-      valid: true,
-      error: null,
-      key: { userId: "user-123" } as any,
+    const now = Date.now();
+    const daemonRun: DaemonRunTokenClaims = {
+      kind: "daemon-run" as const,
+      runId: "run-google-123",
+      threadId: "thread-google-123",
+      threadChatId: "thread-chat-google-123",
+      sandboxId: "sandbox-google-123",
+      agent: "gemini",
+      transportMode: "legacy" as const,
+      protocolVersion: 1,
+      providers: ["google"],
+      nonce: "nonce-google-123",
+      issuedAt: now,
+      exp: now + 60_000,
+    };
+    getDaemonTokenAuthContextOrNullMock.mockResolvedValue({
+      userId: "user-123",
+      keyId: "daemon-key-google-123",
+      claims: daemonRun,
     });
+    hasDaemonProviderScopeMock.mockImplementation(
+      (_claims, provider) => provider === "google",
+    );
+    getAgentRunContextByRunIdMock.mockResolvedValue({
+      runId: daemonRun.runId,
+      threadId: daemonRun.threadId,
+      threadChatId: daemonRun.threadChatId,
+      sandboxId: daemonRun.sandboxId,
+      agent: daemonRun.agent,
+      transportMode: daemonRun.transportMode,
+      protocolVersion: daemonRun.protocolVersion,
+      tokenNonce: daemonRun.nonce,
+      daemonTokenKeyId: "daemon-key-google-123",
+      status: "dispatched",
+    } as any);
     getUserCreditBalanceMock.mockResolvedValue({
       totalCreditsCents: 1_000,
       totalUsageCents: 0,
@@ -196,9 +236,12 @@ describe("Google AI Studio proxy route", () => {
       }),
     });
 
-    expect(verifyApiKeyMock).toHaveBeenCalledWith({
-      body: { key: "another-daemon-token" },
-    });
+    expect(getDaemonTokenAuthContextOrNullMock).toHaveBeenCalledTimes(1);
+    const authRequest = getDaemonTokenAuthContextOrNullMock.mock
+      .calls[0]![0] as { headers: Headers } | undefined;
+    expect(authRequest?.headers.get("X-Daemon-Token")).toBe(
+      "another-daemon-token",
+    );
 
     const fetchUrl = fetchMock.mock.calls[0]![0] as URL;
     expect(fetchUrl.searchParams.get("key")).toBe("test-google-ai-studio-key");

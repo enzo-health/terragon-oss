@@ -85,9 +85,167 @@ export async function getUserIdOrRedirect(): Promise<User["id"]> {
   return userId;
 }
 
-export async function getUserIdOrNullFromDaemonToken(
+export type DaemonRunTokenClaims = {
+  kind: "daemon-run";
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  sandboxId: string;
+  agent: string;
+  transportMode: "legacy" | "acp";
+  protocolVersion: number;
+  providers: DaemonTokenProvider[];
+  nonce: string;
+  issuedAt: number;
+  exp: number;
+};
+
+export type DaemonTokenProvider =
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "openrouter";
+
+type DaemonTokenMetadata = {
+  daemonRun?: unknown;
+};
+
+type DaemonTokenKeyLike = {
+  id?: unknown;
+  userId?: unknown;
+  metadata?: unknown;
+};
+
+export type DaemonTokenAuthContext = {
+  userId: string;
+  keyId: string | null;
+  claims: DaemonRunTokenClaims | null;
+};
+
+function parseDaemonTokenProviders(
+  value: unknown,
+): DaemonTokenProvider[] | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const providers: DaemonTokenProvider[] = [];
+  const seen = new Set<DaemonTokenProvider>();
+  for (const item of value) {
+    if (
+      item !== "openai" &&
+      item !== "anthropic" &&
+      item !== "google" &&
+      item !== "openrouter"
+    ) {
+      return null;
+    }
+    const provider: DaemonTokenProvider = item;
+    if (seen.has(provider)) {
+      continue;
+    }
+    seen.add(provider);
+    providers.push(provider);
+  }
+  return providers.length > 0 ? providers : null;
+}
+
+function parseDaemonTokenMetadata(raw: unknown): DaemonTokenMetadata | null {
+  if (raw == null) {
+    return null;
+  }
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return parsed as DaemonTokenMetadata;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === "object") {
+    return raw as DaemonTokenMetadata;
+  }
+  return null;
+}
+
+function parseDaemonRunTokenClaims(raw: unknown): DaemonRunTokenClaims | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const claims = raw as Partial<DaemonRunTokenClaims>;
+  if (claims.kind !== "daemon-run") {
+    return null;
+  }
+  if (typeof claims.runId !== "string" || claims.runId.length === 0) {
+    return null;
+  }
+  if (typeof claims.threadId !== "string" || claims.threadId.length === 0) {
+    return null;
+  }
+  if (
+    typeof claims.threadChatId !== "string" ||
+    claims.threadChatId.length === 0
+  ) {
+    return null;
+  }
+  if (typeof claims.sandboxId !== "string" || claims.sandboxId.length === 0) {
+    return null;
+  }
+  if (typeof claims.agent !== "string" || claims.agent.length === 0) {
+    return null;
+  }
+  if (claims.transportMode !== "legacy" && claims.transportMode !== "acp") {
+    return null;
+  }
+  if (
+    typeof claims.protocolVersion !== "number" ||
+    !Number.isInteger(claims.protocolVersion) ||
+    claims.protocolVersion < 1
+  ) {
+    return null;
+  }
+  const providers = parseDaemonTokenProviders(claims.providers);
+  if (!providers) {
+    return null;
+  }
+  if (typeof claims.nonce !== "string" || claims.nonce.length === 0) {
+    return null;
+  }
+  if (
+    typeof claims.issuedAt !== "number" ||
+    !Number.isFinite(claims.issuedAt) ||
+    claims.issuedAt <= 0
+  ) {
+    return null;
+  }
+  if (
+    typeof claims.exp !== "number" ||
+    !Number.isFinite(claims.exp) ||
+    claims.exp <= 0
+  ) {
+    return null;
+  }
+  return {
+    kind: "daemon-run",
+    runId: claims.runId,
+    threadId: claims.threadId,
+    threadChatId: claims.threadChatId,
+    sandboxId: claims.sandboxId,
+    agent: claims.agent,
+    transportMode: claims.transportMode,
+    protocolVersion: claims.protocolVersion,
+    providers,
+    nonce: claims.nonce,
+    issuedAt: claims.issuedAt,
+    exp: claims.exp,
+  };
+}
+
+export async function getDaemonTokenAuthContextOrNull(
   request: Pick<Request, "headers">,
-): Promise<string | null> {
+): Promise<DaemonTokenAuthContext | null> {
   const token = request.headers.get("X-Daemon-Token");
   if (!token) {
     return null;
@@ -95,8 +253,9 @@ export async function getUserIdOrNullFromDaemonToken(
   const { valid, error, key } = await auth.api.verifyApiKey({
     body: { key: token },
   });
-  const userId = key?.userId;
-  if (error || !valid || !userId) {
+  const keyLike = (key ?? null) as DaemonTokenKeyLike | null;
+  const userId = keyLike?.userId;
+  if (error || !valid || typeof userId !== "string" || userId.length === 0) {
     console.log(
       "Unauthorized",
       "error",
@@ -108,7 +267,27 @@ export async function getUserIdOrNullFromDaemonToken(
     );
     return null;
   }
-  return userId;
+  const metadata = parseDaemonTokenMetadata(keyLike?.metadata ?? null);
+  const claims = parseDaemonRunTokenClaims(metadata?.daemonRun ?? null);
+  return {
+    userId,
+    keyId: typeof keyLike?.id === "string" ? keyLike.id : null,
+    claims,
+  };
+}
+
+export async function getUserIdOrNullFromDaemonToken(
+  request: Pick<Request, "headers">,
+): Promise<string | null> {
+  const authContext = await getDaemonTokenAuthContextOrNull(request);
+  return authContext?.userId ?? null;
+}
+
+export function hasDaemonProviderScope(
+  claims: DaemonRunTokenClaims,
+  provider: DaemonTokenProvider,
+): boolean {
+  return claims.providers.includes(provider);
 }
 
 export async function getUserOrNull(): Promise<User | null> {

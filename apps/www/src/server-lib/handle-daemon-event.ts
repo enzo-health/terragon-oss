@@ -52,6 +52,7 @@ export async function handleDaemonEvent({
   userId,
   timezone,
   contextUsage,
+  runId = null,
 }: {
   messages: ClaudeMessage[];
   threadId: string;
@@ -59,6 +60,7 @@ export async function handleDaemonEvent({
   userId: string;
   timezone: string;
   contextUsage: number | null;
+  runId?: string | null;
 }) {
   console.log(
     "Daemon event",
@@ -552,6 +554,7 @@ export async function handleDaemonEvent({
         shouldSkipCheckpoint,
         sourceType: thread.sourceType ?? null,
         sourceMetadata: thread.sourceMetadata ?? null,
+        runId,
       }),
     );
   }
@@ -568,6 +571,7 @@ async function handleThreadFinish({
   shouldSkipCheckpoint,
   sourceType,
   sourceMetadata,
+  runId,
 }: {
   userId: string;
   threadId: string;
@@ -578,6 +582,7 @@ async function handleThreadFinish({
   shouldSkipCheckpoint: boolean;
   sourceType: string | null;
   sourceMetadata: ThreadSourceMetadata | null;
+  runId: string | null;
 }) {
   // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
   if (sourceType === "linear-mention" && sourceMetadata != null) {
@@ -628,7 +633,14 @@ async function handleThreadFinish({
     );
   }
   if (shouldProcessFollowUpQueue) {
-    waitUntil(maybeProcessFollowUpQueue({ threadId, threadChatId, userId }));
+    waitUntil(
+      maybeProcessFollowUpQueue({
+        threadId,
+        threadChatId,
+        userId,
+        runId,
+      }),
+    );
   } else {
     // If the thread was booting and was rate limited, skip checkpoint too since we've done nothing.
     const skipCheckpointForRateLimit =

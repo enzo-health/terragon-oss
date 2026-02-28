@@ -45,6 +45,8 @@ export type SandboxStatus =
 
 export type Thread = typeof schema.thread.$inferSelect;
 export type ThreadChat = typeof schema.threadChat.$inferSelect;
+export type AgentRunContext = typeof schema.agentRunContext.$inferSelect;
+export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
@@ -224,6 +226,18 @@ export type ThreadStatus =
 
   // Agent is complete (done with checkpointing)
   | "complete";
+
+export type AgentTransportMode = "legacy" | "acp";
+
+export type AgentRunProtocolVersion = 1 | 2;
+
+export type AgentRunStatus =
+  | "pending"
+  | "dispatched"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "stopped";
 
 export type ThreadErrorType =
   | "request-timeout"
