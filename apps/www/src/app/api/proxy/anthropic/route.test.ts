@@ -2,19 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { NextRequest } from "next/server";
 import * as aiSdkRoute from "./[[...path]]/route";
 import { logAnthropicUsage } from "./log-anthropic-usage";
-import { auth } from "@/lib/auth";
+import {
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+  type DaemonRunTokenClaims,
+} from "@/lib/auth-server";
 import { getUserCreditBalance } from "@terragon/shared/model/credits";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
-vi.mock("@/lib/auth", () => ({
-  auth: {
-    api: {
-      verifyApiKey: vi.fn(),
-    },
-  },
+vi.mock("@/lib/auth-server", () => ({
+  getDaemonTokenAuthContextOrNull: vi.fn(),
+  hasDaemonProviderScope: vi.fn(),
 }));
 
 vi.mock("@terragon/shared/model/credits", () => ({
   getUserCreditBalance: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getAgentRunContextByRunId: vi.fn(),
 }));
 
 vi.mock("@/server-lib/credit-auto-reload", () => ({
@@ -51,7 +57,9 @@ function createRequest({
 
   const hasDaemonToken =
     mergedHeaders.has("X-Daemon-Token") ||
-    /^x-daemon-token\s+/i.test(mergedHeaders.get("authorization") ?? "");
+    /^(?:x-daemon-token|bearer)\s+/i.test(
+      mergedHeaders.get("authorization") ?? "",
+    );
 
   if (includeDefaultToken && !hasDaemonToken) {
     mergedHeaders.set("X-Daemon-Token", "test-daemon-token");
@@ -76,19 +84,53 @@ function createRequest({
 }
 
 describe("Anthropic proxy route", () => {
-  const verifyApiKeyMock = vi.mocked(auth.api.verifyApiKey);
+  const getDaemonTokenAuthContextOrNullMock = vi.mocked(
+    getDaemonTokenAuthContextOrNull,
+  );
+  const hasDaemonProviderScopeMock = vi.mocked(hasDaemonProviderScope);
   const getUserCreditBalanceMock = vi.mocked(getUserCreditBalance);
+  const getAgentRunContextByRunIdMock = vi.mocked(getAgentRunContextByRunId);
   const logUsageMock = vi.mocked(logAnthropicUsage);
   const { POST } = aiSdkRoute;
 
   beforeEach(async () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
-    verifyApiKeyMock.mockResolvedValue({
-      valid: true,
-      error: null,
-      key: { userId: "user-123" } as any,
+    const now = Date.now();
+    const daemonRun: DaemonRunTokenClaims = {
+      kind: "daemon-run" as const,
+      runId: "run-anthropic-123",
+      threadId: "thread-anthropic-123",
+      threadChatId: "thread-chat-anthropic-123",
+      sandboxId: "sandbox-anthropic-123",
+      agent: "claudeCode",
+      transportMode: "legacy" as const,
+      protocolVersion: 1,
+      providers: ["anthropic"],
+      nonce: "nonce-anthropic-123",
+      issuedAt: now,
+      exp: now + 60_000,
+    };
+    getDaemonTokenAuthContextOrNullMock.mockResolvedValue({
+      userId: "user-123",
+      keyId: "daemon-key-anthropic-123",
+      claims: daemonRun,
     });
+    hasDaemonProviderScopeMock.mockImplementation(
+      (_claims, provider) => provider === "anthropic",
+    );
+    getAgentRunContextByRunIdMock.mockResolvedValue({
+      runId: daemonRun.runId,
+      threadId: daemonRun.threadId,
+      threadChatId: daemonRun.threadChatId,
+      sandboxId: daemonRun.sandboxId,
+      agent: daemonRun.agent,
+      transportMode: daemonRun.transportMode,
+      protocolVersion: daemonRun.protocolVersion,
+      tokenNonce: daemonRun.nonce,
+      daemonTokenKeyId: "daemon-key-anthropic-123",
+      status: "dispatched",
+    } as any);
     getUserCreditBalanceMock.mockResolvedValue({
       totalCreditsCents: 1_000,
       totalUsageCents: 0,
@@ -171,9 +213,12 @@ describe("Anthropic proxy route", () => {
 
     await POST(request, { params: {} });
 
-    expect(verifyApiKeyMock).toHaveBeenCalledWith({
-      body: { key: "another-daemon-token" },
-    });
+    expect(getDaemonTokenAuthContextOrNullMock).toHaveBeenCalledTimes(1);
+    const authRequest = getDaemonTokenAuthContextOrNullMock.mock
+      .calls[0]![0] as { headers: Headers } | undefined;
+    expect(authRequest?.headers.get("X-Daemon-Token")).toBe(
+      "another-daemon-token",
+    );
 
     const fetchHeaders =
       (fetchMock.mock.calls[0]![1]!.headers as Headers) ?? new Headers();

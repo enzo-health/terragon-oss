@@ -23,6 +23,43 @@ import {
 import { getEnv } from "./env";
 import path from "path";
 
+function getSandboxAgentBaseUrl(
+  options: Pick<CreateSandboxOptions, "environmentVariables">,
+): string | null {
+  const entry = options.environmentVariables.find(
+    (envVar) => envVar.key === "SANDBOX_AGENT_BASE_URL",
+  );
+  if (!entry || !entry.value) {
+    return null;
+  }
+  return entry.value.replace(/\/+$/, "");
+}
+
+async function probeSandboxAgentEndpoint({
+  session,
+  options,
+}: {
+  session: ISandboxSession;
+  options: CreateSandboxOptions;
+}) {
+  if (!options.featureFlags.sandboxAgentAcpTransport) {
+    return;
+  }
+  const baseUrl = getSandboxAgentBaseUrl(options);
+  if (!baseUrl) {
+    throw new Error(
+      "sandboxAgentAcpTransport is enabled but SANDBOX_AGENT_BASE_URL is missing",
+    );
+  }
+  await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/health`)}`);
+  try {
+    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`);
+    return;
+  } catch {
+    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/rpc`)}`);
+  }
+}
+
 async function createNewBranch({
   session,
   threadName,
@@ -122,6 +159,10 @@ export async function setupSandboxOneTime(
 
   // Wait for daemon to be ready (it has its own 1 second wait)
   await daemonPromise;
+  await probeSandboxAgentEndpoint({
+    session,
+    options,
+  });
 
   // Only run terragon-setup.sh if not explicitly skipped
   if (options.skipSetupScript) {
@@ -211,6 +252,10 @@ export async function setupSandboxEveryTime({
   isCreatingSandbox: boolean;
 }) {
   await setupGitCredentials(session, options);
+  await probeSandboxAgentEndpoint({
+    session,
+    options,
+  });
   if (!options.fastResume) {
     if (options.agent) {
       await updateAgentFiles({

@@ -12,7 +12,9 @@ import {
   ClaudeMessage,
   DaemonMessage,
   DAEMON_VERSION,
+  DaemonTransportMode,
 } from "./shared";
+import { parseAcpLineToClaudeMessages } from "./acp-adapter";
 import { performance } from "node:perf_hooks";
 import { RetryBackoff, RetryConfig, DEFAULT_RETRY_CONFIG } from "./retry";
 import {
@@ -41,6 +43,24 @@ import { AgentFrontmatterReader } from "./agent-frontmatter";
 import { createHash, randomUUID } from "node:crypto";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
+const ACP_SSE_RECONNECT_DELAY_MS = 150;
+const ACP_REQUEST_TIMEOUT_MS = 120_000;
+const ACP_TERMINAL_QUIESCENCE_MS = 300;
+const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
+
+type AcpRequestEnvelope = {
+  jsonrpc: "2.0";
+  id: number;
+  method: string;
+  params?: Record<string, unknown>;
+};
+
+type AcpResponseEnvelope = {
+  jsonrpc?: unknown;
+  id?: unknown;
+  result?: unknown;
+  error?: unknown;
+};
 
 function formatError(error: unknown): object {
   if (error instanceof Error) {
@@ -92,6 +112,10 @@ type DaemonEventRunState = {
   runId: string;
   nextSeq: number;
   coordinatorRoutingEnabled: boolean;
+  transportMode: DaemonTransportMode;
+  protocolVersion: number;
+  acpServerId: string | null;
+  acpSessionId: string | null;
   cleanupRequested: boolean;
   pendingEnvelope: {
     messagesFingerprint: string;
@@ -357,40 +381,21 @@ export class TerragonDaemon {
     }
   }
 
-  private hasBufferedEntriesForThread(threadChatId: string): boolean {
-    return this.messageBuffer.some(
-      (entry) => entry.threadChatId === threadChatId,
-    );
-  }
-
   private initializeDaemonEventRunStateForNewRun({
-    threadChatId,
+    input,
     coordinatorRoutingEnabled,
   }: {
-    threadChatId: string;
+    input: DaemonMessageClaude;
     coordinatorRoutingEnabled: boolean;
   }): void {
-    const existingRunState = this.daemonEventRunStates.get(threadChatId);
-    if (
-      existingRunState &&
-      (existingRunState.pendingEnvelope ||
-        this.hasBufferedEntriesForThread(threadChatId))
-    ) {
-      this.runtime.logger.debug(
-        "Preserving daemon event run state due to pending envelope or buffered entries",
-        {
-          threadChatId,
-          hasPendingEnvelope: existingRunState.pendingEnvelope != null,
-          hasBufferedEntries: this.hasBufferedEntriesForThread(threadChatId),
-        },
-      );
-      return;
-    }
-
-    this.daemonEventRunStates.set(threadChatId, {
-      runId: randomUUID(),
+    this.daemonEventRunStates.set(input.threadChatId, {
+      runId: input.runId ?? randomUUID(),
       nextSeq: 0,
       coordinatorRoutingEnabled,
+      transportMode: input.transportMode ?? "legacy",
+      protocolVersion: input.protocolVersion ?? 1,
+      acpServerId: input.acpServerId ?? null,
+      acpSessionId: input.acpSessionId ?? null,
       cleanupRequested: false,
       pendingEnvelope: null,
     });
@@ -406,6 +411,19 @@ export class TerragonDaemon {
     }
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
+    const bufferedBefore = this.messageBuffer.length;
+    this.messageBuffer = this.messageBuffer.filter(
+      (entry) => entry.threadChatId !== input.threadChatId,
+    );
+    if (this.messageBuffer.length !== bufferedBefore) {
+      this.runtime.logger.warn(
+        "Dropped buffered daemon messages from previous run before starting new run",
+        {
+          threadChatId: input.threadChatId,
+          droppedEntries: bufferedBefore - this.messageBuffer.length,
+        },
+      );
+    }
     const coordinatorRoutingEnabled = this.getFeatureFlag(
       "sdlcLoopCoordinatorRouting",
     );
@@ -426,9 +444,21 @@ export class TerragonDaemon {
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.initializeDaemonEventRunStateForNewRun({
-      threadChatId: input.threadChatId,
+      input,
       coordinatorRoutingEnabled,
     });
+    if (input.transportMode === "acp") {
+      if (input.permissionMode === "plan") {
+        throw new Error("ACP transport does not support plan permission mode");
+      }
+      if (!this.getFeatureFlag("sandboxAgentAcpTransport")) {
+        throw new Error(
+          "ACP transport requested but sandboxAgentAcpTransport feature flag is disabled",
+        );
+      }
+      await this.runAcpTransportCommand(input);
+      return;
+    }
     switch (input.agent) {
       case "claudeCode":
         await this.runClaudeCodeCommand(input);
@@ -458,6 +488,457 @@ export class TerragonDaemon {
     }
   }
 
+  private async runAcpTransportCommand(
+    input: DaemonMessageClaude,
+  ): Promise<void> {
+    if (!this.activeProcesses.has(input.threadChatId)) {
+      throw new Error("Missing active process state for ACP transport");
+    }
+
+    const baseUrlRaw = process.env.SANDBOX_AGENT_BASE_URL;
+    if (!baseUrlRaw) {
+      throw new Error("SANDBOX_AGENT_BASE_URL is required for ACP transport");
+    }
+    const baseUrl = baseUrlRaw.replace(/\/+$/, "");
+    if (!baseUrl) {
+      throw new Error("SANDBOX_AGENT_BASE_URL is invalid for ACP transport");
+    }
+
+    const acpAgent = (() => {
+      switch (input.agent) {
+        case "claudeCode":
+          return "claude";
+        case "codex":
+          return "codex";
+        case "amp":
+          return "amp";
+        case "opencode":
+          return "opencode";
+        case "gemini":
+          throw new Error("ACP transport is not supported for gemini agent");
+        default: {
+          const _exhaustiveCheck: never = input.agent;
+          throw new Error(
+            `ACP transport is not supported for agent: ${_exhaustiveCheck}`,
+          );
+        }
+      }
+    })();
+
+    const runState = this.getOrCreateDaemonEventRunState(input.threadChatId);
+    const serverId =
+      input.acpServerId ?? runState.acpServerId ?? `terragon-${runState.runId}`;
+    runState.acpServerId = serverId;
+    if (input.acpSessionId) {
+      runState.acpSessionId = input.acpSessionId;
+    }
+    this.daemonEventRunStates.set(input.threadChatId, runState);
+    let sawTerminalEventFromStream = false;
+    let lastAcpMessageAtMs = Date.now();
+
+    const createUrl = (bootstrapAgent: boolean): string => {
+      const url = new URL(`${baseUrl}/v1/acp/${encodeURIComponent(serverId)}`);
+      if (bootstrapAgent) {
+        url.searchParams.set("agent", acpAgent);
+      }
+      return url.toString();
+    };
+
+    const toObject = (value: unknown): Record<string, unknown> | null => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return null;
+      }
+      return value as Record<string, unknown>;
+    };
+
+    const getErrorMessage = (error: unknown): string => {
+      if (error instanceof Error) {
+        return error.message;
+      }
+      try {
+        return JSON.stringify(error);
+      } catch {
+        return String(error);
+      }
+    };
+
+    const timeoutSignal = (): AbortSignal | undefined => {
+      if (
+        typeof AbortSignal !== "undefined" &&
+        typeof AbortSignal.timeout === "function"
+      ) {
+        return AbortSignal.timeout(ACP_REQUEST_TIMEOUT_MS);
+      }
+      return undefined;
+    };
+
+    let nextRequestId = 1;
+    const postEnvelope = async ({
+      method,
+      params,
+      bootstrap,
+    }: {
+      method: string;
+      params?: Record<string, unknown>;
+      bootstrap?: boolean;
+    }): Promise<AcpResponseEnvelope> => {
+      const envelope: AcpRequestEnvelope = {
+        jsonrpc: "2.0",
+        id: nextRequestId,
+        method,
+      };
+      nextRequestId += 1;
+      if (params) {
+        envelope.params = params;
+      }
+      const response = await fetch(createUrl(!!bootstrap), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(envelope),
+        signal: timeoutSignal(),
+      });
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new Error(
+          `ACP POST failed (${response.status} ${response.statusText}) ${bodyText}`,
+        );
+      }
+      if (!bodyText.trim()) {
+        return {};
+      }
+      return JSON.parse(bodyText) as AcpResponseEnvelope;
+    };
+
+    const applyAcpMessages = (messages: ClaudeMessage[]) => {
+      if (!this.activeProcesses.has(input.threadChatId)) {
+        return;
+      }
+      for (const message of messages) {
+        lastAcpMessageAtMs = Date.now();
+        if (
+          (message.type === "assistant" || message.type === "user") &&
+          message.session_id
+        ) {
+          this.updateActiveProcessState(input.threadChatId, {
+            sessionId: message.session_id,
+            isWorking: true,
+          });
+        }
+        if (
+          message.type === "result" ||
+          message.type === "custom-error" ||
+          message.type === "custom-stop"
+        ) {
+          sawTerminalEventFromStream = true;
+          this.updateActiveProcessState(input.threadChatId, {
+            isCompleted: true,
+          });
+        }
+        this.addMessageToBuffer({
+          agent: input.agent,
+          message,
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          token: input.token,
+        });
+      }
+    };
+
+    const parseSseChunk = (chunk: string) => {
+      if (!chunk.trim()) {
+        return;
+      }
+      let eventName = "message";
+      const dataLines: string[] = [];
+      for (const line of chunk.split("\n")) {
+        if (!line || line.startsWith(":")) {
+          continue;
+        }
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+          continue;
+        }
+        if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (eventName !== "message" || dataLines.length === 0) {
+        return;
+      }
+      const payload = dataLines.join("\n");
+      const currentSessionId =
+        this.activeProcesses.get(input.threadChatId)?.sessionId ??
+        input.sessionId ??
+        "";
+      const messages = parseAcpLineToClaudeMessages(payload, currentSessionId);
+      if (messages.length > 0) {
+        applyAcpMessages(messages);
+      }
+    };
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      });
+
+    const waitForStreamQuiescence = async (): Promise<void> => {
+      const startedAtMs = Date.now();
+      while (Date.now() - startedAtMs < ACP_TERMINAL_MAX_WAIT_MS) {
+        const sinceLastMessageMs = Date.now() - lastAcpMessageAtMs;
+        if (sinceLastMessageMs >= ACP_TERMINAL_QUIESCENCE_MS) {
+          return;
+        }
+        await sleep(
+          Math.min(ACP_TERMINAL_QUIESCENCE_MS - sinceLastMessageMs, 50),
+        );
+      }
+    };
+
+    const consumeSse = async (
+      body: ReadableStream<Uint8Array>,
+      abortSignal: AbortSignal,
+    ): Promise<void> => {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (!abortSignal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) {
+            return;
+          }
+          buffer += decoder
+            .decode(value, { stream: true })
+            .replace(/\r\n/g, "\n");
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex !== -1) {
+            const eventChunk = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            parseSseChunk(eventChunk);
+            separatorIndex = buffer.indexOf("\n\n");
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
+    const sseAbortController = new AbortController();
+    const sseLoop = (async () => {
+      while (!sseAbortController.signal.aborted) {
+        try {
+          const response = await fetch(createUrl(false), {
+            method: "GET",
+            headers: {
+              Accept: "text/event-stream",
+            },
+            signal: sseAbortController.signal,
+          });
+          if (!response.ok) {
+            throw new Error(
+              `ACP SSE failed (${response.status} ${response.statusText})`,
+            );
+          }
+          if (!response.body) {
+            throw new Error("ACP SSE response has no body");
+          }
+          await consumeSse(response.body, sseAbortController.signal);
+          if (!sseAbortController.signal.aborted) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, ACP_SSE_RECONNECT_DELAY_MS),
+            );
+          }
+        } catch (error) {
+          if (sseAbortController.signal.aborted) {
+            return;
+          }
+          this.runtime.logger.warn("ACP SSE loop error", {
+            threadChatId: input.threadChatId,
+            serverId,
+            error: formatError(error),
+          });
+          await new Promise((resolve) =>
+            setTimeout(resolve, ACP_SSE_RECONNECT_DELAY_MS),
+          );
+        }
+      }
+    })();
+    let sseClosed = false;
+    const closeSse = async (): Promise<void> => {
+      if (sseClosed) {
+        return;
+      }
+      sseClosed = true;
+      sseAbortController.abort();
+      await sseLoop.catch(() => undefined);
+    };
+
+    try {
+      const initializeResponse = await postEnvelope({
+        method: "initialize",
+        params: {
+          protocolVersion: 1,
+          clientInfo: {
+            name: "terragon-daemon",
+            version: DAEMON_VERSION,
+          },
+        },
+        bootstrap: true,
+      });
+      if (toObject(initializeResponse.error)) {
+        throw new Error(
+          `ACP initialize failed: ${JSON.stringify(initializeResponse.error)}`,
+        );
+      }
+
+      let sessionId = input.acpSessionId ?? input.sessionId;
+      if (!sessionId) {
+        const newSessionResponse = await postEnvelope({
+          method: "session/new",
+          params: {
+            cwd: ".",
+            mcpServers: [],
+          },
+        });
+        if (toObject(newSessionResponse.error)) {
+          throw new Error(
+            `ACP session/new failed: ${JSON.stringify(newSessionResponse.error)}`,
+          );
+        }
+        const result = toObject(newSessionResponse.result);
+        const newSessionId = result?.sessionId;
+        if (typeof newSessionId !== "string" || newSessionId.length === 0) {
+          throw new Error("ACP session/new returned invalid sessionId");
+        }
+        sessionId = newSessionId;
+      }
+
+      this.updateActiveProcessState(input.threadChatId, {
+        sessionId,
+        isWorking: true,
+      });
+      const refreshedRunState = this.getOrCreateDaemonEventRunState(
+        input.threadChatId,
+      );
+      refreshedRunState.acpServerId = serverId;
+      refreshedRunState.acpSessionId = sessionId;
+      this.daemonEventRunStates.set(input.threadChatId, refreshedRunState);
+
+      const promptResponse = await postEnvelope({
+        method: "session/prompt",
+        params: {
+          sessionId,
+          prompt: [{ type: "text", text: input.prompt }],
+        },
+      });
+      await waitForStreamQuiescence();
+      await closeSse();
+      if (!this.activeProcesses.has(input.threadChatId)) {
+        return;
+      }
+      const promptError = toObject(promptResponse.error);
+      if (promptError) {
+        if (!sawTerminalEventFromStream) {
+          const promptMessage =
+            typeof promptError.message === "string"
+              ? promptError.message
+              : "ACP session/prompt failed";
+          this.addMessageToBuffer({
+            agent: input.agent,
+            message: {
+              type: "result",
+              subtype: "error_during_execution",
+              duration_ms: this.getProcessDurationMs(input.threadChatId),
+              is_error: true,
+              num_turns: 1,
+              error: promptMessage,
+              session_id: sessionId,
+            },
+            threadId: input.threadId,
+            threadChatId: input.threadChatId,
+            token: input.token,
+          });
+        }
+      } else {
+        if (!sawTerminalEventFromStream) {
+          const promptResult = toObject(promptResponse.result);
+          const stopReason =
+            typeof promptResult?.stopReason === "string"
+              ? promptResult.stopReason
+              : "acp_prompt_complete";
+          this.addMessageToBuffer({
+            agent: input.agent,
+            message: {
+              type: "result",
+              subtype: "success",
+              total_cost_usd: 0,
+              duration_ms: this.getProcessDurationMs(input.threadChatId),
+              duration_api_ms: this.getProcessDurationMs(input.threadChatId),
+              is_error: false,
+              num_turns: 1,
+              result: stopReason,
+              session_id: sessionId,
+            },
+            threadId: input.threadId,
+            threadChatId: input.threadChatId,
+            token: input.token,
+          });
+        }
+      }
+      this.updateActiveProcessState(input.threadChatId, {
+        isCompleted: true,
+      });
+    } catch (error) {
+      await closeSse();
+      this.runtime.logger.error("ACP transport command failed", {
+        threadChatId: input.threadChatId,
+        runId: input.runId ?? null,
+        serverId,
+        error: formatError(error),
+      });
+      if (!sawTerminalEventFromStream) {
+        this.addMessageToBuffer({
+          agent: input.agent,
+          message: {
+            type: "custom-error",
+            session_id: null,
+            duration_ms: this.getProcessDurationMs(input.threadChatId),
+            error_info: getErrorMessage(error),
+          },
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          token: input.token,
+        });
+      }
+      this.updateActiveProcessState(input.threadChatId, {
+        isCompleted: true,
+      });
+    } finally {
+      await closeSse();
+      try {
+        await fetch(createUrl(false), {
+          method: "DELETE",
+          headers: {
+            Accept: "application/json",
+          },
+          signal: timeoutSignal(),
+        });
+      } catch (error) {
+        this.runtime.logger.warn("ACP transport close failed", {
+          threadChatId: input.threadChatId,
+          serverId,
+          error: formatError(error),
+        });
+      }
+      this.activeProcesses.delete(input.threadChatId);
+      this.markDaemonEventRunStateForCleanup(input.threadChatId);
+      await this.flushMessageBuffer();
+    }
+  }
+
   private shouldEmitDaemonEventEnvelopeV2(threadChatId: string): boolean {
     const runState = this.daemonEventRunStates.get(threadChatId);
     if (runState) {
@@ -483,6 +964,10 @@ export class TerragonDaemon {
       coordinatorRoutingEnabled: this.getFeatureFlag(
         "sdlcLoopCoordinatorRouting",
       ),
+      transportMode: "legacy",
+      protocolVersion: 1,
+      acpServerId: null,
+      acpSessionId: null,
       cleanupRequested: false,
       pendingEnvelope: null,
     };
@@ -1506,11 +1991,16 @@ export class TerragonDaemon {
             entryCount,
           })
         : null;
+      const runState = this.getOrCreateDaemonEventRunState(threadChatId);
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
         timezone,
         threadChatId,
+        transportMode: runState.transportMode,
+        protocolVersion: runState.protocolVersion,
+        acpServerId: runState.acpServerId,
+        acpSessionId: runState.acpSessionId,
         ...(envelopeV2 ?? {}),
       };
 

@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
-import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
+import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   getActiveSdlcLoopForThread,
   transitionSdlcLoopState,
 } from "@terragon/shared/model/sdlc-loop";
+import {
+  getAgentRunContextByRunId,
+  updateAgentRunContext,
+} from "@terragon/shared/model/agent-run-context";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
 import {
@@ -86,7 +90,7 @@ const dbMocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/auth-server", () => ({
-  getUserIdOrNullFromDaemonToken: vi.fn(),
+  getDaemonTokenAuthContextOrNull: vi.fn(),
 }));
 
 vi.mock("@/server-lib/handle-daemon-event", () => ({
@@ -111,16 +115,42 @@ vi.mock("@/server-lib/sdlc-loop/signal-inbox", () => ({
   runBestEffortSdlcSignalInboxTick: vi.fn(),
 }));
 
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getAgentRunContextByRunId: vi.fn(),
+  updateAgentRunContext: vi.fn(),
+}));
+
 function createDaemonRequest(
   body: Record<string, unknown>,
-  headers: HeadersInit = {},
+  headers: Record<string, string> = {},
+  options: { autoCapabilities?: boolean } = {},
 ) {
+  const requestHeaders: Record<string, string> = {
+    "content-type": "application/json",
+    ...headers,
+  };
+
+  const hasEnvelopeV2 =
+    body.payloadVersion === 2 &&
+    typeof body.eventId === "string" &&
+    body.eventId.length > 0 &&
+    typeof body.runId === "string" &&
+    body.runId.length > 0 &&
+    typeof body.seq === "number" &&
+    Number.isInteger(body.seq) &&
+    body.seq >= 0;
+  if (
+    (options.autoCapabilities ?? true) &&
+    hasEnvelopeV2 &&
+    !requestHeaders[DAEMON_EVENT_CAPABILITIES_HEADER]
+  ) {
+    requestHeaders[DAEMON_EVENT_CAPABILITIES_HEADER] =
+      DAEMON_CAPABILITY_EVENT_ENVELOPE_V2;
+  }
+
   return new Request("http://localhost/api/daemon-event", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...headers,
-    },
+    headers: requestHeaders,
     body: JSON.stringify(body),
   });
 }
@@ -128,7 +158,43 @@ function createDaemonRequest(
 describe("daemon-event route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getUserIdOrNullFromDaemonToken).mockResolvedValue("user-1");
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "legacy",
+        protocolVersion: 1,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    });
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "legacy",
+      protocolVersion: 1,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    vi.mocked(updateAgentRunContext).mockResolvedValue(null);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
     vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
@@ -149,7 +215,7 @@ describe("daemon-event route", () => {
   });
 
   it("returns 401 when daemon token auth fails", async () => {
-    vi.mocked(getUserIdOrNullFromDaemonToken).mockResolvedValue(null);
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
 
     const response = await POST(
       createDaemonRequest({
@@ -186,8 +252,8 @@ describe("daemon-event route", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(409);
-    expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("daemon_event_capability_v2_requires_v2_envelope");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
@@ -216,8 +282,51 @@ describe("daemon-event route", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(409);
-    expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("daemon_event_capability_v2_requires_v2_envelope");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects v2 envelope payloads when the daemon does not advertise v2 envelope capability", async () => {
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-1",
+          runId: "run-1",
+          seq: 0,
+        },
+        {},
+        { autoCapabilities: false },
+      ),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("daemon_event_v2_envelope_requires_capability_v2");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("requires threadChatId for non-legacy daemon payloads", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        messages: [],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-1",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 

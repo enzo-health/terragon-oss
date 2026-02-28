@@ -1,15 +1,20 @@
 import { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getUserCreditBalance } from "@terragon/shared/model/credits";
 import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
 import { logGoogleUsage } from "../log-google-usage";
 import { waitUntil } from "@vercel/functions";
 import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
+import {
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+} from "@/lib/auth-server";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 const GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/";
 const DEFAULT_PATH = "v1beta/models/gemini-2.5-pro:streamGenerateContent";
+const GOOGLE_API_ORIGIN = new URL(GOOGLE_API_BASE).origin;
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +55,18 @@ function buildTargetUrl(
       : DEFAULT_PATH;
   // Replace /v1/models with /v1beta/models
   pathname = pathname.replace("v1/models", "v1beta/models");
+
+  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
+    throw new Error("invalid proxy path");
+  }
+
   const targetUrl = new URL(pathname, GOOGLE_API_BASE);
+  if (targetUrl.origin !== GOOGLE_API_ORIGIN) {
+    throw new Error("invalid proxy origin");
+  }
+  if (!targetUrl.pathname.startsWith("/v1beta/")) {
+    throw new Error("invalid proxy path");
+  }
   // Add API key as query parameter
   const apiKey = getApiKey();
   if (apiKey) {
@@ -189,7 +205,12 @@ async function proxyRequest(
   authContext: AuthContext & { bodyBuffer?: ArrayBuffer; model?: string },
 ) {
   const params = await args.params;
-  const targetUrl = buildTargetUrl(request, params.path);
+  let targetUrl: URL;
+  try {
+    targetUrl = buildTargetUrl(request, params.path);
+  } catch {
+    return new Response("Invalid proxy path", { status: 400 });
+  }
 
   const validation = await validateProxyRequestModel({
     request,
@@ -342,16 +363,49 @@ async function authorize(request: NextRequest): Promise<
   }
 
   try {
-    const { valid, error, key } = await auth.api.verifyApiKey({
-      body: { key: token },
+    const daemonAuth = await getDaemonTokenAuthContextOrNull({
+      headers: new Headers({ "X-Daemon-Token": token }),
     });
-
-    const userId = key?.userId;
-
-    if (error || !valid || !userId) {
-      console.log("Unauthorized Google proxy request", {
-        error,
-        valid,
+    if (!daemonAuth || !daemonAuth.claims) {
+      console.log("Unauthorized Google proxy request");
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    const userId = daemonAuth.userId;
+    const claims = daemonAuth.claims;
+    if (!hasDaemonProviderScope(claims, "google") || claims.exp <= Date.now()) {
+      console.log("Google proxy access denied: provider scope mismatch", {
+        userId,
+        runId: claims.runId,
+      });
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    const runContext = await getAgentRunContextByRunId({
+      db,
+      runId: claims.runId,
+      userId,
+    });
+    if (!runContext) {
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    if (
+      !daemonAuth.keyId ||
+      !runContext.daemonTokenKeyId ||
+      daemonAuth.keyId !== runContext.daemonTokenKeyId ||
+      runContext.runId !== claims.runId ||
+      runContext.threadId !== claims.threadId ||
+      runContext.threadChatId !== claims.threadChatId ||
+      runContext.sandboxId !== claims.sandboxId ||
+      runContext.agent !== claims.agent ||
+      runContext.transportMode !== claims.transportMode ||
+      runContext.protocolVersion !== claims.protocolVersion ||
+      runContext.tokenNonce !== claims.nonce ||
+      runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped"
+    ) {
+      console.log("Google proxy access denied: run context mismatch", {
+        userId,
+        runId: claims.runId,
       });
       return { response: new Response("Unauthorized", { status: 401 }) };
     }

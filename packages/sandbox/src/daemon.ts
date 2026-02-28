@@ -15,6 +15,34 @@ export const DAEMON_FILE_PATH = "/tmp/terragon-daemon.mjs";
 export const MCP_SERVER_FILE_PATH = "/tmp/terry-mcp-server.mjs";
 export const MCP_SERVER_JSON_FILE_PATH = "/tmp/mcp-server.json";
 export const DAEMON_LOG_FILE_PATH = "/tmp/terragon-daemon.log";
+const DAEMON_SEND_MAX_ATTEMPTS = 4;
+const DAEMON_SEND_BASE_BACKOFF_MS = 150;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function computeRetryBackoffMs(attempt: number): number {
+  const cappedAttempt = Math.min(Math.max(attempt, 0), 6);
+  const expBackoff = DAEMON_SEND_BASE_BACKOFF_MS * 2 ** cappedAttempt;
+  const jitter = Math.floor(Math.random() * 50);
+  return expBackoff + jitter;
+}
+
+function isTransientDaemonSendError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes("timeout") ||
+    msg.includes("closed before ack") ||
+    msg.includes("not ready") ||
+    msg.includes("econnrefused") ||
+    msg.includes("econnreset") ||
+    msg.includes("broken pipe")
+  );
+}
 
 async function startDaemon({
   session,
@@ -246,11 +274,29 @@ export async function sendMessage({
   const filePath = `/tmp/terragon-msg-${Date.now()}.json`;
   await session.writeTextFile(filePath, jsonMessage);
   await session.runCommand(`chmod 666 ${filePath}`);
-  await session.runCommand(
-    `timeout 5s cat ${filePath} | node ${DAEMON_FILE_PATH} --write --timeout=5000`,
-    { timeoutMs: 5000 },
-  );
-  console.log("Message sent to daemon");
+  for (let attempt = 0; attempt < DAEMON_SEND_MAX_ATTEMPTS; attempt++) {
+    try {
+      await session.runCommand(
+        `timeout 5s cat ${filePath} | node ${DAEMON_FILE_PATH} --write --timeout=5000`,
+        { timeoutMs: 5000 },
+      );
+      console.log("Message sent to daemon", { attempt: attempt + 1 });
+      return;
+    } catch (error) {
+      const isLastAttempt = attempt === DAEMON_SEND_MAX_ATTEMPTS - 1;
+      const transient = isTransientDaemonSendError(error);
+      if (!transient || isLastAttempt) {
+        throw error;
+      }
+      const waitMs = computeRetryBackoffMs(attempt);
+      console.warn("Transient daemon send failure, retrying", {
+        attempt: attempt + 1,
+        waitMs,
+        error,
+      });
+      await sleep(waitMs);
+    }
+  }
 }
 
 export async function sendPingMessage({

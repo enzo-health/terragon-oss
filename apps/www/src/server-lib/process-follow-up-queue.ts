@@ -5,15 +5,18 @@ import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { getThreadChat } from "@terragon/shared/model/threads";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 export async function maybeProcessFollowUpQueue({
   userId,
   threadId,
   threadChatId,
+  runId = null,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
+  runId?: string | null;
 }) {
   console.log("Checking if we have queued follow up messages", {
     threadId,
@@ -25,6 +28,50 @@ export async function maybeProcessFollowUpQueue({
     threadChatId,
     userId,
   });
+  if (runId) {
+    const runContext = await getAgentRunContextByRunId({
+      db,
+      runId,
+      userId,
+    });
+    if (!runContext) {
+      console.warn("Skipping follow-up queue: missing run context", {
+        threadId,
+        threadChatId,
+        runId,
+      });
+      return;
+    }
+    if (
+      runContext.threadId !== threadId ||
+      runContext.threadChatId !== threadChatId
+    ) {
+      console.warn(
+        "Skipping follow-up queue: run context does not match chat",
+        {
+          threadId,
+          threadChatId,
+          runId,
+          runContextThreadId: runContext.threadId,
+          runContextThreadChatId: runContext.threadChatId,
+        },
+      );
+      return;
+    }
+    if (
+      runContext.status !== "completed" &&
+      runContext.status !== "failed" &&
+      runContext.status !== "stopped"
+    ) {
+      console.log("Skipping follow-up queue: run not terminal yet", {
+        threadId,
+        threadChatId,
+        runId,
+        runStatus: runContext.status,
+      });
+      return;
+    }
+  }
   if (!threadChat) {
     throw new Error("Thread chat not found");
   }
