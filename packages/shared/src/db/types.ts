@@ -50,6 +50,11 @@ export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
 export type SdlcLoop = typeof schema.sdlcLoop.$inferSelect;
 export type SdlcLoopInsert = typeof schema.sdlcLoop.$inferInsert;
+export type SdlcPhaseArtifact = typeof schema.sdlcPhaseArtifact.$inferSelect;
+export type SdlcPhaseArtifactInsert =
+  typeof schema.sdlcPhaseArtifact.$inferInsert;
+export type SdlcPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
+export type SdlcPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
 export type SdlcLoopLease = typeof schema.sdlcLoopLease.$inferSelect;
 export type SdlcLoopLeaseInsert = typeof schema.sdlcLoopLease.$inferInsert;
 export type SdlcLoopSignalInbox =
@@ -136,6 +141,7 @@ export type ThreadSourceMetadata =
   | {
       type: "www";
       sdlcLoopOptIn: boolean;
+      sdlcPlanApprovalPolicy?: SdlcPlanApprovalPolicy;
     }
   | {
       type: "github-mention";
@@ -521,20 +527,121 @@ export type AgentProviderMetadata =
   | OpenAIProviderMetadata;
 
 export type SdlcLoopState =
-  | "enrolled"
+  | "planning"
   | "implementing"
+  | "reviewing"
+  | "ui_testing"
+  | "pr_babysitting"
+  // Legacy states kept for compatibility during migration.
+  | "enrolled"
   | "gates_running"
-  | "blocked_on_agent_fixes"
-  | "blocked_on_ci"
-  | "blocked_on_review_threads"
   | "video_pending"
   | "human_review_ready"
   | "video_degraded_ready"
+  | "blocked_on_agent_fixes"
+  | "blocked_on_ci"
+  | "blocked_on_review_threads"
   | "blocked_on_human_feedback"
   | "terminated_pr_closed"
   | "terminated_pr_merged"
   | "done"
   | "stopped";
+
+export type SdlcPhase =
+  | "planning"
+  | "implementing"
+  | "reviewing"
+  | "ui_testing"
+  | "pr_linking"
+  | "pr_babysitting";
+
+export type SdlcArtifactType =
+  | "plan_spec"
+  | "implementation_snapshot"
+  | "review_bundle"
+  | "ui_smoke_result"
+  | "pr_link"
+  | "babysit_evaluation";
+
+export type SdlcArtifactStatus =
+  | "generated"
+  | "approved"
+  | "accepted"
+  | "rejected"
+  | "superseded";
+
+export type SdlcArtifactGeneratedBy = "agent" | "system" | "human";
+
+export type SdlcPlanTaskStatus =
+  | "todo"
+  | "in_progress"
+  | "done"
+  | "blocked"
+  | "skipped";
+
+export type SdlcPlanTaskCompletedBy = "agent" | "verifier" | "human";
+
+export type SdlcPlanApprovalPolicy = "auto" | "human_required";
+
+export type SdlcPlanTaskDefinition = {
+  stableTaskId: string;
+  title: string;
+  description?: string | null;
+  acceptance: string[];
+};
+
+export type SdlcPlanSpecPayload = {
+  planText: string;
+  tasks: SdlcPlanTaskDefinition[];
+  source: "exit_plan_mode" | "write_tool" | "agent_text" | "system";
+};
+
+export type SdlcPlanTaskCompletionEvidence = {
+  headSha: string;
+  note?: string | null;
+  changedFiles?: string[] | null;
+};
+
+export type SdlcImplementationSnapshotPayload = {
+  headSha: string;
+  summary: string;
+  changedFiles: string[];
+  completedTaskIds: string[];
+};
+
+export type SdlcReviewBundlePayload = {
+  headSha: string;
+  deepRunId?: string | null;
+  carmackRunId?: string | null;
+  deepBlockingFindings: number;
+  carmackBlockingFindings: number;
+  gatePassed: boolean;
+  summary: string;
+};
+
+export type SdlcUiSmokePayload = {
+  headSha: string;
+  gatePassed: boolean;
+  summary: string;
+  blockingIssues: string[];
+  changedFiles: string[];
+};
+
+export type SdlcPrLinkPayload = {
+  repoFullName: string;
+  prNumber: number;
+  pullRequestUrl: string;
+  operation: "created" | "updated" | "linked";
+};
+
+export type SdlcBabysitEvaluationPayload = {
+  headSha: string;
+  requiredCiPassed: boolean;
+  unresolvedReviewThreads: number;
+  unresolvedDeepBlockers: number;
+  unresolvedCarmackBlockers: number;
+  allRequiredGatesPassed: boolean;
+};
 
 export type SdlcLoopCauseType =
   | "daemon_terminal"

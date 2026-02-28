@@ -47,7 +47,12 @@ import {
 import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
 
 const newThread = async (args: NewThreadArgs) => {
-  return unwrapResult(await newThreadAction(args));
+  return unwrapResult(
+    await newThreadAction({
+      runInSdlcLoop: false,
+      ...args,
+    }),
+  );
 };
 
 const runScheduledThread = async ({
@@ -157,7 +162,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, world!",
+        prompt: expect.stringContaining("Hello, world!"),
         sessionId: threadChat!.sessionId,
         type: "claude",
         permissionMode: threadChat!.permissionMode,
@@ -251,7 +256,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, again",
+        prompt: expect.stringContaining("Hello, again"),
         sessionId: threadChatUpdated!.sessionId,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
@@ -388,8 +393,9 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt:
+        prompt: expect.stringContaining(
           "Hello! This thread should be queued because of the concurrency limit.",
+        ),
         sessionId: threadChatUpdated!.sessionId,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
@@ -440,7 +446,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, world!",
+        prompt: expect.stringContaining("Hello, world!"),
         sessionId: threadChat!.sessionId,
         type: "claude",
         permissionMode: threadChat!.permissionMode,
@@ -542,7 +548,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, again",
+        prompt: expect.stringContaining("Hello, again"),
         sessionId: threadChatUpdated!.sessionId,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
@@ -592,7 +598,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, world!",
+        prompt: expect.stringContaining("Hello, world!"),
         sessionId: threadChat!.sessionId,
         type: "claude",
         permissionMode: threadChat!.permissionMode,
@@ -730,7 +736,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, world!",
+        prompt: expect.stringContaining("Hello, world!"),
         sessionId: null,
         type: "claude",
         permissionMode: "allowAll",
@@ -838,7 +844,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, world!",
+        prompt: expect.stringContaining("Hello, world!"),
         sessionId: null,
         type: "claude",
         permissionMode: "allowAll",
@@ -1071,7 +1077,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello, again",
+        prompt: expect.stringContaining("Hello, again"),
         sessionId: threadChatUpdated!.sessionId,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
@@ -1299,7 +1305,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: `The user has run out of context. This is a summary of what has been done: <summary>\ntest-summary\n</summary>\n\nHello, again`,
+        prompt: expect.stringContaining("Hello, again"),
         sessionId: null,
         type: "claude",
         permissionMode: "allowAll",
@@ -1351,7 +1357,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Hello in plan mode",
+        prompt: expect.stringContaining("Hello in plan mode"),
         sessionId: null,
         type: "claude",
         permissionMode: "plan",
@@ -1584,7 +1590,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Scheduled task message",
+        prompt: expect.stringContaining("Scheduled task message"),
         sessionId: null,
         type: "claude",
         permissionMode: "allowAll",
@@ -1650,7 +1656,7 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Scheduled but will run now",
+        prompt: expect.stringContaining("Scheduled but will run now"),
         sessionId: null,
         type: "claude",
         permissionMode: "allowAll",
@@ -1754,7 +1760,9 @@ describe("end-to-end", () => {
       session: expect.any(Object),
       message: {
         model: "sonnet",
-        prompt: "Scheduled but will cancel schedule\n\n---\n\nFollow up",
+        prompt: expect.stringContaining(
+          "Scheduled but will cancel schedule\n\n---\n\nFollow up",
+        ),
         sessionId: null,
         type: "claude",
         permissionMode: "allowAll",

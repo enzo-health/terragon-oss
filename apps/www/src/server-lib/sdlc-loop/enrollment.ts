@@ -1,9 +1,12 @@
 import { db } from "@/lib/db";
 import {
-  enrollSdlcLoopForGithubPR,
-  getActiveSdlcLoopForGithubPRAndUser,
+  enrollSdlcLoopForThread,
+  getActiveSdlcLoopForThread,
+  getPreferredActiveSdlcLoopForGithubPRAndUser,
+  linkSdlcLoopToGithubPRForThread,
 } from "@terragon/shared/model/sdlc-loop";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
+import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
 
 export function isSdlcLoopEnrollmentAllowedForThread({
   sourceType,
@@ -38,11 +41,45 @@ export async function getActiveSdlcLoopForGithubPRIfEnabled({
   repoFullName: string;
   prNumber: number;
 }) {
-  return await getActiveSdlcLoopForGithubPRAndUser({
+  return await getPreferredActiveSdlcLoopForGithubPRAndUser({
     db,
     userId,
     repoFullName,
     prNumber,
+  });
+}
+
+export async function getActiveSdlcLoopForThreadIfEnabled({
+  userId,
+  threadId,
+}: {
+  userId: string;
+  threadId: string;
+}) {
+  return await getActiveSdlcLoopForThread({
+    db,
+    userId,
+    threadId,
+  });
+}
+
+export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
+  userId,
+  repoFullName,
+  threadId,
+  planApprovalPolicy,
+}: {
+  userId: string;
+  repoFullName: string;
+  threadId: string;
+  planApprovalPolicy?: SdlcPlanApprovalPolicy;
+}) {
+  return await enrollSdlcLoopForThread({
+    db,
+    userId,
+    repoFullName,
+    threadId,
+    planApprovalPolicy,
   });
 }
 
@@ -51,58 +88,58 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   repoFullName,
   prNumber,
   threadId,
+  planApprovalPolicy,
 }: {
   userId: string;
   repoFullName: string;
   prNumber: number;
   threadId: string;
+  planApprovalPolicy?: SdlcPlanApprovalPolicy;
 }) {
-  const activeLoop = await getActiveSdlcLoopForGithubPRAndUser({
+  const enrolled = await enrollSdlcLoopForThread({
     db,
     userId,
     repoFullName,
-    prNumber,
-  });
-  if (activeLoop) {
-    return activeLoop;
-  }
-
-  const enrolled = await enrollSdlcLoopForGithubPR({
-    db,
-    userId,
-    repoFullName,
-    prNumber,
     threadId,
+    planApprovalPolicy,
   });
+  const linked = await linkSdlcLoopToGithubPRForThread({
+    db,
+    userId,
+    repoFullName,
+    threadId,
+    prNumber,
+  });
+  const activeLoop = linked ?? enrolled;
   if (
-    enrolled &&
+    activeLoop &&
     [
-      "enrolled",
+      "planning",
       "implementing",
-      "gates_running",
+      "reviewing",
+      "ui_testing",
+      "pr_babysitting",
       "blocked_on_agent_fixes",
       "blocked_on_ci",
       "blocked_on_review_threads",
-      "video_pending",
-      "human_review_ready",
-      "video_degraded_ready",
       "blocked_on_human_feedback",
-    ].includes(enrolled.state)
+    ].includes(activeLoop.state)
   ) {
-    return enrolled;
+    return activeLoop;
   }
 
-  const refreshedActiveLoop = await getActiveSdlcLoopForGithubPRAndUser({
-    db,
-    userId,
-    repoFullName,
-    prNumber,
-  });
+  const refreshedActiveLoop =
+    await getPreferredActiveSdlcLoopForGithubPRAndUser({
+      db,
+      userId,
+      repoFullName,
+      prNumber,
+    });
   if (refreshedActiveLoop) {
     return refreshedActiveLoop;
   }
 
-  if (enrolled) {
+  if (activeLoop) {
     console.warn(
       "[sdlc-loop enrollment] enrollment did not yield an active loop; returning null",
       {
@@ -110,8 +147,8 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
         repoFullName,
         prNumber,
         threadId,
-        enrollmentId: enrolled.id,
-        enrollmentState: enrolled.state,
+        enrollmentId: activeLoop.id,
+        enrollmentState: activeLoop.state,
       },
     );
   }

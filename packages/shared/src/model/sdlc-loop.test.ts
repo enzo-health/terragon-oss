@@ -10,8 +10,11 @@ import {
   canRunCarmackReviewForHeadSha,
   claimGithubWebhookDelivery,
   completeGithubWebhookDelivery,
+  createImplementationArtifactForHead,
+  createPlanArtifactForLoop,
   evaluateSdlcLoopGuardrails,
   enrollSdlcLoopForGithubPR,
+  enrollSdlcLoopForThread,
   enqueueSdlcOutboxAction,
   evaluateSdlcParitySlo,
   getActiveSdlcLoopForThread,
@@ -21,6 +24,7 @@ import {
   getActiveSdlcLoopForGithubPRAndUser,
   getActiveSdlcLoopForGithubPR,
   getActiveSdlcLoopsForGithubPR,
+  getPreferredActiveSdlcLoopForGithubPRAndUser,
   claimNextSdlcOutboxActionForExecution,
   classifySdlcVideoCaptureFailure,
   clearSdlcCanonicalStatusCommentReference,
@@ -31,17 +35,23 @@ import {
   persistSdlcCiGateEvaluation,
   persistSdlcVideoCaptureOutcome,
   recordSdlcParityMetricSample,
+  replacePlanTasksForArtifact,
+  approvePlanArtifactForLoop,
   persistDeepReviewGateResult,
   persistSdlcReviewThreadGateEvaluation,
   releaseGithubWebhookDeliveryClaim,
   releaseSdlcLoopLease,
+  linkSdlcLoopToGithubPRForThread,
+  markPlanTasksCompletedByAgent,
   resolveCarmackReviewFinding,
   getUnresolvedBlockingDeepReviewFindings,
   resolveDeepReviewFinding,
   shouldQueueFollowUpForCarmackReview,
   shouldQueueFollowUpForDeepReview,
+  transitionSdlcLoopStateWithArtifact,
   transitionSdlcLoopState,
   transitionLoopToStoppedAndCancelPendingOutbox,
+  verifyPlanTaskCompletionForHead,
 } from "./sdlc-loop";
 
 const db = createDb(env.DATABASE_URL!);
@@ -54,6 +64,8 @@ describe("sdlc loop model", () => {
     await db.delete(schema.sdlcCiGateRun);
     await db.delete(schema.sdlcDeepReviewFinding);
     await db.delete(schema.sdlcDeepReviewRun);
+    await db.delete(schema.sdlcPlanTask);
+    await db.delete(schema.sdlcPhaseArtifact);
     await db.delete(schema.sdlcParityMetricSample);
     await db.delete(schema.sdlcLoopOutboxAttempt);
     await db.delete(schema.sdlcLoopOutbox);
@@ -93,6 +105,113 @@ describe("sdlc loop model", () => {
     expect(loop).not.toBeNull();
     expect(loop?.threadId).toBe(threadId);
     expect(loop?.currentHeadSha).toBe("abc123");
+  });
+
+  it("enrolls thread-scoped loop with nullable PR by default", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      currentHeadSha: "sha-thread-enroll",
+    });
+
+    expect(loop).toBeDefined();
+    expect(loop?.prNumber).toBeNull();
+    expect(loop?.state).toBe("planning");
+    expect(loop?.currentHeadSha).toBe("sha-thread-enroll");
+  });
+
+  it("links an enrolled thread-scoped loop to a PR later", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    const linked = await linkSdlcLoopToGithubPRForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      prNumber: 77,
+      currentHeadSha: "sha-linked",
+    });
+
+    expect(linked).toBeDefined();
+    expect(linked?.prNumber).toBe(77);
+    expect(linked?.currentHeadSha).toBe("sha-linked");
+  });
+
+  it("prefers canonical github_pr thread when multiple loops map to same PR and user", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId: canonicalThreadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const { threadId: siblingThreadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const canonicalLoop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 88,
+      threadId: canonicalThreadId,
+    });
+    const siblingLoop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 88,
+      threadId: siblingThreadId,
+    });
+
+    await db
+      .insert(schema.githubPR)
+      .values({
+        repoFullName: "owner/repo",
+        number: 88,
+        threadId: canonicalThreadId,
+      })
+      .onConflictDoNothing();
+
+    const preferred = await getPreferredActiveSdlcLoopForGithubPRAndUser({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 88,
+    });
+
+    expect(preferred?.id).toBe(canonicalLoop?.id);
+    expect(preferred?.id).not.toBe(siblingLoop?.id);
   });
 
   it("returns active enrollment for repo/pr without user hint", async () => {
@@ -280,7 +399,7 @@ describe("sdlc loop model", () => {
 
     expect(second).toBeDefined();
     expect(second?.id).not.toBe(first?.id);
-    expect(second?.state).toBe("enrolled");
+    expect(second?.state).toBe("planning");
   });
 
   it("reactivates a terminal enrollment when thread uniqueness prevents reinsert", async () => {
@@ -317,7 +436,7 @@ describe("sdlc loop model", () => {
     });
 
     expect(reenrolled?.id).toBe(first?.id);
-    expect(reenrolled?.state).toBe("enrolled");
+    expect(reenrolled?.state).toBe("planning");
     expect(reenrolled?.currentHeadSha).toBe("sha-reactivated");
     expect(reenrolled?.stopReason).toBeNull();
   });
@@ -383,6 +502,280 @@ describe("sdlc loop model", () => {
     });
 
     expect(loop?.threadId).toBe(threadId);
+  });
+
+  it("does not transition planning->implementing without an accepted/approved plan artifact", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+    expect(loop).toBeDefined();
+
+    const planArtifact = await createPlanArtifactForLoop({
+      db,
+      loopId: loop!.id,
+      loopVersion: 1,
+      status: "generated",
+      generatedBy: "agent",
+      payload: {
+        planText: "Plan text",
+        source: "agent_text",
+        tasks: [
+          {
+            stableTaskId: "task-1",
+            title: "Implement core flow",
+            acceptance: [],
+          },
+        ],
+      },
+    });
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      tasks: [
+        {
+          stableTaskId: "task-1",
+          title: "Implement core flow",
+          acceptance: [],
+        },
+      ],
+    });
+
+    const transitionResult = await transitionSdlcLoopStateWithArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      expectedPhase: "planning",
+      transitionEvent: "plan_completed",
+      loopVersion: 1,
+    });
+
+    expect(transitionResult).toBe("artifact_gate_failed");
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("planning");
+  });
+
+  it("requires explicit human approval before transitioning planning->implementing when policy is human_required", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      planApprovalPolicy: "human_required",
+    });
+    expect(loop?.planApprovalPolicy).toBe("human_required");
+
+    const planArtifact = await createPlanArtifactForLoop({
+      db,
+      loopId: loop!.id,
+      loopVersion: 2,
+      status: "generated",
+      generatedBy: "agent",
+      payload: {
+        planText: "Human approval required plan",
+        source: "agent_text",
+        tasks: [
+          {
+            stableTaskId: "task-1",
+            title: "Implement",
+            acceptance: [],
+          },
+        ],
+      },
+    });
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      tasks: [
+        {
+          stableTaskId: "task-1",
+          title: "Implement",
+          acceptance: [],
+        },
+      ],
+    });
+
+    const blockedResult = await transitionSdlcLoopStateWithArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      expectedPhase: "planning",
+      transitionEvent: "plan_completed",
+      loopVersion: 2,
+    });
+    expect(blockedResult).toBe("artifact_gate_failed");
+
+    const approvedPlan = await approvePlanArtifactForLoop({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      approvedByUserId: user.id,
+    });
+    expect(approvedPlan?.status).toBe("approved");
+
+    const transitioned = await transitionSdlcLoopStateWithArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      expectedPhase: "planning",
+      transitionEvent: "plan_completed",
+      loopVersion: 2,
+    });
+    expect(transitioned).toBe("updated");
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("implementing");
+  });
+
+  it("verifies plan task completion before implementing->reviewing transition", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      currentHeadSha: "sha-impl-1",
+    });
+    expect(loop).toBeDefined();
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "implementing" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const planArtifact = await createPlanArtifactForLoop({
+      db,
+      loopId: loop!.id,
+      loopVersion: 3,
+      status: "accepted",
+      generatedBy: "agent",
+      payload: {
+        planText: "Implementation plan",
+        source: "agent_text",
+        tasks: [
+          {
+            stableTaskId: "task-1",
+            title: "Add models",
+            acceptance: [],
+          },
+          {
+            stableTaskId: "task-2",
+            title: "Wire orchestrator",
+            acceptance: [],
+          },
+        ],
+      },
+    });
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      tasks: [
+        {
+          stableTaskId: "task-1",
+          title: "Add models",
+          acceptance: [],
+        },
+        {
+          stableTaskId: "task-2",
+          title: "Wire orchestrator",
+          acceptance: [],
+        },
+      ],
+    });
+
+    const initialVerification = await verifyPlanTaskCompletionForHead({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      headSha: "sha-impl-1",
+    });
+    expect(initialVerification.gatePassed).toBe(false);
+    expect(initialVerification.incompleteTaskIds).toEqual(["task-1", "task-2"]);
+
+    await markPlanTasksCompletedByAgent({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      completions: [
+        {
+          stableTaskId: "task-1",
+          status: "done",
+          evidence: { headSha: "sha-impl-1", changedFiles: ["a.ts"] },
+        },
+        {
+          stableTaskId: "task-2",
+          status: "done",
+          evidence: { headSha: "sha-impl-1", changedFiles: ["b.ts"] },
+        },
+      ],
+    });
+
+    const verified = await verifyPlanTaskCompletionForHead({
+      db,
+      loopId: loop!.id,
+      artifactId: planArtifact.id,
+      headSha: "sha-impl-1",
+    });
+    expect(verified.gatePassed).toBe(true);
+
+    const implementationArtifact = await createImplementationArtifactForHead({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-impl-1",
+      loopVersion: 4,
+      payload: {
+        headSha: "sha-impl-1",
+        summary: "All planned work implemented",
+        changedFiles: ["a.ts", "b.ts"],
+        completedTaskIds: ["task-1", "task-2"],
+      },
+      status: "accepted",
+      generatedBy: "system",
+    });
+    const transitionResult = await transitionSdlcLoopStateWithArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: implementationArtifact.id,
+      expectedPhase: "implementing",
+      transitionEvent: "implementation_completed",
+      headSha: "sha-impl-1",
+      loopVersion: 4,
+    });
+    expect(transitionResult).toBe("updated");
   });
 
   it("builds canonical cause IDs with delivery uniqueness for non-daemon causes", () => {
@@ -550,6 +943,10 @@ describe("sdlc loop model", () => {
       prNumber: 42,
       threadId,
     });
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "reviewing" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const first = await acquireSdlcLoopLease({
       db,
@@ -718,6 +1115,10 @@ describe("sdlc loop model", () => {
       threadId,
       currentHeadSha: "sha-ci-1",
     });
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "pr_babysitting" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const result = await persistSdlcCiGateEvaluation({
       db,
@@ -746,7 +1147,7 @@ describe("sdlc loop model", () => {
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("blocked_on_ci");
+    expect(reloadedLoop?.state).toBe("implementing");
   });
 
   it("persists review-thread gate evaluation and blocks when unresolved threads remain", async () => {
@@ -767,6 +1168,10 @@ describe("sdlc loop model", () => {
       threadId,
       currentHeadSha: "sha-review-1",
     });
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "pr_babysitting" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const blocked = await persistSdlcReviewThreadGateEvaluation({
       db,
@@ -798,7 +1203,7 @@ describe("sdlc loop model", () => {
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("gates_running");
+    expect(reloadedLoop?.state).toBe("implementing");
   });
 
   it("does not resurrect terminal loops from gate persistence replays", async () => {
@@ -1076,6 +1481,79 @@ describe("sdlc loop model", () => {
     expect(reloadedLoop?.loopVersion).toBe(6);
   });
 
+  it("does not advance planning loops on implementation_progress", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+    expect(loop).toBeDefined();
+    expect(loop?.state).toBe("planning");
+
+    const transitionOutcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "implementation_progress",
+    });
+
+    expect(transitionOutcome).toBe("stale_noop");
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("planning");
+  });
+
+  it("escalates to human feedback when retry cap is exceeded", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "reviewing",
+        fixAttemptCount: 1,
+        maxFixAttempts: 1,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const transitionOutcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "review_blocked",
+    });
+    expect(transitionOutcome).toBe("updated");
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("blocked_on_human_feedback");
+    expect(reloadedLoop?.fixAttemptCount).toBe(2);
+    expect(reloadedLoop?.maxFixAttempts).toBe(1);
+  });
+
   it("does not rewrite current head sha on unversioned implementation transitions", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({
@@ -1137,6 +1615,10 @@ describe("sdlc loop model", () => {
       prNumber: 42,
       threadId,
     });
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "reviewing" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const result = await persistDeepReviewGateResult({
       db,
@@ -1156,7 +1638,7 @@ describe("sdlc loop model", () => {
 
     expect(run?.status).toBe("invalid_output");
     expect(result.errorCode).toBe("deep_review_invalid_output");
-    expect(reloadedLoop?.state).toBe("blocked_on_agent_fixes");
+    expect(reloadedLoop?.state).toBe("implementing");
   });
 
   it("persists blocking findings with stable identifiers", async () => {
@@ -1853,6 +2335,11 @@ describe("sdlc loop model", () => {
     );
     expect(classifiedFailure.failureClass).toBe("quota");
 
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "ui_testing" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
     await persistSdlcVideoCaptureOutcome({
       db,
       loopId: loop!.id,
@@ -1867,9 +2354,14 @@ describe("sdlc loop model", () => {
     let reloaded = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloaded?.state).toBe("video_degraded_ready");
+    expect(reloaded?.state).toBe("implementing");
     expect(reloaded?.videoCaptureStatus).toBe("failed");
     expect(reloaded?.latestVideoFailureClass).toBe("quota");
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "ui_testing" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await persistSdlcVideoCaptureOutcome({
       db,
@@ -1884,7 +2376,7 @@ describe("sdlc loop model", () => {
     reloaded = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloaded?.state).toBe("human_review_ready");
+    expect(reloaded?.state).toBe("pr_babysitting");
     expect(reloaded?.videoCaptureStatus).toBe("captured");
     expect(reloaded?.latestVideoArtifactR2Key).toBe("videos/loop-101.mp4");
     expect(reloaded?.latestVideoFailureClass).toBeNull();

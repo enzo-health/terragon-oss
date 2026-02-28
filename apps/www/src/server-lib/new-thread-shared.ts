@@ -42,6 +42,7 @@ import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getThreadChatHistory } from "./compact";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
+  ensureSdlcLoopEnrollmentForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "./sdlc-loop/enrollment";
 
@@ -228,8 +229,49 @@ export async function createNewThread({
     },
     enableThreadChatCreation,
   });
+
+  const enrollmentAllowedForThread = isSdlcLoopEnrollmentAllowedForThread({
+    sourceType,
+    sourceMetadata: sourceMetadata ?? null,
+  });
+  const shouldEnrollSdlcLoop =
+    enrollmentAllowedForThread &&
+    (runInSdlcLoop ||
+      sourceType === "automation" ||
+      sourceType === "github-mention" ||
+      (sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn));
+  const planApprovalPolicy =
+    sourceMetadata?.type === "www"
+      ? (sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
+      : "auto";
+  const ensureThreadScopedSdlcEnrollment = async () => {
+    if (!shouldEnrollSdlcLoop) {
+      return;
+    }
+    await ensureSdlcLoopEnrollmentForThreadIfEnabled({
+      userId,
+      repoFullName: githubRepoFullName,
+      threadId,
+      planApprovalPolicy,
+    });
+  };
   // If saving as draft, update the thread with the user message
   if (saveAsDraft) {
+    if (shouldEnrollSdlcLoop) {
+      waitUntil(
+        ensureThreadScopedSdlcEnrollment().catch((error) => {
+          console.warn(
+            "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+            {
+              userId,
+              threadId,
+              repoFullName: githubRepoFullName,
+              error,
+            },
+          );
+        }),
+      );
+    }
     await updateThread({
       db,
       userId,
@@ -243,11 +285,7 @@ export async function createNewThread({
 
   const updateThreadMetadata = () => {
     const maybeEnsureSdlcLoopEnrollment = async (prNumber: number) => {
-      const enrollmentAllowedForThread = isSdlcLoopEnrollmentAllowedForThread({
-        sourceType,
-        sourceMetadata: sourceMetadata ?? null,
-      });
-      if (!runInSdlcLoop || !enrollmentAllowedForThread) {
+      if (!shouldEnrollSdlcLoop) {
         return;
       }
       try {
@@ -256,6 +294,7 @@ export async function createNewThread({
           repoFullName: githubRepoFullName,
           prNumber,
           threadId,
+          planApprovalPolicy,
         });
       } catch (error) {
         console.warn(
@@ -328,6 +367,21 @@ export async function createNewThread({
         ],
       },
     });
+    if (shouldEnrollSdlcLoop) {
+      waitUntil(
+        ensureThreadScopedSdlcEnrollment().catch((error) => {
+          console.warn(
+            "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+            {
+              userId,
+              threadId,
+              repoFullName: githubRepoFullName,
+              error,
+            },
+          );
+        }),
+      );
+    }
     updateThreadMetadata();
     return { threadId, threadChatId };
   }
@@ -361,6 +415,22 @@ export async function createNewThread({
         ],
       },
     });
+  }
+
+  if (shouldEnrollSdlcLoop) {
+    try {
+      await ensureThreadScopedSdlcEnrollment();
+    } catch (error) {
+      console.warn(
+        "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+        {
+          userId,
+          threadId,
+          repoFullName: githubRepoFullName,
+          error,
+        },
+      );
+    }
   }
 
   // Start processing the message

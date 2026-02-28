@@ -52,6 +52,11 @@ export type SdlcLoopStatusStateSummary = {
 };
 
 const SDLC_STATE_SUMMARY = {
+  planning: {
+    stateLabel: "Planning",
+    explanation: "Agent is drafting an implementation plan before coding.",
+    progressPercent: 10,
+  },
   enrolled: {
     stateLabel: "Enrolled",
     explanation: "Loop is enrolled and waiting for implementation progress.",
@@ -61,6 +66,22 @@ const SDLC_STATE_SUMMARY = {
     stateLabel: "Implementing",
     explanation: "Agent is implementing fixes and preparing gate evaluations.",
     progressPercent: 25,
+  },
+  reviewing: {
+    stateLabel: "Reviewing",
+    explanation: "Deep and architecture review gates are running.",
+    progressPercent: 45,
+  },
+  ui_testing: {
+    stateLabel: "UI Testing",
+    explanation: "Browser smoke testing is validating UI behavior.",
+    progressPercent: 65,
+  },
+  pr_babysitting: {
+    stateLabel: "PR Babysitting",
+    explanation:
+      "Monitoring CI and review feedback until all blockers are resolved.",
+    progressPercent: 85,
   },
   gates_running: {
     stateLabel: "Gates Running",
@@ -139,6 +160,8 @@ function inferCiStatusFromLoopState(
   switch (loopState) {
     case "blocked_on_ci":
       return "blocked";
+    case "pr_babysitting":
+      return "pending";
     case "human_review_ready":
     case "video_degraded_ready":
     case "blocked_on_human_feedback":
@@ -148,8 +171,11 @@ function inferCiStatusFromLoopState(
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
+    case "planning":
     case "enrolled":
     case "implementing":
+    case "reviewing":
+    case "ui_testing":
       return "not_started";
     default:
       return "pending";
@@ -162,6 +188,8 @@ function inferReviewThreadsStatusFromLoopState(
   switch (loopState) {
     case "blocked_on_review_threads":
       return "blocked";
+    case "pr_babysitting":
+      return "pending";
     case "human_review_ready":
     case "video_pending":
     case "video_degraded_ready":
@@ -172,8 +200,11 @@ function inferReviewThreadsStatusFromLoopState(
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
+    case "planning":
     case "enrolled":
     case "implementing":
+    case "reviewing":
+    case "ui_testing":
       return "not_started";
     default:
       return "pending";
@@ -186,6 +217,9 @@ function inferDeepReviewStatusFromLoopState(
   switch (loopState) {
     case "blocked_on_agent_fixes":
       return "blocked";
+    case "ui_testing":
+    case "pr_babysitting":
+      return "passed";
     case "human_review_ready":
     case "video_pending":
     case "video_degraded_ready":
@@ -196,8 +230,10 @@ function inferDeepReviewStatusFromLoopState(
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
+    case "planning":
     case "enrolled":
     case "implementing":
+    case "reviewing":
     case "blocked_on_ci":
     case "blocked_on_review_threads":
       return "not_started";
@@ -212,6 +248,9 @@ function inferCarmackStatusFromLoopState(
   switch (loopState) {
     case "blocked_on_agent_fixes":
       return "blocked";
+    case "ui_testing":
+    case "pr_babysitting":
+      return "passed";
     case "human_review_ready":
     case "video_pending":
     case "video_degraded_ready":
@@ -222,8 +261,10 @@ function inferCarmackStatusFromLoopState(
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
+    case "planning":
     case "enrolled":
     case "implementing":
+    case "reviewing":
     case "blocked_on_ci":
     case "blocked_on_review_threads":
       return "not_started";

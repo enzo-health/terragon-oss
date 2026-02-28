@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
+  drainDueSdlcSignalInboxActions,
   runBestEffortSdlcSignalInboxTick,
 } from "./signal-inbox";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
@@ -8,11 +9,14 @@ import { getThread } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import {
   acquireSdlcLoopLease,
+  createBabysitEvaluationArtifactForHead,
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
   persistSdlcCiGateEvaluation,
   persistSdlcReviewThreadGateEvaluation,
   releaseSdlcLoopLease,
+  transitionSdlcLoopState,
+  transitionSdlcLoopStateWithArtifact,
 } from "@terragon/shared/model/sdlc-loop";
 import type { DB } from "@terragon/shared/db";
 
@@ -20,6 +24,25 @@ const dbMocks = vi.hoisted(() => {
   const loopFindFirst = vi.fn();
   const signalFindFirst = vi.fn();
   const ciGateRunFindFirst = vi.fn();
+  const dueRowsLimit = vi.fn();
+  const dueRowsOrderBy = vi.fn(() => ({
+    limit: dueRowsLimit,
+  }));
+  const dueRowsGroupBy = vi.fn(() => ({
+    orderBy: dueRowsOrderBy,
+  }));
+  const dueRowsWhere = vi.fn(() => ({
+    groupBy: dueRowsGroupBy,
+  }));
+  const dueRowsInnerJoin = vi.fn(() => ({
+    where: dueRowsWhere,
+  }));
+  const dueRowsFrom = vi.fn(() => ({
+    innerJoin: dueRowsInnerJoin,
+  }));
+  const select = vi.fn(() => ({
+    from: dueRowsFrom,
+  }));
   const markProcessedReturning = vi.fn();
   const markProcessedWhere = vi.fn(() => ({
     returning: markProcessedReturning,
@@ -35,6 +58,13 @@ const dbMocks = vi.hoisted(() => {
     loopFindFirst,
     signalFindFirst,
     ciGateRunFindFirst,
+    dueRowsLimit,
+    dueRowsOrderBy,
+    dueRowsGroupBy,
+    dueRowsWhere,
+    dueRowsInnerJoin,
+    dueRowsFrom,
+    select,
     markProcessedReturning,
     markProcessedWhere,
     markProcessedSet,
@@ -56,15 +86,19 @@ vi.mock("@terragon/shared/utils/thread-utils", () => ({
 
 vi.mock("@terragon/shared/model/sdlc-loop", () => ({
   acquireSdlcLoopLease: vi.fn(),
+  createBabysitEvaluationArtifactForHead: vi.fn(),
   enqueueSdlcOutboxAction: vi.fn(),
   evaluateSdlcLoopGuardrails: vi.fn(),
   persistSdlcCiGateEvaluation: vi.fn(),
   persistSdlcReviewThreadGateEvaluation: vi.fn(),
   releaseSdlcLoopLease: vi.fn(),
+  transitionSdlcLoopState: vi.fn(),
+  transitionSdlcLoopStateWithArtifact: vi.fn(),
 }));
 
 function makeDb(): DB {
   return {
+    select: dbMocks.select,
     query: {
       sdlcLoop: {
         findFirst: dbMocks.loopFindFirst,
@@ -108,6 +142,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
     dbMocks.markProcessedReturning.mockResolvedValue([{ id: "signal-1" }]);
+    dbMocks.dueRowsLimit.mockResolvedValue([]);
     dbMocks.ciGateRunFindFirst.mockResolvedValue({
       requiredChecks: ["CI / lint", "CI / tests"],
     });
@@ -142,6 +177,11 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       shouldQueueFollowUp: true,
       loopUpdateOutcome: "updated",
     });
+    vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
+    vi.mocked(createBabysitEvaluationArtifactForHead).mockResolvedValue({
+      id: "babysit-artifact-1",
+    } as Awaited<ReturnType<typeof createBabysitEvaluationArtifactForHead>>);
+    vi.mocked(transitionSdlcLoopStateWithArtifact).mockResolvedValue("updated");
     vi.mocked(getThread).mockResolvedValue({
       id: "thread-1",
       threadChats: [{ id: "chat-1" }],
@@ -204,6 +244,67 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     );
     expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
     expect(releaseSdlcLoopLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses feedback runtime follow-up while loop is in planning", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "planning",
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "route-feedback:planning-suppressed",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-1",
+        runtimeAction: "none",
+      }),
+    );
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks signal processed without PR publication action when loop has no PR number", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-no-pr",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: null,
+      loopVersion: 4,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-no-pr",
+      leaseOwnerToken: "route-feedback:no-pr",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual({
+      processed: true,
+      signalId: "signal-1",
+      causeType: "check_run.completed",
+      runtimeAction: "none",
+      outboxId: null,
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
   });
 
   it("persists review gate evaluations for review feedback signals", async () => {
@@ -638,5 +739,65 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     });
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();
     expect(dbMocks.markProcessedReturning).not.toHaveBeenCalled();
+  });
+
+  it("durably drains queued signal inbox work for due loops", async () => {
+    dbMocks.dueRowsLimit.mockResolvedValueOnce([
+      { loopId: "loop-1" },
+      { loopId: "loop-2" },
+    ]);
+    dbMocks.loopFindFirst
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "enrolled",
+      })
+      .mockResolvedValueOnce({
+        id: "loop-2",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 3,
+        currentHeadSha: "sha-loop-2",
+        state: "enrolled",
+      });
+    dbMocks.signalFindFirst
+      .mockResolvedValueOnce({
+        id: "signal-1",
+        causeType: "check_run.completed",
+        canonicalCauseId: "delivery-1:99",
+        payload: {
+          eventType: "check_run.completed",
+          checkName: "CI / tests",
+          checkOutcome: "fail",
+          headSha: "sha-loop-1",
+        },
+        receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+      })
+      .mockResolvedValueOnce(null);
+
+    const result = await drainDueSdlcSignalInboxActions({
+      db: makeDb(),
+      leaseOwnerTokenPrefix: "cron:scheduled-tasks",
+      maxLoops: 5,
+      maxSignalsTotal: 5,
+      maxSignalsPerLoop: 1,
+      now: new Date("2026-01-01T00:05:00.000Z"),
+    });
+
+    expect(result).toEqual({
+      dueLoopCount: 2,
+      visitedLoopCount: 2,
+      loopsWithProcessedSignals: 1,
+      processedSignalCount: 1,
+      reachedSignalLimit: false,
+    });
+    expect(acquireSdlcLoopLease).toHaveBeenCalledTimes(2);
   });
 });

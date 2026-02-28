@@ -2,10 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import {
-  getActiveSdlcLoopForThread,
-  transitionSdlcLoopState,
-} from "@terragon/shared/model/sdlc-loop";
+import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
 import {
@@ -99,7 +96,6 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@terragon/shared/model/sdlc-loop", () => ({
   getActiveSdlcLoopForThread: vi.fn(),
-  transitionSdlcLoopState: vi.fn(),
   SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
@@ -130,7 +126,6 @@ describe("daemon-event route", () => {
     vi.clearAllMocks();
     vi.mocked(getUserIdOrNullFromDaemonToken).mockResolvedValue("user-1");
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
-    vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
     vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
       executed: false,
@@ -273,6 +268,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
+      state: "enrolled",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
 
@@ -306,13 +302,6 @@ describe("daemon-event route", () => {
         iterationCount: 11,
       },
     });
-    expect(transitionSdlcLoopState).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      transitionEvent: "implementation_progress",
-      loopVersion: 12,
-      now: expect.any(Date),
-    });
     expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledWith({
       db: expect.any(Object),
       loopId: "loop-1",
@@ -325,6 +314,32 @@ describe("daemon-event route", () => {
         iterationCount: 11,
       },
     });
+  });
+
+  it("does not force implementation transition when enrolled loop has already advanced state", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      state: "blocked_on_ci",
+      loopVersion: 11,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-non-enrolled",
+        runId: "run-1",
+        seq: 2,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
+    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("rolls back the claimed v2 signal when daemon handling fails so retries can process the message", async () => {

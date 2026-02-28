@@ -25,10 +25,13 @@ import {
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
 import {
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
+  ensureSdlcLoopEnrollmentForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/sdlc-loop/enrollment";
-import { maybeRunSdlcPrePrReview } from "@/server-lib/sdlc-loop/pre-pr-review";
+import {
+  linkSdlcLoopToGithubPRForThread,
+  transitionSdlcLoopState,
+} from "@terragon/shared/model/sdlc-loop";
 
 export async function openPullRequestForThread({
   threadId,
@@ -48,6 +51,7 @@ export async function openPullRequestForThread({
   console.log("openPullRequestForThread", {
     threadId,
     userId,
+    threadChatId,
     prType,
     skipCommitAndPush,
   });
@@ -71,20 +75,50 @@ export async function openPullRequestForThread({
     sourceType: thread.sourceType,
     sourceMetadata: thread.sourceMetadata ?? null,
   });
-  const maybeEnsureSdlcLoopEnrollment = async (prNumber: number) => {
+  const maybeLinkThreadLoopToPr = async ({
+    prNumber,
+    headSha,
+  }: {
+    prNumber: number;
+    headSha?: string | null | undefined;
+  }) => {
     if (!sdlcLoopOptIn) {
-      return;
+      return null;
     }
     try {
-      await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+      const planApprovalPolicy =
+        thread.sourceMetadata?.type === "www"
+          ? (thread.sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
+          : "auto";
+      await ensureSdlcLoopEnrollmentForThreadIfEnabled({
         userId,
         repoFullName: thread.githubRepoFullName,
-        prNumber,
         threadId,
+        planApprovalPolicy,
       });
+      const linkedLoop = await linkSdlcLoopToGithubPRForThread({
+        db,
+        userId,
+        repoFullName: thread.githubRepoFullName,
+        threadId,
+        prNumber,
+        ...(typeof headSha === "string" && headSha.trim().length > 0
+          ? { currentHeadSha: headSha.trim() }
+          : {}),
+      });
+      if (!linkedLoop) {
+        return null;
+      }
+      await transitionSdlcLoopState({
+        db,
+        loopId: linkedLoop.id,
+        transitionEvent: "pr_linked",
+        now: new Date(),
+      });
+      return linkedLoop;
     } catch (error) {
       console.warn(
-        "[openPullRequestForThread] failed to ensure SDLC loop enrollment",
+        "[openPullRequestForThread] failed to link thread loop to PR",
         {
           userId,
           threadId,
@@ -93,6 +127,7 @@ export async function openPullRequestForThread({
           error,
         },
       );
+      return null;
     }
   };
   // Make sure we're not on the main branch
@@ -133,18 +168,6 @@ export async function openPullRequestForThread({
     }
     throw new Error("No changes to PR");
   }
-  let gitDiffForSdlcPrePr = gitDiffMaybeCutOff;
-  if (!thread.githubPRNumber && sdlcLoopOptIn) {
-    const strictDiffForSdlcPrePr = await getGitDiffMaybeCutoff({
-      session,
-      baseBranch,
-      allowCutoff: false,
-    });
-    if (!strictDiffForSdlcPrePr) {
-      throw new Error("No changes available for SDLC pre-PR review");
-    }
-    gitDiffForSdlcPrePr = strictDiffForSdlcPrePr;
-  }
   // Get GitHub App installation token
   const [owner, repo] = parseRepoFullName(thread.githubRepoFullName);
   // Check if there's an existing PR for this branch if so we're good to go.
@@ -176,7 +199,10 @@ export async function openPullRequestForThread({
         },
       }),
     ]);
-    await maybeEnsureSdlcLoopEnrollment(existingPr.number);
+    await maybeLinkThreadLoopToPr({
+      prNumber: existingPr.number,
+      headSha: existingPr.head?.sha,
+    });
     await updatePullRequestForThread({
       threadId,
       userId,
@@ -184,30 +210,6 @@ export async function openPullRequestForThread({
     });
     return;
   }
-  const resolvedThreadChatId =
-    threadChatId ?? thread.threadChats[thread.threadChats.length - 1]?.id;
-  if (!resolvedThreadChatId) {
-    throw new ThreadError(
-      "unknown-error",
-      "Missing thread chat context required for SDLC pre-PR review",
-      null,
-    );
-  }
-  const shouldCreateOrLinkPr = await maybeRunSdlcPrePrReview({
-    thread,
-    userId,
-    threadChatId: resolvedThreadChatId,
-    session,
-    diffOutput: gitDiffForSdlcPrePr,
-  });
-  if (!shouldCreateOrLinkPr) {
-    throw new ThreadError(
-      "unknown-error",
-      "SDLC pre-PR review blocked PR creation. Resolve findings and retry.",
-      null,
-    );
-  }
-
   // Otherwise, generate a new PR.
   let prTitle = "Update code changes";
   let prBody = "Updates made to the codebase.";
@@ -270,7 +272,10 @@ export async function openPullRequestForThread({
       },
     }),
   ]);
-  await maybeEnsureSdlcLoopEnrollment(pr.data.number);
+  await maybeLinkThreadLoopToPr({
+    prNumber: pr.data.number,
+    headSha: pr.data.head?.sha,
+  });
 }
 
 async function updatePullRequestForThread({

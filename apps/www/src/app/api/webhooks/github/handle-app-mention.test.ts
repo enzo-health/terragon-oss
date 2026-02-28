@@ -263,7 +263,7 @@ describe("handleAppMention", () => {
       repoFullName: isolatedPr.repoFullName,
       prNumber: isolatedPr.number,
       threadId: mentionThread.threadId,
-      state: "enrolled",
+      state: "planning",
     });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
