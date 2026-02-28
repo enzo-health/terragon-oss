@@ -216,6 +216,12 @@ async function getOrCreateSandboxForThread({
     },
     {} as Record<string, string>,
   );
+  if (
+    userFeatureFlags.sandboxAgentAcpTransport &&
+    !mergedEnvironmentVariables.SANDBOX_AGENT_BASE_URL?.trim()
+  ) {
+    mergedEnvironmentVariables.SANDBOX_AGENT_BASE_URL = "http://127.0.0.1:2468";
+  }
   const finalEnvironmentVariables = Object.entries(
     mergedEnvironmentVariables,
   ).map(([key, value]) => ({ key, value }));

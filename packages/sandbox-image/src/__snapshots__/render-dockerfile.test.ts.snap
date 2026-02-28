@@ -80,13 +80,14 @@ ENV PATH="/root/.local/bin:\${PATH}"
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install pnpm, claude code, gemini cli, amp, codex, and opencode
+# Install pnpm, sandbox-agent, claude code, gemini cli, amp, codex, and opencode
 RUN npm install -g pnpm \\
-    @anthropic-ai/claude-code@2.0.65 \\
-    @google/gemini-cli@0.20.0 \\
-    @sourcegraph/amp@0.0.1765471542-g74e231 \\
-    @openai/codex@0.76.0 \\
-    opencode-ai@1.0.149
+    @anthropic-ai/claude-code@2.1.52 \\
+    @google/gemini-cli@0.29.7 \\
+    @sourcegraph/amp@0.0.1771963583-ga618c9 \\
+    @openai/codex@0.104.0 \\
+    opencode-ai@1.2.10 \\
+    @sandbox-agent/cli@0.2.x
 
 
 # Patch gemini cli to disable console.debug
@@ -189,13 +190,14 @@ ENV PATH="/root/.local/bin:\${PATH}"
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install pnpm, claude code, gemini cli, amp, codex, and opencode
+# Install pnpm, sandbox-agent, claude code, gemini cli, amp, codex, and opencode
 RUN npm install -g pnpm \\
-    @anthropic-ai/claude-code@2.0.65 \\
-    @google/gemini-cli@0.20.0 \\
-    @sourcegraph/amp@0.0.1765471542-g74e231 \\
-    @openai/codex@0.76.0 \\
-    opencode-ai@1.0.149
+    @anthropic-ai/claude-code@2.1.52 \\
+    @google/gemini-cli@0.29.7 \\
+    @sourcegraph/amp@0.0.1771963583-ga618c9 \\
+    @openai/codex@0.104.0 \\
+    opencode-ai@1.2.10 \\
+    @sandbox-agent/cli@0.2.x
 
 
 # Patch gemini cli to disable console.debug

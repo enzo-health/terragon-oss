@@ -23,6 +23,10 @@ import {
 import { getEnv } from "./env";
 import path from "path";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getSandboxAgentBaseUrl(
   options: Pick<CreateSandboxOptions, "environmentVariables">,
 ): string | null {
@@ -33,6 +37,85 @@ function getSandboxAgentBaseUrl(
     return null;
   }
   return entry.value.replace(/\/+$/, "");
+}
+
+function isLocalSandboxAgentUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+async function ensureSandboxAgentRunning({
+  session,
+  baseUrl,
+}: {
+  session: ISandboxSession;
+  baseUrl: string;
+}): Promise<void> {
+  if (!isLocalSandboxAgentUrl(baseUrl)) {
+    return;
+  }
+
+  let port = "2468";
+  try {
+    const parsed = new URL(baseUrl);
+    port = parsed.port || "2468";
+  } catch {
+    return;
+  }
+
+  const isRunning = await session
+    .runCommand(
+      `ps -ef | grep sandbox-agent | grep -F " --port ${port}" | grep -v grep`,
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (isRunning) {
+    return;
+  }
+
+  try {
+    await session.runCommand("command -v sandbox-agent >/dev/null 2>&1");
+  } catch {
+    throw new Error(
+      "sandbox-agent is enabled but not installed in the sandbox image. Install @sandbox-agent/cli in the image and set SANDBOX_AGENT_BASE_URL.",
+    );
+  }
+
+  await session.runBackgroundCommand(
+    `sandbox-agent server --no-token --host 0.0.0.0 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
+  );
+}
+
+async function waitForSandboxAgentHealth({
+  session,
+  baseUrl,
+  maxRetries = 12,
+  retryDelayMs = 500,
+}: {
+  session: ISandboxSession;
+  baseUrl: string;
+  maxRetries?: number;
+  retryDelayMs?: number;
+}) {
+  const healthUrl = `${baseUrl}/v1/health`;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await session.runCommand(`curl -fsS ${bashQuote(healthUrl)}`);
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt === maxRetries - 1) {
+        throw lastError;
+      }
+      await sleep(retryDelayMs);
+    }
+  }
 }
 
 async function probeSandboxAgentEndpoint({
@@ -51,7 +134,8 @@ async function probeSandboxAgentEndpoint({
       "sandboxAgentAcpTransport is enabled but SANDBOX_AGENT_BASE_URL is missing",
     );
   }
-  await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/health`)}`);
+  await ensureSandboxAgentRunning({ session, baseUrl });
+  await waitForSandboxAgentHealth({ session, baseUrl });
   try {
     await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`);
     return;
