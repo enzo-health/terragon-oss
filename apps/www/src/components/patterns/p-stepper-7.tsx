@@ -148,7 +148,7 @@ function getPlanningStatus({
   if (!state) {
     return isLoading ? "pending" : "not_started";
   }
-  if (state === "enrolled") {
+  if (state === "planning" || state === "enrolled") {
     return "pending";
   }
   return "passed";
@@ -166,6 +166,7 @@ function getImplementingStatus({
   }
 
   switch (state) {
+    case "planning":
     case "enrolled":
       return "not_started";
     case "implementing":
@@ -192,7 +193,11 @@ function getReviewingStatus({
     return isLoading ? "pending" : "not_started";
   }
 
-  if (state === "enrolled" || state === "implementing") {
+  if (
+    state === "planning" ||
+    state === "enrolled" ||
+    state === "implementing"
+  ) {
     return "not_started";
   }
 
@@ -209,6 +214,9 @@ function getReviewingStatus({
   }
 
   if (
+    state === "reviewing" ||
+    state === "ui_testing" ||
+    state === "pr_babysitting" ||
     state === "video_pending" ||
     state === "human_review_ready" ||
     state === "video_degraded_ready" ||
@@ -228,9 +236,16 @@ function getReviewingStatus({
     ),
   );
 
+  const reviewAggregatePendingStates: SdlcLoopState[] = [
+    "gates_running",
+    "reviewing",
+    "pr_babysitting",
+    "blocked_on_ci",
+  ];
+
   if (
     aggregateStatus === "not_started" &&
-    (state === "gates_running" || state === "blocked_on_ci")
+    reviewAggregatePendingStates.includes(state)
   ) {
     return "pending";
   }
@@ -251,7 +266,13 @@ function getCiStatus({
     return isLoading ? "pending" : "not_started";
   }
 
-  if (state === "enrolled" || state === "implementing") {
+  if (
+    state === "planning" ||
+    state === "enrolled" ||
+    state === "implementing" ||
+    state === "reviewing" ||
+    state === "ui_testing"
+  ) {
     return "not_started";
   }
 
@@ -272,6 +293,7 @@ function getCiStatus({
   if (
     ciStatus === "not_started" &&
     (state === "gates_running" ||
+      state === "pr_babysitting" ||
       state === "blocked_on_review_threads" ||
       state === "blocked_on_agent_fixes")
   ) {
@@ -295,14 +317,24 @@ function getUiTestingStatus({
   }
 
   if (
+    state === "planning" ||
     state === "enrolled" ||
     state === "implementing" ||
+    state === "reviewing" ||
     state === "gates_running" ||
     state === "blocked_on_agent_fixes" ||
     state === "blocked_on_ci" ||
     state === "blocked_on_review_threads"
   ) {
     return "not_started";
+  }
+
+  if (state === "ui_testing") {
+    return "pending";
+  }
+
+  if (state === "pr_babysitting") {
+    return "passed";
   }
 
   if (state === "video_pending") {

@@ -48,6 +48,12 @@ import { waitUntil } from "@vercel/functions";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import {
+  ensureSdlcLoopEnrollmentForThreadIfEnabled,
+  getActiveSdlcLoopForThreadIfEnabled,
+  isSdlcLoopEnrollmentAllowedForThread,
+} from "@/server-lib/sdlc-loop/enrollment";
+import type { SdlcLoopState } from "@terragon/shared/db/types";
+import {
   getThreadContextMessageToGenerate,
   generateThreadContextResult,
 } from "@/server-lib/thread-context";
@@ -130,8 +136,11 @@ export async function startAgentMessage({
 
       // Only check rate limits if the thread doesn't have any active thread chats.
       const thread = await getThread({ db, threadId, userId });
+      if (!thread) {
+        throw new ThreadError("unknown-error", "Thread not found", null);
+      }
       if (
-        thread!.threadChats.every(
+        thread.threadChats.every(
           (chat) => !activeThreadStatuses.includes(chat.status),
         )
       ) {
@@ -438,11 +447,61 @@ export async function startAgentMessage({
             threadMessages: threadChat.messages ?? [],
             session,
           });
+          const sdlcEligibleForThread = isSdlcLoopEnrollmentAllowedForThread({
+            sourceType: thread?.sourceType ?? null,
+            sourceMetadata: thread?.sourceMetadata ?? null,
+          });
+          let activeSdlcLoop = await getActiveSdlcLoopForThreadIfEnabled({
+            userId,
+            threadId,
+          });
+          if (sdlcEligibleForThread && !activeSdlcLoop) {
+            try {
+              const planApprovalPolicy =
+                thread?.sourceMetadata?.type === "www"
+                  ? (thread.sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
+                  : "auto";
+              await ensureSdlcLoopEnrollmentForThreadIfEnabled({
+                userId,
+                repoFullName: thread.githubRepoFullName,
+                threadId,
+                planApprovalPolicy,
+              });
+              activeSdlcLoop = await getActiveSdlcLoopForThreadIfEnabled({
+                userId,
+                threadId,
+              });
+            } catch (error) {
+              console.warn(
+                "[startAgentMessage] failed to self-heal SDLC loop enrollment",
+                {
+                  userId,
+                  threadId,
+                  repoFullName: thread.githubRepoFullName,
+                  error,
+                },
+              );
+            }
+          }
+          if (sdlcEligibleForThread && !activeSdlcLoop) {
+            throw new ThreadError(
+              "unknown-error",
+              "SDLC loop enrollment missing for eligible thread",
+              null,
+            );
+          }
+          const sdlcPhasePrefix = buildSdlcPhasePromptPrefix(
+            activeSdlcLoop?.state ?? null,
+          );
 
-          const finalFinalPrompt = finalPrompt.replace(
+          const sanitizedPrompt = finalPrompt.replace(
             /(?:^|\s)\/compact(?=\s|$)/g,
             "",
           );
+          const finalFinalPrompt =
+            sdlcPhasePrefix === null
+              ? sanitizedPrompt
+              : `${sdlcPhasePrefix}\n\n${sanitizedPrompt}`;
 
           if (!finalFinalPrompt.trim()) {
             throw new ThreadError("no-user-message", "", null);
@@ -604,4 +663,65 @@ async function preparePromptForModel({
     }
   }
   return { prompt };
+}
+
+function buildSdlcPhasePromptPrefix(
+  state: SdlcLoopState | null,
+): string | null {
+  if (!state) {
+    return null;
+  }
+
+  switch (state) {
+    case "planning":
+      return [
+        "SDLC phase: planning.",
+        "Generate an implementation plan only.",
+        "Output a structured plan artifact in JSON with keys: planText, tasks[].",
+        "Each task must include stableTaskId, title, optional description, and acceptance[] criteria.",
+        "Do not edit files, run mutating commands, or open/update a PR in this phase.",
+      ].join(" ");
+    case "implementing":
+      return [
+        "SDLC phase: implementing.",
+        "Implement the approved plan with code changes and checkpoints.",
+        "Mark completed plan tasks with evidence (headSha, changed files, note).",
+        "Do not skip directly to PR babysitting in this phase.",
+      ].join(" ");
+    case "reviewing":
+      return [
+        "SDLC phase: reviewing.",
+        "Perform deep bug review and architecture review until there are zero blocking findings.",
+        "If findings exist, fix them before proceeding.",
+      ].join(" ");
+    case "ui_testing":
+      return [
+        "SDLC phase: ui_testing.",
+        "Run browser smoke tests against the changed UI paths and fix any blocking issues.",
+      ].join(" ");
+    case "pr_babysitting":
+      return [
+        "SDLC phase: pr_babysitting.",
+        "Focus on CI and review feedback resolution until required CI passes and blockers are zero.",
+      ].join(" ");
+    case "blocked_on_agent_fixes":
+    case "blocked_on_ci":
+    case "blocked_on_review_threads":
+      return [
+        `SDLC phase: ${state}.`,
+        "Unblock this phase first. Resolve blockers before advancing.",
+      ].join(" ");
+    case "blocked_on_human_feedback":
+      return [
+        "SDLC phase: blocked_on_human_feedback.",
+        "Wait for explicit human feedback before making additional loop progression decisions.",
+      ].join(" ");
+    case "done":
+    case "stopped":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+      return `SDLC phase: ${state}. Avoid new SDLC actions unless explicitly requested.`;
+    default:
+      return null;
+  }
 }

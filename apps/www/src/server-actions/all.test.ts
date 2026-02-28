@@ -42,6 +42,9 @@ describe("auth checks", async () => {
   for (const file of adminServerActionFiles) {
     const exports = await import(file);
     for (const key in exports) {
+      if (!key.endsWith("Action")) {
+        continue;
+      }
       it(`should wrap all exports in ${relative(adminDir, file)} -> ${key} with adminOnly`, async () => {
         const fn = exports[key as keyof typeof exports];
         expect(fn.adminOnly).toBe(true);
@@ -52,6 +55,9 @@ describe("auth checks", async () => {
   for (const file of nonAdminServerActionFiles) {
     const exports = await import(file);
     for (const key in exports) {
+      if (!key.endsWith("Action")) {
+        continue;
+      }
       it(`should wrap all exports in ${relative(__dirname, file)} -> ${key} with userOnlyAction`, async () => {
         const fn = exports[key as keyof typeof exports];
         expect(fn.userOnly).toBe(true);

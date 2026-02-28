@@ -7,19 +7,34 @@ import type {
 } from "@terragon/shared/db/types";
 import {
   acquireSdlcLoopLease,
+  createBabysitEvaluationArtifactForHead,
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
   persistSdlcCiGateEvaluation,
   persistSdlcReviewThreadGateEvaluation,
   releaseSdlcLoopLease,
+  transitionSdlcLoopStateWithArtifact,
   type SdlcGuardrailReasonCode,
 } from "@terragon/shared/model/sdlc-loop";
 import { getThread } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import { and, desc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 
 const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
+const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
+const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
+const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
 const terminalSdlcLoopStates: ReadonlySet<SdlcLoopState> = new Set([
   "terminated_pr_closed",
   "terminated_pr_merged",
@@ -31,6 +46,9 @@ const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
   "check_suite.completed",
   "pull_request_review",
   "pull_request_review_comment",
+]);
+const nonBabysitFeedbackSuppressedStates: ReadonlySet<SdlcLoopState> = new Set([
+  "planning",
 ]);
 const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
 const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
@@ -74,8 +92,16 @@ export type SdlcSignalInboxTickResult =
       signalId: string;
       causeType: SdlcLoopCauseType;
       runtimeAction: RuntimeActionOutcome;
-      outboxId: string;
+      outboxId: string | null;
     };
+
+export type SdlcDurableSignalInboxDrainResult = {
+  dueLoopCount: number;
+  visitedLoopCount: number;
+  loopsWithProcessedSignals: number;
+  processedSignalCount: number;
+  reachedSignalLimit: boolean;
+};
 
 function getPayloadText(
   payload: Record<string, unknown> | null,
@@ -244,6 +270,97 @@ async function getPriorCiRequiredChecksForHead({
   return requiredChecks.length > 0 ? requiredChecks : null;
 }
 
+async function evaluateBabysitCompletionForHead({
+  db,
+  loopId,
+  headSha,
+}: {
+  db: DB;
+  loopId: string;
+  headSha: string;
+}) {
+  const [
+    latestCiRun,
+    latestReviewRun,
+    unresolvedDeepFindings,
+    unresolvedCarmackFindings,
+  ] = await Promise.all([
+    db.query.sdlcCiGateRun.findFirst({
+      where: and(
+        eq(schema.sdlcCiGateRun.loopId, loopId),
+        eq(schema.sdlcCiGateRun.headSha, headSha),
+      ),
+      orderBy: [
+        desc(schema.sdlcCiGateRun.updatedAt),
+        desc(schema.sdlcCiGateRun.createdAt),
+      ],
+      columns: {
+        gatePassed: true,
+        status: true,
+      },
+    }),
+    db.query.sdlcReviewThreadGateRun.findFirst({
+      where: and(
+        eq(schema.sdlcReviewThreadGateRun.loopId, loopId),
+        eq(schema.sdlcReviewThreadGateRun.headSha, headSha),
+      ),
+      orderBy: [
+        desc(schema.sdlcReviewThreadGateRun.updatedAt),
+        desc(schema.sdlcReviewThreadGateRun.createdAt),
+      ],
+      columns: {
+        gatePassed: true,
+        unresolvedThreadCount: true,
+        status: true,
+      },
+    }),
+    db
+      .select({ id: schema.sdlcDeepReviewFinding.id })
+      .from(schema.sdlcDeepReviewFinding)
+      .where(
+        and(
+          eq(schema.sdlcDeepReviewFinding.loopId, loopId),
+          eq(schema.sdlcDeepReviewFinding.headSha, headSha),
+          eq(schema.sdlcDeepReviewFinding.isBlocking, true),
+          isNull(schema.sdlcDeepReviewFinding.resolvedAt),
+        ),
+      ),
+    db
+      .select({ id: schema.sdlcCarmackReviewFinding.id })
+      .from(schema.sdlcCarmackReviewFinding)
+      .where(
+        and(
+          eq(schema.sdlcCarmackReviewFinding.loopId, loopId),
+          eq(schema.sdlcCarmackReviewFinding.headSha, headSha),
+          eq(schema.sdlcCarmackReviewFinding.isBlocking, true),
+          isNull(schema.sdlcCarmackReviewFinding.resolvedAt),
+        ),
+      ),
+  ]);
+
+  const hasDeepReviewBlocker = unresolvedDeepFindings.length > 0;
+  const hasCarmackReviewBlocker = unresolvedCarmackFindings.length > 0;
+  const unresolvedReviewThreads = latestReviewRun?.unresolvedThreadCount ?? 0;
+  const requiredCiPassed = Boolean(latestCiRun?.gatePassed);
+  const unresolvedDeepBlockers = unresolvedDeepFindings.length;
+  const unresolvedCarmackBlockers = unresolvedCarmackFindings.length;
+
+  const allRequiredGatesPassed =
+    requiredCiPassed &&
+    Boolean(latestReviewRun?.gatePassed) &&
+    unresolvedReviewThreads === 0 &&
+    !hasDeepReviewBlocker &&
+    !hasCarmackReviewBlocker;
+
+  return {
+    requiredCiPassed,
+    unresolvedReviewThreads,
+    unresolvedDeepBlockers,
+    unresolvedCarmackBlockers,
+    allRequiredGatesPassed,
+  };
+}
+
 async function persistGateEvaluationForSignal({
   db,
   loop,
@@ -255,6 +372,7 @@ async function persistGateEvaluationForSignal({
     id: string;
     loopVersion: number;
     currentHeadSha: string | null;
+    state: SdlcLoopState;
   };
   signal: PendingSignal;
   now: Date;
@@ -409,7 +527,7 @@ async function persistGateEvaluationForSignal({
         },
         now,
       });
-      return evaluation.shouldQueueFollowUp;
+      return evaluation.shouldQueueFollowUp || loop.state !== "pr_babysitting";
     }
 
     const requiredCheck = buildCiRequiredCheckFromSignalPayload(signal.payload);
@@ -441,7 +559,7 @@ async function persistGateEvaluationForSignal({
       },
       now,
     });
-    return evaluation.shouldQueueFollowUp;
+    return evaluation.shouldQueueFollowUp || loop.state !== "pr_babysitting";
   }
 
   const unresolvedThreadCount = deriveReviewUnresolvedThreadCount({
@@ -492,7 +610,10 @@ async function persistGateEvaluationForSignal({
     unresolvedThreadCount,
     now,
   });
-  return evaluation.shouldQueueFollowUp;
+  return (
+    evaluation.shouldQueueFollowUp ||
+    (unresolvedThreadCount > 0 && loop.state !== "pr_babysitting")
+  );
 }
 
 function buildFeedbackFollowUpMessage({
@@ -698,6 +819,123 @@ function buildPublicationStatusBody({
   ].join("\n");
 }
 
+function buildDurableSignalInboxGuardrailRuntime() {
+  return {
+    killSwitchEnabled: false,
+    cooldownUntil: null,
+    maxIterations: null,
+    manualIntentAllowed: true,
+    iterationCount: 0,
+  } satisfies SdlcSignalInboxGuardrailRuntimeInput;
+}
+
+export async function drainDueSdlcSignalInboxActions({
+  db,
+  now = new Date(),
+  leaseOwnerTokenPrefix,
+  maxLoops = SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS,
+  maxSignalsTotal = SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL,
+  maxSignalsPerLoop = SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP,
+}: {
+  db: DB;
+  now?: Date;
+  leaseOwnerTokenPrefix: string;
+  maxLoops?: number;
+  maxSignalsTotal?: number;
+  maxSignalsPerLoop?: number;
+}): Promise<SdlcDurableSignalInboxDrainResult> {
+  const boundedMaxLoops = Math.max(0, Math.trunc(maxLoops));
+  const boundedMaxSignalsTotal = Math.max(0, Math.trunc(maxSignalsTotal));
+  const boundedMaxSignalsPerLoop = Math.max(0, Math.trunc(maxSignalsPerLoop));
+
+  if (
+    boundedMaxLoops === 0 ||
+    boundedMaxSignalsTotal === 0 ||
+    boundedMaxSignalsPerLoop === 0
+  ) {
+    return {
+      dueLoopCount: 0,
+      visitedLoopCount: 0,
+      loopsWithProcessedSignals: 0,
+      processedSignalCount: 0,
+      reachedSignalLimit: false,
+    };
+  }
+
+  const dueRows = await db
+    .select({
+      loopId: schema.sdlcLoopSignalInbox.loopId,
+    })
+    .from(schema.sdlcLoopSignalInbox)
+    .innerJoin(
+      schema.sdlcLoop,
+      eq(schema.sdlcLoop.id, schema.sdlcLoopSignalInbox.loopId),
+    )
+    .where(
+      and(
+        notInArray(schema.sdlcLoop.state, [...terminalSdlcLoopStates]),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        or(
+          ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
+          and(
+            eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
+            isNotNull(schema.sdlcLoopSignalInbox.committedAt),
+          ),
+        ),
+      ),
+    )
+    .groupBy(schema.sdlcLoopSignalInbox.loopId)
+    .orderBy(sql`min(${schema.sdlcLoopSignalInbox.receivedAt})`)
+    .limit(boundedMaxLoops);
+
+  const dueLoopIds: string[] = [];
+  for (const row of dueRows) {
+    dueLoopIds.push(row.loopId);
+  }
+
+  let visitedLoopCount = 0;
+  let loopsWithProcessedSignals = 0;
+  let processedSignalCount = 0;
+
+  for (const loopId of dueLoopIds) {
+    if (processedSignalCount >= boundedMaxSignalsTotal) {
+      break;
+    }
+    visitedLoopCount += 1;
+    let processedForLoop = 0;
+
+    while (
+      processedForLoop < boundedMaxSignalsPerLoop &&
+      processedSignalCount < boundedMaxSignalsTotal
+    ) {
+      const tick = await runBestEffortSdlcSignalInboxTick({
+        db,
+        loopId,
+        leaseOwnerToken: `${leaseOwnerTokenPrefix}:${loopId}:${processedForLoop + 1}`,
+        now,
+        guardrailRuntime: buildDurableSignalInboxGuardrailRuntime(),
+      });
+      if (!tick.processed) {
+        break;
+      }
+      processedForLoop += 1;
+      processedSignalCount += 1;
+    }
+
+    if (processedForLoop > 0) {
+      loopsWithProcessedSignals += 1;
+    }
+  }
+
+  return {
+    dueLoopCount: dueLoopIds.length,
+    visitedLoopCount,
+    loopsWithProcessedSignals,
+    processedSignalCount,
+    reachedSignalLimit: processedSignalCount >= boundedMaxSignalsTotal,
+  };
+}
+
 export async function runBestEffortSdlcSignalInboxTick({
   db,
   loopId,
@@ -770,6 +1008,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           id: loop.id,
           loopVersion: loop.loopVersion,
           currentHeadSha: loop.currentHeadSha,
+          state: loop.state,
         },
         signal,
         now,
@@ -784,10 +1023,15 @@ export async function runBestEffortSdlcSignalInboxTick({
     }
 
     let runtimeAction: RuntimeActionOutcome = "none";
+    const shouldSuppressFeedbackRuntimeAction =
+      feedbackSignalCauseTypes.has(signal.causeType) &&
+      nonBabysitFeedbackSuppressedStates.has(loop.state);
 
     if (
       feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp
+      shouldQueueRuntimeFollowUp &&
+      !shouldSuppressFeedbackRuntimeAction &&
+      typeof loop.prNumber === "number"
     ) {
       try {
         await routeFeedbackSignalToEnrolledThread({
@@ -812,28 +1056,116 @@ export async function runBestEffortSdlcSignalInboxTick({
           reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
         };
       }
+    } else if (
+      feedbackSignalCauseTypes.has(signal.causeType) &&
+      shouldQueueRuntimeFollowUp &&
+      shouldSuppressFeedbackRuntimeAction
+    ) {
+      console.log(
+        "[sdlc-loop] suppressing feedback runtime action outside PR babysitting phase",
+        {
+          loopId,
+          signalId: signal.id,
+          causeType: signal.causeType,
+          loopState: loop.state,
+        },
+      );
+    } else if (
+      feedbackSignalCauseTypes.has(signal.causeType) &&
+      shouldQueueRuntimeFollowUp
+    ) {
+      console.warn(
+        "[sdlc-loop] skipping feedback runtime action due to missing PR link",
+        {
+          loopId,
+          signalId: signal.id,
+          causeType: signal.causeType,
+        },
+      );
     }
 
-    const outbox = await enqueueSdlcOutboxAction({
-      db,
-      loopId,
-      transitionSeq: resolveSignalTransitionSeq({
-        loopVersion: loop.loopVersion,
-        signalReceivedAt: signal.receivedAt,
-        now,
-      }),
-      actionType: "publish_status_comment",
-      actionKey: `signal-inbox:${signal.id}:publish-status-comment`,
-      payload: {
-        repoFullName: loop.repoFullName,
-        prNumber: loop.prNumber,
-        body: buildPublicationStatusBody({
-          signal,
-          runtimeAction,
-        }),
+    const refreshedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loopId),
+      columns: {
+        state: true,
+        currentHeadSha: true,
       },
-      now,
     });
+
+    if (
+      refreshedLoop?.state === "pr_babysitting" &&
+      feedbackSignalCauseTypes.has(signal.causeType)
+    ) {
+      const babysitHeadSha =
+        getPayloadText(signal.payload, "headSha") ??
+        refreshedLoop.currentHeadSha;
+      if (babysitHeadSha) {
+        const babysitEvaluation = await evaluateBabysitCompletionForHead({
+          db,
+          loopId,
+          headSha: babysitHeadSha,
+        });
+        const loopVersionForArtifact =
+          typeof loop.loopVersion === "number" &&
+          Number.isFinite(loop.loopVersion)
+            ? Math.max(loop.loopVersion, 0) + 1
+            : 1;
+        const babysitArtifact = await createBabysitEvaluationArtifactForHead({
+          db,
+          loopId,
+          headSha: babysitHeadSha,
+          loopVersion: loopVersionForArtifact,
+          payload: {
+            headSha: babysitHeadSha,
+            requiredCiPassed: babysitEvaluation.requiredCiPassed,
+            unresolvedReviewThreads: babysitEvaluation.unresolvedReviewThreads,
+            unresolvedDeepBlockers: babysitEvaluation.unresolvedDeepBlockers,
+            unresolvedCarmackBlockers:
+              babysitEvaluation.unresolvedCarmackBlockers,
+            allRequiredGatesPassed: babysitEvaluation.allRequiredGatesPassed,
+          },
+          generatedBy: "system",
+          status: "accepted",
+        });
+        if (babysitEvaluation.allRequiredGatesPassed) {
+          await transitionSdlcLoopStateWithArtifact({
+            db,
+            loopId,
+            artifactId: babysitArtifact.id,
+            expectedPhase: "pr_babysitting",
+            transitionEvent: "babysit_passed",
+            headSha: babysitHeadSha,
+            loopVersion: loopVersionForArtifact,
+            now,
+          });
+        }
+      }
+    }
+
+    let outboxId: string | null = null;
+    if (typeof loop.prNumber === "number") {
+      const outbox = await enqueueSdlcOutboxAction({
+        db,
+        loopId,
+        transitionSeq: resolveSignalTransitionSeq({
+          loopVersion: loop.loopVersion,
+          signalReceivedAt: signal.receivedAt,
+          now,
+        }),
+        actionType: "publish_status_comment",
+        actionKey: `signal-inbox:${signal.id}:publish-status-comment`,
+        payload: {
+          repoFullName: loop.repoFullName,
+          prNumber: loop.prNumber,
+          body: buildPublicationStatusBody({
+            signal,
+            runtimeAction,
+          }),
+        },
+        now,
+      });
+      outboxId = outbox.outboxId;
+    }
 
     const [markedProcessed] = await db
       .update(schema.sdlcLoopSignalInbox)
@@ -855,7 +1187,7 @@ export async function runBestEffortSdlcSignalInboxTick({
       signalId: signal.id,
       causeType: signal.causeType,
       runtimeAction,
-      outboxId: outbox.outboxId,
+      outboxId,
     };
   } finally {
     const released = await releaseSdlcLoopLease({

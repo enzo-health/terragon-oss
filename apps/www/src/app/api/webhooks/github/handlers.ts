@@ -160,8 +160,9 @@ async function syncSdlcLoopStateForPullRequestLifecycle({
       : action === "opened" ||
           action === "ready_for_review" ||
           action === "reopened" ||
-          action === "synchronize"
-        ? "implementation_progress"
+          action === "synchronize" ||
+          action === "edited"
+        ? "pr_linked"
         : null;
 
   if (!transitionEvent) {

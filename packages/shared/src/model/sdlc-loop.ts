@@ -27,6 +27,21 @@ import {
   SdlcLoopOutboxSupersessionGroup,
   SdlcParityTargetClass,
   SdlcLoopState,
+  SdlcPhase,
+  SdlcArtifactType,
+  SdlcArtifactStatus,
+  SdlcArtifactGeneratedBy,
+  SdlcPlanTaskStatus,
+  SdlcPlanTaskCompletedBy,
+  SdlcPlanApprovalPolicy,
+  SdlcPlanSpecPayload,
+  SdlcImplementationSnapshotPayload,
+  SdlcReviewBundlePayload,
+  SdlcUiSmokePayload,
+  SdlcPrLinkPayload,
+  SdlcBabysitEvaluationPayload,
+  SdlcPlanTask,
+  SdlcPlanTaskCompletionEvidence,
   SdlcOutboxAttemptStatus,
   SdlcReviewThreadEvaluationSource,
   SdlcReviewThreadGateStatus,
@@ -34,15 +49,20 @@ import {
 } from "../db/types";
 
 const activeSdlcLoopStates = [
-  "enrolled",
+  "planning",
   "implementing",
+  "reviewing",
+  "ui_testing",
+  "pr_babysitting",
+  // Legacy active states retained during migration.
+  "enrolled",
   "gates_running",
-  "blocked_on_agent_fixes",
-  "blocked_on_ci",
-  "blocked_on_review_threads",
   "video_pending",
   "human_review_ready",
   "video_degraded_ready",
+  "blocked_on_agent_fixes",
+  "blocked_on_ci",
+  "blocked_on_review_threads",
   "blocked_on_human_feedback",
 ] as const satisfies readonly SdlcLoopState[];
 const activeSdlcLoopStateList: SdlcLoopState[] = [...activeSdlcLoopStates];
@@ -61,15 +81,17 @@ const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
   terminalSdlcLoopStateList,
 );
 
-const readyForHumanReviewSdlcLoopStates = [
-  "human_review_ready",
-  "video_degraded_ready",
-] as const satisfies readonly SdlcLoopState[];
-const readyForHumanReviewSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
-  [...readyForHumanReviewSdlcLoopStates],
-);
-
 export type SdlcLoopTransitionEvent =
+  | "plan_completed"
+  | "implementation_completed"
+  | "review_passed"
+  | "review_blocked"
+  | "ui_smoke_passed"
+  | "ui_smoke_failed"
+  | "pr_linked"
+  | "babysit_passed"
+  | "babysit_blocked"
+  // Legacy transition events kept for compatibility while callsites migrate.
   | "implementation_progress"
   | "ci_gate_passed"
   | "ci_gate_blocked"
@@ -88,6 +110,55 @@ export type SdlcLoopTransitionEvent =
   | "manual_stop"
   | "mark_done";
 
+type SdlcArtifactPayload =
+  | SdlcPlanSpecPayload
+  | SdlcImplementationSnapshotPayload
+  | SdlcReviewBundlePayload
+  | SdlcUiSmokePayload
+  | SdlcPrLinkPayload
+  | SdlcBabysitEvaluationPayload
+  | Record<string, unknown>;
+
+const sdlcPlanTaskNonBlockingTerminalStatusSet = new Set<SdlcPlanTaskStatus>([
+  "done",
+  "skipped",
+]);
+
+const sdlcPlanTaskIncompleteStatusSet = new Set<SdlcPlanTaskStatus>([
+  "todo",
+  "in_progress",
+  "blocked",
+]);
+
+function isIncompletePlanTaskStatus(status: SdlcPlanTaskStatus): boolean {
+  return sdlcPlanTaskIncompleteStatusSet.has(status);
+}
+
+function isNonBlockingTerminalPlanTaskStatus(
+  status: SdlcPlanTaskStatus,
+): boolean {
+  return sdlcPlanTaskNonBlockingTerminalStatusSet.has(status);
+}
+
+type SdlcLoopArtifactPointerField =
+  | "activePlanArtifactId"
+  | "activeImplementationArtifactId"
+  | "activeReviewArtifactId"
+  | "activeUiArtifactId"
+  | "activeBabysitArtifactId";
+
+const phaseToLoopPointerColumn: Record<
+  SdlcPhase,
+  SdlcLoopArtifactPointerField | null
+> = {
+  planning: "activePlanArtifactId",
+  implementing: "activeImplementationArtifactId",
+  reviewing: "activeReviewArtifactId",
+  ui_testing: "activeUiArtifactId",
+  pr_linking: null,
+  pr_babysitting: "activeBabysitArtifactId",
+};
+
 export function isSdlcLoopTerminalState(state: SdlcLoopState): boolean {
   return terminalSdlcLoopStateSet.has(state);
 }
@@ -103,6 +174,7 @@ export function resolveSdlcLoopNextState({
     if (
       event === "video_capture_succeeded" ||
       event === "video_capture_failed" ||
+      event === "babysit_passed" ||
       event === "mark_done"
     ) {
       return "done";
@@ -114,49 +186,140 @@ export function resolveSdlcLoopNextState({
     return null;
   }
 
-  switch (event) {
-    case "implementation_progress":
-      return "implementing";
-    case "ci_gate_passed":
-    case "review_threads_gate_passed":
-    case "deep_review_gate_passed":
-    case "carmack_review_gate_passed":
-      return "gates_running";
-    case "ci_gate_blocked":
-      return "blocked_on_ci";
-    case "review_threads_gate_blocked":
-      return readyForHumanReviewSdlcLoopStateSet.has(currentState)
-        ? "blocked_on_human_feedback"
-        : "blocked_on_review_threads";
-    case "deep_review_gate_blocked":
-    case "carmack_review_gate_blocked":
-      return "blocked_on_agent_fixes";
-    case "video_capture_started":
+  const globalTransitions: Partial<
+    Record<SdlcLoopTransitionEvent, SdlcLoopState>
+  > = {
+    pr_closed_unmerged: "terminated_pr_closed",
+    pr_merged: "terminated_pr_merged",
+    manual_stop: "stopped",
+    human_feedback_requested: "blocked_on_human_feedback",
+  };
+  if (event in globalTransitions) {
+    return globalTransitions[event] ?? null;
+  }
+
+  switch (currentState) {
+    case "planning":
+      if (event === "plan_completed") {
+        return "implementing";
+      }
+      return null;
+    case "implementing":
+      if (event === "implementation_progress") {
+        return "implementing";
+      }
+      if (event === "implementation_completed") {
+        return "reviewing";
+      }
+      return null;
+    case "reviewing":
       if (
-        currentState === "gates_running" ||
-        currentState === "video_pending"
+        event === "review_blocked" ||
+        event === "deep_review_gate_blocked" ||
+        event === "carmack_review_gate_blocked"
       ) {
+        return "implementing";
+      }
+      if (event === "review_passed") {
+        return "ui_testing";
+      }
+      if (
+        event === "deep_review_gate_passed" ||
+        event === "carmack_review_gate_passed"
+      ) {
+        return "reviewing";
+      }
+      return null;
+    case "ui_testing":
+      if (event === "ui_smoke_failed" || event === "video_capture_failed") {
+        return "implementing";
+      }
+      if (event === "ui_smoke_passed" || event === "video_capture_started") {
+        return "ui_testing";
+      }
+      if (event === "pr_linked" || event === "video_capture_succeeded") {
+        return "pr_babysitting";
+      }
+      return null;
+    case "pr_babysitting":
+      if (
+        event === "babysit_blocked" ||
+        event === "ci_gate_blocked" ||
+        event === "review_threads_gate_blocked" ||
+        event === "deep_review_gate_blocked" ||
+        event === "carmack_review_gate_blocked"
+      ) {
+        return "implementing";
+      }
+      if (event === "babysit_passed" || event === "mark_done") {
+        return "done";
+      }
+      if (
+        event === "pr_linked" ||
+        event === "ci_gate_passed" ||
+        event === "review_threads_gate_passed" ||
+        event === "deep_review_gate_passed" ||
+        event === "carmack_review_gate_passed"
+      ) {
+        return "pr_babysitting";
+      }
+      return null;
+    // Legacy migration states.
+    case "enrolled":
+      if (event === "plan_completed") {
+        return "implementing";
+      }
+      return null;
+    case "gates_running":
+      if (
+        event === "review_blocked" ||
+        event === "deep_review_gate_blocked" ||
+        event === "carmack_review_gate_blocked"
+      ) {
+        return "implementing";
+      }
+      if (event === "review_passed") {
+        return "ui_testing";
+      }
+      if (
+        event === "deep_review_gate_passed" ||
+        event === "carmack_review_gate_passed"
+      ) {
+        return "gates_running";
+      }
+      return null;
+    case "video_pending":
+      if (event === "video_capture_failed") {
+        return "implementing";
+      }
+      if (event === "video_capture_succeeded") {
+        return "pr_babysitting";
+      }
+      if (event === "video_capture_started") {
         return "video_pending";
       }
       return null;
-    case "video_capture_succeeded":
-      return "human_review_ready";
-    case "video_capture_failed":
-      return "video_degraded_ready";
-    case "human_feedback_requested":
-      return readyForHumanReviewSdlcLoopStateSet.has(currentState)
-        ? "blocked_on_human_feedback"
-        : null;
-    case "pr_closed_unmerged":
-      return "terminated_pr_closed";
-    case "pr_merged":
-      return "terminated_pr_merged";
-    case "manual_stop":
-      return "stopped";
-    case "mark_done":
-      return readyForHumanReviewSdlcLoopStateSet.has(currentState)
-        ? "done"
-        : null;
+    case "human_review_ready":
+    case "video_degraded_ready":
+      if (event === "pr_linked") {
+        return "pr_babysitting";
+      }
+      if (event === "mark_done") {
+        return "done";
+      }
+      return null;
+    case "blocked_on_agent_fixes":
+    case "blocked_on_ci":
+    case "blocked_on_review_threads":
+      if (event === "implementation_progress") {
+        return "implementing";
+      }
+      return null;
+    case "blocked_on_human_feedback":
+      if (event === "mark_done") {
+        return "done";
+      }
+      return null;
     default:
       return null;
   }
@@ -428,13 +591,11 @@ export async function getActiveSdlcLoopForGithubPRAndUser({
   repoFullName: string;
   prNumber: number;
 }) {
-  return await db.query.sdlcLoop.findFirst({
-    where: and(
-      eq(schema.sdlcLoop.userId, userId),
-      eq(schema.sdlcLoop.repoFullName, repoFullName),
-      eq(schema.sdlcLoop.prNumber, prNumber),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
-    ),
+  return await getPreferredActiveSdlcLoopForGithubPRAndUser({
+    db,
+    userId,
+    repoFullName,
+    prNumber,
   });
 }
 
@@ -453,8 +614,50 @@ export async function getActiveSdlcLoopsForGithubPR({
       eq(schema.sdlcLoop.prNumber, prNumber),
       inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
     ),
-    orderBy: [schema.sdlcLoop.updatedAt, schema.sdlcLoop.id],
+    orderBy: [desc(schema.sdlcLoop.updatedAt), desc(schema.sdlcLoop.id)],
   });
+}
+
+export async function getPreferredActiveSdlcLoopForGithubPRAndUser({
+  db,
+  userId,
+  repoFullName,
+  prNumber,
+}: {
+  db: DB;
+  userId: string;
+  repoFullName: string;
+  prNumber: number;
+}) {
+  const loops = await getActiveSdlcLoopsForGithubPR({
+    db,
+    repoFullName,
+    prNumber,
+  });
+  const userLoops = loops.filter((loop) => loop.userId === userId);
+  if (userLoops.length === 0) {
+    return undefined;
+  }
+
+  const canonicalPr = await db.query.githubPR.findFirst({
+    where: and(
+      eq(schema.githubPR.repoFullName, repoFullName),
+      eq(schema.githubPR.number, prNumber),
+    ),
+    columns: {
+      threadId: true,
+    },
+  });
+  if (canonicalPr?.threadId) {
+    const canonicalLoop = userLoops.find(
+      (loop) => loop.threadId === canonicalPr.threadId,
+    );
+    if (canonicalLoop) {
+      return canonicalLoop;
+    }
+  }
+
+  return userLoops[0];
 }
 
 export async function getActiveSdlcLoopForGithubPR({
@@ -519,6 +722,7 @@ export async function enrollSdlcLoopForGithubPR({
   prNumber,
   threadId,
   currentHeadSha,
+  planApprovalPolicy,
 }: {
   db: DB;
   userId: string;
@@ -526,6 +730,44 @@ export async function enrollSdlcLoopForGithubPR({
   prNumber: number;
   threadId: string;
   currentHeadSha?: string | null;
+  planApprovalPolicy?: SdlcPlanApprovalPolicy;
+}) {
+  const enrolled = await enrollSdlcLoopForThread({
+    db,
+    userId,
+    repoFullName,
+    threadId,
+    currentHeadSha,
+    planApprovalPolicy,
+  });
+  if (!enrolled) {
+    return enrolled;
+  }
+
+  return await linkSdlcLoopToGithubPRForThread({
+    db,
+    userId,
+    repoFullName,
+    threadId,
+    prNumber,
+    currentHeadSha,
+  });
+}
+
+export async function enrollSdlcLoopForThread({
+  db,
+  userId,
+  repoFullName,
+  threadId,
+  currentHeadSha,
+  planApprovalPolicy,
+}: {
+  db: DB;
+  userId: string;
+  repoFullName: string;
+  threadId: string;
+  currentHeadSha?: string | null;
+  planApprovalPolicy?: SdlcPlanApprovalPolicy;
 }) {
   const now = new Date();
   const inserted = await db
@@ -533,9 +775,10 @@ export async function enrollSdlcLoopForGithubPR({
     .values({
       userId,
       repoFullName,
-      prNumber,
       threadId,
+      state: "planning",
       currentHeadSha: currentHeadSha ?? null,
+      planApprovalPolicy: planApprovalPolicy ?? "auto",
       updatedAt: now,
     })
     .onConflictDoNothing()
@@ -545,28 +788,31 @@ export async function enrollSdlcLoopForGithubPR({
     return inserted[0];
   }
 
-  const activeLoop = await getActiveSdlcLoopForGithubPRAndUser({
+  const activeLoop = await getActiveSdlcLoopForThread({
     db,
     userId,
-    repoFullName,
-    prNumber,
+    threadId,
   });
   if (activeLoop) {
     return activeLoop;
   }
 
   const reactivationSet: {
-    state: "enrolled";
+    state: "planning";
     stopReason: null;
     updatedAt: Date;
     currentHeadSha?: string | null;
+    planApprovalPolicy?: SdlcPlanApprovalPolicy;
   } = {
-    state: "enrolled",
+    state: "planning",
     stopReason: null,
     updatedAt: now,
   };
   if (currentHeadSha !== undefined) {
     reactivationSet.currentHeadSha = currentHeadSha;
+  }
+  if (planApprovalPolicy !== undefined) {
+    reactivationSet.planApprovalPolicy = planApprovalPolicy;
   }
 
   const [reactivated] = await db
@@ -577,7 +823,6 @@ export async function enrollSdlcLoopForGithubPR({
         eq(schema.sdlcLoop.threadId, threadId),
         eq(schema.sdlcLoop.userId, userId),
         eq(schema.sdlcLoop.repoFullName, repoFullName),
-        eq(schema.sdlcLoop.prNumber, prNumber),
         notInArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
       ),
     )
@@ -586,14 +831,79 @@ export async function enrollSdlcLoopForGithubPR({
     return reactivated;
   }
 
-  return await db.query.sdlcLoop.findFirst({
-    where: and(
-      eq(schema.sdlcLoop.userId, userId),
-      eq(schema.sdlcLoop.repoFullName, repoFullName),
-      eq(schema.sdlcLoop.prNumber, prNumber),
-      inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
-    ),
-    orderBy: [desc(schema.sdlcLoop.updatedAt)],
+  return await getActiveSdlcLoopForThread({
+    db,
+    userId,
+    threadId,
+  });
+}
+
+export async function linkSdlcLoopToGithubPRForThread({
+  db,
+  userId,
+  repoFullName,
+  threadId,
+  prNumber,
+  currentHeadSha,
+}: {
+  db: DB;
+  userId: string;
+  repoFullName: string;
+  threadId: string;
+  prNumber: number;
+  currentHeadSha?: string | null;
+}) {
+  const now = new Date();
+  const activeLoop =
+    (await getActiveSdlcLoopForThread({
+      db,
+      userId,
+      threadId,
+    })) ??
+    (await enrollSdlcLoopForThread({
+      db,
+      userId,
+      repoFullName,
+      threadId,
+      currentHeadSha,
+    }));
+  if (!activeLoop) {
+    return undefined;
+  }
+
+  const nextValues: {
+    prNumber: number;
+    updatedAt: Date;
+    currentHeadSha?: string | null;
+  } = {
+    prNumber,
+    updatedAt: now,
+  };
+  if (currentHeadSha !== undefined) {
+    nextValues.currentHeadSha = currentHeadSha;
+  }
+
+  const [updated] = await db
+    .update(schema.sdlcLoop)
+    .set(nextValues)
+    .where(
+      and(
+        eq(schema.sdlcLoop.id, activeLoop.id),
+        eq(schema.sdlcLoop.userId, userId),
+        eq(schema.sdlcLoop.threadId, threadId),
+        eq(schema.sdlcLoop.repoFullName, repoFullName),
+      ),
+    )
+    .returning();
+  if (updated) {
+    return updated;
+  }
+
+  return await getPreferredActiveSdlcLoopForGithubPRAndUser({
+    db,
+    userId,
+    repoFullName,
+    prNumber,
   });
 }
 
@@ -612,6 +922,742 @@ export async function getActiveSdlcLoopForThread({
       eq(schema.sdlcLoop.threadId, threadId),
       inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
     ),
+  });
+}
+
+function buildLoopArtifactPointerUpdate({
+  phase,
+  artifactId,
+}: {
+  phase: SdlcPhase;
+  artifactId: string;
+}): Partial<typeof schema.sdlcLoop.$inferInsert> {
+  const pointer = phaseToLoopPointerColumn[phase];
+  if (!pointer) {
+    return {};
+  }
+  return {
+    [pointer]: artifactId,
+  };
+}
+
+function getPlanArtifactRequiredStatus(
+  policy: SdlcPlanApprovalPolicy,
+): SdlcArtifactStatus {
+  return policy === "human_required" ? "approved" : "accepted";
+}
+
+export async function getLatestAcceptedArtifact({
+  db,
+  loopId,
+  phase,
+  headSha,
+  includeApprovedForPlanning = true,
+}: {
+  db: DB;
+  loopId: string;
+  phase: SdlcPhase;
+  headSha?: string | null;
+  includeApprovedForPlanning?: boolean;
+}) {
+  const acceptedStatuses: SdlcArtifactStatus[] =
+    includeApprovedForPlanning && phase === "planning"
+      ? ["accepted", "approved"]
+      : ["accepted"];
+
+  const whereClauses = [
+    eq(schema.sdlcPhaseArtifact.loopId, loopId),
+    eq(schema.sdlcPhaseArtifact.phase, phase),
+    inArray(schema.sdlcPhaseArtifact.status, acceptedStatuses),
+  ];
+  if (headSha !== undefined) {
+    if (headSha === null) {
+      whereClauses.push(isNull(schema.sdlcPhaseArtifact.headSha));
+    } else {
+      whereClauses.push(eq(schema.sdlcPhaseArtifact.headSha, headSha));
+    }
+  }
+
+  return await db.query.sdlcPhaseArtifact.findFirst({
+    where: and(...whereClauses),
+    orderBy: [
+      desc(schema.sdlcPhaseArtifact.createdAt),
+      desc(schema.sdlcPhaseArtifact.id),
+    ],
+  });
+}
+
+export async function createPlanArtifactForLoop({
+  db,
+  loopId,
+  loopVersion,
+  payload,
+  generatedBy = "agent",
+  status = "generated",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  loopVersion: number;
+  payload: SdlcPlanSpecPayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await db.transaction(async (tx) => {
+    await tx
+      .update(schema.sdlcPhaseArtifact)
+      .set({
+        status: "superseded",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.sdlcPhaseArtifact.loopId, loopId),
+          eq(schema.sdlcPhaseArtifact.phase, "planning"),
+          inArray(schema.sdlcPhaseArtifact.status, [
+            "generated",
+            "approved",
+            "accepted",
+          ]),
+        ),
+      );
+
+    const [artifact] = await tx
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId,
+        phase: "planning",
+        artifactType: "plan_spec",
+        headSha: null,
+        loopVersion,
+        status,
+        generatedBy,
+        payload,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (!artifact) {
+      throw new Error("Failed to create SDLC plan artifact");
+    }
+
+    await tx
+      .update(schema.sdlcLoop)
+      .set({
+        ...buildLoopArtifactPointerUpdate({
+          phase: "planning",
+          artifactId: artifact.id,
+        }),
+        updatedAt: now,
+      })
+      .where(eq(schema.sdlcLoop.id, loopId));
+
+    return artifact;
+  });
+}
+
+export async function approvePlanArtifactForLoop({
+  db,
+  loopId,
+  artifactId,
+  approvedByUserId,
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  artifactId: string;
+  approvedByUserId: string;
+  now?: Date;
+}) {
+  const [artifact] = await db
+    .update(schema.sdlcPhaseArtifact)
+    .set({
+      status: "approved",
+      approvedByUserId,
+      approvedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.sdlcPhaseArtifact.id, artifactId),
+        eq(schema.sdlcPhaseArtifact.loopId, loopId),
+        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.sdlcPhaseArtifact.artifactType, "plan_spec"),
+        inArray(schema.sdlcPhaseArtifact.status, ["generated", "accepted"]),
+      ),
+    )
+    .returning();
+
+  if (!artifact) {
+    return undefined;
+  }
+
+  await db
+    .update(schema.sdlcLoop)
+    .set({
+      activePlanArtifactId: artifact.id,
+      updatedAt: now,
+    })
+    .where(eq(schema.sdlcLoop.id, loopId));
+
+  return artifact;
+}
+
+export async function replacePlanTasksForArtifact({
+  db,
+  loopId,
+  artifactId,
+  tasks,
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  artifactId: string;
+  tasks: Array<{
+    stableTaskId: string;
+    title: string;
+    description?: string | null;
+    acceptance: string[];
+  }>;
+  now?: Date;
+}) {
+  return await db.transaction(async (tx) => {
+    const artifact = await tx.query.sdlcPhaseArtifact.findFirst({
+      where: and(
+        eq(schema.sdlcPhaseArtifact.id, artifactId),
+        eq(schema.sdlcPhaseArtifact.loopId, loopId),
+        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.sdlcPhaseArtifact.artifactType, "plan_spec"),
+      ),
+    });
+    if (!artifact) {
+      throw new Error("Plan artifact not found for loop");
+    }
+
+    await tx
+      .delete(schema.sdlcPlanTask)
+      .where(eq(schema.sdlcPlanTask.artifactId, artifactId));
+
+    if (tasks.length === 0) {
+      return [] as SdlcPlanTask[];
+    }
+
+    const dedupedTasks = new Map<
+      string,
+      {
+        stableTaskId: string;
+        title: string;
+        description?: string | null;
+        acceptance: string[];
+      }
+    >();
+    for (const task of tasks) {
+      const stableTaskId = task.stableTaskId.trim();
+      if (!stableTaskId) {
+        continue;
+      }
+      dedupedTasks.set(stableTaskId, {
+        stableTaskId,
+        title: task.title.trim(),
+        description: task.description?.trim() || null,
+        acceptance: task.acceptance,
+      });
+    }
+
+    const preparedTasks = [...dedupedTasks.values()].filter(
+      (task) => task.title.length > 0,
+    );
+    if (preparedTasks.length === 0) {
+      return [] as SdlcPlanTask[];
+    }
+
+    const taskRows: Array<typeof schema.sdlcPlanTask.$inferInsert> =
+      preparedTasks.map((task) => ({
+        artifactId,
+        loopId,
+        stableTaskId: task.stableTaskId,
+        title: task.title,
+        description: task.description ?? null,
+        acceptance: task.acceptance,
+        status: "todo",
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+    return await tx.insert(schema.sdlcPlanTask).values(taskRows).returning();
+  });
+}
+
+export async function markPlanTasksCompletedByAgent({
+  db,
+  loopId,
+  artifactId,
+  completions,
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  artifactId: string;
+  completions: Array<{
+    stableTaskId: string;
+    status?: Extract<SdlcPlanTaskStatus, "done" | "skipped" | "blocked">;
+    evidence: SdlcPlanTaskCompletionEvidence;
+  }>;
+  now?: Date;
+}) {
+  if (completions.length === 0) {
+    return {
+      updatedTaskCount: 0,
+    };
+  }
+
+  let updatedTaskCount = 0;
+  for (const completion of completions) {
+    const stableTaskId = completion.stableTaskId.trim();
+    if (!stableTaskId) {
+      continue;
+    }
+    const nextStatus = completion.status ?? "done";
+    const completedAt =
+      nextStatus === "done" || nextStatus === "skipped" ? now : null;
+    const completedBy: SdlcPlanTaskCompletedBy | null =
+      nextStatus === "done" || nextStatus === "skipped" ? "agent" : null;
+
+    const [updated] = await db
+      .update(schema.sdlcPlanTask)
+      .set({
+        status: nextStatus,
+        completedAt,
+        completedBy,
+        completionEvidence: completion.evidence,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.sdlcPlanTask.loopId, loopId),
+          eq(schema.sdlcPlanTask.artifactId, artifactId),
+          eq(schema.sdlcPlanTask.stableTaskId, stableTaskId),
+        ),
+      )
+      .returning({ id: schema.sdlcPlanTask.id });
+    if (updated) {
+      updatedTaskCount += 1;
+    }
+  }
+
+  return {
+    updatedTaskCount,
+  };
+}
+
+export async function verifyPlanTaskCompletionForHead({
+  db,
+  loopId,
+  artifactId,
+  headSha,
+}: {
+  db: DB;
+  loopId: string;
+  artifactId: string;
+  headSha: string;
+}) {
+  const tasks = await db.query.sdlcPlanTask.findMany({
+    where: and(
+      eq(schema.sdlcPlanTask.loopId, loopId),
+      eq(schema.sdlcPlanTask.artifactId, artifactId),
+    ),
+  });
+
+  const incompleteTasks = tasks.filter((task) =>
+    isIncompletePlanTaskStatus(task.status),
+  );
+
+  const invalidEvidenceTaskIds: string[] = [];
+  for (const task of tasks) {
+    if (!isNonBlockingTerminalPlanTaskStatus(task.status)) {
+      continue;
+    }
+    if (task.status === "skipped") {
+      continue;
+    }
+    const evidence =
+      task.completionEvidence as SdlcPlanTaskCompletionEvidence | null;
+    if (!evidence || evidence.headSha !== headSha) {
+      invalidEvidenceTaskIds.push(task.stableTaskId);
+    }
+  }
+
+  return {
+    gatePassed:
+      tasks.length > 0 &&
+      incompleteTasks.length === 0 &&
+      invalidEvidenceTaskIds.length === 0,
+    totalTasks: tasks.length,
+    incompleteTaskIds: incompleteTasks.map((task) => task.stableTaskId),
+    invalidEvidenceTaskIds,
+  };
+}
+
+async function createHeadScopedArtifact({
+  db,
+  loopId,
+  phase,
+  artifactType,
+  headSha,
+  loopVersion,
+  payload,
+  generatedBy = "system",
+  status = "accepted",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  phase: SdlcPhase;
+  artifactType: SdlcArtifactType;
+  headSha: string;
+  loopVersion: number;
+  payload: SdlcArtifactPayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await db.transaction(async (tx) => {
+    await tx
+      .update(schema.sdlcPhaseArtifact)
+      .set({
+        status: "superseded",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.sdlcPhaseArtifact.loopId, loopId),
+          eq(schema.sdlcPhaseArtifact.phase, phase),
+          eq(schema.sdlcPhaseArtifact.headSha, headSha),
+          inArray(schema.sdlcPhaseArtifact.status, [
+            "generated",
+            "approved",
+            "accepted",
+          ]),
+        ),
+      );
+
+    const [artifact] = await tx
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId,
+        phase,
+        artifactType,
+        headSha,
+        loopVersion,
+        status,
+        generatedBy,
+        payload,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!artifact) {
+      throw new Error("Failed to create SDLC phase artifact");
+    }
+
+    await tx
+      .update(schema.sdlcLoop)
+      .set({
+        ...buildLoopArtifactPointerUpdate({
+          phase,
+          artifactId: artifact.id,
+        }),
+        updatedAt: now,
+      })
+      .where(eq(schema.sdlcLoop.id, loopId));
+
+    return artifact;
+  });
+}
+
+export async function createImplementationArtifactForHead({
+  db,
+  loopId,
+  headSha,
+  loopVersion,
+  payload,
+  generatedBy = "system",
+  status = "accepted",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  headSha: string;
+  loopVersion: number;
+  payload: SdlcImplementationSnapshotPayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await createHeadScopedArtifact({
+    db,
+    loopId,
+    phase: "implementing",
+    artifactType: "implementation_snapshot",
+    headSha,
+    loopVersion,
+    payload,
+    generatedBy,
+    status,
+    now,
+  });
+}
+
+export async function createReviewBundleArtifactForHead({
+  db,
+  loopId,
+  headSha,
+  loopVersion,
+  payload,
+  generatedBy = "system",
+  status = "accepted",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  headSha: string;
+  loopVersion: number;
+  payload: SdlcReviewBundlePayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await createHeadScopedArtifact({
+    db,
+    loopId,
+    phase: "reviewing",
+    artifactType: "review_bundle",
+    headSha,
+    loopVersion,
+    payload,
+    generatedBy,
+    status,
+    now,
+  });
+}
+
+export async function createUiSmokeArtifactForHead({
+  db,
+  loopId,
+  headSha,
+  loopVersion,
+  payload,
+  generatedBy = "system",
+  status = "accepted",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  headSha: string;
+  loopVersion: number;
+  payload: SdlcUiSmokePayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await createHeadScopedArtifact({
+    db,
+    loopId,
+    phase: "ui_testing",
+    artifactType: "ui_smoke_result",
+    headSha,
+    loopVersion,
+    payload,
+    generatedBy,
+    status,
+    now,
+  });
+}
+
+export async function createPrLinkArtifact({
+  db,
+  loopId,
+  loopVersion,
+  payload,
+  generatedBy = "system",
+  status = "accepted",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  loopVersion: number;
+  payload: SdlcPrLinkPayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await db.transaction(async (tx) => {
+    await tx
+      .update(schema.sdlcPhaseArtifact)
+      .set({
+        status: "superseded",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.sdlcPhaseArtifact.loopId, loopId),
+          eq(schema.sdlcPhaseArtifact.phase, "pr_linking"),
+          inArray(schema.sdlcPhaseArtifact.status, [
+            "generated",
+            "approved",
+            "accepted",
+          ]),
+        ),
+      );
+
+    const [artifact] = await tx
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId,
+        phase: "pr_linking",
+        artifactType: "pr_link",
+        headSha: null,
+        loopVersion,
+        status,
+        generatedBy,
+        payload,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!artifact) {
+      throw new Error("Failed to create SDLC PR link artifact");
+    }
+
+    return artifact;
+  });
+}
+
+export async function createBabysitEvaluationArtifactForHead({
+  db,
+  loopId,
+  headSha,
+  loopVersion,
+  payload,
+  generatedBy = "system",
+  status = "accepted",
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  headSha: string;
+  loopVersion: number;
+  payload: SdlcBabysitEvaluationPayload;
+  generatedBy?: SdlcArtifactGeneratedBy;
+  status?: SdlcArtifactStatus;
+  now?: Date;
+}) {
+  return await createHeadScopedArtifact({
+    db,
+    loopId,
+    phase: "pr_babysitting",
+    artifactType: "babysit_evaluation",
+    headSha,
+    loopVersion,
+    payload,
+    generatedBy,
+    status,
+    now,
+  });
+}
+
+export type SdlcTransitionWithArtifactOutcome =
+  | SdlcGateLoopUpdateOutcome
+  | "artifact_not_found"
+  | "artifact_gate_failed";
+
+export async function transitionSdlcLoopStateWithArtifact({
+  db,
+  loopId,
+  artifactId,
+  transitionEvent,
+  headSha,
+  loopVersion,
+  expectedPhase,
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  artifactId: string;
+  transitionEvent: SdlcLoopTransitionEvent;
+  headSha?: string | null;
+  loopVersion?: number;
+  expectedPhase: SdlcPhase;
+  now?: Date;
+}): Promise<SdlcTransitionWithArtifactOutcome> {
+  return await db.transaction(async (tx) => {
+    const [loop, artifact] = await Promise.all([
+      tx.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.id, loopId),
+      }),
+      tx.query.sdlcPhaseArtifact.findFirst({
+        where: and(
+          eq(schema.sdlcPhaseArtifact.id, artifactId),
+          eq(schema.sdlcPhaseArtifact.loopId, loopId),
+          eq(schema.sdlcPhaseArtifact.phase, expectedPhase),
+        ),
+      }),
+    ]);
+
+    if (!loop || !artifact) {
+      return "artifact_not_found";
+    }
+
+    const requiredStatus =
+      transitionEvent === "plan_completed"
+        ? getPlanArtifactRequiredStatus(loop.planApprovalPolicy)
+        : "accepted";
+    if (artifact.status !== requiredStatus) {
+      return "artifact_gate_failed";
+    }
+
+    if (headSha !== undefined) {
+      if (headSha === null) {
+        if (artifact.headSha !== null) {
+          return "artifact_gate_failed";
+        }
+      } else if (artifact.headSha !== headSha) {
+        return "artifact_gate_failed";
+      }
+    }
+
+    if (
+      loopVersion !== undefined &&
+      Number.isFinite(loopVersion) &&
+      artifact.loopVersion > loopVersion
+    ) {
+      return "artifact_gate_failed";
+    }
+
+    const loopPointerUpdate = buildLoopArtifactPointerUpdate({
+      phase: expectedPhase,
+      artifactId: artifact.id,
+    });
+    if (Object.keys(loopPointerUpdate).length > 0) {
+      await tx
+        .update(schema.sdlcLoop)
+        .set({
+          ...loopPointerUpdate,
+          updatedAt: now,
+        })
+        .where(eq(schema.sdlcLoop.id, loopId));
+    }
+
+    return await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      transitionEvent,
+      headSha,
+      loopVersion,
+      now,
+    });
   });
 }
 
@@ -1352,10 +2398,7 @@ export function resolveSdlcReadyStateAfterVideoCapture({
 }: {
   currentState: SdlcLoopState;
   artifactR2Key: string | null;
-}): Extract<
-  SdlcLoopState,
-  "human_review_ready" | "video_degraded_ready" | "done"
-> | null {
+}): Extract<SdlcLoopState, "pr_babysitting" | "implementing" | "done"> | null {
   const transitionEvent: SdlcLoopTransitionEvent = artifactR2Key
     ? "video_capture_succeeded"
     : "video_capture_failed";
@@ -1364,10 +2407,7 @@ export function resolveSdlcReadyStateAfterVideoCapture({
     event: transitionEvent,
   });
 
-  if (
-    nextState === "human_review_ready" ||
-    nextState === "video_degraded_ready"
-  ) {
+  if (nextState === "pr_babysitting" || nextState === "implementing") {
     return nextState;
   }
 
@@ -1766,6 +2806,19 @@ export type SdlcGateLoopUpdateOutcome =
   | "terminal_noop"
   | "stale_noop";
 
+const fixAttemptIncrementEvents: ReadonlySet<SdlcLoopTransitionEvent> = new Set(
+  [
+    "review_blocked",
+    "ui_smoke_failed",
+    "babysit_blocked",
+    // Legacy gate-blocked events still increment attempts during migration.
+    "ci_gate_blocked",
+    "review_threads_gate_blocked",
+    "deep_review_gate_blocked",
+    "carmack_review_gate_blocked",
+  ],
+);
+
 async function persistGuardedGateLoopState({
   tx,
   loopId,
@@ -1787,6 +2840,8 @@ async function persistGuardedGateLoopState({
       state: true,
       loopVersion: true,
       currentHeadSha: true,
+      fixAttemptCount: true,
+      maxFixAttempts: true,
     },
   });
 
@@ -1805,18 +2860,30 @@ async function persistGuardedGateLoopState({
   if (
     transitionEvent === "implementation_progress" &&
     normalizedLoopVersion === null &&
-    loop.state !== "enrolled" &&
+    loop.state !== "planning" &&
     loop.state !== "implementing"
   ) {
     return "stale_noop";
   }
-  const nextState = resolveSdlcLoopNextState({
+  let nextState = resolveSdlcLoopNextState({
     currentState: loop.state,
     event: transitionEvent,
   });
 
   if (!nextState) {
     return "stale_noop";
+  }
+
+  const shouldIncrementFixAttempt =
+    fixAttemptIncrementEvents.has(transitionEvent);
+  const nextFixAttemptCount = shouldIncrementFixAttempt
+    ? loop.fixAttemptCount + 1
+    : loop.fixAttemptCount;
+  if (
+    shouldIncrementFixAttempt &&
+    nextFixAttemptCount > Math.max(loop.maxFixAttempts, 0)
+  ) {
+    nextState = "blocked_on_human_feedback";
   }
 
   if (normalizedLoopVersion !== null) {
@@ -1839,10 +2906,14 @@ async function persistGuardedGateLoopState({
     updatedAt: Date;
     currentHeadSha?: string | null;
     loopVersion?: number;
+    fixAttemptCount?: number;
   } = {
     state: nextState,
     updatedAt: now,
   };
+  if (shouldIncrementFixAttempt) {
+    nextValues.fixAttemptCount = nextFixAttemptCount;
+  }
   if (
     normalizedLoopVersion !== null &&
     (typeof headSha === "string" || headSha === null)
@@ -2273,6 +3344,7 @@ export async function persistDeepReviewGateResult({
   model,
   rawOutput,
   promptVersion = 1,
+  updateLoopState = true,
 }: {
   db: DB;
   loopId: string;
@@ -2281,6 +3353,7 @@ export async function persistDeepReviewGateResult({
   model: string;
   rawOutput: unknown;
   promptVersion?: number;
+  updateLoopState?: boolean;
 }): Promise<PersistDeepReviewGateResult> {
   return await db.transaction(async (tx) => {
     const parsed = parseDeepReviewGateOutput(rawOutput);
@@ -2332,14 +3405,16 @@ export async function persistDeepReviewGateResult({
           ),
         );
 
-      const loopUpdateOutcome = await persistGuardedGateLoopState({
-        tx,
-        loopId,
-        headSha,
-        loopVersion,
-        transitionEvent: "deep_review_gate_blocked",
-        now: new Date(),
-      });
+      const loopUpdateOutcome = updateLoopState
+        ? await persistGuardedGateLoopState({
+            tx,
+            loopId,
+            headSha,
+            loopVersion,
+            transitionEvent: "deep_review_gate_blocked",
+            now: new Date(),
+          })
+        : "stale_noop";
 
       return {
         runId: run.id,
@@ -2462,17 +3537,19 @@ export async function persistDeepReviewGateResult({
       }
     }
 
-    const loopUpdateOutcome = await persistGuardedGateLoopState({
-      tx,
-      loopId,
-      headSha,
-      loopVersion,
-      transitionEvent:
-        status === "blocked"
-          ? "deep_review_gate_blocked"
-          : "deep_review_gate_passed",
-      now: new Date(),
-    });
+    const loopUpdateOutcome = updateLoopState
+      ? await persistGuardedGateLoopState({
+          tx,
+          loopId,
+          headSha,
+          loopVersion,
+          transitionEvent:
+            status === "blocked"
+              ? "deep_review_gate_blocked"
+              : "deep_review_gate_passed",
+          now: new Date(),
+        })
+      : "stale_noop";
 
     const unresolvedBlockingFindings = (
       await tx
@@ -2715,6 +3792,7 @@ export async function persistCarmackReviewGateResult({
   model,
   rawOutput,
   promptVersion = 1,
+  updateLoopState = true,
 }: {
   db: DB;
   loopId: string;
@@ -2723,6 +3801,7 @@ export async function persistCarmackReviewGateResult({
   model: string;
   rawOutput: unknown;
   promptVersion?: number;
+  updateLoopState?: boolean;
 }): Promise<PersistCarmackReviewGateResult> {
   return await db.transaction(async (tx) => {
     const parsed = parseCarmackReviewGateOutput(rawOutput);
@@ -2774,14 +3853,16 @@ export async function persistCarmackReviewGateResult({
           ),
         );
 
-      const loopUpdateOutcome = await persistGuardedGateLoopState({
-        tx,
-        loopId,
-        headSha,
-        loopVersion,
-        transitionEvent: "carmack_review_gate_blocked",
-        now: new Date(),
-      });
+      const loopUpdateOutcome = updateLoopState
+        ? await persistGuardedGateLoopState({
+            tx,
+            loopId,
+            headSha,
+            loopVersion,
+            transitionEvent: "carmack_review_gate_blocked",
+            now: new Date(),
+          })
+        : "stale_noop";
 
       return {
         runId: run.id,
@@ -2905,17 +3986,19 @@ export async function persistCarmackReviewGateResult({
       }
     }
 
-    const loopUpdateOutcome = await persistGuardedGateLoopState({
-      tx,
-      loopId,
-      headSha,
-      loopVersion,
-      transitionEvent:
-        status === "blocked"
-          ? "carmack_review_gate_blocked"
-          : "carmack_review_gate_passed",
-      now: new Date(),
-    });
+    const loopUpdateOutcome = updateLoopState
+      ? await persistGuardedGateLoopState({
+          tx,
+          loopId,
+          headSha,
+          loopVersion,
+          transitionEvent:
+            status === "blocked"
+              ? "carmack_review_gate_blocked"
+              : "carmack_review_gate_passed",
+          now: new Date(),
+        })
+      : "stale_noop";
 
     const unresolvedBlockingFindings = (
       await tx
