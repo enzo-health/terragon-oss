@@ -397,8 +397,12 @@ export class DaemonRuntime implements IDaemonRuntime {
     processId: number | undefined;
     pollInterval: NodeJS.Timeout | undefined;
   } {
-    const child = spawn("bash", ["-lc", command], {
-      env,
+    const shell = process.env.SHELL || "bash";
+    const child = spawn(shell, ["-lc", command], {
+      env: {
+        ...process.env,
+        ...env,
+      },
       detached: true,
       stdio: ["inherit", "pipe", "pipe"],
     });
@@ -516,8 +520,12 @@ export class DaemonRuntime implements IDaemonRuntime {
     processId: number | undefined;
     pollInterval: NodeJS.Timeout | undefined;
   } {
-    const child = spawn("bash", ["-lc", command], {
-      env,
+    const shell = process.env.SHELL || "bash";
+    const child = spawn(shell, ["-lc", command], {
+      env: {
+        ...process.env,
+        ...env,
+      },
       detached: true,
       stdio: ["inherit", "pipe", "pipe"],
     });

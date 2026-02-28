@@ -145,7 +145,8 @@ export function getUserMessageToSend({
         type: "user",
         model: getLastUserMessageModel(messages),
         timestamp: userMessagesToSend[userMessagesToSend.length - 1]!.timestamp,
-        permissionMode: lastPermissionMode || "allowAll",
+        permissionMode:
+          currentMessage?.permissionMode || lastPermissionMode || "allowAll",
         parts: allParts,
       };
     }

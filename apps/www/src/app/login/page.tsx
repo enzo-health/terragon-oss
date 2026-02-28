@@ -4,7 +4,7 @@ import Login from "./login";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Login | Terragon",
+  title: "Sign in | Terragon",
 };
 
 export default async function LoginPage({

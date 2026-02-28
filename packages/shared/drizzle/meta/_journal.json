@@ -47,8 +47,15 @@
     {
       "idx": 6,
       "version": "7",
+      "when": 1772140000000,
+      "tag": "0006_agent_run_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
       "when": 1772160000000,
-      "tag": "0006_thread_scoped_sdlc_loop",
+      "tag": "0007_thread_scoped_sdlc_loop",
       "breakpoints": true
     }
   ]

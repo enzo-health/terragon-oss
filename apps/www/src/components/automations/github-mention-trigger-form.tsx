@@ -8,8 +8,6 @@ import { Label } from "@/components/ui/label";
 import { RepoSelector } from "../repo-branch-selector";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
-import { useAccessInfo } from "@/queries/subscription";
-import { cn } from "@/lib/utils";
 
 export function GitHubMentionTriggerForm({
   value,
@@ -24,10 +22,7 @@ export function GitHubMentionTriggerForm({
   onChange: (value: GitHubMentionTriggerConfig) => void;
   errorMessage?: string;
 }) {
-  const { tier } = useAccessInfo();
-  const isProTier = tier === "pro";
   const includeBotMentions = value.filter.includeBotMentions ?? false;
-  const botMentionsDisabled = !isProTier && !includeBotMentions;
 
   return (
     <div className="space-y-4 border rounded-lg p-4">
@@ -50,12 +45,8 @@ export function GitHubMentionTriggerForm({
             <Checkbox
               id="includeBotMentions"
               checked={includeBotMentions}
-              disabled={botMentionsDisabled}
               onCheckedChange={(checked) => {
                 const nextIncludeBotMentions = checked === true;
-                if (!isProTier && nextIncludeBotMentions) {
-                  return;
-                }
                 onChange({
                   ...value,
                   filter: {
@@ -67,15 +58,9 @@ export function GitHubMentionTriggerForm({
             />
             <Label
               htmlFor="includeBotMentions"
-              className={cn("text-sm font-normal flex items-center gap-2", {
-                "cursor-not-allowed opacity-50": botMentionsDisabled,
-                "cursor-pointer": !botMentionsDisabled,
-              })}
+              className="text-sm font-normal flex items-center gap-2 cursor-pointer"
             >
               <span>Include mentions from bot users</span>
-              <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
-                Pro
-              </span>
             </Label>
           </div>
           {includeBotMentions && (

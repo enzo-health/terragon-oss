@@ -47,8 +47,6 @@ import { tryAutoCompactThread } from "@/server-lib/compact";
 import { waitUntil } from "@vercel/functions";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getUserCredentials } from "@/server-lib/user-credentials";
-import { getAccessInfoForUser } from "@/lib/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 import {
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
   getActiveSdlcLoopForThreadIfEnabled,
@@ -59,6 +57,9 @@ import {
   getThreadContextMessageToGenerate,
   generateThreadContextResult,
 } from "@/server-lib/thread-context";
+import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { randomUUID } from "node:crypto";
+import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 
 async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   // Task queue limiting is always enabled
@@ -124,12 +125,6 @@ export async function startAgentMessage({
     threadChatId,
     userId,
     execOrThrow: async (threadChat) => {
-      // Enforce subscription/access gating (defense-in-depth):
-      // If the user lacks active access, surface an error and halt early.
-      const { tier } = await getAccessInfoForUser(userId);
-      if (tier === "none") {
-        throw new Error(SUBSCRIPTION_MESSAGES.RUN_TASK);
-      }
       if (!threadChat) {
         throw new ThreadError("unknown-error", "Thread chat not found", null);
       }
@@ -517,6 +512,49 @@ export async function startAgentMessage({
             (agentForModel === "claudeCode" && !userCredentials.hasClaude) ||
             !isConnectedCredentialsSupported(agentForModel);
 
+          const runId = randomUUID();
+          const tokenNonce = randomUUID();
+          const featureFlags = await getFeatureFlagsForUser({
+            db,
+            userId,
+          });
+          const supportsAcp =
+            threadChat.agent === "claudeCode" ||
+            threadChat.agent === "codex" ||
+            threadChat.agent === "amp" ||
+            threadChat.agent === "opencode";
+          const effectivePermissionMode =
+            threadChat.permissionMode || "allowAll";
+          const transportMode =
+            featureFlags.sandboxAgentAcpTransport &&
+            supportsAcp &&
+            effectivePermissionMode !== "plan"
+              ? ("acp" as const)
+              : ("legacy" as const);
+          const protocolVersion = transportMode === "acp" ? 2 : 1;
+          const acpServerId =
+            transportMode === "acp" ? `terragon-${runId}` : null;
+          const acpSessionId =
+            transportMode === "acp" ? (sessionId ?? null) : null;
+
+          await upsertAgentRunContext({
+            db,
+            runId,
+            userId,
+            threadId,
+            threadChatId,
+            sandboxId: session.sandboxId,
+            transportMode,
+            protocolVersion,
+            agent: threadChat.agent,
+            permissionMode: effectivePermissionMode,
+            requestedSessionId: sessionId ?? null,
+            resolvedSessionId: null,
+            status: "pending",
+            tokenNonce,
+            daemonTokenKeyId: null,
+          });
+
           await sendDaemonMessage({
             message: {
               type: "claude",
@@ -525,7 +563,16 @@ export async function startAgentMessage({
               agentVersion: threadChat.agentVersion,
               prompt: finalFinalPrompt,
               sessionId,
-              permissionMode: threadChat.permissionMode || "allowAll",
+              permissionMode: effectivePermissionMode,
+              runId,
+              transportMode,
+              protocolVersion,
+              ...(transportMode === "acp"
+                ? {
+                    acpServerId,
+                    acpSessionId,
+                  }
+                : {}),
               ...(shouldUseCredits ? { useCredits: true } : {}),
             },
             userId,
@@ -533,6 +580,13 @@ export async function startAgentMessage({
             threadChatId,
             sandboxId: session.sandboxId,
             session,
+            runContext: {
+              runId,
+              tokenNonce,
+              transportMode,
+              protocolVersion,
+              agent: threadChat.agent,
+            },
           });
         },
       });

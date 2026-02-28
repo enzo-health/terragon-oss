@@ -2,19 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { NextRequest } from "next/server";
 import * as aiSdkRoute from "./[[...path]]/route";
 import { logOpenRouterUsage } from "./log-usage";
-import { auth } from "@/lib/auth";
+import {
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+  type DaemonRunTokenClaims,
+} from "@/lib/auth-server";
 import { getUserCreditBalance } from "@terragon/shared/model/credits";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
-vi.mock("@/lib/auth", () => ({
-  auth: {
-    api: {
-      verifyApiKey: vi.fn(),
-    },
-  },
+vi.mock("@/lib/auth-server", () => ({
+  getDaemonTokenAuthContextOrNull: vi.fn(),
+  hasDaemonProviderScope: vi.fn(),
 }));
 
 vi.mock("@terragon/shared/model/credits", () => ({
   getUserCreditBalance: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getAgentRunContextByRunId: vi.fn(),
 }));
 
 vi.mock("@/server-lib/credit-auto-reload", () => ({
@@ -70,19 +76,53 @@ function createRequest({
 }
 
 describe("OpenRouter proxy route", () => {
-  const verifyApiKeyMock = vi.mocked(auth.api.verifyApiKey);
+  const getDaemonTokenAuthContextOrNullMock = vi.mocked(
+    getDaemonTokenAuthContextOrNull,
+  );
+  const hasDaemonProviderScopeMock = vi.mocked(hasDaemonProviderScope);
   const getUserCreditBalanceMock = vi.mocked(getUserCreditBalance);
+  const getAgentRunContextByRunIdMock = vi.mocked(getAgentRunContextByRunId);
   const logUsageMock = vi.mocked(logOpenRouterUsage);
   const { POST } = aiSdkRoute;
 
   beforeEach(async () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
-    verifyApiKeyMock.mockResolvedValue({
-      valid: true,
-      error: null,
-      key: { userId: "user-123" } as any,
+    const now = Date.now();
+    const daemonRun: DaemonRunTokenClaims = {
+      kind: "daemon-run" as const,
+      runId: "run-openrouter-123",
+      threadId: "thread-openrouter-123",
+      threadChatId: "thread-chat-openrouter-123",
+      sandboxId: "sandbox-openrouter-123",
+      agent: "opencode",
+      transportMode: "legacy" as const,
+      protocolVersion: 1,
+      providers: ["openrouter"],
+      nonce: "nonce-openrouter-123",
+      issuedAt: now,
+      exp: now + 60_000,
+    };
+    getDaemonTokenAuthContextOrNullMock.mockResolvedValue({
+      userId: "user-123",
+      keyId: "daemon-key-openrouter-123",
+      claims: daemonRun,
     });
+    hasDaemonProviderScopeMock.mockImplementation(
+      (_claims, provider) => provider === "openrouter",
+    );
+    getAgentRunContextByRunIdMock.mockResolvedValue({
+      runId: daemonRun.runId,
+      threadId: daemonRun.threadId,
+      threadChatId: daemonRun.threadChatId,
+      sandboxId: daemonRun.sandboxId,
+      agent: daemonRun.agent,
+      transportMode: daemonRun.transportMode,
+      protocolVersion: daemonRun.protocolVersion,
+      tokenNonce: daemonRun.nonce,
+      daemonTokenKeyId: "daemon-key-openrouter-123",
+      status: "dispatched",
+    } as any);
     getUserCreditBalanceMock.mockResolvedValue({
       totalCreditsCents: 1_000,
       totalUsageCents: 0,
@@ -178,9 +218,12 @@ describe("OpenRouter proxy route", () => {
       params: Promise.resolve({}),
     });
 
-    expect(verifyApiKeyMock).toHaveBeenCalledWith({
-      body: { key: "another-daemon-token" },
-    });
+    expect(getDaemonTokenAuthContextOrNullMock).toHaveBeenCalledTimes(1);
+    const authRequest = getDaemonTokenAuthContextOrNullMock.mock
+      .calls[0]![0] as { headers: Headers } | undefined;
+    expect(authRequest?.headers.get("X-Daemon-Token")).toBe(
+      "another-daemon-token",
+    );
 
     const fetchHeaders =
       (fetchMock.mock.calls[0]![1]!.headers as Headers) ?? new Headers();

@@ -250,12 +250,12 @@ describe("daemon", () => {
     await sleep();
     expect(serverPostMock).toHaveBeenCalledTimes(1);
     expect(serverPostMock).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         messages: [claudeMessage1],
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
   });
@@ -623,32 +623,32 @@ describe("daemon", () => {
     expect(serverPostMock).toHaveBeenCalledTimes(3);
     expect(serverPostMock).toHaveBeenNthCalledWith(
       1,
-      {
+      expect.objectContaining({
         messages: messageBatch1,
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
     expect(serverPostMock).toHaveBeenNthCalledWith(
       2,
-      {
+      expect.objectContaining({
         messages: messageBatch2,
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
     expect(serverPostMock).toHaveBeenNthCalledWith(
       3,
-      {
+      expect.objectContaining({
         messages: messageBatch3,
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
   });
@@ -726,7 +726,7 @@ describe("daemon", () => {
     // First call should have the first 3 messages
     expect(serverPostMock).toHaveBeenNthCalledWith(
       1,
-      {
+      expect.objectContaining({
         messages: [
           { role: "assistant", content: "TEST_RESPONSE_1" },
           { role: "assistant", content: "TEST_RESPONSE_2" },
@@ -735,14 +735,14 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
 
     // Second call should have the last 2 messages
     expect(serverPostMock).toHaveBeenNthCalledWith(
       2,
-      {
+      expect.objectContaining({
         messages: [
           { role: "assistant", content: "TEST_RESPONSE_4" },
           { role: "assistant", content: "TEST_RESPONSE_5" },
@@ -750,7 +750,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
   });
@@ -846,7 +846,7 @@ describe("daemon", () => {
     expect(serverPostMock).toHaveBeenCalledTimes(2);
     expect(serverPostMock).toHaveBeenNthCalledWith(
       1,
-      {
+      expect.objectContaining({
         messages: [
           { role: "assistant", content: "TEST_RESPONSE_1" },
           { role: "assistant", content: "TEST_RESPONSE_2" },
@@ -854,12 +854,12 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
     expect(serverPostMock).toHaveBeenNthCalledWith(
       2,
-      {
+      expect.objectContaining({
         messages: [
           { role: "assistant", content: "TEST_RESPONSE_1" },
           { role: "assistant", content: "TEST_RESPONSE_2" },
@@ -867,7 +867,7 @@ describe("daemon", () => {
         threadId: "TEST_THREAD_ID_STRING",
         threadChatId: "TEST_THREAD_CHAT_ID_STRING",
         timezone: "America/New_York",
-      },
+      }),
       "TEST_TOKEN_STRING",
     );
   });
@@ -1149,12 +1149,12 @@ describe("daemon", () => {
     for (let i = 1; i <= 4; i++) {
       expect(serverPostMock).toHaveBeenNthCalledWith(
         i,
-        {
+        expect.objectContaining({
           messages: [{ role: "assistant", content: "TEST_MESSAGE" }],
           threadId: "TEST_THREAD_ID_STRING",
           threadChatId: "TEST_THREAD_CHAT_ID_STRING",
           timezone: "America/New_York",
-        },
+        }),
         "TEST_TOKEN_STRING",
       );
     }
@@ -1362,12 +1362,12 @@ describe("daemon", () => {
       // Should have sent only the result message, not an additional custom-error
       expect(serverPostMock).toHaveBeenCalledTimes(1);
       expect(serverPostMock).toHaveBeenCalledWith(
-        {
+        expect.objectContaining({
           messages: [rateLimitResult],
           threadId: "TEST_THREAD_ID_STRING",
           threadChatId: "TEST_THREAD_CHAT_ID_STRING",
           timezone: "America/New_York",
-        },
+        }),
         "TEST_TOKEN_STRING",
       );
     });

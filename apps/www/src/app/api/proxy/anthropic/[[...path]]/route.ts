@@ -1,16 +1,21 @@
 import { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getUserCreditBalance } from "@terragon/shared/model/credits";
 import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
 import { logAnthropicUsage } from "../log-anthropic-usage";
 import { waitUntil } from "@vercel/functions";
 import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
+import {
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+} from "@/lib/auth-server";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 const ANTHROPIC_API_BASE = "https://api.anthropic.com/";
 const DEFAULT_ANTHROPIC_PATH = "v1/messages";
 const ANTHROPIC_API_VERSION = "2023-06-01";
+const ANTHROPIC_API_ORIGIN = new URL(ANTHROPIC_API_BASE).origin;
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +70,17 @@ function buildTargetUrl(
       ? pathSegments.join("/")
       : DEFAULT_ANTHROPIC_PATH;
 
+  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
+    throw new Error("invalid proxy path");
+  }
+
   const targetUrl = new URL(pathname, ANTHROPIC_API_BASE);
+  if (targetUrl.origin !== ANTHROPIC_API_ORIGIN) {
+    throw new Error("invalid proxy origin");
+  }
+  if (!targetUrl.pathname.startsWith("/v1/")) {
+    throw new Error("invalid proxy path");
+  }
   const search = request.nextUrl.search;
   if (search) {
     targetUrl.search = search;
@@ -285,7 +300,12 @@ async function proxyRequest(
   authContext: AuthContext,
 ) {
   const params = await args.params;
-  const targetUrl = buildTargetUrl(request, params.path);
+  let targetUrl: URL;
+  try {
+    targetUrl = buildTargetUrl(request, params.path);
+  } catch {
+    return new Response("Invalid proxy path", { status: 400 });
+  }
 
   const validation = await validateProxyRequestModel({
     request,
@@ -410,14 +430,53 @@ async function authorize(
   }
 
   try {
-    const { valid, error, key } = await auth.api.verifyApiKey({
-      body: { key: token },
+    const daemonAuth = await getDaemonTokenAuthContextOrNull({
+      headers: new Headers({ "X-Daemon-Token": token }),
     });
-
-    const userId = key?.userId;
-
-    if (error || !valid || !userId) {
-      console.log("Unauthorized Anthropic proxy request", { error, valid });
+    if (!daemonAuth || !daemonAuth.claims) {
+      console.log("Unauthorized Anthropic proxy request");
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    const userId = daemonAuth.userId;
+    const claims = daemonAuth.claims;
+    if (
+      !hasDaemonProviderScope(claims, "anthropic") ||
+      claims.exp <= Date.now()
+    ) {
+      console.log("Anthropic proxy access denied: provider scope mismatch", {
+        userId,
+        runId: claims.runId,
+      });
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    const runContext = await getAgentRunContextByRunId({
+      db,
+      runId: claims.runId,
+      userId,
+    });
+    if (!runContext) {
+      return { response: new Response("Unauthorized", { status: 401 }) };
+    }
+    if (
+      !daemonAuth.keyId ||
+      !runContext.daemonTokenKeyId ||
+      daemonAuth.keyId !== runContext.daemonTokenKeyId ||
+      runContext.runId !== claims.runId ||
+      runContext.threadId !== claims.threadId ||
+      runContext.threadChatId !== claims.threadChatId ||
+      runContext.sandboxId !== claims.sandboxId ||
+      runContext.agent !== claims.agent ||
+      runContext.transportMode !== claims.transportMode ||
+      runContext.protocolVersion !== claims.protocolVersion ||
+      runContext.tokenNonce !== claims.nonce ||
+      runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped"
+    ) {
+      console.log("Anthropic proxy access denied: run context mismatch", {
+        userId,
+        runId: claims.runId,
+      });
       return { response: new Response("Unauthorized", { status: 401 }) };
     }
 

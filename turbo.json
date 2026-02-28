@@ -46,10 +46,6 @@
       "persistent": true,
       "cache": false
     },
-    "dev:stripe": {
-      "persistent": true,
-      "cache": false
-    },
     "test-sandbox-image": {
       "dependsOn": ["^build"],
       "passThroughEnv": ["*"]

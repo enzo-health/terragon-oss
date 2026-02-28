@@ -141,6 +141,12 @@ export const featureFlagsDefinitions = {
     description:
       "Routes GitHub webhook feedback for enrolled PR loops to the SDLC coordinator instead of direct follow-up queueing.",
   },
+  sandboxAgentAcpTransport: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Enables sandbox-agent ACP transport metadata and sandbox capability probing for daemon runs.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

@@ -6,9 +6,6 @@ import {
   followUpInternal,
   queueFollowUpInternal,
 } from "@/server-lib/follow-up";
-import { getAccessInfoForUser } from "@/lib/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
-import { UserFacingError } from "@/lib/server-actions";
 
 export type FollowUpArgs = {
   threadId: string;
@@ -30,10 +27,6 @@ export const followUp = userOnlyAction(
     },
   ) {
     console.log("followUp", { threadId, threadChatId });
-    const { tier } = await getAccessInfoForUser(userId);
-    if (tier === "none") {
-      throw new UserFacingError(SUBSCRIPTION_MESSAGES.FOLLOW_UP);
-    }
     await followUpInternal({
       userId,
       threadId,
@@ -65,10 +58,6 @@ export const queueFollowUp = userOnlyAction(
     },
   ) {
     console.log("queueFollowUp", { threadId, threadChatId });
-    const { tier } = await getAccessInfoForUser(userId);
-    if (tier === "none") {
-      throw new UserFacingError(SUBSCRIPTION_MESSAGES.QUEUE_FOLLOW_UP);
-    }
     await queueFollowUpInternal({
       userId,
       threadId,

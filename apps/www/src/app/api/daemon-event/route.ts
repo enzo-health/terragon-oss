@@ -1,6 +1,7 @@
-import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
+import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
+  DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
@@ -12,6 +13,10 @@ import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
 } from "@terragon/shared/model/sdlc-loop";
+import {
+  getAgentRunContextByRunId,
+  updateAgentRunContext,
+} from "@terragon/shared/model/agent-run-context";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
@@ -84,6 +89,76 @@ function getDaemonEventEnvelopeV2(
     runId: body.runId,
     seq,
   };
+}
+
+function deriveSessionIdFromMessages(
+  messages: DaemonEventAPIBody["messages"],
+): string | null {
+  for (const message of messages) {
+    if (message.type === "assistant" || message.type === "user") {
+      if (typeof message.session_id === "string" && message.session_id.length) {
+        return message.session_id;
+      }
+    }
+  }
+  return null;
+}
+
+function deriveRunStatusFromMessages(
+  messages: DaemonEventAPIBody["messages"],
+): "processing" | "completed" | "failed" | "stopped" {
+  let sawResult = false;
+  for (const message of messages) {
+    if (message.type === "custom-stop") {
+      return "stopped";
+    }
+    if (message.type === "custom-error") {
+      return "failed";
+    }
+    if (message.type === "result") {
+      sawResult = true;
+      if (message.is_error) {
+        return "failed";
+      }
+    }
+  }
+  if (sawResult) {
+    return "completed";
+  }
+  return "processing";
+}
+
+function parseDaemonCapabilitiesHeader(
+  daemonCapabilitiesHeader: string | null,
+): Set<string> {
+  if (!daemonCapabilitiesHeader) {
+    return new Set();
+  }
+  return new Set(
+    daemonCapabilitiesHeader
+      .split(",")
+      .map((capability) => capability.trim())
+      .filter((capability) => capability.length > 0),
+  );
+}
+
+function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
+  return (
+    body.payloadVersion !== undefined ||
+    body.eventId !== undefined ||
+    body.runId !== undefined ||
+    body.seq !== undefined
+  );
+}
+
+function hasRequiredThreadChatIdForNonLegacyPayload(
+  threadChatId: unknown,
+): threadChatId is string {
+  return (
+    typeof threadChatId === "string" &&
+    threadChatId.length > 0 &&
+    threadChatId !== LEGACY_THREAD_CHAT_ID
+  );
 }
 
 async function claimEnrolledLoopDaemonEvent({
@@ -337,17 +412,212 @@ export async function POST(request: Request) {
     request.headers.get(DAEMON_EVENT_VERSION_HEADER) ?? null;
   const daemonCapabilitiesHeader =
     request.headers.get(DAEMON_EVENT_CAPABILITIES_HEADER) ?? null;
+  const daemonCapabilities = parseDaemonCapabilitiesHeader(
+    daemonCapabilitiesHeader,
+  );
+  const daemonAdvertisesEnvelopeV2 = daemonCapabilities.has(
+    DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  );
   const {
     messages,
     threadId,
-    threadChatId = LEGACY_THREAD_CHAT_ID,
     // Old clients don't send the timezone, so we fallback to UTC
     timezone = "UTC",
+    transportMode = "legacy",
+    protocolVersion = 1,
   } = json;
+  const rawThreadChatId = json.threadChatId;
+  const threadChatId =
+    typeof rawThreadChatId === "string" && rawThreadChatId.length > 0
+      ? rawThreadChatId
+      : LEGACY_THREAD_CHAT_ID;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
-  const userId = await getUserIdOrNullFromDaemonToken(request);
-  if (!userId) {
+  const daemonAuthContext = await getDaemonTokenAuthContextOrNull(request);
+  if (!daemonAuthContext) {
     return new Response("Unauthorized", { status: 401 });
+  }
+  const userId = daemonAuthContext.userId;
+  const claims = daemonAuthContext.claims;
+
+  if (daemonAdvertisesEnvelopeV2 && !envelopeV2) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_capability_v2_requires_v2_envelope",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (envelopeV2 && !daemonAdvertisesEnvelopeV2) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_v2_envelope_requires_capability_v2",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (
+    hasNonLegacyDaemonPayload(json) &&
+    !hasRequiredThreadChatIdForNonLegacyPayload(rawThreadChatId)
+  ) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_non_legacy_requires_thread_chat_id",
+      },
+      { status: 400 },
+    );
+  }
+
+  let runContext: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null =
+    null;
+  const authoritativeRunId = claims?.runId ?? envelopeV2?.runId ?? null;
+  if (authoritativeRunId) {
+    runContext = await getAgentRunContextByRunId({
+      db,
+      runId: authoritativeRunId,
+      userId,
+    });
+    if (!runContext) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_not_found",
+          runId: authoritativeRunId,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
+  if (envelopeV2 && claims && envelopeV2.runId !== claims.runId) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_run_id_claim_mismatch",
+        runId: envelopeV2.runId,
+      },
+      { status: 401 },
+    );
+  }
+
+  if (envelopeV2 && !claims) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_token_claims_required",
+        runId: envelopeV2.runId,
+      },
+      { status: 401 },
+    );
+  }
+
+  if (claims) {
+    if (claims.exp <= Date.now()) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_expired",
+          runId: claims.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (!runContext) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_not_found",
+          runId: claims.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      runContext.threadId !== threadId ||
+      runContext.threadChatId !== threadChatId ||
+      claims.threadId !== threadId ||
+      claims.threadChatId !== threadChatId
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      claims.runId !== runContext.runId ||
+      claims.threadId !== runContext.threadId ||
+      claims.threadChatId !== runContext.threadChatId ||
+      claims.sandboxId !== runContext.sandboxId ||
+      claims.agent !== runContext.agent ||
+      claims.nonce !== runContext.tokenNonce ||
+      claims.transportMode !== runContext.transportMode ||
+      claims.protocolVersion !== runContext.protocolVersion
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_claim_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (!daemonAuthContext.keyId || !runContext.daemonTokenKeyId) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_key_missing",
+          runId: runContext.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (daemonAuthContext.keyId !== runContext.daemonTokenKeyId) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_key_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (
+      transportMode !== runContext.transportMode ||
+      protocolVersion !== runContext.protocolVersion
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_transport_context_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped"
+    ) {
+      return Response.json(
+        {
+          success: true,
+          deduplicated: true,
+          reason: "run_terminal_ignored",
+          runId: runContext.runId,
+        },
+        { status: 202 },
+      );
+    }
   }
 
   const enrolledLoop = await getActiveSdlcLoopForThread({
@@ -521,6 +791,19 @@ export async function POST(request: Request) {
     }
   })();
   let result: Awaited<ReturnType<typeof handleDaemonEvent>>;
+  if (
+    runContext &&
+    (runContext.status === "pending" || runContext.status === "dispatched")
+  ) {
+    await updateAgentRunContext({
+      db,
+      userId,
+      runId: runContext.runId,
+      updates: {
+        status: "processing",
+      },
+    });
+  }
   try {
     result = await handleDaemonEvent({
       messages,
@@ -529,8 +812,19 @@ export async function POST(request: Request) {
       userId,
       timezone,
       contextUsage: computedContextUsage ?? null,
+      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
     });
   } catch (error) {
+    if (runContext) {
+      await updateAgentRunContext({
+        db,
+        userId,
+        runId: runContext.runId,
+        updates: {
+          status: "failed",
+        },
+      });
+    }
     await rollbackClaimedSignal({
       reason: "handle_daemon_event_threw",
       error,
@@ -539,11 +833,35 @@ export async function POST(request: Request) {
   }
 
   if (!result.success) {
+    if (runContext) {
+      await updateAgentRunContext({
+        db,
+        userId,
+        runId: runContext.runId,
+        updates: {
+          status: "failed",
+        },
+      });
+    }
     await rollbackClaimedSignal({
       reason: "handle_daemon_event_failed",
       error: result.error,
     });
     return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (runContext) {
+    const resolvedSessionId = deriveSessionIdFromMessages(messages);
+    const resolvedStatus = deriveRunStatusFromMessages(messages);
+    await updateAgentRunContext({
+      db,
+      userId,
+      runId: runContext.runId,
+      updates: {
+        resolvedSessionId,
+        status: resolvedStatus,
+      },
+    });
   }
 
   if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {

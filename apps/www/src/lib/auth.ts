@@ -1,127 +1,28 @@
 import * as schema from "@terragon/shared/db/schema";
+import { eq } from "drizzle-orm";
 import { betterAuth } from "better-auth";
 import {
-  bearer,
-  magicLink,
-  apiKey,
   admin,
+  apiKey,
+  bearer,
   createAuthMiddleware,
+  magicLink,
 } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { stripe as createStripePlugin } from "@better-auth/stripe";
 import { db } from "./db";
 import { env } from "@terragon/env/apps-www";
-import { Resend } from "resend";
 import { getPostHogServer } from "./posthog-server";
 import { nonLocalhostPublicAppUrl } from "./server-utils";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { handleStripeCreditTopUpEvent } from "@/server-lib/stripe-credit-top-ups";
 import { maybeGrantSignupBonus } from "@/server-lib/credits";
-import { handlePromotionCodeCheckoutSessionCompleted } from "./stripe-promotion-codes";
-import Stripe from "stripe";
 import { LoopsClient } from "loops";
-import { getUnusedPromotionCodeForUser } from "@terragon/shared/model/subscription";
-import {
-  STRIPE_PLAN_CONFIGS,
-  getStripeWebhookSecret,
-} from "@/server-lib/stripe";
-import { getStripeClient } from "@/server-lib/stripe";
-import { isStripeConfigured } from "@/server-lib/stripe";
+import { Resend } from "resend";
 
-const stripePlugins = (() => {
-  if (!isStripeConfigured()) {
-    return [];
-  }
-  const stripeClient = getStripeClient();
-  return [
-    createStripePlugin({
-      stripeClient,
-      stripeWebhookSecret: getStripeWebhookSecret(),
-      createCustomerOnSignUp: true,
-      subscription: {
-        enabled: true,
-        plans: STRIPE_PLAN_CONFIGS,
-        // Configure Stripe Checkout session parameters globally
-        // so all upgrade flows use the Better Auth checkout.
-        getCheckoutSessionParams: async (
-          { user, plan, subscription },
-          _request,
-        ) => {
-          try {
-            // Only attempt to auto-apply a one-time promo when the user
-            // does not already have an active subscription context.
-            // Additionally, verify with Stripe that the code is still
-            // active and has not been redeemed yet.
-            const promo = await getUnusedPromotionCodeForUser({
-              db,
-              userId: user.id,
-            });
-            let discounts:
-              | Stripe.Checkout.SessionCreateParams.Discount[]
-              | undefined;
-            if (promo?.stripePromotionCodeId) {
-              try {
-                const promotion = await stripeClient.promotionCodes.retrieve(
-                  promo.stripePromotionCodeId,
-                );
-
-                const timesRedeemed = promotion.times_redeemed ?? 0;
-                const isActive = promotion.active ?? false;
-
-                // Only auto-apply if it's active and has not been used.
-                if (isActive && timesRedeemed === 0) {
-                  discounts = [{ promotion_code: promo.stripePromotionCodeId }];
-                }
-              } catch (stripeErr) {
-                // If Stripe lookup fails, skip auto-apply (user can still enter code manually)
-                console.warn(
-                  "Stripe promotion code lookup failed; continuing without auto-apply",
-                  stripeErr,
-                );
-              }
-            }
-
-            return {
-              params: {
-                custom_text: {
-                  submit: {
-                    message: "We'll start your subscription right away",
-                  },
-                },
-                ...(discounts ? { discounts } : {}),
-              },
-              options: {
-                idempotencyKey: `sub_${user.id}_${plan.name}_${Date.now()}`,
-              },
-            } as const;
-          } catch (err) {
-            // If any lookup fails, fall back to default params while still
-            // enabling promotion code entry for the user.
-            return {
-              params: {
-                custom_text: {
-                  submit: {
-                    message: "We'll start your subscription right away",
-                  },
-                },
-              },
-              options: {
-                idempotencyKey: `sub_${user.id}_${plan.name}_${Date.now()}`,
-              },
-            } as const;
-          }
-        },
-      },
-      onEvent: async (event) => {
-        await handlePromotionCodeCheckoutSessionCompleted({
-          event,
-          stripeClient,
-        });
-        await handleStripeCreditTopUpEvent(event);
-      },
-    }),
-  ] as const;
-})();
+const initialAdminEmails = new Set(
+  env.INITIAL_ADMIN_EMAILS.split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0),
+);
 
 export const auth = betterAuth({
   account: {
@@ -165,6 +66,7 @@ export const auth = betterAuth({
           );
         }
       }
+      return null;
     }),
   },
   databaseHooks: {
@@ -180,6 +82,14 @@ export const auth = betterAuth({
               signupMethod: "open_signup",
             },
           });
+
+          const normalizedEmail = user.email?.trim().toLowerCase();
+          if (normalizedEmail && initialAdminEmails.has(normalizedEmail)) {
+            await db
+              .update(schema.user)
+              .set({ role: "admin" })
+              .where(eq(schema.user.id, user.id));
+          }
 
           // Create Loops contact + event (best-effort)
           try {
@@ -264,8 +174,6 @@ export const auth = betterAuth({
         }
       },
     }),
-    // Conditionally include Stripe plugin only when configured
-    ...stripePlugins,
   ],
   trustedOrigins: [
     "www.terragonlabs.com",

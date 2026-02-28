@@ -8,8 +8,6 @@ import { useThread } from "../thread-context";
 import { toast } from "sonner";
 import { approvePlan } from "@/server-actions/approve-plan";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
-import { useAccessInfo } from "@/queries/subscription";
-import { SUBSCRIPTION_MESSAGES } from "@/lib/subscription-msgs";
 import { useOptimisticUpdateThreadChat } from "../hooks";
 
 /**
@@ -71,7 +69,6 @@ export function ExitPlanModeTool({
 }: {
   toolPart: Extract<AllToolParts, { name: "ExitPlanMode" }>;
 }) {
-  const { isActive } = useAccessInfo();
   const { threadChat, isReadOnly, promptBoxRef } = useThread();
 
   // Try to get plan from parameters (old agent behavior) or from Write tool call (new agent behavior)
@@ -124,10 +121,6 @@ export function ExitPlanModeTool({
     if (isReadOnly || !threadChat) {
       return;
     }
-    if (!isActive) {
-      toast.error(SUBSCRIPTION_MESSAGES.FOLLOW_UP);
-      return;
-    }
     // Switch promptbox to execute mode (allowAll)
     promptBoxRef?.current?.setPermissionMode("allowAll");
     updateThreadChat({ permissionMode: "allowAll" });
@@ -139,7 +132,6 @@ export function ExitPlanModeTool({
     isReadOnly,
     threadChat,
     promptBoxRef,
-    isActive,
     handleApproveMutation,
     updateThreadChat,
   ]);

@@ -22,11 +22,10 @@ import { DBUserMessage } from "@terragon/shared/db/db-message";
 import type { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import {
   addEyesReactionToComment,
-  getAccessInfoForGitHubAccount,
-  postBillingLinkComment,
+  isKnownGitHubAccount,
+  postIntegrationSetupComment,
   extractModelFromComment,
 } from "./utils";
-import { getAccessInfoForUser } from "@/lib/subscription";
 import { maybeBatchThreads } from "@/lib/batch-threads";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
@@ -95,14 +94,14 @@ export async function handleAppMention({
     );
     return;
   }
-  const accessInfoOrNull = await getAccessInfoForGitHubAccount({
+  const knownAccount = await isKnownGitHubAccount({
     gitHubAccountId: commentGitHubAccountId,
   });
-  if (accessInfoOrNull?.tier === "none") {
+  if (!knownAccount) {
     console.log(
-      `GitHub user ${commentGitHubUsername} has no access, posting billing link comment`,
+      `GitHub user ${commentGitHubUsername} has no access, posting setup guidance comment`,
     );
-    await postBillingLinkComment({
+    await postIntegrationSetupComment({
       octokit,
       owner,
       repo,
@@ -654,14 +653,11 @@ async function isMatchingGitHubMentionAutomation({
   if (mentioningUserId === automation.userId) {
     return true;
   }
-  const accessInfo = await getAccessInfoForUser(automation.userId);
-  console.log("accessInfo", accessInfo);
   const config = automation.triggerConfig as GitHubMentionTriggerConfig;
   // Check bot mention filter conditions
   let botMentionMatches = false;
   if (
     commentGitHubUsername.endsWith("[bot]") &&
-    accessInfo.tier === "pro" &&
     config.filter.includeBotMentions &&
     config.filter.botUsernames
   ) {

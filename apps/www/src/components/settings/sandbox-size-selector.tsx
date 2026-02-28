@@ -9,15 +9,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { useAccessInfo } from "@/queries/subscription";
 
 export function SandboxSizeSelector() {
   const userSettings = useAtomValue(userSettingsAtom);
   const userSettingsMutation = useUpdateUserSettingsMutation();
   const largeSandboxSizeEnabled = useFeatureFlag("enableLargeSandboxSize");
-  const { tier } = useAccessInfo();
-  const isProUser = tier === "pro";
-  const canSelectLarge = largeSandboxSizeEnabled && isProUser;
+  const canSelectLarge = largeSandboxSizeEnabled;
   return (
     <Select
       value={userSettings?.sandboxSize ?? "small"}

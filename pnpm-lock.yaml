@@ -225,9 +225,6 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.803.0
         version: 3.820.0
-      '@better-auth/stripe':
-        specifier: 1.3.25
-        version: 1.3.25(better-auth@1.3.25(next@15.4.8(@babel/core@7.27.4)(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@19.1.0-rc.2)(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(stripe@18.5.0(@types/node@24.0.1))
       '@date-fns/tz':
         specifier: ^1.2.0
         version: 1.2.0
@@ -1460,12 +1457,6 @@ packages:
 
   '@better-auth/core@1.3.25':
     resolution: {integrity: sha512-+Z09RkrpufX8+skD05pAoMSNo95Cl6nwfqrcEHfXJPaiSGJNXoo4/0GNtxZAgsW89xfRdsmbVAwwEd1AlCrHZA==}
-
-  '@better-auth/stripe@1.3.25':
-    resolution: {integrity: sha512-bEN8/6fMhrCHbn27FDlBaZNg/9IevxOeYuSsqKTCUZ9sQeLyrlVEMaz1PLEl07UYv/9PG6WkRlUKbrbZ+JaqpQ==}
-    peerDependencies:
-      better-auth: 1.3.25
-      stripe: ^18
 
   '@better-auth/utils@0.3.0':
     resolution: {integrity: sha512-W+Adw6ZA6mgvnSnhOki270rwJ42t4XzSK6YWGF//BbVXL6SwCLWfyzBc1lN2m/4RM28KubdBKQ4X5VMoLRNPQw==}
@@ -12272,13 +12263,6 @@ snapshots:
   '@better-auth/core@1.3.25':
     dependencies:
       better-call: 1.0.19
-      zod: 4.1.11
-
-  '@better-auth/stripe@1.3.25(better-auth@1.3.25(next@15.4.8(@babel/core@7.27.4)(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@19.1.0-rc.2)(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(stripe@18.5.0(@types/node@24.0.1))':
-    dependencies:
-      better-auth: 1.3.25(next@15.4.8(@babel/core@7.27.4)(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@19.1.0-rc.2)(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
-      defu: 6.1.4
-      stripe: 18.5.0(@types/node@24.0.1)
       zod: 4.1.11
 
   '@better-auth/utils@0.3.0': {}

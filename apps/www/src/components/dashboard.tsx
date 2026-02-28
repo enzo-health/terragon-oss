@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils";
 import { RecommendedTasks } from "./recommended-tasks";
 import { useAtomValue } from "jotai";
 import { selectedModelAtom } from "@/atoms/user-flags";
-import { FeatureUpsellToast } from "@/components/feature-upsell-toast";
 import { unwrapError, unwrapResult } from "@/lib/server-actions";
 
 export function Dashboard({
@@ -109,7 +108,6 @@ export function Dashboard({
         "flex flex-col h-full max-w-2xl w-full mx-auto gap-8 justify-start pt-2.5",
       )}
     >
-      <FeatureUpsellToast />
       <DashboardPromptBox
         placeholder={placeholder}
         status={null}

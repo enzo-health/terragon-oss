@@ -51,7 +51,7 @@ export const exchangeCode = userOnlyAction(
           authType === "api-key"
             ? await createAnthropicAPIKey(tokenResponse.access_token)
             : undefined,
-        isSubscription: authType === "subscription",
+        isSubscription: authType === "account-link",
         tokenType: tokenResponse.token_type,
         expiresAt: tokenResponse.expires_in
           ? new Date(Date.now() + tokenResponse.expires_in * 1000)

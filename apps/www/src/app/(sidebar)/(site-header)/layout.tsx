@@ -6,7 +6,6 @@ import {
   HydrationBoundary,
   QueryClient,
 } from "@tanstack/react-query";
-import { accessQueryOptions } from "@/queries/subscription";
 
 export default async function SiteHeaderLayout({
   children,
@@ -14,7 +13,6 @@ export default async function SiteHeaderLayout({
   children: React.ReactNode;
 }) {
   const queryClient = new QueryClient();
-  await queryClient.prefetchQuery(accessQueryOptions());
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
       <div className="flex flex-col h-[100dvh] min-w-0 w-full items-center">

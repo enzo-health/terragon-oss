@@ -1,7 +1,5 @@
 import { db } from "@/lib/db";
 import { getUserSettings } from "@terragon/shared/model/user";
-import type { AccessTier } from "@terragon/shared/db/types";
-import { getAccessInfoForUser } from "./subscription";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import type { SandboxSize } from "@terragon/types/sandbox";
 
@@ -19,62 +17,12 @@ const DEFAULT_MAX_CONCURRENT_TASK_COUNT =
     ? productionMaxConcurrentTasks
     : developmentMaxConcurrentTasks;
 
-function getSandboxSizeForTier({
-  tier,
-  sandboxSize,
-}: {
-  tier: AccessTier;
-  sandboxSize: SandboxSize;
-}): SandboxSize {
-  switch (sandboxSize) {
-    case "small": {
-      return "small";
-    }
-    case "large": {
-      if (tier === "pro") {
-        return "large";
-      }
-      console.warn(
-        `Large sandbox size is not available for tier: ${tier}. Falling back to small.`,
-      );
-      return "small";
-    }
-    default: {
-      const _exhaustiveCheck: never = sandboxSize;
-      console.error(
-        `Invalid sandbox size: ${_exhaustiveCheck}. Tier: ${tier}.`,
-      );
-      return DEFAULT_SANDBOX_SIZE;
-    }
-  }
-}
-
-function getMaxConcurrentTaskCountForTier(tier: AccessTier): number {
-  return tier === "pro"
-    ? proMaxConcurrentTasks
-    : DEFAULT_MAX_CONCURRENT_TASK_COUNT;
-}
-
-function getMaxAutomationsForTier(
-  tier: AccessTier,
-  options?: { hasUnlimitedAddon?: boolean },
-): number | null {
-  if (options?.hasUnlimitedAddon) {
-    return null;
-  }
-  if (tier === "pro") {
-    return null;
-  }
-  return DEFAULT_MAX_AUTOMATIONS;
-}
-
 export const maxConcurrentTasksPerUser = DEFAULT_MAX_CONCURRENT_TASK_COUNT;
 
 export async function getSandboxSizeForUser(
   userId: string,
 ): Promise<SandboxSize> {
-  const [{ tier }, userSettings, largeSandboxSizeEnabled] = await Promise.all([
-    getAccessInfoForUser(userId),
+  const [userSettings, largeSandboxSizeEnabled] = await Promise.all([
     getUserSettings({ db, userId }),
     getFeatureFlagForUser({
       db,
@@ -85,31 +33,23 @@ export async function getSandboxSizeForUser(
   if (!largeSandboxSizeEnabled) {
     return DEFAULT_SANDBOX_SIZE;
   }
-  return getSandboxSizeForTier({
-    tier,
-    sandboxSize: userSettings.sandboxSize ?? DEFAULT_SANDBOX_SIZE,
-  });
+
+  return userSettings.sandboxSize === "large" ? "large" : DEFAULT_SANDBOX_SIZE;
 }
 
 export async function getMaxConcurrentTaskCountForUser(
-  userId: string,
+  _userId: string,
 ): Promise<number> {
-  const { tier } = await getAccessInfoForUser(userId);
-  return getMaxConcurrentTaskCountForTier(tier);
+  return proMaxConcurrentTasks;
 }
 
 export async function getMaxAutomationsForUser(
   userId: string,
 ): Promise<number | null> {
-  const [accessInfo, hasUnlimitedFlag] = await Promise.all([
-    getAccessInfoForUser(userId),
-    getFeatureFlagForUser({
-      db,
-      userId,
-      flagName: "allowUnlimitedAutomations",
-    }),
-  ]);
-  return getMaxAutomationsForTier(accessInfo.tier, {
-    hasUnlimitedAddon: hasUnlimitedFlag,
+  const hasUnlimitedFlag = await getFeatureFlagForUser({
+    db,
+    userId,
+    flagName: "allowUnlimitedAutomations",
   });
+  return hasUnlimitedFlag ? null : DEFAULT_MAX_AUTOMATIONS;
 }

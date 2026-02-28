@@ -37,6 +37,9 @@ import {
   ThreadSource,
   ThreadSourceMetadata,
   UserCreditGrantType,
+  AgentTransportMode,
+  AgentRunProtocolVersion,
+  AgentRunStatus,
   AgentProviderMetadata,
   SdlcCarmackReviewSeverity,
   SdlcCarmackReviewStatus,
@@ -396,6 +399,52 @@ export const threadChat = pgTable(
       table.userId,
       table.threadId,
     ),
+  ],
+);
+
+export const agentRunContext = pgTable(
+  "agent_run_context",
+  {
+    runId: text("run_id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id").notNull(),
+    sandboxId: text("sandbox_id").notNull(),
+    transportMode: text("transport_mode")
+      .$type<AgentTransportMode>()
+      .notNull()
+      .default("legacy"),
+    protocolVersion: integer("protocol_version")
+      .$type<AgentRunProtocolVersion>()
+      .notNull()
+      .default(1),
+    agent: text("agent").$type<AIAgent>().notNull(),
+    permissionMode: text("permission_mode")
+      .$type<"allowAll" | "plan">()
+      .notNull()
+      .default("allowAll"),
+    requestedSessionId: text("requested_session_id"),
+    resolvedSessionId: text("resolved_session_id"),
+    status: text("status").$type<AgentRunStatus>().notNull().default("pending"),
+    tokenNonce: text("token_nonce").notNull(),
+    daemonTokenKeyId: text("daemon_token_key_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("agent_run_context_thread_chat_id_idx").on(
+      table.threadId,
+      table.threadChatId,
+    ),
+    index("agent_run_context_sandbox_id_idx").on(table.sandboxId),
+    index("agent_run_context_status_idx").on(table.status),
   ],
 );
 
@@ -935,8 +984,7 @@ export const userFlags = pgTable(
     // @deprecated Use lastSeenReleaseNotesVersion instead
     lastSeenReleaseNotes: timestamp("last_seen_release_notes"),
     lastSeenReleaseNotesVersion: integer("last_seen_release_notes_version"),
-    // Feature upsell toast last seen version. Increment FEATURE_UPSELL_VERSION
-    // in apps/www/src/lib/constants.ts to show the upsell again.
+    // Reserved metadata for feature-upgrade notification tracking.
     lastSeenFeatureUpsellVersion: integer("last_seen_feature_upsell_version"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at")

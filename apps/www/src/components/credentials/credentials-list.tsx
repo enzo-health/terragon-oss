@@ -57,10 +57,10 @@ function CredentialDeleteButton({
           onDelete();
           setShowDeleteDialog(false);
         }}
-        title={isOAuth ? "Disconnect Subscription" : "Delete Credential"}
+        title={isOAuth ? "Disconnect Account" : "Delete Credential"}
         description={
           isOAuth
-            ? `Are you sure you want to disconnect your ${agentName} subscription? This action cannot be undone.`
+            ? `Are you sure you want to disconnect your ${agentName} account connection? This action cannot be undone.`
             : `Are you sure you want to delete this ${agentName} credential? This action cannot be undone.`
         }
         confirmText={isOAuth ? "Disconnect" : "Delete"}
@@ -100,7 +100,7 @@ function CredentialsListItem({
               {credential.agentName}
             </span>
             <Badge variant="outline" className="text-xs">
-              {credential.type === "api-key" ? "API Key" : "Subscription"}
+              {credential.type === "api-key" ? "API Key" : "Account"}
             </Badge>
           </div>
           {credential.type === "oauth" &&
@@ -114,7 +114,7 @@ function CredentialsListItem({
                       {String(credential.metadata.accountEmail)}
                     </span>
                   )}
-                {/* Codex OAuth - email, planType, chatgptAccountId */}
+                {/* Codex OAuth - email */}
                 {credential.agent === "codex" &&
                   "email" in credential.metadata &&
                   credential.metadata.email && (

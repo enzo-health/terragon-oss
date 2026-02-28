@@ -39,46 +39,6 @@ export async function trackSandboxCreation(userId: string) {
   }
 }
 
-// Waitlist submission rate limiting (by IP address)
-export const waitlistSubmissionRateLimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(
-    5, // 5 requests
-    "15m", // per 15 minutes
-  ),
-  prefix: `${PREFIX}:waitlist-submission`,
-});
-
-// Onboarding questionnaire update rate limiting (by IP address)
-export const onboardingUpdateRateLimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(
-    20, // 20 requests (allow multiple form steps)
-    "5m", // per 5 minutes
-  ),
-  prefix: `${PREFIX}:onboarding-update`,
-});
-
-export async function checkWaitlistRateLimit(ip: string) {
-  const result = await waitlistSubmissionRateLimit.limit(ip);
-  if (!result.success) {
-    throw new Error(
-      `Too many waitlist submissions. Try again in ${Math.ceil(result.reset / 1000 / 60)} minutes.`,
-    );
-  }
-  return result;
-}
-
-export async function checkOnboardingRateLimit(ip: string) {
-  const result = await onboardingUpdateRateLimit.limit(ip);
-  if (!result.success) {
-    throw new Error(
-      `Too many form updates. Try again in ${Math.ceil(result.reset / 1000 / 60)} minutes.`,
-    );
-  }
-  return result;
-}
-
 // CLI task creation rate limiting (by user ID)
 export const cliTaskCreationRateLimit = new Ratelimit({
   redis,

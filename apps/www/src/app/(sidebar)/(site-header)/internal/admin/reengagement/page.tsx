@@ -1,7 +1,11 @@
 import { getAdminUserOrThrow } from "@/lib/auth-server";
-import { ReengagementContent } from "@/components/admin/reengagement-content";
 
 export default async function AdminReengagementPage() {
   await getAdminUserOrThrow();
-  return <ReengagementContent />;
+
+  return (
+    <div className="px-4 py-6 text-muted-foreground">
+      Re-engagement campaigns are disabled in internal mode.
+    </div>
+  );
 }

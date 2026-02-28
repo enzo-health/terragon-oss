@@ -78,11 +78,7 @@ function getDefaultBreadcrumbs(pathname: string): BreadcrumbItem[] | null {
   if (pathname.startsWith("/internal/admin")) {
     return [{ label: "Admin", href: "/internal/admin" }];
   }
-  if (
-    pathname === "/welcome" ||
-    pathname === "/" ||
-    pathname === "/dashboard"
-  ) {
+  if (pathname === "/" || pathname === "/dashboard") {
     return [];
   }
   return null;
