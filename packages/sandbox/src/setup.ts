@@ -36,7 +36,7 @@ function getSandboxAgentBaseUrl(
   if (!entry || !entry.value) {
     return null;
   }
-  return entry.value.replace(/\/+$/, "");
+  return entry.value.trim().replace(/\/+$/, "");
 }
 
 function isLocalSandboxAgentUrl(baseUrl: string): boolean {
@@ -86,7 +86,7 @@ async function ensureSandboxAgentRunning({
   }
 
   await session.runBackgroundCommand(
-    `sandbox-agent server --no-token --host 0.0.0.0 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
+    `sandbox-agent server --no-token --host 127.0.0.1 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
   );
 }
 
@@ -106,7 +106,9 @@ async function waitForSandboxAgentHealth({
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      await session.runCommand(`curl -fsS ${bashQuote(healthUrl)}`);
+      await session.runCommand(
+        `curl -fsS --connect-timeout 5 --max-time 8 ${bashQuote(healthUrl)}`,
+      );
       return;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
