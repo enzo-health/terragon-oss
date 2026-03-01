@@ -693,5 +693,14 @@
     "provider": "daytona",
     "size": "large",
     "createdAt": "2026-02-28T22:24:48.000Z"
+  },
+  {
+    "name": "terry-vCPU-4-RAM-8GB-2026-03-01-05-50-38-z6glek",
+    "dockerfileHash": "1f6113aafc2a550eff50edcbe3dd6179e1d0ff12079e10f42245cdb0055e44bd",
+    "cpuCount": 4,
+    "memoryGB": 8,
+    "provider": "daytona",
+    "size": "large",
+    "createdAt": "2026-03-01T05:50:38.000Z"
   }
 ]
