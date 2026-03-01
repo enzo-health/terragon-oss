@@ -32,7 +32,11 @@ export async function getBannerConfigAction(): Promise<BannerConfig | null> {
 
     return config;
   } catch (error) {
-    console.error("Failed to get banner config from Redis:", error);
+    // Silence expected error during Next.js static generation probing
+    const msg = error instanceof Error ? error.message : "";
+    if (!msg.includes("DYNAMIC_SERVER_USAGE")) {
+      console.error("Failed to get banner config from Redis:", error);
+    }
     return null;
   }
 }
