@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --turbo",
     "dev:cron": "dotenv -e .env.development.local -- vercel-cron",
-    "build": "pnpm --filter bundled build && next build",
+    "build": "pnpm --filter @terragon/shared drizzle-kit-migrate && pnpm --filter bundled build && next build",
     "start": "next start",
     "test": "vitest",
     "storybook": "ladle serve",
