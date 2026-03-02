@@ -26,9 +26,16 @@ type SdlcLoopStatusBlocker = {
   title: string;
   source: SdlcLoopStatusCheckKey | "human_feedback";
 };
+type SdlcPlannedTask = {
+  stableTaskId: string;
+  title: string;
+  status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
+};
+
 type SdlcLoopStatus = {
   loopId: string;
   state: SdlcLoopState;
+  planApprovalPolicy: "auto" | "human_required";
   stateLabel: string;
   explanation: string;
   progressPercent: number;
@@ -60,6 +67,7 @@ type SdlcLoopStatus = {
       done: number;
       remaining: number;
     };
+    plannedTasks: SdlcPlannedTask[];
   };
   updatedAtIso: string;
 };
@@ -67,6 +75,7 @@ type SdlcLoopStatus = {
 const sdlcLoopStatusSchema = z.object({
   loopId: z.string().min(1),
   state: z.string().min(1),
+  planApprovalPolicy: z.enum(["auto", "human_required"]),
   stateLabel: z.string().min(1),
   explanation: z.string().min(1),
   progressPercent: z.number().int().min(0).max(100),
@@ -126,6 +135,13 @@ const sdlcLoopStatusSchema = z.object({
       done: z.number().int().min(0),
       remaining: z.number().int().min(0),
     }),
+    plannedTasks: z.array(
+      z.object({
+        stableTaskId: z.string().min(1),
+        title: z.string().min(1),
+        status: z.enum(["todo", "in_progress", "done", "blocked", "skipped"]),
+      }),
+    ),
   }),
   updatedAtIso: z.string().datetime(),
 });
@@ -431,6 +447,8 @@ export const getSdlcLoopStatusAction = userOnlyAction(
           ),
           columns: {
             status: true,
+            stableTaskId: true,
+            title: true,
           },
         })
       : [];
@@ -498,6 +516,7 @@ export const getSdlcLoopStatusAction = userOnlyAction(
     const response: SdlcLoopStatus = {
       loopId: loop.id,
       state: loop.state as SdlcLoopState,
+      planApprovalPolicy: loop.planApprovalPolicy,
       stateLabel: stateSummary.stateLabel,
       explanation,
       progressPercent: stateSummary.progressPercent,
@@ -535,6 +554,11 @@ export const getSdlcLoopStatusAction = userOnlyAction(
           done: plannedTaskDone,
           remaining: plannedTaskRemaining,
         },
+        plannedTasks: plannedTasks.map((t) => ({
+          stableTaskId: t.stableTaskId,
+          title: t.title,
+          status: t.status ?? "todo",
+        })),
       },
       updatedAtIso: loop.updatedAt.toISOString(),
     };

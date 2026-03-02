@@ -248,6 +248,7 @@ function ChatUI({
         />
         <SdlcTopProgressStepper
           threadId={threadId}
+          threadChatId={threadChatId ?? null}
           enabled={shouldShowSdlcLoopStatus}
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">

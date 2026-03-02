@@ -1,12 +1,16 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import type {
   SdlcLoopStatusCheck,
   SdlcLoopStatusCheckStatus,
 } from "@/lib/sdlc-loop-status";
 import { cn } from "@/lib/utils";
 import { useSdlcLoopStatusQuery } from "@/queries/sdlc-loop-status-queries";
+import { useServerActionMutation } from "@/queries/server-action-helpers";
+import { approvePlan } from "@/server-actions/approve-plan";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
   Stepper,
@@ -18,7 +22,13 @@ import {
   StepperTrigger,
 } from "@/components/reui/stepper";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
-import { AlertTriangleIcon, CheckIcon, LoaderCircleIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CircleIcon,
+  LoaderCircleIcon,
+} from "lucide-react";
 
 type SdlcPhaseKey =
   | "planning"
@@ -434,13 +444,101 @@ function buildSdlcPhases({
   ];
 }
 
+type SdlcPlannedTask = {
+  stableTaskId: string;
+  title: string;
+  status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
+};
+
+function PlanTaskStatusIcon({ status }: { status: SdlcPlannedTask["status"] }) {
+  switch (status) {
+    case "done":
+    case "skipped":
+      return <CheckIcon className="size-3 shrink-0 text-emerald-600" />;
+    case "in_progress":
+      return (
+        <LoaderCircleIcon className="size-3 shrink-0 animate-spin text-foreground" />
+      );
+    case "blocked":
+      return <AlertTriangleIcon className="size-3 shrink-0 text-destructive" />;
+    default:
+      return (
+        <CircleIcon className="size-3 shrink-0 text-muted-foreground/50" />
+      );
+  }
+}
+
+function SdlcPlanTaskList({
+  tasks,
+  taskSummary,
+  showApprove,
+  threadId,
+  threadChatId,
+}: {
+  tasks: SdlcPlannedTask[];
+  taskSummary: { total: number; done: number; remaining: number };
+  showApprove: boolean;
+  threadId: string;
+  threadChatId: string | null;
+}) {
+  const approveMutation = useServerActionMutation({
+    mutationFn: approvePlan,
+  });
+
+  const handleApprove = useCallback(async () => {
+    if (!threadChatId) return;
+    await approveMutation.mutateAsync({ threadId, threadChatId });
+  }, [threadId, threadChatId, approveMutation]);
+
+  return (
+    <div className="mt-1.5 rounded-md border bg-muted/30 px-3 py-2">
+      <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+        {taskSummary.done} of {taskSummary.total} tasks complete
+      </p>
+      <ul className="space-y-1">
+        {tasks.map((task) => (
+          <li
+            key={task.stableTaskId}
+            className="flex items-center gap-2 text-[12px] leading-tight"
+          >
+            <PlanTaskStatusIcon status={task.status} />
+            <span
+              className={cn(
+                "truncate",
+                task.status === "done" || task.status === "skipped"
+                  ? "text-muted-foreground line-through"
+                  : "text-foreground",
+              )}
+            >
+              {task.title}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {showApprove && threadChatId && (
+        <Button
+          size="sm"
+          className="mt-2 h-7 text-xs"
+          disabled={approveMutation.isPending}
+          onClick={handleApprove}
+        >
+          {approveMutation.isPending ? "Approving…" : "Approve Plan"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function SdlcTopProgressStepper({
   threadId,
+  threadChatId,
   enabled,
 }: {
   threadId: string;
+  threadChatId: string | null;
   enabled: boolean;
 }) {
+  const [expandedPhase, setExpandedPhase] = useState<SdlcPhaseKey | null>(null);
   const { data, isLoading, isError } = useSdlcLoopStatusQuery({
     threadId,
     enabled,
@@ -508,6 +606,10 @@ export function SdlcTopProgressStepper({
                 phase.status === "passed" || phase.status === "degraded";
               const isStepBlocked = phase.status === "blocked";
               const isStepLoading = phase.status === "pending";
+              const isExpandable =
+                phase.key === "planning" &&
+                (data?.artifacts?.plannedTasks?.length ?? 0) > 0;
+              const isExpanded = expandedPhase === phase.key;
 
               return (
                 <StepperItem
@@ -515,11 +617,27 @@ export function SdlcTopProgressStepper({
                   step={index + 1}
                   completed={isStepDone}
                   loading={isStepLoading}
-                  className="min-w-[150px] items-start"
+                  className={cn(
+                    "min-w-[150px] items-start",
+                    isExpanded && "min-w-[260px]",
+                  )}
                 >
                   <StepperTrigger
-                    disabled
-                    className="h-auto cursor-default items-start gap-2 rounded-lg px-1 py-1 disabled:opacity-100"
+                    disabled={!isExpandable}
+                    className={cn(
+                      "h-auto items-start gap-2 rounded-lg px-1 py-1 disabled:opacity-100",
+                      isExpandable
+                        ? "cursor-pointer hover:bg-muted/50"
+                        : "cursor-default",
+                    )}
+                    onClick={
+                      isExpandable
+                        ? () =>
+                            setExpandedPhase((prev) =>
+                              prev === phase.key ? null : phase.key,
+                            )
+                        : undefined
+                    }
                   >
                     <StepperIndicator
                       className={cn(
@@ -540,8 +658,16 @@ export function SdlcTopProgressStepper({
                     </StepperIndicator>
 
                     <div className="min-w-0 space-y-1 text-left">
-                      <StepperTitle className="truncate text-[13px] leading-tight">
+                      <StepperTitle className="flex items-center gap-1 truncate text-[13px] leading-tight">
                         {phase.label}
+                        {isExpandable && (
+                          <ChevronDownIcon
+                            className={cn(
+                              "size-3 shrink-0 transition-transform",
+                              isExpanded && "rotate-180",
+                            )}
+                          />
+                        )}
                       </StepperTitle>
                       <span
                         className={cn(
@@ -553,6 +679,22 @@ export function SdlcTopProgressStepper({
                       </span>
                     </div>
                   </StepperTrigger>
+
+                  {isExpanded &&
+                    phase.key === "planning" &&
+                    data?.artifacts?.plannedTasks && (
+                      <SdlcPlanTaskList
+                        tasks={data.artifacts.plannedTasks}
+                        taskSummary={data.artifacts.plannedTaskSummary}
+                        showApprove={
+                          data.state === "planning" &&
+                          data.planApprovalPolicy === "human_required" &&
+                          data.artifacts.planningArtifact?.status !== "accepted"
+                        }
+                        threadId={threadId}
+                        threadChatId={threadChatId}
+                      />
+                    )}
 
                   {phases.length > index + 1 ? (
                     <StepperSeparator
