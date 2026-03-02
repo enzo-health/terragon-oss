@@ -87,6 +87,16 @@ export async function handleDaemonEvent({
   }
   console.log("Thread chat status: ", threadChat.status);
 
+  if (messages.length > 0 && messages.some((m) => m.type === "assistant")) {
+    console.log("Daemon event message stats", {
+      threadId,
+      threadChatId,
+      totalMessages: messages.length,
+      messageTypes: [...new Set(messages.map((m) => m.type))],
+      assistantCount: messages.filter((m) => m.type === "assistant").length,
+    });
+  }
+
   let isStop = false;
   let isDone = false;
   let isError = false;

@@ -614,6 +614,10 @@ export class TerragonDaemon {
 
     const applyAcpMessages = (messages: ClaudeMessage[]) => {
       if (!this.activeProcesses.has(input.threadChatId)) {
+        this.runtime.logger.warn("ACP messages dropped: no active process", {
+          threadChatId: input.threadChatId,
+          droppedMessageCount: messages.length,
+        });
         return;
       }
       for (const message of messages) {
@@ -666,6 +670,15 @@ export class TerragonDaemon {
         }
       }
       if (eventName !== "message" || dataLines.length === 0) {
+        if (eventName !== "message") {
+          this.runtime.logger.debug(
+            "ACP SSE event ignored (non-message event)",
+            {
+              eventName,
+              threadChatId: input.threadChatId,
+            },
+          );
+        }
         return;
       }
       const payload = dataLines.join("\n");
@@ -676,6 +689,11 @@ export class TerragonDaemon {
       const messages = parseAcpLineToClaudeMessages(payload, currentSessionId);
       if (messages.length > 0) {
         applyAcpMessages(messages);
+      } else {
+        this.runtime.logger.debug("ACP SSE payload produced no messages", {
+          threadChatId: input.threadChatId,
+          payloadPreview: payload.slice(0, 200),
+        });
       }
     };
 
@@ -918,21 +936,16 @@ export class TerragonDaemon {
       });
     } finally {
       await closeSse();
-      try {
-        await fetch(createUrl(false), {
-          method: "DELETE",
-          headers: {
-            Accept: "application/json",
-          },
-          signal: timeoutSignal(),
-        });
-      } catch (error) {
-        this.runtime.logger.warn("ACP transport close failed", {
-          threadChatId: input.threadChatId,
-          serverId,
-          error: formatError(error),
-        });
-      }
+      // Fire-and-forget: server cleanup is best-effort, don't block on it
+      fetch(createUrl(false), {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+      }).catch(() => {
+        // Intentionally ignore - server cleanup is best-effort
+      });
       this.activeProcesses.delete(input.threadChatId);
       this.markDaemonEventRunStateForCleanup(input.threadChatId);
       await this.flushMessageBuffer();
