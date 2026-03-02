@@ -319,6 +319,21 @@ describe("parseAcpLineToClaudeMessages", () => {
     }
   });
 
+  it("parses terminal stopReason response as result message", () => {
+    const line = JSON.stringify({
+      id: 3,
+      jsonrpc: "2.0",
+      result: { stopReason: "end_turn" },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback-id");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("result");
+    if (result[0]!.type === "result" && result[0]!.subtype === "success") {
+      expect(result[0]!.result).toBe("end_turn");
+      expect(result[0]!.session_id).toBe("fallback-id");
+    }
+  });
+
   it("uses fallback sessionId when none provided", () => {
     const line = JSON.stringify({
       jsonrpc: "2.0",

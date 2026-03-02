@@ -246,6 +246,25 @@ export function parseAcpLineToClaudeMessages(
   if (!envelope) {
     return [];
   }
+  // Detect JSON-RPC terminal response: {"id":N,"jsonrpc":"2.0","result":{"stopReason":"end_turn"}}
+  // This is the response to the session/prompt POST, signaling the agent turn is complete.
+  const resultObj = asObject(envelope.result);
+  if (resultObj && typeof resultObj.stopReason === "string") {
+    return [
+      {
+        type: "result",
+        subtype: "success",
+        total_cost_usd: 0,
+        duration_ms: 0,
+        duration_api_ms: 0,
+        is_error: false,
+        num_turns: 0,
+        result: resultObj.stopReason,
+        session_id: fallbackSessionId,
+      },
+    ];
+  }
+
   const method = typeof envelope.method === "string" ? envelope.method : null;
   if (method === "session/update") {
     const params = asObject(envelope.params);
