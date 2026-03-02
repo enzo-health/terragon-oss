@@ -1,22 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parsePlanSpec, normalizeStableTaskId } from "./parse-plan-spec";
 
-// Mock the ai SDK's generateObject for LLM normalization tests
-vi.mock("ai", () => ({
-  generateObject: vi.fn(),
-}));
-
-// Mock the openai provider
-vi.mock("@ai-sdk/openai", () => ({
-  openai: vi.fn(() => "mocked-model"),
-}));
-
-import { generateObject } from "ai";
-const mockedGenerateObject = vi.mocked(generateObject);
-
 describe("parsePlanSpec", () => {
-  describe("canonical format (strict parser)", () => {
-    it("parses standard tasks/title/stableTaskId JSON", async () => {
+  describe("canonical format", () => {
+    it("parses standard tasks/title/stableTaskId JSON", () => {
       const input = JSON.stringify({
         planText: "Set up auth module",
         tasks: [
@@ -28,7 +15,7 @@ describe("parsePlanSpec", () => {
           },
         ],
       });
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks).toHaveLength(1);
@@ -39,114 +26,21 @@ describe("parsePlanSpec", () => {
       expect(result.plan.planText).toBe("Set up auth module");
     });
 
-    it("auto-generates stableTaskId from title if missing", async () => {
+    it("auto-generates stableTaskId from title if missing", () => {
       const input = JSON.stringify({
         tasks: [{ title: "Add login page" }],
       });
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks[0]!.stableTaskId).toBe("add-login-page");
     });
   });
 
-  describe("case insensitivity", () => {
-    it("resolves canonical keys case-insensitively", async () => {
+  describe("agent alias formats", () => {
+    it("parses steps/task_name/stableId aliases", () => {
       const input = JSON.stringify({
-        Tasks: [
-          {
-            Title: "Case test",
-            StableTaskId: "case-test",
-          },
-        ],
-      });
-      const result = await parsePlanSpec(input);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.plan.tasks[0]!.title).toBe("Case test");
-      expect(result.plan.tasks[0]!.stableTaskId).toBe("case-test");
-    });
-  });
-
-  describe("nested JSON (1 level)", () => {
-    it("parses { plan: { tasks: [...] } } format", async () => {
-      const input = JSON.stringify({
-        plan: {
-          planText: "Overview of the plan",
-          tasks: [
-            { title: "Task A", description: "Do A" },
-            { title: "Task B", description: "Do B" },
-          ],
-        },
-      });
-      const result = await parsePlanSpec(input);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.plan.tasks).toHaveLength(2);
-      expect(result.plan.planText).toBe("Overview of the plan");
-      expect(result.diagnostic).toContain("root.plan");
-    });
-  });
-
-  describe("top-level array", () => {
-    it("parses [{ title: '...' }] format", async () => {
-      const input = JSON.stringify([
-        { title: "Task 1" },
-        { title: "Task 2" },
-        { title: "Task 3" },
-      ]);
-      const result = await parsePlanSpec(input);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.plan.tasks).toHaveLength(3);
-      expect(result.diagnostic).toContain("top-level JSON array");
-    });
-  });
-
-  describe("fenced JSON blocks", () => {
-    it("extracts JSON from ```json fences with canonical keys", async () => {
-      const input = [
-        "Here is my plan:",
-        "",
-        "```json",
-        JSON.stringify({
-          tasks: [
-            { title: "Write tests", stableTaskId: "write-tests" },
-            { title: "Implement code", stableTaskId: "impl-code" },
-          ],
-        }),
-        "```",
-      ].join("\n");
-      const result = await parsePlanSpec(input);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.plan.tasks).toHaveLength(2);
-      expect(result.plan.tasks[0]!.stableTaskId).toBe("write-tests");
-      expect(result.plan.tasks[1]!.title).toBe("Implement code");
-    });
-  });
-
-  describe("LLM normalization fallback", () => {
-    it("triggers LLM normalization for non-canonical JSON", async () => {
-      mockedGenerateObject.mockResolvedValueOnce({
-        object: {
-          planText: "Implement feature X",
-          tasks: [
-            {
-              stableTaskId: "step-1",
-              title: "Create database schema",
-              description: "Add migrations for new tables.",
-              acceptance: ["Migration runs without errors"],
-            },
-          ],
-        },
-        // Minimal mock shape for other fields
-        response: { id: "test-response" },
-      } as any);
-
-      // Non-canonical: "steps" instead of "tasks", "task_name" instead of "title"
-      const input = JSON.stringify({
-        plan_text: "Implement feature X",
+        summary: "Implement feature X",
         steps: [
           {
             stableId: "step-1",
@@ -156,61 +50,140 @@ describe("parsePlanSpec", () => {
           },
         ],
       });
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks).toHaveLength(1);
       expect(result.plan.tasks[0]!.stableTaskId).toBe("step-1");
       expect(result.plan.tasks[0]!.title).toBe("Create database schema");
-      expect(result.diagnostic).toContain("LLM");
-      expect(mockedGenerateObject).toHaveBeenCalledOnce();
+      expect(result.plan.tasks[0]!.description).toBe(
+        "Add migrations for new tables.",
+      );
+      expect(result.plan.tasks[0]!.acceptance).toEqual([
+        "Migration runs without errors",
+      ]);
+      expect(result.plan.planText).toBe("Implement feature X");
     });
 
-    it("skips LLM for canonical JSON that parses successfully", async () => {
-      mockedGenerateObject.mockClear();
+    it("parses name/id aliases", () => {
       const input = JSON.stringify({
-        tasks: [{ title: "Direct parse" }],
+        tasks: [
+          {
+            id: "my-task",
+            name: "Build API endpoint",
+            desc: "REST endpoint for users.",
+            criteria: ["Returns 200"],
+          },
+        ],
       });
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
-      expect(mockedGenerateObject).not.toHaveBeenCalled();
+      if (!result.ok) return;
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("my-task");
+      expect(result.plan.tasks[0]!.title).toBe("Build API endpoint");
+      expect(result.plan.tasks[0]!.description).toBe(
+        "REST endpoint for users.",
+      );
+      expect(result.plan.tasks[0]!.acceptance).toEqual(["Returns 200"]);
     });
 
-    it("skips LLM for non-JSON input and falls through to markdown", async () => {
-      mockedGenerateObject.mockClear();
-      const input = [
-        "Implementation plan:",
-        "1. Set up database schema",
-        "2. Create API endpoints",
-      ].join("\n");
-      const result = await parsePlanSpec(input);
+    it("parses items array alias", () => {
+      const input = JSON.stringify({
+        items: [{ label: "First item", detail: "Do the thing" }],
+      });
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(1);
+      expect(result.plan.tasks[0]!.title).toBe("First item");
+    });
+  });
+
+  describe("case insensitivity", () => {
+    it("resolves keys case-insensitively", () => {
+      const input = JSON.stringify({
+        Tasks: [
+          {
+            Title: "Case test",
+            StableTaskId: "case-test",
+          },
+        ],
+      });
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks[0]!.title).toBe("Case test");
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("case-test");
+    });
+  });
+
+  describe("nested JSON (1 level)", () => {
+    it("parses { plan: { tasks: [...] } } format", () => {
+      const input = JSON.stringify({
+        plan: {
+          summary: "Overview of the plan",
+          tasks: [
+            { title: "Task A", description: "Do A" },
+            { title: "Task B", description: "Do B" },
+          ],
+        },
+      });
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks).toHaveLength(2);
-      expect(mockedGenerateObject).not.toHaveBeenCalled();
+      expect(result.plan.planText).toBe("Overview of the plan");
+      expect(result.diagnostic).toContain("root.plan");
     });
+  });
 
-    it("returns clean diagnostic when LLM normalization fails", async () => {
-      mockedGenerateObject.mockRejectedValueOnce(new Error("LLM error"));
+  describe("top-level array", () => {
+    it("parses [{ title: '...' }] format", () => {
+      const input = JSON.stringify([
+        { title: "Task 1" },
+        { title: "Task 2" },
+        { title: "Task 3" },
+      ]);
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(3);
+      expect(result.diagnostic).toContain("top-level JSON array");
+    });
+  });
 
-      const input = JSON.stringify({
-        steps: [{ name: "Broken format" }],
-      });
-      const result = await parsePlanSpec(input);
-      expect(result.ok).toBe(false);
-      expect(result.diagnostic).toContain("could not be parsed or normalized");
+  describe("fenced JSON blocks", () => {
+    it("extracts JSON from ```json fences", () => {
+      const input = [
+        "Here is my plan:",
+        "",
+        "```json",
+        JSON.stringify({
+          steps: [
+            { name: "Write tests", stable_id: "write-tests" },
+            { name: "Implement code", stable_id: "impl-code" },
+          ],
+        }),
+        "```",
+      ].join("\n");
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(2);
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("write-tests");
+      expect(result.plan.tasks[1]!.title).toBe("Implement code");
     });
   });
 
   describe("markdown list fallback", () => {
-    it("parses numbered list", async () => {
+    it("parses numbered list", () => {
       const input = [
         "Implementation plan:",
         "1. Set up database schema",
         "2. Create API endpoints",
         "3. Build frontend components",
       ].join("\n");
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks).toHaveLength(3);
@@ -218,22 +191,22 @@ describe("parsePlanSpec", () => {
       expect(result.plan.tasks[0]!.stableTaskId).toBe("task-1");
     });
 
-    it("parses bullet list", async () => {
+    it("parses bullet list", () => {
       const input = ["- Add auth middleware", "- Configure JWT tokens"].join(
         "\n",
       );
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks).toHaveLength(2);
     });
 
-    it("parses step-prefixed list", async () => {
+    it("parses step-prefixed list", () => {
       const input = [
         "Step 1: Initialize project",
         "Step 2: Add dependencies",
       ].join("\n");
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.plan.tasks).toHaveLength(2);
@@ -241,69 +214,102 @@ describe("parsePlanSpec", () => {
   });
 
   describe("error cases", () => {
-    it("returns diagnostic for empty text", async () => {
-      const result = await parsePlanSpec("");
+    it("returns diagnostic for empty text", () => {
+      const result = parsePlanSpec("");
       expect(result.ok).toBe(false);
       expect(result.diagnostic).toBe("Plan text is empty.");
     });
 
-    it("returns diagnostic for whitespace-only text", async () => {
-      const result = await parsePlanSpec("   \n\n  ");
+    it("returns diagnostic for whitespace-only text", () => {
+      const result = parsePlanSpec("   \n\n  ");
       expect(result.ok).toBe(false);
       expect(result.diagnostic).toBe("Plan text is empty.");
     });
 
-    it("returns diagnostic when tasks array has no valid titles", async () => {
-      mockedGenerateObject.mockRejectedValueOnce(new Error("mocked"));
+    it("returns diagnostic when tasks array has no valid titles", () => {
       const input = JSON.stringify({
         tasks: [{ description: "No title here" }, { description: "Or here" }],
       });
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(false);
-      expect(result.diagnostic).toContain("could not be parsed or normalized");
+      expect(result.diagnostic).toContain("recognizable 'title' field");
     });
 
-    it("returns diagnostic for plain text without list structure", async () => {
+    it("returns diagnostic for JSON with no tasks array", () => {
+      const input = JSON.stringify({ foo: "bar", baz: 123 });
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostic).toContain(
+        "could not locate a tasks/steps array",
+      );
+    });
+
+    it("returns diagnostic for plain text without list structure", () => {
       const input = "This is just a paragraph describing what I plan to do.";
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(false);
       expect(result.diagnostic).toContain("No JSON or structured list found");
     });
 
-    it("returns diagnostic for top-level array with no titles", async () => {
-      mockedGenerateObject.mockRejectedValueOnce(new Error("mocked"));
+    it("returns diagnostic for top-level array with no titles", () => {
       const input = JSON.stringify([
         { description: "no title" },
-        { foo: "also-no-title" },
+        { id: "also-no-title" },
       ]);
-      const result = await parsePlanSpec(input);
+      const result = parsePlanSpec(input);
       expect(result.ok).toBe(false);
-      expect(result.diagnostic).toContain("could not be parsed or normalized");
+      expect(result.diagnostic).toContain(
+        "top-level JSON array but no task had a recognizable 'title'",
+      );
     });
   });
 
-  describe("strict parser — no cross-key aliasing", () => {
-    it("does NOT parse 'steps' as tasks (requires LLM)", async () => {
-      mockedGenerateObject.mockClear();
-      mockedGenerateObject.mockRejectedValueOnce(new Error("mocked failure"));
-
+  describe("priority ordering", () => {
+    it("canonical title wins over alias name", () => {
       const input = JSON.stringify({
-        steps: [{ name: "Should not parse directly" }],
+        tasks: [{ title: "Canonical title", name: "Alias name" }],
       });
-      const result = await parsePlanSpec(input);
-      // Strict parser fails, LLM fallback fails → overall failure
-      expect(result.ok).toBe(false);
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks[0]!.title).toBe("Canonical title");
     });
 
-    it("does NOT parse 'name' as title (requires LLM)", async () => {
-      mockedGenerateObject.mockClear();
-      mockedGenerateObject.mockRejectedValueOnce(new Error("mocked failure"));
-
+    it("canonical stableTaskId wins over alias id", () => {
       const input = JSON.stringify({
-        tasks: [{ name: "Should not match title" }],
+        tasks: [
+          { title: "Test", stableTaskId: "canonical-id", id: "alias-id" },
+        ],
       });
-      const result = await parsePlanSpec(input);
-      expect(result.ok).toBe(false);
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("canonical-id");
+    });
+
+    it("canonical tasks array wins over alias steps", () => {
+      const input = JSON.stringify({
+        tasks: [{ title: "From tasks" }],
+        steps: [{ title: "From steps" }],
+      });
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks[0]!.title).toBe("From tasks");
+    });
+  });
+
+  describe("no cross-field ambiguity", () => {
+    it("summary resolves to planText, not task title", () => {
+      const input = JSON.stringify({
+        summary: "This is the plan summary",
+        tasks: [{ title: "A task" }],
+      });
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.planText).toBe("This is the plan summary");
+      expect(result.plan.tasks[0]!.title).toBe("A task");
     });
   });
 });

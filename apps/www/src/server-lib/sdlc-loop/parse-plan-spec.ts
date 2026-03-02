@@ -1,14 +1,44 @@
 /**
- * Strict canonical JSON plan parser with LLM normalization fallback.
+ * Deterministic JSON plan parser with alias resolution.
  *
- * Phase 1: Strict parser — only accepts exact canonical keys (case-insensitive).
- * Phase 2: LLM normalization — uses generateObject to convert non-canonical JSON.
- * Phase 3: Markdown list fallback for unstructured text.
+ * Resolves canonical keys first, then known agent aliases (Codex, Amp, etc).
+ * Each alias maps to exactly one canonical field — no cross-field ambiguity.
  */
 
-import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
-import * as z from "zod/v4";
+// ---------------------------------------------------------------------------
+// Alias arrays — canonical key first, alternatives after.
+// INVARIANT: no alias string appears in more than one array.
+// ---------------------------------------------------------------------------
+
+const TASKS_ARRAY_ALIASES = ["tasks", "steps", "plan_tasks", "items"] as const;
+
+const TASK_TITLE_ALIASES = ["title", "name", "task_name", "label"] as const;
+
+const TASK_ID_ALIASES = [
+  "stableTaskId",
+  "stable_task_id",
+  "stableId",
+  "stable_id",
+  "taskId",
+  "task_id",
+  "id",
+] as const;
+
+const TASK_DESC_ALIASES = ["description", "details", "detail", "desc"] as const;
+
+const TASK_ACCEPTANCE_ALIASES = [
+  "acceptance",
+  "acceptanceCriteria",
+  "acceptance_criteria",
+  "criteria",
+] as const;
+
+const PLAN_TEXT_ALIASES = [
+  "planText",
+  "plan_text",
+  "summary",
+  "overview",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,27 +61,23 @@ export type PlanParseResult =
   | { ok: false; plan: null; diagnostic: string };
 
 // ---------------------------------------------------------------------------
-// LLM normalization schema
+// Key resolution — case-insensitive, deterministic priority
 // ---------------------------------------------------------------------------
 
-const planSpecSchema = z.object({
-  planText: z.string().describe("Brief summary of the implementation approach"),
-  tasks: z
-    .array(
-      z.object({
-        stableTaskId: z.string().describe("Kebab-case unique ID for this task"),
-        title: z.string().describe("Short imperative title for the task"),
-        description: z
-          .string()
-          .nullable()
-          .describe("Detailed description of what to do"),
-        acceptance: z
-          .array(z.string())
-          .describe("Acceptance criteria for this task"),
-      }),
-    )
-    .min(1),
-});
+function resolveKey(
+  obj: Record<string, unknown>,
+  aliases: readonly string[],
+): unknown | undefined {
+  const lowerKeys = new Map<string, unknown>();
+  for (const k of Object.keys(obj)) {
+    lowerKeys.set(k.toLowerCase(), obj[k]);
+  }
+  for (const alias of aliases) {
+    const val = lowerKeys.get(alias.toLowerCase());
+    if (val !== undefined) return val;
+  }
+  return undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Stable task ID normalizer (shared with approve-plan & checkpoint)
@@ -69,46 +95,31 @@ export function normalizeStableTaskId(value: string, index: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Strict canonical key resolver — case-insensitive but NO cross-key aliasing
-// ---------------------------------------------------------------------------
-
-function resolveStrictKey(
-  obj: Record<string, unknown>,
-  canonicalKey: string,
-): unknown | undefined {
-  const lowerTarget = canonicalKey.toLowerCase();
-  for (const k of Object.keys(obj)) {
-    if (k.toLowerCase() === lowerTarget) return obj[k];
-  }
-  return undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Single-task parser (strict canonical keys only)
+// Single-task parser
 // ---------------------------------------------------------------------------
 
 function parseTask(raw: unknown, index: number): ParsedPlanTask | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
 
-  const titleRaw = resolveStrictKey(obj, "title");
+  const titleRaw = resolveKey(obj, TASK_TITLE_ALIASES);
   if (typeof titleRaw !== "string" || titleRaw.trim().length === 0) return null;
 
   const title = titleRaw.trim();
 
-  const idRaw = resolveStrictKey(obj, "stableTaskId");
+  const idRaw = resolveKey(obj, TASK_ID_ALIASES);
   const stableTaskId =
     typeof idRaw === "string" && idRaw.trim().length > 0
       ? idRaw.trim()
       : normalizeStableTaskId(title, index);
 
-  const descRaw = resolveStrictKey(obj, "description");
+  const descRaw = resolveKey(obj, TASK_DESC_ALIASES);
   const description =
     typeof descRaw === "string" && descRaw.trim().length > 0
       ? descRaw.trim()
       : null;
 
-  const acceptanceRaw = resolveStrictKey(obj, "acceptance");
+  const acceptanceRaw = resolveKey(obj, TASK_ACCEPTANCE_ALIASES);
   const acceptance = Array.isArray(acceptanceRaw)
     ? acceptanceRaw
         .filter(
@@ -155,13 +166,13 @@ function parseJsonObject(root: unknown, rawText: string): PlanParseResult {
 
   const obj = root as Record<string, unknown>;
 
-  // Tier B: strict "tasks" key at root level
-  const tasksRaw = resolveStrictKey(obj, "tasks");
+  // Tier B: resolve tasks array at root level
+  const tasksRaw = resolveKey(obj, TASKS_ARRAY_ALIASES);
   if (Array.isArray(tasksRaw)) {
     const tasks = tasksRaw
       .map((item, i) => parseTask(item, i))
       .filter((t): t is ParsedPlanTask => t !== null);
-    const planTextRaw = resolveStrictKey(obj, "planText");
+    const planTextRaw = resolveKey(obj, PLAN_TEXT_ALIASES);
     const planText =
       typeof planTextRaw === "string" && planTextRaw.trim().length > 0
         ? planTextRaw.trim()
@@ -181,18 +192,18 @@ function parseJsonObject(root: unknown, rawText: string): PlanParseResult {
     };
   }
 
-  // Tier C: check one level of nesting for "tasks" key
+  // Tier C: check one level of nesting
   for (const key of Object.keys(obj)) {
     const nested = obj[key];
     if (!nested || typeof nested !== "object" || Array.isArray(nested))
       continue;
     const nestedObj = nested as Record<string, unknown>;
-    const nestedTasks = resolveStrictKey(nestedObj, "tasks");
+    const nestedTasks = resolveKey(nestedObj, TASKS_ARRAY_ALIASES);
     if (Array.isArray(nestedTasks)) {
       const tasks = nestedTasks
         .map((item, i) => parseTask(item, i))
         .filter((t): t is ParsedPlanTask => t !== null);
-      const planTextRaw = resolveStrictKey(nestedObj, "planText");
+      const planTextRaw = resolveKey(nestedObj, PLAN_TEXT_ALIASES);
       const planText =
         typeof planTextRaw === "string" && planTextRaw.trim().length > 0
           ? planTextRaw.trim()
@@ -216,34 +227,8 @@ function parseJsonObject(root: unknown, rawText: string): PlanParseResult {
     ok: false,
     plan: null,
     diagnostic:
-      "Parsed JSON object but could not locate a tasks array at root or one level deep.",
+      "Parsed JSON object but could not locate a tasks/steps array at root or one level deep.",
   };
-}
-
-// ---------------------------------------------------------------------------
-// LLM normalization fallback
-// ---------------------------------------------------------------------------
-
-async function normalizePlanWithLlm(rawText: string): Promise<PlanParseResult> {
-  try {
-    const result = await generateObject({
-      model: openai("gpt-4.1-mini"),
-      schema: planSpecSchema,
-      prompt: `Extract the implementation plan from this agent output. Convert it to the canonical format.\n\n${rawText}`,
-    });
-    return {
-      ok: true,
-      plan: result.object as ParsedPlanSpec,
-      diagnostic: "Plan normalized via LLM from non-canonical format.",
-    };
-  } catch {
-    return {
-      ok: false,
-      plan: null,
-      diagnostic:
-        "Plan could not be parsed or normalized. Output a JSON with tasks[] array.",
-    };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,10 +271,10 @@ function parseMarkdownList(text: string): PlanParseResult {
 }
 
 // ---------------------------------------------------------------------------
-// Strict canonical parser (sync, fast path)
+// Main entry point
 // ---------------------------------------------------------------------------
 
-function parseStrictCanonical(text: string): PlanParseResult {
+export function parsePlanSpec(text: string): PlanParseResult {
   const trimmed = text.trim();
   if (!trimmed) {
     return {
@@ -320,33 +305,6 @@ function parseStrictCanonical(text: string): PlanParseResult {
     }
   }
 
-  return { ok: false, plan: null, diagnostic: "Strict parser found no match." };
-}
-
-// ---------------------------------------------------------------------------
-// Main entry point (async — LLM fallback may be triggered)
-// ---------------------------------------------------------------------------
-
-export async function parsePlanSpec(text: string): Promise<PlanParseResult> {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return {
-      ok: false,
-      plan: null,
-      diagnostic: "Plan text is empty.",
-    };
-  }
-
-  // Phase 1: strict canonical parse (sync, fast)
-  const strictResult = parseStrictCanonical(trimmed);
-  if (strictResult.ok) return strictResult;
-
-  // Phase 2: if input looks like JSON, try LLM normalization
-  const hasJsonContent = /[{[\]]/.test(trimmed);
-  if (hasJsonContent) {
-    return normalizePlanWithLlm(trimmed);
-  }
-
-  // Phase 3: markdown list fallback (sync)
+  // Tier 3: markdown list fallback
   return parseMarkdownList(trimmed);
 }

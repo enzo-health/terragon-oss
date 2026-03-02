@@ -259,17 +259,16 @@ export function extractLatestPlanText(messages: DBMessage[] | null): {
   };
 }
 
-async function parsePlanSpecWithSource({
+function parsePlanSpecWithSource({
   text,
   source,
 }: {
   text: string;
   source: ParsedPlanSpecWithSource["source"];
-}): Promise<
+}):
   | { ok: true; plan: ParsedPlanSpecWithSource; diagnostic: string }
-  | { ok: false; diagnostic: string }
-> {
-  const result = await parsePlanSpec(text);
+  | { ok: false; diagnostic: string } {
+  const result = parsePlanSpec(text);
   if (!result.ok) return { ok: false, diagnostic: result.diagnostic };
   return {
     ok: true,
@@ -669,7 +668,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       threadChat?.agent === "opencode";
     const extractedPlan = extractLatestPlanText(threadChat?.messages ?? null);
     const planParseResult = extractedPlan
-      ? await parsePlanSpecWithSource({
+      ? parsePlanSpecWithSource({
           text: extractedPlan.text,
           source: extractedPlan.source,
         })
