@@ -461,14 +461,15 @@ function evaluatePlanningPhaseGate({
  * appears, checkpoints are bookkeeping-only — no gate evaluation, no
  * follow-up messages, no loop.
  */
-const PHASE_COMPLETE_ALIASES = [
-  "phaseComplete",
+/** Pre-lowercased aliases for the phase-complete signal key. */
+const PHASE_COMPLETE_ALIASES: ReadonlySet<string> = new Set([
+  "phasecomplete",
   "phase_complete",
-  "phaseCompleted",
+  "phasecompleted",
   "phase_completed",
-  "isPhaseComplete",
+  "isphasecomplete",
   "is_phase_complete",
-] as const;
+]);
 
 function detectPhaseCompleteSignal(messages: DBMessage[] | null): boolean {
   const agentText = extractLatestTopLevelAgentText(messages);
@@ -480,12 +481,20 @@ function detectPhaseCompleteSignal(messages: DBMessage[] | null): boolean {
 
   for (const candidate of jsonCandidates) {
     try {
-      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(candidate);
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        continue;
+      }
+      const record = parsed as Record<string, unknown>;
       const lowerKeys = new Map(
-        Object.entries(parsed).map(([k, v]) => [k.toLowerCase(), v]),
+        Object.entries(record).map(([k, v]) => [k.toLowerCase(), v]),
       );
       for (const alias of PHASE_COMPLETE_ALIASES) {
-        if (lowerKeys.get(alias.toLowerCase()) === true) return true;
+        if (lowerKeys.get(alias) === true) return true;
       }
     } catch {
       continue;
@@ -540,6 +549,52 @@ async function queueSdlcFollowUpMessage({
     appendOrReplace: "append",
     source: "www",
   });
+}
+
+/**
+ * Fire `implementation_gate_blocked`, re-fetch the loop, and escalate to
+ * `blocked_on_human_feedback` if the fix-attempt limit was reached.
+ * Returns `true` if escalated (caller should return early).
+ */
+async function transitionImplementationGateBlocked({
+  db: dbConn,
+  userId,
+  threadId,
+  threadChatId,
+  loopId,
+  escalationDetails,
+}: {
+  db: typeof db;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  loopId: string;
+  escalationDetails: string[];
+}): Promise<boolean> {
+  const outcome = await transitionSdlcLoopState({
+    db: dbConn,
+    loopId,
+    transitionEvent: "implementation_gate_blocked",
+  });
+  if (outcome === "stale_noop" || outcome === "terminal_noop") {
+    return true;
+  }
+  const refreshedLoop = await getActiveSdlcLoopForThread({
+    db: dbConn,
+    userId,
+    threadId,
+  });
+  if (refreshedLoop?.state === "blocked_on_human_feedback") {
+    await queueSdlcFollowUpMessage({
+      userId,
+      threadId,
+      threadChatId,
+      heading: "SDLC implementation: max retries exceeded.",
+      details: escalationDetails,
+    });
+    return true;
+  }
+  return false;
 }
 
 async function getHeadShaOrThrow(session: ISandboxSession): Promise<string> {
@@ -859,29 +914,6 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   });
 
   if (sdlcImplementingStates.has(activeLoop.state)) {
-    const IMPLEMENTING_TIMEOUT_MS = 45 * 60 * 1000; // 45 minutes
-    if (activeLoop.phaseEnteredAt) {
-      const elapsed =
-        Date.now() - new Date(activeLoop.phaseEnteredAt).getTime();
-      if (elapsed > IMPLEMENTING_TIMEOUT_MS) {
-        await transitionSdlcLoopState({
-          db,
-          loopId: activeLoop.id,
-          transitionEvent: "human_feedback_requested",
-        });
-        await queueSdlcFollowUpMessage({
-          userId,
-          threadId,
-          threadChatId,
-          heading: "SDLC implementing phase timed out.",
-          details: [
-            `No completion signal after ${Math.round(elapsed / 60000)} minutes. Human intervention required.`,
-          ],
-        });
-        return true;
-      }
-    }
-
     // Sub-state transitions (blocked_on_agent_fixes, etc.)
     if (
       activeLoop.state === "blocked_on_agent_fixes" ||
@@ -954,37 +986,27 @@ async function maybeRunStrictSdlcCheckpointPipeline({
 
     // Agent signaled phaseComplete — NOW evaluate the implementation gate
     if (!hasCodeDiffArtifact(diffOutput)) {
-      await transitionSdlcLoopState({
-        db,
-        loopId: activeLoop.id,
-        transitionEvent: "implementation_gate_blocked",
-      });
-      const refreshedLoopNoDiff = await getActiveSdlcLoopForThread({
+      const escalated = await transitionImplementationGateBlocked({
         db,
         userId,
         threadId,
+        threadChatId,
+        loopId: activeLoop.id,
+        escalationDetails: ["Human intervention required."],
       });
-      if (refreshedLoopNoDiff?.state === "blocked_on_human_feedback") {
+      if (!escalated) {
         await queueSdlcFollowUpMessage({
           userId,
           threadId,
           threadChatId,
-          heading: "SDLC implementation: max retries exceeded.",
-          details: ["Human intervention required."],
+          heading:
+            "SDLC implementation: completion signaled but no code changes detected.",
+          details: [
+            "You indicated phaseComplete but no git diff was found.",
+            "Write code and signal phaseComplete again when done.",
+          ],
         });
-        return true;
       }
-      await queueSdlcFollowUpMessage({
-        userId,
-        threadId,
-        threadChatId,
-        heading:
-          "SDLC implementation: completion signaled but no code changes detected.",
-        details: [
-          "You indicated phaseComplete but no git diff was found.",
-          "Write code and signal phaseComplete again when done.",
-        ],
-      });
       return true;
     }
 
@@ -1018,37 +1040,26 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         );
       }
 
-      await transitionSdlcLoopState({
-        db,
-        loopId: activeLoop.id,
-        transitionEvent: "implementation_gate_blocked",
-      });
-      const refreshedLoop = await getActiveSdlcLoopForThread({
+      const escalated = await transitionImplementationGateBlocked({
         db,
         userId,
         threadId,
+        threadChatId,
+        loopId: activeLoop.id,
+        escalationDetails: [
+          "Human intervention required. The implementation gate has failed too many times.",
+        ],
       });
-      if (refreshedLoop?.state === "blocked_on_human_feedback") {
+      if (!escalated) {
         await queueSdlcFollowUpMessage({
           userId,
           threadId,
           threadChatId,
-          heading: "SDLC implementation: max retries exceeded.",
-          details: [
-            "Human intervention required. The implementation gate has failed too many times.",
-          ],
+          heading:
+            "SDLC implementation: completion signaled but tasks incomplete.",
+          details: reasons,
         });
-        return true;
       }
-
-      await queueSdlcFollowUpMessage({
-        userId,
-        threadId,
-        threadChatId,
-        heading:
-          "SDLC implementation: completion signaled but tasks incomplete.",
-        details: reasons,
-      });
       return true;
     }
 

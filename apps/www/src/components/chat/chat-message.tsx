@@ -300,7 +300,7 @@ function SystemMessage({ message }: { message: UISystemMessage }) {
       case "fix-github-checks":
         return "Fixing GitHub Checks...";
       case "sdlc-error-retry":
-        return "SDLC error detected. Auto-retrying...";
+        return "An error occurred. Automatically retrying...";
       case "follow-up-retry-failed":
         return "Follow-up processing failed.";
       case "stop":

@@ -43,8 +43,22 @@ import {
 } from "./linear-agent-activity";
 import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import type {
+  ThreadSourceMetadata,
+  SdlcLoopState,
+} from "@terragon/shared/db/types";
 import { publicAppUrl } from "@terragon/env/next-public";
+
+/** SDLC phases eligible for auto-retry on generic agent error. */
+const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
+  "implementing",
+  "reviewing",
+  "ui_testing",
+  "pr_babysitting",
+  "blocked_on_agent_fixes",
+  "blocked_on_ci",
+  "blocked_on_review_threads",
+]);
 
 export async function handleDaemonEvent({
   messages,
@@ -492,100 +506,97 @@ export async function handleDaemonEvent({
 
   // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
-    const activeSdlcLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId,
-      threadId,
-    });
+    try {
+      const activeSdlcLoop = await getActiveSdlcLoopForThread({
+        db,
+        userId,
+        threadId,
+      });
 
-    const sdlcRetryPhases = new Set([
-      "implementing",
-      "reviewing",
-      "ui_testing",
-      "pr_babysitting",
-      "blocked_on_agent_fixes",
-      "blocked_on_ci",
-      "blocked_on_review_threads",
-    ]);
+      if (activeSdlcLoop && SDLC_AUTO_RETRY_PHASES.has(activeSdlcLoop.state)) {
+        console.log(
+          `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", checking for retry`,
+          { threadId, threadChatId: threadChat.id },
+        );
 
-    if (activeSdlcLoop && sdlcRetryPhases.has(activeSdlcLoop.state)) {
-      console.log(
-        `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", checking for retry`,
-        { threadId, threadChatId: threadChat.id },
-      );
-
-      // Check if we've already retried by looking for an sdlc-error-retry system message
-      const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
-      let alreadyRetried = false;
-      for (let i = allMessages.length - 1; i >= 0; i--) {
-        const msg = allMessages[i];
-        if (msg?.type === "user") {
-          const msgBefore = allMessages[i - 1];
-          const isRetryAndContinue =
-            msg.parts.length === 1 &&
-            msg.parts[0]?.type === "text" &&
-            msg.parts[0]?.text.toLowerCase().includes("continue") &&
-            msgBefore?.type === "system" &&
-            msgBefore?.message_type === "sdlc-error-retry";
-          if (isRetryAndContinue) {
-            alreadyRetried = true;
-            console.log(
-              "Skipping SDLC error retry because we already retried once",
-              { threadId, threadChatId: threadChat.id },
-            );
+        // Check if we've already retried by looking for an sdlc-error-retry system message
+        const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
+        let alreadyRetried = false;
+        for (let i = allMessages.length - 1; i >= 0; i--) {
+          const msg = allMessages[i];
+          if (msg?.type === "user") {
+            const msgBefore = allMessages[i - 1];
+            const isRetryAndContinue =
+              msg.parts.length === 1 &&
+              msg.parts[0]?.type === "text" &&
+              msg.parts[0]?.text.toLowerCase().includes("continue") &&
+              msgBefore?.type === "system" &&
+              msgBefore?.message_type === "sdlc-error-retry";
+            if (isRetryAndContinue) {
+              alreadyRetried = true;
+              console.log(
+                "Skipping SDLC error retry because we already retried once",
+                { threadId, threadChatId: threadChat.id },
+              );
+              break;
+            }
             break;
           }
-          break;
+        }
+
+        if (!alreadyRetried) {
+          console.log("Adding sdlc-error-retry and queueing retry");
+          // Add a system message about the retry
+          const sdlcErrorRetryMessage: DBSystemMessage = {
+            type: "system",
+            message_type: "sdlc-error-retry",
+            parts: [],
+            timestamp: new Date().toISOString(),
+          };
+
+          // Ensure appendMessages is an array before pushing
+          if (!threadChatUpdates.appendMessages) {
+            threadChatUpdates.appendMessages = [];
+          }
+          threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
+
+          // Create a "Continue" message to restart the agent
+          const continueMessage: DBUserMessage = {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "Continue" }],
+            timestamp: new Date().toISOString(),
+          };
+
+          // Queue the Continue message to be processed after the thread update
+          threadChatUpdates.appendQueuedMessages = [continueMessage];
+
+          // Clear the error since we've handled it with retry
+          threadChatUpdates.errorMessage = null;
+          threadChatUpdates.errorMessageInfo = null;
+
+          // Force a fresh session to avoid stale session issues
+          threadChatUpdates.sessionId = null;
+
+          // Mark that we've recovered from the error and the thread is done
+          isError = false;
+          isDone = true; // Mark as done so the thread completes normally
+
+          getPostHogServer().capture({
+            distinctId: userId,
+            event: "sdlc_error_retry",
+            properties: {
+              threadId,
+              sdlcPhase: activeSdlcLoop.state,
+            },
+          });
         }
       }
-
-      if (!alreadyRetried) {
-        console.log("Adding sdlc-error-retry and queueing retry");
-        // Add a system message about the retry
-        const sdlcErrorRetryMessage: DBSystemMessage = {
-          type: "system",
-          message_type: "sdlc-error-retry",
-          parts: [],
-          timestamp: new Date().toISOString(),
-        };
-
-        // Ensure appendMessages is an array before pushing
-        if (!threadChatUpdates.appendMessages) {
-          threadChatUpdates.appendMessages = [];
-        }
-        threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
-
-        // Create a "Continue" message to restart the agent
-        const continueMessage: DBUserMessage = {
-          type: "user",
-          model: null,
-          parts: [{ type: "text", text: "Continue" }],
-          timestamp: new Date().toISOString(),
-        };
-
-        // Queue the Continue message to be processed after the thread update
-        threadChatUpdates.appendQueuedMessages = [continueMessage];
-
-        // Clear the error since we've handled it with retry
-        threadChatUpdates.errorMessage = null;
-        threadChatUpdates.errorMessageInfo = null;
-
-        // Force a fresh session to avoid stale session issues
-        threadChatUpdates.sessionId = null;
-
-        // Mark that we've recovered from the error and the thread is done
-        isError = false;
-        isDone = true; // Mark as done so the thread completes normally
-
-        getPostHogServer().capture({
-          distinctId: userId,
-          event: "sdlc_error_retry",
-          properties: {
-            threadId,
-            sdlcPhase: activeSdlcLoop.state,
-          },
-        });
-      }
+    } catch (sdlcLookupError) {
+      console.error(
+        "SDLC error recovery lookup failed, falling through to normal error path",
+        { threadId, error: sdlcLookupError },
+      );
     }
   }
 

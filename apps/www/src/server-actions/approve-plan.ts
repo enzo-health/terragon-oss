@@ -61,8 +61,9 @@ export const approvePlan = userOnlyAction(
 
     const parseResult = parsePlanSpec(extracted.text);
     if (!parseResult.ok) {
+      console.warn("Plan parse failed", { diagnostic: parseResult.diagnostic });
       throw new UserFacingError(
-        `Plan artifact is invalid: ${parseResult.diagnostic}`,
+        "Plan artifact could not be parsed. Please regenerate the plan.",
       );
     }
     const parsedPlan = parseResult.plan;
