@@ -540,6 +540,13 @@ export async function startAgentMessage({
             threadChatId !== LEGACY_THREAD_CHAT_ID
               ? ("acp" as const)
               : ("legacy" as const);
+          // Each ACP turn bootstraps a new server (new runId → new acpServerId).
+          // The previous session is bound to the old server and invalid here.
+          // The "booting" status check (line 412) normally handles this, but
+          // this guard covers edge cases where status isn't "booting".
+          if (transportMode === "acp") {
+            sessionId = null;
+          }
           const protocolVersion = transportMode === "acp" ? 2 : 1;
           const acpServerId =
             transportMode === "acp" ? `terragon-${runId}` : null;

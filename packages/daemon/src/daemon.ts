@@ -47,6 +47,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
+const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 10;
 const ACP_REQUEST_TIMEOUT_MS = 120_000;
 const ACP_TERMINAL_QUIESCENCE_MS = 300;
 const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
@@ -773,12 +774,13 @@ export class TerragonDaemon {
       processState.acpAbortController = sseAbortController;
     }
     // When externally aborted (stop message), unblock the SSE terminal promise
-    sseAbortController.signal.addEventListener(
-      "abort",
-      () => resolveSseTerminal?.(),
-      { once: true },
-    );
+    // Wrap in arrow fn so TS doesn't narrow the mutable `let` inside closures.
+    const triggerSseTerminal = (): void => resolveSseTerminal?.();
+    sseAbortController.signal.addEventListener("abort", triggerSseTerminal, {
+      once: true,
+    });
     const sseLoop = (async () => {
+      let consecutiveSseFailures = 0;
       while (!sseAbortController.signal.aborted) {
         try {
           const response = await fetch(createUrl(false), {
@@ -797,6 +799,7 @@ export class TerragonDaemon {
             throw new Error("ACP SSE response has no body");
           }
           await consumeSse(response.body, sseAbortController.signal);
+          consecutiveSseFailures = 0;
           if (!sseAbortController.signal.aborted) {
             await new Promise((resolve) =>
               setTimeout(resolve, ACP_SSE_RECONNECT_DELAY_MS),
@@ -806,14 +809,30 @@ export class TerragonDaemon {
           if (sseAbortController.signal.aborted) {
             return;
           }
+          consecutiveSseFailures++;
           this.runtime.logger.warn("ACP SSE loop error", {
             threadChatId: input.threadChatId,
             serverId,
             error: formatError(error),
+            consecutiveSseFailures,
           });
-          await new Promise((resolve) =>
-            setTimeout(resolve, ACP_SSE_RECONNECT_DELAY_MS),
+          if (consecutiveSseFailures >= ACP_SSE_MAX_CONSECUTIVE_FAILURES) {
+            this.runtime.logger.error(
+              "ACP SSE circuit breaker tripped — giving up after max consecutive failures",
+              {
+                threadChatId: input.threadChatId,
+                serverId,
+                consecutiveSseFailures,
+              },
+            );
+            triggerSseTerminal();
+            return;
+          }
+          const backoffMs = Math.min(
+            ACP_SSE_RECONNECT_DELAY_MS * 2 ** consecutiveSseFailures,
+            5_000,
           );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
       }
     })();
@@ -936,7 +955,7 @@ export class TerragonDaemon {
           const promptMessage =
             typeof promptError.message === "string"
               ? promptError.message
-              : "ACP session/prompt failed";
+              : "ACP session/prompt failed (no terminal SSE event received)";
           this.addMessageToBuffer({
             agent: input.agent,
             message: {
