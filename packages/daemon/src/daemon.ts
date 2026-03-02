@@ -746,6 +746,47 @@ export class TerragonDaemon {
         return;
       }
       const payload = dataLines.join("\n");
+
+      // Auto-approve ACP permission requests (yolo mode for all agents).
+      // The ACP server sends session/request_permission as a JSON-RPC request
+      // (has an `id` field) over SSE. The agent blocks until a response is
+      // POSTed back. We approve immediately so the agent never stalls.
+      try {
+        const envelope = JSON.parse(payload);
+        if (
+          envelope &&
+          typeof envelope === "object" &&
+          envelope.method === "session/request_permission" &&
+          envelope.id !== undefined
+        ) {
+          lastAcpMessageAtMs = Date.now();
+          this.runtime.logger.info("ACP auto-approving permission request", {
+            threadChatId: input.threadChatId,
+            requestId: envelope.id,
+          });
+          fetch(createUrl(false), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: envelope.id,
+              result: { optionId: "approved" },
+            }),
+          }).catch((err) => {
+            this.runtime.logger.error("ACP permission approval POST failed", {
+              threadChatId: input.threadChatId,
+              error: getErrorMessage(err),
+            });
+          });
+          return;
+        }
+      } catch {
+        // Not valid JSON — fall through to normal handler
+      }
+
       const currentSessionId =
         this.activeProcesses.get(input.threadChatId)?.sessionId ??
         input.sessionId ??
