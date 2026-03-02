@@ -10,6 +10,7 @@ import {
   approvePlanArtifactForLoop,
   createPlanArtifactForLoop,
   getActiveSdlcLoopForThread,
+  getLatestAcceptedArtifact,
   replacePlanTasksForArtifact,
   transitionSdlcLoopStateWithArtifact,
 } from "@terragon/shared/model/sdlc-loop";
@@ -75,6 +76,24 @@ export const approvePlan = userOnlyAction(
       Number.isFinite(activeLoop.loopVersion)
         ? Math.max(activeLoop.loopVersion, 0) + 1
         : 1;
+    const existingArtifact = await getLatestAcceptedArtifact({
+      db,
+      loopId: activeLoop.id,
+      phase: "planning",
+      includeApprovedForPlanning: true,
+    });
+    if (existingArtifact) {
+      const existingVersion =
+        typeof existingArtifact.loopVersion === "number"
+          ? existingArtifact.loopVersion
+          : 0;
+      if (existingVersion >= nextLoopVersion) {
+        throw new UserFacingError(
+          "Plan already approved. Refresh to see current state.",
+        );
+      }
+    }
+
     const planArtifact = await createPlanArtifactForLoop({
       db,
       loopId: activeLoop.id,

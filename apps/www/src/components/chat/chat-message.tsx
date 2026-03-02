@@ -299,6 +299,10 @@ function SystemMessage({ message }: { message: UISystemMessage }) {
         return "Scheduled task cancelled.";
       case "fix-github-checks":
         return "Fixing GitHub Checks...";
+      case "sdlc-error-retry":
+        return "SDLC error detected. Auto-retrying...";
+      case "follow-up-retry-failed":
+        return "Follow-up processing failed.";
       case "stop":
       case "git-diff":
         return "";
@@ -320,6 +324,10 @@ function SystemMessage({ message }: { message: UISystemMessage }) {
         return "bg-green-500";
       case "cancel-schedule":
         return "bg-muted-foreground";
+      case "sdlc-error-retry":
+        return "bg-red-500";
+      case "follow-up-retry-failed":
+        return "bg-red-500";
       case "stop":
       case "git-diff":
         return "";

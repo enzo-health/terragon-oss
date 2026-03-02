@@ -41,7 +41,9 @@ export type DBSystemMessage = {
     | "generic-retry"
     | "invalid-token-retry"
     | "clear-context"
-    | "compact-result";
+    | "compact-result"
+    | "sdlc-error-retry"
+    | "follow-up-retry-failed";
   parts: DBTextPart[];
   timestamp?: string;
   model?: AIModel | null;

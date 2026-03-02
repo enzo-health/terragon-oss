@@ -407,6 +407,11 @@ export async function startAgentMessage({
             }))!;
           }
           let sessionId = threadChat.sessionId;
+          // If sandbox was just resumed (booting), previous session is dead.
+          // Force fresh session to avoid "Resource not found" from stale ACP refs.
+          if (threadChat.status === "booting") {
+            sessionId = null;
+          }
           const { summary, didCompact } = await tryAutoCompactThread({
             userId,
             threadId,

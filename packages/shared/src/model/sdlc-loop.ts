@@ -84,6 +84,7 @@ const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
 export type SdlcLoopTransitionEvent =
   | "plan_completed"
   | "plan_gate_blocked"
+  | "implementation_gate_blocked"
   | "implementation_completed"
   | "review_passed"
   | "review_blocked"
@@ -210,6 +211,9 @@ export function resolveSdlcLoopNextState({
       return null;
     case "implementing":
       if (event === "implementation_progress") {
+        return "implementing";
+      }
+      if (event === "implementation_gate_blocked") {
         return "implementing";
       }
       if (event === "implementation_completed") {
@@ -2813,6 +2817,7 @@ export type SdlcGateLoopUpdateOutcome =
 const fixAttemptIncrementEvents: ReadonlySet<SdlcLoopTransitionEvent> = new Set(
   [
     "plan_gate_blocked",
+    "implementation_gate_blocked",
     "review_blocked",
     "ui_smoke_failed",
     "babysit_blocked",
@@ -2847,6 +2852,7 @@ async function persistGuardedGateLoopState({
       currentHeadSha: true,
       fixAttemptCount: true,
       maxFixAttempts: true,
+      phaseEnteredAt: true,
     },
   });
 
@@ -2912,6 +2918,7 @@ async function persistGuardedGateLoopState({
     currentHeadSha?: string | null;
     loopVersion?: number;
     fixAttemptCount?: number;
+    phaseEnteredAt?: Date | null;
   } = {
     state: nextState,
     updatedAt: now,
@@ -2927,6 +2934,9 @@ async function persistGuardedGateLoopState({
   }
   if (normalizedLoopVersion !== null) {
     nextValues.loopVersion = normalizedLoopVersion;
+  }
+  if (nextState !== loop.state) {
+    nextValues.phaseEnteredAt = now;
   }
 
   let whereCondition = and(

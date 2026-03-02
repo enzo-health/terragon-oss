@@ -7,6 +7,8 @@ import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
+const MAX_FOLLOW_UP_RETRIES = 3;
+
 export async function maybeProcessFollowUpQueue({
   userId,
   threadId,
@@ -124,14 +126,83 @@ export async function maybeProcessFollowUpQueue({
           agentVersion: threadChat.agentVersion,
         }),
     };
-    await startAgentMessage({
-      db,
-      userId,
-      message: messageWithModel,
+    console.log("Processing follow-up", {
       threadId,
       threadChatId,
-      isNewThread: false,
+      queuedMessageCount: threadChat.queuedMessages?.length ?? 0,
     });
+    try {
+      await startAgentMessage({
+        db,
+        userId,
+        message: messageWithModel,
+        threadId,
+        threadChatId,
+        isNewThread: false,
+      });
+    } catch (error) {
+      console.error("Follow-up processing failed", {
+        threadId,
+        threadChatId,
+        error,
+      });
+
+      const existingRetries = (threadChat.messages ?? []).filter(
+        (m) =>
+          m.type === "system" &&
+          (m as { message_type: string }).message_type ===
+            "follow-up-retry-failed",
+      ).length;
+
+      if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
+        await updateThreadChatWithTransition({
+          userId,
+          threadId,
+          threadChatId,
+          eventType: "system.error",
+          chatUpdates: {
+            replaceQueuedMessages: [],
+            errorMessage: "agent-generic-error",
+            errorMessageInfo: `Follow-up failed ${existingRetries + 1} times`,
+            appendMessages: [
+              {
+                type: "system",
+                message_type: "follow-up-retry-failed",
+                parts: [
+                  {
+                    type: "text" as const,
+                    text: "Follow-up processing failed. Queue cleared.",
+                  },
+                ],
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          },
+        });
+      } else {
+        await updateThreadChatWithTransition({
+          userId,
+          threadId,
+          threadChatId,
+          eventType: "system.error",
+          chatUpdates: {
+            appendMessages: [
+              {
+                type: "system",
+                message_type: "follow-up-retry-failed",
+                parts: [
+                  {
+                    type: "text" as const,
+                    text: `Follow-up attempt ${existingRetries + 1} failed: ${error instanceof Error ? error.message : "unknown"}`,
+                  },
+                ],
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          },
+        });
+      }
+    }
     return;
   }
 
@@ -147,11 +218,80 @@ export async function maybeProcessFollowUpQueue({
   if (!didUpdateStatus) {
     throw new Error("Failed to process follow up message");
   }
-  await startAgentMessage({
-    db,
-    userId,
+  console.log("Processing follow-up", {
     threadId,
     threadChatId,
-    isNewThread: false,
+    queuedMessageCount: threadChat.queuedMessages?.length ?? 0,
   });
+  try {
+    await startAgentMessage({
+      db,
+      userId,
+      threadId,
+      threadChatId,
+      isNewThread: false,
+    });
+  } catch (error) {
+    console.error("Follow-up processing failed", {
+      threadId,
+      threadChatId,
+      error,
+    });
+
+    const existingRetries = (threadChat.messages ?? []).filter(
+      (m) =>
+        m.type === "system" &&
+        (m as { message_type: string }).message_type ===
+          "follow-up-retry-failed",
+    ).length;
+
+    if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
+      await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId,
+        eventType: "system.error",
+        chatUpdates: {
+          replaceQueuedMessages: [],
+          errorMessage: "agent-generic-error",
+          errorMessageInfo: `Follow-up failed ${existingRetries + 1} times`,
+          appendMessages: [
+            {
+              type: "system",
+              message_type: "follow-up-retry-failed",
+              parts: [
+                {
+                  type: "text" as const,
+                  text: "Follow-up processing failed. Queue cleared.",
+                },
+              ],
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+    } else {
+      await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId,
+        eventType: "system.error",
+        chatUpdates: {
+          appendMessages: [
+            {
+              type: "system",
+              message_type: "follow-up-retry-failed",
+              parts: [
+                {
+                  type: "text" as const,
+                  text: `Follow-up attempt ${existingRetries + 1} failed: ${error instanceof Error ? error.message : "unknown"}`,
+                },
+              ],
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+    }
+  }
 }
