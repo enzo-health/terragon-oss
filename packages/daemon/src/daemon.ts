@@ -112,6 +112,8 @@ type ActiveProcessState = {
   pollInterval: NodeJS.Timeout | null;
   /** AbortController for ACP transport — signals SSE loop and unblocks Promise.race on stop. */
   acpAbortController: AbortController | null;
+  /** Unique ID for this run, used to guard cleanup against race conditions with overlapping runs. */
+  runId: string;
 };
 
 type DaemonEventRunState = {
@@ -439,6 +441,7 @@ export class TerragonDaemon {
       "sdlcLoopCoordinatorRouting",
     );
     // Create new process state for this threadChatId
+    const runId = input.runId ?? randomUUID();
     const newProcessState: ActiveProcessState = {
       processId: null,
       agent: input.agent,
@@ -453,6 +456,7 @@ export class TerragonDaemon {
       token: input.token,
       pollInterval: null,
       acpAbortController: null,
+      runId,
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.initializeDaemonEventRunStateForNewRun({
@@ -506,6 +510,8 @@ export class TerragonDaemon {
     if (!this.activeProcesses.has(input.threadChatId)) {
       throw new Error("Missing active process state for ACP transport");
     }
+    // Capture runId early so the finally block can guard cleanup against overlapping runs
+    const localRunId = this.activeProcesses.get(input.threadChatId)!.runId;
 
     const baseUrlRaw = process.env.SANDBOX_AGENT_BASE_URL;
     if (!baseUrlRaw) {
@@ -1101,8 +1107,13 @@ export class TerragonDaemon {
       }).catch(() => {
         // Intentionally ignore - server cleanup is best-effort
       });
-      this.activeProcesses.delete(input.threadChatId);
-      this.markDaemonEventRunStateForCleanup(input.threadChatId);
+      // Only delete if this run still owns the entry — a newer run may have
+      // already replaced it, and deleting would destroy the new run's state.
+      const currentProcess = this.activeProcesses.get(input.threadChatId);
+      if (currentProcess?.runId === localRunId) {
+        this.activeProcesses.delete(input.threadChatId);
+        this.markDaemonEventRunStateForCleanup(input.threadChatId);
+      }
       await this.flushMessageBuffer();
     }
   }
