@@ -148,6 +148,7 @@ async function waitForDaemonReady(
   maxAttempts = 20,
   intervalMs = 500,
 ) {
+  let lastError: Error | null = null;
   for (let i = 0; i < maxAttempts; i++) {
     try {
       // Check if the daemon is responsive
@@ -159,11 +160,13 @@ async function waitForDaemonReady(
         return;
       }
     } catch (error) {
-      // Ignore errors during startup check
+      lastError = error instanceof Error ? error : new Error(String(error));
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error("Daemon failed to start within timeout period");
+  throw new Error(
+    `Daemon failed to start within timeout period. Last error: ${lastError?.message || "unknown"}. Check /tmp/terragon-daemon.log for details.`,
+  );
 }
 
 export async function getDaemonLogs({

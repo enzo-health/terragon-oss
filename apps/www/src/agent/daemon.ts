@@ -68,6 +68,20 @@ function providersForAgent(agent: AIAgent): DaemonTokenProvider[] {
   }
 }
 
+function isInfrastructureError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes("relation") ||
+    msg.includes("column") ||
+    msg.includes("createapikey") ||
+    msg.includes("database") ||
+    msg.includes("connect econnrefused") ||
+    msg.includes("violates") ||
+    msg.includes("duplicate key")
+  );
+}
+
 export async function sendDaemonMessage({
   message,
   userId,
@@ -183,6 +197,9 @@ export async function sendDaemonMessage({
         });
       }
     }
-    throw wrapError("agent-not-responding", error);
+    const errorType = isInfrastructureError(error)
+      ? "unknown-error"
+      : "agent-not-responding";
+    throw wrapError(errorType, error);
   }
 }

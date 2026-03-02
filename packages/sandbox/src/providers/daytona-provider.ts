@@ -132,10 +132,16 @@ class DaytonaSession implements ISandboxSession {
         ? workDir
         : path.join(DEFAULT_DIR, workDir);
       await this.sandbox.process.createSession(sessionId);
-      await this.sandbox.process.executeSessionCommand(sessionId, {
-        command: `cd ${workDirPath}`,
-        runAsync: false,
-      });
+      const cdResult = await this.sandbox.process.executeSessionCommand(
+        sessionId,
+        {
+          command: `cd ${workDirPath}`,
+          runAsync: false,
+        },
+      );
+      if (cdResult.exitCode !== undefined && cdResult.exitCode !== 0) {
+        throw new Error(`Working directory does not exist: ${workDirPath}`);
+      }
       if (options?.env) {
         for (const [key, value] of Object.entries(options.env)) {
           await this.sandbox.process.executeSessionCommand(sessionId, {

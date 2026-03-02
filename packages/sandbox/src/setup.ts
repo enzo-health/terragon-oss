@@ -310,7 +310,7 @@ export async function gitCloneRepo(
     cloneCommand += ` --branch ${bashQuote(options.repoBaseBranchName)}`;
   }
   cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${session.repoDir}`;
-  await session.runCommand(cloneCommand, { cwd: "." });
+  await session.runCommand(cloneCommand, { cwd: "/" });
 }
 
 export async function setupGitCredentials(
