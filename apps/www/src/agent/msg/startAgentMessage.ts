@@ -521,7 +521,6 @@ export async function startAgentMessage({
           });
           const supportsAcp =
             threadChat.agent === "claudeCode" ||
-            threadChat.agent === "codex" ||
             threadChat.agent === "amp" ||
             threadChat.agent === "opencode";
           const effectivePermissionMode =
