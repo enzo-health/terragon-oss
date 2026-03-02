@@ -102,14 +102,17 @@ function extractLatestTopLevelAgentText(
     return null;
   }
 
-  for (const message of [...messages].reverse()) {
-    if (message.type !== "agent") {
+  // Merge the last consecutive run of top-level agent messages.
+  // ACP transports (e.g. Codex) stream word-by-word, so a single response
+  // becomes many small agent messages that must be concatenated.
+  const textParts: string[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message) continue;
+    if (message.type !== "agent" || message.parent_tool_use_id !== null) {
+      if (textParts.length > 0) break; // end of consecutive run
       continue;
     }
-    if (message.parent_tool_use_id !== null) {
-      continue;
-    }
-
     const text = message.parts
       .filter((part) => part.type === "text")
       .map((part) => part.text.trim())
@@ -117,11 +120,11 @@ function extractLatestTopLevelAgentText(
       .join("\n")
       .trim();
     if (text.length > 0) {
-      return text;
+      textParts.unshift(text); // prepend to maintain order
     }
   }
 
-  return null;
+  return textParts.length > 0 ? textParts.join("") : null;
 }
 
 type ParsedPlanSpec = {

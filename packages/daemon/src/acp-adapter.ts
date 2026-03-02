@@ -104,6 +104,21 @@ function parseSessionUpdate(
     ];
   }
 
+  // Fallback: surface unknown sessionUpdate types as assistant text if content exists
+  if (contentText) {
+    return [
+      {
+        type: "assistant",
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: contentText }],
+        },
+      },
+    ];
+  }
+
   return [];
 }
 

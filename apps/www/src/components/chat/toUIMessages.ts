@@ -142,6 +142,15 @@ export function toUIMessages({
       } else {
         currentAgentMessage = getOrCreateAgentMessage();
         for (const part of dbMessage.parts) {
+          // Merge consecutive text parts into one (e.g. ACP streams word-by-word)
+          if (part.type === "text") {
+            const lastPart =
+              currentAgentMessage.parts[currentAgentMessage.parts.length - 1];
+            if (lastPart && lastPart.type === "text") {
+              lastPart.text += part.text;
+              continue;
+            }
+          }
           pushPart(currentAgentMessage.parts, part);
         }
       }
