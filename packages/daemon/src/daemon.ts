@@ -42,6 +42,7 @@ import {
 } from "./opencode";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
 import { codexCommand, createCodexParserState, parseCodexLine } from "./codex";
+import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -646,6 +647,11 @@ export class TerragonDaemon {
       runState.acpSessionId = input.acpSessionId;
     }
     this.daemonEventRunStates.set(input.threadChatId, runState);
+    // When the agent is Codex, create a parser state so ACP events can be
+    // routed through the structured Codex parsing pipeline (parseCodexItem).
+    const codexAcpState =
+      input.agent === "codex" ? createCodexParserState() : null;
+
     let sawTerminalEventFromStream = false;
     let circuitBreakerTripped = false;
     let resolveSseTerminal: (() => void) | null = null;
@@ -926,6 +932,24 @@ export class TerragonDaemon {
         this.activeProcesses.get(input.threadChatId)?.sessionId ??
         input.sessionId ??
         "";
+
+      // For Codex ACP sessions, try to parse the payload as a structured
+      // Codex event first. This produces rich tool calls (Bash, Write,
+      // WebSearch, Task, etc.) instead of flattened text.
+      if (codexAcpState) {
+        const codexMessages = tryParseAcpAsCodexEvent(
+          payload,
+          currentSessionId,
+          codexAcpState,
+          this.runtime,
+        );
+        if (codexMessages && codexMessages.length > 0) {
+          applyAcpMessages(codexMessages);
+          return;
+        }
+      }
+
+      // Generic ACP parsing fallback
       const messages = parseAcpLineToClaudeMessages(payload, currentSessionId);
       if (messages.length > 0) {
         applyAcpMessages(messages);

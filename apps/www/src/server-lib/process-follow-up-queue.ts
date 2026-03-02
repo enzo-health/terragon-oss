@@ -14,6 +14,24 @@ const MAX_FOLLOW_UP_RETRIES = 3;
  * Shared retry handler for follow-up processing failures.
  * Counts existing retry markers, clears queue on max retries, or appends a retry marker.
  */
+function formatFollowUpError(error: unknown): string {
+  if (error instanceof Error) {
+    const parts = [error.message];
+    if (error.stack) {
+      // Include first 3 stack frames for context
+      const frames = error.stack.split("\n").slice(1, 4).join("\n");
+      parts.push(frames);
+    }
+    return parts.join("\n");
+  }
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 async function handleFollowUpFailure({
   userId,
   threadId,
@@ -27,6 +45,13 @@ async function handleFollowUpFailure({
   messages: DBMessage[] | null;
   error: unknown;
 }) {
+  const formattedError = formatFollowUpError(error);
+  console.error("handleFollowUpFailure invoked", {
+    threadId,
+    threadChatId,
+    errorDetail: formattedError,
+  });
+
   const existingRetries = (messages ?? []).filter(
     (m): m is DBSystemMessage =>
       m.type === "system" && m.message_type === "follow-up-retry-failed",
@@ -42,7 +67,7 @@ async function handleFollowUpFailure({
         chatUpdates: {
           replaceQueuedMessages: [],
           errorMessage: "agent-generic-error",
-          errorMessageInfo: `Follow-up failed ${existingRetries + 1} times`,
+          errorMessageInfo: `Follow-up failed ${existingRetries + 1} times: ${formattedError}`,
           appendMessages: [
             {
               type: "system",

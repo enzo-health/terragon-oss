@@ -800,6 +800,19 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
 
     if (!planParseResult || !planParseResult.ok) {
+      console.warn(
+        "SDLC planning gate: plan parse failed or returned no result",
+        {
+          threadId,
+          threadChatId,
+          hasPlanParseResult: !!planParseResult,
+          parseOk: planParseResult?.ok ?? null,
+          parseDiagnostic:
+            planParseResult && !planParseResult.ok
+              ? planParseResult.diagnostic
+              : null,
+        },
+      );
       return true;
     }
     const parsedPlan = planParseResult.plan;
@@ -1599,15 +1612,30 @@ export async function checkpointThreadAndPush({
       throw commitAndPushError;
     }
 
-    const handledBySdlcPipeline = await maybeRunStrictSdlcCheckpointPipeline({
-      threadId,
-      threadChatId,
-      userId,
-      session,
-      createPR,
-      prType,
-      diffOutput,
-    });
+    let handledBySdlcPipeline = false;
+    try {
+      handledBySdlcPipeline = await maybeRunStrictSdlcCheckpointPipeline({
+        threadId,
+        threadChatId,
+        userId,
+        session,
+        createPR,
+        prType,
+        diffOutput,
+      });
+    } catch (sdlcError) {
+      console.error(
+        "SDLC checkpoint pipeline failed — falling through to normal checkpoint",
+        {
+          threadId,
+          threadChatId,
+          error:
+            sdlcError instanceof Error
+              ? { message: sdlcError.message, stack: sdlcError.stack }
+              : sdlcError,
+        },
+      );
+    }
     if (handledBySdlcPipeline) {
       return;
     }

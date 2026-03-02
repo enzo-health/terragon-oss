@@ -3,7 +3,7 @@ import type { ThreadEvent } from "@openai/codex-sdk";
 import { IDaemonRuntime } from "./runtime";
 import { ClaudeMessage } from "./shared";
 
-type CodexItemEvent = Extract<
+export type CodexItemEvent = Extract<
   ThreadEvent,
   { type: "item.started" | "item.updated" | "item.completed" }
 >;
@@ -760,7 +760,7 @@ function formatWebSearchResults(rawResults: unknown, query: string): string {
     .join("\n");
 }
 
-function parseCodexItem({
+export function parseCodexItem({
   codexMsg,
   runtime,
   state,
