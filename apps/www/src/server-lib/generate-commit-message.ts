@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
 import * as z from "zod/v4";
 import { openai } from "@ai-sdk/openai";
+import { env } from "@terragon/env/apps-www";
 
 // Zod schemas for structured data generation
 const commitMessageSchema = z.object({
@@ -11,6 +12,9 @@ const commitMessageSchema = z.object({
 });
 
 export async function generateCommitMessage(gitDiff: string): Promise<string> {
+  if (!env.OPENAI_API_KEY) {
+    return "chore: update code";
+  }
   const result = await generateObject({
     model: openai("gpt-4.1-mini"),
     schema: commitMessageSchema,

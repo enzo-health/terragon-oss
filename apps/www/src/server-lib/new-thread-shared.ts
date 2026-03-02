@@ -457,14 +457,16 @@ export async function generateAndUpdateThreadName({
   message: DBUserMessage;
 }) {
   const generatedName = await generateThreadName(message);
-  await updateThread({
-    db,
-    userId,
-    threadId,
-    updates: {
-      name: generatedName,
-    },
-  });
+  if (generatedName) {
+    await updateThread({
+      db,
+      userId,
+      threadId,
+      updates: {
+        name: generatedName,
+      },
+    });
+  }
 }
 
 function getThreadNameForAutomation({

@@ -41,6 +41,9 @@ export async function generateThreadContextResult({
     sessionHistory: threadContextMessage.threadChatHistory,
     nextTask: threadContextMessage.taskDescription,
   });
+  if (!threadContextSummary) {
+    return;
+  }
   await updateThreadChat({
     db,
     userId,

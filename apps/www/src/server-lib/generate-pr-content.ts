@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import * as z from "zod/v4";
+import { env } from "@terragon/env/apps-www";
 
 const prContentSchema = z.object({
   title: z.string().describe("Concise pull request title"),
@@ -93,7 +94,10 @@ export async function generatePRContent({
   branchName: string;
   repoName: string;
   taskTitle: string;
-}): Promise<{ title: string; body: string }> {
+}): Promise<{ title: string; body: string } | null> {
+  if (!env.OPENAI_API_KEY) {
+    return null;
+  }
   // Original logic: generate both title and body
   const result = await generateObject({
     model: openai("gpt-5-nano"),
@@ -137,6 +141,9 @@ export async function updatePRContent({
   currentBody: string;
   taskTitle: string;
 }): Promise<{ shouldUpdate: boolean; title?: string; body?: string }> {
+  if (!env.OPENAI_API_KEY) {
+    return { shouldUpdate: false };
+  }
   const result = await generateObject({
     model: openai("gpt-5-nano"),
     schema: prUpdateSchema,

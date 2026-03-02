@@ -80,7 +80,7 @@ export async function compactThreadChat({
       threadChatId,
     });
     const summary = await generateSessionSummary({ sessionHistory: history });
-    return { summary };
+    return { summary: summary ?? "Failed to generate summary" };
   } catch (e) {
     console.error(e);
     return {

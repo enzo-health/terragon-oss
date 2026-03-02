@@ -1,6 +1,7 @@
 import { openai } from "@ai-sdk/openai";
 import { generateObject } from "ai";
 import * as z from "zod/v4";
+import { env } from "@terragon/env/apps-www";
 
 const compactSchema = z.object({
   summary: z.string().describe("Abridged summary of the session log"),
@@ -12,7 +13,10 @@ export async function generateSessionSummary({
 }: {
   sessionHistory: string;
   nextTask?: string;
-}): Promise<string> {
+}): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) {
+    return null;
+  }
   const promptParts = [
     "Based on the following session history, generate an abridged summary that captures the key activities, changes made, and outcomes:",
     "",

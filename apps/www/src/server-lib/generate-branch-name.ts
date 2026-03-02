@@ -2,6 +2,7 @@ import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import * as z from "zod/v4";
 import { generateRandomBranchName } from "@terragon/sandbox/utils";
+import { env } from "@terragon/env/apps-www";
 
 const branchNameSchema = z.object({
   name: z
@@ -22,6 +23,10 @@ export async function generateBranchName(
   }
   // In test environment, skip AI generation and return simple unique branch name
   if (process.env.NODE_ENV === "test") {
+    return generateRandomBranchName(prefix);
+  }
+  // If no OpenAI API key, skip AI generation
+  if (!env.OPENAI_API_KEY) {
     return generateRandomBranchName(prefix);
   }
   try {

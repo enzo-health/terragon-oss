@@ -3,6 +3,7 @@ import { openai } from "@ai-sdk/openai";
 import * as z from "zod/v4";
 import { DBUserMessage } from "@terragon/shared";
 import { richTextToPlainText } from "@/components/promptbox/tiptap-to-richtext";
+import { env } from "@terragon/env/apps-www";
 
 const threadNameSchema = z.object({
   name: z
@@ -12,7 +13,10 @@ const threadNameSchema = z.object({
 
 export async function generateThreadName(
   message: DBUserMessage,
-): Promise<string> {
+): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) {
+    return null;
+  }
   console.log("generateThreadName", message);
   const prompt = message.parts
     .map((part) => {

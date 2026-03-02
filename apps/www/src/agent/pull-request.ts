@@ -220,8 +220,10 @@ export async function openPullRequestForThread({
       repoName: thread.githubRepoFullName,
       taskTitle: thread.name ?? "Untitled Task",
     });
-    prTitle = generatedPRContent.title;
-    prBody = generatedPRContent.body;
+    if (generatedPRContent) {
+      prTitle = generatedPRContent.title;
+      prBody = generatedPRContent.body;
+    }
   } catch (error) {
     console.error(
       "Failed to generate PR title and body, using fallbacks:",

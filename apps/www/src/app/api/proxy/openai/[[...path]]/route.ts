@@ -328,6 +328,16 @@ async function authorize(
     return { response: new Response("Unauthorized", { status: 401 }) };
   }
 
+  // Check if API key is configured
+  if (!env.OPENAI_API_KEY) {
+    console.log("OpenAI proxy access denied: API key not configured");
+    return {
+      response: new Response("OpenAI provider not configured on this server", {
+        status: 503,
+      }),
+    };
+  }
+
   try {
     const daemonAuth = await getDaemonTokenAuthContextOrNull({
       headers: new Headers({ "X-Daemon-Token": token }),

@@ -429,6 +429,17 @@ async function authorize(
     return { response: new Response("Unauthorized", { status: 401 }) };
   }
 
+  // Check if API key is configured
+  if (!env.ANTHROPIC_API_KEY) {
+    console.log("Anthropic proxy access denied: API key not configured");
+    return {
+      response: new Response(
+        "Anthropic provider not configured on this server",
+        { status: 503 },
+      ),
+    };
+  }
+
   try {
     const daemonAuth = await getDaemonTokenAuthContextOrNull({
       headers: new Headers({ "X-Daemon-Token": token }),
