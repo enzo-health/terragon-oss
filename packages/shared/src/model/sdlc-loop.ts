@@ -83,6 +83,7 @@ const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
 
 export type SdlcLoopTransitionEvent =
   | "plan_completed"
+  | "plan_gate_blocked"
   | "implementation_completed"
   | "review_passed"
   | "review_blocked"
@@ -202,6 +203,9 @@ export function resolveSdlcLoopNextState({
     case "planning":
       if (event === "plan_completed") {
         return "implementing";
+      }
+      if (event === "plan_gate_blocked") {
+        return "planning";
       }
       return null;
     case "implementing":
@@ -2808,6 +2812,7 @@ export type SdlcGateLoopUpdateOutcome =
 
 const fixAttemptIncrementEvents: ReadonlySet<SdlcLoopTransitionEvent> = new Set(
   [
+    "plan_gate_blocked",
     "review_blocked",
     "ui_smoke_failed",
     "babysit_blocked",

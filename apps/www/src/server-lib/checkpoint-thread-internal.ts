@@ -48,6 +48,10 @@ import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
 import * as z from "zod/v4";
 import { runCarmackReviewGate } from "./sdlc-loop/carmack-review-gate";
 import { runDeepReviewGate } from "./sdlc-loop/deep-review-gate";
+import {
+  parsePlanSpec,
+  type ParsedPlanSpec as SharedParsedPlanSpec,
+} from "./sdlc-loop/parse-plan-spec";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { runStructuredCodexGateInSandbox } from "./sdlc-loop/sandbox-codex-gate";
@@ -127,14 +131,7 @@ function extractLatestTopLevelAgentText(
   return textParts.length > 0 ? textParts.join("") : null;
 }
 
-type ParsedPlanSpec = {
-  planText: string;
-  tasks: Array<{
-    stableTaskId: string;
-    title: string;
-    description?: string | null;
-    acceptance: string[];
-  }>;
+type ParsedPlanSpecWithSource = SharedParsedPlanSpec & {
   source: "exit_plan_mode" | "write_tool" | "agent_text";
 };
 
@@ -189,14 +186,15 @@ function findPlanFromWriteToolCall({
   return null;
 }
 
-function extractLatestPlanText(messages: DBMessage[] | null): {
+export function extractLatestPlanText(messages: DBMessage[] | null): {
   text: string;
-  source: ParsedPlanSpec["source"];
+  source: ParsedPlanSpecWithSource["source"];
 } | null {
   if (!messages || messages.length === 0) {
     return null;
   }
 
+  // Priority 1: ExitPlanMode tool call (with optional Write companion)
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (
@@ -227,6 +225,30 @@ function extractLatestPlanText(messages: DBMessage[] | null): {
     }
   }
 
+  // Priority 2: Standalone Write to plans/*.md (no ExitPlanMode required).
+  // Enables ACP agents that can Write but cannot ExitPlanMode.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message) continue;
+    if (message.type === "user") break;
+    if (
+      message.type === "tool-call" &&
+      message.name === SDLC_PLAN_TOOL_NAMES.WRITE
+    ) {
+      const filePath = message.parameters?.file_path;
+      const content = message.parameters?.content;
+      if (
+        typeof filePath === "string" &&
+        /plans\/[^/]+\.md$/.test(filePath) &&
+        typeof content === "string" &&
+        content.trim().length > 0
+      ) {
+        return { text: content.trim(), source: "write_tool" };
+      }
+    }
+  }
+
+  // Priority 3: Agent text fallback
   const latestAgentText = extractLatestTopLevelAgentText(messages);
   if (!latestAgentText) {
     return null;
@@ -237,136 +259,21 @@ function extractLatestPlanText(messages: DBMessage[] | null): {
   };
 }
 
-function normalizeStableTaskId(value: string, index: number): string {
-  const normalized = value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (!normalized) {
-    return `task-${index + 1}`;
-  }
-  return normalized;
-}
-
-function parsePlanSpecFromText({
+function parsePlanSpecWithSource({
   text,
   source,
 }: {
   text: string;
-  source: ParsedPlanSpec["source"];
-}): ParsedPlanSpec | null {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const parseJsonPlan = (input: string): ParsedPlanSpec | null => {
-    try {
-      const parsed = JSON.parse(input) as {
-        planText?: unknown;
-        tasks?: unknown;
-      };
-      if (!Array.isArray(parsed.tasks)) {
-        return null;
-      }
-      const tasks = parsed.tasks
-        .map((task, index) => {
-          if (!task || typeof task !== "object") {
-            return null;
-          }
-          const typed = task as {
-            stableTaskId?: unknown;
-            title?: unknown;
-            description?: unknown;
-            acceptance?: unknown;
-          };
-          if (
-            typeof typed.title !== "string" ||
-            typed.title.trim().length === 0
-          ) {
-            return null;
-          }
-          const acceptance = Array.isArray(typed.acceptance)
-            ? typed.acceptance
-                .filter(
-                  (criterion): criterion is string =>
-                    typeof criterion === "string" &&
-                    criterion.trim().length > 0,
-                )
-                .map((criterion) => criterion.trim())
-            : [];
-          const stableTaskId =
-            typeof typed.stableTaskId === "string" &&
-            typed.stableTaskId.trim().length > 0
-              ? typed.stableTaskId.trim()
-              : normalizeStableTaskId(typed.title, index);
-          return {
-            stableTaskId,
-            title: typed.title.trim(),
-            description:
-              typeof typed.description === "string" &&
-              typed.description.trim().length > 0
-                ? typed.description.trim()
-                : null,
-            acceptance,
-          };
-        })
-        .filter((task): task is NonNullable<typeof task> => task !== null);
-      if (tasks.length === 0) {
-        return null;
-      }
-      return {
-        planText:
-          typeof parsed.planText === "string" &&
-          parsed.planText.trim().length > 0
-            ? parsed.planText.trim()
-            : trimmed,
-        tasks,
-        source,
-      };
-    } catch {
-      return null;
-    }
-  };
-
-  const directJson = parseJsonPlan(trimmed);
-  if (directJson) {
-    return directJson;
-  }
-  const fencedJsonMatches = [...trimmed.matchAll(/```json\s*([\s\S]*?)```/gi)];
-  for (const match of fencedJsonMatches) {
-    const candidate = parseJsonPlan(match[1] ?? "");
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  const tasks = trimmed
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) =>
-      /^(?:\d+[\.\)]|[-*]|(?:step|phase)\s+\d+[:.)-]?)\s+\S+/i.test(line),
-    )
-    .map((line, index) => {
-      const title = line.replace(
-        /^(?:\d+[\.\)]|[-*]|(?:step|phase)\s+\d+[:.)-]?)\s+/i,
-        "",
-      );
-      return {
-        stableTaskId: `task-${index + 1}`,
-        title,
-        description: null,
-        acceptance: [],
-      };
-    });
-  if (tasks.length === 0) {
-    return null;
-  }
-
+  source: ParsedPlanSpecWithSource["source"];
+}):
+  | { ok: true; plan: ParsedPlanSpecWithSource; diagnostic: string }
+  | { ok: false; diagnostic: string } {
+  const result = parsePlanSpec(text);
+  if (!result.ok) return { ok: false, diagnostic: result.diagnostic };
   return {
-    planText: trimmed,
-    tasks,
-    source,
+    ok: true,
+    plan: { ...result.plan, source },
+    diagnostic: result.diagnostic,
   };
 }
 
@@ -499,10 +406,15 @@ function parseTaskCompletionUpdatesFromText({
 
 function evaluatePlanningPhaseGate({
   diffOutput,
-  parsedPlan,
+  planParseResult,
+  isAcpAgent,
 }: {
   diffOutput: string | null;
-  parsedPlan: ParsedPlanSpec | null;
+  planParseResult:
+    | { ok: true; plan: ParsedPlanSpecWithSource; diagnostic: string }
+    | { ok: false; diagnostic: string }
+    | null;
+  isAcpAgent: boolean;
 }): SdlcPhaseGateEvaluation {
   const reasons: string[] = [];
   if (hasCodeDiffArtifact(diffOutput)) {
@@ -511,13 +423,17 @@ function evaluatePlanningPhaseGate({
     );
   }
 
-  if (!parsedPlan) {
+  if (!planParseResult) {
     reasons.push(
-      "No plan artifact found. Use ExitPlanMode or a structured plan JSON/text with explicit tasks before advancing.",
+      isAcpAgent
+        ? "No plan artifact found. Output a ```json code block with a tasks[] array in your response."
+        : "No plan artifact found. Use ExitPlanMode or output a structured plan JSON with a tasks[] array.",
     );
-  } else if (parsedPlan.tasks.length < 1) {
+  } else if (!planParseResult.ok) {
+    reasons.push(planParseResult.diagnostic);
+  } else if (planParseResult.plan.tasks.length < 1) {
     reasons.push(
-      "Plan artifact is missing tasks. Include at least one actionable task with a stable id and title.",
+      "Plan artifact is missing tasks. Include at least one actionable task with a title.",
     );
   }
 
@@ -746,18 +662,47 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       threadId,
       threadChatId,
     });
+    const isAcpAgent =
+      threadChat?.agent === "codex" ||
+      threadChat?.agent === "amp" ||
+      threadChat?.agent === "opencode";
     const extractedPlan = extractLatestPlanText(threadChat?.messages ?? null);
-    const parsedPlan = extractedPlan
-      ? parsePlanSpecFromText({
+    const planParseResult = extractedPlan
+      ? parsePlanSpecWithSource({
           text: extractedPlan.text,
           source: extractedPlan.source,
         })
       : null;
     const planningGate = evaluatePlanningPhaseGate({
       diffOutput,
-      parsedPlan,
+      planParseResult,
+      isAcpAgent,
     });
     if (!planningGate.gatePassed) {
+      await transitionSdlcLoopState({
+        db,
+        loopId: activeLoop.id,
+        transitionEvent: "plan_gate_blocked",
+      });
+      // Check if max retries exceeded → blocked_on_human_feedback
+      const refreshed = await getActiveSdlcLoopForThread({
+        db,
+        userId,
+        threadId,
+      });
+      if (refreshed?.state === "blocked_on_human_feedback") {
+        await queueSdlcFollowUpMessage({
+          userId,
+          threadId,
+          threadChatId,
+          heading: "SDLC planning: max retries exceeded.",
+          details: [
+            "The planning gate has failed too many times.",
+            "Human intervention is required to unblock. Review the plan format and retry.",
+          ],
+        });
+        return true;
+      }
       await queueSdlcFollowUpMessage({
         userId,
         threadId,
@@ -768,9 +713,10 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       return true;
     }
 
-    if (!parsedPlan) {
+    if (!planParseResult || !planParseResult.ok) {
       return true;
     }
+    const parsedPlan = planParseResult.plan;
 
     const nextLoopVersion =
       typeof activeLoop.loopVersion === "number" &&

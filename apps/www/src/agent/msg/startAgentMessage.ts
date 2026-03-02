@@ -677,12 +677,20 @@ function buildSdlcPhasePromptPrefix(
   switch (state) {
     case "planning":
       return [
-        "SDLC phase: planning.",
-        "Generate an implementation plan only.",
-        "Output a structured plan artifact in JSON with keys: planText, tasks[].",
-        "Each task must include stableTaskId, title, optional description, and acceptance[] criteria.",
-        "Do not edit files, run mutating commands, or open/update a PR in this phase.",
-      ].join(" ");
+        "SDLC phase: planning. Generate an implementation plan only.",
+        "Output your plan as a JSON code block. Example:",
+        "",
+        "```json",
+        '{ "planText": "Brief summary of approach.",',
+        '  "tasks": [',
+        '    { "stableTaskId": "setup-auth", "title": "Set up authentication module",',
+        '      "description": "Create auth middleware.", "acceptance": ["Login returns JWT"] }',
+        "  ] }",
+        "```",
+        "",
+        "Required: tasks[] with at least one task. Each task needs title.",
+        "Do not edit files, run mutating commands, or open/update a PR.",
+      ].join("\n");
     case "implementing":
       return [
         "SDLC phase: implementing.",
