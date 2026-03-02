@@ -1,0 +1,1 @@
+ALTER TABLE "sdlc_loop_signal_inbox" ADD COLUMN "committed_at" timestamp;
