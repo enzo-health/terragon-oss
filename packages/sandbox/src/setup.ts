@@ -67,9 +67,13 @@ async function ensureSandboxAgentRunning({
     return;
   }
 
+  // Run all sandbox-agent checks from root dir since /root/repo may not exist yet
+  const cmdOpts = { cwd: "/" };
+
   const isRunning = await session
     .runCommand(
       `ps -ef | grep sandbox-agent | grep -F " --port ${port}" | grep -v grep`,
+      cmdOpts,
     )
     .then(() => true)
     .catch(() => false);
@@ -77,18 +81,18 @@ async function ensureSandboxAgentRunning({
     return;
   }
 
-  // Check common install locations - Daytona sandboxes may have a minimal PATH
-  // that doesn't include /usr/bin where npm global installs land
+  // Check common install locations - Daytona sandboxes may place npm global
+  // binaries in /usr/bin instead of /usr/local/bin
   let sandboxAgentBin = "sandbox-agent";
   try {
-    await session.runCommand("command -v sandbox-agent >/dev/null 2>&1");
+    await session.runCommand("command -v sandbox-agent >/dev/null 2>&1", cmdOpts);
   } catch {
     try {
-      await session.runCommand("test -x /usr/bin/sandbox-agent");
+      await session.runCommand("test -x /usr/bin/sandbox-agent", cmdOpts);
       sandboxAgentBin = "/usr/bin/sandbox-agent";
     } catch {
       try {
-        await session.runCommand("test -x /usr/local/bin/sandbox-agent");
+        await session.runCommand("test -x /usr/local/bin/sandbox-agent", cmdOpts);
         sandboxAgentBin = "/usr/local/bin/sandbox-agent";
       } catch {
         throw new Error(
