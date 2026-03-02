@@ -138,6 +138,7 @@ export const auth = betterAuth({
     bearer(),
     apiKey({
       maximumNameLength: 64,
+      enableMetadata: true,
       rateLimit: {
         enabled: false,
       },
