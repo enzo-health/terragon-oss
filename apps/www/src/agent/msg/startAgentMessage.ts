@@ -524,8 +524,10 @@ export async function startAgentMessage({
             threadChat.agent === "codex" ||
             threadChat.agent === "amp" ||
             threadChat.agent === "opencode";
-          const effectivePermissionMode =
-            threadChat.permissionMode || "allowAll";
+          const rawPermissionMode = threadChat.permissionMode || "allowAll";
+          const effectivePermissionMode = activeSdlcLoop
+            ? "allowAll"
+            : rawPermissionMode;
           const transportMode =
             featureFlags.sandboxAgentAcpTransport &&
             supportsAcp &&

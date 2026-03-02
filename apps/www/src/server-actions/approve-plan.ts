@@ -58,7 +58,7 @@ export const approvePlan = userOnlyAction(
       );
     }
 
-    const parseResult = parsePlanSpec(extracted.text);
+    const parseResult = await parsePlanSpec(extracted.text);
     if (!parseResult.ok) {
       throw new UserFacingError(
         `Plan artifact is invalid: ${parseResult.diagnostic}`,
