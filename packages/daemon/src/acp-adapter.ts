@@ -139,6 +139,58 @@ function parseEnvelopeError(envelope: JsonObject): ClaudeMessage[] {
   ];
 }
 
+/**
+ * Coalesce consecutive top-level assistant text-only messages into a single message.
+ * ACP transports stream token-by-token, producing many tiny ClaudeMessages. This
+ * merges them before sending to the server to reduce DB bloat and improve rendering.
+ *
+ * Only merges when:
+ * - Both messages are type "assistant" with parent_tool_use_id === null
+ * - Both messages contain exclusively text content blocks (no tool_use)
+ * - Both share the same session_id
+ */
+export function coalesceAssistantTextMessages(
+  messages: ClaudeMessage[],
+): ClaudeMessage[] {
+  if (messages.length <= 1) {
+    return messages;
+  }
+
+  const result: ClaudeMessage[] = [];
+  for (const msg of messages) {
+    const prev = result[result.length - 1];
+    if (
+      prev &&
+      prev.type === "assistant" &&
+      msg.type === "assistant" &&
+      prev.parent_tool_use_id === null &&
+      msg.parent_tool_use_id === null &&
+      prev.session_id === msg.session_id
+    ) {
+      const prevContent = prev.message.content;
+      const currContent = msg.message.content;
+      if (
+        Array.isArray(prevContent) &&
+        Array.isArray(currContent) &&
+        prevContent.every((c) => c.type === "text") &&
+        currContent.every((c) => c.type === "text")
+      ) {
+        // Merge: append all current text to the last text block of prev
+        const prevLastText = prevContent[prevContent.length - 1];
+        if (prevLastText && prevLastText.type === "text") {
+          const mergedText = currContent
+            .map((c) => (c.type === "text" ? c.text : ""))
+            .join("");
+          prevLastText.text += mergedText;
+          continue;
+        }
+      }
+    }
+    result.push(msg);
+  }
+  return result;
+}
+
 export function parseAcpLineToClaudeMessages(
   line: string,
   fallbackSessionId: string,

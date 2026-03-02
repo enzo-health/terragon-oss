@@ -14,7 +14,10 @@ import {
   DAEMON_VERSION,
   DaemonTransportMode,
 } from "./shared";
-import { parseAcpLineToClaudeMessages } from "./acp-adapter";
+import {
+  parseAcpLineToClaudeMessages,
+  coalesceAssistantTextMessages,
+} from "./acp-adapter";
 import { performance } from "node:perf_hooks";
 import { RetryBackoff, RetryConfig, DEFAULT_RETRY_CONFIG } from "./retry";
 import {
@@ -1866,8 +1869,11 @@ export class TerragonDaemon {
       }
 
       try {
+        const messagesToSend = coalesceAssistantTextMessages(
+          processedEntriesToSend.map((e) => e.message),
+        );
         await this.sendMessagesToAPI({
-          messages: processedEntriesToSend.map((e) => e.message),
+          messages: messagesToSend,
           entryCount: entriesToSend.length,
           timezone,
           token,
