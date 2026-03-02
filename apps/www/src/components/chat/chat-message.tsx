@@ -30,6 +30,7 @@ const nonCollapsibleToolNames = new Set<string>([
   "SuggestFollowupTask",
   "mcp__terry__SuggestFollowupTask",
   "ExitPlanMode",
+  "PermissionRequest",
 ]);
 
 function getPartGroupType({

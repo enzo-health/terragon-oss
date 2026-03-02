@@ -93,16 +93,29 @@ export const DaemonMessageStopSchema = z.object({
   token: z.string(),
 });
 
+export const DaemonMessagePermissionResponseSchema = z.object({
+  type: z.literal("permission-response"),
+  threadId: z.string(),
+  threadChatId: z.string(),
+  token: z.string(),
+  promptId: z.string(),
+  optionId: z.string(),
+});
+
 export const DaemonMessageSchema = z.union([
   DaemonMessageClaudeSchema,
   DaemonMessageKillSchema,
   DaemonMessageStopSchema,
   DaemonMessagePingSchema,
+  DaemonMessagePermissionResponseSchema,
 ]);
 
 export type DaemonMessageClaude = z.infer<typeof DaemonMessageClaudeSchema>;
 export type DaemonMessageStop = z.infer<typeof DaemonMessageStopSchema>;
 export type DaemonMessagePing = z.infer<typeof DaemonMessagePingSchema>;
+export type DaemonMessagePermissionResponse = z.infer<
+  typeof DaemonMessagePermissionResponseSchema
+>;
 export type DaemonMessage = z.infer<typeof DaemonMessageSchema>;
 
 export type ClaudeMessage =

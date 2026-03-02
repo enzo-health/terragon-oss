@@ -45,6 +45,13 @@ type SendDaemonMessageArgs =
         "token" | "threadId" | "threadChatId" | "featureFlags"
       >;
       runContext?: null;
+    })
+  | (SendDaemonMessageArgsBase & {
+      message: DistributiveOmit<
+        Extract<DaemonMessage, { type: "permission-response" }>,
+        "token" | "threadId" | "threadChatId"
+      >;
+      runContext?: null;
     });
 
 function providersForAgent(agent: AIAgent): DaemonTokenProvider[] {

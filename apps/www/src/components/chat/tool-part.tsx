@@ -14,6 +14,7 @@ import { WebFetchTool, WebSearchTool } from "./tools/web-tool";
 import { TaskTool } from "./tools/task-tool";
 import { SuggestFollowupTaskTool } from "./tools/suggest-followup-task-tool";
 import { ExitPlanModeTool } from "./tools/exit-plan-mode-tool";
+import { PermissionRequestTool } from "./tools/permission-request-tool";
 import { DefaultTool } from "./tools/default-tool";
 
 const ToolPart = memo(function ToolPart({
@@ -132,6 +133,14 @@ const ToolPart = memo(function ToolPart({
       return (
         <ExitPlanModeTool
           toolPart={toolPart as Extract<AllToolParts, { name: "ExitPlanMode" }>}
+        />
+      );
+    case "PermissionRequest":
+      return (
+        <PermissionRequestTool
+          toolPart={
+            toolPart as Extract<AllToolParts, { name: "PermissionRequest" }>
+          }
         />
       );
     default:

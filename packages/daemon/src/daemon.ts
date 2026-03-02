@@ -116,6 +116,10 @@ type ActiveProcessState = {
   acpAbortController: AbortController | null;
   /** Unique ID for this run, used to guard cleanup against race conditions with overlapping runs. */
   runId: string;
+  /** Pending ACP permission requests awaiting user approval (plan mode only). */
+  pendingPermissions: Map<string, { acpRequestId: unknown }>;
+  /** The ACP server URL, set when the ACP connection is established. */
+  acpUrl: string | null;
 };
 
 type DaemonEventRunState = {
@@ -342,6 +346,78 @@ export class TerragonDaemon {
           this.runtime.logger.info("Ping message received");
           break;
         }
+        case "permission-response": {
+          this.runtime.logger.info("Permission response received", {
+            promptId: parsedMessage.promptId,
+            optionId: parsedMessage.optionId,
+            threadChatId: parsedMessage.threadChatId,
+          });
+
+          const processState = this.activeProcesses.get(
+            parsedMessage.threadChatId,
+          );
+          const pending = processState?.pendingPermissions?.get(
+            parsedMessage.promptId,
+          );
+          if (!pending) {
+            this.runtime.logger.warn("No pending permission found", {
+              promptId: parsedMessage.promptId,
+            });
+            break;
+          }
+
+          // POST approval/denial to ACP server
+          const acpUrl = processState?.acpUrl;
+          if (acpUrl) {
+            fetch(acpUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: pending.acpRequestId,
+                result: { optionId: parsedMessage.optionId },
+              }),
+            }).catch((err) => {
+              this.runtime.logger.error("Permission response POST failed", {
+                error: formatError(err),
+              });
+            });
+          }
+
+          processState!.pendingPermissions.delete(parsedMessage.promptId);
+
+          // Emit synthetic tool result so UI shows resolution
+          this.addMessageToBuffer({
+            agent: null,
+            message: {
+              type: "user",
+              session_id: "",
+              parent_tool_use_id: null,
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: parsedMessage.promptId,
+                    content:
+                      parsedMessage.optionId === "approved"
+                        ? "Permission granted"
+                        : "Permission denied",
+                    is_error: parsedMessage.optionId !== "approved",
+                  },
+                ],
+              },
+            },
+            threadId: parsedMessage.threadId,
+            threadChatId: parsedMessage.threadChatId,
+            token: parsedMessage.token,
+          });
+          this.flushMessageBuffer();
+          break;
+        }
         case "claude": {
           this.runCommand(parsedMessage).catch((error) => {
             this.runtime.logger.error("Failed to run command", {
@@ -469,6 +545,8 @@ export class TerragonDaemon {
       pollInterval: null,
       acpAbortController: null,
       runId,
+      pendingPermissions: new Map(),
+      acpUrl: null,
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.initializeDaemonEventRunStateForNewRun({
@@ -476,9 +554,6 @@ export class TerragonDaemon {
       coordinatorRoutingEnabled,
     });
     if (input.transportMode === "acp") {
-      if (input.permissionMode === "plan") {
-        throw new Error("ACP transport does not support plan permission mode");
-      }
       if (!this.getFeatureFlag("sandboxAgentAcpTransport")) {
         throw new Error(
           "ACP transport requested but sandboxAgentAcpTransport feature flag is disabled",
@@ -588,6 +663,11 @@ export class TerragonDaemon {
       }
       return url.toString();
     };
+
+    // Store ACP URL on process state for permission-response handler
+    this.updateActiveProcessState(input.threadChatId, {
+      acpUrl: createUrl(false),
+    });
 
     const toObject = (value: unknown): Record<string, unknown> | null => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -747,10 +827,11 @@ export class TerragonDaemon {
       }
       const payload = dataLines.join("\n");
 
-      // Auto-approve ACP permission requests (yolo mode for all agents).
+      // Handle ACP permission requests.
       // The ACP server sends session/request_permission as a JSON-RPC request
       // (has an `id` field) over SSE. The agent blocks until a response is
-      // POSTed back. We approve immediately so the agent never stalls.
+      // POSTed back. In allowAll mode, auto-approve immediately. In plan mode,
+      // emit a synthetic PermissionRequest tool call for user approval.
       try {
         const envelope = JSON.parse(payload);
         if (
@@ -760,27 +841,81 @@ export class TerragonDaemon {
           envelope.id !== undefined
         ) {
           lastAcpMessageAtMs = Date.now();
-          this.runtime.logger.info("ACP auto-approving permission request", {
-            threadChatId: input.threadChatId,
-            requestId: envelope.id,
-          });
-          fetch(createUrl(false), {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: envelope.id,
-              result: { optionId: "approved" },
-            }),
-          }).catch((err) => {
-            this.runtime.logger.error("ACP permission approval POST failed", {
+
+          // In allowAll mode (default), auto-approve immediately
+          if (input.permissionMode !== "plan") {
+            this.runtime.logger.info("ACP auto-approving permission request", {
               threadChatId: input.threadChatId,
-              error: getErrorMessage(err),
+              requestId: envelope.id,
             });
-          });
+            fetch(createUrl(false), {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: envelope.id,
+                result: { optionId: "approved" },
+              }),
+            }).catch((err) => {
+              this.runtime.logger.error("ACP permission approval POST failed", {
+                threadChatId: input.threadChatId,
+                error: getErrorMessage(err),
+              });
+            });
+            return;
+          }
+
+          // In plan mode, surface as a synthetic tool call for user approval
+          const promptId = `perm-${randomUUID()}`;
+          const params =
+            typeof envelope.params === "object" && envelope.params
+              ? envelope.params
+              : {};
+          const processState = this.activeProcesses.get(input.threadChatId);
+          if (processState) {
+            processState.pendingPermissions.set(promptId, {
+              acpRequestId: envelope.id,
+            });
+          }
+
+          this.runtime.logger.info(
+            "ACP permission request surfaced for user approval",
+            {
+              threadChatId: input.threadChatId,
+              requestId: envelope.id,
+              promptId,
+            },
+          );
+
+          const currentSessionId =
+            this.activeProcesses.get(input.threadChatId)?.sessionId ??
+            input.sessionId ??
+            "";
+          applyAcpMessages([
+            {
+              type: "assistant",
+              session_id: currentSessionId,
+              parent_tool_use_id: null,
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: promptId,
+                    name: "PermissionRequest",
+                    input: {
+                      options: params.options ?? [],
+                      description: params.description ?? "",
+                      tool_name: params.tool_name ?? "",
+                    },
+                  },
+                ],
+              },
+            },
+          ]);
           return;
         }
       } catch {
@@ -1408,6 +1543,7 @@ export class TerragonDaemon {
         | "isStopping"
         | "isCompleted"
         | "pollInterval"
+        | "acpUrl"
       >
     >,
   ) => {

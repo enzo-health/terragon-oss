@@ -123,6 +123,7 @@ export type AllToolParts =
   | UIToolPart<"Task", ToolParams["Task"]>
   | UIToolPart<"SuggestFollowupTask", ToolParams["SuggestFollowupTask"]>
   | UIToolPart<"ExitPlanMode", ToolParams["ExitPlanMode"]>
+  | UIToolPart<"PermissionRequest", ToolParams["PermissionRequest"]>
   | UIToolPart<string, Record<string, any>>;
 
 export type UIToolPart<
@@ -255,5 +256,11 @@ interface ToolParams {
 
   ExitPlanMode: {
     plan: string;
+  };
+
+  PermissionRequest: {
+    options: Array<{ kind: string; name: string; optionId: string }>;
+    description: string;
+    tool_name: string;
   };
 }
