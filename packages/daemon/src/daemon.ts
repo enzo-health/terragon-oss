@@ -546,6 +546,7 @@ export class TerragonDaemon {
     }
     this.daemonEventRunStates.set(input.threadChatId, runState);
     let sawTerminalEventFromStream = false;
+    let circuitBreakerTripped = false;
     let resolveSseTerminal: (() => void) | null = null;
     const sseTerminalPromise = new Promise<void>((resolve) => {
       resolveSseTerminal = resolve;
@@ -825,6 +826,7 @@ export class TerragonDaemon {
                 consecutiveSseFailures,
               },
             );
+            circuitBreakerTripped = true;
             triggerSseTerminal();
             return;
           }
@@ -936,19 +938,37 @@ export class TerragonDaemon {
         toObject(promptResponse.error) &&
         !sawTerminalEventFromStream
       ) {
-        const sinceLastSseMs = Date.now() - lastAcpMessageAtMs;
-        if (sinceLastSseMs < 30_000) {
-          this.runtime.logger.info(
-            "ACP POST failed but SSE stream is alive — waiting for SSE terminal event",
-            {
-              threadChatId: input.threadChatId,
-              sinceLastSseMs,
-              postError: toObject(promptResponse.error),
-            },
-          );
-          promptResponse = await sseTerminalPromise.then(
-            () => null as AcpResponseEnvelope | null,
-          );
+        // If aborted intentionally (stop command), don't enter recovery
+        if (!sseAbortController.signal.aborted) {
+          const sinceLastSseMs = Date.now() - lastAcpMessageAtMs;
+          if (sinceLastSseMs < 30_000) {
+            this.runtime.logger.info(
+              "ACP POST failed but SSE stream is alive — waiting for SSE terminal event",
+              {
+                threadChatId: input.threadChatId,
+                sinceLastSseMs,
+                postError: toObject(promptResponse.error),
+              },
+            );
+            promptResponse = await Promise.race([
+              sseTerminalPromise.then(() => null as AcpResponseEnvelope | null),
+              new Promise<AcpResponseEnvelope>((resolve) =>
+                setTimeout(
+                  () =>
+                    resolve({
+                      error: {
+                        message:
+                          "SSE alive but no terminal event within timeout",
+                      },
+                    } as AcpResponseEnvelope),
+                  ACP_REQUEST_TIMEOUT_MS,
+                ),
+              ),
+            ]);
+          }
+        } else {
+          // Intentional abort — discard POST error, let stop handler manage terminal message
+          promptResponse = null;
         }
       }
 
@@ -1019,6 +1039,26 @@ export class TerragonDaemon {
             token: input.token,
           });
         }
+      }
+
+      if (
+        !sawTerminalEventFromStream &&
+        !finalPromptResponse &&
+        circuitBreakerTripped
+      ) {
+        this.addMessageToBuffer({
+          agent: input.agent,
+          message: {
+            type: "custom-error",
+            session_id: null,
+            duration_ms: this.getProcessDurationMs(input.threadChatId),
+            error_info:
+              "ACP SSE circuit breaker tripped — agent connection lost after max consecutive failures",
+          },
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          token: input.token,
+        });
       }
 
       this.updateActiveProcessState(input.threadChatId, {
