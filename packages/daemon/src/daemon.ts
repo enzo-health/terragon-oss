@@ -2216,6 +2216,11 @@ export class TerragonDaemon {
   private async teardown(): Promise<void> {
     // Send any remaining messages in the buffer
     this.killAllActiveProcesses();
+    // Wait for any in-progress flush to complete before final flush
+    const teardownFlushStart = Date.now();
+    while (this.isFlushInProgress && Date.now() - teardownFlushStart < 10_000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     await this.flushMessageBuffer();
     // Send a kill message to the unix socket to flush our blocking listeners.
     await writeToUnixSocket({
