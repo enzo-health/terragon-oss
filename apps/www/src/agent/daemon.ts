@@ -121,9 +121,9 @@ export async function sendDaemonMessage({
           userId,
           ...(daemonRunClaims
             ? {
-                metadata: JSON.stringify({
+                metadata: {
                   daemonRun: daemonRunClaims,
-                }),
+                },
               }
             : {}),
         },
