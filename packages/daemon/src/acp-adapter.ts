@@ -32,11 +32,12 @@ function toTextContent(content: unknown): string {
         if (!itemObject) {
           return "";
         }
-        const text = itemObject.text;
-        if (typeof text === "string") return text;
-        const itemType =
-          typeof itemObject.type === "string" ? itemObject.type : "unknown";
-        return `[${itemType} content]`;
+        // Try common content fields: text, diff, patch, data, content
+        for (const field of ["text", "diff", "patch", "data", "content"]) {
+          const val = itemObject[field];
+          if (typeof val === "string") return val;
+        }
+        return "";
       })
       .join("\n");
   }
