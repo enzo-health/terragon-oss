@@ -696,10 +696,16 @@ function buildSdlcPhasePromptPrefix(
     case "implementing":
       return [
         "SDLC phase: implementing.",
-        "Implement the approved plan with code changes and checkpoints.",
-        "Mark completed plan tasks with evidence (headSha, changed files, note).",
+        "Implement the approved plan with concrete code changes.",
+        "Mark completed tasks with evidence and signal completion:",
+        "",
+        "```json",
+        '{ "taskUpdates": [{ "stableTaskId": "task-id", "status": "done", "note": "..." }], "phaseComplete": true }',
+        "```",
+        "",
+        "Only set phaseComplete: true when ALL planned tasks are implemented.",
         "Do not skip directly to PR babysitting in this phase.",
-      ].join(" ");
+      ].join("\n");
     case "reviewing":
       return [
         "SDLC phase: reviewing.",
@@ -721,7 +727,8 @@ function buildSdlcPhasePromptPrefix(
     case "blocked_on_review_threads":
       return [
         `SDLC phase: ${state}.`,
-        "Unblock this phase first. Resolve blockers before advancing.",
+        "Resolve blockers before advancing.",
+        "When fixes are complete, signal with phaseComplete: true in your task update JSON.",
       ].join(" ");
     case "blocked_on_human_feedback":
       return [

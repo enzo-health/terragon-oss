@@ -443,24 +443,29 @@ function evaluatePlanningPhaseGate({
   };
 }
 
-function evaluateImplementationPhaseGate({
-  diffOutput,
-}: {
-  diffOutput: string | null;
-}): SdlcPhaseGateEvaluation {
-  if (hasCodeDiffArtifact(diffOutput)) {
-    return {
-      gatePassed: true,
-      reasons: [],
-    };
-  }
+/**
+ * Detect whether the agent explicitly signaled phase completion via
+ * `"phaseComplete": true` in a structured JSON block. Until this signal
+ * appears, checkpoints are bookkeeping-only — no gate evaluation, no
+ * follow-up messages, no loop.
+ */
+function detectPhaseCompleteSignal(messages: DBMessage[] | null): boolean {
+  const agentText = extractLatestTopLevelAgentText(messages);
+  if (!agentText) return false;
 
-  return {
-    gatePassed: false,
-    reasons: [
-      "No code-diff artifact detected. Implement the plan with concrete code changes before review can run.",
-    ],
-  };
+  const trimmed = agentText.trim();
+  const fencedJsonMatches = [...trimmed.matchAll(/```json\s*([\s\S]*?)```/gi)];
+  const jsonCandidates = [trimmed, ...fencedJsonMatches.map((m) => m[1] ?? "")];
+
+  for (const candidate of jsonCandidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (parsed.phaseComplete === true) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 function buildSdlcFixFollowUpMessage({
@@ -821,20 +826,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   });
 
   if (sdlcImplementingStates.has(activeLoop.state)) {
-    const implementationGate = evaluateImplementationPhaseGate({
-      diffOutput,
-    });
-    if (!implementationGate.gatePassed) {
-      await queueSdlcFollowUpMessage({
-        userId,
-        threadId,
-        threadChatId,
-        heading: "SDLC implementation gate blocked.",
-        details: implementationGate.reasons,
-      });
-      return true;
-    }
-
+    // Sub-state transitions (blocked_on_agent_fixes, etc.)
     if (
       activeLoop.state === "blocked_on_agent_fixes" ||
       activeLoop.state === "blocked_on_ci" ||
@@ -850,6 +842,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       });
     }
 
+    // Always fetch the plan artifact (needed for task bookkeeping)
     const acceptedPlanArtifact = await getLatestAcceptedArtifact({
       db,
       loopId: activeLoop.id,
@@ -870,6 +863,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       return true;
     }
 
+    // Always run task bookkeeping (every checkpoint)
     const threadChat = await getThreadChat({
       db,
       userId,
@@ -891,6 +885,34 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       completions: completionUpdates,
     });
 
+    // Check for agent completion signal — until the agent signals
+    // phaseComplete, this is a progress checkpoint only (no gate, no follow-up)
+    const phaseComplete = detectPhaseCompleteSignal(
+      threadChat?.messages ?? null,
+    );
+
+    if (!phaseComplete) {
+      // Agent hasn't signaled completion — silent return
+      return true;
+    }
+
+    // Agent signaled phaseComplete — NOW evaluate the implementation gate
+    if (!hasCodeDiffArtifact(diffOutput)) {
+      await queueSdlcFollowUpMessage({
+        userId,
+        threadId,
+        threadChatId,
+        heading:
+          "SDLC implementation: completion signaled but no code changes detected.",
+        details: [
+          "You indicated phaseComplete but no git diff was found.",
+          "Write code and signal phaseComplete again when done.",
+        ],
+      });
+      return true;
+    }
+
+    // Verify all tasks are complete
     const verifiedTaskCompletion = await verifyPlanTaskCompletionForHead({
       db,
       loopId: activeLoop.id,
@@ -925,12 +947,13 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         threadId,
         threadChatId,
         heading:
-          "SDLC implementation gate blocked. Complete all planned tasks with valid evidence before review.",
+          "SDLC implementation: completion signaled but tasks incomplete.",
         details: reasons,
       });
       return true;
     }
 
+    // All gates pass — create artifact and transition to reviewing
     const implementationArtifact = await createImplementationArtifactForHead({
       db,
       loopId: activeLoop.id,
