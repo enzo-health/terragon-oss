@@ -125,6 +125,7 @@ async function waitForSandboxAgentHealth({
     try {
       await session.runCommand(
         `curl -fsS --connect-timeout 5 --max-time 8 ${bashQuote(healthUrl)}`,
+        { cwd: "/" },
       );
       return;
     } catch (error) {
@@ -156,10 +157,14 @@ async function probeSandboxAgentEndpoint({
   await ensureSandboxAgentRunning({ session, baseUrl });
   await waitForSandboxAgentHealth({ session, baseUrl });
   try {
-    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`);
+    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`, {
+      cwd: "/",
+    });
     return;
   } catch {
-    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/rpc`)}`);
+    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/rpc`)}`, {
+      cwd: "/",
+    });
   }
 }
 
