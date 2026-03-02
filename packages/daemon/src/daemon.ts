@@ -923,10 +923,34 @@ export class TerragonDaemon {
       // Wait for completion from either channel:
       // - SSE terminal event (primary, most reliable)
       // - POST response (fallback if SSE misses the event or ACP server crashes)
-      const promptResponse = await Promise.race([
+      let promptResponse = await Promise.race([
         sseTerminalPromise.then(() => null as AcpResponseEnvelope | null),
         promptDone,
       ]);
+
+      // If the POST returned an error (e.g. 504 proxy timeout) but the SSE
+      // stream is still alive (received an event recently), the agent is still
+      // working. Discard the POST error and wait for the SSE terminal event.
+      if (
+        promptResponse &&
+        toObject(promptResponse.error) &&
+        !sawTerminalEventFromStream
+      ) {
+        const sinceLastSseMs = Date.now() - lastAcpMessageAtMs;
+        if (sinceLastSseMs < 30_000) {
+          this.runtime.logger.info(
+            "ACP POST failed but SSE stream is alive — waiting for SSE terminal event",
+            {
+              threadChatId: input.threadChatId,
+              sinceLastSseMs,
+              postError: toObject(promptResponse.error),
+            },
+          );
+          promptResponse = await sseTerminalPromise.then(
+            () => null as AcpResponseEnvelope | null,
+          );
+        }
+      }
 
       // If SSE won the race, give the POST a short grace period to also finish
       let graceTimer: ReturnType<typeof setTimeout> | undefined;
