@@ -77,16 +77,29 @@ async function ensureSandboxAgentRunning({
     return;
   }
 
+  // Check common install locations - Daytona sandboxes may have a minimal PATH
+  // that doesn't include /usr/bin where npm global installs land
+  let sandboxAgentBin = "sandbox-agent";
   try {
     await session.runCommand("command -v sandbox-agent >/dev/null 2>&1");
   } catch {
-    throw new Error(
-      "sandbox-agent is enabled but not installed in the sandbox image. Install @sandbox-agent/cli in the image and set SANDBOX_AGENT_BASE_URL.",
-    );
+    try {
+      await session.runCommand("test -x /usr/bin/sandbox-agent");
+      sandboxAgentBin = "/usr/bin/sandbox-agent";
+    } catch {
+      try {
+        await session.runCommand("test -x /usr/local/bin/sandbox-agent");
+        sandboxAgentBin = "/usr/local/bin/sandbox-agent";
+      } catch {
+        throw new Error(
+          "sandbox-agent is enabled but not installed in the sandbox image. Install @sandbox-agent/cli in the image and set SANDBOX_AGENT_BASE_URL.",
+        );
+      }
+    }
   }
 
   await session.runBackgroundCommand(
-    `sandbox-agent server --no-token --host 127.0.0.1 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
+    `${sandboxAgentBin} server --no-token --host 127.0.0.1 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
   );
 }
 
