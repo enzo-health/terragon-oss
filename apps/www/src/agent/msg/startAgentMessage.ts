@@ -60,6 +60,7 @@ import {
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { randomUUID } from "node:crypto";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 
 async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   // Task queue limiting is always enabled
@@ -528,7 +529,8 @@ export async function startAgentMessage({
           const transportMode =
             featureFlags.sandboxAgentAcpTransport &&
             supportsAcp &&
-            effectivePermissionMode !== "plan"
+            effectivePermissionMode !== "plan" &&
+            threadChatId !== LEGACY_THREAD_CHAT_ID
               ? ("acp" as const)
               : ("legacy" as const);
           const protocolVersion = transportMode === "acp" ? 2 : 1;
