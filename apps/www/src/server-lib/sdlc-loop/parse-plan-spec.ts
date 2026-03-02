@@ -271,6 +271,59 @@ function parseMarkdownList(text: string): PlanParseResult {
 }
 
 // ---------------------------------------------------------------------------
+// Truncated JSON repair — best-effort closing of brackets/braces
+// ---------------------------------------------------------------------------
+
+function tryRepairTruncatedJson(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+
+  // Strip trailing comma and incomplete string literal
+  let cleaned = trimmed.replace(/,\s*"[^"]*$/, "").replace(/,\s*$/, "");
+
+  // Count unclosed brackets/braces
+  const stack: string[] = [];
+  let inString = false;
+  let escape = false;
+  for (const ch of cleaned) {
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+
+  // If we're inside a string, close it
+  if (inString) {
+    cleaned += '"';
+  }
+
+  // Close remaining brackets/braces in reverse order
+  while (stack.length > 0) {
+    cleaned += stack.pop();
+  }
+
+  // Only return if we actually have something parseable
+  try {
+    JSON.parse(cleaned);
+    return cleaned;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -292,7 +345,7 @@ export function parsePlanSpec(text: string): PlanParseResult {
     // not direct JSON — continue
   }
 
-  // Tier 2: fenced ```json ``` blocks
+  // Tier 2: fenced ```json ``` blocks (closed)
   const fencedJsonMatches = [...trimmed.matchAll(/```json\s*([\s\S]*?)```/gi)];
   for (const match of fencedJsonMatches) {
     const candidate = match[1] ?? "";
@@ -302,6 +355,46 @@ export function parsePlanSpec(text: string): PlanParseResult {
       if (result.ok) return result;
     } catch {
       // continue to next fence
+    }
+  }
+
+  // Tier 2b: unclosed fenced JSON (truncated agent output)
+  const unclosedFenceMatch = trimmed.match(/```json\s*([\s\S]+)$/i);
+  if (unclosedFenceMatch) {
+    const candidate = unclosedFenceMatch[1] ?? "";
+    const repaired = tryRepairTruncatedJson(candidate);
+    if (repaired) {
+      try {
+        const parsed = JSON.parse(repaired);
+        const result = parseJsonObject(parsed, trimmed);
+        if (result.ok) return result;
+      } catch {
+        // repair wasn't sufficient
+      }
+    }
+  }
+
+  // Tier 2c: bare JSON object (no fences)
+  const firstBrace = trimmed.indexOf("{");
+  if (firstBrace >= 0) {
+    const bareCandidate = trimmed.slice(firstBrace);
+    // Try direct parse first
+    try {
+      const parsed = JSON.parse(bareCandidate);
+      const result = parseJsonObject(parsed, trimmed);
+      if (result.ok) return result;
+    } catch {
+      // Try repair on bare JSON
+      const repaired = tryRepairTruncatedJson(bareCandidate);
+      if (repaired) {
+        try {
+          const parsed = JSON.parse(repaired);
+          const result = parseJsonObject(parsed, trimmed);
+          if (result.ok) return result;
+        } catch {
+          // repair wasn't sufficient
+        }
+      }
     }
   }
 

@@ -69,10 +69,34 @@ function parseSessionUpdate(
   const contentText = toTextContent(update.content);
 
   if (
-    sessionUpdate === "agent_message_chunk" ||
-    sessionUpdate === "agent_message" ||
     sessionUpdate === "agent_thought_chunk" ||
     sessionUpdate === "agent_reasoning_chunk"
+  ) {
+    if (!contentText) {
+      return [];
+    }
+    return [
+      {
+        type: "assistant",
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: contentText,
+              signature: "acp-synthetic-signature",
+            },
+          ],
+        },
+      },
+    ];
+  }
+
+  if (
+    sessionUpdate === "agent_message_chunk" ||
+    sessionUpdate === "agent_message"
   ) {
     if (!contentText) {
       return [];
@@ -169,20 +193,34 @@ export function coalesceAssistantTextMessages(
     ) {
       const prevContent = prev.message.content;
       const currContent = msg.message.content;
-      if (
-        Array.isArray(prevContent) &&
-        Array.isArray(currContent) &&
-        prevContent.every((c) => c.type === "text") &&
-        currContent.every((c) => c.type === "text")
-      ) {
-        // Merge: append all current text to the last text block of prev
-        const prevLastText = prevContent[prevContent.length - 1];
-        if (prevLastText && prevLastText.type === "text") {
-          const mergedText = currContent
-            .map((c) => (c.type === "text" ? c.text : ""))
-            .join("");
-          prevLastText.text += mergedText;
-          continue;
+      if (Array.isArray(prevContent) && Array.isArray(currContent)) {
+        // Merge consecutive text-only messages
+        if (
+          prevContent.every((c) => c.type === "text") &&
+          currContent.every((c) => c.type === "text")
+        ) {
+          const prevLastText = prevContent[prevContent.length - 1];
+          if (prevLastText && prevLastText.type === "text") {
+            const mergedText = currContent
+              .map((c) => (c.type === "text" ? c.text : ""))
+              .join("");
+            prevLastText.text += mergedText;
+            continue;
+          }
+        }
+        // Merge consecutive thinking-only messages
+        if (
+          prevContent.every((c) => c.type === "thinking") &&
+          currContent.every((c) => c.type === "thinking")
+        ) {
+          const prevLastThinking = prevContent[prevContent.length - 1];
+          if (prevLastThinking && prevLastThinking.type === "thinking") {
+            const mergedThinking = currContent
+              .map((c) => (c.type === "thinking" ? c.thinking : ""))
+              .join("");
+            prevLastThinking.thinking += mergedThinking;
+            continue;
+          }
         }
       }
     }

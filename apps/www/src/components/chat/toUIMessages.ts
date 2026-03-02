@@ -151,6 +151,15 @@ export function toUIMessages({
               continue;
             }
           }
+          // Merge consecutive thinking parts into one (same ACP streaming pattern)
+          if (part.type === "thinking") {
+            const lastPart =
+              currentAgentMessage.parts[currentAgentMessage.parts.length - 1];
+            if (lastPart && lastPart.type === "thinking") {
+              lastPart.thinking += part.thinking;
+              continue;
+            }
+          }
           pushPart(currentAgentMessage.parts, part);
         }
       }

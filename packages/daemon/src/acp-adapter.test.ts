@@ -36,6 +36,24 @@ function toolMsg(sessionId = "s1"): ClaudeMessage {
   };
 }
 
+function thinkingMsg(thinking: string, sessionId = "s1"): ClaudeMessage {
+  return {
+    type: "assistant",
+    session_id: sessionId,
+    parent_tool_use_id: null,
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "thinking",
+          thinking,
+          signature: "acp-synthetic-signature",
+        },
+      ],
+    },
+  };
+}
+
 function nestedTextMsg(
   text: string,
   parentId: string,
@@ -124,6 +142,35 @@ describe("coalesceAssistantTextMessages", () => {
     expect(result[1]).toEqual(toolMsg());
     // Last text stays
     expect(result[2]).toEqual(textMsg("done"));
+  });
+
+  it("merges consecutive thinking-only messages", () => {
+    const msgs = [
+      thinkingMsg("Let me"),
+      thinkingMsg(" think"),
+      thinkingMsg("..."),
+    ];
+    const result = coalesceAssistantTextMessages(msgs);
+    expect(result).toHaveLength(1);
+    const content =
+      result[0]!.type === "assistant" ? result[0]!.message.content : [];
+    expect(
+      Array.isArray(content) &&
+        content[0]?.type === "thinking" &&
+        content[0].thinking,
+    ).toBe("Let me think...");
+  });
+
+  it("does not merge thinking with text messages", () => {
+    const msgs = [thinkingMsg("thinking..."), textMsg("response")];
+    const result = coalesceAssistantTextMessages(msgs);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not merge text with thinking messages", () => {
+    const msgs = [textMsg("hello"), thinkingMsg("hmm")];
+    const result = coalesceAssistantTextMessages(msgs);
+    expect(result).toHaveLength(2);
   });
 
   it("merges two consecutive runs separated by a tool call", () => {
@@ -221,6 +268,55 @@ describe("parseAcpLineToClaudeMessages", () => {
 
   it("returns empty for invalid JSON", () => {
     expect(parseAcpLineToClaudeMessages("not json", "fb")).toEqual([]);
+  });
+
+  it("parses agent_thought_chunk as thinking block", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess1",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: "Let me consider...",
+        },
+      },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("assistant");
+    if (result[0]!.type === "assistant") {
+      const content = result[0]!.message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]!.type).toBe("thinking");
+        if (content[0]!.type === "thinking") {
+          expect(content[0]!.thinking).toBe("Let me consider...");
+        }
+      }
+    }
+  });
+
+  it("parses agent_reasoning_chunk as thinking block", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess1",
+        update: {
+          sessionUpdate: "agent_reasoning_chunk",
+          content: "Reasoning about this...",
+        },
+      },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    if (result[0]!.type === "assistant") {
+      const content = result[0]!.message.content;
+      if (Array.isArray(content)) {
+        expect(content[0]!.type).toBe("thinking");
+      }
+    }
   });
 
   it("uses fallback sessionId when none provided", () => {

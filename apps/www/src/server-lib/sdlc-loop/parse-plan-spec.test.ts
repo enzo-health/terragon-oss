@@ -213,6 +213,45 @@ describe("parsePlanSpec", () => {
     });
   });
 
+  describe("truncated JSON recovery", () => {
+    it("recovers plan from unclosed fenced JSON block", () => {
+      const input = [
+        "Here is my plan:",
+        "",
+        "```json",
+        '{ "tasks": [{ "title": "Set up auth", "stableTaskId": "setup-auth" }, { "title": "Add tests", "stableTaskId": "add-tests"',
+      ].join("\n");
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Should recover at least the first complete task
+      expect(result.plan.tasks.length).toBeGreaterThanOrEqual(1);
+      expect(result.plan.tasks[0]!.title).toBe("Set up auth");
+    });
+
+    it("recovers plan from truncated bare JSON object", () => {
+      const input =
+        'Some preamble text\n{ "planText": "My plan", "tasks": [{ "title": "First task", "stableTaskId": "first" }';
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(1);
+      expect(result.plan.tasks[0]!.title).toBe("First task");
+    });
+
+    it("recovers plan with truncated string value", () => {
+      const input = [
+        "```json",
+        '{ "tasks": [{ "title": "Complete task", "stableTaskId": "complete" }, { "title": "Truncated desc',
+      ].join("\n");
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks.length).toBeGreaterThanOrEqual(1);
+      expect(result.plan.tasks[0]!.title).toBe("Complete task");
+    });
+  });
+
   describe("error cases", () => {
     it("returns diagnostic for empty text", () => {
       const result = parsePlanSpec("");
