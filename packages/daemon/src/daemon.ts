@@ -986,10 +986,11 @@ export class TerragonDaemon {
                 postError: toObject(promptResponse.error),
               },
             );
+            let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
             promptResponse = await Promise.race([
               sseTerminalPromise.then(() => null as AcpResponseEnvelope | null),
-              new Promise<AcpResponseEnvelope>((resolve) =>
-                setTimeout(
+              new Promise<AcpResponseEnvelope>((resolve) => {
+                recoveryTimer = setTimeout(
                   () =>
                     resolve({
                       error: {
@@ -998,9 +999,10 @@ export class TerragonDaemon {
                       },
                     } as AcpResponseEnvelope),
                   ACP_REQUEST_TIMEOUT_MS,
-                ),
-              ),
+                );
+              }),
             ]);
+            if (recoveryTimer) clearTimeout(recoveryTimer);
           }
         } else {
           // Intentional abort — discard POST error, let stop handler manage terminal message
@@ -2003,167 +2005,169 @@ export class TerragonDaemon {
     this.isFlushInProgress = true;
     this.pendingFlushRequired = false;
 
-    if (this.messageFlushTimer) {
-      clearTimeout(this.messageFlushTimer);
-      this.messageFlushTimer = null;
-    }
-
-    const messageBufferCopy = [...this.messageBuffer];
-    this.messageBuffer = [];
-
-    // Group messages by threadChatId so each thread flushes independently
-    const groupsOrdered: Array<{
-      threadChatId: string;
-      entries: MessageBufferEntry[];
-    }> = [];
-    const groupMap = new Map<string, MessageBufferEntry[]>();
-    for (const entry of messageBufferCopy) {
-      const threadChatId = entry.threadChatId;
-      let group = groupMap.get(threadChatId);
-      if (!group) {
-        group = [];
-        groupMap.set(threadChatId, group);
-        groupsOrdered.push({ threadChatId, entries: group });
-      }
-      group.push(entry);
-    }
-
-    const handledEntries = new Set<MessageBufferEntry>();
-    const failedGroups: Array<{
-      threadId: string;
-      threadChatId: string;
-      messageCount: number;
-      error: unknown;
-    }> = [];
-    const timezone = this.getCurrentTimezone();
-
-    for (const group of groupsOrdered) {
-      const entriesToSend = this.getPendingBatchEntriesForThread({
-        threadChatId: group.threadChatId,
-        entries: group.entries,
-      });
-      if (entriesToSend.length === 0) {
-        continue;
-      }
-      const lastEntry = entriesToSend[entriesToSend.length - 1]!;
-      const threadId = lastEntry.threadId;
-      const threadChatId = lastEntry.threadChatId;
-      const token = lastEntry.token;
-      const processedEntriesToSend =
-        this.processMessagesForSending(entriesToSend);
-      if (processedEntriesToSend.length === 0) {
-        for (const entry of entriesToSend) {
-          handledEntries.add(entry);
-        }
-        if (entriesToSend.length < group.entries.length) {
-          this.pendingFlushRequired = true;
-        }
-        continue;
-      }
-
-      try {
-        const messagesToSend = coalesceAssistantTextMessages(
-          processedEntriesToSend.map((e) => e.message),
-        );
-        await this.sendMessagesToAPI({
-          messages: messagesToSend,
-          entryCount: entriesToSend.length,
-          timezone,
-          token,
-          threadId,
-          threadChatId,
-        });
-        for (const entry of entriesToSend) {
-          handledEntries.add(entry);
-        }
-        if (entriesToSend.length < group.entries.length) {
-          this.pendingFlushRequired = true;
-        }
-      } catch (error) {
-        failedGroups.push({
-          threadId,
-          threadChatId,
-          messageCount: processedEntriesToSend.length,
-          error,
-        });
-      }
-    }
-
-    const unsentEntries = messageBufferCopy.filter(
-      (entry) => !handledEntries.has(entry),
-    );
-    if (unsentEntries.length > 0) {
-      this.messageBuffer = [...unsentEntries, ...this.messageBuffer];
-      if (failedGroups.length === 0) {
-        this.pendingFlushRequired = true;
-      }
-    }
-
     let retryDelayOverrideMs: number | null = null;
-    if (failedGroups.length > 0) {
-      const allClaimInProgress = failedGroups.every((failedGroup) =>
-        isDaemonEventClaimInProgressError(failedGroup.error),
-      );
-      if (allClaimInProgress) {
-        this.retryBackoff.reset();
-        retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
-        for (const failedGroup of failedGroups) {
-          this.runtime.logger.warn(
-            "Daemon event claim is in progress; preserving payload identity and retrying",
-            {
-              error: formatError(failedGroup.error),
-              messageCount: failedGroup.messageCount,
-              threadId: failedGroup.threadId,
-              threadChatId: failedGroup.threadChatId,
-              retryingIn: retryDelayOverrideMs,
-            },
-          );
+    try {
+      if (this.messageFlushTimer) {
+        clearTimeout(this.messageFlushTimer);
+        this.messageFlushTimer = null;
+      }
+
+      const messageBufferCopy = [...this.messageBuffer];
+      this.messageBuffer = [];
+
+      // Group messages by threadChatId so each thread flushes independently
+      const groupsOrdered: Array<{
+        threadChatId: string;
+        entries: MessageBufferEntry[];
+      }> = [];
+      const groupMap = new Map<string, MessageBufferEntry[]>();
+      for (const entry of messageBufferCopy) {
+        const threadChatId = entry.threadChatId;
+        let group = groupMap.get(threadChatId);
+        if (!group) {
+          group = [];
+          groupMap.set(threadChatId, group);
+          groupsOrdered.push({ threadChatId, entries: group });
         }
-        this.pendingFlushRequired = true;
-      } else {
-        this.retryBackoff.increment();
-        const retryInOrNull = this.retryBackoff.retryIn();
-        if (retryInOrNull === null) {
-          for (const failedGroup of failedGroups) {
-            this.runtime.logger.error(
-              "Max retries reached for this message group, scheduling fallback retry",
-              {
-                error: formatError(failedGroup.error),
-                messageCount: failedGroup.messageCount,
-                threadId: failedGroup.threadId,
-                threadChatId: failedGroup.threadChatId,
-                attempt: this.retryBackoff.retryAttempt,
-              },
-            );
+        group.push(entry);
+      }
+
+      const handledEntries = new Set<MessageBufferEntry>();
+      const failedGroups: Array<{
+        threadId: string;
+        threadChatId: string;
+        messageCount: number;
+        error: unknown;
+      }> = [];
+      const timezone = this.getCurrentTimezone();
+
+      for (const group of groupsOrdered) {
+        const entriesToSend = this.getPendingBatchEntriesForThread({
+          threadChatId: group.threadChatId,
+          entries: group.entries,
+        });
+        if (entriesToSend.length === 0) {
+          continue;
+        }
+        const lastEntry = entriesToSend[entriesToSend.length - 1]!;
+        const threadId = lastEntry.threadId;
+        const threadChatId = lastEntry.threadChatId;
+        const token = lastEntry.token;
+        const processedEntriesToSend =
+          this.processMessagesForSending(entriesToSend);
+        if (processedEntriesToSend.length === 0) {
+          for (const entry of entriesToSend) {
+            handledEntries.add(entry);
           }
-          // Schedule a long-delay fallback retry rather than stranding messages
-          this.pendingFlushRequired = true;
-          retryDelayOverrideMs = 30_000;
-          this.retryBackoff.reset();
-        } else {
-          for (const failedGroup of failedGroups) {
-            this.runtime.logger.error(
-              "API call failed for message group, will retry messages",
-              {
-                error: formatError(failedGroup.error),
-                messageCount: failedGroup.messageCount,
-                threadId: failedGroup.threadId,
-                threadChatId: failedGroup.threadChatId,
-                retryingIn: retryInOrNull,
-                attempt: this.retryBackoff.retryAttempt,
-              },
-            );
+          if (entriesToSend.length < group.entries.length) {
+            this.pendingFlushRequired = true;
           }
+          continue;
+        }
+
+        try {
+          const messagesToSend = coalesceAssistantTextMessages(
+            processedEntriesToSend.map((e) => e.message),
+          );
+          await this.sendMessagesToAPI({
+            messages: messagesToSend,
+            entryCount: entriesToSend.length,
+            timezone,
+            token,
+            threadId,
+            threadChatId,
+          });
+          for (const entry of entriesToSend) {
+            handledEntries.add(entry);
+          }
+          if (entriesToSend.length < group.entries.length) {
+            this.pendingFlushRequired = true;
+          }
+        } catch (error) {
+          failedGroups.push({
+            threadId,
+            threadChatId,
+            messageCount: processedEntriesToSend.length,
+            error,
+          });
+        }
+      }
+
+      const unsentEntries = messageBufferCopy.filter(
+        (entry) => !handledEntries.has(entry),
+      );
+      if (unsentEntries.length > 0) {
+        this.messageBuffer = [...unsentEntries, ...this.messageBuffer];
+        if (failedGroups.length === 0) {
           this.pendingFlushRequired = true;
         }
       }
-    } else if (handledEntries.size > 0) {
-      this.retryBackoff.reset();
-    } else if (handledEntries.size === 0) {
-      this.runtime.logger.info("All messages filtered out, nothing to send");
-    }
 
-    this.isFlushInProgress = false;
+      if (failedGroups.length > 0) {
+        const allClaimInProgress = failedGroups.every((failedGroup) =>
+          isDaemonEventClaimInProgressError(failedGroup.error),
+        );
+        if (allClaimInProgress) {
+          this.retryBackoff.reset();
+          retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
+          for (const failedGroup of failedGroups) {
+            this.runtime.logger.warn(
+              "Daemon event claim is in progress; preserving payload identity and retrying",
+              {
+                error: formatError(failedGroup.error),
+                messageCount: failedGroup.messageCount,
+                threadId: failedGroup.threadId,
+                threadChatId: failedGroup.threadChatId,
+                retryingIn: retryDelayOverrideMs,
+              },
+            );
+          }
+          this.pendingFlushRequired = true;
+        } else {
+          this.retryBackoff.increment();
+          const retryInOrNull = this.retryBackoff.retryIn();
+          if (retryInOrNull === null) {
+            for (const failedGroup of failedGroups) {
+              this.runtime.logger.error(
+                "Max retries reached for this message group, scheduling fallback retry",
+                {
+                  error: formatError(failedGroup.error),
+                  messageCount: failedGroup.messageCount,
+                  threadId: failedGroup.threadId,
+                  threadChatId: failedGroup.threadChatId,
+                  attempt: this.retryBackoff.retryAttempt,
+                },
+              );
+            }
+            // Schedule a long-delay fallback retry rather than stranding messages
+            this.pendingFlushRequired = true;
+            retryDelayOverrideMs = 30_000;
+            this.retryBackoff.reset();
+          } else {
+            for (const failedGroup of failedGroups) {
+              this.runtime.logger.error(
+                "API call failed for message group, will retry messages",
+                {
+                  error: formatError(failedGroup.error),
+                  messageCount: failedGroup.messageCount,
+                  threadId: failedGroup.threadId,
+                  threadChatId: failedGroup.threadChatId,
+                  retryingIn: retryInOrNull,
+                  attempt: this.retryBackoff.retryAttempt,
+                },
+              );
+            }
+            this.pendingFlushRequired = true;
+          }
+        }
+      } else if (handledEntries.size > 0) {
+        this.retryBackoff.reset();
+      } else if (handledEntries.size === 0) {
+        this.runtime.logger.info("All messages filtered out, nothing to send");
+      }
+    } finally {
+      this.isFlushInProgress = false;
+    }
     // If new messages arrived while we were flushing, or if we need to retry
     if (this.pendingFlushRequired && this.messageBuffer.length > 0) {
       const retryInOrNull = this.retryBackoff.retryIn();
