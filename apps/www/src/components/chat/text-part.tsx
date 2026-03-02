@@ -107,6 +107,16 @@ function convertCitationsToGitHubLinks(
   );
 }
 
+/**
+ * Insert paragraph breaks after bold text at the start of a line that runs
+ * directly into body text (no whitespace separator). ACP transports like Codex
+ * emit a bold "thinking header" (e.g. **Preparing reply**) followed immediately
+ * by the response body with no newline, which renders as one cramped paragraph.
+ */
+function normalizeBoldHeaders(text: string): string {
+  return text.replace(/^(\*\*[^*]+\*\*)([A-Za-z])/gm, "$1\n\n$2");
+}
+
 const TextPart = memo(function TextPart({
   text,
   githubRepoFullName,
@@ -114,12 +124,14 @@ const TextPart = memo(function TextPart({
   baseBranchName,
   hasCheckpoint,
 }: TextPartProps) {
-  const processedText = convertCitationsToGitHubLinks(
-    text,
-    githubRepoFullName,
-    branchName,
-    baseBranchName,
-    hasCheckpoint,
+  const processedText = normalizeBoldHeaders(
+    convertCitationsToGitHubLinks(
+      text,
+      githubRepoFullName,
+      branchName,
+      baseBranchName,
+      hasCheckpoint,
+    ),
   );
   return (
     <div className="prose prose-sm max-w-none">
