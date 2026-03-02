@@ -2126,7 +2126,7 @@ export class TerragonDaemon {
         if (retryInOrNull === null) {
           for (const failedGroup of failedGroups) {
             this.runtime.logger.error(
-              "Max retries reached for this message group, will wait for next trigger",
+              "Max retries reached for this message group, scheduling fallback retry",
               {
                 error: formatError(failedGroup.error),
                 messageCount: failedGroup.messageCount,
@@ -2136,7 +2136,10 @@ export class TerragonDaemon {
               },
             );
           }
-          // Don't set pendingFlushRequired - wait for next natural trigger
+          // Schedule a long-delay fallback retry rather than stranding messages
+          this.pendingFlushRequired = true;
+          retryDelayOverrideMs = 30_000;
+          this.retryBackoff.reset();
         } else {
           for (const failedGroup of failedGroups) {
             this.runtime.logger.error(
