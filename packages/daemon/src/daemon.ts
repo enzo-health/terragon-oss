@@ -537,6 +537,10 @@ export class TerragonDaemon {
     }
     this.daemonEventRunStates.set(input.threadChatId, runState);
     let sawTerminalEventFromStream = false;
+    let resolveSseTerminal: (() => void) | null = null;
+    const sseTerminalPromise = new Promise<void>((resolve) => {
+      resolveSseTerminal = resolve;
+    });
     let lastAcpMessageAtMs = Date.now();
 
     const createUrl = (bootstrapAgent: boolean): string => {
@@ -646,6 +650,7 @@ export class TerragonDaemon {
           message.type === "custom-stop"
         ) {
           sawTerminalEventFromStream = true;
+          resolveSseTerminal?.();
           this.updateActiveProcessState(input.threadChatId, {
             isCompleted: true,
           });
@@ -854,22 +859,57 @@ export class TerragonDaemon {
       refreshedRunState.acpSessionId = sessionId;
       this.daemonEventRunStates.set(input.threadChatId, refreshedRunState);
 
-      const promptResponse = await postEnvelope({
+      // SSE-primary: fire POST without blocking, use SSE terminal event as completion signal.
+      // The POST holds the connection open until the agent turn finishes, which can take
+      // 5-30+ min. HTTP proxies/LBs may kill it, so we don't rely on it for completion.
+      const promptDone = postEnvelope({
         method: "session/prompt",
         params: {
           sessionId,
           prompt: [{ type: "text", text: input.prompt }],
         },
         noTimeout: true,
+      }).catch((err: unknown) => {
+        // POST failed (network error, proxy killed connection, etc.)
+        // This is non-fatal if SSE already delivered the terminal event.
+        this.runtime.logger.warn("ACP session/prompt POST failed", {
+          threadChatId: input.threadChatId,
+          error: formatError(err),
+          sawTerminalEventFromStream,
+        });
+        return { error: { message: formatError(err) } } as AcpResponseEnvelope;
       });
+
+      // Wait for completion from either channel:
+      // - SSE terminal event (primary, most reliable)
+      // - POST response (fallback if SSE misses the event or ACP server crashes)
+      const promptResponse = await Promise.race([
+        sseTerminalPromise.then(() => null as AcpResponseEnvelope | null),
+        promptDone,
+      ]);
+
+      // If SSE won the race, give the POST a short grace period to also finish
+      const finalPromptResponse =
+        promptResponse ??
+        (await Promise.race([
+          promptDone,
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), 5_000),
+          ),
+        ]));
+
       await waitForStreamQuiescence();
       await closeSse();
+
       if (!this.activeProcesses.has(input.threadChatId)) {
         return;
       }
-      const promptError = toObject(promptResponse.error);
-      if (promptError) {
-        if (!sawTerminalEventFromStream) {
+
+      // SSE terminal event is authoritative. Only use POST response as fallback
+      // if SSE somehow missed the terminal event (e.g. ACP server crashed).
+      if (!sawTerminalEventFromStream && finalPromptResponse) {
+        const promptError = toObject(finalPromptResponse.error);
+        if (promptError) {
           const promptMessage =
             typeof promptError.message === "string"
               ? promptError.message
@@ -889,10 +929,8 @@ export class TerragonDaemon {
             threadChatId: input.threadChatId,
             token: input.token,
           });
-        }
-      } else {
-        if (!sawTerminalEventFromStream) {
-          const promptResult = toObject(promptResponse.result);
+        } else {
+          const promptResult = toObject(finalPromptResponse.result);
           const stopReason =
             typeof promptResult?.stopReason === "string"
               ? promptResult.stopReason
@@ -916,6 +954,7 @@ export class TerragonDaemon {
           });
         }
       }
+
       this.updateActiveProcessState(input.threadChatId, {
         isCompleted: true,
       });
