@@ -158,7 +158,7 @@ class E2BSession implements ISandboxSession {
       },
       user: "root",
       envs: options?.env,
-      cwd: REPO_DIR,
+      cwd: options?.cwd || REPO_DIR,
     });
   }
 

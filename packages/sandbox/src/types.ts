@@ -69,6 +69,7 @@ export interface BackgroundCommandOptions {
   onOutput?: (data: string) => void;
   timeoutMs?: number;
   env?: Record<string, string>;
+  cwd?: string;
 }
 
 export interface ISandboxSession {

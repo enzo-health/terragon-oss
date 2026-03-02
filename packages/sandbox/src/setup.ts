@@ -104,6 +104,7 @@ async function ensureSandboxAgentRunning({
 
   await session.runBackgroundCommand(
     `${sandboxAgentBin} server --no-token --host 127.0.0.1 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
+    { cwd: "/" },
   );
 }
 

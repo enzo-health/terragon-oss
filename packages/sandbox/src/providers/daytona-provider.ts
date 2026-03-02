@@ -282,6 +282,7 @@ class DaytonaSession implements ISandboxSession {
     console.log("Running command:", command);
     await this.runCommandWithSession(command, {
       env: options?.env,
+      cwd: options?.cwd,
       timeoutMs: options?.timeoutMs,
       onStdout: options?.onOutput,
       onStderr: options?.onOutput,

@@ -130,7 +130,7 @@ class DockerSession implements ISandboxSession {
         "exec",
         ...envArgs,
         "-w",
-        path.resolve(path.join(DEFAULT_DIR, REPO_DIR)),
+        options?.cwd || path.resolve(path.join(DEFAULT_DIR, REPO_DIR)),
         this.containerId,
         "bash",
         "-c",
