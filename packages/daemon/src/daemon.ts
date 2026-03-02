@@ -472,7 +472,15 @@ export class TerragonDaemon {
           "ACP transport requested but sandboxAgentAcpTransport feature flag is disabled",
         );
       }
-      await this.runAcpTransportCommand(input);
+      try {
+        await this.runAcpTransportCommand(input);
+      } catch (error) {
+        // Clean up if runAcpTransportCommand threw before its inner try/finally
+        if (this.activeProcesses.has(input.threadChatId)) {
+          this.activeProcesses.delete(input.threadChatId);
+        }
+        throw error;
+      }
       return;
     }
     switch (input.agent) {
@@ -760,7 +768,8 @@ export class TerragonDaemon {
           }
           buffer += decoder
             .decode(value, { stream: true })
-            .replace(/\r\n/g, "\n");
+            .replace(/\r\n/g, "\n")
+            .replace(/\r/g, "\n");
           let separatorIndex = buffer.indexOf("\n\n");
           while (separatorIndex !== -1) {
             const eventChunk = buffer.slice(0, separatorIndex);
@@ -770,11 +779,30 @@ export class TerragonDaemon {
           }
         }
       } finally {
+        // Flush any remaining complete event before releasing
+        if (buffer.trim()) {
+          const separatorIndex = buffer.indexOf("\n\n");
+          if (separatorIndex !== -1) {
+            const eventChunk = buffer.slice(0, separatorIndex);
+            parseSseChunk(eventChunk);
+          }
+        }
         reader.releaseLock();
       }
     };
 
     const sseAbortController = new AbortController();
+    const abortableSleep = (ms: number): Promise<void> =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        const onAbort = (): void => {
+          clearTimeout(timer);
+          resolve();
+        };
+        sseAbortController.signal.addEventListener("abort", onAbort, {
+          once: true,
+        });
+      });
     // Store on process state so killActiveProcess can abort ACP transport
     const processState = this.activeProcesses.get(input.threadChatId);
     if (processState) {
@@ -805,12 +833,14 @@ export class TerragonDaemon {
           if (!response.body) {
             throw new Error("ACP SSE response has no body");
           }
+          const sseStartMs = Date.now();
           await consumeSse(response.body, sseAbortController.signal);
-          consecutiveSseFailures = 0;
+          // Only reset failure counter if connection was stable (>5s)
+          if (Date.now() - sseStartMs > 5_000) {
+            consecutiveSseFailures = 0;
+          }
           if (!sseAbortController.signal.aborted) {
-            await new Promise((resolve) =>
-              setTimeout(resolve, ACP_SSE_RECONNECT_DELAY_MS),
-            );
+            await abortableSleep(ACP_SSE_RECONNECT_DELAY_MS);
           }
         } catch (error) {
           if (sseAbortController.signal.aborted) {
@@ -840,7 +870,7 @@ export class TerragonDaemon {
             ACP_SSE_RECONNECT_DELAY_MS * 2 ** consecutiveSseFailures,
             5_000,
           );
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          await abortableSleep(backoffMs);
         }
       }
     })();
