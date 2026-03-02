@@ -1,9 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { DiffView, DiffModeEnum } from "@git-diff-view/react";
-import "@git-diff-view/react/styles/diff-view-pure.css";
+import {
+  AnnotationSide,
+  type DiffLineEventBaseProps,
+  type DiffLineAnnotation,
+  PatchDiff,
+} from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
 import {
   ChevronRight,
@@ -23,7 +26,6 @@ import { ThreadInfoFull } from "@terragon/shared";
 import { cn } from "@/lib/utils";
 import {
   parseMultiFileDiff,
-  createDiffFile,
   type FileChangeType,
   type ParsedDiffFile,
 } from "@/lib/git-diff";
@@ -145,11 +147,15 @@ interface FileDiffWrapperProps {
   forceUnified?: boolean;
 }
 
+interface CommentWidgetData {
+  isAddition: boolean;
+}
+
 /**
  * Comment widget component
  */
 interface CommentWidgetProps {
-  side: number; // SplitSide enum: 1 = old, 2 = new
+  side: 1 | 2; // SplitSide enum: 1 = old, 2 = new
   lineNumber: number;
   onClose: () => void;
   fileName: string;
@@ -267,21 +273,66 @@ function FileDiffWrapper({
     forceUnified || parsedFile.changeType === "added" ? "unified" : mode;
   const sentinelRef = useRef<HTMLDivElement>(null);
   const isHeaderStuck = useIsStuck(sentinelRef);
+  const [activeAnnotation, setActiveAnnotation] = useState<{
+    lineNumber: number;
+    side: AnnotationSide;
+    isAddition: boolean;
+  } | null>(null);
 
   // Only load text diff data for non-image files when image diff view is enabled
   // If feature flag is off, treat images as binary files and load text diff
   const isImage = isImageDiffViewEnabled && parsedFile.isImage;
-  const {
-    isLoading,
-    data: diffFile,
-    error,
-  } = useQuery({
-    queryKey: ["diffFile", parsedFile.fullDiff],
-    retry: false,
-    staleTime: Infinity,
-    queryFn: () => createDiffFile({ parsedFile }),
-    enabled: expanded && !isImage,
-  });
+  const lineAnnotations = useMemo<
+    DiffLineAnnotation<CommentWidgetData>[]
+  >(() => {
+    if (!enableComments || activeAnnotation === null) return [];
+    return [
+      {
+        side: activeAnnotation.side,
+        lineNumber: activeAnnotation.lineNumber,
+        metadata: {
+          isAddition: activeAnnotation.isAddition,
+        },
+      },
+    ];
+  }, [activeAnnotation, enableComments]);
+
+  const getLineTheme = useMemo(() => {
+    if (theme === "light") return "pierre-light";
+    if (theme === "dark") return "pierre-dark";
+    return "pierre-dark";
+  }, [theme]);
+
+  const themeType = useMemo(() => {
+    if (theme === "light") return "light";
+    if (theme === "dark") return "dark";
+    return "system";
+  }, [theme]);
+
+  const closeActiveAnnotation = () => setActiveAnnotation(null);
+
+  const handleLineClick = ({
+    annotationSide,
+    lineNumber,
+    lineType,
+  }: DiffLineEventBaseProps) => {
+    if (!enableComments) return;
+    if (lineType !== "change-addition" && lineType !== "change-deletion") {
+      return;
+    }
+
+    setActiveAnnotation((prev) => {
+      const isAddition = annotationSide === "additions";
+      if (prev?.lineNumber === lineNumber && prev.side === annotationSide) {
+        return null;
+      }
+      return {
+        lineNumber,
+        side: annotationSide,
+        isAddition,
+      };
+    });
+  };
 
   // For images (when feature enabled), show binary badge instead of line counts
   const showLineCounts = !isImage && !parsedFile.isBinary;
@@ -359,71 +410,36 @@ function FileDiffWrapper({
               headBranchName={thread.branchName ?? thread.repoBaseBranchName}
             />
           </div>
-        ) : error ? (
-          <div className="bg-background overflow-hidden rounded-b-lg text-xs flex px-4 pt-0 pb-2">
-            <span className="text-destructive">{error.message}</span>
-          </div>
-        ) : isLoading ? (
-          <div className="bg-background overflow-hidden rounded-b-lg text-xs flex px-4 pt-0 pb-2">
-            <span className="text-muted-foreground">Loading...</span>
-          </div>
-        ) : diffFile ? (
+        ) : (
           <div className="bg-background overflow-hidden rounded-b-lg">
-            <DiffView
-              diffFile={diffFile}
-              diffViewMode={
-                effectiveMode === "split"
-                  ? DiffModeEnum.Split
-                  : DiffModeEnum.Unified
-              }
-              diffViewTheme={theme === "light" ? "light" : "dark"}
-              diffViewFontSize={12}
-              diffViewHighlight={true}
-              diffViewWrap={true}
-              diffViewAddWidget={enableComments}
-              onAddWidgetClick={
-                enableComments
-                  ? (data) => {
-                      console.log("Widget clicked - full data:", data);
-                      // The library passes the side and lineNumber in renderWidgetLine, not here
-                      // So we'll use a simpler approach - just track if we want to show widgets
-                    }
-                  : undefined
-              }
-              renderWidgetLine={
-                enableComments
-                  ? ({ onClose, side, lineNumber, diffFile }) => {
-                      console.log("renderWidgetLine called:", {
-                        side,
-                        lineNumber,
-                      });
-
-                      // Determine if this is an addition or deletion based on the diff line type
-                      const isAddition =
-                        effectiveMode === "unified"
-                          ? diffFile.getUnifiedLineByLineNumber(
-                              lineNumber,
-                              side,
-                            )?.diff?.type === 1 // DiffLineType.Add
-                          : side === 2; // In split mode, side 2 (new) is addition, side 1 (old) is deletion
-
-                      // Show widget when renderWidgetLine is called (it's only called for the clicked line)
-                      return (
-                        <CommentWidget
-                          side={side}
-                          lineNumber={lineNumber}
-                          onClose={onClose}
-                          fileName={parsedFile.fileName}
-                          thread={thread}
-                          isAddition={isAddition}
-                        />
-                      );
-                    }
-                  : undefined
+            <PatchDiff
+              patch={parsedFile.fullDiff}
+              options={{
+                diffStyle: effectiveMode === "split" ? "split" : "unified",
+                overflow: "wrap",
+                theme: getLineTheme,
+                themeType,
+                onLineClick: enableComments ? handleLineClick : undefined,
+              }}
+              lineAnnotations={lineAnnotations}
+              renderAnnotation={(annotation) => (
+                <CommentWidget
+                  side={annotation.side === "additions" ? 2 : 1}
+                  lineNumber={annotation.lineNumber}
+                  onClose={closeActiveAnnotation}
+                  fileName={parsedFile.fileName}
+                  thread={thread}
+                  isAddition={annotation.metadata?.isAddition ?? false}
+                />
+              )}
+              style={
+                {
+                  "--diffs-font-size": "12px",
+                } as React.CSSProperties
               }
             />
           </div>
-        ) : null)}
+        ))}
     </div>
   );
 }

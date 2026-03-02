@@ -1,6 +1,3 @@
-import { DiffFile } from "@git-diff-view/react";
-import { nanoid } from "nanoid/non-secure";
-
 export type FileChangeType = "added" | "deleted" | "modified";
 
 const IMAGE_EXTENSIONS = new Set([
@@ -174,78 +171,4 @@ export function parseMultiFileDiff(diffString: string): ParsedDiffFile[] {
   }
 
   return files;
-}
-
-/**
- * Creates a DiffFile instance from a ParsedDiffFile
- * @param parsedFile - The parsed diff file metadata
- * @returns A DiffFile instance ready for rendering
- */
-async function createDiffFileInline(
-  parsedFile: ParsedDiffFile,
-): Promise<DiffFile | null> {
-  const data = DiffFile.createInstance({
-    newFile: {
-      fileName: parsedFile.fileName,
-      fileLang: parsedFile.fileLang,
-      content: "",
-    },
-    hunks: [parsedFile.fullDiff],
-  });
-
-  data?.init();
-  data?.buildSplitDiffLines();
-  return data;
-}
-
-let diffWorker: Worker | null = null;
-
-function getDiffWorker() {
-  if (!diffWorker) {
-    diffWorker = new Worker(new URL("./git-diff-worker.ts", import.meta.url));
-  }
-  return diffWorker;
-}
-
-export type DiffFileWorkerMessage = {
-  id: string;
-  parsedFile: ParsedDiffFile;
-};
-
-export type DiffFileWorkerResult = {
-  id: string;
-  bundle?: ReturnType<DiffFile["getBundle"] | DiffFile["_getFullBundle"]>;
-  error?: string;
-};
-
-async function createDiffFileWorker(
-  parsedFile: ParsedDiffFile,
-): Promise<DiffFile | null> {
-  const worker = getDiffWorker();
-  const id = nanoid();
-  worker.postMessage({ id, parsedFile });
-  const diffFileResult = await new Promise<DiffFileWorkerResult>((resolve) => {
-    const onMessage = (event: MessageEvent) => {
-      if (event.data.id === id) {
-        worker.removeEventListener("message", onMessage);
-        resolve(event.data);
-      }
-    };
-    worker.addEventListener("message", onMessage);
-  });
-  if (diffFileResult.error) {
-    throw new Error(diffFileResult.error);
-  }
-  return DiffFile.createInstance({}, diffFileResult.bundle);
-}
-
-export async function createDiffFile({
-  parsedFile,
-}: {
-  parsedFile: ParsedDiffFile;
-}): Promise<DiffFile | null> {
-  if (typeof Worker !== "undefined") {
-    return createDiffFileWorker(parsedFile);
-  }
-  return createDiffFileInline(parsedFile);
 }
