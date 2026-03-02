@@ -799,7 +799,7 @@ export class TerragonDaemon {
         const newSessionResponse = await postEnvelope({
           method: "session/new",
           params: {
-            cwd: ".",
+            cwd: process.cwd(),
             mcpServers: [],
           },
         });
