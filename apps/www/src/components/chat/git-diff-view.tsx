@@ -432,9 +432,11 @@ function FileDiffWrapper({
                   isAddition={annotation.metadata?.isAddition ?? false}
                 />
               )}
-              style={{
-                "--diffs-font-size": "12px",
-              }}
+              style={
+                {
+                  "--diffs-font-size": "12px",
+                } as React.CSSProperties
+              }
             />
           </div>
         ))}
