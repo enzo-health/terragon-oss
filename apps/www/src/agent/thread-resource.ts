@@ -30,19 +30,20 @@ export async function withThreadChat<T>({
   onExit?: (threadChat: ThreadChat | null) => void | Promise<void>;
   onError?: (error: Error) => void | Promise<void>;
 }): Promise<T | undefined> {
-  const threadChat = threadChatId
-    ? await getThreadChat({
-        db,
-        threadId,
-        threadChatId,
-        userId,
-      })
-    : null;
-  if (threadChatId && !threadChat) {
-    throw new ThreadError("unknown-error", "Thread chat not found", null);
-  }
+  let threadChat: ThreadChat | null | undefined = null;
   let result: T | undefined;
   try {
+    threadChat = threadChatId
+      ? await getThreadChat({
+          db,
+          threadId,
+          threadChatId,
+          userId,
+        })
+      : null;
+    if (threadChatId && !threadChat) {
+      throw new ThreadError("unknown-error", "Thread chat not found", null);
+    }
     result = await execOrThrow(threadChat ?? null);
   } catch (error) {
     let errorType: ThreadErrorType;

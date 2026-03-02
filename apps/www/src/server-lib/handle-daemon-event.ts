@@ -705,6 +705,10 @@ async function handleThreadFinish({
   sourceMetadata: ThreadSourceMetadata | null;
   runId: string | null;
 }) {
+  // Deactivate the sandbox immediately so hibernation is never blocked,
+  // even if Vercel kills the function before the rest of the cleanup runs.
+  await setActiveThreadChat({ sandboxId, threadChatId, isActive: false });
+
   // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
   if (sourceType === "linear-mention" && sourceMetadata != null) {
     const linearMeta = sourceMetadata as Extract<
@@ -770,9 +774,6 @@ async function handleThreadFinish({
     if (!skipCheckpoint) {
       waitUntil(checkpointThread({ threadId, threadChatId, userId }));
     }
-    waitUntil(
-      setActiveThreadChat({ sandboxId, threadChatId, isActive: false }),
-    );
     const queuedThreadChats = await getEligibleQueuedThreadChats({ userId });
     if (queuedThreadChats.length > 0) {
       waitUntil(internalPOST(`process-thread-queue/${userId}`));
