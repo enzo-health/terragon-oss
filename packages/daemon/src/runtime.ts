@@ -358,11 +358,9 @@ export class DaemonRuntime implements IDaemonRuntime {
       });
       socket.on("end", () => {
         this.logger.info("Unix socket connection ended");
-        this.listenToUnixSocket(callback);
       });
       socket.on("error", (error) => {
         this.logger.error("Unix socket connection error", { error });
-        this.listenToUnixSocket(callback);
       });
     });
 

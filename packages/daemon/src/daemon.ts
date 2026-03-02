@@ -156,7 +156,8 @@ export class TerragonDaemon {
   private uptimeReportingTimer: NodeJS.Timeout | null = null;
   private isFlushInProgress: boolean = false;
   private pendingFlushRequired: boolean = false;
-  private retryBackoff: RetryBackoff;
+  private retryBackoffs: Map<string, RetryBackoff> = new Map();
+  private retryConfig: RetryConfig;
 
   private featureFlags: FeatureFlags = {} as FeatureFlags;
   private agentFrontmatterReader: AgentFrontmatterReader;
@@ -181,7 +182,7 @@ export class TerragonDaemon {
     this.messageHandleDelay = messageHandleDelay;
     this.messageFlushDelay = messageFlushDelay;
     this.uptimeReportingInterval = uptimeReportingInterval;
-    this.retryBackoff = new RetryBackoff(retryConfig);
+    this.retryConfig = retryConfig;
     this.mcpConfigPath = mcpConfigPath;
     this.agentFrontmatterReader = new AgentFrontmatterReader(runtime);
 
@@ -203,6 +204,15 @@ export class TerragonDaemon {
         );
       }
     }
+  }
+
+  private getRetryBackoff(threadChatId: string): RetryBackoff {
+    let backoff = this.retryBackoffs.get(threadChatId);
+    if (!backoff) {
+      backoff = new RetryBackoff(this.retryConfig);
+      this.retryBackoffs.set(threadChatId, backoff);
+    }
+    return backoff;
   }
 
   /**
@@ -566,6 +576,8 @@ export class TerragonDaemon {
       resolveSseTerminal = resolve;
     });
     let lastAcpMessageAtMs = Date.now();
+    let lastEventId: string | null = null;
+    const promptPostAbortController = new AbortController();
 
     const createUrl = (bootstrapAgent: boolean): string => {
       const url = new URL(`${baseUrl}/v1/acp/${encodeURIComponent(serverId)}`);
@@ -612,12 +624,15 @@ export class TerragonDaemon {
       params,
       bootstrap,
       noTimeout,
+      signal,
     }: {
       method: string;
       params?: Record<string, unknown>;
       bootstrap?: boolean;
       /** Skip the request timeout (for long-running calls like session/prompt). */
       noTimeout?: boolean;
+      /** Optional abort signal to cancel the request externally. */
+      signal?: AbortSignal;
     }): Promise<AcpResponseEnvelope> => {
       const envelope: AcpRequestEnvelope = {
         jsonrpc: "2.0",
@@ -628,6 +643,11 @@ export class TerragonDaemon {
       if (params) {
         envelope.params = params;
       }
+      const timeoutSig = timeoutSignal(noTimeout ? null : undefined);
+      const combinedSignal =
+        signal && timeoutSig
+          ? AbortSignal.any([signal, timeoutSig])
+          : (signal ?? timeoutSig);
       const response = await fetch(createUrl(!!bootstrap), {
         method: "POST",
         headers: {
@@ -635,7 +655,7 @@ export class TerragonDaemon {
           Accept: "application/json",
         },
         body: JSON.stringify(envelope),
-        signal: timeoutSignal(noTimeout ? null : undefined),
+        signal: combinedSignal,
       });
       const bodyText = await response.text();
       if (!response.ok) {
@@ -701,6 +721,10 @@ export class TerragonDaemon {
         }
         if (line.startsWith("event:")) {
           eventName = line.slice(6).trim();
+          continue;
+        }
+        if (line.startsWith("id:")) {
+          lastEventId = line.slice(3).trim();
           continue;
         }
         if (line.startsWith("data:")) {
@@ -818,11 +842,15 @@ export class TerragonDaemon {
       let consecutiveSseFailures = 0;
       while (!sseAbortController.signal.aborted) {
         try {
+          const sseHeaders: Record<string, string> = {
+            Accept: "text/event-stream",
+          };
+          if (lastEventId) {
+            sseHeaders["Last-Event-ID"] = lastEventId;
+          }
           const response = await fetch(createUrl(false), {
             method: "GET",
-            headers: {
-              Accept: "text/event-stream",
-            },
+            headers: sseHeaders,
             signal: sseAbortController.signal,
           });
           if (!response.ok) {
@@ -945,6 +973,7 @@ export class TerragonDaemon {
           prompt: [{ type: "text", text: input.prompt }],
         },
         noTimeout: true,
+        signal: promptPostAbortController.signal,
       }).catch((err: unknown) => {
         // POST failed (network error, proxy killed connection, etc.)
         // This is non-fatal if SSE already delivered the terminal event.
@@ -1128,6 +1157,7 @@ export class TerragonDaemon {
         isCompleted: true,
       });
     } finally {
+      promptPostAbortController.abort();
       await closeSse();
       // Fire-and-forget: server cleanup is best-effort, don't block on it
       fetch(createUrl(false), {
@@ -1264,6 +1294,7 @@ export class TerragonDaemon {
     }
     runState.cleanupRequested = true;
     this.daemonEventRunStates.set(threadChatId, runState);
+    this.retryBackoffs.delete(threadChatId);
   }
 
   private maybeCleanupDaemonEventRunState(threadChatId: string): void {
@@ -1966,7 +1997,7 @@ export class TerragonDaemon {
    * Add a message to the buffer and trigger debounced sending
    */
   private addMessageToBuffer(entry: MessageBufferEntry): void {
-    this.retryBackoff.reset();
+    this.getRetryBackoff(entry.threadChatId).reset();
     this.messageBuffer.push(entry);
     this.runtime.logger.debug("Added message to buffer", {
       bufferSize: this.messageBuffer.length,
@@ -2108,9 +2139,8 @@ export class TerragonDaemon {
           isDaemonEventClaimInProgressError(failedGroup.error),
         );
         if (allClaimInProgress) {
-          this.retryBackoff.reset();
-          retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
           for (const failedGroup of failedGroups) {
+            this.getRetryBackoff(failedGroup.threadChatId).reset();
             this.runtime.logger.warn(
               "Daemon event claim is in progress; preserving payload identity and retrying",
               {
@@ -2118,16 +2148,18 @@ export class TerragonDaemon {
                 messageCount: failedGroup.messageCount,
                 threadId: failedGroup.threadId,
                 threadChatId: failedGroup.threadChatId,
-                retryingIn: retryDelayOverrideMs,
+                retryingIn: DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS,
               },
             );
           }
+          retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
           this.pendingFlushRequired = true;
         } else {
-          this.retryBackoff.increment();
-          const retryInOrNull = this.retryBackoff.retryIn();
-          if (retryInOrNull === null) {
-            for (const failedGroup of failedGroups) {
+          for (const failedGroup of failedGroups) {
+            const backoff = this.getRetryBackoff(failedGroup.threadChatId);
+            backoff.increment();
+            const retryInOrNull = backoff.retryIn();
+            if (retryInOrNull === null) {
               this.runtime.logger.error(
                 "Max retries reached for this message group, scheduling fallback retry",
                 {
@@ -2135,16 +2167,11 @@ export class TerragonDaemon {
                   messageCount: failedGroup.messageCount,
                   threadId: failedGroup.threadId,
                   threadChatId: failedGroup.threadChatId,
-                  attempt: this.retryBackoff.retryAttempt,
+                  attempt: backoff.retryAttempt,
                 },
               );
-            }
-            // Schedule a long-delay fallback retry rather than stranding messages
-            this.pendingFlushRequired = true;
-            retryDelayOverrideMs = 30_000;
-            this.retryBackoff.reset();
-          } else {
-            for (const failedGroup of failedGroups) {
+              backoff.reset();
+            } else {
               this.runtime.logger.error(
                 "API call failed for message group, will retry messages",
                 {
@@ -2153,15 +2180,18 @@ export class TerragonDaemon {
                   threadId: failedGroup.threadId,
                   threadChatId: failedGroup.threadChatId,
                   retryingIn: retryInOrNull,
-                  attempt: this.retryBackoff.retryAttempt,
+                  attempt: backoff.retryAttempt,
                 },
               );
             }
-            this.pendingFlushRequired = true;
           }
+          this.pendingFlushRequired = true;
         }
       } else if (handledEntries.size > 0) {
-        this.retryBackoff.reset();
+        // Reset backoff for successfully flushed threads
+        for (const entry of handledEntries) {
+          this.getRetryBackoff(entry.threadChatId).reset();
+        }
       } else if (handledEntries.size === 0) {
         this.runtime.logger.info("All messages filtered out, nothing to send");
       }
@@ -2170,9 +2200,19 @@ export class TerragonDaemon {
     }
     // If new messages arrived while we were flushing, or if we need to retry
     if (this.pendingFlushRequired && this.messageBuffer.length > 0) {
-      const retryInOrNull = this.retryBackoff.retryIn();
+      // Compute minimum retry delay across all threads that have pending retries
+      let minRetryDelay: number | null = null;
+      for (const [, backoff] of this.retryBackoffs) {
+        const delay = backoff.retryIn();
+        if (
+          delay !== null &&
+          (minRetryDelay === null || delay < minRetryDelay)
+        ) {
+          minRetryDelay = delay;
+        }
+      }
       const delay =
-        retryDelayOverrideMs ?? retryInOrNull ?? this.messageFlushDelay;
+        retryDelayOverrideMs ?? minRetryDelay ?? this.messageFlushDelay;
       this.messageFlushTimer = setTimeout(() => {
         this.flushMessageBuffer();
       }, delay);
