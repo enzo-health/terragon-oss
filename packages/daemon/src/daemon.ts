@@ -565,12 +565,15 @@ export class TerragonDaemon {
       }
     };
 
-    const timeoutSignal = (): AbortSignal | undefined => {
+    const timeoutSignal = (
+      overrideMs?: number | null,
+    ): AbortSignal | undefined => {
+      if (overrideMs === null) return undefined;
       if (
         typeof AbortSignal !== "undefined" &&
         typeof AbortSignal.timeout === "function"
       ) {
-        return AbortSignal.timeout(ACP_REQUEST_TIMEOUT_MS);
+        return AbortSignal.timeout(overrideMs ?? ACP_REQUEST_TIMEOUT_MS);
       }
       return undefined;
     };
@@ -580,10 +583,13 @@ export class TerragonDaemon {
       method,
       params,
       bootstrap,
+      noTimeout,
     }: {
       method: string;
       params?: Record<string, unknown>;
       bootstrap?: boolean;
+      /** Skip the request timeout (for long-running calls like session/prompt). */
+      noTimeout?: boolean;
     }): Promise<AcpResponseEnvelope> => {
       const envelope: AcpRequestEnvelope = {
         jsonrpc: "2.0",
@@ -601,7 +607,7 @@ export class TerragonDaemon {
           Accept: "application/json",
         },
         body: JSON.stringify(envelope),
-        signal: timeoutSignal(),
+        signal: timeoutSignal(noTimeout ? null : undefined),
       });
       const bodyText = await response.text();
       if (!response.ok) {
@@ -854,6 +860,7 @@ export class TerragonDaemon {
           sessionId,
           prompt: [{ type: "text", text: input.prompt }],
         },
+        noTimeout: true,
       });
       await waitForStreamQuiescence();
       await closeSse();
