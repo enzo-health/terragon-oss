@@ -191,8 +191,7 @@ This project implements a **markdown renderer** with support for various element
 ## Installation
 
 \`\`\`bash
-npm install react-markdown react-syntax-highlighter
-npm install --save-dev @types/react-syntax-highlighter
+npm install streamdown @streamdown/code
 \`\`\`
 
 ## Usage Example
@@ -211,7 +210,7 @@ function MyComponent() {
 |------|------|-------------|----------|
 | text | string | Markdown text to render | Yes |
 
-> **Note:** This component uses \`react-markdown\` with \`remark-gfm\` for GitHub-flavored markdown support.
+> **Note:** This component uses \`streamdown\` with \`@streamdown/code\` for markdown rendering and syntax highlighting.
 
 ## File Structure
 

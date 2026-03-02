@@ -1,6 +1,6 @@
-import { memo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { memo, useMemo, useState } from "react";
+import { Streamdown } from "streamdown";
+import "streamdown/styles.css";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 interface ThinkingPartProps {
@@ -26,6 +26,38 @@ const ThinkingPart = memo(function ThinkingPart({
 }: ThinkingPartProps) {
   const [isExpanded, setIsExpanded] = useState(isLatest);
 
+  const components = useMemo(
+    () => ({
+      p({ children }: any) {
+        return <p className="mb-2 last:mb-0 break-all">{children}</p>;
+      },
+      ul({ children }: any) {
+        return <ul className="list-disc pl-4 mb-2 break-all">{children}</ul>;
+      },
+      ol({ children }: any) {
+        return <ol className="list-decimal pl-4 mb-2 break-all">{children}</ol>;
+      },
+      li({ children }: any) {
+        return <li className="mb-1 break-all">{children}</li>;
+      },
+      code({ children }: any) {
+        return (
+          <code className="bg-background/50 px-1 py-0.5 rounded text-xs font-mono break-all">
+            {children}
+          </code>
+        );
+      },
+      blockquote({ children }: any) {
+        return (
+          <blockquote className="border-l-2 border-border pl-3 italic my-2">
+            {children}
+          </blockquote>
+        );
+      },
+    }),
+    [],
+  );
+
   if (!isExpanded) {
     return (
       <button
@@ -48,43 +80,7 @@ const ThinkingPart = memo(function ThinkingPart({
         <span className="truncate">Thinking...</span>
       </button>
       <div className="overflow-hidden break-all">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            p({ children }) {
-              return <p className="mb-2 last:mb-0 break-all">{children}</p>;
-            },
-            ul({ children }) {
-              return (
-                <ul className="list-disc pl-4 mb-2 break-all">{children}</ul>
-              );
-            },
-            ol({ children }) {
-              return (
-                <ol className="list-decimal pl-4 mb-2 break-all">{children}</ol>
-              );
-            },
-            li({ children }) {
-              return <li className="mb-1 break-all">{children}</li>;
-            },
-            code({ children }) {
-              return (
-                <code className="bg-background/50 px-1 py-0.5 rounded text-xs font-mono break-all">
-                  {children}
-                </code>
-              );
-            },
-            blockquote({ children }) {
-              return (
-                <blockquote className="border-l-2 border-border pl-3 italic my-2">
-                  {children}
-                </blockquote>
-              );
-            },
-          }}
-        >
-          {thinking}
-        </ReactMarkdown>
+        <Streamdown components={components}>{thinking}</Streamdown>
       </div>
     </div>
   );
