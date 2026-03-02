@@ -85,14 +85,20 @@ async function ensureSandboxAgentRunning({
   // binaries in /usr/bin instead of /usr/local/bin
   let sandboxAgentBin = "sandbox-agent";
   try {
-    await session.runCommand("command -v sandbox-agent >/dev/null 2>&1", cmdOpts);
+    await session.runCommand(
+      "command -v sandbox-agent >/dev/null 2>&1",
+      cmdOpts,
+    );
   } catch {
     try {
       await session.runCommand("test -x /usr/bin/sandbox-agent", cmdOpts);
       sandboxAgentBin = "/usr/bin/sandbox-agent";
     } catch {
       try {
-        await session.runCommand("test -x /usr/local/bin/sandbox-agent", cmdOpts);
+        await session.runCommand(
+          "test -x /usr/local/bin/sandbox-agent",
+          cmdOpts,
+        );
         sandboxAgentBin = "/usr/local/bin/sandbox-agent";
       } catch {
         throw new Error(
@@ -310,7 +316,7 @@ export async function gitCloneRepo(
     cloneCommand += ` --branch ${bashQuote(options.repoBaseBranchName)}`;
   }
   cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${session.repoDir}`;
-  await session.runCommand(cloneCommand, { cwd: "/" });
+  await session.runCommand(cloneCommand, { cwd: `/${session.homeDir}` });
 }
 
 export async function setupGitCredentials(
