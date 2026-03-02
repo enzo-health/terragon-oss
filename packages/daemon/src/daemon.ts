@@ -963,10 +963,10 @@ export class TerragonDaemon {
       refreshedRunState.acpSessionId = sessionId;
       this.daemonEventRunStates.set(input.threadChatId, refreshedRunState);
 
-      // SSE-primary: fire POST without blocking, use SSE terminal event as completion signal.
-      // The POST holds the connection open until the agent turn finishes, which can take
-      // 5-30+ min. HTTP proxies/LBs may kill it, so we don't rely on it for completion.
-      const promptDone = postEnvelope({
+      // Fire POST as trigger only — don't use response for completion.
+      // The POST holds the connection open for the entire agent turn (5-30+ min).
+      // HTTP proxies/LBs may kill it, so SSE terminal event is the sole completion signal.
+      postEnvelope({
         method: "session/prompt",
         params: {
           sessionId,
@@ -975,81 +975,30 @@ export class TerragonDaemon {
         noTimeout: true,
         signal: promptPostAbortController.signal,
       }).catch((err: unknown) => {
-        // POST failed (network error, proxy killed connection, etc.)
-        // This is non-fatal if SSE already delivered the terminal event.
-        this.runtime.logger.warn("ACP session/prompt POST failed", {
-          threadChatId: input.threadChatId,
-          error: formatError(err),
-          sawTerminalEventFromStream,
-        });
-        return {
-          error: { message: getErrorMessage(err) },
-        } as AcpResponseEnvelope;
+        // POST failures are non-fatal: SSE terminal event is sole completion signal
+        if (!promptPostAbortController.signal.aborted) {
+          this.runtime.logger.warn(
+            "ACP session/prompt POST failed (non-fatal)",
+            {
+              threadChatId: input.threadChatId,
+              error: formatError(err),
+            },
+          );
+        }
       });
 
-      // Wait for completion from either channel:
-      // - SSE terminal event (primary, most reliable)
-      // - POST response (fallback if SSE misses the event or ACP server crashes)
-      let promptResponse = await Promise.race([
-        sseTerminalPromise.then(() => null as AcpResponseEnvelope | null),
-        promptDone,
+      // Single await: SSE terminal event OR overall timeout
+      let overallTimer: ReturnType<typeof setTimeout> | undefined;
+      const completionReason = await Promise.race([
+        sseTerminalPromise.then(() => "sse_terminal" as const),
+        new Promise<"timeout">((resolve) => {
+          overallTimer = setTimeout(
+            () => resolve("timeout"),
+            ACP_REQUEST_TIMEOUT_MS,
+          );
+        }),
       ]);
-
-      // If the POST returned an error (e.g. 504 proxy timeout) but the SSE
-      // stream is still alive (received an event recently), the agent is still
-      // working. Discard the POST error and wait for the SSE terminal event.
-      if (
-        promptResponse &&
-        toObject(promptResponse.error) &&
-        !sawTerminalEventFromStream
-      ) {
-        // If aborted intentionally (stop command), don't enter recovery
-        if (!sseAbortController.signal.aborted) {
-          const sinceLastSseMs = Date.now() - lastAcpMessageAtMs;
-          if (sinceLastSseMs < 30_000) {
-            this.runtime.logger.info(
-              "ACP POST failed but SSE stream is alive — waiting for SSE terminal event",
-              {
-                threadChatId: input.threadChatId,
-                sinceLastSseMs,
-                postError: toObject(promptResponse.error),
-              },
-            );
-            let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
-            promptResponse = await Promise.race([
-              sseTerminalPromise.then(() => null as AcpResponseEnvelope | null),
-              new Promise<AcpResponseEnvelope>((resolve) => {
-                recoveryTimer = setTimeout(
-                  () =>
-                    resolve({
-                      error: {
-                        message:
-                          "SSE alive but no terminal event within timeout",
-                      },
-                    } as AcpResponseEnvelope),
-                  ACP_REQUEST_TIMEOUT_MS,
-                );
-              }),
-            ]);
-            if (recoveryTimer) clearTimeout(recoveryTimer);
-          }
-        } else {
-          // Intentional abort — discard POST error, let stop handler manage terminal message
-          promptResponse = null;
-        }
-      }
-
-      // If SSE won the race, give the POST a short grace period to also finish
-      let graceTimer: ReturnType<typeof setTimeout> | undefined;
-      const finalPromptResponse =
-        promptResponse ??
-        (await Promise.race([
-          promptDone,
-          new Promise<null>((resolve) => {
-            graceTimer = setTimeout(() => resolve(null), 5_000);
-          }),
-        ]));
-      if (graceTimer) clearTimeout(graceTimer);
+      if (overallTimer) clearTimeout(overallTimer);
 
       await waitForStreamQuiescence();
       await closeSse();
@@ -1058,69 +1007,19 @@ export class TerragonDaemon {
         return;
       }
 
-      // SSE terminal event is authoritative. Only use POST response as fallback
-      // if SSE somehow missed the terminal event (e.g. ACP server crashed).
-      if (!sawTerminalEventFromStream && finalPromptResponse) {
-        const promptError = toObject(finalPromptResponse.error);
-        if (promptError) {
-          const promptMessage =
-            typeof promptError.message === "string"
-              ? promptError.message
-              : "ACP session/prompt failed (no terminal SSE event received)";
-          this.addMessageToBuffer({
-            agent: input.agent,
-            message: {
-              type: "result",
-              subtype: "error_during_execution",
-              duration_ms: this.getProcessDurationMs(input.threadChatId),
-              is_error: true,
-              num_turns: 1,
-              error: promptMessage,
-              session_id: sessionId,
-            },
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        } else {
-          const promptResult = toObject(finalPromptResponse.result);
-          const stopReason =
-            typeof promptResult?.stopReason === "string"
-              ? promptResult.stopReason
-              : "acp_prompt_complete";
-          this.addMessageToBuffer({
-            agent: input.agent,
-            message: {
-              type: "result",
-              subtype: "success",
-              total_cost_usd: 0,
-              duration_ms: this.getProcessDurationMs(input.threadChatId),
-              duration_api_ms: this.getProcessDurationMs(input.threadChatId),
-              is_error: false,
-              num_turns: 1,
-              result: stopReason,
-              session_id: sessionId,
-            },
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        }
-      }
-
-      if (
-        !sawTerminalEventFromStream &&
-        !finalPromptResponse &&
-        circuitBreakerTripped
-      ) {
+      if (sawTerminalEventFromStream) {
+        // SSE delivered the terminal event — already buffered by applyAcpMessages.
+        // Nothing more to do.
+      } else if (completionReason === "timeout") {
         this.addMessageToBuffer({
           agent: input.agent,
           message: {
             type: "custom-error",
             session_id: null,
             duration_ms: this.getProcessDurationMs(input.threadChatId),
-            error_info:
-              "ACP SSE circuit breaker tripped — agent connection lost after max consecutive failures",
+            error_info: circuitBreakerTripped
+              ? "ACP SSE circuit breaker tripped — agent connection lost after max consecutive failures"
+              : "ACP completion timeout — no terminal SSE event received within timeout",
           },
           threadId: input.threadId,
           threadChatId: input.threadChatId,
