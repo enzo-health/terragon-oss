@@ -61,8 +61,5 @@
     "*.{js,jsx,ts,tsx,json,css,scss,md,mdx,html,mjs}": [
       "prettier --write --ignore-path .prettierignore --config .prettierrc"
     ]
-  },
-  "dependencies": {
-    "@git-diff-view/react": "^0.0.35"
   }
 }

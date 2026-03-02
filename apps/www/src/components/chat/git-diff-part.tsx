@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
 import { useThread } from "./thread-context";
-import "@git-diff-view/react/styles/diff-view-pure.css";
 import { useTheme } from "next-themes";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
