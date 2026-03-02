@@ -109,6 +109,8 @@ type ActiveProcessState = {
   isStopping: boolean;
   isCompleted: boolean;
   pollInterval: NodeJS.Timeout | null;
+  /** AbortController for ACP transport — signals SSE loop and unblocks Promise.race on stop. */
+  acpAbortController: AbortController | null;
 };
 
 type DaemonEventRunState = {
@@ -356,6 +358,11 @@ export class TerragonDaemon {
         });
         killProcessGroup(this.runtime, processId);
       }
+      // Abort ACP transport (SSE loop + unblock Promise.race)
+      if (activeProcessState.acpAbortController) {
+        this.runtime.logger.info("Aborting ACP transport", { threadChatId });
+        activeProcessState.acpAbortController.abort();
+      }
       // Clean up polling interval to prevent memory leaks
       if (activeProcessState.pollInterval) {
         this.runtime.logger.info("Clearing polling interval", {
@@ -444,6 +451,7 @@ export class TerragonDaemon {
       threadChatId: input.threadChatId,
       token: input.token,
       pollInterval: null,
+      acpAbortController: null,
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.initializeDaemonEventRunStateForNewRun({
@@ -759,6 +767,17 @@ export class TerragonDaemon {
     };
 
     const sseAbortController = new AbortController();
+    // Store on process state so killActiveProcess can abort ACP transport
+    const processState = this.activeProcesses.get(input.threadChatId);
+    if (processState) {
+      processState.acpAbortController = sseAbortController;
+    }
+    // When externally aborted (stop message), unblock the SSE terminal promise
+    sseAbortController.signal.addEventListener(
+      "abort",
+      () => resolveSseTerminal?.(),
+      { once: true },
+    );
     const sseLoop = (async () => {
       while (!sseAbortController.signal.aborted) {
         try {
@@ -877,7 +896,9 @@ export class TerragonDaemon {
           error: formatError(err),
           sawTerminalEventFromStream,
         });
-        return { error: { message: formatError(err) } } as AcpResponseEnvelope;
+        return {
+          error: { message: getErrorMessage(err) },
+        } as AcpResponseEnvelope;
       });
 
       // Wait for completion from either channel:
@@ -889,14 +910,16 @@ export class TerragonDaemon {
       ]);
 
       // If SSE won the race, give the POST a short grace period to also finish
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
       const finalPromptResponse =
         promptResponse ??
         (await Promise.race([
           promptDone,
-          new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), 5_000),
-          ),
+          new Promise<null>((resolve) => {
+            graceTimer = setTimeout(() => resolve(null), 5_000);
+          }),
         ]));
+      if (graceTimer) clearTimeout(graceTimer);
 
       await waitForStreamQuiescence();
       await closeSse();
