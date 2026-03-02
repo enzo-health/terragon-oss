@@ -75,8 +75,14 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
         ];
       }
       return [];
-    default:
+    default: {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[toDBMessage] Unknown ClaudeMessage type:",
+        (claudeMessage as { type?: string }).type,
+      );
       return [];
+    }
   }
 }
 

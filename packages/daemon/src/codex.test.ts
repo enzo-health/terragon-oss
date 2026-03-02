@@ -118,7 +118,7 @@ describe("parseCodexLine", () => {
     }
   });
 
-  test("should parse command_execution with completed status (error)", () => {
+  test("should parse command_execution with completed status (error) and include exit code", () => {
     const line =
       '{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"bash -lc \'cat nonexistent\'","aggregated_output":"cat: nonexistent: No such file or directory\\n","exit_code":1,"status":"completed"}}';
     const results = parseCodexLine({ line, runtime: mockRuntime });
@@ -136,11 +136,21 @@ describe("parseCodexLine", () => {
           tool_use_id: "item_2",
           is_error: true,
         });
+        if (
+          content[0] &&
+          typeof content[0] === "object" &&
+          "content" in content[0]
+        ) {
+          expect(content[0].content).toContain("[exit code: 1]");
+          expect(content[0].content).toContain(
+            "cat: nonexistent: No such file or directory",
+          );
+        }
       }
     }
   });
 
-  test("should parse command_execution with declined status as error", () => {
+  test("should parse command_execution with declined status as non-error", () => {
     const line =
       '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"bash -lc dangerous","aggregated_output":"Command was denied","status":"declined"}}';
     const results = parseCodexLine({ line, runtime: mockRuntime });
@@ -158,7 +168,7 @@ describe("parseCodexLine", () => {
           type: "tool_result",
           tool_use_id: "item_3",
           content: "Command was denied",
-          is_error: true,
+          is_error: false,
         });
       }
     }
@@ -183,21 +193,51 @@ describe("parseCodexLine", () => {
     });
   });
 
-  test("should return null for file_change and log changes", () => {
+  test("should surface file_change as Write tool call", () => {
     const line =
       '{"type":"item.completed","item":{"id":"item_7","type":"file_change","changes":[{"path":"/Users/michael/Projects/test-project/src/math.ts","kind":"update"}],"status":"completed"}}';
     const results = parseCodexLine({ line, runtime: mockRuntime });
 
+    expect(results).toHaveLength(2);
+
+    const [toolUse, toolResult] = results;
+    expect(toolUse?.type).toBe("assistant");
+    if (toolUse?.type === "assistant") {
+      const content = toolUse.message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_use",
+          name: "Write",
+          id: "item_7",
+          input: {
+            file_path: "/Users/michael/Projects/test-project/src/math.ts",
+            content: "",
+          },
+        });
+      }
+    }
+
+    expect(toolResult?.type).toBe("user");
+    if (toolResult?.type === "user") {
+      const content = toolResult.message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_7",
+          content: "/Users/michael/Projects/test-project/src/math.ts",
+          is_error: false,
+        });
+      }
+    }
+  });
+
+  test("should return empty for file_change with no changes", () => {
+    const line =
+      '{"type":"item.completed","item":{"id":"item_8","type":"file_change","changes":[],"status":"completed"}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
     expect(results).toHaveLength(0);
-    expect(mockRuntime.logger.info).toHaveBeenCalledWith("Codex file changes", {
-      changes: [
-        {
-          path: "/Users/michael/Projects/test-project/src/math.ts",
-          kind: "update",
-        },
-      ],
-      paths: "/Users/michael/Projects/test-project/src/math.ts",
-    });
   });
 
   test("should handle invalid JSON as text", () => {
@@ -303,11 +343,11 @@ describe("parseCodexLine", () => {
     }
   });
 
-  test("should parse web_search item started and completed", () => {
+  test("should parse web_search item started and completed with structured results", () => {
     const startedLine =
       '{"type":"item.started","item":{"id":"item_web","type":"web_search","query":"latest ai news"}}';
     const completedLine =
-      '{"type":"item.completed","item":{"id":"item_web","type":"web_search","query":"latest ai news","results":["result1","result2"]}}';
+      '{"type":"item.completed","item":{"id":"item_web","type":"web_search","query":"latest ai news","results":[{"title":"AI News","url":"https://example.com","snippet":"Latest updates"}]}}';
 
     const started = parseCodexLine({
       line: startedLine,
@@ -353,7 +393,9 @@ describe("parseCodexLine", () => {
           typeof content[0] === "object" &&
           "content" in content[0]
         ) {
-          expect(content[0].content).toContain("result1");
+          expect(content[0].content).toContain("AI News");
+          expect(content[0].content).toContain("https://example.com");
+          expect(content[0].content).toContain("Latest updates");
         }
       }
     }

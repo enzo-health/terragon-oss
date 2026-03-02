@@ -33,9 +33,12 @@ function toTextContent(content: unknown): string {
           return "";
         }
         const text = itemObject.text;
-        return typeof text === "string" ? text : "";
+        if (typeof text === "string") return text;
+        const itemType =
+          typeof itemObject.type === "string" ? itemObject.type : "unknown";
+        return `[${itemType} content]`;
       })
-      .join("");
+      .join("\n");
   }
   const contentObject = asObject(content);
   if (!contentObject) {

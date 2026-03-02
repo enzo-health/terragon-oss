@@ -49,6 +49,8 @@ const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
 const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 10;
 const ACP_REQUEST_TIMEOUT_MS = 120_000;
+const ACP_SSE_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 min of SSE silence
+const ACP_INACTIVITY_CHECK_INTERVAL_MS = 30_000; // check every 30s
 const ACP_TERMINAL_QUIESCENCE_MS = 300;
 const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
 
@@ -987,18 +989,20 @@ export class TerragonDaemon {
         }
       });
 
-      // Single await: SSE terminal event OR overall timeout
-      let overallTimer: ReturnType<typeof setTimeout> | undefined;
+      // Await SSE terminal event OR prolonged SSE inactivity
+      let inactivityTimer: ReturnType<typeof setInterval> | undefined;
       const completionReason = await Promise.race([
         sseTerminalPromise.then(() => "sse_terminal" as const),
         new Promise<"timeout">((resolve) => {
-          overallTimer = setTimeout(
-            () => resolve("timeout"),
-            ACP_REQUEST_TIMEOUT_MS,
-          );
+          inactivityTimer = setInterval(() => {
+            const inactiveMs = Date.now() - lastAcpMessageAtMs;
+            if (inactiveMs >= ACP_SSE_INACTIVITY_TIMEOUT_MS) {
+              resolve("timeout");
+            }
+          }, ACP_INACTIVITY_CHECK_INTERVAL_MS);
         }),
       ]);
-      if (overallTimer) clearTimeout(overallTimer);
+      if (inactivityTimer) clearInterval(inactivityTimer);
 
       await waitForStreamQuiescence();
       await closeSse();
@@ -1087,7 +1091,7 @@ export class TerragonDaemon {
             duration_ms: this.getProcessDurationMs(input.threadChatId),
             error_info: circuitBreakerTripped
               ? "ACP SSE circuit breaker tripped — agent connection lost after max consecutive failures"
-              : "ACP completion timeout — no terminal SSE event received within timeout",
+              : `ACP completion timeout — no SSE activity for ${Math.round(ACP_SSE_INACTIVITY_TIMEOUT_MS / 60_000)} minutes`,
           },
           threadId: input.threadId,
           threadChatId: input.threadChatId,

@@ -744,6 +744,22 @@ function isNonFatalCodexWarning(message: string | undefined): boolean {
   );
 }
 
+function formatWebSearchResults(rawResults: unknown, query: string): string {
+  if (!rawResults || !Array.isArray(rawResults)) {
+    return typeof rawResults === "string"
+      ? rawResults
+      : `Web search completed for query: ${query}`;
+  }
+  return rawResults
+    .map((r: Record<string, unknown>, i: number) => {
+      const title = typeof r.title === "string" ? r.title : `Result ${i + 1}`;
+      const url = typeof r.url === "string" ? r.url : "";
+      const snippet = typeof r.snippet === "string" ? r.snippet : "";
+      return `${title}${url ? ` (${url})` : ""}${snippet ? `\n  ${snippet}` : ""}`;
+    })
+    .join("\n");
+}
+
 function parseCodexItem({
   codexMsg,
   runtime,
@@ -831,6 +847,10 @@ function parseCodexItem({
         case "completed": {
           const output = item.aggregated_output;
           const exitCode = item.exit_code;
+          const resultContent =
+            exitCode && exitCode !== 0
+              ? `${output || "Command completed"}\n[exit code: ${exitCode}]`
+              : output || "Command completed";
           messages.push({
             type: "user",
             message: {
@@ -839,7 +859,7 @@ function parseCodexItem({
                 {
                   type: "tool_result",
                   tool_use_id: toolUseId,
-                  content: output || "Command completed",
+                  content: resultContent,
                   is_error: exitCode !== 0,
                 },
               ],
@@ -879,8 +899,8 @@ function parseCodexItem({
                 {
                   type: "tool_result",
                   tool_use_id: toolUseId,
-                  content: output || "Command declined",
-                  is_error: true,
+                  content: output || "Command declined by approval policy",
+                  is_error: false,
                 },
               ],
             },
@@ -898,13 +918,47 @@ function parseCodexItem({
       }
     }
     case "file_change": {
-      // File changes are logged but not included in the message stream
-      // The actual file content changes are handled by the codex CLI
       const changes = item.changes ?? [];
-      const paths = changes.map((c) => c.path).join(", ");
-      runtime.logger.info("Codex file changes", {
-        changes,
-        paths,
+      if (changes.length === 0) return messages;
+      const toolUseId = item.id;
+      const pathList = changes.map((c) => c.path);
+      messages.push({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              name: "Write",
+              id: toolUseId,
+              input: {
+                file_path:
+                  pathList.length === 1
+                    ? pathList[0]
+                    : `${pathList.length} files`,
+                content: "",
+              },
+            },
+          ],
+        },
+        parent_tool_use_id: parentToolUseId,
+        session_id: "",
+      });
+      messages.push({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolUseId,
+              content: pathList.join("\n"),
+              is_error: false,
+            },
+          ],
+        },
+        parent_tool_use_id: parentToolUseId,
+        session_id: "",
       });
       return messages;
     }
@@ -935,12 +989,7 @@ function parseCodexItem({
         }
         case "item.updated":
         case "item.completed": {
-          const serializedResults =
-            typeof rawResults === "string"
-              ? rawResults
-              : rawResults
-                ? JSON.stringify(rawResults, null, 2)
-                : `Web search completed for query: ${query}`;
+          const serializedResults = formatWebSearchResults(rawResults, query);
           const isError =
             status?.toLowerCase() === "failed" || item.error !== undefined;
           messages.push({
