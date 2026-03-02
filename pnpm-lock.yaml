@@ -237,6 +237,9 @@ importers:
       '@git-diff-view/core':
         specifier: ^0.0.35
         version: 0.0.35
+      '@git-diff-view/react':
+        specifier: ^0.0.35
+        version: 0.0.35(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.60.0(react@19.1.2))
