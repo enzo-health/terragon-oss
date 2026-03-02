@@ -1175,6 +1175,54 @@ export async function stopStalledThreads({
     .returning();
 }
 
+export async function getStalledThreadChats({
+  db,
+  cutoffSecs = 60 * 60, // Default to 1 hour
+}: {
+  db: DB;
+  cutoffSecs?: number;
+}) {
+  const threadChats = await db.query.threadChat.findMany({
+    where: and(
+      inArray(schema.threadChat.status, [
+        "booting",
+        "stopping",
+        "working",
+        "working-done",
+        "working-error",
+        "checkpointing",
+      ]),
+      lte(
+        schema.threadChat.updatedAt,
+        new Date(Date.now() - cutoffSecs * 1000),
+      ),
+      ne(schema.threadChat.id, LEGACY_THREAD_CHAT_ID),
+    ),
+    orderBy: (threadChat) => [desc(threadChat.updatedAt)],
+    columns: {
+      id: true,
+      threadId: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
+  return threadChats;
+}
+
+export async function stopStalledThreadChats({
+  db,
+  threadChatIds,
+}: {
+  db: DB;
+  threadChatIds: string[];
+}) {
+  await db
+    .update(schema.threadChat)
+    .set({ status: "complete", errorMessage: "request-timeout" })
+    .where(inArray(schema.threadChat.id, threadChatIds))
+    .returning();
+}
+
 export async function hasOtherUnarchivedThreadsWithSamePR({
   db,
   threadId,

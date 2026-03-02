@@ -2,6 +2,8 @@ import type { NextRequest } from "next/server";
 import {
   getStalledThreads,
   stopStalledThreads,
+  getStalledThreadChats,
+  stopStalledThreadChats,
 } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
@@ -50,6 +52,28 @@ async function stopStalledThreadsTask() {
   }
 }
 
+async function stopStalledThreadChatsTask() {
+  console.log("Processing stalled thread chats");
+  const stalledThreadChats = await getStalledThreadChats({ db });
+  console.log(`Found ${stalledThreadChats.length} stalled thread chats`);
+  if (stalledThreadChats.length === 0) {
+    return;
+  }
+
+  console.log("Stopping stalled thread chats");
+  console.log(
+    stalledThreadChats.map((tc) => ({
+      id: tc.id,
+      threadId: tc.threadId,
+      status: tc.status,
+    })),
+  );
+  await stopStalledThreadChats({
+    db,
+    threadChatIds: stalledThreadChats.map((tc) => tc.id),
+  });
+}
+
 // This is run every 5 minutes, see vercel.json.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -63,6 +87,7 @@ export async function GET(request: NextRequest) {
   }
   console.log("Stalled tasks cron task triggered");
   await stopStalledThreadsTask();
+  await stopStalledThreadChatsTask();
   console.log("Stalled tasks cron task completed");
   return Response.json({ success: true });
 }
