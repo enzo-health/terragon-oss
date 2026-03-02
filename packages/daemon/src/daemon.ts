@@ -1007,8 +1007,76 @@ export class TerragonDaemon {
         return;
       }
 
+      // Polling fallback: if SSE failed but agent may have completed, check status.
+      // The /status endpoint may not exist on all ACP servers — failures are expected and harmless.
+      if (!sawTerminalEventFromStream && circuitBreakerTripped) {
+        for (let pollAttempt = 0; pollAttempt < 5; pollAttempt++) {
+          const pollDelay = Math.min(1_000 * 2 ** pollAttempt, 16_000);
+          await new Promise<void>((resolve) => setTimeout(resolve, pollDelay));
+          try {
+            const statusUrl = `${createUrl(false)}/status`;
+            const statusResponse = await fetch(statusUrl, {
+              method: "GET",
+              headers: { Accept: "application/json" },
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (statusResponse.ok) {
+              const statusBody = (await statusResponse.json()) as Record<
+                string,
+                unknown
+              >;
+              if (
+                statusBody &&
+                typeof statusBody === "object" &&
+                statusBody.completed
+              ) {
+                this.runtime.logger.info(
+                  "ACP polling fallback: agent completed despite SSE failure",
+                  {
+                    threadChatId: input.threadChatId,
+                    pollAttempt,
+                    serverId,
+                  },
+                );
+                // Construct a success result from the status response
+                this.addMessageToBuffer({
+                  agent: input.agent,
+                  message: {
+                    type: "result",
+                    subtype: "success",
+                    total_cost_usd: 0,
+                    duration_ms: this.getProcessDurationMs(input.threadChatId),
+                    duration_api_ms: this.getProcessDurationMs(
+                      input.threadChatId,
+                    ),
+                    is_error: false,
+                    num_turns: 1,
+                    result:
+                      typeof statusBody.stopReason === "string"
+                        ? statusBody.stopReason
+                        : "acp_poll_complete",
+                    session_id: sessionId,
+                  },
+                  threadId: input.threadId,
+                  threadChatId: input.threadChatId,
+                  token: input.token,
+                });
+                sawTerminalEventFromStream = true; // skip the error branch below
+                break;
+              }
+            }
+          } catch {
+            // Poll failed — expected if server doesn't support /status endpoint
+            this.runtime.logger.debug("ACP polling fallback attempt failed", {
+              threadChatId: input.threadChatId,
+              pollAttempt,
+            });
+          }
+        }
+      }
+
       if (sawTerminalEventFromStream) {
-        // SSE delivered the terminal event — already buffered by applyAcpMessages.
+        // SSE delivered the terminal event (or polling recovered it) — already buffered.
         // Nothing more to do.
       } else if (completionReason === "timeout") {
         this.addMessageToBuffer({
