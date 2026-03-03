@@ -1048,6 +1048,14 @@ export class TerragonDaemon {
     sseAbortController.signal.addEventListener("abort", triggerSseTerminal, {
       once: true,
     });
+
+    // Propagate the daemon token to sandbox-agent's environment.
+    // In ACP mode, sandbox-agent spawns agent processes (e.g., Codex).
+    // Codex reads DAEMON_TOKEN via env_http_headers for proxy auth.
+    // The token changes each run, so sandbox-agent must be restarted to
+    // inherit the updated process.env before spawning the agent.
+    await this.ensureSandboxAgentHasToken(baseUrl, input);
+
     const sseLoop = (async () => {
       let consecutiveSseFailures = 0;
       while (!sseAbortController.signal.aborted) {
@@ -1357,6 +1365,107 @@ export class TerragonDaemon {
       }
       await this.flushMessageBuffer();
     }
+  }
+
+  /**
+   * Restart sandbox-agent with the daemon token in its environment.
+   *
+   * In ACP transport, sandbox-agent spawns agent processes (e.g., Codex
+   * `app-server`). Agents like Codex read DAEMON_TOKEN from their env
+   * (via `env_http_headers` in config.toml) to authenticate API calls
+   * through our proxy. Since the token changes each run and sandbox-agent
+   * was originally started without it, we must restart sandbox-agent so
+   * the new process inherits the updated `process.env`.
+   */
+  private async ensureSandboxAgentHasToken(
+    baseUrl: string,
+    input: DaemonMessageClaude,
+  ): Promise<void> {
+    // Set token env vars on daemon process so execSync children inherit them.
+    process.env.DAEMON_TOKEN = input.token;
+
+    // For Claude Code ACP, also set Anthropic-specific env vars
+    if (input.agent === "claudeCode" && input.useCredits) {
+      process.env.ANTHROPIC_AUTH_TOKEN = input.token;
+      process.env.ANTHROPIC_BASE_URL = `${this.runtime.normalizedUrl}/api/proxy/anthropic`;
+    }
+
+    let port = "2468";
+    let host = "127.0.0.1";
+    try {
+      const parsed = new URL(baseUrl);
+      port = parsed.port || "2468";
+      host = parsed.hostname || "127.0.0.1";
+    } catch {
+      // Use defaults
+    }
+
+    // Kill existing sandbox-agent so we can restart with updated env
+    try {
+      this.runtime.execSync(
+        `pkill -f "sandbox-agent.*--port ${port}" 2>/dev/null || true`,
+      );
+    } catch {
+      // Ignore — process may not exist
+    }
+
+    // Brief pause for process cleanup
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Find sandbox-agent binary (mirrors logic in packages/sandbox/src/setup.ts)
+    let sandboxAgentBin = "sandbox-agent";
+    for (const candidate of [
+      "sandbox-agent",
+      "/usr/bin/sandbox-agent",
+      "/usr/local/bin/sandbox-agent",
+    ]) {
+      try {
+        this.runtime.execSync(
+          candidate === "sandbox-agent"
+            ? "command -v sandbox-agent >/dev/null 2>&1"
+            : `test -x ${candidate}`,
+        );
+        sandboxAgentBin = candidate;
+        break;
+      } catch {
+        continue;
+      }
+    }
+
+    // Start sandbox-agent — inherits process.env (including DAEMON_TOKEN)
+    try {
+      this.runtime.execSync(
+        `nohup ${sandboxAgentBin} server --no-token --host ${host} --port ${port} >> /tmp/sandbox-agent.log 2>&1 &`,
+      );
+    } catch (error) {
+      this.runtime.logger.error(
+        "Failed to restart sandbox-agent with DAEMON_TOKEN",
+        { error: formatError(error) },
+      );
+      throw new Error("Failed to restart sandbox-agent with DAEMON_TOKEN");
+    }
+
+    // Wait for sandbox-agent health (matches setup.ts pattern)
+    const healthUrl = `${baseUrl.replace(/\/+$/, "")}/v1/health`;
+    const maxRetries = 20;
+    for (let i = 0; i < maxRetries; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        const response = await fetch(healthUrl);
+        if (response.ok) {
+          this.runtime.logger.info(
+            "sandbox-agent restarted with DAEMON_TOKEN",
+            { port, retries: i },
+          );
+          return;
+        }
+      } catch {
+        // Continue retrying
+      }
+    }
+    throw new Error(
+      `sandbox-agent failed to become healthy after restart (${maxRetries} retries)`,
+    );
   }
 
   private shouldEmitDaemonEventEnvelopeV2(threadChatId: string): boolean {
