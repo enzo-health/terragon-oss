@@ -8,6 +8,7 @@ import {
 import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
 import { maybeHibernateSandboxById } from "@/agent/sandbox";
+import { setActiveThreadChat } from "@/agent/sandbox-resource";
 
 async function sleep(ms: number = 1000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,6 +73,59 @@ async function stopStalledThreadChatsTask() {
     db,
     threadChatIds: stalledThreadChats.map((tc) => tc.id),
   });
+
+  // Clean up Redis active-thread-chats set for each stalled thread chat
+  console.log("Cleaning up Redis for stalled thread chats");
+  for (const tc of stalledThreadChats) {
+    if (tc.codesandboxId) {
+      try {
+        await setActiveThreadChat({
+          sandboxId: tc.codesandboxId,
+          threadChatId: tc.id,
+          isActive: false,
+        });
+      } catch (error) {
+        console.error(
+          `Failed to clean up Redis for thread chat ${tc.id}`,
+          error,
+        );
+      }
+    }
+  }
+
+  // Hibernate sandboxes in batches of 10
+  const sandboxes = new Map(
+    stalledThreadChats
+      .filter((tc) => tc.codesandboxId)
+      .map((tc) => [
+        tc.codesandboxId!,
+        {
+          threadId: tc.threadId,
+          userId: tc.userId,
+          sandboxProvider: tc.sandboxProvider,
+        },
+      ]),
+  );
+  console.log(`Hibernating ${sandboxes.size} sandboxes`);
+  const sandboxEntries = Array.from(sandboxes.entries());
+  for (let i = 0; i < sandboxEntries.length; i += 10) {
+    const batch = sandboxEntries.slice(i, i + 10);
+    await Promise.all(
+      batch.map(async ([sandboxId, { threadId, userId, sandboxProvider }]) => {
+        try {
+          await maybeHibernateSandboxById({
+            threadId,
+            userId,
+            sandboxId,
+            sandboxProvider,
+          });
+        } catch (error) {
+          // Ignore errors
+        }
+      }),
+    );
+    await sleep();
+  }
 }
 
 // This is run every 5 minutes, see vercel.json.

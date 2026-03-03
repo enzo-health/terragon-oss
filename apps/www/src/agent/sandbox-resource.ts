@@ -76,6 +76,12 @@ export async function withSandboxResource<T>({
       );
     } catch (e) {
       console.error("Failed to decrement active users for sandbox", e);
+      // Safety: set a short expiry so the counter self-heals
+      try {
+        await redis.expire(`${ACTIVE_USERS_PREFIX}${sandboxId}`, 60);
+      } catch {
+        // Best effort
+      }
     }
   }
 }
