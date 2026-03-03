@@ -16,7 +16,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends any
 type RunContext = {
   runId: string;
   tokenNonce: string;
-  transportMode: "legacy" | "acp";
+  transportMode: "legacy" | "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
   agent: AIAgent;
 };
@@ -108,7 +108,7 @@ export async function sendDaemonMessage({
       threadChatId: string;
       sandboxId: string;
       agent: AIAgent;
-      transportMode: "legacy" | "acp";
+      transportMode: "legacy" | "acp" | "codex-app-server";
       protocolVersion: 1 | 2;
       providers: DaemonTokenProvider[];
       nonce: string;

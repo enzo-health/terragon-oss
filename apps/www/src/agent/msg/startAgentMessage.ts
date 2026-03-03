@@ -537,11 +537,20 @@ export async function startAgentMessage({
           const effectivePermissionMode = activeSdlcLoop
             ? "allowAll"
             : rawPermissionMode;
-          const transportMode =
-            featureFlags.sandboxAgentAcpTransport &&
-            supportsAcp &&
+          const transportEligible =
             effectivePermissionMode !== "plan" &&
-            threadChatId !== LEGACY_THREAD_CHAT_ID
+            threadChatId !== LEGACY_THREAD_CHAT_ID;
+          const shouldUseCodexAppServerTransport =
+            transportEligible &&
+            threadChat.agent === "codex" &&
+            featureFlags.codexAppServerTransport;
+          const shouldUseAcpTransport =
+            transportEligible &&
+            featureFlags.sandboxAgentAcpTransport &&
+            supportsAcp;
+          const transportMode = shouldUseCodexAppServerTransport
+            ? ("codex-app-server" as const)
+            : shouldUseAcpTransport
               ? ("acp" as const)
               : ("legacy" as const);
           // Each ACP turn bootstraps a new server (new runId → new acpServerId).

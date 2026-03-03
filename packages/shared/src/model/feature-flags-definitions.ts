@@ -147,6 +147,12 @@ export const featureFlagsDefinitions = {
     description:
       "Enables sandbox-agent ACP transport metadata and sandbox capability probing for daemon runs.",
   },
+  codexAppServerTransport: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Enables codex app-server JSON-RPC transport mode for Codex agent runs.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;
