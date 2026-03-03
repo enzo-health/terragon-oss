@@ -70,12 +70,21 @@ export async function POST(request: Request) {
         }
       })(),
     ]);
+  if (!githubAccessToken) {
+    console.error(
+      `[github-oauth] No GitHub access token found for user ${userId} when loading sandbox env for thread ${threadId}`,
+    );
+    return NextResponse.json(
+      { error: "GitHub access token not found" },
+      { status: 400 },
+    );
+  }
 
   return NextResponse.json({
     message: "ok",
     environmentVariables: getEnv({
       userEnv: environmentVariables,
-      githubAccessToken: githubAccessToken ?? "",
+      githubAccessToken,
       agentCredentials,
     }),
   });

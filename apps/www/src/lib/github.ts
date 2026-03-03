@@ -1,10 +1,12 @@
 import { db } from "./db";
 import { auth } from "./auth";
+import { env } from "@terragon/env/apps-www";
 import {
   getGithubPR,
   getThreadsForGithubPR,
   upsertGithubPR,
 } from "@terragon/shared/model/github";
+import * as schema from "@terragon/shared/db/schema";
 import { Octokit } from "octokit";
 import {
   getGithubPRMergeableState,
@@ -12,6 +14,9 @@ import {
   getGithubPRChecksStatus,
 } from "@terragon/shared/github-api/helpers";
 import { getInstallationToken } from "@terragon/shared/github-app";
+import { symmetricEncrypt } from "better-auth/crypto";
+import { and, eq } from "drizzle-orm";
+import { decryptTokenWithBackwardsCompatibility } from "@terragon/utils/encryption";
 import { getPostHogServer } from "./posthog-server";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { BroadcastMessageThreadData } from "@terragon/types/broadcast";
@@ -242,6 +247,82 @@ export async function getOctokitForApp({
   return new Octokit({ auth: githubAccessToken });
 }
 
+const GITHUB_OAUTH_TOKEN_REGEX =
+  /^(gh[oprsu]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)$/;
+
+function isLikelyGitHubOAuthToken(token: string): boolean {
+  return GITHUB_OAUTH_TOKEN_REGEX.test(token);
+}
+
+async function tryMigrateLegacyGitHubOAuthTokens({
+  userId,
+}: {
+  userId: string;
+}): Promise<boolean> {
+  const githubAccount = await db.query.account.findFirst({
+    where: and(
+      eq(schema.account.userId, userId),
+      eq(schema.account.providerId, "github"),
+    ),
+    columns: {
+      id: true,
+      accessToken: true,
+      refreshToken: true,
+    },
+  });
+  if (!githubAccount?.accessToken) {
+    return false;
+  }
+
+  const decryptedAccessToken = decryptTokenWithBackwardsCompatibility(
+    githubAccount.accessToken,
+    env.ENCRYPTION_MASTER_KEY,
+  );
+  if (!isLikelyGitHubOAuthToken(decryptedAccessToken)) {
+    return false;
+  }
+
+  const decryptedRefreshToken = githubAccount.refreshToken
+    ? decryptTokenWithBackwardsCompatibility(
+        githubAccount.refreshToken,
+        env.ENCRYPTION_MASTER_KEY,
+      )
+    : null;
+  if (
+    decryptedRefreshToken &&
+    !isLikelyGitHubOAuthToken(decryptedRefreshToken)
+  ) {
+    return false;
+  }
+
+  const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
+    symmetricEncrypt({
+      key: env.BETTER_AUTH_SECRET,
+      data: decryptedAccessToken,
+    }),
+    decryptedRefreshToken
+      ? symmetricEncrypt({
+          key: env.BETTER_AUTH_SECRET,
+          data: decryptedRefreshToken,
+        })
+      : Promise.resolve<string | null>(null),
+  ]);
+
+  await db
+    .update(schema.account)
+    .set({
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.account.id, githubAccount.id));
+
+  console.info(
+    `[github-oauth] Migrated legacy encrypted tokens for user ${userId}`,
+  );
+  return true;
+}
+
 export async function getGitHubUserAccessToken({
   userId,
 }: {
@@ -252,8 +333,29 @@ export async function getGitHubUserAccessToken({
       body: { providerId: "github", userId },
     });
     return result?.accessToken ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    console.error(
+      `[github-oauth] Failed to get GitHub access token for user ${userId}`,
+      error,
+    );
+    try {
+      const migratedLegacyTokens = await tryMigrateLegacyGitHubOAuthTokens({
+        userId,
+      });
+      if (!migratedLegacyTokens) {
+        return null;
+      }
+      const retryResult = await auth.api.getAccessToken({
+        body: { providerId: "github", userId },
+      });
+      return retryResult?.accessToken ?? null;
+    } catch (migrationError) {
+      console.error(
+        `[github-oauth] Failed to recover GitHub OAuth tokens for user ${userId}`,
+        migrationError,
+      );
+      return null;
+    }
   }
 }
 
