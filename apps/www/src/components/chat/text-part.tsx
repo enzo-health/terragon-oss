@@ -1,9 +1,11 @@
-import { memo, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Streamdown } from "streamdown";
 import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import "streamdown/styles.css";
 import "katex/dist/katex.min.css";
+import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
 
 interface TextPartProps {
@@ -60,6 +62,67 @@ function normalizeBoldHeaders(text: string): string {
   return text.replace(/^(\*\*[^*]+\*\*)([A-Za-z])/gm, "$1\n\n$2");
 }
 
+const COLLAPSE_THRESHOLD = 20;
+const VISIBLE_LINES = 15;
+const LINE_HEIGHT_PX = 22;
+
+interface BlockInfo {
+  totalLines: number;
+  expanded: boolean;
+}
+
+function CollapsibleCodeBlockOverlay({
+  totalLines,
+  isExpanded,
+  onToggle,
+}: {
+  totalLines: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const hiddenLines = totalLines - VISIBLE_LINES;
+  if (hiddenLines <= 0) return null;
+
+  return (
+    <div
+      className={cn(
+        "absolute right-0 bottom-0 left-0 z-10 flex items-end justify-center transition-all",
+        !isExpanded && "pointer-events-none",
+      )}
+      style={!isExpanded ? { height: `${LINE_HEIGHT_PX * 4}px` } : undefined}
+    >
+      {!isExpanded && (
+        <div className="absolute inset-0 bg-gradient-to-t from-sidebar to-transparent" />
+      )}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="pointer-events-auto relative z-20 mb-1 cursor-pointer rounded-md border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+      >
+        {isExpanded ? "Show less" : `Show ${hiddenLines} more lines`}
+      </button>
+    </div>
+  );
+}
+
+function scanForCodeBlocks(
+  container: HTMLElement,
+): Map<number, { totalLines: number }> {
+  const result = new Map<number, { totalLines: number }>();
+  const bodies = container.querySelectorAll<HTMLElement>(
+    '[data-streamdown="code-block-body"]',
+  );
+  bodies.forEach((body, index) => {
+    const codeEl = body.querySelector("code");
+    if (!codeEl) return;
+    const lineCount = codeEl.children.length;
+    if (lineCount > COLLAPSE_THRESHOLD) {
+      result.set(index, { totalLines: lineCount });
+    }
+  });
+  return result;
+}
+
 const TextPart = memo(function TextPart({
   text,
   githubRepoFullName,
@@ -67,6 +130,11 @@ const TextPart = memo(function TextPart({
   baseBranchName,
   hasCheckpoint,
 }: TextPartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
+  // Track scan results separately from expand state to avoid re-scan loops
+  const lastScanRef = useRef<string>("");
+
   const processedText = normalizeBoldHeaders(
     convertCitationsToGitHubLinks(
       text,
@@ -76,6 +144,77 @@ const TextPart = memo(function TextPart({
       hasCheckpoint,
     ),
   );
+
+  // Scan for collapsible code blocks after DOM updates
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const runScan = () => {
+      const scanned = scanForCodeBlocks(container);
+      // Build a fingerprint of the scan results to avoid unnecessary state updates
+      const fingerprint = Array.from(scanned.entries())
+        .map(([i, v]) => `${i}:${v.totalLines}`)
+        .join(",");
+      if (fingerprint === lastScanRef.current) return;
+      lastScanRef.current = fingerprint;
+
+      setBlocks((prev) => {
+        const next = new Map<number, BlockInfo>();
+        for (const [index, info] of scanned) {
+          const existing = prev.get(index);
+          next.set(index, {
+            totalLines: info.totalLines,
+            expanded: existing?.expanded ?? false,
+          });
+        }
+        return next;
+      });
+    };
+
+    // Run immediately
+    runScan();
+
+    // Observe for new code blocks rendered asynchronously (Suspense, lazy highlight)
+    const observer = new MutationObserver(runScan);
+    observer.observe(container, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [processedText]);
+
+  // Apply collapse styles imperatively to code-block-body elements
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const bodies = container.querySelectorAll<HTMLElement>(
+      '[data-streamdown="code-block-body"]',
+    );
+    bodies.forEach((body, index) => {
+      const entry = blocks.get(index);
+      if (entry && !entry.expanded) {
+        body.style.maxHeight = `${VISIBLE_LINES * LINE_HEIGHT_PX}px`;
+        body.style.overflow = "hidden";
+        body.style.position = "relative";
+      } else if (entry && entry.expanded) {
+        body.style.maxHeight = "";
+        body.style.overflow = "";
+        body.style.position = "relative";
+      } else {
+        body.style.maxHeight = "";
+        body.style.overflow = "";
+      }
+    });
+  }, [blocks]);
+
+  const toggleBlock = useCallback((index: number) => {
+    setBlocks((prev) => {
+      const next = new Map(prev);
+      const entry = next.get(index);
+      if (entry) {
+        next.set(index, { ...entry, expanded: !entry.expanded });
+      }
+      return next;
+    });
+  }, []);
 
   const components = useMemo(
     () => ({
@@ -181,8 +320,37 @@ const TextPart = memo(function TextPart({
     [],
   );
 
+  // Render portals into code-block-body elements for collapse overlays
+  const overlays = useMemo(() => {
+    const container = containerRef.current;
+    if (!container || blocks.size === 0) return null;
+
+    const bodies = container.querySelectorAll<HTMLElement>(
+      '[data-streamdown="code-block-body"]',
+    );
+
+    const portals: React.ReactNode[] = [];
+    bodies.forEach((body, index) => {
+      const entry = blocks.get(index);
+      if (!entry) return;
+      portals.push(
+        createPortal(
+          <CollapsibleCodeBlockOverlay
+            key={index}
+            totalLines={entry.totalLines}
+            isExpanded={entry.expanded}
+            onToggle={() => toggleBlock(index)}
+          />,
+          body,
+        ),
+      );
+    });
+    return portals.length > 0 ? portals : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocks, toggleBlock]);
+
   return (
-    <div className="prose prose-sm max-w-none">
+    <div className="prose prose-sm max-w-none" ref={containerRef}>
       <Streamdown
         plugins={plugins}
         components={components}
@@ -190,6 +358,7 @@ const TextPart = memo(function TextPart({
       >
         {processedText}
       </Streamdown>
+      {overlays}
     </div>
   );
 });
