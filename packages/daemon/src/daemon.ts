@@ -838,7 +838,7 @@ export class TerragonDaemon {
       daemonThreadId: input.threadId,
       token: input.token,
       startTime: Date.now(),
-      threadId: input.sessionId,
+      threadId: null,
       isStopping: false,
       isCompleted: false,
       watchdogTriggered: false,
@@ -867,9 +867,6 @@ export class TerragonDaemon {
         resolveThreadReadyBase(threadId);
       },
     };
-    if (input.sessionId) {
-      context.resolveThreadReady(input.sessionId);
-    }
     return context;
   }
 
@@ -1065,6 +1062,18 @@ export class TerragonDaemon {
     });
   }
 
+  private hasOtherActiveAppServerTurns(threadChatId: string): boolean {
+    for (const [candidateThreadChatId, context] of this.appServerRunContexts) {
+      if (candidateThreadChatId === threadChatId) {
+        continue;
+      }
+      if (!context.isCompleted) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private isAppServerCrashError(error: unknown): boolean {
     if (!(error instanceof Error)) {
       return false;
@@ -1210,7 +1219,16 @@ export class TerragonDaemon {
 
     try {
       await this.applyAppServerRespawnBackoff();
-      await manager.restartIfTokenChanged(input.token);
+      if (this.hasOtherActiveAppServerTurns(input.threadChatId)) {
+        this.runtime.logger.warn(
+          "Skipping codex app-server token restart while other turns are active",
+          {
+            threadChatId: input.threadChatId,
+          },
+        );
+      } else {
+        await manager.restartIfTokenChanged(input.token);
+      }
       await manager.ensureReady();
 
       removeNotificationHandler = manager.onNotification(
@@ -1520,9 +1538,11 @@ export class TerragonDaemon {
         clearInterval(processHealthInterval);
       }
       this.clearAppServerWatchdog(context);
-      this.stopHeartbeat(input.threadChatId);
-      this.appServerRunContexts.delete(input.threadChatId);
-      this.markDaemonEventRunStateForCleanup(input.threadChatId);
+      if (this.appServerRunContexts.get(input.threadChatId) === context) {
+        this.stopHeartbeat(input.threadChatId);
+        this.appServerRunContexts.delete(input.threadChatId);
+        this.markDaemonEventRunStateForCleanup(input.threadChatId);
+      }
     }
   }
 
@@ -3339,11 +3359,12 @@ export class TerragonDaemon {
           const messagesToSend = coalesceAssistantTextMessages(
             processedEntriesToSend.map((e) => e.message),
           );
-          const codexPreviousResponseId =
-            [...processedEntriesToSend]
-              .reverse()
-              .find((entry) => entry.codexPreviousResponseId !== undefined)
-              ?.codexPreviousResponseId ?? undefined;
+          const codexPreviousResponseEntry = [...processedEntriesToSend]
+            .reverse()
+            .find((entry) => entry.codexPreviousResponseId !== undefined);
+          const codexPreviousResponseId = codexPreviousResponseEntry
+            ? codexPreviousResponseEntry.codexPreviousResponseId
+            : undefined;
           await this.sendMessagesToAPI({
             messages: messagesToSend,
             entryCount: entriesToSend.length,

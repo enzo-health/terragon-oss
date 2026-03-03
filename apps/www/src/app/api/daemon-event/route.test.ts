@@ -408,6 +408,134 @@ describe("daemon-event route", () => {
     });
   });
 
+  it("rejects invalid codexPreviousResponseId payload types", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "codex",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        providers: ["openai"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    } as any);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "codex-app-server",
+      protocolVersion: 1,
+      agent: "codex",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage("codex-thread-1")],
+        timezone: "UTC",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        codexPreviousResponseId: 123,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("invalid_codex_previous_response_id");
+    expect(dbMocks.update).not.toHaveBeenCalled();
+  });
+
+  it("rolls back enrolled-loop claim when codexPreviousResponseId persistence fails", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "codex",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        providers: ["openai"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    } as any);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "codex-app-server",
+      protocolVersion: 1,
+      agent: "codex",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      state: "enrolled",
+      loopVersion: 11,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    dbMocks.updateSet.mockImplementationOnce(() => {
+      throw new Error("db write failed");
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage("codex-thread-1")],
+        timezone: "UTC",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        codexPreviousResponseId: "resp-next-999",
+        payloadVersion: 2,
+        eventId: "event-persist-fail",
+        runId: "run-1",
+        seq: 4,
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.text()).resolves.toBe(
+      "failed to persist codex previous response id",
+    );
+    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
+    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
+    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
+  });
+
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",

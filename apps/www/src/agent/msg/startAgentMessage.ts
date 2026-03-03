@@ -553,6 +553,20 @@ export async function startAgentMessage({
             : shouldUseAcpTransport
               ? ("acp" as const)
               : ("legacy" as const);
+          if (transportMode !== "codex-app-server") {
+            if (codexPreviousResponseId !== null) {
+              await updateThreadChat({
+                db,
+                userId,
+                threadId,
+                threadChatId,
+                updates: {
+                  codexPreviousResponseId: null,
+                },
+              });
+            }
+            codexPreviousResponseId = null;
+          }
           // Each ACP turn bootstraps a new server (new runId → new acpServerId).
           // The previous session is bound to the old server and invalid here.
           // The "booting" status check (line 412) normally handles this, but

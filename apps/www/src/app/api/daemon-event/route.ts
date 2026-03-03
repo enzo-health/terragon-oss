@@ -883,22 +883,53 @@ export async function POST(request: Request) {
   }
 
   if (
-    transportMode === "codex-app-server" &&
     resolvedStatus === "completed" &&
     json.codexPreviousResponseId !== undefined
   ) {
-    await db
-      .update(schema.threadChat)
-      .set({
-        codexPreviousResponseId: json.codexPreviousResponseId,
-      })
-      .where(
-        and(
-          eq(schema.threadChat.userId, userId),
-          eq(schema.threadChat.threadId, threadId),
-          eq(schema.threadChat.id, threadChatId),
-        ),
+    if (
+      json.codexPreviousResponseId !== null &&
+      typeof json.codexPreviousResponseId !== "string"
+    ) {
+      await rollbackClaimedSignal({
+        reason: "invalid_codex_previous_response_id",
+        error: json.codexPreviousResponseId,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "invalid_codex_previous_response_id",
+        },
+        { status: 400 },
       );
+    }
+
+    const shouldPersistCodexPreviousResponseId =
+      transportMode === "codex-app-server" ||
+      json.codexPreviousResponseId === null;
+    if (shouldPersistCodexPreviousResponseId) {
+      try {
+        await db
+          .update(schema.threadChat)
+          .set({
+            codexPreviousResponseId: json.codexPreviousResponseId,
+          })
+          .where(
+            and(
+              eq(schema.threadChat.userId, userId),
+              eq(schema.threadChat.threadId, threadId),
+              eq(schema.threadChat.id, threadChatId),
+            ),
+          );
+      } catch (error) {
+        await rollbackClaimedSignal({
+          reason: "persist_codex_previous_response_id_failed",
+          error,
+        });
+        return new Response("failed to persist codex previous response id", {
+          status: 500,
+        });
+      }
+    }
   }
 
   if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {

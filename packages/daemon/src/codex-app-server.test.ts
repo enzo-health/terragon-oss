@@ -496,6 +496,65 @@ describe("CodexAppServerManager", () => {
     await manager.kill();
   });
 
+  test("ignores ambiguous thread/started notification when multiple thread starts are pending", async () => {
+    const { manager, processes } = createManagerHarness();
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    const startThreadOne = manager.send({
+      method: "thread/start",
+      params: {},
+      threadChatId: "thread-chat-1",
+    });
+    const startThreadTwo = manager.send({
+      method: "thread/start",
+      params: {},
+      threadChatId: "thread-chat-2",
+    });
+    await waitForCondition(() => processHandle.stdinWrites.length >= 4);
+    const startThreadOneRequest = parseJsonObject(
+      processHandle.stdinWrites[2] ?? "{}",
+    );
+    const startThreadTwoRequest = parseJsonObject(
+      processHandle.stdinWrites[3] ?? "{}",
+    );
+
+    processHandle.emitStdoutLine(
+      '{"method":"thread/started","params":{"thread":{"id":"thread-ambiguous"}}}',
+    );
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    expect(manager.getThreadState("thread-ambiguous")).toBeNull();
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        id: startThreadTwoRequest.id,
+        result: { thread: { id: "thread-2" } },
+      }),
+    );
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        id: startThreadOneRequest.id,
+        result: { thread: { id: "thread-1" } },
+      }),
+    );
+    await Promise.all([startThreadOne, startThreadTwo]);
+
+    expect(manager.getThreadState("thread-1")?.threadChatId).toBe(
+      "thread-chat-1",
+    );
+    expect(manager.getThreadState("thread-2")?.threadChatId).toBe(
+      "thread-chat-2",
+    );
+
+    await manager.kill();
+  });
+
   test("global stdin mutex prevents overlapping writes", async () => {
     const { manager, processes } = createManagerHarness({
       writeDelayMs: 10,

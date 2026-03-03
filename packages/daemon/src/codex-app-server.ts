@@ -1167,12 +1167,22 @@ export class CodexAppServerManager {
       threadId &&
       !this.threadStates.has(threadId)
     ) {
-      const pendingThreadStart = this.pendingThreadStarts.shift() ?? null;
-      const threadChatId = pendingThreadStart?.threadChatId ?? threadId;
-      this.threadStates.set(threadId, {
-        threadChatId,
-        parserState: createCodexParserState(),
-      });
+      const pendingThreadStart = this.getSinglePendingThreadStart();
+      if (pendingThreadStart) {
+        this.removePendingThreadStartByRequestId(pendingThreadStart.requestId);
+        this.threadStates.set(threadId, {
+          threadChatId: pendingThreadStart.threadChatId,
+          parserState: createCodexParserState(),
+        });
+      } else {
+        this.logger.warn(
+          "Ignoring ambiguous thread/started notification without correlated request result",
+          {
+            threadId,
+            pendingThreadStarts: this.pendingThreadStarts.length,
+          },
+        );
+      }
     }
     const threadState = threadId
       ? (this.threadStates.get(threadId) ?? null)
@@ -1229,6 +1239,13 @@ export class CodexAppServerManager {
       1,
     );
     return pendingThreadStart ?? null;
+  }
+
+  private getSinglePendingThreadStart(): PendingThreadStart | null {
+    if (this.pendingThreadStarts.length !== 1) {
+      return null;
+    }
+    return this.pendingThreadStarts[0] ?? null;
   }
 
   private withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
