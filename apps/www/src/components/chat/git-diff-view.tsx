@@ -34,6 +34,10 @@ import type { DBUserMessage } from "@terragon/shared";
 import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
 import { ImageDiffView } from "@/components/chat/image-diff-view";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { useThread } from "./thread-context";
+import { followUp } from "@/server-actions/follow-up";
+import { useOptimisticUpdateThreadChat } from "./hooks";
+import { convertToPlainText } from "@/lib/db-message-helpers";
 
 /**
  * Formats file size in bytes to human-readable format
@@ -171,6 +175,12 @@ function CommentWidget({
   thread,
   isAddition,
 }: CommentWidgetProps) {
+  const { threadChat } = useThread();
+  const threadChatId = threadChat?.id;
+  const updateThreadChat = useOptimisticUpdateThreadChat({
+    threadId: thread.id,
+    threadChatId,
+  });
   const emptyMessage: DBUserMessage = {
     type: "user",
     parts: [{ type: "text", text: "" }],
@@ -181,13 +191,32 @@ function CommentWidget({
   }: {
     userMessage: DBUserMessage;
   }) => {
-    console.log("Comment submitted:", {
-      fileName,
-      side,
-      lineNumber,
-      userMessage,
+    if (!threadChatId || !threadChat) return;
+    const plainText = convertToPlainText({ message: userMessage });
+    if (plainText.length === 0) return;
+
+    const sideLabel = isAddition ? "new" : "old";
+    const contextPrefix = `[Comment on ${fileName} line ${lineNumber} (${sideLabel})]\n\n`;
+    const contextualMessage: DBUserMessage = {
+      ...userMessage,
+      parts: [{ type: "text", text: contextPrefix }, ...userMessage.parts],
+    };
+
+    // Optimistic update
+    updateThreadChat({
+      messages: [...(threadChat.messages ?? []), contextualMessage],
+      errorMessage: null,
+      errorMessageInfo: null,
+      status: "booting",
     });
+
     onClose();
+
+    await followUp({
+      threadId: thread.id,
+      threadChatId,
+      message: contextualMessage,
+    });
   };
   return (
     <div
