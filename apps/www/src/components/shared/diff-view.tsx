@@ -2,6 +2,169 @@ import parse from "parse-diff";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { PatchDiff } from "@pierre/diffs/react";
+import { useTheme } from "next-themes";
+import React from "react";
+
+/**
+ * Generates a unified diff patch string from old and new content.
+ * The patch format is compatible with @pierre/diffs PatchDiff component.
+ */
+function createEditPatch(
+  filePath: string,
+  oldStr: string,
+  newStr: string,
+): string {
+  const oldLines = oldStr.split("\n");
+  const newLines = newStr.split("\n");
+
+  const lines: string[] = [
+    `diff --git a/${filePath} b/${filePath}`,
+    `--- a/${filePath}`,
+    `+++ b/${filePath}`,
+    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+  ];
+
+  for (const line of oldLines) {
+    lines.push(`-${line}`);
+  }
+  for (const line of newLines) {
+    lines.push(`+${line}`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Generates a unified diff patch for a new file (write operation).
+ */
+function createWritePatch(filePath: string, content: string): string {
+  const newLines = content.split("\n");
+
+  const lines: string[] = [
+    `diff --git a/${filePath} b/${filePath}`,
+    `new file mode 100644`,
+    `--- /dev/null`,
+    `+++ b/${filePath}`,
+    `@@ -0,0 +1,${newLines.length} @@`,
+  ];
+
+  for (const line of newLines) {
+    lines.push(`+${line}`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Generates a unified diff patch for multiple edits on the same file.
+ * Each edit becomes a separate hunk.
+ */
+function createMultiEditPatch(
+  filePath: string,
+  edits: Array<{ old_string: string; new_string: string }>,
+): string {
+  const lines: string[] = [
+    `diff --git a/${filePath} b/${filePath}`,
+    `--- a/${filePath}`,
+    `+++ b/${filePath}`,
+  ];
+
+  let currentOldLine = 1;
+  let currentNewLine = 1;
+
+  for (const edit of edits) {
+    const oldLines = edit.old_string.split("\n");
+    const newLines = edit.new_string.split("\n");
+
+    lines.push(
+      `@@ -${currentOldLine},${oldLines.length} +${currentNewLine},${newLines.length} @@`,
+    );
+
+    for (const line of oldLines) {
+      lines.push(`-${line}`);
+    }
+    for (const line of newLines) {
+      lines.push(`+${line}`);
+    }
+
+    currentOldLine += oldLines.length;
+    currentNewLine += newLines.length;
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Generates a unified diff patch showing unchanged content (for read tool).
+ */
+function createNoChangePatch(filePath: string, contents: string): string {
+  const contentLines = contents.split("\n");
+
+  const lines: string[] = [
+    `diff --git a/${filePath} b/${filePath}`,
+    `--- a/${filePath}`,
+    `+++ b/${filePath}`,
+    `@@ -1,${contentLines.length} +1,${contentLines.length} @@`,
+  ];
+
+  for (const line of contentLines) {
+    lines.push(` ${line}`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Wrapper component for PatchDiff with consistent styling and theme support.
+ */
+function HighlightedDiffView({
+  patch,
+  maxHeight,
+}: {
+  patch: string;
+  maxHeight?: string;
+}) {
+  const { resolvedTheme } = useTheme();
+
+  const getLineTheme = useMemo(() => {
+    if (resolvedTheme === "light") return "pierre-light";
+    if (resolvedTheme === "dark") return "pierre-dark";
+    return "pierre-dark";
+  }, [resolvedTheme]);
+
+  const themeType = useMemo(() => {
+    if (resolvedTheme === "light") return "light" as const;
+    if (resolvedTheme === "dark") return "dark" as const;
+    return "system" as const;
+  }, [resolvedTheme]);
+
+  return (
+    <div
+      className={cn(
+        "overflow-auto rounded border dark:border-neutral-800",
+        maxHeight,
+      )}
+    >
+      <PatchDiff
+        patch={patch}
+        options={{
+          diffStyle: "unified",
+          overflow: "wrap",
+          theme: getLineTheme,
+          themeType,
+          disableFileHeader: true,
+          disableLineNumbers: true,
+        }}
+        style={
+          {
+            "--diffs-font-size": "12px",
+          } as React.CSSProperties
+        }
+      />
+    </div>
+  );
+}
 
 export function DiffView({
   diffString,
@@ -271,58 +434,16 @@ export function EditDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const file = useMemo(() => {
-    const oldLines = oldStr.split("\n");
-    const newLines = newStr.split("\n");
-    const deletions = oldLines.length;
-    const additions = newLines.length;
+  const patch = useMemo(
+    () => createEditPatch(filePath, oldStr, newStr),
+    [filePath, oldStr, newStr],
+  );
 
-    const changes: parse.Change[] = [];
-    for (let i = 0; i < additions; i++) {
-      changes.push({
-        type: "add" as const,
-        add: true as const,
-        content: newLines[i]!,
-        ln: i + 1,
-      });
-    }
-    for (let i = 0; i < deletions; i++) {
-      changes.push({
-        type: "del" as const,
-        del: true as const,
-        content: oldLines[i]!,
-        ln: i + 1,
-      });
-    }
-    return {
-      from: filePath,
-      to: filePath,
-      chunks: [
-        {
-          content: "",
-          changes,
-          oldStart: 1,
-          oldLines: deletions,
-          newStart: 1,
-          newLines: additions,
-        },
-      ],
-      deletions,
-      additions,
-    };
-  }, [filePath, oldStr, newStr]);
+  if (!defaultExpanded) return null;
 
   return (
     <div className="flex flex-col gap-1">
-      <FileDiff
-        showLineNumbers={false}
-        showFileNames={false}
-        file={file}
-        expanded={expanded}
-        onToggle={() => setExpanded(!expanded)}
-        chunkClassName={chunkClassName}
-      />
+      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
     </div>
   );
 }
@@ -338,48 +459,16 @@ export function WriteDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const file = useMemo(() => {
-    const newLines = newStr.split("\n");
-    const additions = newLines.length;
+  const patch = useMemo(
+    () => createWritePatch(filePath, newStr),
+    [filePath, newStr],
+  );
 
-    const changes: parse.Change[] = [];
-    for (let i = 0; i < additions; i++) {
-      changes.push({
-        type: "add" as const,
-        add: true as const,
-        content: newLines[i]!,
-        ln: i + 1,
-      });
-    }
-    return {
-      to: filePath,
-      from: "/dev/null",
-      chunks: [
-        {
-          content: "",
-          changes,
-          oldStart: 1,
-          oldLines: 0,
-          newStart: 1,
-          newLines: additions,
-        },
-      ],
-      deletions: 0,
-      additions,
-    };
-  }, [filePath, newStr]);
+  if (!defaultExpanded) return null;
 
   return (
     <div className="flex flex-col gap-1">
-      <FileDiff
-        showLineNumbers={false}
-        showFileNames={false}
-        file={file}
-        expanded={expanded}
-        onToggle={() => setExpanded(!expanded)}
-        chunkClassName={chunkClassName}
-      />
+      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
     </div>
   );
 }
@@ -395,48 +484,16 @@ export function NoChangesDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const file = useMemo(() => {
-    const newLines = contents.split("\n");
+  const patch = useMemo(
+    () => createNoChangePatch(filePath, contents),
+    [filePath, contents],
+  );
 
-    const changes: parse.Change[] = [];
-    for (let i = 0; i < newLines.length; i++) {
-      changes.push({
-        type: "normal" as const,
-        content: newLines[i]!,
-        ln1: i + 1,
-        ln2: i + 1,
-        normal: true as const,
-      });
-    }
-    return {
-      to: filePath,
-      from: filePath,
-      chunks: [
-        {
-          content: "",
-          changes,
-          oldStart: 1,
-          oldLines: newLines.length,
-          newStart: 1,
-          newLines: newLines.length,
-        },
-      ],
-      deletions: 0,
-      additions: 0,
-    };
-  }, [filePath, contents]);
+  if (!defaultExpanded) return null;
 
   return (
     <div className="flex flex-col gap-1">
-      <FileDiff
-        file={file}
-        expanded={expanded}
-        showFileNames={false}
-        showLineNumbers={false}
-        onToggle={() => setExpanded(!expanded)}
-        chunkClassName={chunkClassName}
-      />
+      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
     </div>
   );
 }
@@ -452,94 +509,16 @@ export function MultiEditDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const patch = useMemo(
+    () => createMultiEditPatch(filePath, edits),
+    [filePath, edits],
+  );
 
-  const file = useMemo(() => {
-    const allChanges: parse.Change[] = [];
-    let currentLine = 1;
-    let totalAdditions = 0;
-    let totalDeletions = 0;
-
-    // Process each edit
-    edits.forEach((edit, editIndex) => {
-      const oldLines = edit.old_string.split("\n");
-      const newLines = edit.new_string.split("\n");
-
-      // Add a separator comment for multiple edits
-      if (edits.length > 1) {
-        allChanges.push({
-          type: "normal" as const,
-          content: `// Edit ${editIndex + 1} of ${edits.length}`,
-          ln1: currentLine,
-          ln2: currentLine,
-          normal: true as const,
-        });
-      }
-
-      // Add all deletions first
-      oldLines.forEach((line, i) => {
-        allChanges.push({
-          type: "del" as const,
-          del: true as const,
-          content: line,
-          ln: currentLine + i,
-        });
-        totalDeletions++;
-      });
-
-      // Then add all additions
-      newLines.forEach((line, i) => {
-        allChanges.push({
-          type: "add" as const,
-          add: true as const,
-          content: line,
-          ln: currentLine + i,
-        });
-        totalAdditions++;
-      });
-
-      // Add spacing between edits
-      if (editIndex < edits.length - 1) {
-        allChanges.push({
-          type: "normal" as const,
-          content: "",
-          ln1: currentLine,
-          ln2: currentLine,
-          normal: true as const,
-        });
-      }
-
-      currentLine += Math.max(oldLines.length, newLines.length) + 2;
-    });
-
-    return {
-      from: filePath,
-      to: filePath,
-      chunks: [
-        {
-          content: "",
-          changes: allChanges,
-          oldStart: 1,
-          oldLines: totalDeletions,
-          newStart: 1,
-          newLines: totalAdditions,
-        },
-      ],
-      deletions: totalDeletions,
-      additions: totalAdditions,
-    };
-  }, [filePath, edits]);
+  if (!defaultExpanded) return null;
 
   return (
     <div className="flex flex-col gap-1">
-      <FileDiff
-        showLineNumbers={false}
-        showFileNames={false}
-        file={file}
-        expanded={expanded}
-        onToggle={() => setExpanded(!expanded)}
-        chunkClassName={chunkClassName}
-      />
+      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
     </div>
   );
 }
