@@ -672,6 +672,7 @@ export async function handleDaemonEvent({
         sandboxId: thread.codesandboxId!,
         statusBeforeUpdate: threadChat.status,
         isRateLimited,
+        isError,
         shouldSkipCheckpoint,
         sourceType: thread.sourceType ?? null,
         sourceMetadata: thread.sourceMetadata ?? null,
@@ -689,6 +690,7 @@ async function handleThreadFinish({
   sandboxId,
   statusBeforeUpdate,
   isRateLimited,
+  isError,
   shouldSkipCheckpoint,
   sourceType,
   sourceMetadata,
@@ -700,6 +702,7 @@ async function handleThreadFinish({
   sandboxId: string;
   statusBeforeUpdate: ThreadStatus;
   isRateLimited: boolean;
+  isError: boolean;
   shouldSkipCheckpoint: boolean;
   sourceType: string | null;
   sourceMetadata: ThreadSourceMetadata | null;
@@ -742,7 +745,7 @@ async function handleThreadFinish({
     }
   }
 
-  let shouldProcessFollowUpQueue = !isRateLimited;
+  let shouldProcessFollowUpQueue = !isRateLimited && !isError;
   if (shouldProcessFollowUpQueue) {
     const threadChat = await getThreadChat({
       db,
