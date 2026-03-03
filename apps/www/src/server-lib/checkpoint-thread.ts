@@ -75,54 +75,88 @@ export async function checkpointThread({
         threadChatId,
         eventType: "system.checkpoint-done",
       });
-      // Send task completion transactional email via Loops (if feature flag enabled)
-      const isEmailNotifsEnabled = await getFeatureFlagForUser({
-        db,
-        userId,
-        flagName: "enableEmailNotifs",
-      });
-      if (isEmailNotifsEnabled) {
-        const [user, thread] = await Promise.all([
-          getUser({ db, userId }),
-          getThreadMinimal({ db, threadId, userId }),
-        ]);
-        if (user?.email && thread) {
-          const taskUrl = `${publicAppUrl()}/task/${threadId}`;
-          await sendLoopsTransactionalEmail({
-            email: user.email,
-            transactionalId: "cmggdi0rhd5ns0c0i5wn9wu29", // Task completion template
-            dataVariables: {
-              threadName: thread.name ?? "Task",
-              taskUrl,
-              repoFullName: thread.githubRepoFullName,
-              model: threadChat!.agent,
-              threadId,
-            },
-          });
-        }
-      }
-      if (threadChat?.agent === "claudeCode") {
-        await maybeSaveClaudeSessionToR2({
+      // Post-checkpoint operations: each is independent and best-effort.
+      // Failures must not propagate to the checkpoint error handler since
+      // the checkpoint itself already succeeded.
+      try {
+        const isEmailNotifsEnabled = await getFeatureFlagForUser({
+          db,
           userId,
+          flagName: "enableEmailNotifs",
+        });
+        if (isEmailNotifsEnabled) {
+          const [user, thread] = await Promise.all([
+            getUser({ db, userId }),
+            getThreadMinimal({ db, threadId, userId }),
+          ]);
+          if (user?.email && thread) {
+            const taskUrl = `${publicAppUrl()}/task/${threadId}`;
+            await sendLoopsTransactionalEmail({
+              email: user.email,
+              transactionalId: "cmggdi0rhd5ns0c0i5wn9wu29", // Task completion template
+              dataVariables: {
+                threadName: thread.name ?? "Task",
+                taskUrl,
+                repoFullName: thread.githubRepoFullName,
+                model: threadChat!.agent,
+                threadId,
+              },
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Post-checkpoint email notification failed", {
           threadId,
           threadChatId,
-          session,
+          error: e,
+        });
+      }
+      try {
+        if (threadChat?.agent === "claudeCode") {
+          await maybeSaveClaudeSessionToR2({
+            userId,
+            threadId,
+            threadChatId,
+            session,
+          });
+        }
+      } catch (e) {
+        console.error("Post-checkpoint R2 session save failed", {
+          threadId,
+          threadChatId,
+          error: e,
         });
       }
       await maybeAutoArchiveThread({ userId, threadId, threadChatId });
-      await maybeUpdateGitHubCheckRunForThreadChat({
-        userId,
-        threadId,
-        threadChatId,
-        status: "completed",
-        conclusion: "success",
-        summary: `Task completed: ${threadId}`,
-      });
-      await maybeProcessFollowUpQueue({
-        threadId,
-        userId,
-        threadChatId,
-      });
+      try {
+        await maybeUpdateGitHubCheckRunForThreadChat({
+          userId,
+          threadId,
+          threadChatId,
+          status: "completed",
+          conclusion: "success",
+          summary: `Task completed: ${threadId}`,
+        });
+      } catch (e) {
+        console.error("Post-checkpoint GitHub check run update failed", {
+          threadId,
+          threadChatId,
+          error: e,
+        });
+      }
+      try {
+        await maybeProcessFollowUpQueue({
+          threadId,
+          userId,
+          threadChatId,
+        });
+      } catch (e) {
+        console.error("Post-checkpoint follow-up queue processing failed", {
+          threadId,
+          threadChatId,
+          error: e,
+        });
+      }
     },
     onError: (error) => {
       console.error("Error in post-processing:", error);

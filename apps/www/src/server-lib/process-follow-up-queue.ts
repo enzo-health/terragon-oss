@@ -181,7 +181,11 @@ export async function maybeProcessFollowUpQueue({
     }
   }
   if (!threadChat) {
-    throw new Error("Thread chat not found");
+    console.warn("Skipping follow-up queue: thread chat not found", {
+      threadId,
+      threadChatId,
+    });
+    return;
   }
   // Don't process follow up messages if the thread is rate limited by the agent.
   if (threadChat.status === "queued-agent-rate-limit") {
