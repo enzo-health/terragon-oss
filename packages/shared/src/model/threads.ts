@@ -1018,6 +1018,38 @@ export async function updateThread({
 }
 
 /**
+ * Explicitly set `updatedAt` on a threadChat (or legacy thread) to the current time.
+ * Used by heartbeat events to prevent the stalled-tasks cron from killing active runs
+ * that happen to produce no stdout for extended periods.
+ */
+export async function touchThreadChatUpdatedAt({
+  db,
+  threadId,
+  threadChatId,
+}: {
+  db: DB;
+  threadId: string;
+  threadChatId: string;
+}) {
+  if (threadChatId === LEGACY_THREAD_CHAT_ID) {
+    await db
+      .update(schema.thread)
+      .set({ updatedAt: new Date() })
+      .where(eq(schema.thread.id, threadId));
+  } else {
+    await db
+      .update(schema.threadChat)
+      .set({ updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.threadChat.id, threadChatId),
+          eq(schema.threadChat.threadId, threadId),
+        ),
+      );
+  }
+}
+
+/**
  * When we update thread statuses, we want to ensure that we're the ones who updated the thread status
  * from the current status to the new status.
  *

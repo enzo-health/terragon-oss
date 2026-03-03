@@ -34,6 +34,7 @@ import {
   MessageBufferEntry,
   killProcessGroup,
   createIdleWatchdog,
+  IdleWatchdog,
 } from "./utils";
 import {
   opencodeCommand,
@@ -54,6 +55,7 @@ const ACP_SSE_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 min of SSE silence
 const ACP_INACTIVITY_CHECK_INTERVAL_MS = 30_000; // check every 30s
 const ACP_TERMINAL_QUIESCENCE_MS = 300;
 const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 type AcpRequestEnvelope = {
   jsonrpc: "2.0";
@@ -121,6 +123,8 @@ type ActiveProcessState = {
   pendingPermissions: Map<string, { acpRequestId: unknown }>;
   /** The ACP server URL, set when the ACP connection is established. */
   acpUrl: string | null;
+  /** Idle watchdog reference, used by heartbeat to reset timeout. */
+  watchdog: IdleWatchdog | null;
 };
 
 type DaemonEventRunState = {
@@ -154,6 +158,7 @@ export class TerragonDaemon {
   private mcpConfigPath: string | undefined;
 
   private activeProcesses: Map<string, ActiveProcessState> = new Map();
+  private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
   private daemonEventRunStates: Map<string, DaemonEventRunState> = new Map();
 
   private messageHandleDelay: number = 0;
@@ -472,6 +477,7 @@ export class TerragonDaemon {
         });
         maybeFixLogsForSessionId(this.runtime, activeProcessState.sessionId);
       }
+      this.stopHeartbeat(threadChatId);
       this.activeProcesses.delete(threadChatId);
       this.markDaemonEventRunStateForCleanup(threadChatId);
     }
@@ -548,8 +554,10 @@ export class TerragonDaemon {
       runId,
       pendingPermissions: new Map(),
       acpUrl: null,
+      watchdog: null,
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
+    this.startHeartbeat(input.threadChatId);
     this.initializeDaemonEventRunStateForNewRun({
       input,
       coordinatorRoutingEnabled,
@@ -1568,6 +1576,7 @@ export class TerragonDaemon {
         | "isCompleted"
         | "pollInterval"
         | "acpUrl"
+        | "watchdog"
       >
     >,
   ) => {
@@ -1646,6 +1655,7 @@ export class TerragonDaemon {
       });
     }
     // Remove this process from the map
+    this.stopHeartbeat(threadChatId);
     this.activeProcesses.delete(threadChatId);
     this.markDaemonEventRunStateForCleanup(threadChatId);
   };
@@ -1767,6 +1777,7 @@ export class TerragonDaemon {
         this.updateActiveProcessState(input.threadChatId, {
           processId,
           pollInterval,
+          watchdog,
         });
         // Start the watchdog once the process is running
         watchdog.reset();
@@ -2462,7 +2473,67 @@ export class TerragonDaemon {
     return this.featureFlags[name] ?? false;
   }
 
+  // ── Heartbeat ────────────────────────────────────────────────────────
+  // Periodically POSTs an empty `messages: []` event to keep all timeout
+  // layers alive (daemon watchdog, sandbox auto-pause, stalled-tasks cron).
+
+  private getHeartbeatIntervalMs(): number {
+    if (process.env.HEARTBEAT_INTERVAL_MS) {
+      const n = Number(process.env.HEARTBEAT_INTERVAL_MS);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return DEFAULT_HEARTBEAT_INTERVAL_MS;
+  }
+
+  private startHeartbeat(threadChatId: string): void {
+    this.stopHeartbeat(threadChatId); // clear any stale timer
+    const intervalMs = this.getHeartbeatIntervalMs();
+    const timer = setInterval(() => {
+      this.sendHeartbeat(threadChatId);
+    }, intervalMs);
+    this.heartbeatTimers.set(threadChatId, timer);
+  }
+
+  private stopHeartbeat(threadChatId: string): void {
+    const timer = this.heartbeatTimers.get(threadChatId);
+    if (timer) {
+      clearInterval(timer);
+      this.heartbeatTimers.delete(threadChatId);
+    }
+  }
+
+  private sendHeartbeat(threadChatId: string): void {
+    const processState = this.activeProcesses.get(threadChatId);
+    if (!processState || processState.isCompleted || processState.isStopping) {
+      this.stopHeartbeat(threadChatId);
+      return;
+    }
+    // Reset idle watchdog so it doesn't kill the process during silent operations
+    if (processState.watchdog) {
+      processState.watchdog.reset();
+    }
+    // Best-effort POST with empty messages — errors are logged but ignored
+    this.sendMessagesToAPI({
+      messages: [],
+      entryCount: 0,
+      timezone:
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York",
+      token: processState.token,
+      threadId: processState.threadId,
+      threadChatId: processState.threadChatId,
+    }).catch((error) => {
+      this.runtime.logger.error("Heartbeat failed", {
+        threadChatId,
+        error: formatError(error),
+      });
+    });
+  }
+
   private async teardown(): Promise<void> {
+    // Stop all heartbeat timers
+    for (const threadChatId of this.heartbeatTimers.keys()) {
+      this.stopHeartbeat(threadChatId);
+    }
     // Send any remaining messages in the buffer
     this.killAllActiveProcesses();
     // Wait for any in-progress flush to complete before final flush

@@ -2166,4 +2166,155 @@ describe("daemon", () => {
       expect(claudeCommand).not.toContain("--permission-mode");
     });
   });
+
+  describe("heartbeat", () => {
+    it("should send heartbeat with empty messages after interval", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "50";
+
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+      serverPostMock.mockClear();
+
+      // Wait for heartbeat to fire
+      await sleepUntil(() =>
+        serverPostMock.mock.calls.some(
+          (call: any) => call[0]?.messages?.length === 0,
+        ),
+      );
+
+      expect(serverPostMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: [],
+          threadId: "TEST_THREAD_ID_STRING",
+          threadChatId: "TEST_THREAD_CHAT_ID_STRING",
+        }),
+        "TEST_TOKEN_STRING",
+      );
+
+      delete process.env.HEARTBEAT_INTERVAL_MS;
+    });
+
+    it("should stop heartbeat when process completes", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "50";
+
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      // Simulate process completion
+      mockSpawnCommandStdoutLine({
+        type: "result",
+        subtype: "success",
+        total_cost_usd: 0,
+        duration_ms: 100,
+        duration_api_ms: 100,
+        is_error: false,
+        num_turns: 1,
+        session_id: "test-session",
+        result: "done",
+      });
+      await sleep(20);
+
+      // Simulate process close — this triggers handleProcessClose which stops heartbeat
+      const onClose = spawnCommandLineMock.mock.calls[0]![1].onClose;
+      onClose?.(0);
+      await sleep(20);
+      serverPostMock.mockClear();
+
+      // Wait long enough — no heartbeat should fire after process close
+      await sleep(120);
+      const heartbeatCalls = serverPostMock.mock.calls.filter(
+        (call: any) => call[0]?.messages?.length === 0,
+      );
+      expect(heartbeatCalls).toHaveLength(0);
+
+      delete process.env.HEARTBEAT_INTERVAL_MS;
+    });
+
+    it("should stop heartbeat when stop message is received", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "50";
+
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      // Send stop message — killActiveProcess stops the heartbeat
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_STOP_MESSAGE),
+      });
+      await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
+      serverPostMock.mockClear();
+
+      // Wait long enough — no heartbeat should fire after stop
+      await sleep(120);
+      const heartbeatCalls = serverPostMock.mock.calls.filter(
+        (call: any) => call[0]?.messages?.length === 0,
+      );
+      expect(heartbeatCalls).toHaveLength(0);
+
+      delete process.env.HEARTBEAT_INTERVAL_MS;
+    });
+
+    it("should survive heartbeat API failure without killing the process", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "50";
+
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      // Make serverPost fail only for heartbeat (empty messages)
+      serverPostMock.mockImplementation(async (payload: any) => {
+        if (payload.messages?.length === 0) {
+          throw new Error("Network error");
+        }
+      });
+
+      // Wait for heartbeat to attempt and fail
+      await sleep(80);
+
+      // Process should still be running (not killed)
+      expect(killChildProcessGroupMock).not.toHaveBeenCalled();
+
+      delete process.env.HEARTBEAT_INTERVAL_MS;
+    });
+
+    it("should clean up heartbeat timers on teardown", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "50";
+
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+      serverPostMock.mockClear();
+
+      // Teardown should clear all heartbeat timers
+      await runtime.teardown();
+      serverPostMock.mockClear();
+
+      // After teardown, no heartbeats should fire
+      await sleep(120);
+      const heartbeatCalls = serverPostMock.mock.calls.filter(
+        (call: any) => call[0]?.messages?.length === 0,
+      );
+      expect(heartbeatCalls).toHaveLength(0);
+
+      delete process.env.HEARTBEAT_INTERVAL_MS;
+    });
+  });
 });

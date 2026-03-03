@@ -12,6 +12,7 @@ import {
 import {
   getThreadChat,
   getThreadMinimal,
+  touchThreadChatUpdatedAt,
 } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
@@ -88,6 +89,25 @@ export async function handleDaemonEvent({
     "messages",
     JSON.stringify(messages, null, 2),
   );
+
+  // Heartbeat: empty messages just extend sandbox life and refresh updatedAt
+  if (messages.length === 0) {
+    const thread = await getThreadMinimal({ db, threadId, userId });
+    if (!thread) {
+      return { success: false, error: "Thread not found", status: 404 };
+    }
+    if (thread.codesandboxId && thread.sandboxProvider) {
+      waitUntil(
+        extendSandboxLife({
+          sandboxId: thread.codesandboxId,
+          sandboxProvider: thread.sandboxProvider,
+        }),
+      );
+    }
+    await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+    return { success: true };
+  }
+
   const [threadChat, thread] = await Promise.all([
     getThreadChat({
       db,

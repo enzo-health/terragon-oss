@@ -620,6 +620,23 @@ export async function POST(request: Request) {
     }
   }
 
+  // Heartbeat shortcut: empty messages skip SDLC loop, envelope validation, and
+  // run-context status transitions — just extend sandbox life + refresh updatedAt.
+  if (messages.length === 0) {
+    const result = await handleDaemonEvent({
+      messages: [],
+      threadId,
+      threadChatId,
+      userId,
+      timezone,
+      contextUsage: null,
+    });
+    if (!result.success) {
+      return new Response(result.error, { status: result.status || 500 });
+    }
+    return Response.json({ success: true });
+  }
+
   const enrolledLoop = await getActiveSdlcLoopForThread({
     db,
     userId,
