@@ -407,6 +407,103 @@ function transformTodoListItem({
   return [];
 }
 
+type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+type ResolvedCodexModel = {
+  modelName: string;
+  reasoningEffort: CodexReasoningEffort | null;
+};
+
+function resolveCodexModel(model: string): ResolvedCodexModel {
+  switch (model) {
+    case "gpt-5-low":
+      return { modelName: "gpt-5", reasoningEffort: "low" };
+    case "gpt-5-high":
+      return { modelName: "gpt-5", reasoningEffort: "high" };
+    case "gpt-5-codex-low":
+      return { modelName: "gpt-5-codex", reasoningEffort: "low" };
+    case "gpt-5-codex-medium":
+      return { modelName: "gpt-5-codex", reasoningEffort: "medium" };
+    case "gpt-5-codex-high":
+      return { modelName: "gpt-5-codex", reasoningEffort: "high" };
+    case "gpt-5.1-low":
+      return { modelName: "gpt-5.1", reasoningEffort: "low" };
+    case "gpt-5.1":
+      return { modelName: "gpt-5.1", reasoningEffort: null };
+    case "gpt-5.1-high":
+      return { modelName: "gpt-5.1", reasoningEffort: "high" };
+    case "gpt-5.1-codex-low":
+      return { modelName: "gpt-5.1-codex", reasoningEffort: "low" };
+    case "gpt-5.1-codex-medium":
+      return { modelName: "gpt-5.1-codex", reasoningEffort: "medium" };
+    case "gpt-5.1-codex-high":
+      return { modelName: "gpt-5.1-codex", reasoningEffort: "high" };
+    case "gpt-5.1-codex-max-low":
+      return { modelName: "gpt-5.1-codex-max", reasoningEffort: "low" };
+    case "gpt-5.1-codex-max":
+      return { modelName: "gpt-5.1-codex-max", reasoningEffort: "medium" };
+    case "gpt-5.1-codex-max-high":
+      return { modelName: "gpt-5.1-codex-max", reasoningEffort: "high" };
+    case "gpt-5.1-codex-max-xhigh":
+      return { modelName: "gpt-5.1-codex-max", reasoningEffort: "xhigh" };
+    case "gpt-5.2-low":
+      return { modelName: "gpt-5.2", reasoningEffort: "low" };
+    case "gpt-5.2":
+      return { modelName: "gpt-5.2", reasoningEffort: "medium" };
+    case "gpt-5.2-high":
+      return { modelName: "gpt-5.2", reasoningEffort: "high" };
+    case "gpt-5.2-xhigh":
+      return { modelName: "gpt-5.2", reasoningEffort: "xhigh" };
+    case "gpt-5.2-codex-low":
+      return { modelName: "gpt-5.2-codex", reasoningEffort: "low" };
+    case "gpt-5.2-codex-medium":
+      return { modelName: "gpt-5.2-codex", reasoningEffort: "medium" };
+    case "gpt-5.2-codex-high":
+      return { modelName: "gpt-5.2-codex", reasoningEffort: "high" };
+    case "gpt-5.2-codex-xhigh":
+      return { modelName: "gpt-5.2-codex", reasoningEffort: "xhigh" };
+    case "gpt-5.3-codex-low":
+      return { modelName: "gpt-5.3-codex", reasoningEffort: "low" };
+    case "gpt-5.3-codex-medium":
+      return { modelName: "gpt-5.3-codex", reasoningEffort: "medium" };
+    case "gpt-5.3-codex-high":
+      return { modelName: "gpt-5.3-codex", reasoningEffort: "high" };
+    case "gpt-5.3-codex-xhigh":
+      return { modelName: "gpt-5.3-codex", reasoningEffort: "xhigh" };
+    case "gpt-5.3-codex-spark-low":
+      return { modelName: "gpt-5.3-codex-spark", reasoningEffort: "low" };
+    case "gpt-5.3-codex-spark-medium":
+      return { modelName: "gpt-5.3-codex-spark", reasoningEffort: "medium" };
+    case "gpt-5.3-codex-spark-high":
+      return { modelName: "gpt-5.3-codex-spark", reasoningEffort: "high" };
+    case "gpt-5":
+      return { modelName: "gpt-5", reasoningEffort: null };
+    default:
+      return { modelName: "gpt-5", reasoningEffort: null };
+  }
+}
+
+export function codexAppServerStartCommand({
+  model,
+  useCredits = false,
+}: {
+  model: string;
+  useCredits?: boolean;
+}): [command: string, args: string[]] {
+  const resolvedModel = resolveCodexModel(model);
+  const args = ["app-server", "-c", `model="${resolvedModel.modelName}"`];
+  if (resolvedModel.reasoningEffort) {
+    args.push(
+      "-c",
+      `model_reasoning_effort="${resolvedModel.reasoningEffort}"`,
+    );
+  }
+  if (useCredits) {
+    args.push("-c", 'model_provider="terry"');
+  }
+  return ["codex", args];
+}
+
 /**
  * Create a command to run the Codex CLI with the given prompt.
  *
@@ -454,146 +551,12 @@ export function codexCommand({
       "Codex multi-agent disabled via CODEX_DISABLE_MULTI_AGENT",
     );
   }
-  switch (model) {
-    case "gpt-5-low":
-      commandParts.push("--model gpt-5 --config model_reasoning_effort=low");
-      break;
-    case "gpt-5-high":
-      commandParts.push("--model gpt-5 --config model_reasoning_effort=high");
-      break;
-    case "gpt-5-codex-low":
-      commandParts.push(
-        "--model gpt-5-codex --config model_reasoning_effort=low",
-      );
-      break;
-    case "gpt-5-codex-medium":
-      commandParts.push(
-        "--model gpt-5-codex --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5-codex-high":
-      commandParts.push(
-        "--model gpt-5-codex --config model_reasoning_effort=high",
-      );
-      break;
-    case "gpt-5.1-low":
-      commandParts.push("--model gpt-5.1 --config model_reasoning_effort=low");
-      break;
-    case "gpt-5.1":
-      commandParts.push("--model gpt-5.1");
-      break;
-    case "gpt-5.1-high":
-      commandParts.push("--model gpt-5.1 --config model_reasoning_effort=high");
-      break;
-    case "gpt-5.1-codex-low":
-      commandParts.push(
-        "--model gpt-5.1-codex --config model_reasoning_effort=low",
-      );
-      break;
-    case "gpt-5.1-codex-medium":
-      commandParts.push(
-        "--model gpt-5.1-codex --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5.1-codex-high":
-      commandParts.push(
-        "--model gpt-5.1-codex --config model_reasoning_effort=high",
-      );
-      break;
-    case "gpt-5.1-codex-max-low":
-      commandParts.push(
-        "--model gpt-5.1-codex-max --config model_reasoning_effort=low",
-      );
-      break;
-    case "gpt-5.1-codex-max":
-      commandParts.push(
-        "--model gpt-5.1-codex-max --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5.1-codex-max-high":
-      commandParts.push(
-        "--model gpt-5.1-codex-max --config model_reasoning_effort=high",
-      );
-      break;
-    case "gpt-5.1-codex-max-xhigh":
-      commandParts.push(
-        "--model gpt-5.1-codex-max --config model_reasoning_effort=xhigh",
-      );
-      break;
-    case "gpt-5.2-low":
-      commandParts.push("--model gpt-5.2 --config model_reasoning_effort=low");
-      break;
-    case "gpt-5.2":
-      commandParts.push(
-        "--model gpt-5.2 --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5.2-high":
-      commandParts.push("--model gpt-5.2 --config model_reasoning_effort=high");
-      break;
-    case "gpt-5.2-xhigh":
-      commandParts.push(
-        "--model gpt-5.2 --config model_reasoning_effort=xhigh",
-      );
-      break;
-    case "gpt-5.2-codex-low":
-      commandParts.push(
-        "--model gpt-5.2-codex --config model_reasoning_effort=low",
-      );
-      break;
-    case "gpt-5.2-codex-medium":
-      commandParts.push(
-        "--model gpt-5.2-codex --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5.2-codex-high":
-      commandParts.push(
-        "--model gpt-5.2-codex --config model_reasoning_effort=high",
-      );
-      break;
-    case "gpt-5.2-codex-xhigh":
-      commandParts.push(
-        "--model gpt-5.2-codex --config model_reasoning_effort=xhigh",
-      );
-      break;
-    case "gpt-5.3-codex-low":
-      commandParts.push(
-        "--model gpt-5.3-codex --config model_reasoning_effort=low",
-      );
-      break;
-    case "gpt-5.3-codex-medium":
-      commandParts.push(
-        "--model gpt-5.3-codex --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5.3-codex-high":
-      commandParts.push(
-        "--model gpt-5.3-codex --config model_reasoning_effort=high",
-      );
-      break;
-    case "gpt-5.3-codex-xhigh":
-      commandParts.push(
-        "--model gpt-5.3-codex --config model_reasoning_effort=xhigh",
-      );
-      break;
-    case "gpt-5.3-codex-spark-low":
-      commandParts.push(
-        "--model gpt-5.3-codex-spark --config model_reasoning_effort=low",
-      );
-      break;
-    case "gpt-5.3-codex-spark-medium":
-      commandParts.push(
-        "--model gpt-5.3-codex-spark --config model_reasoning_effort=medium",
-      );
-      break;
-    case "gpt-5.3-codex-spark-high":
-      commandParts.push(
-        "--model gpt-5.3-codex-spark --config model_reasoning_effort=high",
-      );
-      break;
-    default: {
-      commandParts.push("--model gpt-5");
-    }
+  const resolvedModel = resolveCodexModel(model);
+  commandParts.push(`--model ${resolvedModel.modelName}`);
+  if (resolvedModel.reasoningEffort) {
+    commandParts.push(
+      `--config model_reasoning_effort=${resolvedModel.reasoningEffort}`,
+    );
   }
   if (useCredits) {
     commandParts.push("-c", 'model_provider="terry"');
