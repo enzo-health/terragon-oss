@@ -102,6 +102,22 @@ function isDaemonEventClaimInProgressError(error: unknown): boolean {
   return status === 409 && errorCode === "daemon_event_claim_in_progress";
 }
 
+/**
+ * Detect permanent auth errors that should NOT be retried.
+ * A 401 with daemon_token_claims_required means the token is invalid
+ * and retrying won't help — the daemon needs a fresh token from the server.
+ */
+function isNonRetryableAuthError(error: unknown): boolean {
+  if (error instanceof DaemonServerPostError) {
+    return error.status === 401 || error.status === 403;
+  }
+  if (!error || typeof error !== "object" || !("status" in error)) {
+    return false;
+  }
+  const status = (error as { status?: unknown }).status;
+  return status === 401 || status === 403;
+}
+
 type ActiveProcessState = {
   agent: AIAgent;
   threadId: string;
@@ -1056,7 +1072,12 @@ export class TerragonDaemon {
     // inherit the updated process.env before spawning the agent.
     await this.ensureSandboxAgentHasToken(baseUrl, input);
 
+    // Track that we just restarted so we can suppress expected initial SSE 404s
+    let justRestarted = true;
+
     const sseLoop = (async () => {
+      // Brief settle after sandbox-agent restart — ACP endpoints need time to register
+      await abortableSleep(300);
       let consecutiveSseFailures = 0;
       while (!sseAbortController.signal.aborted) {
         try {
@@ -1079,6 +1100,7 @@ export class TerragonDaemon {
           if (!response.body) {
             throw new Error("ACP SSE response has no body");
           }
+          justRestarted = false;
           const sseStartMs = Date.now();
           await consumeSse(response.body, sseAbortController.signal);
           // Only reset failure counter if connection was stable (>5s)
@@ -1093,12 +1115,24 @@ export class TerragonDaemon {
             return;
           }
           consecutiveSseFailures++;
-          this.runtime.logger.warn("ACP SSE loop error", {
-            threadChatId: input.threadChatId,
-            serverId,
-            error: formatError(error),
-            consecutiveSseFailures,
-          });
+          // Suppress expected 404s right after sandbox-agent restart
+          if (justRestarted && consecutiveSseFailures <= 3) {
+            this.runtime.logger.debug(
+              "ACP SSE not yet available after restart (expected)",
+              {
+                threadChatId: input.threadChatId,
+                serverId,
+                consecutiveSseFailures,
+              },
+            );
+          } else {
+            this.runtime.logger.warn("ACP SSE loop error", {
+              threadChatId: input.threadChatId,
+              serverId,
+              error: formatError(error),
+              consecutiveSseFailures,
+            });
+          }
           if (consecutiveSseFailures >= ACP_SSE_MAX_CONSECUTIVE_FAILURES) {
             this.runtime.logger.error(
               "ACP SSE circuit breaker tripped — giving up after max consecutive failures",
@@ -2427,11 +2461,36 @@ export class TerragonDaemon {
       }
 
       if (failedGroups.length > 0) {
-        const allClaimInProgress = failedGroups.every((failedGroup) =>
-          isDaemonEventClaimInProgressError(failedGroup.error),
-        );
+        // Detect permanent auth errors (401/403) — drop messages instead of retrying forever.
+        // These indicate an invalid token that won't become valid on its own.
+        const retryableGroups = failedGroups.filter((g) => {
+          if (isNonRetryableAuthError(g.error)) {
+            this.runtime.logger.error(
+              "Permanent auth error — dropping messages (token is invalid, retrying won't help)",
+              {
+                error: formatError(g.error),
+                messageCount: g.messageCount,
+                threadId: g.threadId,
+                threadChatId: g.threadChatId,
+              },
+            );
+            this.getRetryBackoff(g.threadChatId).reset();
+            // Remove these messages from the buffer
+            this.messageBuffer = this.messageBuffer.filter(
+              (entry) => entry.threadChatId !== g.threadChatId,
+            );
+            return false;
+          }
+          return true;
+        });
+
+        const allClaimInProgress =
+          retryableGroups.length > 0 &&
+          retryableGroups.every((failedGroup) =>
+            isDaemonEventClaimInProgressError(failedGroup.error),
+          );
         if (allClaimInProgress) {
-          for (const failedGroup of failedGroups) {
+          for (const failedGroup of retryableGroups) {
             this.getRetryBackoff(failedGroup.threadChatId).reset();
             this.runtime.logger.warn(
               "Daemon event claim is in progress; preserving payload identity and retrying",
@@ -2446,8 +2505,8 @@ export class TerragonDaemon {
           }
           retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
           this.pendingFlushRequired = true;
-        } else {
-          for (const failedGroup of failedGroups) {
+        } else if (retryableGroups.length > 0) {
+          for (const failedGroup of retryableGroups) {
             const backoff = this.getRetryBackoff(failedGroup.threadChatId);
             backoff.increment();
             const retryInOrNull = backoff.retryIn();
