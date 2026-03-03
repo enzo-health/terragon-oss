@@ -61,9 +61,11 @@ RUN npm install -g pnpm \\
 
 
 # Configure Codex with increased timeouts and retries for long-running tasks
+# Settings must be under [model_providers.openai] — root-level keys are silently ignored by codex_core
+# Note: request_max_retries cannot be overridden for the built-in openai provider (Codex #3026)
 RUN mkdir -p /root/.codex && cat > /root/.codex/config.toml << 'TOML'
+[model_providers.openai]
 stream_idle_timeout_ms = 600000
-request_max_retries = 10
 stream_max_retries = 20
 TOML
 
@@ -148,9 +150,11 @@ RUN npm install -g pnpm \\
 
 
 # Configure Codex with increased timeouts and retries for long-running tasks
+# Settings must be under [model_providers.openai] — root-level keys are silently ignored by codex_core
+# Note: request_max_retries cannot be overridden for the built-in openai provider (Codex #3026)
 RUN mkdir -p /root/.codex && cat > /root/.codex/config.toml << 'TOML'
+[model_providers.openai]
 stream_idle_timeout_ms = 600000
-request_max_retries = 10
 stream_max_retries = 20
 TOML
 
