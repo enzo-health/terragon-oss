@@ -188,6 +188,61 @@ describe("daemon", () => {
     expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
   });
 
+  it("routes codex app-server transport to runAppServerCommand", async () => {
+    const stopAppServerTurnSpy = vi
+      .spyOn(daemon as any, "stopAppServerTurn")
+      .mockResolvedValue(false);
+    const runAppServerCommandSpy = vi
+      .spyOn(daemon as any, "runAppServerCommand")
+      .mockResolvedValue(undefined);
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify({
+        ...TEST_INPUT_MESSAGE,
+        agent: "codex",
+        model: "gpt-5",
+        transportMode: "codex-app-server",
+      } satisfies DaemonMessageClaude),
+    });
+
+    await sleepUntil(() => runAppServerCommandSpy.mock.calls.length === 1);
+    expect(stopAppServerTurnSpy).toHaveBeenCalledTimes(1);
+    expect(runAppServerCommandSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "codex",
+        transportMode: "codex-app-server",
+      }),
+    );
+    expect(spawnCommandLineMock).not.toHaveBeenCalled();
+  });
+
+  it("interrupts app-server turn on stop message instead of killing process", async () => {
+    (daemon as any).appServerRunContexts.set(
+      TEST_STOP_MESSAGE.threadChatId,
+      {},
+    );
+    const stopAppServerTurnSpy = vi
+      .spyOn(daemon as any, "stopAppServerTurn")
+      .mockResolvedValue(true);
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(TEST_STOP_MESSAGE),
+    });
+
+    await sleepUntil(() => stopAppServerTurnSpy.mock.calls.length === 1);
+    expect(stopAppServerTurnSpy).toHaveBeenCalledWith({
+      threadId: TEST_STOP_MESSAGE.threadId,
+      threadChatId: TEST_STOP_MESSAGE.threadChatId,
+      token: TEST_STOP_MESSAGE.token,
+      includeStopMessage: true,
+    });
+    expect(killChildProcessGroupMock).not.toHaveBeenCalled();
+  });
+
   it("should not kill an already finished process when starting a new command", async () => {
     let firstOnClose: ((code: number | null) => void) | undefined;
     spawnCommandLineMock.mockImplementation((command, handlers) => {

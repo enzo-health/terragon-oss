@@ -17,9 +17,14 @@ export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
   sdlcLoopCoordinatorRouting?: boolean;
   sandboxAgentAcpTransport?: boolean;
+  codexAppServerTransport?: boolean;
 };
 
-export const DaemonTransportModeSchema = z.enum(["legacy", "acp"]);
+export const DaemonTransportModeSchema = z.enum([
+  "legacy",
+  "acp",
+  "codex-app-server",
+]);
 export type DaemonTransportMode = z.infer<typeof DaemonTransportModeSchema>;
 
 export const DaemonMessageClaudeSchema = z

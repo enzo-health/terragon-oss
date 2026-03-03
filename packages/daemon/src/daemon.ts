@@ -42,7 +42,14 @@ import {
   parseOpencodeLine,
 } from "./opencode";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
-import { codexCommand, createCodexParserState, parseCodexLine } from "./codex";
+import {
+  codexCommand,
+  createCodexParserState,
+  parseCodexLine,
+  buildThreadStartParams,
+  buildTurnStartParams,
+} from "./codex";
+import { CodexAppServerManager, extractThreadEvent } from "./codex-app-server";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
 import { createHash, randomUUID } from "node:crypto";
@@ -56,6 +63,11 @@ const ACP_INACTIVITY_CHECK_INTERVAL_MS = 30_000; // check every 30s
 const ACP_TERMINAL_QUIESCENCE_MS = 300;
 const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const APP_SERVER_TURN_WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const APP_SERVER_INTERRUPT_TIMEOUT_MS = 30_000;
+const APP_SERVER_RESPAWN_WINDOW_MS = 60_000;
+const APP_SERVER_MAX_RESPAWNS_PER_WINDOW = 3;
+const APP_SERVER_RESPAWN_BASE_DELAY_MS = 1_000;
 
 type AcpRequestEnvelope = {
   jsonrpc: "2.0";
@@ -118,6 +130,84 @@ function isNonRetryableAuthError(error: unknown): boolean {
   return status === 401 || status === 403;
 }
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(
+  value: Record<string, unknown> | null,
+  key: string,
+): string | null {
+  if (!value) {
+    return null;
+  }
+  const keyValue = value[key];
+  return typeof keyValue === "string" ? keyValue : null;
+}
+
+function extractThreadIdFromRpcResult(result: unknown): string | null {
+  const resultRecord = toRecord(result);
+  if (!resultRecord) {
+    return null;
+  }
+
+  const directThreadId =
+    readString(resultRecord, "threadId") ??
+    readString(resultRecord, "thread_id") ??
+    readString(resultRecord, "conversationId") ??
+    readString(resultRecord, "id");
+  if (directThreadId) {
+    return directThreadId;
+  }
+
+  const threadRecord = toRecord(resultRecord.thread);
+  if (!threadRecord) {
+    return null;
+  }
+  return (
+    readString(threadRecord, "id") ??
+    readString(threadRecord, "threadId") ??
+    readString(threadRecord, "thread_id")
+  );
+}
+
+function extractCodexPreviousResponseIdFromParams(
+  params: Record<string, unknown>,
+): string | null {
+  const turnRecord = toRecord(params.turn);
+  const responseRecord =
+    toRecord(turnRecord?.response) ?? toRecord(params.response);
+  const previousResponseId =
+    readString(responseRecord, "id") ??
+    readString(turnRecord, "response_id") ??
+    readString(turnRecord, "responseId") ??
+    readString(params, "previous_response_id") ??
+    readString(params, "previousResponseId");
+  return previousResponseId;
+}
+
+function isTurnInterruptedFromParams(params: Record<string, unknown>): boolean {
+  const turnRecord = toRecord(params.turn);
+  const status =
+    readString(turnRecord, "status") ??
+    readString(turnRecord, "completionStatus") ??
+    readString(params, "status");
+  return typeof status === "string" && status.toLowerCase() === "interrupted";
+}
+
+function extractTurnFailureMessage(params: Record<string, unknown>): string {
+  const errorRecord =
+    toRecord(params.error) ?? toRecord(toRecord(params.turn)?.error);
+  const message =
+    readString(errorRecord, "message") ??
+    readString(params, "message") ??
+    "Codex turn failed";
+  return message;
+}
+
 type ActiveProcessState = {
   agent: AIAgent;
   threadId: string;
@@ -141,6 +231,29 @@ type ActiveProcessState = {
   acpUrl: string | null;
   /** Idle watchdog reference, used by heartbeat to reset timeout. */
   watchdog: IdleWatchdog | null;
+};
+
+type AppServerTurnCompletion = {
+  status: "completed" | "failed" | "interrupted";
+  codexPreviousResponseId: string | null;
+  errorMessage: string | null;
+};
+
+type AppServerRunContext = {
+  threadChatId: string;
+  daemonThreadId: string;
+  token: string;
+  startTime: number;
+  threadId: string | null;
+  isStopping: boolean;
+  isCompleted: boolean;
+  watchdogTriggered: boolean;
+  turnCompletePromise: Promise<AppServerTurnCompletion>;
+  threadReadyPromise: Promise<string>;
+  watchdogTimer: NodeJS.Timeout | null;
+  resolveTurnComplete: (result: AppServerTurnCompletion) => void;
+  rejectTurnComplete: (error: Error) => void;
+  resolveThreadReady: (threadId: string) => void;
 };
 
 type DaemonEventRunState = {
@@ -174,8 +287,15 @@ export class TerragonDaemon {
   private mcpConfigPath: string | undefined;
 
   private activeProcesses: Map<string, ActiveProcessState> = new Map();
+  private appServerRunContexts: Map<string, AppServerRunContext> = new Map();
   private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
   private daemonEventRunStates: Map<string, DaemonEventRunState> = new Map();
+  private appServerManager: CodexAppServerManager | null = null;
+  private appServerManagerConfig: {
+    model: string;
+    useCredits: boolean;
+  } | null = null;
+  private appServerCrashTimestamps: number[] = [];
 
   private messageHandleDelay: number = 0;
   private messageFlushDelay: number = 0;
@@ -328,6 +448,28 @@ export class TerragonDaemon {
           break;
         }
         case "stop": {
+          const appServerRun = this.appServerRunContexts.get(
+            parsedMessage.threadChatId,
+          );
+          if (appServerRun) {
+            this.runtime.logger.info(
+              "Stop message received, interrupting codex app-server turn...",
+              { threadChatId: parsedMessage.threadChatId },
+            );
+            void this.stopAppServerTurn({
+              threadId: parsedMessage.threadId,
+              threadChatId: parsedMessage.threadChatId,
+              token: parsedMessage.token,
+              includeStopMessage: true,
+            }).catch((error) => {
+              this.runtime.logger.error("Failed to stop app-server turn", {
+                threadChatId: parsedMessage.threadChatId,
+                error: formatError(error),
+              });
+            });
+            break;
+          }
+
           this.runtime.logger.info(
             "Stop message received, killing specific process...",
             { threadChatId: parsedMessage.threadChatId },
@@ -503,6 +645,27 @@ export class TerragonDaemon {
     for (const threadChatId of this.activeProcesses.keys()) {
       this.killActiveProcess(threadChatId);
     }
+    for (const threadChatId of this.appServerRunContexts.keys()) {
+      const context = this.appServerRunContexts.get(threadChatId);
+      if (!context) {
+        continue;
+      }
+      context.isStopping = true;
+      context.rejectTurnComplete(
+        new Error("Codex app-server turn stopped during daemon shutdown"),
+      );
+      this.clearAppServerWatchdog(context);
+      this.stopHeartbeat(threadChatId);
+      this.markDaemonEventRunStateForCleanup(threadChatId);
+    }
+    this.appServerRunContexts.clear();
+    if (this.appServerManager) {
+      void this.appServerManager.kill().catch((error) => {
+        this.runtime.logger.error("Failed to kill codex app-server", {
+          error: formatError(error),
+        });
+      });
+    }
   }
 
   private initializeDaemonEventRunStateForNewRun({
@@ -535,6 +698,12 @@ export class TerragonDaemon {
     }
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
+    await this.stopAppServerTurn({
+      threadId: input.threadId,
+      threadChatId: input.threadChatId,
+      token: input.token,
+      includeStopMessage: false,
+    });
     const bufferedBefore = this.messageBuffer.length;
     this.messageBuffer = this.messageBuffer.filter(
       (entry) => entry.threadChatId !== input.threadChatId,
@@ -551,6 +720,19 @@ export class TerragonDaemon {
     const coordinatorRoutingEnabled = this.getFeatureFlag(
       "sdlcLoopCoordinatorRouting",
     );
+    this.initializeDaemonEventRunStateForNewRun({
+      input,
+      coordinatorRoutingEnabled,
+    });
+    if (input.transportMode === "codex-app-server") {
+      if (input.agent !== "codex") {
+        throw new Error(
+          `codex-app-server transport is only supported for codex agent, received ${input.agent}`,
+        );
+      }
+      await this.runAppServerCommand(input);
+      return;
+    }
     // Create new process state for this threadChatId
     const runId = input.runId ?? randomUUID();
     const newProcessState: ActiveProcessState = {
@@ -574,10 +756,6 @@ export class TerragonDaemon {
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.startHeartbeat(input.threadChatId);
-    this.initializeDaemonEventRunStateForNewRun({
-      input,
-      coordinatorRoutingEnabled,
-    });
     if (input.transportMode === "acp") {
       if (!this.getFeatureFlag("sandboxAgentAcpTransport")) {
         throw new Error(
@@ -621,6 +799,681 @@ export class TerragonDaemon {
         });
         throw new Error(`Unknown agent: ${input.agent}`);
       }
+    }
+  }
+
+  private createAppServerRunContext(
+    input: DaemonMessageClaude,
+  ): AppServerRunContext {
+    let resolveTurnCompleteBase!: (result: AppServerTurnCompletion) => void;
+    let rejectTurnCompleteBase!: (error: Error) => void;
+    const turnCompletePromise = new Promise<AppServerTurnCompletion>(
+      (resolve, reject) => {
+        resolveTurnCompleteBase = resolve;
+        rejectTurnCompleteBase = (error) => reject(error);
+      },
+    );
+
+    let resolveThreadReadyBase!: (threadId: string) => void;
+    const threadReadyPromise = new Promise<string>((resolve) => {
+      resolveThreadReadyBase = resolve;
+    });
+
+    let threadReadyResolved = false;
+    const context: AppServerRunContext = {
+      threadChatId: input.threadChatId,
+      daemonThreadId: input.threadId,
+      token: input.token,
+      startTime: Date.now(),
+      threadId: input.sessionId,
+      isStopping: false,
+      isCompleted: false,
+      watchdogTriggered: false,
+      turnCompletePromise,
+      threadReadyPromise,
+      watchdogTimer: null,
+      resolveTurnComplete: (result) => {
+        if (context.isCompleted) {
+          return;
+        }
+        context.isCompleted = true;
+        resolveTurnCompleteBase(result);
+      },
+      rejectTurnComplete: (error) => {
+        if (context.isCompleted) {
+          return;
+        }
+        context.isCompleted = true;
+        rejectTurnCompleteBase(error);
+      },
+      resolveThreadReady: (threadId) => {
+        if (threadReadyResolved) {
+          return;
+        }
+        threadReadyResolved = true;
+        resolveThreadReadyBase(threadId);
+      },
+    };
+    if (input.sessionId) {
+      context.resolveThreadReady(input.sessionId);
+    }
+    return context;
+  }
+
+  private getAppServerWatchdogTimeoutMs(): number {
+    if (process.env.IDLE_TIMEOUT_MS) {
+      const timeoutMs = Number(process.env.IDLE_TIMEOUT_MS);
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        return timeoutMs;
+      }
+    }
+    return APP_SERVER_TURN_WATCHDOG_TIMEOUT_MS;
+  }
+
+  private clearAppServerWatchdog(context: AppServerRunContext): void {
+    if (context.watchdogTimer) {
+      clearTimeout(context.watchdogTimer);
+      context.watchdogTimer = null;
+    }
+  }
+
+  private normalizeAppServerMessageSessionId({
+    message,
+    threadId,
+  }: {
+    message: ClaudeMessage;
+    threadId: string;
+  }): ClaudeMessage {
+    if (
+      "session_id" in message &&
+      typeof message.session_id === "string" &&
+      message.session_id.length === 0
+    ) {
+      return {
+        ...message,
+        session_id: threadId,
+      };
+    }
+    return message;
+  }
+
+  private resolveAppServerThread({
+    context,
+    manager,
+    threadId,
+  }: {
+    context: AppServerRunContext;
+    manager: CodexAppServerManager;
+    threadId: string;
+  }): void {
+    context.threadId = threadId;
+    context.resolveThreadReady(threadId);
+    manager.ensureThreadState({
+      threadId,
+      threadChatId: context.threadChatId,
+    });
+  }
+
+  private async sendAppServerTurnInterrupt({
+    threadId,
+    threadChatId,
+  }: {
+    threadId: string;
+    threadChatId: string;
+  }): Promise<void> {
+    if (!this.appServerManager) {
+      return;
+    }
+    await this.appServerManager.send({
+      method: "turn/interrupt",
+      threadChatId,
+      timeoutMs: APP_SERVER_INTERRUPT_TIMEOUT_MS,
+      params: {
+        threadId,
+        thread_id: threadId,
+      },
+    });
+  }
+
+  private resetAppServerWatchdog({
+    context,
+    input,
+    manager,
+  }: {
+    context: AppServerRunContext;
+    input: DaemonMessageClaude;
+    manager: CodexAppServerManager;
+  }): void {
+    if (context.isStopping || context.isCompleted) {
+      return;
+    }
+    this.clearAppServerWatchdog(context);
+    const timeoutMs = this.getAppServerWatchdogTimeoutMs();
+    context.watchdogTimer = setTimeout(() => {
+      if (context.isStopping || context.isCompleted) {
+        return;
+      }
+      context.watchdogTriggered = true;
+      this.runtime.logger.warn(
+        "Codex app-server turn idle timeout reached, interrupting turn",
+        {
+          threadChatId: input.threadChatId,
+          timeoutMs,
+          threadId: context.threadId,
+        },
+      );
+      const threadId = context.threadId;
+      if (!threadId) {
+        context.rejectTurnComplete(
+          new Error("Codex app-server watchdog timeout before thread id ready"),
+        );
+        return;
+      }
+      void this.sendAppServerTurnInterrupt({
+        threadId,
+        threadChatId: input.threadChatId,
+      })
+        .catch((error) => {
+          this.runtime.logger.error(
+            "Failed to interrupt codex app-server turn after watchdog timeout",
+            {
+              threadChatId: input.threadChatId,
+              threadId,
+              error: formatError(error),
+            },
+          );
+        })
+        .finally(() => {
+          this.clearAppServerWatchdog(context);
+          context.watchdogTimer = setTimeout(() => {
+            if (context.isCompleted || context.isStopping) {
+              return;
+            }
+            this.runtime.logger.warn(
+              "Codex app-server did not acknowledge watchdog interrupt in time; forcing restart",
+              {
+                threadChatId: input.threadChatId,
+                threadId,
+              },
+            );
+            context.rejectTurnComplete(
+              new Error(
+                "Codex app-server turn timed out and did not complete after interrupt",
+              ),
+            );
+            void manager.kill().catch((error) => {
+              this.runtime.logger.error(
+                "Failed to kill codex app-server after watchdog timeout",
+                {
+                  error: formatError(error),
+                },
+              );
+            });
+          }, APP_SERVER_INTERRUPT_TIMEOUT_MS);
+        });
+    }, timeoutMs);
+  }
+
+  private pruneAppServerCrashWindow(now: number = Date.now()): void {
+    this.appServerCrashTimestamps = this.appServerCrashTimestamps.filter(
+      (timestamp) => now - timestamp <= APP_SERVER_RESPAWN_WINDOW_MS,
+    );
+  }
+
+  private registerAppServerCrash(): number {
+    const now = Date.now();
+    this.pruneAppServerCrashWindow(now);
+    this.appServerCrashTimestamps.push(now);
+    this.pruneAppServerCrashWindow(now);
+    return this.appServerCrashTimestamps.length;
+  }
+
+  private resetAppServerCrashHistory(): void {
+    this.appServerCrashTimestamps = [];
+  }
+
+  private async applyAppServerRespawnBackoff(): Promise<void> {
+    this.pruneAppServerCrashWindow();
+    const crashCount = this.appServerCrashTimestamps.length;
+    if (crashCount === 0) {
+      return;
+    }
+    if (crashCount > APP_SERVER_MAX_RESPAWNS_PER_WINDOW) {
+      throw new Error(
+        `Codex app-server exceeded ${APP_SERVER_MAX_RESPAWNS_PER_WINDOW} respawns within ${APP_SERVER_RESPAWN_WINDOW_MS / 1000}s`,
+      );
+    }
+    const delayMs = Math.min(
+      10_000,
+      APP_SERVER_RESPAWN_BASE_DELAY_MS * 2 ** (crashCount - 1),
+    );
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
+  }
+
+  private isAppServerCrashError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const lowerMessage = error.message.toLowerCase();
+    return (
+      lowerMessage.includes("codex app-server exited") ||
+      lowerMessage.includes("codex app-server is not running")
+    );
+  }
+
+  private async getOrCreateAppServerManager(
+    input: DaemonMessageClaude,
+  ): Promise<CodexAppServerManager> {
+    const nextConfig = {
+      model: input.model,
+      useCredits: !!input.useCredits,
+    };
+    const existingConfig = this.appServerManagerConfig;
+    const configChanged =
+      !!existingConfig &&
+      (existingConfig.model !== nextConfig.model ||
+        existingConfig.useCredits !== nextConfig.useCredits);
+
+    if (configChanged && this.appServerRunContexts.size > 0) {
+      throw new Error(
+        "Cannot reconfigure codex app-server while turns are still active",
+      );
+    }
+
+    if (configChanged && this.appServerManager) {
+      await this.appServerManager.kill();
+      this.appServerManager = null;
+      this.appServerManagerConfig = null;
+    }
+
+    if (!this.appServerManager) {
+      this.appServerManager = new CodexAppServerManager({
+        logger: this.runtime.logger,
+        model: nextConfig.model,
+        useCredits: nextConfig.useCredits,
+        daemonToken: input.token,
+      });
+      this.appServerManagerConfig = nextConfig;
+    }
+
+    return this.appServerManager;
+  }
+
+  private async stopAppServerTurn({
+    threadId,
+    threadChatId,
+    token,
+    includeStopMessage,
+  }: {
+    threadId: string;
+    threadChatId: string;
+    token: string;
+    includeStopMessage: boolean;
+  }): Promise<boolean> {
+    const context = this.appServerRunContexts.get(threadChatId);
+    if (!context) {
+      return false;
+    }
+
+    context.isStopping = true;
+    this.clearAppServerWatchdog(context);
+
+    if (context.threadId) {
+      try {
+        await this.sendAppServerTurnInterrupt({
+          threadId: context.threadId,
+          threadChatId,
+        });
+      } catch (error) {
+        this.runtime.logger.warn(
+          "Failed to send app-server turn interrupt during stop",
+          {
+            threadChatId,
+            threadId: context.threadId,
+            error: formatError(error),
+          },
+        );
+      }
+    } else {
+      context.rejectTurnComplete(
+        new Error("Stop requested before codex app-server thread started"),
+      );
+    }
+
+    await Promise.race([
+      context.turnCompletePromise.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, APP_SERVER_INTERRUPT_TIMEOUT_MS);
+      }),
+    ]);
+
+    if (!context.isCompleted) {
+      context.rejectTurnComplete(
+        new Error("Stop timeout waiting for codex app-server turn completion"),
+      );
+      if (this.appServerManager) {
+        await this.appServerManager.kill().catch((error) => {
+          this.runtime.logger.error(
+            "Failed to kill codex app-server after stop timeout",
+            {
+              error: formatError(error),
+            },
+          );
+        });
+      }
+    }
+
+    this.markDaemonEventRunStateForCleanup(threadChatId);
+
+    if (includeStopMessage) {
+      const durationMs = this.getProcessDurationMs(threadChatId);
+      this.addMessageToBuffer({
+        agent: null,
+        message: {
+          type: "custom-stop",
+          session_id: null,
+          duration_ms: durationMs,
+        },
+        threadId,
+        threadChatId,
+        token,
+      });
+      await this.flushMessageBuffer();
+    }
+
+    return true;
+  }
+
+  private async runAppServerCommand(input: DaemonMessageClaude): Promise<void> {
+    const manager = await this.getOrCreateAppServerManager(input);
+    const context = this.createAppServerRunContext(input);
+    this.appServerRunContexts.set(input.threadChatId, context);
+    this.startHeartbeat(input.threadChatId);
+
+    let removeNotificationHandler: (() => void) | null = null;
+    let processHealthInterval: NodeJS.Timeout | null = null;
+
+    try {
+      await this.applyAppServerRespawnBackoff();
+      await manager.restartIfTokenChanged(input.token);
+      await manager.ensureReady();
+
+      removeNotificationHandler = manager.onNotification(
+        (notification, notificationContext) => {
+          const belongsToThread =
+            notificationContext.threadState?.threadChatId ===
+              input.threadChatId ||
+            (context.threadId !== null &&
+              notificationContext.threadId === context.threadId);
+          if (!belongsToThread) {
+            return;
+          }
+
+          const threadEvent = extractThreadEvent(notification);
+          if (!threadEvent) {
+            return;
+          }
+
+          if (threadEvent.type === "thread.started") {
+            this.resolveAppServerThread({
+              context,
+              manager,
+              threadId: threadEvent.thread_id,
+            });
+          } else if (notificationContext.threadId) {
+            this.resolveAppServerThread({
+              context,
+              manager,
+              threadId: notificationContext.threadId,
+            });
+          }
+
+          const threadState =
+            notificationContext.threadState ??
+            (context.threadId
+              ? manager.ensureThreadState({
+                  threadId: context.threadId,
+                  threadChatId: input.threadChatId,
+                })
+              : null);
+          if (!threadState) {
+            return;
+          }
+
+          const parsedMessages = parseCodexLine({
+            line: JSON.stringify(threadEvent),
+            runtime: this.runtime,
+            state: threadState.parserState,
+          });
+          for (const parsedMessage of parsedMessages) {
+            const normalized = context.threadId
+              ? this.normalizeAppServerMessageSessionId({
+                  message: parsedMessage,
+                  threadId: context.threadId,
+                })
+              : parsedMessage;
+            this.addMessageToBuffer({
+              agent: "codex",
+              message: normalized,
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
+            });
+          }
+
+          if (
+            threadEvent.type === "item.started" ||
+            threadEvent.type === "item.updated" ||
+            threadEvent.type === "item.completed"
+          ) {
+            this.resetAppServerWatchdog({
+              context,
+              input,
+              manager,
+            });
+          }
+
+          if (threadEvent.type === "turn.failed") {
+            const params = notification.params ?? {};
+            context.resolveTurnComplete({
+              status: "failed",
+              codexPreviousResponseId: null,
+              errorMessage: extractTurnFailureMessage(params),
+            });
+            return;
+          }
+
+          if (threadEvent.type === "error") {
+            context.resolveTurnComplete({
+              status: "failed",
+              codexPreviousResponseId: null,
+              errorMessage: threadEvent.message,
+            });
+            return;
+          }
+
+          if (threadEvent.type === "turn.completed") {
+            const params = notification.params ?? {};
+            const completionStatus = isTurnInterruptedFromParams(params)
+              ? "interrupted"
+              : "completed";
+            context.resolveTurnComplete({
+              status: completionStatus,
+              codexPreviousResponseId:
+                extractCodexPreviousResponseIdFromParams(params),
+              errorMessage: null,
+            });
+          }
+        },
+      );
+
+      if (input.sessionId) {
+        this.resolveAppServerThread({
+          context,
+          manager,
+          threadId: input.sessionId,
+        });
+        await manager.send({
+          method: "thread/resume",
+          threadChatId: input.threadChatId,
+          params: {
+            threadId: input.sessionId,
+            thread_id: input.sessionId,
+          },
+        });
+      } else {
+        const threadStartResult = await manager.send({
+          method: "thread/start",
+          threadChatId: input.threadChatId,
+          params: buildThreadStartParams({
+            model: input.model,
+            instructions: input.prompt,
+          }),
+        });
+        const threadIdFromResult =
+          extractThreadIdFromRpcResult(threadStartResult);
+        if (threadIdFromResult) {
+          this.resolveAppServerThread({
+            context,
+            manager,
+            threadId: threadIdFromResult,
+          });
+        }
+      }
+
+      const threadId = await Promise.race([
+        context.threadReadyPromise,
+        new Promise<string>((_, reject) => {
+          setTimeout(
+            () => reject(new Error("Timed out waiting for codex thread id")),
+            APP_SERVER_INTERRUPT_TIMEOUT_MS,
+          );
+        }),
+      ]);
+
+      this.resetAppServerWatchdog({
+        context,
+        input,
+        manager,
+      });
+      await manager.send({
+        method: "turn/start",
+        threadChatId: input.threadChatId,
+        params: buildTurnStartParams({
+          threadId,
+          prompt: input.prompt,
+        }),
+      });
+
+      processHealthInterval = setInterval(() => {
+        if (context.isCompleted || context.isStopping) {
+          return;
+        }
+        if (manager.isAlive()) {
+          return;
+        }
+        context.rejectTurnComplete(
+          new Error("codex app-server exited unexpectedly during turn"),
+        );
+      }, 250);
+
+      const completion = await context.turnCompletePromise;
+      const processDurationMs = this.getProcessDurationMs(input.threadChatId);
+      const normalizedThreadId = context.threadId ?? input.sessionId ?? "";
+
+      if (!context.isStopping && completion.status === "completed") {
+        this.addMessageToBuffer({
+          agent: "codex",
+          message: {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: processDurationMs,
+            duration_api_ms: processDurationMs,
+            is_error: false,
+            num_turns: 1,
+            result: "Codex successfully completed",
+            session_id: normalizedThreadId,
+          },
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          token: input.token,
+        });
+      } else if (!context.isStopping) {
+        const errorInfo =
+          completion.errorMessage ??
+          (context.watchdogTriggered
+            ? "Codex turn timed out and was interrupted"
+            : "Codex turn did not complete successfully");
+        this.addMessageToBuffer({
+          agent: "codex",
+          message: {
+            type: "custom-error",
+            session_id: null,
+            duration_ms: processDurationMs,
+            error_info: errorInfo,
+          },
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          token: input.token,
+        });
+      }
+
+      this.runtime.logger.info("Codex app-server turn completed", {
+        threadChatId: input.threadChatId,
+        threadId: normalizedThreadId || null,
+        codexPreviousResponseId: completion.codexPreviousResponseId,
+        status: completion.status,
+      });
+
+      await this.flushMessageBuffer();
+      this.resetAppServerCrashHistory();
+    } catch (error) {
+      if (!context.isStopping) {
+        const crashError =
+          this.isAppServerCrashError(error) || !manager.isAlive();
+        if (crashError) {
+          const crashCount = this.registerAppServerCrash();
+          if (crashCount > APP_SERVER_MAX_RESPAWNS_PER_WINDOW) {
+            this.runtime.logger.error("Codex app-server crash loop detected", {
+              crashCount,
+              threadChatId: input.threadChatId,
+            });
+          }
+        }
+
+        this.addMessageToBuffer({
+          agent: "codex",
+          message: {
+            type: "custom-error",
+            session_id: null,
+            duration_ms: this.getProcessDurationMs(input.threadChatId),
+            error_info:
+              error instanceof Error ? error.message : "Codex app-server error",
+          },
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          token: input.token,
+        });
+        await this.flushMessageBuffer();
+      }
+
+      if (!context.isStopping) {
+        throw error;
+      }
+    } finally {
+      if (removeNotificationHandler) {
+        removeNotificationHandler();
+      }
+      if (processHealthInterval) {
+        clearInterval(processHealthInterval);
+      }
+      this.clearAppServerWatchdog(context);
+      this.stopHeartbeat(input.threadChatId);
+      this.appServerRunContexts.delete(input.threadChatId);
+      this.markDaemonEventRunStateForCleanup(input.threadChatId);
     }
   }
 
@@ -1699,6 +2552,10 @@ export class TerragonDaemon {
     if (activeProcessState?.stderr.length) {
       return activeProcessState.stderr.join("\n");
     }
+    const appServerContext = this.appServerRunContexts.get(threadChatId);
+    if (appServerContext?.watchdogTriggered) {
+      return "Codex app-server turn hit the watchdog timeout";
+    }
     return undefined;
   };
 
@@ -1706,6 +2563,10 @@ export class TerragonDaemon {
     const activeProcessState = this.activeProcesses.get(threadChatId);
     if (activeProcessState?.startTime) {
       return Math.round(Date.now() - activeProcessState.startTime);
+    }
+    const appServerContext = this.appServerRunContexts.get(threadChatId);
+    if (appServerContext?.startTime) {
+      return Math.round(Date.now() - appServerContext.startTime);
     }
     return 0;
   };
@@ -2675,23 +3536,52 @@ export class TerragonDaemon {
 
   private sendHeartbeat(threadChatId: string): void {
     const processState = this.activeProcesses.get(threadChatId);
-    if (!processState || processState.isCompleted || processState.isStopping) {
+    if (processState) {
+      if (processState.isCompleted || processState.isStopping) {
+        this.stopHeartbeat(threadChatId);
+        return;
+      }
+      // Reset idle watchdog so it doesn't kill the process during silent operations
+      if (processState.watchdog) {
+        processState.watchdog.reset();
+      }
+      // Best-effort POST with empty messages — errors are logged but ignored
+      this.sendMessagesToAPI({
+        messages: [],
+        entryCount: 0,
+        timezone:
+          Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          "America/New_York",
+        token: processState.token,
+        threadId: processState.threadId,
+        threadChatId: processState.threadChatId,
+      }).catch((error) => {
+        this.runtime.logger.error("Heartbeat failed", {
+          threadChatId,
+          error: formatError(error),
+        });
+      });
+      return;
+    }
+
+    const appServerContext = this.appServerRunContexts.get(threadChatId);
+    if (
+      !appServerContext ||
+      appServerContext.isCompleted ||
+      appServerContext.isStopping
+    ) {
       this.stopHeartbeat(threadChatId);
       return;
     }
-    // Reset idle watchdog so it doesn't kill the process during silent operations
-    if (processState.watchdog) {
-      processState.watchdog.reset();
-    }
-    // Best-effort POST with empty messages — errors are logged but ignored
+
     this.sendMessagesToAPI({
       messages: [],
       entryCount: 0,
       timezone:
         Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York",
-      token: processState.token,
-      threadId: processState.threadId,
-      threadChatId: processState.threadChatId,
+      token: appServerContext.token,
+      threadId: appServerContext.daemonThreadId,
+      threadChatId: appServerContext.threadChatId,
     }).catch((error) => {
       this.runtime.logger.error("Heartbeat failed", {
         threadChatId,

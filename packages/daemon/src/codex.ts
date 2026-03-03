@@ -504,6 +504,59 @@ export function codexAppServerStartCommand({
   return ["codex", args];
 }
 
+export type CodexThreadStartParams = {
+  model: string;
+  stream: true;
+  instructions: string;
+  sandboxPolicy: {
+    type: "externalSandbox";
+    networkAccess: "enabled";
+  };
+  approvalPolicy: "never";
+  modelReasoningEffort?: CodexReasoningEffort;
+};
+
+export function buildThreadStartParams({
+  model,
+  instructions,
+}: {
+  model: string;
+  instructions: string;
+}): CodexThreadStartParams {
+  const resolvedModel = resolveCodexModel(model);
+  return {
+    model: resolvedModel.modelName,
+    ...(resolvedModel.reasoningEffort
+      ? { modelReasoningEffort: resolvedModel.reasoningEffort }
+      : {}),
+    stream: true,
+    instructions,
+    sandboxPolicy: {
+      type: "externalSandbox",
+      networkAccess: "enabled",
+    },
+    approvalPolicy: "never",
+  };
+}
+
+export type CodexTurnStartParams = {
+  threadId: string;
+  content: string;
+};
+
+export function buildTurnStartParams({
+  threadId,
+  prompt,
+}: {
+  threadId: string;
+  prompt: string;
+}): CodexTurnStartParams {
+  return {
+    threadId,
+    content: prompt,
+  };
+}
+
 /**
  * Create a command to run the Codex CLI with the given prompt.
  *

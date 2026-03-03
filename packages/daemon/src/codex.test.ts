@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+  buildThreadStartParams,
+  buildTurnStartParams,
   codexAppServerStartCommand,
   codexCommand,
   createCodexParserState,
@@ -1139,5 +1141,58 @@ describe("codexAppServerStartCommand", () => {
       "-c",
       'model_provider="terry"',
     ]);
+  });
+});
+
+describe("buildThreadStartParams", () => {
+  test("builds thread/start params with sandbox and approval defaults", () => {
+    const params = buildThreadStartParams({
+      model: "gpt-5.2-codex-high",
+      instructions: "System instructions",
+    });
+
+    expect(params).toEqual({
+      model: "gpt-5.2-codex",
+      modelReasoningEffort: "high",
+      stream: true,
+      instructions: "System instructions",
+      sandboxPolicy: {
+        type: "externalSandbox",
+        networkAccess: "enabled",
+      },
+      approvalPolicy: "never",
+    });
+  });
+
+  test("omits modelReasoningEffort when model has no explicit effort", () => {
+    const params = buildThreadStartParams({
+      model: "gpt-5",
+      instructions: "No effort override",
+    });
+
+    expect(params).toEqual({
+      model: "gpt-5",
+      stream: true,
+      instructions: "No effort override",
+      sandboxPolicy: {
+        type: "externalSandbox",
+        networkAccess: "enabled",
+      },
+      approvalPolicy: "never",
+    });
+  });
+});
+
+describe("buildTurnStartParams", () => {
+  test("builds turn/start params with thread id and prompt content", () => {
+    const params = buildTurnStartParams({
+      threadId: "thread-123",
+      prompt: "Implement this task",
+    });
+
+    expect(params).toEqual({
+      threadId: "thread-123",
+      content: "Implement this task",
+    });
   });
 });
