@@ -124,6 +124,7 @@ export type AllToolParts =
   | UIToolPart<"SuggestFollowupTask", ToolParams["SuggestFollowupTask"]>
   | UIToolPart<"ExitPlanMode", ToolParams["ExitPlanMode"]>
   | UIToolPart<"PermissionRequest", ToolParams["PermissionRequest"]>
+  | UIToolPart<"FileChange", ToolParams["FileChange"]>
   | UIToolPart<string, Record<string, any>>;
 
 export type UIToolPart<
@@ -262,5 +263,9 @@ interface ToolParams {
     options: Array<{ kind: string; name: string; optionId: string }>;
     description: string;
     tool_name: string;
+  };
+
+  FileChange: {
+    files: Array<{ path: string; action?: string }>;
   };
 }

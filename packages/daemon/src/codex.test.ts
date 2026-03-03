@@ -193,7 +193,7 @@ describe("parseCodexLine", () => {
     });
   });
 
-  test("should surface file_change as Write tool call", () => {
+  test("should surface file_change as FileChange tool call", () => {
     const line =
       '{"type":"item.completed","item":{"id":"item_7","type":"file_change","changes":[{"path":"/Users/michael/Projects/test-project/src/math.ts","kind":"update"}],"status":"completed"}}';
     const results = parseCodexLine({ line, runtime: mockRuntime });
@@ -208,11 +208,15 @@ describe("parseCodexLine", () => {
       if (Array.isArray(content)) {
         expect(content[0]).toMatchObject({
           type: "tool_use",
-          name: "Write",
+          name: "FileChange",
           id: "item_7",
           input: {
-            file_path: "/Users/michael/Projects/test-project/src/math.ts",
-            content: "",
+            files: [
+              {
+                path: "/Users/michael/Projects/test-project/src/math.ts",
+                action: "modified",
+              },
+            ],
           },
         });
       }

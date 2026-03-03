@@ -167,9 +167,9 @@ describe("tryParseAcpAsCodexEvent", () => {
       if (Array.isArray(content)) {
         expect(content[0]).toMatchObject({
           type: "tool_use",
-          name: "Write",
+          name: "FileChange",
           id: "item_7",
-          input: { file_path: "/src/math.ts", content: "" },
+          input: { files: [{ path: "/src/math.ts", action: "modified" }] },
         });
       }
     }

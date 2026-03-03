@@ -9,6 +9,20 @@ import {
   GenericToolPartClickToExpand,
 } from "./generic-ui";
 
+function countToolParts(parts: AllToolParts["parts"]) {
+  let total = 0;
+  let completed = 0;
+  for (const part of parts) {
+    if (part.type === "tool") {
+      total++;
+      if (part.status === "completed" || part.status === "error") {
+        completed++;
+      }
+    }
+  }
+  return { total, completed };
+}
+
 export function TaskTool({
   toolPart,
   ToolPartComponent,
@@ -27,12 +41,21 @@ export function TaskTool({
   // Extract agent color from parameters if available
   const toolColor = (toolPart.parameters as any)._agent_color;
 
+  const { total, completed } = countToolParts(toolPart.parts);
+  const toolCountSuffix =
+    total > 0 ? (
+      <span className="text-muted-foreground text-xs font-mono ml-1">
+        {completed}/{total} tools
+      </span>
+    ) : null;
+
   return (
     <GenericToolPart
       toolName={toolName}
       toolArg={toolPart.parameters.description}
       toolStatus={toolPart.status}
       toolColor={toolColor}
+      toolArgSuffix={toolCountSuffix}
     >
       <TaskToolContent
         toolPart={toolPart}
@@ -100,63 +123,71 @@ function TaskToolContent({
       toolStatus={toolPart.status}
       className="text-foreground"
     >
-      {numToolsToHide > 0 && !expanded && (
-        <GenericToolPartContentRow index={0}>
-          <div className="text-sm text-muted-foreground italic">
-            {numToolsToHide === 1
-              ? numTools === 1
-                ? "1 tool "
-                : "1 other tool..."
-              : numToolsToHide === numTools
-                ? `${numToolsToHide} tools...`
-                : `${numToolsToHide} other tools...`}
-            <GenericToolPartClickToExpand
-              label="Show all tools"
-              onClick={() => setExpanded(true)}
-            />
-          </div>
-        </GenericToolPartContentRow>
-      )}
-      {expanded && numTools > 1 && (
-        <GenericToolPartContentRow index={0}>
-          <div className="text-sm text-muted-foreground italic">
-            Showing all {numTools} tools{" "}
-            <GenericToolPartClickToExpand
-              label="Show less"
-              onClick={() => setExpanded(false)}
-            />
-          </div>
-        </GenericToolPartContentRow>
-      )}
-      {toolPart.parts.map((part, index) => {
-        if (part.type === "tool" && toolIndicesToShow.has(index)) {
-          return (
-            <GenericToolPartContentRow key={index} index={index + indexOffset}>
-              <ToolPartComponent toolPart={part} />
-            </GenericToolPartContentRow>
-          );
-        }
-        if (part.type === "text") {
-          return (
-            <GenericToolPartContentRow key={index} index={index + indexOffset}>
-              <GenericToolPartContentResultWithLines
-                lines={part.text.split("\n")}
-                toolStatus={toolPart.status}
-                singleColumn={true}
+      <div className="col-span-full border-l-2 border-border pl-2">
+        {numToolsToHide > 0 && !expanded && (
+          <GenericToolPartContentRow index={0}>
+            <div className="text-sm text-muted-foreground italic">
+              {numToolsToHide === 1
+                ? numTools === 1
+                  ? "1 tool "
+                  : "1 other tool..."
+                : numToolsToHide === numTools
+                  ? `${numToolsToHide} tools...`
+                  : `${numToolsToHide} other tools...`}
+              <GenericToolPartClickToExpand
+                label="Show all tools"
+                onClick={() => setExpanded(true)}
               />
-            </GenericToolPartContentRow>
-          );
-        }
-      })}
-      {toolResult && (
-        <GenericToolPartContentRow index={-1}>
-          <GenericToolPartContentResultWithLines
-            lines={toolResult.split("\n")}
-            toolStatus={toolPart.status}
-            singleColumn={true}
-          />
-        </GenericToolPartContentRow>
-      )}
+            </div>
+          </GenericToolPartContentRow>
+        )}
+        {expanded && numTools > 1 && (
+          <GenericToolPartContentRow index={0}>
+            <div className="text-sm text-muted-foreground italic">
+              Showing all {numTools} tools{" "}
+              <GenericToolPartClickToExpand
+                label="Show less"
+                onClick={() => setExpanded(false)}
+              />
+            </div>
+          </GenericToolPartContentRow>
+        )}
+        {toolPart.parts.map((part, index) => {
+          if (part.type === "tool" && toolIndicesToShow.has(index)) {
+            return (
+              <GenericToolPartContentRow
+                key={index}
+                index={index + indexOffset}
+              >
+                <ToolPartComponent toolPart={part} />
+              </GenericToolPartContentRow>
+            );
+          }
+          if (part.type === "text") {
+            return (
+              <GenericToolPartContentRow
+                key={index}
+                index={index + indexOffset}
+              >
+                <GenericToolPartContentResultWithLines
+                  lines={part.text.split("\n")}
+                  toolStatus={toolPart.status}
+                  singleColumn={true}
+                />
+              </GenericToolPartContentRow>
+            );
+          }
+        })}
+        {toolResult && (
+          <GenericToolPartContentRow index={-1}>
+            <GenericToolPartContentResultWithLines
+              lines={toolResult.split("\n")}
+              toolStatus={toolPart.status}
+              singleColumn={true}
+            />
+          </GenericToolPartContentRow>
+        )}
+      </div>
     </GenericToolPartContent>
   );
 }

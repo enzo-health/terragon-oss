@@ -22,12 +22,14 @@ interface MessagePartProps {
   part: UIPart;
   onClick?: () => void;
   isLatest?: boolean;
+  isAgentWorking?: boolean;
 }
 
 export const MessagePart = memo(function MessagePart({
   part,
   onClick,
   isLatest = false,
+  isAgentWorking = false,
 }: MessagePartProps) {
   const { thread, threadChat } = useThread();
   const githubRepoFullName = thread?.githubRepoFullName;
@@ -54,7 +56,13 @@ export const MessagePart = memo(function MessagePart({
       );
     }
     case "thinking": {
-      return <ThinkingPart thinking={part.thinking} isLatest={isLatest} />;
+      return (
+        <ThinkingPart
+          thinking={part.thinking}
+          isLatest={isLatest}
+          isAgentWorking={isAgentWorking}
+        />
+      );
     }
     case "tool": {
       const toolPart = part as AllToolParts;

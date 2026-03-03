@@ -15,6 +15,7 @@ import { TaskTool } from "./tools/task-tool";
 import { SuggestFollowupTaskTool } from "./tools/suggest-followup-task-tool";
 import { ExitPlanModeTool } from "./tools/exit-plan-mode-tool";
 import { PermissionRequestTool } from "./tools/permission-request-tool";
+import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
 
 const ToolPart = memo(function ToolPart({
@@ -143,6 +144,27 @@ const ToolPart = memo(function ToolPart({
           }
         />
       );
+    case "FileChange":
+      return (
+        <FileChangeTool
+          toolPart={toolPart as Extract<AllToolParts, { name: "FileChange" }>}
+        />
+      );
+    case "MCPTool": {
+      // Codex MCPTool: transform to mcp__server__tool format for DefaultTool
+      const { server, tool, ...mcpArgs } = toolPart.parameters as {
+        server?: string;
+        tool?: string;
+        [key: string]: unknown;
+      };
+      const mcpName =
+        server && tool ? `mcp__${server}__${tool}` : toolPart.name;
+      return (
+        <DefaultTool
+          toolPart={{ ...toolPart, name: mcpName, parameters: mcpArgs }}
+        />
+      );
+    }
     default:
       return <DefaultTool toolPart={toolPart} />;
   }

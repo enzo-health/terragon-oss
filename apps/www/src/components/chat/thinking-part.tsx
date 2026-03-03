@@ -1,11 +1,13 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import "streamdown/styles.css";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface ThinkingPartProps {
   thinking: string;
   isLatest?: boolean;
+  isAgentWorking?: boolean;
 }
 
 export function getThinkingTitle(thinking: string): string {
@@ -23,8 +25,27 @@ export function getThinkingTitle(thinking: string): string {
 const ThinkingPart = memo(function ThinkingPart({
   thinking,
   isLatest = false,
+  isAgentWorking = false,
 }: ThinkingPartProps) {
   const [isExpanded, setIsExpanded] = useState(isLatest);
+  const [elapsed, setElapsed] = useState(0);
+  const startTimeRef = useRef<number>(Date.now());
+
+  const isActive = isLatest && isAgentWorking;
+
+  useEffect(() => {
+    if (!isActive) return;
+    startTimeRef.current = Date.now();
+    setElapsed(0);
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isActive]);
+
+  const title = getThinkingTitle(thinking);
+  const displayTitle =
+    isActive && elapsed > 0 ? `${title} (${elapsed}s)` : title;
 
   const components = useMemo(
     () => ({
@@ -62,10 +83,13 @@ const ThinkingPart = memo(function ThinkingPart({
     return (
       <button
         onClick={() => setIsExpanded(true)}
-        className="flex items-center gap-1 py-1 text-sm text-muted-foreground italic"
+        className={cn(
+          "flex items-center gap-1 py-1 text-sm text-muted-foreground italic",
+          isActive && "animate-pulse",
+        )}
       >
         <ChevronRight className="h-4 w-4 shrink-0" />
-        <span className="truncate">{getThinkingTitle(thinking)}</span>
+        <span className="truncate">{displayTitle}</span>
       </button>
     );
   }
@@ -74,10 +98,15 @@ const ThinkingPart = memo(function ThinkingPart({
     <div className="flex flex-col gap-2 text-sm italic text-muted-foreground">
       <button
         onClick={() => setIsExpanded(false)}
-        className="flex items-center gap-1 py-1 w-fit"
+        className={cn(
+          "flex items-center gap-1 py-1 w-fit",
+          isActive && "animate-pulse",
+        )}
       >
         <ChevronDown className="h-4 w-4 shrink-0" />
-        <span className="truncate">Thinking...</span>
+        <span className="truncate">
+          {isActive ? displayTitle : "Thinking..."}
+        </span>
       </button>
       <div className="overflow-hidden break-all">
         <Streamdown components={components}>{thinking}</Streamdown>

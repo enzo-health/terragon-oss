@@ -929,14 +929,13 @@ export function parseCodexItem({
           content: [
             {
               type: "tool_use",
-              name: "Write",
+              name: "FileChange",
               id: toolUseId,
               input: {
-                file_path:
-                  pathList.length === 1
-                    ? pathList[0]
-                    : `${pathList.length} files`,
-                content: "",
+                files: changes.map((c) => ({
+                  path: c.path,
+                  action: "modified",
+                })),
               },
             },
           ],

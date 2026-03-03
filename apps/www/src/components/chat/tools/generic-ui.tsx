@@ -11,12 +11,14 @@ export function GenericToolPart({
   toolStatus,
   children,
   toolColor,
+  toolArgSuffix,
 }: {
-  toolName: string;
+  toolName: React.ReactNode;
   toolArg: string | null;
   toolStatus: AllToolParts["status"];
   children: React.ReactNode;
   toolColor?: string;
+  toolArgSuffix?: React.ReactNode;
 }) {
   const colorClass = getAgentColorClass(toolColor);
   return (
@@ -42,6 +44,7 @@ export function GenericToolPart({
             >
               {toolName}
             </span>
+            {toolArgSuffix}
           </div>
         ) : (
           <div className="break-words line-clamp-3">
@@ -56,6 +59,7 @@ export function GenericToolPart({
             <span className="!text-foreground font-semibold">(</span>
             <span className="!text-foreground font-medium">{toolArg}</span>
             <span className="!text-foreground font-semibold">)</span>
+            {toolArgSuffix}
           </div>
         )}
         {children}

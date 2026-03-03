@@ -232,6 +232,7 @@ export const ChatMessage = memo(function ChatMessage({
                     key={`${groupIndex}-${partIndex}`}
                     part={part}
                     isLatest={isLatestMessage && groupIndex === lastGroupIndex}
+                    isAgentWorking={isAgentWorking}
                   />
                 );
               })}
@@ -445,6 +446,7 @@ function CollapsibleAgentActivityGroup({
                 key={partIndex}
                 part={part}
                 isLatest={isLatestMessage && partIndex === numParts - 1}
+                isAgentWorking={isAgentWorking}
               />
             );
           })}

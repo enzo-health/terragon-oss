@@ -6,12 +6,53 @@ import {
   GenericToolPartContentResultWithPreview,
 } from "./generic-ui";
 import { formatToolParameters } from "./utils";
+import { Plug } from "lucide-react";
+
+function parseMcpToolName(name: string): {
+  server: string;
+  tool: string;
+} | null {
+  if (!name.startsWith("mcp__")) return null;
+  // Format: mcp__serverName__toolName (split on __ delimiter)
+  const parts = name.split("__");
+  if (parts.length >= 3) {
+    return { server: parts[1]!, tool: parts.slice(2).join("__") };
+  }
+  return null;
+}
+
+export function McpToolDisplay({
+  serverName,
+  toolName,
+}: {
+  serverName: string;
+  toolName: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Plug className="size-3" />
+      <span>
+        MCP: {serverName}::{toolName}
+      </span>
+    </span>
+  );
+}
 
 export function DefaultTool({ toolPart }: { toolPart: AllToolParts }) {
+  const mcpInfo = parseMcpToolName(toolPart.name);
+  const displayName = mcpInfo ? (
+    <McpToolDisplay serverName={mcpInfo.server} toolName={mcpInfo.tool} />
+  ) : null;
+  const toolArg = mcpInfo
+    ? formatToolParameters(toolPart.parameters, {
+        excludeKeys: ["server", "tool"],
+      })
+    : formatToolParameters(toolPart.parameters);
+
   return (
     <GenericToolPart
-      toolName={toolPart.name}
-      toolArg={formatToolParameters(toolPart.parameters)}
+      toolName={displayName ?? toolPart.name}
+      toolArg={toolArg}
       toolStatus={toolPart.status}
     >
       {toolPart.status === "pending" ? (
