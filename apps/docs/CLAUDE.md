@@ -12,15 +12,7 @@
 
 Use tools like `curl` or `WebFetch` to verify external links before committing documentation changes.
 
-## Release Notes
+## Documentation Updates
 
-When making changes to release notes (`apps/docs/content/docs/resources/release-notes.mdx`), always use the template and guidelines in `RELEASE_NOTES_TEMPLATE.md`.
-
-**IMPORTANT**: After adding a new release notes entry, you MUST bump the `RELEASE_NOTES_VERSION` constant in `apps/www/src/lib/constants.ts` by incrementing it by 1. This triggers the release notes badge to appear for users.
-
-The template ensures consistent formatting and includes guidance for:
-
-- Writing user-focused descriptions
-- Proper formatting and capitalization
-- Handling early access features
-- Required sections and organization
+When adding or updating documentation content, use the existing documentation templates if
+you need a standard structure for regular changelog-style publications.

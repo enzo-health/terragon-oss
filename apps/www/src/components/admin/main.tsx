@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   Users,
-  BarChart3,
   Settings,
   Monitor,
   FolderOpen,
@@ -29,11 +28,6 @@ const adminCategories: AdminCategory[] = [
       { title: "Me", href: "/internal/admin/me" },
       { title: "Users", href: "/internal/admin/user" },
     ],
-  },
-  {
-    name: "Analytics & Engagement",
-    icon: BarChart3,
-    sections: [{ title: "Feedback", href: "/internal/admin/feedback" }],
   },
   {
     name: "Security & Abuse",

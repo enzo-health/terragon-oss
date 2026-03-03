@@ -8,7 +8,6 @@ import {
 import { db } from "@/lib/db";
 import type { UserFlags } from "@terragon/shared";
 import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
-import { RELEASE_NOTES_VERSION } from "@/lib/constants";
 
 export const getUserFlagsAction = userOnlyAction(
   async function getUserFlagsAction(userId: string): Promise<UserFlags | null> {
@@ -58,19 +57,6 @@ export const updateSelectedBranch = userOnlyAction(
     });
   },
   { defaultErrorMessage: "Failed to update selected branch" },
-);
-
-export const updateReleaseNotesLastSeen = userOnlyAction(
-  async function updateReleaseNotesLastSeen(userId: string) {
-    await updateUserFlags({
-      db,
-      userId,
-      updates: {
-        lastSeenReleaseNotesVersion: RELEASE_NOTES_VERSION,
-      },
-    });
-  },
-  { defaultErrorMessage: "Failed to update release notes last seen" },
 );
 
 export const updateSelectedModels = userOnlyAction(
