@@ -105,6 +105,14 @@ export function toUIMessages({
 
   for (const dbMessage of dbMessages) {
     if (dbMessage.type === "meta" && dbMessage.subtype === "result-success") {
+      // Attach run stats to the preceding agent message before flushing
+      if (currentAgentMessage && dbMessage.duration_ms > 0) {
+        currentAgentMessage.meta = {
+          cost_usd: dbMessage.cost_usd,
+          duration_ms: dbMessage.duration_ms,
+          num_turns: dbMessage.num_turns,
+        };
+      }
       clearCurrentAgentMessage();
       clearCurrentUserMessage();
       continue;

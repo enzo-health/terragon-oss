@@ -664,7 +664,7 @@ describe("toUIMessages", () => {
     ];
 
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
-    // Meta messages should be completely ignored
+    // Meta messages should be ignored, but result-success attaches meta to agent message
     expect(result).toEqual([
       {
         role: "user",
@@ -675,6 +675,7 @@ describe("toUIMessages", () => {
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "Task started" }],
+        meta: { cost_usd: 0.01, duration_ms: 1000, num_turns: 1 },
       },
     ]);
   });
@@ -725,6 +726,7 @@ describe("toUIMessages", () => {
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "first agent" }],
+        meta: { cost_usd: 0.01, duration_ms: 1000, num_turns: 1 },
       },
       {
         role: "user",

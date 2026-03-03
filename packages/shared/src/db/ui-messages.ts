@@ -25,6 +25,11 @@ export type UIAgentMessage = {
   role: "agent";
   agent: AIAgent;
   parts: UIPart[];
+  meta?: {
+    cost_usd: number;
+    duration_ms: number;
+    num_turns: number;
+  };
 };
 
 export type UISystemMessage =

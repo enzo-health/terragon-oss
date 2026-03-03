@@ -1,7 +1,9 @@
 import { memo, useMemo } from "react";
 import { Streamdown } from "streamdown";
 import { createCodePlugin } from "@streamdown/code";
+import { createMathPlugin } from "@streamdown/math";
 import "streamdown/styles.css";
+import "katex/dist/katex.min.css";
 import { ImagePart } from "./image-part";
 
 interface TextPartProps {
@@ -16,7 +18,9 @@ const codePlugin = createCodePlugin({
   themes: ["github-light", "one-dark-pro"],
 });
 
-const plugins = { code: codePlugin };
+const mathPlugin = createMathPlugin();
+
+const plugins = { code: codePlugin, math: mathPlugin };
 
 function convertCitationsToGitHubLinks(
   text: string,
