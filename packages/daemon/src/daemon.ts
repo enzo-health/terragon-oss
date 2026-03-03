@@ -180,13 +180,26 @@ function extractCodexPreviousResponseIdFromParams(
   const turnRecord = toRecord(params.turn);
   const responseRecord =
     toRecord(turnRecord?.response) ?? toRecord(params.response);
+  const resultRecord = toRecord(params.result);
   const previousResponseId =
     readString(responseRecord, "id") ??
+    readString(resultRecord, "id") ??
+    readString(turnRecord, "id") ??
     readString(turnRecord, "response_id") ??
     readString(turnRecord, "responseId") ??
+    readString(params, "response_id") ??
+    readString(params, "responseId") ??
     readString(params, "previous_response_id") ??
-    readString(params, "previousResponseId");
+    readString(params, "previousResponseId") ??
+    readString(params, "id");
   return previousResponseId;
+}
+
+function isThreadResumeRpcError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes("request failed for thread/resume");
 }
 
 function isTurnInterruptedFromParams(params: Record<string, unknown>): boolean {
@@ -1310,19 +1323,54 @@ export class TerragonDaemon {
       );
 
       if (input.sessionId) {
-        this.resolveAppServerThread({
-          context,
-          manager,
-          threadId: input.sessionId,
-        });
-        await manager.send({
-          method: "thread/resume",
-          threadChatId: input.threadChatId,
-          params: {
+        try {
+          await manager.send({
+            method: "thread/resume",
+            threadChatId: input.threadChatId,
+            params: {
+              threadId: input.sessionId,
+              thread_id: input.sessionId,
+              ...(input.codexPreviousResponseId
+                ? { previous_response_id: input.codexPreviousResponseId }
+                : {}),
+            },
+          });
+          this.resolveAppServerThread({
+            context,
+            manager,
             threadId: input.sessionId,
-            thread_id: input.sessionId,
-          },
-        });
+          });
+        } catch (error) {
+          if (!isThreadResumeRpcError(error)) {
+            throw error;
+          }
+          this.runtime.logger.warn(
+            "Codex app-server thread/resume failed; falling back to thread/start",
+            {
+              threadChatId: input.threadChatId,
+              sessionId: input.sessionId,
+              codexPreviousResponseId: input.codexPreviousResponseId ?? null,
+              error: formatError(error),
+            },
+          );
+          const threadStartResult = await manager.send({
+            method: "thread/start",
+            threadChatId: input.threadChatId,
+            params: buildThreadStartParams({
+              model: input.model,
+              instructions: input.prompt,
+            }),
+          });
+          const threadIdFromResult =
+            extractThreadIdFromRpcResult(threadStartResult);
+          if (threadIdFromResult) {
+            this.resolveAppServerThread({
+              context,
+              manager,
+              threadId: threadIdFromResult,
+            });
+          }
+        }
       } else {
         const threadStartResult = await manager.send({
           method: "thread/start",
@@ -1400,6 +1448,7 @@ export class TerragonDaemon {
           threadId: input.threadId,
           threadChatId: input.threadChatId,
           token: input.token,
+          codexPreviousResponseId: completion.codexPreviousResponseId,
         });
       } else if (!context.isStopping) {
         const errorInfo =
@@ -3290,6 +3339,11 @@ export class TerragonDaemon {
           const messagesToSend = coalesceAssistantTextMessages(
             processedEntriesToSend.map((e) => e.message),
           );
+          const codexPreviousResponseId =
+            [...processedEntriesToSend]
+              .reverse()
+              .find((entry) => entry.codexPreviousResponseId !== undefined)
+              ?.codexPreviousResponseId ?? undefined;
           await this.sendMessagesToAPI({
             messages: messagesToSend,
             entryCount: entriesToSend.length,
@@ -3297,6 +3351,7 @@ export class TerragonDaemon {
             token,
             threadId,
             threadChatId,
+            codexPreviousResponseId,
           });
           for (const entry of entriesToSend) {
             handledEntries.add(entry);
@@ -3445,6 +3500,7 @@ export class TerragonDaemon {
     token,
     threadId,
     threadChatId,
+    codexPreviousResponseId,
   }: {
     messages: ClaudeMessage[];
     entryCount: number;
@@ -3452,6 +3508,7 @@ export class TerragonDaemon {
     token: string;
     threadId: string;
     threadChatId: string;
+    codexPreviousResponseId?: string | null;
   }): Promise<void> {
     try {
       this.runtime.logger.info("Sending messages to API", {
@@ -3475,6 +3532,9 @@ export class TerragonDaemon {
         protocolVersion: runState.protocolVersion,
         acpServerId: runState.acpServerId,
         acpSessionId: runState.acpSessionId,
+        ...(codexPreviousResponseId !== undefined
+          ? { codexPreviousResponseId }
+          : {}),
         ...(envelopeV2 ?? {}),
       };
 

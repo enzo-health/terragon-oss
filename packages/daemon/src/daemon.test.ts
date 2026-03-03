@@ -12,6 +12,7 @@ import {
   writeToUnixSocket,
 } from "./runtime";
 import { TerragonDaemon } from "./daemon";
+import { createCodexParserState } from "./codex";
 import { createHash } from "node:crypto";
 import {
   describe,
@@ -241,6 +242,182 @@ describe("daemon", () => {
       includeStopMessage: true,
     });
     expect(killChildProcessGroupMock).not.toHaveBeenCalled();
+  });
+
+  it("passes previous_response_id on resume and forwards completion id to daemon-event payload", async () => {
+    let notificationHandler:
+      | ((
+          notification: {
+            method: string;
+            params?: Record<string, unknown>;
+          },
+          context: {
+            threadId: string | null;
+            threadState: {
+              threadChatId: string;
+              parserState: ReturnType<typeof createCodexParserState>;
+            };
+          },
+        ) => void)
+      | null = null;
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn((handler: typeof notificationHandler) => {
+        notificationHandler = handler;
+        return () => {};
+      }),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "turn/start" && notificationHandler) {
+          notificationHandler(
+            {
+              method: "turn/completed",
+              params: {
+                response: {
+                  id: "resp-next-123",
+                },
+              },
+            },
+            {
+              threadId: "session-abc",
+              threadState,
+            },
+          );
+        }
+        return {};
+      }),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await (daemon as any).runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5",
+      transportMode: "codex-app-server",
+      sessionId: "session-abc",
+      codexPreviousResponseId: "resp-prev-001",
+    } satisfies DaemonMessageClaude);
+
+    expect(appServerManager.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({
+          previous_response_id: "resp-prev-001",
+        }),
+      }),
+    );
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codexPreviousResponseId: "resp-next-123",
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
+  });
+
+  it("falls back to thread/start when thread/resume returns a JSON-RPC error", async () => {
+    let notificationHandler:
+      | ((
+          notification: {
+            method: string;
+            params?: Record<string, unknown>;
+          },
+          context: {
+            threadId: string | null;
+            threadState: {
+              threadChatId: string;
+              parserState: ReturnType<typeof createCodexParserState>;
+            };
+          },
+        ) => void)
+      | null = null;
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn((handler: typeof notificationHandler) => {
+        notificationHandler = handler;
+        return () => {};
+      }),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "thread/resume") {
+          throw new Error(
+            "codex app-server request failed for thread/resume: stale thread",
+          );
+        }
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "fresh-thread-123",
+            },
+          };
+        }
+        if (method === "turn/start" && notificationHandler) {
+          notificationHandler(
+            {
+              method: "turn/completed",
+              params: {
+                response: {
+                  id: "resp-next-fresh",
+                },
+              },
+            },
+            {
+              threadId: "fresh-thread-123",
+              threadState,
+            },
+          );
+        }
+        return {};
+      }),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await (daemon as any).runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5",
+      transportMode: "codex-app-server",
+      sessionId: "stale-session-abc",
+    } satisfies DaemonMessageClaude);
+
+    expect(appServerManager.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "thread/start",
+      }),
+    );
+    const calledMethods = appServerManager.send.mock.calls.map(
+      ([request]: [{ method: string }]) => request.method,
+    );
+    expect(calledMethods).toEqual([
+      "thread/resume",
+      "thread/start",
+      "turn/start",
+    ]);
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codexPreviousResponseId: "resp-next-fresh",
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
   });
 
   it("should not kill an already finished process when starting a new command", async () => {

@@ -407,10 +407,13 @@ export async function startAgentMessage({
             }))!;
           }
           let sessionId = threadChat.sessionId;
+          let codexPreviousResponseId =
+            threadChat.codexPreviousResponseId ?? null;
           // If sandbox was just resumed (booting), previous session is dead.
           // Force fresh session to avoid "Resource not found" from stale ACP refs.
           if (threadChat.status === "booting") {
             sessionId = null;
+            codexPreviousResponseId = null;
           }
           const { summary, didCompact } = await tryAutoCompactThread({
             userId,
@@ -423,6 +426,7 @@ export async function startAgentMessage({
               text: `\n\n---\n\nThe user has run out of context. This is a summary of what has been done: <summary>\n${summary}\n</summary>\n\n`,
             });
             sessionId = null;
+            codexPreviousResponseId = null;
           }
           // Prepare prompt based on model
           const model =
@@ -546,6 +550,7 @@ export async function startAgentMessage({
           // this guard covers edge cases where status isn't "booting".
           if (transportMode === "acp") {
             sessionId = null;
+            codexPreviousResponseId = null;
           }
           const protocolVersion = transportMode === "acp" ? 2 : 1;
           const acpServerId =
@@ -579,6 +584,7 @@ export async function startAgentMessage({
               agentVersion: threadChat.agentVersion,
               prompt: finalFinalPrompt,
               sessionId,
+              codexPreviousResponseId,
               permissionMode: effectivePermissionMode,
               runId,
               transportMode,

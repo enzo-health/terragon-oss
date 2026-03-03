@@ -867,9 +867,10 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
+  const resolvedSessionId = deriveSessionIdFromMessages(messages);
+  const resolvedStatus = deriveRunStatusFromMessages(messages);
+
   if (runContext) {
-    const resolvedSessionId = deriveSessionIdFromMessages(messages);
-    const resolvedStatus = deriveRunStatusFromMessages(messages);
     await updateAgentRunContext({
       db,
       userId,
@@ -879,6 +880,25 @@ export async function POST(request: Request) {
         status: resolvedStatus,
       },
     });
+  }
+
+  if (
+    transportMode === "codex-app-server" &&
+    resolvedStatus === "completed" &&
+    json.codexPreviousResponseId !== undefined
+  ) {
+    await db
+      .update(schema.threadChat)
+      .set({
+        codexPreviousResponseId: json.codexPreviousResponseId,
+      })
+      .where(
+        and(
+          eq(schema.threadChat.userId, userId),
+          eq(schema.threadChat.threadId, threadId),
+          eq(schema.threadChat.id, threadChatId),
+        ),
+      );
   }
 
   if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {
