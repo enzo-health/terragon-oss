@@ -1417,6 +1417,9 @@ export class TerragonDaemon {
   ): Promise<void> {
     // Set token env vars on daemon process so execSync children inherit them.
     process.env.DAEMON_TOKEN = input.token;
+    // Increase sandbox-agent's ACP proxy timeout from 120s default to 10 minutes.
+    // session/prompt can take many minutes for complex coding tasks.
+    process.env.SANDBOX_AGENT_ACP_REQUEST_TIMEOUT_MS = "600000";
 
     // For Claude Code ACP, also set Anthropic-specific env vars
     if (input.agent === "claudeCode" && input.useCredits) {

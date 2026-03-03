@@ -57,6 +57,13 @@ RUN npm install -g pnpm \
     @sandbox-agent/cli@0.2.1
 
 
+# Configure Codex with increased timeouts and retries for long-running tasks
+RUN mkdir -p /root/.codex && cat > /root/.codex/config.toml << 'TOML'
+stream_idle_timeout_ms = 600000
+request_max_retries = 10
+stream_max_retries = 20
+TOML
+
 # Patch gemini cli to disable console.debug
 RUN sed -i.bak -e '1a\
 console.debug = () => {};' "$(readlink -f "$(which gemini)")"

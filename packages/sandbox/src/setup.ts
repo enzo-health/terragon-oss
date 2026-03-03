@@ -108,8 +108,10 @@ async function ensureSandboxAgentRunning({
     }
   }
 
+  // Increase ACP proxy timeout from 120s default to 10 minutes.
+  // session/prompt can take many minutes for complex coding tasks.
   await session.runBackgroundCommand(
-    `${sandboxAgentBin} server --no-token --host 127.0.0.1 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
+    `SANDBOX_AGENT_ACP_REQUEST_TIMEOUT_MS=600000 ${sandboxAgentBin} server --no-token --host 127.0.0.1 --port ${port} >> /tmp/sandbox-agent.log 2>&1`,
     { cwd: "/" },
   );
 }
