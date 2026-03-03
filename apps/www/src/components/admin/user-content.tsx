@@ -70,8 +70,6 @@ const userFlagSkipKeys: (keyof UserFlags)[] = [
 ];
 
 const userFlagNullableKeys: (keyof UserFlags)[] = [
-  "lastSeenReleaseNotes",
-  "lastSeenReleaseNotesVersion",
   "selectedBranch",
   "selectedModel",
   "selectedRepo",

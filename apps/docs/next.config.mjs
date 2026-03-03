@@ -18,11 +18,6 @@ const config = {
         permanent: true,
       },
       {
-        source: "/docs/release-notes",
-        destination: "/docs/resources/release-notes",
-        permanent: true,
-      },
-      {
         source: "/docs/tasks/automations",
         destination: "/docs/automations",
         permanent: true,

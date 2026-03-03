@@ -4,13 +4,11 @@ import {
   updateMultiAgentMode,
   updateSelectedRepo,
   updateSelectedBranch,
-  updateReleaseNotesLastSeen,
   getUserFlagsAction,
 } from "@/server-actions/user-flags";
 import type { UserFlags } from "@terragon/shared";
 import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
 import { atom, Getter, Setter } from "jotai";
-import { RELEASE_NOTES_VERSION } from "@/lib/constants";
 import { userCredentialsAtom } from "./user-credentials";
 import { getDefaultModel } from "@/lib/default-ai-model";
 import { ServerActionResult, unwrapResult } from "@/lib/server-actions";
@@ -118,21 +116,6 @@ export const selectedBranchAtom = atom<string | null, [string | null], void>(
       set,
       { selectedBranch: branch },
       async () => updateSelectedBranch(branch),
-    );
-  },
-);
-
-export const lastSeenReleaseNotesVersionAtom = atom<number | null, [], void>(
-  (get) => {
-    const userFlags = get(userFlagsAtom);
-    return userFlags?.lastSeenReleaseNotesVersion ?? null;
-  },
-  async (get, set) => {
-    await optimisticUpdateUserFlags(
-      get,
-      set,
-      { lastSeenReleaseNotesVersion: RELEASE_NOTES_VERSION },
-      async () => updateReleaseNotesLastSeen(),
     );
   },
 );

@@ -4,17 +4,14 @@ import {
   Home,
   Settings,
   Container,
-  MessageSquare,
   BookOpen,
   Shield,
   ChevronUp,
-  Megaphone,
   Workflow,
   ChartColumnBig,
   SunIcon,
   MoonIcon,
 } from "lucide-react";
-import { SiDiscord } from "@icons-pack/react-simple-icons";
 import { Wordmark, WordmarkLogo } from "./shared/wordmark";
 import {
   useSidebar,
@@ -34,11 +31,8 @@ import {
 } from "@/components/ui/sidebar";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { FeedbackDialog } from "./system/feedback-dialog";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtomValue } from "jotai";
 import { userAtom } from "@/atoms/user";
-import { lastSeenReleaseNotesVersionAtom } from "@/atoms/user-flags";
-import { RELEASE_NOTES_VERSION } from "@/lib/constants";
 import { publicDocsUrl } from "@terragon/env/next-public";
 import {
   DropdownMenu,
@@ -105,7 +99,6 @@ function AppMenuItem({
 }
 
 export function AppSidebar() {
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const user = useAtomValue(userAtom);
   const isAdmin = user?.role === "admin";
 
@@ -173,7 +166,6 @@ export function AppSidebar() {
             <SidebarGroupLabel>Support</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                <ReleaseNotesItem />
                 <AppMenuItem>
                   <SidebarMenuButton asChild tooltip="Documentation">
                     <a
@@ -183,27 +175,6 @@ export function AppSidebar() {
                     >
                       <BookOpen className="h-5 w-5" />
                       <span>Documentation</span>
-                    </a>
-                  </SidebarMenuButton>
-                </AppMenuItem>
-                <AppMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => setFeedbackOpen(true)}
-                    tooltip="Send Feedback"
-                  >
-                    <MessageSquare className="h-5 w-5" />
-                    <span>Send Feedback</span>
-                  </SidebarMenuButton>
-                </AppMenuItem>
-                <AppMenuItem>
-                  <SidebarMenuButton asChild tooltip="Discord">
-                    <a
-                      href="https://discord.gg/akupbpGJQF"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <SiDiscord className="h-5 w-5" />
-                      <span>Discord</span>
                     </a>
                   </SidebarMenuButton>
                 </AppMenuItem>
@@ -249,7 +220,6 @@ export function AppSidebar() {
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
-      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </>
   );
 }
@@ -286,42 +256,6 @@ function Item({
       {!!count && (
         <SidebarMenuBadge className="bg-muted">{count}</SidebarMenuBadge>
       )}
-    </AppMenuItem>
-  );
-}
-
-function ReleaseNotesItem() {
-  const [lastSeenReleaseNotesVersion, setLastSeenReleaseNotesVersion] = useAtom(
-    lastSeenReleaseNotesVersionAtom,
-  );
-  const hasUnreadReleaseNotes =
-    lastSeenReleaseNotesVersion !== null &&
-    lastSeenReleaseNotesVersion < RELEASE_NOTES_VERSION;
-  useEffect(() => {
-    // For first time users, set them as having seen the release notes so we
-    // don't badge immediately.
-    if (lastSeenReleaseNotesVersion === null) {
-      setLastSeenReleaseNotesVersion();
-    }
-  }, [lastSeenReleaseNotesVersion, setLastSeenReleaseNotesVersion]);
-  return (
-    <AppMenuItem>
-      <SidebarMenuButton asChild className="relative" tooltip="Release Notes">
-        <Link
-          href={`${publicDocsUrl()}/docs/resources/release-notes`}
-          target="_blank"
-          onClick={() => setLastSeenReleaseNotesVersion()}
-        >
-          <Megaphone className="h-5 w-5" />
-          <span>Release Notes</span>
-          {hasUnreadReleaseNotes && (
-            <span
-              aria-hidden="true"
-              className="size-1.5 rounded-full bg-blue-500 group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:right-0 group-data-[collapsible=icon]:top-1.5"
-            />
-          )}
-        </Link>
-      </SidebarMenuButton>
     </AppMenuItem>
   );
 }
