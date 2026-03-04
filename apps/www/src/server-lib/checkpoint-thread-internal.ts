@@ -55,6 +55,7 @@ import {
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { runStructuredCodexGateInSandbox } from "./sdlc-loop/sandbox-codex-gate";
+import { runQualityCheckGateInSandbox } from "./sdlc-loop/quality-check-gate";
 import { sendSystemMessage } from "./send-system-message";
 
 const SDLC_UI_SMOKE_PROMPT_VERSION = 1;
@@ -1071,6 +1072,35 @@ async function maybeRunStrictSdlcCheckpointPipeline({
           heading:
             "SDLC implementation: completion signaled but tasks incomplete.",
           details: reasons,
+        });
+      }
+      return true;
+    }
+
+    // Quality gate: lint, typecheck, test must pass
+    const qualityResult = await runQualityCheckGateInSandbox(session);
+    if (!qualityResult.gatePassed) {
+      const escalated = await transitionImplementationGateBlocked({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+        loopId: activeLoop.id,
+        escalationDetails: [
+          "Human intervention required. Quality checks continue to fail.",
+        ],
+      });
+      if (!escalated) {
+        await queueSdlcFollowUpMessage({
+          userId,
+          threadId,
+          threadChatId,
+          heading: "SDLC implementation: quality checks failed.",
+          details: [
+            "You indicated phaseComplete but quality checks did not pass.",
+            ...qualityResult.failures,
+            "Fix the failures and signal phaseComplete again.",
+          ],
         });
       }
       return true;
