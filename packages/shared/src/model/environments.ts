@@ -1,8 +1,10 @@
 import { DB } from "../db";
 import * as schema from "../db/schema";
+import type { EnvironmentSnapshot } from "../db/schema";
 import { and, eq, getTableColumns } from "drizzle-orm";
 import { publishBroadcastUserMessage } from "../broadcast-server";
 import { decryptValue } from "@terragon/utils/encryption";
+import type { SandboxSize } from "@terragon/types/sandbox";
 
 export function getEnvironments({
   db,
@@ -312,5 +314,74 @@ export async function getEnvironmentForUserRepo({
       eq(schema.environment.userId, userId),
       eq(schema.environment.repoFullName, repoFullName),
     ),
+  });
+}
+
+export function getReadySnapshot(
+  environment: { snapshots: EnvironmentSnapshot[] | null },
+  provider: "daytona",
+  size: SandboxSize,
+): EnvironmentSnapshot | null {
+  return (
+    environment.snapshots?.find(
+      (s) => s.provider === provider && s.size === size && s.status === "ready",
+    ) ?? null
+  );
+}
+
+export async function updateEnvironmentSnapshot({
+  db,
+  environmentId,
+  userId,
+  snapshot,
+}: {
+  db: DB;
+  environmentId: string;
+  userId: string;
+  snapshot: EnvironmentSnapshot;
+}): Promise<void> {
+  const environment = await getEnvironment({ db, environmentId, userId });
+  if (!environment) {
+    throw new Error("Environment not found");
+  }
+  const existing = environment.snapshots ?? [];
+  const idx = existing.findIndex(
+    (s) => s.provider === snapshot.provider && s.size === snapshot.size,
+  );
+  const updated = [...existing];
+  if (idx >= 0) {
+    updated[idx] = snapshot;
+  } else {
+    updated.push(snapshot);
+  }
+  await updateEnvironment({
+    db,
+    userId,
+    environmentId,
+    updates: { snapshots: updated },
+  });
+}
+
+export async function markSnapshotsStale({
+  db,
+  environmentId,
+  userId,
+}: {
+  db: DB;
+  environmentId: string;
+  userId: string;
+}): Promise<void> {
+  const environment = await getEnvironment({ db, environmentId, userId });
+  if (!environment) return;
+  const snapshots = environment.snapshots ?? [];
+  if (snapshots.length === 0) return;
+  const updated = snapshots.map((s) =>
+    s.status === "ready" ? { ...s, status: "stale" as const } : s,
+  );
+  await updateEnvironment({
+    db,
+    userId,
+    environmentId,
+    updates: { snapshots: updated },
   });
 }

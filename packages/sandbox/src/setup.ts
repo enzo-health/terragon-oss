@@ -240,7 +240,20 @@ export async function setupSandboxOneTime(
     { cwd: "/" },
   );
 
-  await gitCloneRepo(session, options);
+  if (!options.snapshotTemplateId) {
+    await gitCloneRepo(session, options);
+  } else {
+    // Repo already cloned in snapshot — just update git remote with fresh token
+    await options.onStatusUpdate({
+      sandboxId: session.sandboxId,
+      sandboxStatus: "booting",
+      bootingStatus: "cloning-repo",
+    });
+    await session.runCommand(
+      `git remote set-url origin "https://\${GITHUB_ACCESS_TOKEN}@github.com/${options.githubRepoFullName}.git"`,
+      { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
+    );
+  }
   await session.runCommand(
     [
       `git config user.name ${bashQuote(options.userName)}`,
@@ -283,9 +296,9 @@ export async function setupSandboxOneTime(
     options,
   });
 
-  // Only run terragon-setup.sh if not explicitly skipped
-  if (options.skipSetupScript) {
-    console.log("Skipping setup script");
+  // Only run terragon-setup.sh if not explicitly skipped and no snapshot
+  if (options.skipSetupScript || options.snapshotTemplateId) {
+    console.log("Skipping setup script (snapshot or explicit skip)");
   } else {
     await options.onStatusUpdate({
       sandboxId: session.sandboxId,

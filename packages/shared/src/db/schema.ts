@@ -589,6 +589,17 @@ export const userSettings = pgTable(
   (table) => [uniqueIndex("user_id_unique").on(table.userId)],
 );
 
+export type EnvironmentSnapshot = {
+  provider: "daytona";
+  size: SandboxSize;
+  snapshotName: string;
+  status: "building" | "ready" | "failed" | "stale";
+  setupScriptHash: string;
+  baseDockerfileHash: string;
+  error?: string;
+  builtAt: string;
+};
+
 // Each user + repo combination has an environment.
 export const environment = pgTable(
   "environment",
@@ -606,6 +617,7 @@ export const environment = pgTable(
       .default([]),
     mcpConfigEncrypted: text("mcp_config_encrypted"),
     setupScript: text("setup_script"),
+    snapshots: jsonb("snapshots").$type<EnvironmentSnapshot[]>().default([]),
     DEPRECATED_disableGitCheckpointing: boolean("disable_git_checkpointing")
       .notNull()
       .default(false),

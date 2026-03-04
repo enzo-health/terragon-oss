@@ -9,6 +9,7 @@ import {
 import {
   getEnvironment,
   updateEnvironment,
+  markSnapshotsStale,
 } from "@terragon/shared/model/environments";
 import { UserFacingError } from "@/lib/server-actions";
 
@@ -39,6 +40,8 @@ export const updateEnvironmentSetupScript = userOnlyAction(
         setupScript,
       },
     });
+    // Mark any existing snapshots as stale since the setup script changed
+    await markSnapshotsStale({ db, environmentId, userId });
   },
   { defaultErrorMessage: "Failed to update environment setup script" },
 );

@@ -14,6 +14,7 @@ import {
   getDecryptedEnvironmentVariables,
   getDecryptedMcpConfig,
   getDecryptedGlobalEnvironmentVariables,
+  getReadySnapshot,
 } from "@terragon/shared/model/environments";
 import { env } from "@terragon/env/apps-www";
 import type {
@@ -229,6 +230,11 @@ async function getOrCreateSandboxForThread({
   const generateBranchNameWithPrefix = (threadName: string | null) =>
     generateBranchName(threadName, branchPrefix);
   const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
+  // Check for per-repo snapshot (only for new Daytona sandboxes)
+  const snapshot =
+    !thread.codesandboxId && thread.sandboxProvider === "daytona"
+      ? getReadySnapshot(repositoryEnvironment, "daytona", sandboxSize)
+      : null;
   const startTime = Date.now();
   const session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
     threadName: thread.name,
@@ -250,6 +256,7 @@ async function getOrCreateSandboxForThread({
     customSystemPrompt: userSettings.customSystemPrompt,
     setupScript: repositoryEnvironment.setupScript,
     skipSetupScript: thread.skipSetup,
+    snapshotTemplateId: snapshot?.snapshotName ?? undefined,
     fastResume: fastResume && !!thread.codesandboxId,
     publicUrl: nonLocalhostPublicAppUrl(),
     featureFlags: userFeatureFlags,

@@ -356,13 +356,13 @@ export class DaytonaProvider implements ISandboxProvider {
         envs[key] = value;
       }
     }
-    const sandbox = await createWithRetry(
+    const templateId =
+      options.snapshotTemplateId ||
       getTemplateIdForSize({
         provider: "daytona",
         size: options.sandboxSize,
-      }),
-      envs,
-    );
+      });
+    const sandbox = await createWithRetry(templateId, envs);
     const session = new DaytonaSession(sandbox);
     await setupDaytonaOneTime(session);
     return session;

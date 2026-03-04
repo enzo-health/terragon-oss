@@ -82,6 +82,7 @@ export default async function EnvironmentPage({
       environmentVariables={environmentVariables}
       globalEnvironmentVariableKeys={globalEnvironmentVariableKeys}
       mcpConfig={mcpConfig || undefined}
+      snapshots={environment.snapshots ?? []}
     />
   );
 }
