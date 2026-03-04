@@ -1,0 +1,1 @@
+ALTER TABLE "environment" ADD COLUMN "snapshots" jsonb DEFAULT '[]'::jsonb;
