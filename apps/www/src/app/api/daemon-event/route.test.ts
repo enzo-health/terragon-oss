@@ -151,6 +151,20 @@ function createDaemonRequest(
   });
 }
 
+function createSuccessResultMessage(sessionId = "session-1") {
+  return {
+    type: "result",
+    subtype: "success",
+    total_cost_usd: 0,
+    duration_ms: 10,
+    duration_api_ms: 10,
+    is_error: false,
+    num_turns: 1,
+    result: "ok",
+    session_id: sessionId,
+  };
+}
+
 describe("daemon-event route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -216,7 +230,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
       }),
     );
@@ -325,6 +339,205 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
+  it("persists codexPreviousResponseId for successful codex app-server completions", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "codex",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        providers: ["openai"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    } as any);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "codex-app-server",
+      protocolVersion: 1,
+      agent: "codex",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "codex-thread-1",
+          },
+        ],
+        timezone: "UTC",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        codexPreviousResponseId: "resp-next-999",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(dbMocks.update).toHaveBeenCalledTimes(1);
+    expect(dbMocks.updateSet).toHaveBeenCalledWith({
+      codexPreviousResponseId: "resp-next-999",
+    });
+  });
+
+  it("rejects invalid codexPreviousResponseId payload types", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "codex",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        providers: ["openai"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    } as any);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "codex-app-server",
+      protocolVersion: 1,
+      agent: "codex",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage("codex-thread-1")],
+        timezone: "UTC",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        codexPreviousResponseId: 123,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("invalid_codex_previous_response_id");
+    expect(dbMocks.update).not.toHaveBeenCalled();
+  });
+
+  it("does not fail enrolled-loop event handling when codexPreviousResponseId persistence fails", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "codex",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        providers: ["openai"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    } as any);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "codex-app-server",
+      protocolVersion: 1,
+      agent: "codex",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      state: "enrolled",
+      loopVersion: 11,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    dbMocks.updateSet.mockImplementationOnce(() => {
+      throw new Error("db write failed");
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage("codex-thread-1")],
+        timezone: "UTC",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        codexPreviousResponseId: "resp-next-999",
+        payloadVersion: 2,
+        eventId: "event-persist-fail",
+        runId: "run-1",
+        seq: 4,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      acknowledgedEventId: "event-persist-fail",
+      acknowledgedSeq: 4,
+    });
+    expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
+    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
+    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
@@ -335,7 +548,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
       }),
     );
@@ -358,7 +571,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
       }),
     );
@@ -385,7 +598,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-1",
@@ -437,7 +650,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-non-enrolled",
@@ -490,7 +703,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
@@ -505,7 +718,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
@@ -535,7 +748,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-duplicate",
@@ -572,7 +785,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-in-progress",
@@ -607,7 +820,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-stale-claim",
@@ -644,7 +857,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-committed",
@@ -679,7 +892,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-committed-elsewhere",
@@ -707,7 +920,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-out-of-order",
@@ -739,7 +952,7 @@ describe("daemon-event route", () => {
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [],
+        messages: [createSuccessResultMessage()],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-raced",

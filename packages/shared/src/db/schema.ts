@@ -393,6 +393,7 @@ export const threadChat = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
     ...threadChatShared,
+    codexPreviousResponseId: text("codex_previous_response_id"),
   },
   (table) => [
     index("thread_chat_user_id_thread_id_index").on(

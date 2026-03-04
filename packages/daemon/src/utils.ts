@@ -9,6 +9,7 @@ export type MessageBufferEntry = {
   threadId: string;
   threadChatId: string;
   token: string;
+  codexPreviousResponseId?: string | null;
 };
 
 /**

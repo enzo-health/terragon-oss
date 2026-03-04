@@ -867,9 +867,10 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
+  const resolvedSessionId = deriveSessionIdFromMessages(messages);
+  const resolvedStatus = deriveRunStatusFromMessages(messages);
+
   if (runContext) {
-    const resolvedSessionId = deriveSessionIdFromMessages(messages);
-    const resolvedStatus = deriveRunStatusFromMessages(messages);
     await updateAgentRunContext({
       db,
       userId,
@@ -879,6 +880,60 @@ export async function POST(request: Request) {
         status: resolvedStatus,
       },
     });
+  }
+
+  if (
+    resolvedStatus === "completed" &&
+    json.codexPreviousResponseId !== undefined
+  ) {
+    if (
+      json.codexPreviousResponseId !== null &&
+      typeof json.codexPreviousResponseId !== "string"
+    ) {
+      await rollbackClaimedSignal({
+        reason: "invalid_codex_previous_response_id",
+        error: json.codexPreviousResponseId,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "invalid_codex_previous_response_id",
+        },
+        { status: 400 },
+      );
+    }
+
+    const shouldPersistCodexPreviousResponseId =
+      transportMode === "codex-app-server" ||
+      json.codexPreviousResponseId === null;
+    if (shouldPersistCodexPreviousResponseId) {
+      try {
+        await db
+          .update(schema.threadChat)
+          .set({
+            codexPreviousResponseId: json.codexPreviousResponseId,
+          })
+          .where(
+            and(
+              eq(schema.threadChat.userId, userId),
+              eq(schema.threadChat.threadId, threadId),
+              eq(schema.threadChat.id, threadChatId),
+            ),
+          );
+      } catch (error) {
+        console.error(
+          "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
+          {
+            userId,
+            threadId,
+            threadChatId,
+            transportMode,
+            codexPreviousResponseId: json.codexPreviousResponseId,
+            error,
+          },
+        );
+      }
+    }
   }
 
   if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {

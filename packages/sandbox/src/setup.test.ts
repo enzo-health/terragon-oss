@@ -51,7 +51,7 @@ describe("sandbox-setup", () => {
       // Should have git clone with branch specification and blobless flags
       expect(runCommandSpy).toHaveBeenCalledWith(
         "git clone --filter=blob:none --no-recurse-submodules --branch 'develop' https://github.com/owner/repo.git repo",
-        { cwd: "." },
+        { cwd: "/root" },
       );
 
       // Should create new branch with generated name (terragon/[6-char-id]-[6-char-id] in test env)
@@ -107,7 +107,7 @@ describe("sandbox-setup", () => {
       // Should clone with branch specification and blobless flags (no separate checkout needed)
       expect(runCommandSpy).toHaveBeenCalledWith(
         "git clone --filter=blob:none --no-recurse-submodules --branch 'main' https://github.com/owner/repo.git repo",
-        { cwd: "." },
+        { cwd: "/root" },
       );
 
       const runCommandCalls = runCommandSpy.mock.calls;
@@ -132,7 +132,7 @@ describe("sandbox-setup", () => {
       // Should clone the repo with branch specification and blobless flags
       expect(runCommandSpy).toHaveBeenCalledWith(
         "git clone --filter=blob:none --no-recurse-submodules --branch 'feature/test' https://github.com/owner/repo.git repo",
-        { cwd: "." },
+        { cwd: "/root" },
       );
     });
 
@@ -147,7 +147,7 @@ describe("sandbox-setup", () => {
       // Should clone the repo without branch specification but with blobless flags
       expect(runCommandSpy).toHaveBeenCalledWith(
         "git clone --filter=blob:none --no-recurse-submodules https://github.com/owner/repo.git repo",
-        { cwd: "." },
+        { cwd: "/root" },
       );
     });
   });

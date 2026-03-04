@@ -92,7 +92,7 @@ export type DaemonRunTokenClaims = {
   threadChatId: string;
   sandboxId: string;
   agent: string;
-  transportMode: "legacy" | "acp";
+  transportMode: "legacy" | "acp" | "codex-app-server";
   protocolVersion: number;
   providers: DaemonTokenProvider[];
   nonce: string;
@@ -196,7 +196,11 @@ function parseDaemonRunTokenClaims(raw: unknown): DaemonRunTokenClaims | null {
   if (typeof claims.agent !== "string" || claims.agent.length === 0) {
     return null;
   }
-  if (claims.transportMode !== "legacy" && claims.transportMode !== "acp") {
+  if (
+    claims.transportMode !== "legacy" &&
+    claims.transportMode !== "acp" &&
+    claims.transportMode !== "codex-app-server"
+  ) {
     return null;
   }
   if (

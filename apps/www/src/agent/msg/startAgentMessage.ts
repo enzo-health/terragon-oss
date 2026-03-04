@@ -407,10 +407,13 @@ export async function startAgentMessage({
             }))!;
           }
           let sessionId = threadChat.sessionId;
+          let codexPreviousResponseId =
+            threadChat.codexPreviousResponseId ?? null;
           // If sandbox was just resumed (booting), previous session is dead.
           // Force fresh session to avoid "Resource not found" from stale ACP refs.
           if (threadChat.status === "booting") {
             sessionId = null;
+            codexPreviousResponseId = null;
           }
           const { summary, didCompact } = await tryAutoCompactThread({
             userId,
@@ -423,6 +426,7 @@ export async function startAgentMessage({
               text: `\n\n---\n\nThe user has run out of context. This is a summary of what has been done: <summary>\n${summary}\n</summary>\n\n`,
             });
             sessionId = null;
+            codexPreviousResponseId = null;
           }
           // Prepare prompt based on model
           const model =
@@ -533,19 +537,43 @@ export async function startAgentMessage({
           const effectivePermissionMode = activeSdlcLoop
             ? "allowAll"
             : rawPermissionMode;
-          const transportMode =
-            featureFlags.sandboxAgentAcpTransport &&
-            supportsAcp &&
+          const transportEligible =
             effectivePermissionMode !== "plan" &&
-            threadChatId !== LEGACY_THREAD_CHAT_ID
+            threadChatId !== LEGACY_THREAD_CHAT_ID;
+          const shouldUseCodexAppServerTransport =
+            transportEligible &&
+            threadChat.agent === "codex" &&
+            featureFlags.codexAppServerTransport;
+          const shouldUseAcpTransport =
+            transportEligible &&
+            featureFlags.sandboxAgentAcpTransport &&
+            supportsAcp;
+          const transportMode = shouldUseCodexAppServerTransport
+            ? ("codex-app-server" as const)
+            : shouldUseAcpTransport
               ? ("acp" as const)
               : ("legacy" as const);
+          if (transportMode !== "codex-app-server") {
+            if (codexPreviousResponseId !== null) {
+              await updateThreadChat({
+                db,
+                userId,
+                threadId,
+                threadChatId,
+                updates: {
+                  codexPreviousResponseId: null,
+                },
+              });
+            }
+            codexPreviousResponseId = null;
+          }
           // Each ACP turn bootstraps a new server (new runId → new acpServerId).
           // The previous session is bound to the old server and invalid here.
           // The "booting" status check (line 412) normally handles this, but
           // this guard covers edge cases where status isn't "booting".
           if (transportMode === "acp") {
             sessionId = null;
+            codexPreviousResponseId = null;
           }
           const protocolVersion = transportMode === "acp" ? 2 : 1;
           const acpServerId =
@@ -579,6 +607,7 @@ export async function startAgentMessage({
               agentVersion: threadChat.agentVersion,
               prompt: finalFinalPrompt,
               sessionId,
+              codexPreviousResponseId,
               permissionMode: effectivePermissionMode,
               runId,
               transportMode,

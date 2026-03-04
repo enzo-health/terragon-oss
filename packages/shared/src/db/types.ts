@@ -233,7 +233,7 @@ export type ThreadStatus =
   // Agent is complete (done with checkpointing)
   | "complete";
 
-export type AgentTransportMode = "legacy" | "acp";
+export type AgentTransportMode = "legacy" | "acp" | "codex-app-server";
 
 export type AgentRunProtocolVersion = 1 | 2;
 

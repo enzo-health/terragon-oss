@@ -7,6 +7,19 @@ async function sleep(ms: number = 10) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForMockCalls(
+  mockFn: { mock: { calls: unknown[] } },
+  timeoutMs = 1000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (mockFn.mock.calls.length === 0) {
+    if (Date.now() - startedAt > timeoutMs) {
+      return;
+    }
+    await sleep(10);
+  }
+}
+
 describe("runtime", () => {
   let runtime: DaemonRuntime;
 
@@ -113,7 +126,8 @@ describe("runtime", () => {
       onClose: onCloseMock,
       env: {},
     });
-    await sleep(100);
+    await waitForMockCalls(onCloseMock);
+    await sleep(10);
     expect(onStdoutLineMock).toHaveBeenCalledWith("Hello, world!");
     expect(onStderrMock).not.toHaveBeenCalled();
     expect(onErrorMock).not.toHaveBeenCalled();
@@ -135,7 +149,8 @@ describe("runtime", () => {
         env: {},
       },
     );
-    await sleep(100);
+    await waitForMockCalls(onCloseMock);
+    await sleep(10);
     expect(onStdoutMock).toHaveBeenCalledTimes(3);
     expect(onStdoutMock).toHaveBeenNthCalledWith(1, "Hello, world!");
     expect(onStdoutMock).toHaveBeenNthCalledWith(2, "Hello, 2!");
@@ -199,7 +214,8 @@ describe("runtime", () => {
       onClose: onCloseMock,
       env: {},
     });
-    await sleep(100);
+    await waitForMockCalls(onCloseMock);
+    await sleep(10);
     expect(onStdoutMock).toHaveBeenCalledWith("Hello, world!");
     expect(onStderrMock).not.toHaveBeenCalled();
     expect(onErrorMock).not.toHaveBeenCalled();

@@ -756,6 +756,7 @@ function createLegacyThreadChatFull(
     reattemptQueueAt: thread.reattemptQueueAt,
     contextLength: thread.contextLength,
     permissionMode: thread.permissionMode ?? "allowAll",
+    codexPreviousResponseId: null,
     isUnread: thread.isUnread,
     messages: thread.messages ?? [],
     queuedMessages: thread.queuedMessages ?? [],

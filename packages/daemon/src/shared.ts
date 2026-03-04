@@ -17,9 +17,14 @@ export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
   sdlcLoopCoordinatorRouting?: boolean;
   sandboxAgentAcpTransport?: boolean;
+  codexAppServerTransport?: boolean;
 };
 
-export const DaemonTransportModeSchema = z.enum(["legacy", "acp"]);
+export const DaemonTransportModeSchema = z.enum([
+  "legacy",
+  "acp",
+  "codex-app-server",
+]);
 export type DaemonTransportMode = z.infer<typeof DaemonTransportModeSchema>;
 
 export const DaemonMessageClaudeSchema = z
@@ -43,6 +48,7 @@ export const DaemonMessageClaudeSchema = z
     protocolVersion: z.number().int().min(1).optional(),
     acpServerId: z.string().nullable().optional(),
     acpSessionId: z.string().nullable().optional(),
+    codexPreviousResponseId: z.string().nullable().optional(),
   })
   .superRefine((value, ctx) => {
     const transportMode = value.transportMode ?? "legacy";
@@ -207,6 +213,7 @@ export type DaemonEventAPIBody = {
   protocolVersion?: number;
   acpServerId?: string | null;
   acpSessionId?: string | null;
+  codexPreviousResponseId?: string | null;
   payloadVersion?: number;
   eventId?: string;
   runId?: string;
