@@ -1196,7 +1196,7 @@ describe("buildTurnStartParams", () => {
 
     expect(params).toEqual({
       threadId: "thread-123",
-      content: "Implement this task",
+      input: "Implement this task",
     });
   });
 });

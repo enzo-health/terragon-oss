@@ -547,7 +547,7 @@ export function buildThreadStartParams({
 
 export type CodexTurnStartParams = {
   threadId: string;
-  content: string;
+  input: string;
 };
 
 export function buildTurnStartParams({
@@ -559,7 +559,7 @@ export function buildTurnStartParams({
 }): CodexTurnStartParams {
   return {
     threadId,
-    content: prompt,
+    input: prompt,
   };
 }
 
