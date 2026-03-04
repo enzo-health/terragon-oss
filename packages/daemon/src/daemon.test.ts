@@ -594,6 +594,55 @@ describe("daemon", () => {
     expect(appServerManager.ensureReady).toHaveBeenCalledTimes(1);
   });
 
+  it("does not start an app-server turn after stop is requested before thread id resolves", async () => {
+    let resolveEnsureReady!: () => void;
+    const ensureReadyPromise = new Promise<void>((resolve) => {
+      resolveEnsureReady = resolve;
+    });
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn(() => ensureReadyPromise),
+      onNotification: vi.fn(() => () => {}),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async () => ({})),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    const runPromise = (daemon as any).runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5",
+      transportMode: "codex-app-server",
+      sessionId: null,
+    } satisfies DaemonMessageClaude);
+
+    await sleepUntil(
+      () => appServerManager.ensureReady.mock.calls.length === 1,
+    );
+
+    const stopResult = await (daemon as any).stopAppServerTurn({
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      token: TEST_INPUT_MESSAGE.token,
+      includeStopMessage: false,
+    });
+    expect(stopResult).toBe(true);
+    resolveEnsureReady();
+
+    await runPromise;
+
+    expect(appServerManager.send).not.toHaveBeenCalled();
+  });
+
   it("preserves codexPreviousResponseId null when forwarding daemon-event payload", async () => {
     let notificationHandler:
       | ((

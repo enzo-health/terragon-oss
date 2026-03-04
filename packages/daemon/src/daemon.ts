@@ -1138,6 +1138,9 @@ export class TerragonDaemon {
     if (!context) {
       return false;
     }
+    if (context.isCompleted) {
+      return true;
+    }
 
     context.isStopping = true;
     this.clearAppServerWatchdog(context);
@@ -1230,6 +1233,9 @@ export class TerragonDaemon {
         await manager.restartIfTokenChanged(input.token);
       }
       await manager.ensureReady();
+      if (context.isStopping || context.isCompleted) {
+        return;
+      }
 
       removeNotificationHandler = manager.onNotification(
         (notification, notificationContext) => {
@@ -1418,6 +1424,9 @@ export class TerragonDaemon {
           );
         }),
       ]);
+      if (context.isStopping || context.isCompleted) {
+        return;
+      }
 
       this.resetAppServerWatchdog({
         context,
