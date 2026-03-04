@@ -1,0 +1,1 @@
+ALTER TABLE "thread_chat" ADD COLUMN "codex_previous_response_id" text;

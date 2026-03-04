@@ -64,6 +64,13 @@
       "when": 1772445600000,
       "tag": "0008_add_committed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1772607164563,
+      "tag": "0009_add_codex_previous_response_id",
+      "breakpoints": true
     }
   ]
 }
