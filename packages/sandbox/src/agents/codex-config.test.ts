@@ -36,6 +36,7 @@ describe("buildCodexToml", () => {
     expect(toml).toMatchInlineSnapshot(`
       "# IMPORTANT: the top-level key is \`mcp_servers\` rather than \`mcpServers\`.
       [model_providers.openai]
+      name = "openai"
       stream_idle_timeout_ms = 600_000
       stream_max_retries = 20
 
@@ -140,6 +141,7 @@ describe("buildCodexToml", () => {
     expect(toml).toMatchInlineSnapshot(`
       "# IMPORTANT: the top-level key is \`mcp_servers\` rather than \`mcpServers\`.
       [model_providers.openai]
+      name = "openai"
       stream_idle_timeout_ms = 600_000
       stream_max_retries = 20
 
@@ -266,6 +268,7 @@ describe("buildCodexToml", () => {
     expect(toml).toMatchInlineSnapshot(`
       "# IMPORTANT: the top-level key is \`mcp_servers\` rather than \`mcpServers\`.
       [model_providers.openai]
+      name = "openai"
       stream_idle_timeout_ms = 600_000
       stream_max_retries = 20
 
