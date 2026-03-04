@@ -491,7 +491,13 @@ export function codexAppServerStartCommand({
   useCredits?: boolean;
 }): [command: string, args: string[]] {
   const resolvedModel = resolveCodexModel(model);
-  const args = ["app-server", "-c", `model="${resolvedModel.modelName}"`];
+  const args = [
+    "app-server",
+    "-c",
+    `model="${resolvedModel.modelName}"`,
+    "-c",
+    'model_providers.openai.name="openai"',
+  ];
   if (resolvedModel.reasoningEffort) {
     args.push(
       "-c",
