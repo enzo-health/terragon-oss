@@ -208,7 +208,7 @@ export async function maybeRunSdlcPrePrReview({
       threadChatId,
       messageText: [
         "SDLC pre-PR review is required before opening a PR, but the current diff is too large to evaluate.",
-        "PR creation is paused. Reduce the current diff scope, then run checkpoint again to retry pre-PR review and PR creation.",
+        "PR creation is paused. Reduce the current diff scope, then signal phaseComplete: true again to retry pre-PR review and PR creation.",
       ].join("\n\n"),
     });
     console.warn(
