@@ -514,10 +514,8 @@ export type CodexThreadStartParams = {
   model: string;
   stream: true;
   instructions: string;
-  sandboxPolicy: {
-    type: "externalSandbox";
-    networkAccess: "enabled";
-  };
+  /** thread/start uses `sandbox` (SandboxMode string enum), not `sandboxPolicy` (object). */
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "never";
   modelReasoningEffort?: CodexReasoningEffort;
 };
@@ -537,10 +535,9 @@ export function buildThreadStartParams({
       : {}),
     stream: true,
     instructions,
-    sandboxPolicy: {
-      type: "externalSandbox",
-      networkAccess: "enabled",
-    },
+    // thread/start accepts `sandbox` as a string enum (SandboxMode).
+    // Use "danger-full-access" because the Docker/E2B container IS the sandbox.
+    sandbox: "danger-full-access",
     approvalPolicy: "never",
   };
 }
@@ -550,9 +547,21 @@ export type CodexTurnStartInputItem = {
   text: string;
 };
 
+export type CodexSandboxPolicy =
+  | { type: "dangerFullAccess" }
+  | { type: "readOnly" }
+  | { type: "externalSandbox"; networkAccess?: "restricted" | "enabled" }
+  | {
+      type: "workspaceWrite";
+      writableRoots?: string[];
+      networkAccess?: boolean;
+    };
+
 export type CodexTurnStartParams = {
   threadId: string;
   input: CodexTurnStartInputItem[];
+  /** turn/start uses `sandboxPolicy` (SandboxPolicy object) to override sandbox per-turn. */
+  sandboxPolicy?: CodexSandboxPolicy;
 };
 
 export function buildTurnStartParams({
@@ -565,6 +574,9 @@ export function buildTurnStartParams({
   return {
     threadId,
     input: [{ type: "text", text: prompt }],
+    // Override sandbox per-turn: externalSandbox tells Codex to skip its own
+    // sandbox enforcement because the Docker/E2B container IS the sandbox.
+    sandboxPolicy: { type: "externalSandbox", networkAccess: "enabled" },
   };
 }
 

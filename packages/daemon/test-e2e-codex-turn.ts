@@ -316,18 +316,14 @@ async function run() {
   sendNotification("initialized", {});
 
   // Step 2: thread/start
-  // Use dangerFullAccess instead of externalSandbox — externalSandbox expects an
-  // external sandbox runtime that we don't have in a plain Docker container.
+  // buildThreadStartParams now correctly uses `sandbox: "danger-full-access"` (SandboxMode string)
+  // and buildTurnStartParams uses `sandboxPolicy: { type: "externalSandbox" }` (SandboxPolicy object)
   console.log("\n─── Step 2: thread/start ───");
-  const threadStartParams = {
-    ...buildThreadStartParams({
-      model: MODEL,
-      instructions:
-        "You are a helpful coding assistant. Execute commands in the sandbox to complete tasks. Be concise.",
-    }),
-    // Override: dangerFullAccess lets codex execute tools directly in the container
-    sandboxPolicy: { type: "dangerFullAccess" },
-  };
+  const threadStartParams = buildThreadStartParams({
+    model: MODEL,
+    instructions:
+      "You are a helpful coding assistant. Execute commands in the sandbox to complete tasks. Be concise.",
+  });
   const threadStartResult = (await send(
     "thread/start",
     threadStartParams as any,
@@ -351,6 +347,9 @@ async function run() {
     prompt: PROMPT,
   });
   console.log(`  input: ${JSON.stringify(turnStartParams.input)}`);
+  console.log(
+    `  sandboxPolicy: ${JSON.stringify(turnStartParams.sandboxPolicy)}`,
+  );
   await send("turn/start", turnStartParams as any);
 
   // Wait for turn to complete

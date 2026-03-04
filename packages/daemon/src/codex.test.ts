@@ -1160,10 +1160,7 @@ describe("buildThreadStartParams", () => {
       modelReasoningEffort: "high",
       stream: true,
       instructions: "System instructions",
-      sandboxPolicy: {
-        type: "externalSandbox",
-        networkAccess: "enabled",
-      },
+      sandbox: "danger-full-access",
       approvalPolicy: "never",
     });
   });
@@ -1178,17 +1175,14 @@ describe("buildThreadStartParams", () => {
       model: "gpt-5",
       stream: true,
       instructions: "No effort override",
-      sandboxPolicy: {
-        type: "externalSandbox",
-        networkAccess: "enabled",
-      },
+      sandbox: "danger-full-access",
       approvalPolicy: "never",
     });
   });
 });
 
 describe("buildTurnStartParams", () => {
-  test("builds turn/start params with thread id and prompt content", () => {
+  test("builds turn/start params with thread id, prompt, and sandbox policy", () => {
     const params = buildTurnStartParams({
       threadId: "thread-123",
       prompt: "Implement this task",
@@ -1197,6 +1191,7 @@ describe("buildTurnStartParams", () => {
     expect(params).toEqual({
       threadId: "thread-123",
       input: [{ type: "text", text: "Implement this task" }],
+      sandboxPolicy: { type: "externalSandbox", networkAccess: "enabled" },
     });
   });
 });
