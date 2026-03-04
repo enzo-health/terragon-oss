@@ -62,6 +62,7 @@ RUN npm install -g pnpm \
 # Note: request_max_retries cannot be overridden for the built-in openai provider (Codex #3026)
 RUN mkdir -p /root/.codex && cat > /root/.codex/config.toml << 'TOML'
 [model_providers.openai]
+name = "openai"
 stream_idle_timeout_ms = 600000
 stream_max_retries = 20
 TOML
