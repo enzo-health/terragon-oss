@@ -878,7 +878,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
           "SDLC phase advanced to implementing. Execute the approved plan now.",
         details: [
           "Implement the planned changes directly in code.",
-          "After implementing, run checkpoint again to trigger mandatory review, UI smoke, and PR steps.",
+          "After implementing, signal phaseComplete: true again to trigger mandatory review, UI smoke, and PR steps.",
         ],
       });
       await updateThreadChat({
@@ -896,7 +896,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         heading: "SDLC planning gate could not transition to implementing.",
         details: [
           "Plan artifact was saved, but transition preconditions were not met.",
-          "Retry checkpoint or re-approve the plan.",
+          "Signal phaseComplete: true again or re-approve the plan.",
         ],
       });
     }
@@ -1050,7 +1050,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       }
       if (reasons.length === 0) {
         reasons.push(
-          "Task verifier rejected completion evidence. Update task completion evidence and rerun checkpoint.",
+          "Task verifier rejected completion evidence. Update task completion evidence and signal phaseComplete: true again.",
         );
       }
 
@@ -1141,7 +1141,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         heading: "SDLC implementation gate could not transition to reviewing.",
         details: [
           "Implementation artifact was persisted, but transition preconditions were not met.",
-          "Retry checkpoint to continue.",
+          "Signal phaseComplete: true again to continue.",
         ],
       });
       return true;
@@ -1177,7 +1177,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         heading: "SDLC review phase blocked: diff is not reviewable.",
         details: [
           "Deep + Carmack reviews are mandatory before PR actions.",
-          "Reduce the diff scope and rerun checkpoint.",
+          "Reduce the diff scope and signal phaseComplete: true again.",
         ],
       });
       return true;
@@ -1320,7 +1320,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         threadId,
         threadChatId,
         heading:
-          "SDLC review phase blocked. Fix all blocking Deep/Carmack findings, then rerun checkpoint.",
+          "SDLC review phase blocked. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
         details:
           reviewSections.length > 0
             ? reviewSections
@@ -1436,7 +1436,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       heading: "SDLC UI gate could not transition to PR linking.",
       details: [
         "UI smoke artifact was persisted, but transition preconditions were not met.",
-        "Retry checkpoint to continue.",
+        "Signal phaseComplete: true again to continue.",
       ],
     });
     return true;
