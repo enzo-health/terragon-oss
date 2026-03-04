@@ -178,7 +178,7 @@ function createManagerHarness({
 
   const manager = new CodexAppServerManager({
     logger,
-    model: "gpt-5",
+    model: "gpt-5.3-codex-medium",
     daemonToken,
     requestTimeoutMs,
     handshakeTimeoutMs,
@@ -277,7 +277,15 @@ describe("CodexAppServerManager", () => {
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]).toMatchObject({
       command: "codex",
-      args: ["app-server", "-c", 'model="gpt-5"'],
+      args: [
+        "app-server",
+        "-c",
+        'model="gpt-5.3-codex"',
+        "-c",
+        'model_providers.openai.name="openai"',
+        "-c",
+        'model_reasoning_effort="medium"',
+      ],
     });
 
     const initialize = parseJsonObject(processHandle!.stdinWrites[0] ?? "{}");

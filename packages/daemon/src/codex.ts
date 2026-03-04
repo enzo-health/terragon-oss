@@ -546,8 +546,8 @@ export function buildThreadStartParams({
 }
 
 export type CodexTurnStartInputItem = {
-  role: "user";
-  content: string;
+  type: "text";
+  text: string;
 };
 
 export type CodexTurnStartParams = {
@@ -564,7 +564,7 @@ export function buildTurnStartParams({
 }): CodexTurnStartParams {
   return {
     threadId,
-    input: [{ role: "user", content: prompt }],
+    input: [{ type: "text", text: prompt }],
   };
 }
 
