@@ -921,13 +921,17 @@ export async function POST(request: Request) {
             ),
           );
       } catch (error) {
-        await rollbackClaimedSignal({
-          reason: "persist_codex_previous_response_id_failed",
-          error,
-        });
-        return new Response("failed to persist codex previous response id", {
-          status: 500,
-        });
+        console.error(
+          "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
+          {
+            userId,
+            threadId,
+            threadChatId,
+            transportMode,
+            codexPreviousResponseId: json.codexPreviousResponseId,
+            error,
+          },
+        );
       }
     }
   }

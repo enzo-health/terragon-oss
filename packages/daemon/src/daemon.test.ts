@@ -268,6 +268,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn((handler: typeof notificationHandler) => {
         notificationHandler = handler;
         return () => {};
@@ -348,6 +349,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn((handler: typeof notificationHandler) => {
         notificationHandler = handler;
         return () => {};
@@ -444,6 +446,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn((handler: typeof notificationHandler) => {
         notificationHandler = handler;
         return () => {};
@@ -517,7 +520,7 @@ describe("daemon", () => {
     );
   });
 
-  it("does not restart app-server token while other turns are active", async () => {
+  it("restarts app-server token before ensuring readiness", async () => {
     let notificationHandler:
       | ((
           notification: {
@@ -541,6 +544,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn((handler: typeof notificationHandler) => {
         notificationHandler = handler;
         return () => {};
@@ -578,10 +582,6 @@ describe("daemon", () => {
     vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
       appServerManager,
     );
-    (daemon as any).appServerRunContexts.set("OTHER_THREAD_CHAT_ID", {
-      isCompleted: false,
-    });
-
     await (daemon as any).runAppServerCommand({
       ...TEST_INPUT_MESSAGE,
       agent: "codex",
@@ -590,7 +590,9 @@ describe("daemon", () => {
       token: "TOKEN_DIFFERENT",
     } satisfies DaemonMessageClaude);
 
-    expect(appServerManager.restartIfTokenChanged).not.toHaveBeenCalled();
+    expect(appServerManager.restartIfTokenChanged).toHaveBeenCalledWith(
+      "TOKEN_DIFFERENT",
+    );
     expect(appServerManager.ensureReady).toHaveBeenCalledTimes(1);
   });
 
@@ -607,6 +609,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn(() => ensureReadyPromise),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn(() => () => {}),
       ensureThreadState: vi.fn(() => threadState),
       isAlive: vi.fn(() => true),
@@ -667,6 +670,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn((handler: typeof notificationHandler) => {
         notificationHandler = handler;
         return () => {};
@@ -743,6 +747,7 @@ describe("daemon", () => {
     const appServerManager = {
       restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
       ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
       onNotification: vi.fn((handler: typeof notificationHandler) => {
         notificationHandler = handler;
         return () => {};

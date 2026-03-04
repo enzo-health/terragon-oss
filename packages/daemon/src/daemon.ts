@@ -256,6 +256,7 @@ type AppServerRunContext = {
   threadChatId: string;
   daemonThreadId: string;
   token: string;
+  manager: CodexAppServerManager;
   startTime: number;
   threadId: string | null;
   isStopping: boolean;
@@ -303,11 +304,6 @@ export class TerragonDaemon {
   private appServerRunContexts: Map<string, AppServerRunContext> = new Map();
   private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
   private daemonEventRunStates: Map<string, DaemonEventRunState> = new Map();
-  private appServerManager: CodexAppServerManager | null = null;
-  private appServerManagerConfig: {
-    model: string;
-    useCredits: boolean;
-  } | null = null;
   private appServerCrashTimestamps: number[] = [];
 
   private messageHandleDelay: number = 0;
@@ -670,15 +666,14 @@ export class TerragonDaemon {
       this.clearAppServerWatchdog(context);
       this.stopHeartbeat(threadChatId);
       this.markDaemonEventRunStateForCleanup(threadChatId);
-    }
-    this.appServerRunContexts.clear();
-    if (this.appServerManager) {
-      void this.appServerManager.kill().catch((error) => {
+      void context.manager.kill().catch((error) => {
         this.runtime.logger.error("Failed to kill codex app-server", {
+          threadChatId,
           error: formatError(error),
         });
       });
     }
+    this.appServerRunContexts.clear();
   }
 
   private initializeDaemonEventRunStateForNewRun({
@@ -815,9 +810,13 @@ export class TerragonDaemon {
     }
   }
 
-  private createAppServerRunContext(
-    input: DaemonMessageClaude,
-  ): AppServerRunContext {
+  private createAppServerRunContext({
+    input,
+    manager,
+  }: {
+    input: DaemonMessageClaude;
+    manager: CodexAppServerManager;
+  }): AppServerRunContext {
     let resolveTurnCompleteBase!: (result: AppServerTurnCompletion) => void;
     let rejectTurnCompleteBase!: (error: Error) => void;
     const turnCompletePromise = new Promise<AppServerTurnCompletion>(
@@ -837,6 +836,7 @@ export class TerragonDaemon {
       threadChatId: input.threadChatId,
       daemonThreadId: input.threadId,
       token: input.token,
+      manager,
       startTime: Date.now(),
       threadId: null,
       isStopping: false,
@@ -925,16 +925,15 @@ export class TerragonDaemon {
   }
 
   private async sendAppServerTurnInterrupt({
+    manager,
     threadId,
     threadChatId,
   }: {
+    manager: CodexAppServerManager;
     threadId: string;
     threadChatId: string;
   }): Promise<void> {
-    if (!this.appServerManager) {
-      return;
-    }
-    await this.appServerManager.send({
+    await manager.send({
       method: "turn/interrupt",
       threadChatId,
       timeoutMs: APP_SERVER_INTERRUPT_TIMEOUT_MS,
@@ -980,6 +979,7 @@ export class TerragonDaemon {
         return;
       }
       void this.sendAppServerTurnInterrupt({
+        manager,
         threadId,
         threadChatId: input.threadChatId,
       })
@@ -1062,18 +1062,6 @@ export class TerragonDaemon {
     });
   }
 
-  private hasOtherActiveAppServerTurns(threadChatId: string): boolean {
-    for (const [candidateThreadChatId, context] of this.appServerRunContexts) {
-      if (candidateThreadChatId === threadChatId) {
-        continue;
-      }
-      if (!context.isCompleted) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   private isAppServerCrashError(error: unknown): boolean {
     if (!(error instanceof Error)) {
       return false;
@@ -1088,39 +1076,12 @@ export class TerragonDaemon {
   private async getOrCreateAppServerManager(
     input: DaemonMessageClaude,
   ): Promise<CodexAppServerManager> {
-    const nextConfig = {
+    return new CodexAppServerManager({
+      logger: this.runtime.logger,
       model: input.model,
       useCredits: !!input.useCredits,
-    };
-    const existingConfig = this.appServerManagerConfig;
-    const configChanged =
-      !!existingConfig &&
-      (existingConfig.model !== nextConfig.model ||
-        existingConfig.useCredits !== nextConfig.useCredits);
-
-    if (configChanged && this.appServerRunContexts.size > 0) {
-      throw new Error(
-        "Cannot reconfigure codex app-server while turns are still active",
-      );
-    }
-
-    if (configChanged && this.appServerManager) {
-      await this.appServerManager.kill();
-      this.appServerManager = null;
-      this.appServerManagerConfig = null;
-    }
-
-    if (!this.appServerManager) {
-      this.appServerManager = new CodexAppServerManager({
-        logger: this.runtime.logger,
-        model: nextConfig.model,
-        useCredits: nextConfig.useCredits,
-        daemonToken: input.token,
-      });
-      this.appServerManagerConfig = nextConfig;
-    }
-
-    return this.appServerManager;
+      daemonToken: input.token,
+    });
   }
 
   private async stopAppServerTurn({
@@ -1148,6 +1109,7 @@ export class TerragonDaemon {
     if (context.threadId) {
       try {
         await this.sendAppServerTurnInterrupt({
+          manager: context.manager,
           threadId: context.threadId,
           threadChatId,
         });
@@ -1178,16 +1140,15 @@ export class TerragonDaemon {
       context.rejectTurnComplete(
         new Error("Stop timeout waiting for codex app-server turn completion"),
       );
-      if (this.appServerManager) {
-        await this.appServerManager.kill().catch((error) => {
-          this.runtime.logger.error(
-            "Failed to kill codex app-server after stop timeout",
-            {
-              error: formatError(error),
-            },
-          );
-        });
-      }
+      await context.manager.kill().catch((error) => {
+        this.runtime.logger.error(
+          "Failed to kill codex app-server after stop timeout",
+          {
+            threadChatId,
+            error: formatError(error),
+          },
+        );
+      });
     }
 
     this.markDaemonEventRunStateForCleanup(threadChatId);
@@ -1213,7 +1174,7 @@ export class TerragonDaemon {
 
   private async runAppServerCommand(input: DaemonMessageClaude): Promise<void> {
     const manager = await this.getOrCreateAppServerManager(input);
-    const context = this.createAppServerRunContext(input);
+    const context = this.createAppServerRunContext({ input, manager });
     this.appServerRunContexts.set(input.threadChatId, context);
     this.startHeartbeat(input.threadChatId);
 
@@ -1222,16 +1183,7 @@ export class TerragonDaemon {
 
     try {
       await this.applyAppServerRespawnBackoff();
-      if (this.hasOtherActiveAppServerTurns(input.threadChatId)) {
-        this.runtime.logger.warn(
-          "Skipping codex app-server token restart while other turns are active",
-          {
-            threadChatId: input.threadChatId,
-          },
-        );
-      } else {
-        await manager.restartIfTokenChanged(input.token);
-      }
+      await manager.restartIfTokenChanged(input.token);
       await manager.ensureReady();
       if (context.isStopping || context.isCompleted) {
         return;
@@ -1543,6 +1495,12 @@ export class TerragonDaemon {
       if (removeNotificationHandler) {
         removeNotificationHandler();
       }
+      await manager.kill().catch((error) => {
+        this.runtime.logger.error("Failed to kill codex app-server", {
+          threadChatId: input.threadChatId,
+          error: formatError(error),
+        });
+      });
       if (processHealthInterval) {
         clearInterval(processHealthInterval);
       }

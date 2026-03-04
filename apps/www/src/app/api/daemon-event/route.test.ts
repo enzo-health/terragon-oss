@@ -464,7 +464,7 @@ describe("daemon-event route", () => {
     expect(dbMocks.update).not.toHaveBeenCalled();
   });
 
-  it("rolls back enrolled-loop claim when codexPreviousResponseId persistence fails", async () => {
+  it("does not fail enrolled-loop event handling when codexPreviousResponseId persistence fails", async () => {
     vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
       userId: "user-1",
       keyId: "api-key-1",
@@ -527,13 +527,15 @@ describe("daemon-event route", () => {
       }),
     );
 
-    expect(response.status).toBe(500);
-    await expect(response.text()).resolves.toBe(
-      "failed to persist codex previous response id",
-    );
-    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      acknowledgedEventId: "event-persist-fail",
+      acknowledgedSeq: 4,
+    });
+    expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
+    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
+    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
