@@ -118,11 +118,7 @@ export async function buildRepoSnapshot({
 }
 
 export function getSnapshotDockerfileHash(): string {
-  const dockerfileHbsPath = path.join(
-    require.resolve("@terragon/sandbox-image"),
-    "../../Dockerfile.hbs",
-  );
-  const content = fs.readFileSync(dockerfileHbsPath, "utf-8");
+  const content = renderDockerfile("daytona");
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
