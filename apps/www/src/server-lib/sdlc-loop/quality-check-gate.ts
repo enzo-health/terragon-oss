@@ -62,12 +62,17 @@ export async function runQualityCheckGateInSandbox(
   }
 
   // Get available scripts from package.json
-  const availableScripts = await getAvailableScripts(session, cwd);
+  const scriptsResult = await getAvailableScripts(session, cwd);
+  if (!scriptsResult.ok) {
+    failures.push(
+      `Failed to read scripts from package.json: ${truncateOutput(scriptsResult.error)}`,
+    );
+    return { gatePassed: false, failures };
+  }
+  const availableScripts = scriptsResult.scripts;
 
-  // Group 1: Lint
-  const lintScript = ["lint", "lint:fix"].find((s) =>
-    availableScripts.includes(s),
-  );
+  // Group 1: Lint (non-mutating only — no lint:fix)
+  const lintScript = ["lint"].find((s) => availableScripts.includes(s));
   if (lintScript) {
     const result = await runScript(session, pm, lintScript, cwd);
     if (!result.passed) {
@@ -131,18 +136,24 @@ async function detectPackageManager(
 async function getAvailableScripts(
   session: ISandboxSession,
   cwd: string,
-): Promise<string[]> {
+): Promise<{ ok: true; scripts: string[] } | { ok: false; error: string }> {
   try {
     const output = await session.runCommand(
       `node -e "const p=require('./package.json'); console.log(Object.keys(p.scripts||{}).join(','))"`,
       { cwd },
     );
-    return output
-      .trim()
-      .split(",")
-      .filter((s) => s.length > 0);
-  } catch {
-    return [];
+    return {
+      ok: true,
+      scripts: output
+        .trim()
+        .split(",")
+        .filter((s) => s.length > 0),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

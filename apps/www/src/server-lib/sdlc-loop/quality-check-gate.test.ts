@@ -148,6 +148,26 @@ describe("runQualityCheckGateInSandbox", () => {
     expect(result.failures[0]).toContain("npm install failed");
   });
 
+  it("fails when package.json scripts cannot be read", async () => {
+    const session = createMockSession({
+      runCommandResults: {
+        "test -f package.json": "yes",
+        "test -d node_modules": "yes",
+        "test -f pnpm-lock.yaml": new Error("not found"),
+        "test -f bun.lockb": new Error("not found"),
+        "test -f bun.lock": new Error("not found"),
+        "test -f yarn.lock": new Error("not found"),
+        "Object.keys": new Error("node not found"),
+      },
+    });
+
+    const result = await runQualityCheckGateInSandbox(session);
+    expect(result.gatePassed).toBe(false);
+    expect(result.failures[0]).toContain(
+      "Failed to read scripts from package.json",
+    );
+  });
+
   it("reports multiple failures", async () => {
     const session = createMockSession({
       runCommandResults: {

@@ -53,7 +53,15 @@ PM=$(detect_pm)
 
 # Install deps if missing
 if [ ! -d node_modules ]; then
-  $PM install 2>&1 || true
+  INSTALL_OUTPUT=$($PM install 2>&1)
+  if [ $? -ne 0 ]; then
+    QC_OUTPUT="$INSTALL_OUTPUT" node -e '
+      const o = process.env.QC_OUTPUT || "";
+      const t = o.length > 2000 ? o.slice(0,2000) + "... (truncated)" : o;
+      process.stdout.write(JSON.stringify({decision:"block",reason:"Dependency install failed:\\n"+t}));
+    '
+    exit 0
+  fi
 fi
 
 # Check if a script exists in package.json
@@ -74,8 +82,8 @@ truncate_output() {
 
 errors=""
 
-# Group 1: Lint (run first matching)
-for script in lint lint:fix; do
+# Group 1: Lint (non-mutating only — no lint:fix)
+for script in lint; do
   if has_script "$script"; then
     output=$($PM run "$script" 2>&1)
     if [ $? -ne 0 ]; then
@@ -111,9 +119,14 @@ for script in test; do
 done
 
 if [ -n "$errors" ]; then
-  # Escape for JSON: replace backslashes, quotes, newlines
-  escaped_errors=$(echo -e "$errors" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g' | tr '\\n' ' ')
-  printf '{"decision":"block","reason":"Quality checks failed. Fix the errors before completing:\\n%s"}' "$escaped_errors"
+  QC_ERRORS="$errors" node -e '
+    const errors = (process.env.QC_ERRORS || "").replace(/\\n/g, " ");
+    const t = errors.length > 2000 ? errors.slice(0,2000) + "... (truncated)" : errors;
+    process.stdout.write(JSON.stringify({
+      decision: "block",
+      reason: "Quality checks failed. Fix the errors before completing:\\n" + t
+    }));
+  '
   exit 0
 fi
 
