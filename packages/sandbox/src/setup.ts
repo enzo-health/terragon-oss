@@ -20,6 +20,8 @@ import {
   buildOpencodeConfig,
   OPENCODE_AUTO_APPROVE_PLUGIN_CONTENT,
 } from "./agents/opencode-config";
+import { buildClaudeCodeSettings } from "./agents/claude-settings";
+import { buildQualityCheckScript } from "./agents/quality-check";
 import { getEnv } from "./env";
 import path from "path";
 
@@ -497,7 +499,17 @@ async function updateAgentFiles({
         isCreatingSandbox,
         customSystemPromptFilename: "CLAUDE.md",
         customSystemPrompt,
+        otherFiles: [
+          {
+            filename: "settings.json",
+            content: buildClaudeCodeSettings(),
+          },
+        ],
       });
+      // Write quality check script to /tmp (outside config dir)
+      const qualityCheckPath = "/tmp/terragon-quality-check.sh";
+      await session.writeTextFile(qualityCheckPath, buildQualityCheckScript());
+      await session.runCommand(`chmod +x ${qualityCheckPath}`, { cwd: "/" });
       break;
     }
     case "codex": {
