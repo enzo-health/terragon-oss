@@ -596,6 +596,8 @@ export type EnvironmentSnapshot = {
   status: "building" | "ready" | "failed" | "stale";
   setupScriptHash: string;
   baseDockerfileHash: string;
+  environmentVariablesHash?: string;
+  mcpConfigHash?: string;
   error?: string;
   builtAt: string;
 };

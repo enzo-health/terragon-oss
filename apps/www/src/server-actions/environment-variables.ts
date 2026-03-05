@@ -4,8 +4,10 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 
 import {
+  getEnvironments,
   getEnvironment,
   updateEnvironment,
+  markSnapshotsStale,
 } from "@terragon/shared/model/environments";
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
@@ -60,6 +62,28 @@ export const updateEnvironmentVariables = userOnlyAction(
         })),
       },
     });
+    if (environment.isGlobal) {
+      const environments = await getEnvironments({
+        db,
+        userId,
+        includeGlobal: false,
+      });
+      await Promise.all(
+        environments.map((repoEnvironment) =>
+          markSnapshotsStale({
+            db,
+            userId,
+            environmentId: repoEnvironment.id,
+          }),
+        ),
+      );
+    } else {
+      await markSnapshotsStale({
+        db,
+        userId,
+        environmentId,
+      });
+    }
     return { success: true };
   },
   { defaultErrorMessage: "Failed to update environment variables" },

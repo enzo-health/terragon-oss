@@ -16,6 +16,8 @@ vi.mock("./daemon", () => ({
   MCP_SERVER_FILE_PATH: "/tmp/terry-mcp-server.mjs",
 }));
 
+import { installDaemon } from "./daemon";
+
 const defaultOptions: CreateSandboxOptions = {
   threadName: "test-title",
   userName: "test-user",
@@ -187,9 +189,9 @@ describe("sandbox-setup", () => {
         "/home/user/.codex/AGENTS.md",
         customPrompt,
       );
-      // Should set proper permissions
+      // Should set proper permissions (batched chmod)
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "chmod 644 /home/user/.codex/AGENTS.md",
+        "chmod 644 /home/user/.codex/AGENTS.md && chmod 644 /home/user/.codex/config.toml",
         { cwd: "/" },
       );
     });
@@ -268,9 +270,9 @@ describe("sandbox-setup", () => {
         "/home/user/.config/AGENTS.md",
         customPrompt,
       );
-      // Should set proper permissions
+      // Should set proper permissions (batched chmod)
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "chmod 644 /home/user/.config/AGENTS.md",
+        "chmod 644 /home/user/.config/AGENTS.md && chmod 644 /home/user/.config/amp/settings.json",
         { cwd: "/" },
       );
     });
@@ -302,6 +304,33 @@ describe("sandbox-setup", () => {
         "/home/user/.claude/CLAUDE.md",
         customPrompt,
       );
+    });
+
+    it("should not run the setup script during resume setup", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.mocked(installDaemon).mockClear();
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async (cmd) => {
+          if (cmd === "cd && pwd") return "/home/user";
+          return "";
+        });
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          setupScript: "echo hi",
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(
+        runCommandSpy.mock.calls.some(([cmd]) =>
+          cmd.includes("/tmp/terragon-setup-custom.sh"),
+        ),
+      ).toBe(false);
+      expect(installDaemon).not.toHaveBeenCalled();
     });
   });
 
@@ -484,6 +513,49 @@ npm run build`;
       await expect(setupSandboxOneTime(session, options)).rejects.toThrow(
         "Setup script failed",
       );
+    });
+
+    it("should run daemon install and setup script", async () => {
+      const order: string[] = [];
+
+      // installDaemon resolves after a tick — simulates async work
+      vi.mocked(installDaemon).mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        order.push("daemon-done");
+      });
+
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async (cmd) => {
+        if (cmd.includes("bash -x /tmp/terragon-setup-custom.sh")) {
+          order.push("setup-script-ran");
+        }
+        return "";
+      });
+      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        setupScript: "echo hi",
+      });
+
+      // Both must have run
+      expect(order).toContain("daemon-done");
+      expect(order).toContain("setup-script-ran");
+    });
+
+    it("should not run setup script when skipSetupScript is true, waiting for daemon only", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async () => "");
+      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        skipSetupScript: true,
+        setupScript: "echo hi",
+      });
+
+      // installDaemon mock should still have been called
+      expect(installDaemon).toHaveBeenCalled();
     });
   });
 });

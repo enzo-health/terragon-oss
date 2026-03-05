@@ -8,6 +8,9 @@ import { env } from "@terragon/env/apps-www";
 import {
   getEnvironment,
   getDecryptedEnvironmentVariables,
+  getDecryptedMcpConfig,
+  hashEnvironmentVariables,
+  hashSnapshotValue,
   updateEnvironment,
   updateEnvironmentSnapshot,
   getReadySnapshot,
@@ -46,6 +49,24 @@ export const buildEnvironmentSnapshot = userOnlyAction(
 
     const setupScriptHash = getSetupScriptHash(environment.setupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(size);
+    const [repositoryEnvironmentVariables, resolvedMcpConfig] = await Promise.all([
+      getDecryptedEnvironmentVariables({
+        db,
+        userId,
+        environmentId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedMcpConfig({
+        db,
+        userId,
+        environmentId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+    ]);
+    const environmentVariablesHash = hashEnvironmentVariables(
+      repositoryEnvironmentVariables,
+    );
+    const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 
     // Set status to building immediately
     const buildingEntry: EnvironmentSnapshot = {
@@ -55,6 +76,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
       status: "building",
       setupScriptHash,
       baseDockerfileHash,
+      environmentVariablesHash,
+      mcpConfigHash,
       builtAt: new Date().toISOString(),
     };
     await updateEnvironmentSnapshot({
@@ -64,20 +87,13 @@ export const buildEnvironmentSnapshot = userOnlyAction(
       snapshot: buildingEntry,
     });
 
-    const environmentVariables = await getDecryptedEnvironmentVariables({
-      db,
-      userId,
-      environmentId,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    });
-
     // Fire and forget — the build runs in the background
     buildRepoSnapshot({
       repoFullName: environment.repoFullName,
       baseBranch: "main", // Default to main; could be configurable
       githubAccessToken,
       setupScript: environment.setupScript,
-      environmentVariables,
+      environmentVariables: repositoryEnvironmentVariables,
       size,
       onLogs: (chunk) => console.log(`[snapshot-build] ${chunk}`),
     })
@@ -89,6 +105,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
           status: "ready",
           setupScriptHash,
           baseDockerfileHash,
+          environmentVariablesHash,
+          mcpConfigHash,
           builtAt: new Date().toISOString(),
         };
         await updateEnvironmentSnapshot({
@@ -110,6 +128,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
           status: "failed",
           setupScriptHash,
           baseDockerfileHash,
+          environmentVariablesHash,
+          mcpConfigHash,
           error: error instanceof Error ? error.message : String(error),
           builtAt: new Date().toISOString(),
         };

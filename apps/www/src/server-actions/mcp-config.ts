@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import {
   getEnvironment,
   updateEnvironment,
+  markSnapshotsStale,
 } from "@terragon/shared/model/environments";
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
@@ -53,6 +54,11 @@ export const updateMcpConfig = userOnlyAction(
       updates: {
         mcpConfigEncrypted: encryptedConfig,
       },
+    });
+    await markSnapshotsStale({
+      db,
+      userId,
+      environmentId,
     });
 
     // Track MCP config save

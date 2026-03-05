@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { DB } from "../db";
 import * as schema from "../db/schema";
 import type { EnvironmentSnapshot } from "../db/schema";
@@ -317,14 +318,80 @@ export async function getEnvironmentForUserRepo({
   });
 }
 
+export function hashEnvironmentVariables(
+  environmentVariables: Array<{ key: string; value: string }>,
+): string {
+  return hashSnapshotValue(
+    [...environmentVariables]
+      .map((variable) => ({
+        key: variable.key,
+        value: variable.value,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  );
+}
+
+export function hashSnapshotValue(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(normalizeSnapshotValue(value)))
+    .digest("hex");
+}
+
+function normalizeSnapshotValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeSnapshotValue);
+  }
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reduce(
+      (acc, key) => {
+        acc[key] = normalizeSnapshotValue(
+          (value as Record<string, unknown>)[key],
+        );
+        return acc;
+      },
+      {} as Record<string, unknown>,
+    );
+}
+
 export function getReadySnapshot(
   environment: { snapshots: EnvironmentSnapshot[] | null },
   provider: "daytona",
   size: SandboxSize,
+  filters?: {
+    setupScriptHash?: string;
+    baseDockerfileHash?: string;
+    environmentVariablesHash?: string;
+    mcpConfigHash?: string;
+  },
 ): EnvironmentSnapshot | null {
+  const {
+    setupScriptHash,
+    baseDockerfileHash,
+    environmentVariablesHash,
+    mcpConfigHash,
+  } = filters ?? {};
   return (
     environment.snapshots?.find(
-      (s) => s.provider === provider && s.size === size && s.status === "ready",
+      (s) =>
+        s.provider === provider &&
+        s.size === size &&
+        s.status === "ready" &&
+        (setupScriptHash !== undefined
+          ? s.setupScriptHash === setupScriptHash
+          : true) &&
+        (baseDockerfileHash !== undefined
+          ? s.baseDockerfileHash === baseDockerfileHash
+          : true) &&
+        (environmentVariablesHash !== undefined
+          ? s.environmentVariablesHash === environmentVariablesHash
+          : true) &&
+        (mcpConfigHash !== undefined
+          ? s.mcpConfigHash === mcpConfigHash
+          : true),
     ) ?? null
   );
 }

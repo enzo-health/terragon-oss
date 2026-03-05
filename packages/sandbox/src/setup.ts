@@ -72,43 +72,24 @@ async function ensureSandboxAgentRunning({
   // Run all sandbox-agent checks from root dir since /root/repo may not exist yet
   const cmdOpts = { cwd: "/" };
 
-  const isRunning = await session
-    .runCommand(
-      `ps -ef | grep sandbox-agent | grep -F " --port ${port}" | grep -v grep`,
-      cmdOpts,
-    )
-    .then(() => true)
-    .catch(() => false);
-  if (isRunning) {
-    return;
-  }
-
-  // Check common install locations - Daytona sandboxes may place npm global
-  // binaries in /usr/bin instead of /usr/local/bin
-  let sandboxAgentBin = "sandbox-agent";
-  try {
-    await session.runCommand(
-      "command -v sandbox-agent >/dev/null 2>&1",
-      cmdOpts,
+  // Single round-trip: check if running, find binary, or report not found
+  const result = await session.runCommand(
+    `if ps -ef | grep sandbox-agent | grep -F " --port ${port}" | grep -v grep >/dev/null 2>&1; then` +
+      ` echo RUNNING;` +
+      ` elif command -v sandbox-agent >/dev/null 2>&1; then which sandbox-agent;` +
+      ` elif test -x /usr/bin/sandbox-agent; then echo /usr/bin/sandbox-agent;` +
+      ` elif test -x /usr/local/bin/sandbox-agent; then echo /usr/local/bin/sandbox-agent;` +
+      ` else echo NOT_FOUND; fi`,
+    cmdOpts,
+  );
+  const output = result.trim();
+  if (output === "RUNNING") return;
+  if (output === "NOT_FOUND") {
+    throw new Error(
+      "sandbox-agent is enabled but not installed in the sandbox image. Install @sandbox-agent/cli in the image and set SANDBOX_AGENT_BASE_URL.",
     );
-  } catch {
-    try {
-      await session.runCommand("test -x /usr/bin/sandbox-agent", cmdOpts);
-      sandboxAgentBin = "/usr/bin/sandbox-agent";
-    } catch {
-      try {
-        await session.runCommand(
-          "test -x /usr/local/bin/sandbox-agent",
-          cmdOpts,
-        );
-        sandboxAgentBin = "/usr/local/bin/sandbox-agent";
-      } catch {
-        throw new Error(
-          "sandbox-agent is enabled but not installed in the sandbox image. Install @sandbox-agent/cli in the image and set SANDBOX_AGENT_BASE_URL.",
-        );
-      }
-    }
   }
+  const sandboxAgentBin = output;
 
   // Increase ACP proxy timeout from 120s default to 10 minutes.
   // session/prompt can take many minutes for complex coding tasks.
@@ -135,7 +116,7 @@ async function waitForSandboxAgentHealth({
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       await session.runCommand(
-        `curl -fsS --connect-timeout 5 --max-time 8 ${bashQuote(healthUrl)}`,
+        `curl -fsS --connect-timeout 2 --max-time 3 ${bashQuote(healthUrl)}`,
         { cwd: "/" },
       );
       return;
@@ -144,7 +125,8 @@ async function waitForSandboxAgentHealth({
       if (attempt === maxRetries - 1) {
         throw lastError;
       }
-      await sleep(retryDelayMs);
+      const delay = Math.min(retryDelayMs * Math.pow(2, attempt), 1000);
+      await sleep(delay);
     }
   }
 }
@@ -273,13 +255,13 @@ export async function setupSandboxOneTime(
   }
   await session.runCommand(`git clean -fxd`);
 
-  // Install daemon while setup script runs in background
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
     sandboxStatus: "booting",
     bootingStatus: "installing-agent",
   });
-  const daemonPromise = installDaemon({
+
+  const daemonInstallAndProbe = installDaemon({
     session,
     environmentVariables: options.environmentVariables || [],
     githubAccessToken: options.githubAccessToken,
@@ -287,33 +269,32 @@ export async function setupSandboxOneTime(
     userMcpConfig: options.mcpConfig,
     publicUrl: options.publicUrl,
     featureFlags: options.featureFlags,
-  });
-
-  // Wait for daemon to be ready (it has its own 1 second wait)
-  await daemonPromise;
-  await probeSandboxAgentEndpoint({
-    session,
-    options,
-  });
+  }).then(() => probeSandboxAgentEndpoint({ session, options }));
 
   // Only run terragon-setup.sh if not explicitly skipped and no snapshot
   if (options.skipSetupScript || options.snapshotTemplateId) {
     console.log("Skipping setup script (snapshot or explicit skip)");
+    await daemonInstallAndProbe;
   } else {
+    // Daemon startup (~15s for Node.js spawn on Daytona) and the setup script
+    // are fully independent — run them in parallel to hide the spawn latency.
     await options.onStatusUpdate({
       sandboxId: session.sandboxId,
       sandboxStatus: "booting",
       bootingStatus: "running-setup-script",
     });
-    await runSetupScript({
-      session,
-      options: {
-        environmentVariables: options.environmentVariables,
-        githubAccessToken: options.githubAccessToken,
-        agentCredentials: options.agentCredentials,
-        setupScript: options.setupScript,
-      },
-    });
+    await Promise.all([
+      daemonInstallAndProbe,
+      runSetupScript({
+        session,
+        options: {
+          environmentVariables: options.environmentVariables,
+          githubAccessToken: options.githubAccessToken,
+          agentCredentials: options.agentCredentials,
+          setupScript: options.setupScript,
+        },
+      }),
+    ]);
   }
 }
 
@@ -340,30 +321,14 @@ export async function setupGitCredentials(
   session: ISandboxSession,
   options: CreateSandboxOptions,
 ) {
-  try {
-    await session.runCommand(`git config --global credential.helper store`, {
-      cwd: "/",
-    });
-  } catch (error) {
-    // This is an attempt to fix this:
-    // https://discord.com/channels/1389834244985196575/1401876436867878923/1401876436867878923
-    if (
-      error instanceof Error &&
-      error.message.includes(
-        "failed to write new configuration file /root/.gitconfig.lock",
-      )
-    ) {
-      console.error(
-        "Failed to write new configuration file /root/.gitconfig.lock, continuing anyway",
-      );
-    } else {
-      throw error;
-    }
-  }
-
-  // Use environment variables to set the git credentials so that these don't show up in our logs or errors.
+  // Keep credential setup idempotent so hot resumptions don't rewrite secrets when
+  // the token is unchanged.
   await session.runCommand(
-    'echo "https://${GITHUB_USER_NAME}:${GITHUB_ACCESS_TOKEN}@github.com" > ~/.git-credentials',
+    'CREDENTIAL_ENTRY="https://${GITHUB_USER_NAME}:${GITHUB_ACCESS_TOKEN}@github.com" && ' +
+      "if [ -f ~/.git-credentials ] && grep -Fxq \"$CREDENTIAL_ENTRY\" ~/.git-credentials; then " +
+      ' :; else ' +
+      'echo "$CREDENTIAL_ENTRY" > ~/.git-credentials; ' +
+      "fi && (git config --global credential.helper store 2>/dev/null || true)",
     {
       cwd: "/",
       env: {
@@ -383,30 +348,37 @@ export async function setupSandboxEveryTime({
   options: CreateSandboxOptions;
   isCreatingSandbox: boolean;
 }) {
-  await setupGitCredentials(session, options);
-  await probeSandboxAgentEndpoint({
-    session,
-    options,
-  });
-  if (!options.fastResume) {
-    if (options.agent) {
-      await updateAgentFiles({
+  // All setup operations that don't depend on each other run in parallel.
+  const parallelOps: Promise<void>[] = [
+    setupGitCredentials(session, options),
+    probeSandboxAgentEndpoint({ session, options }),
+  ];
+  const agent = !options.fastResume ? options.agent : null;
+  if (agent) {
+    parallelOps.push(
+      updateAgentFiles({
         session,
         customSystemPrompt: options.customSystemPrompt,
-        agent: options.agent,
+        agent,
         agentCredentials: options.agentCredentials,
         isCreatingSandbox,
         mcpConfig: options.mcpConfig,
         publicUrl: options.publicUrl,
-      });
-    }
-    if (options.autoUpdateDaemon && !isCreatingSandbox) {
-      await updateDaemonIfOutdated({ session, options });
-    }
-    if (!isCreatingSandbox) {
-      await restartDaemonIfNotRunning({ session, options });
-    }
+      }),
+    );
   }
+  if (!isCreatingSandbox && !options.fastResume) {
+    parallelOps.push(
+      options.autoUpdateDaemon
+        ? (async () => {
+            await updateDaemonIfOutdated({ session, options });
+            await restartDaemonIfNotRunning({ session, options });
+          })()
+        : restartDaemonIfNotRunning({ session, options }),
+    );
+  }
+
+  await Promise.all(parallelOps);
 }
 
 async function updateAgentFilesShared({
@@ -434,6 +406,8 @@ async function updateAgentFilesShared({
   }>;
 }) {
   const configDirAbsolutePath = path.join(homeDir, agentConfigDir);
+  const chmodCmds: string[] = [];
+
   await session.runCommand(`mkdir -p ${configDirAbsolutePath}`, { cwd: "/" });
 
   if (agentCredentialsFilename) {
@@ -444,7 +418,7 @@ async function updateAgentFilesShared({
     if (agentCredentials && agentCredentials.type === "json-file") {
       console.log("Writing agent credentials to", credentialsPath);
       await session.writeTextFile(credentialsPath, agentCredentials.contents);
-      await session.runCommand(`chmod 600 ${credentialsPath}`, { cwd: "/" });
+      chmodCmds.push(`chmod 600 ${credentialsPath}`);
     } else if (!isCreatingSandbox) {
       console.log("Removing agent credentials from", credentialsPath);
       await session
@@ -460,14 +434,13 @@ async function updateAgentFilesShared({
   if (customSystemPrompt) {
     console.log("Writing custom system prompt to", customSystemPromptPath);
     await session.writeTextFile(customSystemPromptPath, customSystemPrompt);
-    await session.runCommand(`chmod 644 ${customSystemPromptPath}`, {
-      cwd: "/",
-    });
+    chmodCmds.push(`chmod 644 ${customSystemPromptPath}`);
   } else if (!isCreatingSandbox) {
     await session
       .runCommand(`rm -f ${customSystemPromptPath}`, { cwd: "/" })
       .catch(() => {});
   }
+
   if (otherFiles) {
     for (const file of otherFiles) {
       const filePath = path.join(configDirAbsolutePath, file.filename);
@@ -478,8 +451,12 @@ async function updateAgentFilesShared({
       }
       console.log("Writing to", filePath);
       await session.writeTextFile(filePath, file.content);
-      await session.runCommand(`chmod 644 ${filePath}`, { cwd: "/" });
+      chmodCmds.push(`chmod 644 ${filePath}`);
     }
+  }
+
+  if (chmodCmds.length > 0) {
+    await session.runCommand(chmodCmds.join(" && "), { cwd: "/" });
   }
 }
 
