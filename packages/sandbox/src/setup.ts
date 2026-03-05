@@ -103,7 +103,7 @@ async function waitForSandboxAgentHealth({
   session,
   baseUrl,
   maxRetries = 12,
-  retryDelayMs = 500, // kept for API compat, used as fallback
+  retryDelayMs = 500,
 }: {
   session: ISandboxSession;
   baseUrl: string;
@@ -125,7 +125,7 @@ async function waitForSandboxAgentHealth({
       if (attempt === maxRetries - 1) {
         throw lastError;
       }
-      const delay = Math.min(100 * Math.pow(2, attempt), 1000);
+      const delay = Math.min(retryDelayMs * Math.pow(2, attempt), 1000);
       await sleep(delay);
     }
   }

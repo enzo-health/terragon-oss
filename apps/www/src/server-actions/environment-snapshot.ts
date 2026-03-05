@@ -2,15 +2,15 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { createHash } from "node:crypto";
 import { getGitHubUserAccessToken } from "@/lib/github";
 import { UserFacingError } from "@/lib/server-actions";
 import { env } from "@terragon/env/apps-www";
-import type { McpConfig } from "@terragon/sandbox/mcp-config";
 import {
   getEnvironment,
   getDecryptedEnvironmentVariables,
   getDecryptedMcpConfig,
+  hashEnvironmentVariables,
+  hashSnapshotValue,
   updateEnvironment,
   updateEnvironmentSnapshot,
   getReadySnapshot,
@@ -66,7 +66,7 @@ export const buildEnvironmentSnapshot = userOnlyAction(
     const environmentVariablesHash = hashEnvironmentVariables(
       repositoryEnvironmentVariables,
     );
-    const mcpConfigHash = hashMcpConfig(resolvedMcpConfig);
+    const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 
     // Set status to building immediately
     const buildingEntry: EnvironmentSnapshot = {
@@ -213,50 +213,3 @@ export const getSnapshotStatus = userOnlyAction(
   },
   { defaultErrorMessage: "Failed to get snapshot status" },
 );
-
-function hashEnvironmentVariables(
-  environmentVariables: Array<{ key: string; value: string }>,
-): string {
-  return hashValue(
-    [...environmentVariables]
-      .map((variable) => ({
-        key: variable.key,
-        value: variable.value,
-      }))
-      .sort((a, b) => a.key.localeCompare(b.key)),
-  );
-}
-
-function hashMcpConfig(
-  mcpConfig: McpConfig | null,
-): string {
-  return hashValue(mcpConfig);
-}
-
-function hashValue(value: unknown): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        normalizeForHash(value),
-      ),
-    )
-    .digest("hex");
-}
-
-function normalizeForHash(value: unknown): unknown {
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(normalizeForHash);
-  }
-  return Object.keys(value as Record<string, unknown>)
-    .sort()
-    .reduce(
-      (acc, key) => {
-        acc[key] = normalizeForHash((value as Record<string, unknown>)[key]);
-        return acc;
-      },
-      {} as Record<string, unknown>,
-    );
-}

@@ -515,7 +515,7 @@ npm run build`;
       );
     });
 
-    it("should run daemon install and setup script in parallel", async () => {
+    it("should run daemon install and setup script", async () => {
       const order: string[] = [];
 
       // installDaemon resolves after a tick — simulates async work

@@ -74,8 +74,10 @@ export async function buildRepoSnapshot({
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "terragon-snapshot-"));
     try {
       const setupScriptPath = path.join(tmpDir, "terragon-setup.sh");
+      const setupRunnerPath = path.join(tmpDir, "terragon-snapshot-run-setup.sh");
       fs.writeFileSync(setupScriptPath, setupScript);
       const setupCommand = [
+        "#!/usr/bin/env bash",
         "PG_CLUSTER_LINE=\"$(pg_lsclusters --no-header 2>/dev/null | awk 'NF>=2 {print $1\" \"$2; exit}')\"",
         "if [ -z \"$PG_CLUSTER_LINE\" ]; then",
         "  PG_CLUSTER_LINE=\"16 main\"",
@@ -107,15 +109,20 @@ export async function buildRepoSnapshot({
         "EXIT_CODE=$?",
         "pg_ctlcluster \"$PG_CLUSTER_VERSION\" \"$PG_CLUSTER_NAME\" stop || true",
         "redis-cli shutdown || true",
-        "rm -f /tmp/terragon-setup.sh",
+        "rm -f /tmp/terragon-setup.sh /tmp/terragon-snapshot-run-setup.sh",
         "exit \"$EXIT_CODE\"",
-      ].join(" && ");
+      ].join("\n");
+      fs.writeFileSync(setupRunnerPath, setupCommand);
       image = image
         .addLocalFile(setupScriptPath, "/tmp/terragon-setup.sh")
+        .addLocalFile(
+          setupRunnerPath,
+          "/tmp/terragon-snapshot-run-setup.sh",
+        )
         .runCommands(
-          "chmod +x /tmp/terragon-setup.sh",
+          "chmod +x /tmp/terragon-setup.sh /tmp/terragon-snapshot-run-setup.sh",
           // Start services, run setup, stop services — all in one RUN layer
-          setupCommand,
+          "bash /tmp/terragon-snapshot-run-setup.sh",
         );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

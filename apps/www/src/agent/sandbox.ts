@@ -15,6 +15,8 @@ import {
   getDecryptedMcpConfig,
   getDecryptedGlobalEnvironmentVariables,
   getReadySnapshot,
+  hashEnvironmentVariables,
+  hashSnapshotValue,
 } from "@terragon/shared/model/environments";
 import {
   getSetupScriptHash,
@@ -42,7 +44,6 @@ import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import type { UserSettings } from "@terragon/shared";
-import { createHash } from "node:crypto";
 
 async function getOrCreateSandboxWithTimeout(
   sandboxId: string | null,
@@ -268,7 +269,7 @@ async function getOrCreateSandboxForThread({
     const normalizedEnvironmentVariables = applyAcpTransportDefaults(
       mergedEnvironmentEntries,
     );
-    const mcpConfigHash = hashMcpConfig(resolvedMcpConfig);
+    const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 
     bootstrapContext = {
       repositoryEnvironment,
@@ -462,53 +463,6 @@ export async function createSandboxForThread({
     }
     throw wrapError("sandbox-creation-failed", error);
   }
-}
-
-function hashEnvironmentVariables(
-  environmentVariables: Array<{ key: string; value: string }>,
-): string {
-  return hashValue(
-    [...environmentVariables]
-      .map((variable) => ({
-        key: variable.key,
-        value: variable.value,
-      }))
-      .sort((a, b) => a.key.localeCompare(b.key)),
-  );
-}
-
-function hashMcpConfig(
-  mcpConfig: CreateSandboxOptions["mcpConfig"] | null,
-): string {
-  return hashValue(mcpConfig);
-}
-
-function hashValue(value: unknown): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        normalizeForHash(value),
-      ),
-    )
-    .digest("hex");
-}
-
-function normalizeForHash(value: unknown): unknown {
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(normalizeForHash);
-  }
-  return Object.keys(value as Record<string, unknown>)
-    .sort()
-    .reduce(
-      (acc, key) => {
-        acc[key] = normalizeForHash((value as Record<string, unknown>)[key]);
-        return acc;
-      },
-      {} as Record<string, unknown>,
-    );
 }
 
 export async function maybeHibernateSandbox({

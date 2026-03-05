@@ -68,13 +68,15 @@ export const updateEnvironmentVariables = userOnlyAction(
         userId,
         includeGlobal: false,
       });
-      for (const repoEnvironment of environments) {
-        await markSnapshotsStale({
-          db,
-          userId,
-          environmentId: repoEnvironment.id,
-        });
-      }
+      await Promise.all(
+        environments.map((repoEnvironment) =>
+          markSnapshotsStale({
+            db,
+            userId,
+            environmentId: repoEnvironment.id,
+          }),
+        ),
+      );
     } else {
       await markSnapshotsStale({
         db,
