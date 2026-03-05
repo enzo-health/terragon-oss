@@ -654,9 +654,10 @@ async function getLatestPendingBypassForImplementation({
       typeof payload.requestedAt === "string"
         ? Date.parse(payload.requestedAt)
         : Number.NaN;
+    const now = Date.now();
+    const diffMs = now - requestedAt;
     const requestIsFresh =
-      Number.isFinite(requestedAt) &&
-      Date.now() - requestedAt <= 30 * 60 * 1000;
+      Number.isFinite(requestedAt) && diffMs >= 0 && diffMs <= 30 * 60 * 1000;
     if (
       payload.kind === "bypass_once" &&
       payload.gate === "quality" &&
@@ -1837,7 +1838,9 @@ async function maybeAutoFixGitCommitAndPushError({
     return false;
   }
   // Lets make sure that the most recent user/system message is not a retry message
-  const getLastSystemOrUserMessage = (messages: DBMessage[]): DBMessage | null => {
+  const getLastSystemOrUserMessage = (
+    messages: DBMessage[],
+  ): DBMessage | null => {
     for (const message of [...messages].reverse()) {
       if (message.type === "system" || message.type === "user") {
         return message;

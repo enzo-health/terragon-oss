@@ -57,7 +57,10 @@ function buildBypassFollowUpMessage(): DBUserMessage {
 export const requestSdlcResumeFromBlocked = userOnlyAction(
   async function requestSdlcResumeFromBlocked(
     userId: string,
-    { threadId, threadChatId }: { threadId: string; threadChatId: string | null },
+    {
+      threadId,
+      threadChatId,
+    }: { threadId: string; threadChatId: string | null },
   ) {
     const activeLoop = await getActiveSdlcLoopForThread({
       db,
@@ -71,11 +74,6 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
       throw new UserFacingError("SDLC loop is not blocked on human feedback");
     }
 
-    const nextLoopVersion =
-      typeof activeLoop.loopVersion === "number" &&
-      Number.isFinite(activeLoop.loopVersion)
-        ? Math.max(activeLoop.loopVersion, 0) + 1
-        : 1;
     await db.transaction(async (tx) => {
       await transitionBlockedLoopToImplementing({
         tx,
@@ -86,7 +84,7 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
         loopId: activeLoop.id,
         phase: "implementing",
         artifactType: "human_intervention",
-        loopVersion: nextLoopVersion,
+        loopVersion: activeLoop.loopVersion,
         status: "accepted",
         generatedBy: "human",
         payload: {
@@ -121,11 +119,14 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
           ],
         });
       } catch (error) {
-        console.warn("[sdlc-interventions] failed to enqueue resume follow-up", {
-          threadId,
-          loopId: activeLoop.id,
-          error,
-        });
+        console.warn(
+          "[sdlc-interventions] failed to enqueue resume follow-up",
+          {
+            threadId,
+            loopId: activeLoop.id,
+            error,
+          },
+        );
       }
     }
   },
@@ -135,7 +136,10 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
 export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
   async function requestSdlcBypassCurrentGateOnce(
     userId: string,
-    { threadId, threadChatId }: { threadId: string; threadChatId: string | null },
+    {
+      threadId,
+      threadChatId,
+    }: { threadId: string; threadChatId: string | null },
   ) {
     const activeLoop = await getActiveSdlcLoopForThread({
       db,
@@ -154,26 +158,40 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
       );
     }
 
-    const nextLoopVersion =
-      typeof activeLoop.loopVersion === "number" &&
-      Number.isFinite(activeLoop.loopVersion)
-        ? Math.max(activeLoop.loopVersion, 0) + 1
-        : 1;
     await db.transaction(async (tx) => {
       const bypassLockKey = `sdlc-bypass-once:${activeLoop.id}`;
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtext(${bypassLockKey}), 0)`,
       );
-      if (activeLoop.state === "blocked_on_human_feedback") {
+      const lockedLoop = await tx.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.id, activeLoop.id),
+        columns: {
+          id: true,
+          state: true,
+          loopVersion: true,
+        },
+      });
+      if (!lockedLoop) {
+        throw new UserFacingError("No active SDLC loop found for this thread");
+      }
+      const stateAllowsBypassInTx =
+        lockedLoop.state === "blocked_on_human_feedback" ||
+        lockedLoop.state === "implementing";
+      if (!stateAllowsBypassInTx) {
+        throw new UserFacingError(
+          "SDLC loop bypass is only available while implementing or blocked",
+        );
+      }
+      if (lockedLoop.state === "blocked_on_human_feedback") {
         await transitionBlockedLoopToImplementing({
           tx,
-          loopId: activeLoop.id,
+          loopId: lockedLoop.id,
         });
       }
 
       const existingBypasses = await tx.query.sdlcPhaseArtifact.findMany({
         where: and(
-          eq(schema.sdlcPhaseArtifact.loopId, activeLoop.id),
+          eq(schema.sdlcPhaseArtifact.loopId, lockedLoop.id),
           eq(schema.sdlcPhaseArtifact.phase, "implementing"),
           eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
           eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
@@ -201,14 +219,17 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
           typeof payload.requestedAt === "string"
             ? Date.parse(payload.requestedAt)
             : Number.NaN;
+        const now = Date.now();
+        const diffMs = now - requestedAt;
         const isFresh =
           Number.isFinite(requestedAt) &&
-          Date.now() - requestedAt <= 30 * 60 * 1000;
+          diffMs >= 0 &&
+          diffMs <= 30 * 60 * 1000;
         return (
           payload.kind === "bypass_once" &&
           payload.gate === "quality" &&
           payload.actorUserId === userId &&
-          payload.loopVersion === activeLoop.loopVersion &&
+          payload.loopVersion === lockedLoop.loopVersion &&
           isFresh
         );
       });
@@ -217,17 +238,17 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
       }
 
       await tx.insert(schema.sdlcPhaseArtifact).values({
-        loopId: activeLoop.id,
+        loopId: lockedLoop.id,
         phase: "implementing",
         artifactType: "human_intervention",
-        loopVersion: nextLoopVersion,
+        loopVersion: lockedLoop.loopVersion,
         status: "generated",
         generatedBy: "human",
         payload: {
           kind: "bypass_once",
           gate: "quality",
           actorUserId: userId,
-          loopVersion: activeLoop.loopVersion,
+          loopVersion: lockedLoop.loopVersion,
           requestedAt: new Date().toISOString(),
         },
       });
@@ -244,11 +265,14 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
           messages: [buildBypassFollowUpMessage()],
         });
       } catch (error) {
-        console.warn("[sdlc-interventions] failed to enqueue bypass follow-up", {
-          threadId,
-          loopId: activeLoop.id,
-          error,
-        });
+        console.warn(
+          "[sdlc-interventions] failed to enqueue bypass follow-up",
+          {
+            threadId,
+            loopId: activeLoop.id,
+            error,
+          },
+        );
       }
     }
   },
