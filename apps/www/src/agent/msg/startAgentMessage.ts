@@ -112,18 +112,11 @@ async function markFollowUpTtfrStart({
 async function shouldPullUpstreamForThread(threadId: string): Promise<boolean> {
   try {
     const key = getUpstreamPullKey(threadId);
-    const nowMs = Date.now();
-    const raw = await redis.get<string>(key);
-    if (raw) {
-      const lastMs = Number.parseInt(raw, 10);
-      if (!Number.isNaN(lastMs) && nowMs - lastMs < UPSTREAM_PULL_THROTTLE_MS) {
-        return false;
-      }
-    }
-    await redis.set(key, nowMs.toString(), {
-      ex: 60 * 60,
+    const lockResult = await redis.set(key, Date.now().toString(), {
+      nx: true,
+      ex: Math.ceil(UPSTREAM_PULL_THROTTLE_MS / 1000),
     });
-    return true;
+    return lockResult === "OK";
   } catch (error) {
     console.warn("Failed to read/write upstream pull throttle key", {
       threadId,
@@ -173,7 +166,9 @@ export async function startAgentMessage({
   delayMs?: number;
 }) {
   console.log("Starting agent message", { threadId, threadChatId });
-  await markFollowUpTtfrStart({ userId, threadId, threadChatId });
+  if (!isNewThread) {
+    await markFollowUpTtfrStart({ userId, threadId, threadChatId });
+  }
   const userCredentials = await getUserCredentials({ userId });
   if (message) {
     // Check for slash commands

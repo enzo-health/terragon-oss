@@ -304,18 +304,24 @@ describe("sandbox-resource", () => {
 
     it("should return true when thread chat is set to inactive", async () => {
       const threadChatId = `chat-${nanoid()}`;
-      await setActiveThreadChat({
-        sandboxId: testSandboxId,
-        threadChatId,
-        isActive: true,
-      });
-      await setActiveThreadChat({
-        sandboxId: testSandboxId,
-        threadChatId,
-        isActive: false,
-      });
-      const result = await shouldHibernateSandbox(testSandboxId);
-      expect(result).toBe(true);
+      const previousWarmGrace = process.env.SANDBOX_WARM_GRACE_SECONDS;
+      try {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = "0";
+        await setActiveThreadChat({
+          sandboxId: testSandboxId,
+          threadChatId,
+          isActive: true,
+        });
+        await setActiveThreadChat({
+          sandboxId: testSandboxId,
+          threadChatId,
+          isActive: false,
+        });
+        const result = await shouldHibernateSandbox(testSandboxId);
+        expect(result).toBe(true);
+      } finally {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = previousWarmGrace;
+      }
     });
 
     it("should return false when terminal is active", async () => {
@@ -331,13 +337,19 @@ describe("sandbox-resource", () => {
     });
 
     it("should return true when terminal expires", async () => {
-      await setTerminalActive({ sandboxId: testSandboxId, expires: 1 });
+      const previousWarmGrace = process.env.SANDBOX_WARM_GRACE_SECONDS;
+      try {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = "0";
+        await setTerminalActive({ sandboxId: testSandboxId, expires: 1 });
 
-      // Wait for terminal status to expire
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+        // Wait for terminal status to expire
+        await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      const result = await shouldHibernateSandbox(testSandboxId);
-      expect(result).toBe(true);
+        const result = await shouldHibernateSandbox(testSandboxId);
+        expect(result).toBe(true);
+      } finally {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = previousWarmGrace;
+      }
     });
 
     it("should return false when multiple conditions are active", async () => {
@@ -351,6 +363,50 @@ describe("sandbox-resource", () => {
 
       const result = await shouldHibernateSandbox(testSandboxId);
       expect(result).toBe(false);
+    });
+
+    it("should return false during warm grace after deactivation", async () => {
+      const previousWarmGrace = process.env.SANDBOX_WARM_GRACE_SECONDS;
+      try {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = "60";
+        const threadChatId = `chat-${nanoid()}`;
+        await setActiveThreadChat({
+          sandboxId: testSandboxId,
+          threadChatId,
+          isActive: true,
+        });
+        await setActiveThreadChat({
+          sandboxId: testSandboxId,
+          threadChatId,
+          isActive: false,
+        });
+        const result = await shouldHibernateSandbox(testSandboxId);
+        expect(result).toBe(false);
+      } finally {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = previousWarmGrace;
+      }
+    });
+
+    it("should fallback to default warm grace when env override is invalid", async () => {
+      const previousWarmGrace = process.env.SANDBOX_WARM_GRACE_SECONDS;
+      try {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = "invalid";
+        const threadChatId = `chat-${nanoid()}`;
+        await setActiveThreadChat({
+          sandboxId: testSandboxId,
+          threadChatId,
+          isActive: true,
+        });
+        await setActiveThreadChat({
+          sandboxId: testSandboxId,
+          threadChatId,
+          isActive: false,
+        });
+        const result = await shouldHibernateSandbox(testSandboxId);
+        expect(result).toBe(false);
+      } finally {
+        process.env.SANDBOX_WARM_GRACE_SECONDS = previousWarmGrace;
+      }
     });
   });
 });

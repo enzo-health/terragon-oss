@@ -98,7 +98,14 @@ export async function setActiveThreadChat({
     );
     await pipeline.exec();
   } else {
-    await markSandboxActivity(sandboxId);
+    try {
+      await markSandboxActivity(sandboxId);
+    } catch (error) {
+      console.error(
+        `Failed to mark sandbox activity for sandbox ${sandboxId}`,
+        error,
+      );
+    }
     await redis.srem(`${THREAD_CHATS_PREFIX}${sandboxId}`, threadChatId);
   }
 }

@@ -215,13 +215,15 @@ export async function handleDaemonEvent({
       assistantCount: messages.filter((m) => m.type === "assistant").length,
     });
   }
-  await maybeTrackFirstAssistantLatency({
-    runId,
-    userId,
-    threadId,
-    threadChatId,
-    hasAssistantMessage: messages.some((m) => m.type === "assistant"),
-  });
+  waitUntil(
+    maybeTrackFirstAssistantLatency({
+      runId,
+      userId,
+      threadId,
+      threadChatId,
+      hasAssistantMessage: messages.some((m) => m.type === "assistant"),
+    }),
+  );
 
   let isStop = false;
   let isDone = false;

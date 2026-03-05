@@ -14,6 +14,11 @@ export async function getOrCreateSandbox(
   const startTime = Date.now();
   if (sandboxId) {
     log(`Resuming sandbox ${sandboxId}...`);
+    await options.onStatusUpdate({
+      sandboxId,
+      sandboxStatus: "booting",
+      bootingStatus: "provisioning",
+    });
   } else {
     log(`Creating new sandbox for ${options.githubRepoFullName}...`);
     await options.onStatusUpdate({
@@ -23,13 +28,11 @@ export async function getOrCreateSandbox(
     });
   }
   const sandbox = await provider.getOrCreateSandbox(sandboxId, options);
-  if (!sandboxId) {
-    await options.onStatusUpdate({
-      sandboxId: sandbox.sandboxId,
-      sandboxStatus: "booting",
-      bootingStatus: "provisioning-done",
-    });
-  }
+  await options.onStatusUpdate({
+    sandboxId: sandbox.sandboxId,
+    sandboxStatus: "booting",
+    bootingStatus: "provisioning-done",
+  });
   log(`setupSandboxEveryTime ${sandbox.sandboxId}...`);
   await setupSandboxEveryTime({
     session: sandbox,

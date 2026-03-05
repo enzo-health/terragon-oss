@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { DB } from "@terragon/shared/db";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { AIAgent, AIModel, AIAgentCredentials } from "@terragon/agent/types";
 import {
   getThreadMinimal,
   updateThread,
@@ -15,7 +15,13 @@ import {
   getDecryptedMcpConfig,
   getDecryptedGlobalEnvironmentVariables,
   getReadySnapshot,
+  hashEnvironmentVariables,
+  hashSnapshotValue,
 } from "@terragon/shared/model/environments";
+import {
+  getSetupScriptHash,
+  getSnapshotBaseTemplateId,
+} from "@terragon/sandbox/snapshot-builder";
 import { env } from "@terragon/env/apps-www";
 import type {
   CreateSandboxOptions,
@@ -29,28 +35,24 @@ import {
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { trackSandboxCreation } from "@/lib/rate-limit";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
+import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
 import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
-import type { UserSettings } from "@terragon/shared";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
+import type { UserSettings } from "@terragon/shared";
 import { redis } from "@/lib/redis";
 
 const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
 const SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS = 120;
 
-type SandboxResumeContextCacheEntry = {
+type SandboxResumeMetadataCacheEntry = {
   userSettings: Awaited<ReturnType<typeof getUserSettings>>;
   userFeatureFlags: Awaited<ReturnType<typeof getFeatureFlagsForUser>>;
   repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>>;
-  repositoryEnvironmentVariables: Array<{ key: string; value: string }>;
-  globalEnvironmentVariables: Array<{ key: string; value: string }>;
-  mcpConfig: Awaited<ReturnType<typeof getDecryptedMcpConfig>>;
-  githubAccessToken: string | null;
 };
 
 function getSandboxResumeContextCacheKey({
@@ -69,7 +71,7 @@ async function getCachedSandboxResumeContext({
 }: {
   userId: string;
   threadId: string;
-}): Promise<SandboxResumeContextCacheEntry | null> {
+}): Promise<SandboxResumeMetadataCacheEntry | null> {
   let raw: string | null = null;
   try {
     raw = await redis.get<string>(
@@ -87,7 +89,7 @@ async function getCachedSandboxResumeContext({
     return null;
   }
   try {
-    return JSON.parse(raw) as SandboxResumeContextCacheEntry;
+    return JSON.parse(raw) as SandboxResumeMetadataCacheEntry;
   } catch (error) {
     console.warn("Failed to parse sandbox resume context cache entry", {
       userId,
@@ -106,7 +108,7 @@ async function setCachedSandboxResumeContext({
 }: {
   userId: string;
   threadId: string;
-  value: SandboxResumeContextCacheEntry;
+  value: SandboxResumeMetadataCacheEntry;
 }) {
   try {
     await redis.set(
@@ -224,53 +226,105 @@ async function getOrCreateSandboxForThread({
   if (!thread) {
     throw new Error("Thread not found");
   }
+  const shouldFastResume = fastResume && !!thread.codesandboxId;
+
   let agentOrNull: AIAgent | null = null;
   let modelOrNull: AIModel | null = null;
-  if (threadChatIdOrNull) {
-    const threadChat = await getThreadChat({
-      db,
-      threadId,
-      threadChatId: threadChatIdOrNull,
-      userId,
-    });
-    if (threadChat) {
-      agentOrNull = ensureAgent(threadChat.agent);
-      modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
-    }
-  }
-  const [agentCredentialsOrNull, cachedResumeContext] = await Promise.all([
-    (async () => {
-      return agentOrNull
-        ? await getAndVerifyCredentials({
-            agent: agentOrNull,
-            model: modelOrNull,
-            userId,
-          })
-        : null;
-    })(),
+  const [cachedResumeContext, githubAccessToken] = await Promise.all([
     getCachedSandboxResumeContext({ userId, threadId }),
+    getGitHubUserAccessToken({ userId }),
   ]);
-  let resumeContext = cachedResumeContext;
-  if (!resumeContext) {
-    const repositoryEnvironment = await getOrCreateEnvironment({
-      db,
-      userId,
-      repoFullName: thread.githubRepoFullName,
-    });
+  const userFeatureFlags =
+    cachedResumeContext?.userFeatureFlags ??
+    (await getFeatureFlagsForUser({ db, userId }));
+  if (!githubAccessToken) {
+    throw new Error("No GitHub access token found");
+  }
+
+  const applyAcpTransportDefaults = (
+    variables: Array<{ key: string; value: string }>,
+  ): Array<{ key: string; value: string }> => {
+    if (!userFeatureFlags.sandboxAgentAcpTransport) {
+      return variables;
+    }
+
+    return variables.some(
+      (entry) =>
+        entry.key === "SANDBOX_AGENT_BASE_URL" && entry.value.trim().length > 0,
+    )
+      ? variables
+      : [
+          ...variables.filter(
+            (entry) => entry.key !== "SANDBOX_AGENT_BASE_URL",
+          ),
+          { key: "SANDBOX_AGENT_BASE_URL", value: "http://127.0.0.1:2468" },
+        ];
+  };
+
+  type BootstrapContext = {
+    repositoryEnvironment: Awaited<
+      ReturnType<typeof getOrCreateEnvironment>
+    > | null;
+    agent: AIAgent | null;
+    agentCredentialsOrNull: AIAgentCredentials | null;
+    finalEnvironmentVariables: Array<{ key: string; value: string }>;
+    environmentVariablesHash: string;
+    mcpConfigHash: string;
+    customSystemPrompt: string | null;
+    generateBranchNameWithPrefix: (
+      threadName: string | null,
+    ) => Promise<string | null>;
+    mcpConfig: CreateSandboxOptions["mcpConfig"];
+  };
+
+  let bootstrapContext: BootstrapContext | null = null;
+  const getBootstrapContext = async (): Promise<BootstrapContext> => {
+    if (bootstrapContext) {
+      return bootstrapContext;
+    }
+
+    if (threadChatIdOrNull) {
+      const threadChat = await getThreadChat({
+        db,
+        threadId,
+        threadChatId: threadChatIdOrNull,
+        userId,
+      });
+      if (threadChat) {
+        agentOrNull = ensureAgent(threadChat.agent);
+        modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
+      }
+    }
     const [
-      userFeatureFlags,
-      userSettings,
+      resolvedUserSettings,
+      resolvedRepositoryEnvironment,
+      agentCredentialsOrNull,
+    ] = await Promise.all([
+      cachedResumeContext?.userSettings ?? getUserSettings({ db, userId }),
+      cachedResumeContext?.repositoryEnvironment ??
+        getOrCreateEnvironment({
+          db,
+          userId,
+          repoFullName: thread.githubRepoFullName,
+        }),
+      (async () =>
+        agentOrNull
+          ? getAndVerifyCredentials({
+              agent: agentOrNull,
+              model: modelOrNull,
+              userId,
+            })
+          : Promise.resolve(null))(),
+    ]);
+    const [
       repositoryEnvironmentVariables,
       globalEnvironmentVariables,
-      mcpConfig,
-      githubAccessToken,
+      resolvedMcpConfig,
     ] = await Promise.all([
-      getFeatureFlagsForUser({ db, userId }),
-      getUserSettings({ db, userId }),
       getDecryptedEnvironmentVariables({
         db,
         userId,
-        environmentId: repositoryEnvironment.id,
+        environmentId: resolvedRepositoryEnvironment.id,
         encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
       }),
       getDecryptedGlobalEnvironmentVariables({
@@ -281,126 +335,195 @@ async function getOrCreateSandboxForThread({
       getDecryptedMcpConfig({
         db,
         userId,
-        environmentId: repositoryEnvironment.id,
+        environmentId: resolvedRepositoryEnvironment.id,
         encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
       }),
-      getGitHubUserAccessToken({ userId }),
     ]);
-    resumeContext = {
-      userFeatureFlags,
-      userSettings,
-      repositoryEnvironment,
+    // Merge global and environment-specific variables
+    // Environment-specific variables take precedence over global ones
+    const mergedEnvironmentVariables = [
+      ...globalEnvironmentVariables,
+      ...repositoryEnvironmentVariables,
+    ].reduce(
+      (acc, variable) => {
+        acc[variable.key] = variable.value;
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
+    const mergedEnvironmentEntries = Object.entries(
+      mergedEnvironmentVariables,
+    ).map(([key, value]) => ({ key, value }));
+    const environmentVariablesHash = hashEnvironmentVariables(
       repositoryEnvironmentVariables,
-      globalEnvironmentVariables,
-      mcpConfig,
-      githubAccessToken,
-    };
-    await setCachedSandboxResumeContext({
-      userId,
-      threadId,
-      value: resumeContext,
-    });
-  }
-  const {
-    userFeatureFlags,
-    userSettings,
-    repositoryEnvironment,
-    repositoryEnvironmentVariables,
-    globalEnvironmentVariables,
-    mcpConfig,
-    githubAccessToken,
-  } = resumeContext;
-  if (!githubAccessToken) {
-    throw new Error("No GitHub access token found");
-  }
+    );
+    const normalizedEnvironmentVariables = applyAcpTransportDefaults(
+      mergedEnvironmentEntries,
+    );
+    const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 
-  // Merge global and environment-specific variables
-  // Environment-specific variables take precedence over global ones
-  const mergedEnvironmentVariables = [
-    ...globalEnvironmentVariables,
-    ...repositoryEnvironmentVariables,
-  ].reduce(
-    (acc, variable) => {
-      acc[variable.key] = variable.value;
-      return acc;
-    },
-    {} as Record<string, string>,
-  );
-  if (
-    userFeatureFlags.sandboxAgentAcpTransport &&
-    !mergedEnvironmentVariables.SANDBOX_AGENT_BASE_URL?.trim()
-  ) {
-    mergedEnvironmentVariables.SANDBOX_AGENT_BASE_URL = "http://127.0.0.1:2468";
-  }
-  const finalEnvironmentVariables = Object.entries(
-    mergedEnvironmentVariables,
-  ).map(([key, value]) => ({ key, value }));
-  const branchPrefix = userSettings.branchNamePrefix;
-  const generateBranchNameWithPrefix = (threadName: string | null) =>
-    generateBranchName(threadName, branchPrefix);
-  const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-  // Check for per-repo snapshot (only for new Daytona sandboxes)
-  const snapshot =
-    !thread.codesandboxId && thread.sandboxProvider === "daytona"
-      ? getReadySnapshot(repositoryEnvironment, "daytona", sandboxSize)
-      : null;
-  const startTime = Date.now();
-  const session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
-    threadName: thread.name,
-    agent: agentOrNull,
-    agentCredentials: agentCredentialsOrNull,
-    userName: user.name,
-    userEmail: user.email,
-    githubAccessToken,
-    githubRepoFullName: thread.githubRepoFullName,
-    repoBaseBranchName: thread.repoBaseBranchName,
-    userId,
-    sandboxProvider: thread.sandboxProvider,
-    sandboxSize,
-    environmentVariables: finalEnvironmentVariables,
-    createNewBranch,
-    branchName,
-    mcpConfig: mcpConfig || undefined,
-    autoUpdateDaemon: !!userFeatureFlags.autoUpdateDaemon,
-    customSystemPrompt: userSettings.customSystemPrompt,
-    setupScript: repositoryEnvironment.setupScript,
-    skipSetupScript: thread.skipSetup,
-    snapshotTemplateId: snapshot?.snapshotName ?? undefined,
-    fastResume: fastResume && !!thread.codesandboxId,
-    publicUrl: nonLocalhostPublicAppUrl(),
-    featureFlags: userFeatureFlags,
-    generateBranchName: generateBranchNameWithPrefix,
-    onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
-      if (sandboxId && bootingStatus === "provisioning-done") {
-        getPostHogServer().capture({
-          distinctId: userId,
-          event: "sandbox_provisioned",
-          properties: {
-            threadId,
-            sandboxId,
-            sandboxProvider: thread.sandboxProvider,
-            githubRepoFullName: thread.githubRepoFullName,
-            durationMs: Date.now() - startTime,
-          },
-        });
-      }
-      await onStatusUpdate({
-        sandboxId,
-        sandboxStatus,
-        bootingStatus,
+    if (!cachedResumeContext) {
+      await setCachedSandboxResumeContext({
+        userId,
+        threadId,
+        value: {
+          userSettings: resolvedUserSettings,
+          userFeatureFlags,
+          repositoryEnvironment: resolvedRepositoryEnvironment,
+        },
       });
-    },
-  });
+    }
 
-  if (!thread.codesandboxId) {
+    bootstrapContext = {
+      repositoryEnvironment: resolvedRepositoryEnvironment,
+      agent: agentOrNull,
+      agentCredentialsOrNull,
+      finalEnvironmentVariables: normalizedEnvironmentVariables,
+      environmentVariablesHash,
+      mcpConfigHash,
+      customSystemPrompt: resolvedUserSettings.customSystemPrompt,
+      generateBranchNameWithPrefix: (threadName) =>
+        generateBranchName(threadName, resolvedUserSettings.branchNamePrefix),
+      mcpConfig: resolvedMcpConfig || undefined,
+    };
+    return bootstrapContext;
+  };
+
+  const isRecoverableSandboxIdError = (error: unknown): boolean => {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("sandbox not found") ||
+      message.includes("not found") ||
+      message.includes("no such sandbox") ||
+      message.includes("does not exist")
+    );
+  };
+
+  const buildSandboxOptions = (
+    context: BootstrapContext,
+  ): CreateSandboxOptions => {
+    const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
+    const setupScriptHash = getSetupScriptHash(
+      context.repositoryEnvironment?.setupScript ?? null,
+    );
+    const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
+    const snapshot =
+      !thread.codesandboxId &&
+      thread.sandboxProvider === "daytona" &&
+      context.repositoryEnvironment
+        ? getReadySnapshot(
+            context.repositoryEnvironment,
+            "daytona",
+            sandboxSize,
+            {
+              setupScriptHash,
+              baseDockerfileHash,
+              environmentVariablesHash: context.environmentVariablesHash,
+              mcpConfigHash: context.mcpConfigHash,
+            },
+          )
+        : null;
+
+    return {
+      threadName: thread.name,
+      agent: context.agent,
+      agentCredentials: context.agentCredentialsOrNull,
+      userName: user.name,
+      userEmail: user.email,
+      githubAccessToken,
+      githubRepoFullName: thread.githubRepoFullName,
+      repoBaseBranchName: thread.repoBaseBranchName,
+      userId,
+      sandboxProvider: thread.sandboxProvider,
+      sandboxSize,
+      environmentVariables: context.finalEnvironmentVariables,
+      createNewBranch,
+      branchName,
+      mcpConfig: context.mcpConfig || undefined,
+      autoUpdateDaemon: !!userFeatureFlags.autoUpdateDaemon,
+      customSystemPrompt: context.customSystemPrompt,
+      setupScript: context.repositoryEnvironment?.setupScript || null,
+      skipSetupScript: thread.skipSetup,
+      snapshotTemplateId: snapshot?.snapshotName ?? undefined,
+      publicUrl: nonLocalhostPublicAppUrl(),
+      featureFlags: userFeatureFlags,
+      generateBranchName: context.generateBranchNameWithPrefix,
+      onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
+        if (sandboxId && bootingStatus === "provisioning-done") {
+          getPostHogServer().capture({
+            distinctId: userId,
+            event: "sandbox_provisioned",
+            properties: {
+              threadId,
+              sandboxId,
+              sandboxProvider: thread.sandboxProvider,
+              githubRepoFullName: thread.githubRepoFullName,
+              durationMs: Date.now() - startTime,
+            },
+          });
+        }
+        await onStatusUpdate({
+          sandboxId,
+          sandboxStatus,
+          bootingStatus,
+        });
+      },
+    };
+  };
+
+  const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
+  const startTime = Date.now();
+  const bootstrap = await getBootstrapContext();
+  let session: ISandboxSession;
+  try {
+    const bootstrapOptions = buildSandboxOptions(bootstrap);
+    session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
+      ...bootstrapOptions,
+      fastResume: shouldFastResume,
+    });
+  } catch (error) {
+    if (!shouldFastResume) {
+      throw error;
+    }
+    const bootstrapOptions = buildSandboxOptions(bootstrap);
+    try {
+      session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
+        ...bootstrapOptions,
+        fastResume: false,
+      });
+    } catch (reconcileError) {
+      if (!isRecoverableSandboxIdError(reconcileError)) {
+        throw reconcileError;
+      }
+      session = await getOrCreateSandboxWithTimeout(null, {
+        ...bootstrapOptions,
+        fastResume: false,
+      });
+    }
+  }
+
+  if (
+    !thread.codesandboxId ||
+    thread.codesandboxId !== session.sandboxId ||
+    thread.sandboxSize !== sandboxSize
+  ) {
+    const updates: {
+      codesandboxId?: string;
+      sandboxSize: SandboxSize;
+    } = {
+      sandboxSize,
+    };
+    if (!thread.codesandboxId || thread.codesandboxId !== session.sandboxId) {
+      updates.codesandboxId = session.sandboxId;
+    }
     await updateThread({
       db,
       userId,
       threadId,
-      updates: {
-        codesandboxId: session.sandboxId,
-        sandboxSize,
-      },
+      updates,
     });
   }
   return session;
