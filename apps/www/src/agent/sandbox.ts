@@ -368,12 +368,10 @@ async function getOrCreateSandboxForThread({
 
   const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
   const startTime = Date.now();
-  const bootstrapContext = await getBootstrapContext();
+  const bootstrap = await getBootstrapContext();
   let session: ISandboxSession;
   try {
-    const bootstrapOptions = buildSandboxOptions(
-      bootstrapContext,
-    );
+    const bootstrapOptions = buildSandboxOptions(bootstrap);
     session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
       ...bootstrapOptions,
       fastResume: shouldFastResume,
@@ -382,7 +380,7 @@ async function getOrCreateSandboxForThread({
     if (!shouldFastResume) {
       throw error;
     }
-    const bootstrapOptions = buildSandboxOptions(bootstrapContext);
+    const bootstrapOptions = buildSandboxOptions(bootstrap);
     try {
       session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
         ...bootstrapOptions,
