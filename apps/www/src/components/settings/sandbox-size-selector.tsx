@@ -9,7 +9,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 
 export function SandboxSizeSelector() {
   const userSettings = useAtomValue(userSettingsAtom);
@@ -18,7 +17,7 @@ export function SandboxSizeSelector() {
   const canSelectLarge = largeSandboxSizeEnabled;
   return (
     <Select
-      value={userSettings?.sandboxSize ?? DEFAULT_SANDBOX_SIZE}
+      value={userSettings?.sandboxSize ?? "large"}
       onValueChange={async (value) => {
         await userSettingsMutation.mutateAsync({
           sandboxSize: value as SandboxSize,
