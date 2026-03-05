@@ -344,28 +344,34 @@ export async function setupSandboxEveryTime({
   options: CreateSandboxOptions;
   isCreatingSandbox: boolean;
 }) {
-  await Promise.all([
+  // All setup operations that don't depend on each other run in parallel.
+  // restartDaemonIfNotRunning is deferred until after updateDaemonIfOutdated
+  // completes so it sees the latest daemon state.
+  const parallelOps: Promise<void>[] = [
     setupGitCredentials(session, options),
     probeSandboxAgentEndpoint({ session, options }),
-  ]);
+  ];
   if (!options.fastResume) {
     if (options.agent) {
-      await updateAgentFiles({
-        session,
-        customSystemPrompt: options.customSystemPrompt,
-        agent: options.agent,
-        agentCredentials: options.agentCredentials,
-        isCreatingSandbox,
-        mcpConfig: options.mcpConfig,
-        publicUrl: options.publicUrl,
-      });
+      parallelOps.push(
+        updateAgentFiles({
+          session,
+          customSystemPrompt: options.customSystemPrompt,
+          agent: options.agent,
+          agentCredentials: options.agentCredentials,
+          isCreatingSandbox,
+          mcpConfig: options.mcpConfig,
+          publicUrl: options.publicUrl,
+        }),
+      );
     }
     if (options.autoUpdateDaemon && !isCreatingSandbox) {
-      await updateDaemonIfOutdated({ session, options });
+      parallelOps.push(updateDaemonIfOutdated({ session, options }));
     }
-    if (!isCreatingSandbox) {
-      await restartDaemonIfNotRunning({ session, options });
-    }
+  }
+  await Promise.all(parallelOps);
+  if (!options.fastResume && !isCreatingSandbox) {
+    await restartDaemonIfNotRunning({ session, options });
   }
 }
 
