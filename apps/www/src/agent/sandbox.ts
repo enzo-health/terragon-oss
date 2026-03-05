@@ -44,6 +44,88 @@ import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import type { UserSettings } from "@terragon/shared";
+import { redis } from "@/lib/redis";
+
+const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
+const SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS = 120;
+
+type SandboxResumeMetadataCacheEntry = {
+  userSettings: Awaited<ReturnType<typeof getUserSettings>>;
+  userFeatureFlags: Awaited<ReturnType<typeof getFeatureFlagsForUser>>;
+  repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>>;
+};
+
+function getSandboxResumeContextCacheKey({
+  userId,
+  threadId,
+}: {
+  userId: string;
+  threadId: string;
+}) {
+  return `${SANDBOX_RESUME_CONTEXT_CACHE_PREFIX}${userId}:${threadId}`;
+}
+
+async function getCachedSandboxResumeContext({
+  userId,
+  threadId,
+}: {
+  userId: string;
+  threadId: string;
+}): Promise<SandboxResumeMetadataCacheEntry | null> {
+  let raw: string | null = null;
+  try {
+    raw = await redis.get<string>(
+      getSandboxResumeContextCacheKey({ userId, threadId }),
+    );
+  } catch (error) {
+    console.warn("Failed to read sandbox resume context cache", {
+      userId,
+      threadId,
+      error,
+    });
+    return null;
+  }
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as SandboxResumeMetadataCacheEntry;
+  } catch (error) {
+    console.warn("Failed to parse sandbox resume context cache entry", {
+      userId,
+      threadId,
+      error,
+    });
+    await redis.del(getSandboxResumeContextCacheKey({ userId, threadId }));
+    return null;
+  }
+}
+
+async function setCachedSandboxResumeContext({
+  userId,
+  threadId,
+  value,
+}: {
+  userId: string;
+  threadId: string;
+  value: SandboxResumeMetadataCacheEntry;
+}) {
+  try {
+    await redis.set(
+      getSandboxResumeContextCacheKey({ userId, threadId }),
+      JSON.stringify(value),
+      {
+        ex: SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS,
+      },
+    );
+  } catch (error) {
+    console.warn("Failed to write sandbox resume context cache", {
+      userId,
+      threadId,
+      error,
+    });
+  }
+}
 
 async function getOrCreateSandboxWithTimeout(
   sandboxId: string | null,
@@ -148,11 +230,13 @@ async function getOrCreateSandboxForThread({
 
   let agentOrNull: AIAgent | null = null;
   let modelOrNull: AIModel | null = null;
-
-  const [userFeatureFlags, githubAccessToken] = await Promise.all([
-    getFeatureFlagsForUser({ db, userId }),
+  const [cachedResumeContext, githubAccessToken] = await Promise.all([
+    getCachedSandboxResumeContext({ userId, threadId }),
     getGitHubUserAccessToken({ userId }),
   ]);
+  const userFeatureFlags =
+    cachedResumeContext?.userFeatureFlags ??
+    (await getFeatureFlagsForUser({ db, userId }));
   if (!githubAccessToken) {
     throw new Error("No GitHub access token found");
   }
@@ -178,7 +262,9 @@ async function getOrCreateSandboxForThread({
   };
 
   type BootstrapContext = {
-    repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>> | null;
+    repositoryEnvironment: Awaited<
+      ReturnType<typeof getOrCreateEnvironment>
+    > | null;
     agent: AIAgent | null;
     agentCredentialsOrNull: AIAgentCredentials | null;
     finalEnvironmentVariables: Array<{ key: string; value: string }>;
@@ -209,13 +295,18 @@ async function getOrCreateSandboxForThread({
         modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
       }
     }
-    const [userSettings, repositoryEnvironment, agentCredentialsOrNull] = await Promise.all([
-      getUserSettings({ db, userId }),
-      getOrCreateEnvironment({
-        db,
-        userId,
-        repoFullName: thread.githubRepoFullName,
-      }),
+    const [
+      resolvedUserSettings,
+      resolvedRepositoryEnvironment,
+      agentCredentialsOrNull,
+    ] = await Promise.all([
+      cachedResumeContext?.userSettings ?? getUserSettings({ db, userId }),
+      cachedResumeContext?.repositoryEnvironment ??
+        getOrCreateEnvironment({
+          db,
+          userId,
+          repoFullName: thread.githubRepoFullName,
+        }),
       (async () =>
         agentOrNull
           ? getAndVerifyCredentials({
@@ -233,7 +324,7 @@ async function getOrCreateSandboxForThread({
       getDecryptedEnvironmentVariables({
         db,
         userId,
-        environmentId: repositoryEnvironment.id,
+        environmentId: resolvedRepositoryEnvironment.id,
         encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
       }),
       getDecryptedGlobalEnvironmentVariables({
@@ -244,7 +335,7 @@ async function getOrCreateSandboxForThread({
       getDecryptedMcpConfig({
         db,
         userId,
-        environmentId: repositoryEnvironment.id,
+        environmentId: resolvedRepositoryEnvironment.id,
         encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
       }),
     ]);
@@ -260,9 +351,9 @@ async function getOrCreateSandboxForThread({
       },
       {} as Record<string, string>,
     );
-    const mergedEnvironmentEntries = Object.entries(mergedEnvironmentVariables).map(
-      ([key, value]) => ({ key, value }),
-    );
+    const mergedEnvironmentEntries = Object.entries(
+      mergedEnvironmentVariables,
+    ).map(([key, value]) => ({ key, value }));
     const environmentVariablesHash = hashEnvironmentVariables(
       repositoryEnvironmentVariables,
     );
@@ -271,16 +362,28 @@ async function getOrCreateSandboxForThread({
     );
     const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 
+    if (!cachedResumeContext) {
+      await setCachedSandboxResumeContext({
+        userId,
+        threadId,
+        value: {
+          userSettings: resolvedUserSettings,
+          userFeatureFlags,
+          repositoryEnvironment: resolvedRepositoryEnvironment,
+        },
+      });
+    }
+
     bootstrapContext = {
-      repositoryEnvironment,
+      repositoryEnvironment: resolvedRepositoryEnvironment,
       agent: agentOrNull,
       agentCredentialsOrNull,
       finalEnvironmentVariables: normalizedEnvironmentVariables,
       environmentVariablesHash,
       mcpConfigHash,
-      customSystemPrompt: userSettings.customSystemPrompt,
+      customSystemPrompt: resolvedUserSettings.customSystemPrompt,
       generateBranchNameWithPrefix: (threadName) =>
-        generateBranchName(threadName, userSettings.branchNamePrefix),
+        generateBranchName(threadName, resolvedUserSettings.branchNamePrefix),
       mcpConfig: resolvedMcpConfig || undefined,
     };
     return bootstrapContext;
@@ -299,20 +402,29 @@ async function getOrCreateSandboxForThread({
     );
   };
 
-  const buildSandboxOptions = (context: BootstrapContext): CreateSandboxOptions => {
+  const buildSandboxOptions = (
+    context: BootstrapContext,
+  ): CreateSandboxOptions => {
     const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-    const setupScriptHash = getSetupScriptHash(context.repositoryEnvironment?.setupScript ?? null);
+    const setupScriptHash = getSetupScriptHash(
+      context.repositoryEnvironment?.setupScript ?? null,
+    );
     const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
     const snapshot =
       !thread.codesandboxId &&
       thread.sandboxProvider === "daytona" &&
       context.repositoryEnvironment
-        ? getReadySnapshot(context.repositoryEnvironment, "daytona", sandboxSize, {
-            setupScriptHash,
-            baseDockerfileHash,
-            environmentVariablesHash: context.environmentVariablesHash,
-            mcpConfigHash: context.mcpConfigHash,
-          })
+        ? getReadySnapshot(
+            context.repositoryEnvironment,
+            "daytona",
+            sandboxSize,
+            {
+              setupScriptHash,
+              baseDockerfileHash,
+              environmentVariablesHash: context.environmentVariablesHash,
+              mcpConfigHash: context.mcpConfigHash,
+            },
+          )
         : null;
 
     return {
@@ -339,11 +451,7 @@ async function getOrCreateSandboxForThread({
       publicUrl: nonLocalhostPublicAppUrl(),
       featureFlags: userFeatureFlags,
       generateBranchName: context.generateBranchNameWithPrefix,
-      onStatusUpdate: async ({
-        sandboxId,
-        sandboxStatus,
-        bootingStatus,
-      }) => {
+      onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
         if (sandboxId && bootingStatus === "provisioning-done") {
           getPostHogServer().capture({
             distinctId: userId,

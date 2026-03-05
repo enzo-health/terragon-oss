@@ -61,6 +61,70 @@ import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context"
 import { randomUUID } from "node:crypto";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+import { redis } from "@/lib/redis";
+
+const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
+const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
+const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
+const FOLLOW_UP_TTFR_START_TTL_SECONDS = 60 * 60;
+
+function getUpstreamPullKey(threadId: string) {
+  return `${LAST_UPSTREAM_PULL_PREFIX}${threadId}`;
+}
+
+function getFollowUpTtfrStartKey({
+  userId,
+  threadId,
+  threadChatId,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+}) {
+  return `${FOLLOW_UP_TTFR_START_PREFIX}${userId}:${threadId}:${threadChatId}`;
+}
+
+async function markFollowUpTtfrStart({
+  userId,
+  threadId,
+  threadChatId,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+}) {
+  try {
+    await redis.set(
+      getFollowUpTtfrStartKey({ userId, threadId, threadChatId }),
+      Date.now().toString(),
+      { ex: FOLLOW_UP_TTFR_START_TTL_SECONDS },
+    );
+  } catch (error) {
+    console.warn("Failed to write follow-up TTFR start marker", {
+      userId,
+      threadId,
+      threadChatId,
+      error,
+    });
+  }
+}
+
+async function shouldPullUpstreamForThread(threadId: string): Promise<boolean> {
+  try {
+    const key = getUpstreamPullKey(threadId);
+    const lockResult = await redis.set(key, Date.now().toString(), {
+      nx: true,
+      ex: Math.ceil(UPSTREAM_PULL_THROTTLE_MS / 1000),
+    });
+    return lockResult === "OK";
+  } catch (error) {
+    console.warn("Failed to read/write upstream pull throttle key", {
+      threadId,
+      error,
+    });
+    return true;
+  }
+}
 
 async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   // Task queue limiting is always enabled
@@ -102,6 +166,9 @@ export async function startAgentMessage({
   delayMs?: number;
 }) {
   console.log("Starting agent message", { threadId, threadChatId });
+  if (!isNewThread) {
+    await markFollowUpTtfrStart({ userId, threadId, threadChatId });
+  }
   const userCredentials = await getUserCredentials({ userId });
   if (message) {
     // Check for slash commands
@@ -300,6 +367,7 @@ export async function startAgentMessage({
                 userId,
                 createNewBranch,
                 branchName,
+                fastResume: true,
                 onStatusUpdate,
               });
           if (!session) {
@@ -317,7 +385,7 @@ export async function startAgentMessage({
             },
           });
           // Pull latest changes from upstream before sending daemon message
-          if (!isNewThread) {
+          if (!isNewThread && (await shouldPullUpstreamForThread(threadId))) {
             await gitPullUpstream(session);
           }
           await updateThread({

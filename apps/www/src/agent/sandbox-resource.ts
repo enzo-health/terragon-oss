@@ -10,6 +10,52 @@ import { redis } from "@/lib/redis";
 const THREAD_CHATS_PREFIX = "sandbox-active-thread-chats:";
 const TERMINAL_STATUS_PREFIX = "sandbox-terminal-status:";
 const ACTIVE_USERS_PREFIX = "sandbox-active-users:";
+const LAST_ACTIVITY_PREFIX = "sandbox-last-activity:";
+const LAST_ACTIVITY_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+const DEFAULT_WARM_GRACE_SECONDS = 10 * 60; // 10 minutes
+
+function getWarmGraceSeconds(): number {
+  const raw = process.env.SANDBOX_WARM_GRACE_SECONDS;
+  if (!raw) {
+    return DEFAULT_WARM_GRACE_SECONDS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    console.warn(
+      `Invalid SANDBOX_WARM_GRACE_SECONDS value: ${raw}. Using default ${DEFAULT_WARM_GRACE_SECONDS}.`,
+    );
+    return DEFAULT_WARM_GRACE_SECONDS;
+  }
+  return parsed;
+}
+
+async function markSandboxActivity(sandboxId: string) {
+  await redis.set(
+    `${LAST_ACTIVITY_PREFIX}${sandboxId}`,
+    new Date().toISOString(),
+    {
+      ex: LAST_ACTIVITY_TTL_SECONDS,
+    },
+  );
+}
+
+async function getLastSandboxActivityOrNull(
+  sandboxId: string,
+): Promise<Date | null> {
+  const value = await redis.get<string>(`${LAST_ACTIVITY_PREFIX}${sandboxId}`);
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    console.error(
+      `Invalid last activity timestamp for sandbox ${sandboxId}: ${value}`,
+    );
+    await redis.del(`${LAST_ACTIVITY_PREFIX}${sandboxId}`);
+    return null;
+  }
+  return parsed;
+}
 
 export async function setTerminalActive({
   sandboxId,
@@ -21,6 +67,11 @@ export async function setTerminalActive({
   const pipeline = redis.pipeline();
   pipeline.set(`${TERMINAL_STATUS_PREFIX}${sandboxId}`, "1");
   pipeline.expire(`${TERMINAL_STATUS_PREFIX}${sandboxId}`, expires);
+  pipeline.set(`${LAST_ACTIVITY_PREFIX}${sandboxId}`, new Date().toISOString());
+  pipeline.expire(
+    `${LAST_ACTIVITY_PREFIX}${sandboxId}`,
+    LAST_ACTIVITY_TTL_SECONDS,
+  );
   await pipeline.exec();
 }
 
@@ -37,8 +88,24 @@ export async function setActiveThreadChat({
     const pipeline = redis.pipeline();
     pipeline.sadd(`${THREAD_CHATS_PREFIX}${sandboxId}`, threadChatId);
     pipeline.expire(`${THREAD_CHATS_PREFIX}${sandboxId}`, 60 * 60 * 24); // 1 day
+    pipeline.set(
+      `${LAST_ACTIVITY_PREFIX}${sandboxId}`,
+      new Date().toISOString(),
+    );
+    pipeline.expire(
+      `${LAST_ACTIVITY_PREFIX}${sandboxId}`,
+      LAST_ACTIVITY_TTL_SECONDS,
+    );
     await pipeline.exec();
   } else {
+    try {
+      await markSandboxActivity(sandboxId);
+    } catch (error) {
+      console.error(
+        `Failed to mark sandbox activity for sandbox ${sandboxId}`,
+        error,
+      );
+    }
     await redis.srem(`${THREAD_CHATS_PREFIX}${sandboxId}`, threadChatId);
   }
 }
@@ -128,18 +195,30 @@ export async function getTerminalStatus(sandboxId: string) {
 }
 
 export async function shouldHibernateSandbox(sandboxId: string) {
-  const [activeUsers, activeThreadChats, terminalStatus] = await Promise.all([
-    getActiveUsers(sandboxId),
-    getActiveThreadChats(sandboxId),
-    getTerminalStatus(sandboxId),
-  ]);
+  const [activeUsers, activeThreadChats, terminalStatus, lastActivity] =
+    await Promise.all([
+      getActiveUsers(sandboxId),
+      getActiveThreadChats(sandboxId),
+      getTerminalStatus(sandboxId),
+      getLastSandboxActivityOrNull(sandboxId),
+    ]);
+  const warmGraceSeconds = getWarmGraceSeconds();
+  const warmGraceActive =
+    !!lastActivity &&
+    Date.now() - lastActivity.getTime() < warmGraceSeconds * 1000;
   const shouldHibernate =
-    activeUsers <= 0 && activeThreadChats.length === 0 && terminalStatus === 0;
+    activeUsers <= 0 &&
+    activeThreadChats.length === 0 &&
+    terminalStatus === 0 &&
+    !warmGraceActive;
   console.log("shouldHibernateSandbox", {
     sandboxId,
     activeUsers,
     activeThreadChats,
     terminalStatus,
+    lastActivity,
+    warmGraceSeconds,
+    warmGraceActive,
     shouldHibernate,
   });
   return shouldHibernate;

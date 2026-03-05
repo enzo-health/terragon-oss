@@ -49,20 +49,21 @@ export const buildEnvironmentSnapshot = userOnlyAction(
 
     const setupScriptHash = getSetupScriptHash(environment.setupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(size);
-    const [repositoryEnvironmentVariables, resolvedMcpConfig] = await Promise.all([
-      getDecryptedEnvironmentVariables({
-        db,
-        userId,
-        environmentId,
-        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-      }),
-      getDecryptedMcpConfig({
-        db,
-        userId,
-        environmentId,
-        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-      }),
-    ]);
+    const [repositoryEnvironmentVariables, resolvedMcpConfig] =
+      await Promise.all([
+        getDecryptedEnvironmentVariables({
+          db,
+          userId,
+          environmentId,
+          encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+        }),
+        getDecryptedMcpConfig({
+          db,
+          userId,
+          environmentId,
+          encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+        }),
+      ]);
     const environmentVariablesHash = hashEnvironmentVariables(
       repositoryEnvironmentVariables,
     );

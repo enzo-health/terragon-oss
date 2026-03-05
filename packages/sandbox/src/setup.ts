@@ -325,8 +325,8 @@ export async function setupGitCredentials(
   // the token is unchanged.
   await session.runCommand(
     'CREDENTIAL_ENTRY="https://${GITHUB_USER_NAME}:${GITHUB_ACCESS_TOKEN}@github.com" && ' +
-      "if [ -f ~/.git-credentials ] && grep -Fxq \"$CREDENTIAL_ENTRY\" ~/.git-credentials; then " +
-      ' :; else ' +
+      'if [ -f ~/.git-credentials ] && grep -Fxq "$CREDENTIAL_ENTRY" ~/.git-credentials; then ' +
+      " :; else " +
       'echo "$CREDENTIAL_ENTRY" > ~/.git-credentials; ' +
       "fi && (git config --global credential.helper store 2>/dev/null || true)",
     {
