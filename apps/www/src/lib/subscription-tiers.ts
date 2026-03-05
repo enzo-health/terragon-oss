@@ -7,7 +7,7 @@ const productionMaxConcurrentTasks = 3;
 const developmentMaxConcurrentTasks = 3;
 const proMaxConcurrentTasks = 10;
 
-export const DEFAULT_SANDBOX_SIZE: SandboxSize = "small";
+export const DEFAULT_SANDBOX_SIZE: SandboxSize = "large";
 
 // Maximum number of automations allowed per user (without unlimited feature flag)
 export const DEFAULT_MAX_AUTOMATIONS = 20;
