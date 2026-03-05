@@ -79,8 +79,15 @@ export async function buildRepoSnapshot({
         .addLocalFile(setupScriptPath, "/tmp/terragon-setup.sh")
         .runCommands(
           "chmod +x /tmp/terragon-setup.sh",
-          "cd /root/repo && bash -x /tmp/terragon-setup.sh",
-          "rm -f /tmp/terragon-setup.sh",
+          // Start services, run setup, stop services — all in one RUN layer
+          "pg_ctlcluster 16 main start" +
+            " && redis-server --bind 127.0.0.1 --daemonize yes" +
+            " && cd /root/repo && bash -x /tmp/terragon-setup.sh" +
+            " ; EXIT_CODE=$?" +
+            " ; pg_ctlcluster 16 main stop || true" +
+            " ; redis-cli shutdown || true" +
+            " ; rm -f /tmp/terragon-setup.sh" +
+            " ; exit $EXIT_CODE",
         );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
