@@ -575,7 +575,8 @@ export type SdlcArtifactType =
   | "review_bundle"
   | "ui_smoke_result"
   | "pr_link"
-  | "babysit_evaluation";
+  | "babysit_evaluation"
+  | "human_intervention";
 
 export type SdlcArtifactStatus =
   | "generated"

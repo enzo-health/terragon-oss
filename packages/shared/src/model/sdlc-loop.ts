@@ -107,6 +107,8 @@ export type SdlcLoopTransitionEvent =
   | "video_capture_succeeded"
   | "video_capture_failed"
   | "human_feedback_requested"
+  | "blocked_resume_requested"
+  | "blocked_bypass_once_requested"
   | "pr_closed_unmerged"
   | "pr_merged"
   | "manual_stop"
@@ -324,6 +326,12 @@ export function resolveSdlcLoopNextState({
       }
       return null;
     case "blocked_on_human_feedback":
+      if (event === "blocked_resume_requested") {
+        return "implementing";
+      }
+      if (event === "blocked_bypass_once_requested") {
+        return "implementing";
+      }
       if (event === "mark_done") {
         return "done";
       }
@@ -2829,6 +2837,40 @@ const fixAttemptIncrementEvents: ReadonlySet<SdlcLoopTransitionEvent> = new Set(
   ],
 );
 
+function shouldResetFixAttemptCountOnTransition({
+  previousState,
+  nextState,
+}: {
+  previousState: SdlcLoopState;
+  nextState: SdlcLoopState;
+}): boolean {
+  if (
+    previousState === nextState ||
+    nextState === "blocked_on_human_feedback"
+  ) {
+    return false;
+  }
+  if (previousState === "planning" && nextState === "implementing") {
+    return true;
+  }
+  if (previousState === "implementing" && nextState === "reviewing") {
+    return true;
+  }
+  if (previousState === "reviewing" && nextState === "ui_testing") {
+    return true;
+  }
+  if (previousState === "ui_testing" && nextState === "pr_babysitting") {
+    return true;
+  }
+  if (
+    previousState === "blocked_on_human_feedback" &&
+    nextState === "implementing"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 async function persistGuardedGateLoopState({
   tx,
   loopId,
@@ -2887,12 +2929,12 @@ async function persistGuardedGateLoopState({
 
   const shouldIncrementFixAttempt =
     fixAttemptIncrementEvents.has(transitionEvent);
-  const nextFixAttemptCount = shouldIncrementFixAttempt
+  const incrementedFixAttemptCount = shouldIncrementFixAttempt
     ? loop.fixAttemptCount + 1
     : loop.fixAttemptCount;
   if (
     shouldIncrementFixAttempt &&
-    nextFixAttemptCount > Math.max(loop.maxFixAttempts, 0)
+    incrementedFixAttemptCount > Math.max(loop.maxFixAttempts, 0)
   ) {
     nextState = "blocked_on_human_feedback";
   }
@@ -2924,7 +2966,7 @@ async function persistGuardedGateLoopState({
     updatedAt: now,
   };
   if (shouldIncrementFixAttempt) {
-    nextValues.fixAttemptCount = nextFixAttemptCount;
+    nextValues.fixAttemptCount = incrementedFixAttemptCount;
   }
   if (
     normalizedLoopVersion !== null &&
@@ -2937,6 +2979,14 @@ async function persistGuardedGateLoopState({
   }
   if (nextState !== loop.state) {
     nextValues.phaseEnteredAt = now;
+    if (
+      shouldResetFixAttemptCountOnTransition({
+        previousState: loop.state,
+        nextState,
+      })
+    ) {
+      nextValues.fixAttemptCount = 0;
+    }
   }
 
   let whereCondition = and(

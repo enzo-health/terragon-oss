@@ -782,6 +782,7 @@ function buildSdlcPhasePromptPrefix(
       return [
         "SDLC phase: blocked_on_human_feedback.",
         "Wait for explicit human feedback before making additional loop progression decisions.",
+        "Use explicit human-triggered controls to resume or bypass.",
       ].join(" ");
     case "done":
     case "stopped":

@@ -29,6 +29,8 @@ type SdlcLoopStatusBlocker = {
 type SdlcPlannedTask = {
   stableTaskId: string;
   title: string;
+  description: string | null;
+  acceptance: string[];
   status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
 };
 
@@ -55,6 +57,7 @@ type SdlcLoopStatus = {
       id: string;
       status: "generated" | "approved" | "accepted" | "rejected" | "superseded";
       updatedAtIso: string;
+      planText: string | null;
     } | null;
     implementationArtifact: {
       id: string;
@@ -114,6 +117,7 @@ const sdlcLoopStatusSchema = z.object({
           "superseded",
         ]),
         updatedAtIso: z.string().datetime(),
+        planText: z.string().nullable(),
       })
       .nullable(),
     implementationArtifact: z
@@ -139,6 +143,8 @@ const sdlcLoopStatusSchema = z.object({
       z.object({
         stableTaskId: z.string().min(1),
         title: z.string().min(1),
+        description: z.string().nullable(),
+        acceptance: z.array(z.string()),
         status: z.enum(["todo", "in_progress", "done", "blocked", "skipped"]),
       }),
     ),
@@ -391,6 +397,7 @@ export const getSdlcLoopStatusAction = userOnlyAction(
               id: true,
               status: true,
               updatedAt: true,
+              payload: true,
             },
           })
         : db.query.sdlcPhaseArtifact.findFirst({
@@ -406,6 +413,7 @@ export const getSdlcLoopStatusAction = userOnlyAction(
               id: true,
               status: true,
               updatedAt: true,
+              payload: true,
             },
           }),
       loop.activeImplementationArtifactId
@@ -449,6 +457,8 @@ export const getSdlcLoopStatusAction = userOnlyAction(
             status: true,
             stableTaskId: true,
             title: true,
+            description: true,
+            acceptance: true,
           },
         })
       : [];
@@ -539,6 +549,13 @@ export const getSdlcLoopStatusAction = userOnlyAction(
               id: planningArtifact.id,
               status: planningArtifact.status,
               updatedAtIso: planningArtifact.updatedAt.toISOString(),
+              planText:
+                typeof planningArtifact.payload === "object" &&
+                planningArtifact.payload !== null &&
+                "planText" in planningArtifact.payload &&
+                typeof planningArtifact.payload.planText === "string"
+                  ? planningArtifact.payload.planText
+                  : null,
             }
           : null,
         implementationArtifact: implementationArtifact
@@ -557,6 +574,12 @@ export const getSdlcLoopStatusAction = userOnlyAction(
         plannedTasks: plannedTasks.map((t) => ({
           stableTaskId: t.stableTaskId,
           title: t.title,
+          description: t.description ?? null,
+          acceptance:
+            Array.isArray(t.acceptance) &&
+            t.acceptance.every((item) => typeof item === "string")
+              ? t.acceptance
+              : [],
           status: t.status ?? "todo",
         })),
       },

@@ -45,6 +45,8 @@ import {
 } from "@terragon/shared/model/threads";
 import { createGitDiffCheckpoint } from "@terragon/shared/utils/git-diff";
 import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
+import * as schema from "@terragon/shared/db/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
 import * as z from "zod/v4";
 import { runCarmackReviewGate } from "./sdlc-loop/carmack-review-gate";
 import { runDeepReviewGate } from "./sdlc-loop/deep-review-gate";
@@ -84,6 +86,14 @@ const sdlcImplementingStates: ReadonlySet<SdlcLoopState> = new Set([
   "blocked_on_ci",
   "blocked_on_review_threads",
 ]);
+
+type SdlcHumanInterventionPayload = {
+  kind?: unknown;
+  gate?: unknown;
+  actorUserId?: unknown;
+  loopVersion?: unknown;
+  requestedAt?: unknown;
+};
 
 type SdlcPhaseGateEvaluation = {
   gatePassed: boolean;
@@ -610,6 +620,94 @@ async function getHeadShaOrThrow(session: ISandboxSession): Promise<string> {
   return headSha;
 }
 
+async function getLatestPendingBypassForImplementation({
+  loopId,
+  expectedActorUserId,
+  expectedLoopVersion,
+}: {
+  loopId: string;
+  expectedActorUserId: string;
+  expectedLoopVersion: number;
+}): Promise<{ artifactId: string } | null> {
+  const candidates = await db.query.sdlcPhaseArtifact.findMany({
+    where: and(
+      eq(schema.sdlcPhaseArtifact.loopId, loopId),
+      eq(schema.sdlcPhaseArtifact.phase, "implementing"),
+      eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
+      eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
+      eq(schema.sdlcPhaseArtifact.status, "generated"),
+    ),
+    orderBy: [
+      desc(schema.sdlcPhaseArtifact.updatedAt),
+      desc(schema.sdlcPhaseArtifact.createdAt),
+    ],
+    limit: 10,
+    columns: {
+      id: true,
+      payload: true,
+    },
+  });
+
+  for (const candidate of candidates) {
+    const payload = candidate.payload as SdlcHumanInterventionPayload;
+    const requestedAt =
+      typeof payload.requestedAt === "string"
+        ? Date.parse(payload.requestedAt)
+        : Number.NaN;
+    const now = Date.now();
+    const diffMs = now - requestedAt;
+    const requestIsFresh =
+      Number.isFinite(requestedAt) && diffMs >= 0 && diffMs <= 30 * 60 * 1000;
+    if (
+      payload.kind === "bypass_once" &&
+      payload.gate === "quality" &&
+      payload.actorUserId === expectedActorUserId &&
+      payload.loopVersion === expectedLoopVersion &&
+      requestIsFresh
+    ) {
+      return { artifactId: candidate.id };
+    }
+  }
+
+  return null;
+}
+
+async function consumeHumanInterventionArtifact({
+  artifactId,
+  loopId,
+  expectedActorUserId,
+  expectedLoopVersion,
+}: {
+  artifactId: string;
+  loopId: string;
+  expectedActorUserId: string;
+  expectedLoopVersion: number;
+}): Promise<boolean> {
+  const [updated] = await db
+    .update(schema.sdlcPhaseArtifact)
+    .set({
+      status: "accepted",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.sdlcPhaseArtifact.id, artifactId),
+        eq(schema.sdlcPhaseArtifact.loopId, loopId),
+        eq(schema.sdlcPhaseArtifact.phase, "implementing"),
+        eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
+        eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
+        eq(schema.sdlcPhaseArtifact.status, "generated"),
+        sql`${schema.sdlcPhaseArtifact.payload} ->> 'kind' = 'bypass_once'`,
+        sql`${schema.sdlcPhaseArtifact.payload} ->> 'gate' = 'quality'`,
+        sql`${schema.sdlcPhaseArtifact.payload} ->> 'actorUserId' = ${expectedActorUserId}`,
+        sql`${schema.sdlcPhaseArtifact.payload} ->> 'loopVersion' = ${String(expectedLoopVersion)}`,
+      ),
+    )
+    .returning({ id: schema.sdlcPhaseArtifact.id });
+
+  return Boolean(updated);
+}
+
 async function listChangedFiles({
   session,
   baseBranch,
@@ -998,6 +1096,20 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       return true;
     }
 
+    const pendingBypass = await getLatestPendingBypassForImplementation({
+      loopId: activeLoop.id,
+      expectedActorUserId: userId,
+      expectedLoopVersion: activeLoop.loopVersion,
+    });
+    const bypassQualityGateOnce = pendingBypass
+      ? await consumeHumanInterventionArtifact({
+          artifactId: pendingBypass.artifactId,
+          loopId: activeLoop.id,
+          expectedActorUserId: userId,
+          expectedLoopVersion: activeLoop.loopVersion,
+        })
+      : false;
+
     // Agent signaled phaseComplete — NOW evaluate the implementation gate
     if (!hasCodeDiffArtifact(diffOutput)) {
       const escalated = await transitionImplementationGateBlocked({
@@ -1078,7 +1190,9 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
 
     // Quality gate: lint, typecheck, test must pass
-    const qualityResult = await runQualityCheckGateInSandbox(session);
+    const qualityResult = bypassQualityGateOnce
+      ? { gatePassed: true, failures: [] as string[] }
+      : await runQualityCheckGateInSandbox(session);
     if (!qualityResult.gatePassed) {
       const escalated = await transitionImplementationGateBlocked({
         db,
@@ -1724,13 +1838,17 @@ async function maybeAutoFixGitCommitAndPushError({
     return false;
   }
   // Lets make sure that the most recent user/system message is not a retry message
-  let lastSystemOrUserMessage: DBMessage | null = null;
-  for (const message of [...threadChat.messages].reverse()) {
-    if (message.type === "system" || message.type === "user") {
-      lastSystemOrUserMessage = message;
-      break;
+  const getLastSystemOrUserMessage = (
+    messages: DBMessage[],
+  ): DBMessage | null => {
+    for (const message of [...messages].reverse()) {
+      if (message.type === "system" || message.type === "user") {
+        return message;
+      }
     }
-  }
+    return null;
+  };
+  let lastSystemOrUserMessage = getLastSystemOrUserMessage(threadChat.messages);
   if (!lastSystemOrUserMessage) {
     console.error("No system or user message found", {
       userId,
@@ -1765,11 +1883,39 @@ async function maybeAutoFixGitCommitAndPushError({
   // message to retry the commit and push.
   const sandboxId = thread.codesandboxId!;
   await setActiveThreadChat({ sandboxId, threadChatId, isActive: true });
-  await sendSystemMessage({
-    userId,
-    threadId,
-    threadChatId,
-    message: systemRetryMessage,
+  // Serialize retry enqueue per thread chat to avoid duplicate retry messages.
+  await db.transaction(async (tx) => {
+    const retryLockKey = `retry-git-commit-and-push:${threadChatId}`;
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${retryLockKey}), 0)`,
+    );
+
+    const lockedThreadChat = await tx.query.threadChat.findFirst({
+      where: and(
+        eq(schema.threadChat.id, threadChatId),
+        eq(schema.threadChat.threadId, threadId),
+      ),
+      columns: {
+        messages: true,
+      },
+    });
+    const latestSystemOrUserMessage = lockedThreadChat?.messages
+      ? getLastSystemOrUserMessage(lockedThreadChat.messages as DBMessage[])
+      : null;
+    if (
+      latestSystemOrUserMessage?.type === "system" &&
+      latestSystemOrUserMessage.message_type === "retry-git-commit-and-push"
+    ) {
+      console.log("Retry message already queued by another worker, skipping.");
+      return;
+    }
+
+    await sendSystemMessage({
+      userId,
+      threadId,
+      threadChatId,
+      message: systemRetryMessage,
+    });
   });
   return true;
 }
