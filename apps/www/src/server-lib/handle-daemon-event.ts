@@ -42,6 +42,7 @@ import {
   emitLinearActivitiesForDaemonEvent,
   updateAgentSession,
 } from "./linear-agent-activity";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type {
@@ -49,6 +50,7 @@ import type {
   SdlcLoopState,
 } from "@terragon/shared/db/types";
 import { publicAppUrl } from "@terragon/env/next-public";
+import { redis } from "@/lib/redis";
 
 /** SDLC phases eligible for auto-retry on generic agent error. */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
@@ -60,6 +62,88 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "blocked_on_ci",
   "blocked_on_review_threads",
 ]);
+
+const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
+const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
+
+function getFirstAssistantTrackedKey(runId: string) {
+  return `${FIRST_ASSISTANT_TRACKED_PREFIX}${runId}`;
+}
+
+function getFollowUpTtfrStartKey({
+  userId,
+  threadId,
+  threadChatId,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+}) {
+  return `${FOLLOW_UP_TTFR_START_PREFIX}${userId}:${threadId}:${threadChatId}`;
+}
+
+async function maybeTrackFirstAssistantLatency({
+  runId,
+  userId,
+  threadId,
+  threadChatId,
+  hasAssistantMessage,
+}: {
+  runId: string | null;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  hasAssistantMessage: boolean;
+}) {
+  if (!runId || !hasAssistantMessage) {
+    return;
+  }
+  try {
+    const tracked = await redis.set(getFirstAssistantTrackedKey(runId), "1", {
+      nx: true,
+      ex: 60 * 60 * 24,
+    });
+    if (tracked !== "OK") {
+      return;
+    }
+    const [runContext, followUpStartRaw] = await Promise.all([
+      getAgentRunContextByRunId({ db, runId, userId }),
+      redis.get<string>(
+        getFollowUpTtfrStartKey({ userId, threadId, threadChatId }),
+      ),
+    ]);
+    const nowMs = Date.now();
+    const runDispatchToFirstAssistantMs = runContext
+      ? Math.max(0, nowMs - new Date(runContext.createdAt).getTime())
+      : null;
+    const followUpStartMs = followUpStartRaw
+      ? Number.parseInt(followUpStartRaw, 10)
+      : null;
+    const followUpToFirstAssistantMs =
+      followUpStartMs && !Number.isNaN(followUpStartMs)
+        ? Math.max(0, nowMs - followUpStartMs)
+        : null;
+
+    getPostHogServer().capture({
+      distinctId: userId,
+      event: "follow_up_first_assistant_latency",
+      properties: {
+        runId,
+        threadId,
+        threadChatId,
+        runDispatchToFirstAssistantMs,
+        followUpToFirstAssistantMs,
+      },
+    });
+  } catch (error) {
+    console.warn("Failed to track first assistant latency", {
+      runId,
+      threadId,
+      threadChatId,
+      error,
+    });
+  }
+}
 
 export async function handleDaemonEvent({
   messages,
@@ -131,6 +215,13 @@ export async function handleDaemonEvent({
       assistantCount: messages.filter((m) => m.type === "assistant").length,
     });
   }
+  await maybeTrackFirstAssistantLatency({
+    runId,
+    userId,
+    threadId,
+    threadChatId,
+    hasAssistantMessage: messages.some((m) => m.type === "assistant"),
+  });
 
   let isStop = false;
   let isDone = false;

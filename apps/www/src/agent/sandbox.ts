@@ -38,6 +38,92 @@ import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import type { UserSettings } from "@terragon/shared";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
+import { redis } from "@/lib/redis";
+
+const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
+const SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS = 120;
+
+type SandboxResumeContextCacheEntry = {
+  userSettings: Awaited<ReturnType<typeof getUserSettings>>;
+  userFeatureFlags: Awaited<ReturnType<typeof getFeatureFlagsForUser>>;
+  repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>>;
+  repositoryEnvironmentVariables: Array<{ key: string; value: string }>;
+  globalEnvironmentVariables: Array<{ key: string; value: string }>;
+  mcpConfig: Awaited<ReturnType<typeof getDecryptedMcpConfig>>;
+  githubAccessToken: string | null;
+};
+
+function getSandboxResumeContextCacheKey({
+  userId,
+  threadId,
+}: {
+  userId: string;
+  threadId: string;
+}) {
+  return `${SANDBOX_RESUME_CONTEXT_CACHE_PREFIX}${userId}:${threadId}`;
+}
+
+async function getCachedSandboxResumeContext({
+  userId,
+  threadId,
+}: {
+  userId: string;
+  threadId: string;
+}): Promise<SandboxResumeContextCacheEntry | null> {
+  let raw: string | null = null;
+  try {
+    raw = await redis.get<string>(
+      getSandboxResumeContextCacheKey({ userId, threadId }),
+    );
+  } catch (error) {
+    console.warn("Failed to read sandbox resume context cache", {
+      userId,
+      threadId,
+      error,
+    });
+    return null;
+  }
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as SandboxResumeContextCacheEntry;
+  } catch (error) {
+    console.warn("Failed to parse sandbox resume context cache entry", {
+      userId,
+      threadId,
+      error,
+    });
+    await redis.del(getSandboxResumeContextCacheKey({ userId, threadId }));
+    return null;
+  }
+}
+
+async function setCachedSandboxResumeContext({
+  userId,
+  threadId,
+  value,
+}: {
+  userId: string;
+  threadId: string;
+  value: SandboxResumeContextCacheEntry;
+}) {
+  try {
+    await redis.set(
+      getSandboxResumeContextCacheKey({ userId, threadId }),
+      JSON.stringify(value),
+      {
+        ex: SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS,
+      },
+    );
+  } catch (error) {
+    console.warn("Failed to write sandbox resume context cache", {
+      userId,
+      threadId,
+      error,
+    });
+  }
+}
 
 async function getOrCreateSandboxWithTimeout(
   sandboxId: string | null,
@@ -152,14 +238,7 @@ async function getOrCreateSandboxForThread({
       modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
     }
   }
-  const [
-    userFeatureFlags,
-    userSettings,
-    agentCredentialsOrNull,
-    repositoryEnvironment,
-  ] = await Promise.all([
-    getFeatureFlagsForUser({ db, userId }),
-    getUserSettings({ db, userId }),
+  const [agentCredentialsOrNull, cachedResumeContext] = await Promise.all([
     (async () => {
       return agentOrNull
         ? await getAndVerifyCredentials({
@@ -169,38 +248,68 @@ async function getOrCreateSandboxForThread({
           })
         : null;
     })(),
-    // Fetch the environment to get environment variables
-    getOrCreateEnvironment({
+    getCachedSandboxResumeContext({ userId, threadId }),
+  ]);
+  let resumeContext = cachedResumeContext;
+  if (!resumeContext) {
+    const repositoryEnvironment = await getOrCreateEnvironment({
       db,
       userId,
       repoFullName: thread.githubRepoFullName,
-    }),
-  ]);
-  const [
+    });
+    const [
+      userFeatureFlags,
+      userSettings,
+      repositoryEnvironmentVariables,
+      globalEnvironmentVariables,
+      mcpConfig,
+      githubAccessToken,
+    ] = await Promise.all([
+      getFeatureFlagsForUser({ db, userId }),
+      getUserSettings({ db, userId }),
+      getDecryptedEnvironmentVariables({
+        db,
+        userId,
+        environmentId: repositoryEnvironment.id,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedGlobalEnvironmentVariables({
+        db,
+        userId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedMcpConfig({
+        db,
+        userId,
+        environmentId: repositoryEnvironment.id,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getGitHubUserAccessToken({ userId }),
+    ]);
+    resumeContext = {
+      userFeatureFlags,
+      userSettings,
+      repositoryEnvironment,
+      repositoryEnvironmentVariables,
+      globalEnvironmentVariables,
+      mcpConfig,
+      githubAccessToken,
+    };
+    await setCachedSandboxResumeContext({
+      userId,
+      threadId,
+      value: resumeContext,
+    });
+  }
+  const {
+    userFeatureFlags,
+    userSettings,
+    repositoryEnvironment,
     repositoryEnvironmentVariables,
     globalEnvironmentVariables,
     mcpConfig,
     githubAccessToken,
-  ] = await Promise.all([
-    getDecryptedEnvironmentVariables({
-      db,
-      userId,
-      environmentId: repositoryEnvironment.id,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    }),
-    getDecryptedGlobalEnvironmentVariables({
-      db,
-      userId,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    }),
-    getDecryptedMcpConfig({
-      db,
-      userId,
-      environmentId: repositoryEnvironment.id,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    }),
-    getGitHubUserAccessToken({ userId }),
-  ]);
+  } = resumeContext;
   if (!githubAccessToken) {
     throw new Error("No GitHub access token found");
   }
