@@ -353,13 +353,13 @@ export async function setupSandboxEveryTime({
     setupGitCredentials(session, options),
     probeSandboxAgentEndpoint({ session, options }),
   ];
-  const shouldRunSetupAgentFiles = !options.fastResume && options.agent;
-  if (shouldRunSetupAgentFiles) {
+  const agent = !options.fastResume ? options.agent : null;
+  if (agent) {
     parallelOps.push(
       updateAgentFiles({
         session,
         customSystemPrompt: options.customSystemPrompt,
-        agent: options.agent,
+        agent,
         agentCredentials: options.agentCredentials,
         isCreatingSandbox,
         mcpConfig: options.mcpConfig,
