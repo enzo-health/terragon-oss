@@ -146,23 +146,22 @@ export async function installDaemon({
 async function waitForDaemonReady(
   session: ISandboxSession,
   maxAttempts = 20,
-  intervalMs = 500,
+  intervalMs = 500, // kept for API compat
 ) {
   let lastError: Error | null = null;
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      // Check if the daemon is responsive
       const result = await sendPingMessage({ session });
       if (result) {
         console.log("Daemon is ready");
-        // Give it a tiny bit more time to ensure the daemon is fully listening
         await new Promise((resolve) => setTimeout(resolve, 100));
         return;
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const delay = Math.min(100 * Math.pow(2, i), 1000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
   throw new Error(
     `Daemon failed to start within timeout period. Last error: ${lastError?.message || "unknown"}. Check /tmp/terragon-daemon.log for details.`,
@@ -274,14 +273,13 @@ export async function sendMessage({
   message: DaemonMessage;
 }) {
   const jsonMessage = JSON.stringify(message);
-  const filePath = `/tmp/terragon-msg-${Date.now()}.json`;
-  await session.writeTextFile(filePath, jsonMessage);
-  await session.runCommand(`chmod 666 ${filePath}`);
+  // base64-encode to avoid shell escaping issues with JSON special chars
+  const b64 = Buffer.from(jsonMessage).toString("base64");
   for (let attempt = 0; attempt < DAEMON_SEND_MAX_ATTEMPTS; attempt++) {
     try {
       await session.runCommand(
-        `timeout 5s cat ${filePath} | node ${DAEMON_FILE_PATH} --write --timeout=5000`,
-        { timeoutMs: 5000 },
+        `echo '${b64}' | base64 -d | node ${DAEMON_FILE_PATH} --write --timeout=5000`,
+        { timeoutMs: 5000, cwd: "/" },
       );
       console.log("Message sent to daemon", { attempt: attempt + 1 });
       return;

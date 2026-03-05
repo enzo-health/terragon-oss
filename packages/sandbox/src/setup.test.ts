@@ -187,9 +187,9 @@ describe("sandbox-setup", () => {
         "/home/user/.codex/AGENTS.md",
         customPrompt,
       );
-      // Should set proper permissions
+      // Should set proper permissions (batched chmod)
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "chmod 644 /home/user/.codex/AGENTS.md",
+        "chmod 644 /home/user/.codex/AGENTS.md && chmod 644 /home/user/.codex/config.toml",
         { cwd: "/" },
       );
     });
@@ -268,9 +268,9 @@ describe("sandbox-setup", () => {
         "/home/user/.config/AGENTS.md",
         customPrompt,
       );
-      // Should set proper permissions
+      // Should set proper permissions (batched chmod)
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "chmod 644 /home/user/.config/AGENTS.md",
+        "chmod 644 /home/user/.config/AGENTS.md && chmod 644 /home/user/.config/amp/settings.json",
         { cwd: "/" },
       );
     });
