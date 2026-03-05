@@ -278,7 +278,7 @@ export async function sendMessage({
   for (let attempt = 0; attempt < DAEMON_SEND_MAX_ATTEMPTS; attempt++) {
     try {
       await session.runCommand(
-        `echo '${b64}' | base64 -d | node ${DAEMON_FILE_PATH} --write --timeout=5000`,
+        `echo '${b64}' | base64 -d | node ${DAEMON_FILE_PATH} --write`,
         { timeoutMs: 5000, cwd: "/" },
       );
       console.log("Message sent to daemon", { attempt: attempt + 1 });
