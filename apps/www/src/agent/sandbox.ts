@@ -41,6 +41,7 @@ import { getAndVerifyCredentials } from "./credentials";
 import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
+import type { UserSettings } from "@terragon/shared";
 import { createHash } from "node:crypto";
 
 async function getOrCreateSandboxWithTimeout(
@@ -142,9 +143,7 @@ async function getOrCreateSandboxForThread({
   if (!thread) {
     throw new Error("Thread not found");
   }
-  const shouldFastResume =
-    (fastResume || thread.sandboxStatus === "running") &&
-    !!thread.codesandboxId;
+  const shouldFastResume = fastResume && !!thread.codesandboxId;
 
   let agentOrNull: AIAgent | null = null;
   let modelOrNull: AIModel | null = null;
@@ -263,7 +262,9 @@ async function getOrCreateSandboxForThread({
     const mergedEnvironmentEntries = Object.entries(mergedEnvironmentVariables).map(
       ([key, value]) => ({ key, value }),
     );
-    const environmentVariablesHash = hashEnvironmentVariables(mergedEnvironmentEntries);
+    const environmentVariablesHash = hashEnvironmentVariables(
+      repositoryEnvironmentVariables,
+    );
     const normalizedEnvironmentVariables = applyAcpTransportDefaults(
       mergedEnvironmentEntries,
     );

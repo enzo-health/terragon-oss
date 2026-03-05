@@ -9,7 +9,6 @@ import { env } from "@terragon/env/apps-www";
 import type { McpConfig } from "@terragon/sandbox/mcp-config";
 import {
   getEnvironment,
-  getDecryptedGlobalEnvironmentVariables,
   getDecryptedEnvironmentVariables,
   getDecryptedMcpConfig,
   updateEnvironment,
@@ -50,20 +49,11 @@ export const buildEnvironmentSnapshot = userOnlyAction(
 
     const setupScriptHash = getSetupScriptHash(environment.setupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(size);
-    const [
-      repositoryEnvironmentVariables,
-      globalEnvironmentVariables,
-      resolvedMcpConfig,
-    ] = await Promise.all([
+    const [repositoryEnvironmentVariables, resolvedMcpConfig] = await Promise.all([
       getDecryptedEnvironmentVariables({
         db,
         userId,
         environmentId,
-        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-      }),
-      getDecryptedGlobalEnvironmentVariables({
-        db,
-        userId,
         encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
       }),
       getDecryptedMcpConfig({
@@ -73,12 +63,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
         encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
       }),
     ]);
-    const mergedEnvironmentVariables = mergeEnvironmentVariables(
-      globalEnvironmentVariables,
-      repositoryEnvironmentVariables,
-    );
     const environmentVariablesHash = hashEnvironmentVariables(
-      mergedEnvironmentVariables,
+      repositoryEnvironmentVariables,
     );
     const mcpConfigHash = hashMcpConfig(resolvedMcpConfig);
 
@@ -107,7 +93,7 @@ export const buildEnvironmentSnapshot = userOnlyAction(
       baseBranch: "main", // Default to main; could be configurable
       githubAccessToken,
       setupScript: environment.setupScript,
-      environmentVariables: mergedEnvironmentVariables,
+      environmentVariables: repositoryEnvironmentVariables,
       size,
       onLogs: (chunk) => console.log(`[snapshot-build] ${chunk}`),
     })
@@ -239,21 +225,6 @@ function hashEnvironmentVariables(
       }))
       .sort((a, b) => a.key.localeCompare(b.key)),
   );
-}
-
-function mergeEnvironmentVariables(
-  globalEnvironmentVariables: Array<{ key: string; value: string }>,
-  repositoryEnvironmentVariables: Array<{ key: string; value: string }>,
-): Array<{ key: string; value: string }> {
-  return Object.entries(
-    [...globalEnvironmentVariables, ...repositoryEnvironmentVariables].reduce(
-      (acc, variable) => {
-        acc[variable.key] = variable.value;
-        return acc;
-      },
-      {} as Record<string, string>,
-    ),
-  ).map(([key, value]) => ({ key, value }));
 }
 
 function hashMcpConfig(

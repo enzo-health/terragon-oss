@@ -305,6 +305,33 @@ describe("sandbox-setup", () => {
         customPrompt,
       );
     });
+
+    it("should not run the setup script during resume setup", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.mocked(installDaemon).mockClear();
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async (cmd) => {
+          if (cmd === "cd && pwd") return "/home/user";
+          return "";
+        });
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          setupScript: "echo hi",
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(
+        runCommandSpy.mock.calls.some(([cmd]) =>
+          cmd.includes("/tmp/terragon-setup-custom.sh"),
+        ),
+      ).toBe(false);
+      expect(installDaemon).not.toHaveBeenCalled();
+    });
   });
 
   describe("environment setup script", () => {

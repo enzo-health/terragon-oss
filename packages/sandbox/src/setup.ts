@@ -367,52 +367,18 @@ export async function setupSandboxEveryTime({
       }),
     );
   }
-
-  const ensureDaemonStarted = isCreatingSandbox
-    ? installDaemon({
-        session,
-        environmentVariables: options.environmentVariables || [],
-        githubAccessToken: options.githubAccessToken,
-        agentCredentials: options.agentCredentials,
-        userMcpConfig: options.mcpConfig,
-        publicUrl: options.publicUrl,
-        featureFlags: options.featureFlags,
-      })
-    : !options.fastResume && options.autoUpdateDaemon
-      ? (async () => {
-          await updateDaemonIfOutdated({ session, options });
-          await restartDaemonIfNotRunning({ session, options });
-        })()
-      : restartDaemonIfNotRunning({ session, options });
-
-  parallelOps.push(ensureDaemonStarted);
-
-  if (options.skipSetupScript || options.snapshotTemplateId) {
-    // Setup script execution is skipped when the snapshot already includes it
-    // or when callers explicitly opt out.
-    console.log("Skipping setup script (snapshot or explicit skip)");
-    await Promise.all(parallelOps);
-    return;
+  if (!isCreatingSandbox && !options.fastResume) {
+    parallelOps.push(
+      options.autoUpdateDaemon
+        ? (async () => {
+            await updateDaemonIfOutdated({ session, options });
+            await restartDaemonIfNotRunning({ session, options });
+          })()
+        : restartDaemonIfNotRunning({ session, options }),
+    );
   }
 
-  // Keep daemon startup and setup script execution in parallel to reduce tail latency.
-  await options.onStatusUpdate({
-    sandboxId: session.sandboxId,
-    sandboxStatus: "booting",
-    bootingStatus: "running-setup-script",
-  });
-  await Promise.all([
-    ...parallelOps,
-    runSetupScript({
-      session,
-      options: {
-        environmentVariables: options.environmentVariables,
-        githubAccessToken: options.githubAccessToken,
-        agentCredentials: options.agentCredentials,
-        setupScript: options.setupScript,
-      },
-    }),
-  ]);
+  await Promise.all(parallelOps);
 }
 
 async function updateAgentFilesShared({
