@@ -7,6 +7,9 @@ import "streamdown/styles.css";
 import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { parsePlanSpecViewModelFromText } from "@/lib/sdlc-plan-view-model";
+import { SdlcPlanReviewCard } from "@/components/patterns/sdlc-plan-review-card";
 
 interface TextPartProps {
   text: string;
@@ -132,8 +135,15 @@ const TextPart = memo(function TextPart({
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
+  const sdlcPlanReviewCard = useFeatureFlag("sdlcPlanReviewCard");
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
+  const parsedPlan = useMemo(() => {
+    if (!sdlcPlanReviewCard) {
+      return null;
+    }
+    return parsePlanSpecViewModelFromText(text);
+  }, [sdlcPlanReviewCard, text]);
 
   const processedText = normalizeBoldHeaders(
     convertCitationsToGitHubLinks(
@@ -350,15 +360,20 @@ const TextPart = memo(function TextPart({
   }, [blocks, toggleBlock]);
 
   return (
-    <div className="prose prose-sm max-w-none" ref={containerRef}>
-      <Streamdown
-        plugins={plugins}
-        components={components}
-        controls={{ code: true }}
-      >
-        {processedText}
-      </Streamdown>
-      {overlays}
+    <div>
+      {parsedPlan ? (
+        <SdlcPlanReviewCard plan={parsedPlan} className="mb-2" />
+      ) : null}
+      <div className="prose prose-sm max-w-none" ref={containerRef}>
+        <Streamdown
+          plugins={plugins}
+          components={components}
+          controls={{ code: true }}
+        >
+          {processedText}
+        </Streamdown>
+        {overlays}
+      </div>
     </div>
   );
 });

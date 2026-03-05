@@ -175,6 +175,27 @@ describe("parsePlanSpec", () => {
     });
   });
 
+  describe("<proposed_plan> tags", () => {
+    it("parses tasks from a proposed_plan markdown block", () => {
+      const input = [
+        "Some preface",
+        "<proposed_plan>",
+        "## Plan",
+        "",
+        "1. Build auth flow",
+        "2. Add tests",
+        "</proposed_plan>",
+      ].join("\n");
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(2);
+      expect(result.plan.tasks[0]!.title).toBe("Build auth flow");
+      expect(result.plan.tasks[1]!.title).toBe("Add tests");
+      expect(result.diagnostic).toContain("<proposed_plan>");
+    });
+  });
+
   describe("markdown list fallback", () => {
     it("parses numbered list", () => {
       const input = [

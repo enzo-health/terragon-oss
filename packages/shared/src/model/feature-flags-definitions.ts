@@ -153,6 +153,12 @@ export const featureFlagsDefinitions = {
     description:
       "Enables codex app-server JSON-RPC transport mode for Codex agent runs.",
   },
+  sdlcPlanReviewCard: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Renders SDLC plans from agent output in a structured review card in chat and stepper views.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

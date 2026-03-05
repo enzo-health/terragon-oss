@@ -1449,6 +1449,7 @@ describe("sdlc loop model", () => {
         state: "blocked_on_ci",
         loopVersion: 5,
         currentHeadSha: "sha-blocked",
+        fixAttemptCount: 3,
       })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
@@ -1479,6 +1480,7 @@ describe("sdlc loop model", () => {
     });
     expect(reloadedLoop?.state).toBe("implementing");
     expect(reloadedLoop?.loopVersion).toBe(6);
+    expect(reloadedLoop?.fixAttemptCount).toBe(3);
   });
 
   it("does not advance planning loops on implementation_progress", async () => {
@@ -1552,6 +1554,155 @@ describe("sdlc loop model", () => {
     expect(reloadedLoop?.state).toBe("blocked_on_human_feedback");
     expect(reloadedLoop?.fixAttemptCount).toBe(2);
     expect(reloadedLoop?.maxFixAttempts).toBe(1);
+  });
+
+  it("resumes blocked loop back to implementing", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "blocked_on_human_feedback",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "blocked_resume_requested",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("implementing");
+    expect(reloaded?.fixAttemptCount).toBe(0);
+  });
+
+  it("supports one-time bypass transition from blocked state", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "blocked_on_human_feedback",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "blocked_bypass_once_requested",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("implementing");
+  });
+
+  it("resets fix attempts when phase advances", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "implementing",
+        fixAttemptCount: 3,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "implementation_completed",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("reviewing");
+    expect(reloaded?.fixAttemptCount).toBe(0);
+  });
+
+  it("does not reset fix attempts when failing back to implementing", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "reviewing",
+        fixAttemptCount: 2,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "review_blocked",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("implementing");
+    expect(reloaded?.fixAttemptCount).toBe(3);
   });
 
   it("does not rewrite current head sha on unversioned implementation transitions", async () => {

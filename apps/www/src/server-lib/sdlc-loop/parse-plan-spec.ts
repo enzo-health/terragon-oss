@@ -60,6 +60,9 @@ export type PlanParseResult =
   | { ok: true; plan: ParsedPlanSpec; diagnostic: string }
   | { ok: false; plan: null; diagnostic: string };
 
+const PROPOSED_PLAN_TAG_RE =
+  /<proposed_plan>\s*([\s\S]*?)\s*<\/proposed_plan>/i;
+
 // ---------------------------------------------------------------------------
 // Key resolution — case-insensitive, deterministic priority
 // ---------------------------------------------------------------------------
@@ -335,6 +338,21 @@ export function parsePlanSpec(text: string): PlanParseResult {
       plan: null,
       diagnostic: "Plan text is empty.",
     };
+  }
+
+  const proposedPlanMatch = PROPOSED_PLAN_TAG_RE.exec(trimmed);
+  if (proposedPlanMatch?.[1]) {
+    const proposedBody = proposedPlanMatch[1].trim();
+    if (proposedBody.length > 0 && proposedBody !== trimmed) {
+      const nested = parsePlanSpec(proposedBody);
+      if (nested.ok) {
+        return {
+          ok: true,
+          plan: nested.plan,
+          diagnostic: `Parsed plan from <proposed_plan> block. ${nested.diagnostic}`,
+        };
+      }
+    }
   }
 
   // Tier 1: direct JSON.parse

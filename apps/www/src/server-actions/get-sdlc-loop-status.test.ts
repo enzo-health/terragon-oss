@@ -124,9 +124,15 @@ describe("getSdlcLoopStatusAction", () => {
     expect(status?.links.pullRequestUrl).toBeNull();
     expect(status?.artifacts.planningArtifact?.id).toBe(planArtifact.id);
     expect(status?.artifacts.planningArtifact?.status).toBe("accepted");
+    expect(status?.artifacts.planningArtifact?.planText).toBe(
+      "Status test plan",
+    );
     expect(status?.artifacts.implementationArtifact?.headSha).toBe(
       "sha-status-1",
     );
+    expect(status?.artifacts.plannedTasks[0]?.acceptance).toEqual([
+      "Artifacts persisted",
+    ]);
     expect(status?.artifacts.plannedTaskSummary).toEqual({
       total: 2,
       done: 1,

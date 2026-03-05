@@ -9,9 +9,19 @@ import { cn } from "@/lib/utils";
 import { useSdlcLoopStatusQuery } from "@/queries/sdlc-loop-status-queries";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { approvePlan } from "@/server-actions/approve-plan";
+import {
+  requestSdlcBypassCurrentGateOnce,
+  requestSdlcResumeFromBlocked,
+} from "@/server-actions/sdlc-interventions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import {
+  buildArtifactFallbackPlanSpecViewModel,
+  type PlanTaskViewModel,
+} from "@/lib/sdlc-plan-view-model";
+import { SdlcPlanReviewCard } from "./sdlc-plan-review-card";
 import {
   Stepper,
   StepperIndicator,
@@ -447,6 +457,8 @@ function buildSdlcPhases({
 type SdlcPlannedTask = {
   stableTaskId: string;
   title: string;
+  description: string | null;
+  acceptance: string[];
   status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
 };
 
@@ -529,6 +541,53 @@ function SdlcPlanTaskList({
   );
 }
 
+function SdlcInterventionControls({
+  threadId,
+  threadChatId,
+  loopState,
+}: {
+  threadId: string;
+  threadChatId: string | null;
+  loopState: SdlcLoopState;
+}) {
+  const resumeMutation = useServerActionMutation({
+    mutationFn: requestSdlcResumeFromBlocked,
+  });
+  const bypassMutation = useServerActionMutation({
+    mutationFn: requestSdlcBypassCurrentGateOnce,
+  });
+
+  const handleResume = useCallback(async () => {
+    await resumeMutation.mutateAsync({ threadId, threadChatId });
+  }, [resumeMutation, threadChatId, threadId]);
+  const handleBypass = useCallback(async () => {
+    await bypassMutation.mutateAsync({ threadId, threadChatId });
+  }, [bypassMutation, threadChatId, threadId]);
+
+  return (
+    <div className="mt-2 flex gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs"
+        disabled={resumeMutation.isPending || loopState !== "blocked_on_human_feedback"}
+        onClick={handleResume}
+      >
+        {resumeMutation.isPending ? "Resuming…" : "Resume"}
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        className="h-7 text-xs"
+        disabled={bypassMutation.isPending}
+        onClick={handleBypass}
+      >
+        {bypassMutation.isPending ? "Bypassing…" : "Bypass Once"}
+      </Button>
+    </div>
+  );
+}
+
 export function SdlcTopProgressStepper({
   threadId,
   threadChatId,
@@ -543,6 +602,7 @@ export function SdlcTopProgressStepper({
     threadId,
     enabled,
   });
+  const sdlcPlanReviewCard = useFeatureFlag("sdlcPlanReviewCard");
 
   if (!enabled || isError) {
     return null;
@@ -558,6 +618,23 @@ export function SdlcTopProgressStepper({
   const stateLabel = data?.stateLabel ?? "Waiting to Start";
   const needsAttention = data?.needsAttention.isBlocked ?? false;
   const blockerCount = data?.needsAttention.blockerCount ?? 0;
+  const showInterventionControls =
+    data?.state === "blocked_on_human_feedback" ||
+    data?.state === "implementing";
+  const planCardModel =
+    data && sdlcPlanReviewCard
+      ? buildArtifactFallbackPlanSpecViewModel({
+          summary:
+            data.artifacts.planningArtifact?.planText ??
+            "Structured plan captured for this task.",
+          tasks: data.artifacts.plannedTasks.map<PlanTaskViewModel>((task) => ({
+            stableTaskId: task.stableTaskId,
+            title: task.title,
+            description: task.description,
+            acceptance: task.acceptance,
+          })),
+        })
+      : null;
 
   return (
     <div className="w-full border-b border-border/70 bg-gradient-to-b from-background to-muted/20">
@@ -591,6 +668,13 @@ export function SdlcTopProgressStepper({
             )}
           </div>
         </div>
+        {showInterventionControls && data ? (
+          <SdlcInterventionControls
+            threadId={threadId}
+            threadChatId={threadChatId}
+            loopState={data.state}
+          />
+        ) : null}
 
         <Stepper
           value={currentStep}
@@ -683,17 +767,22 @@ export function SdlcTopProgressStepper({
                   {isExpanded &&
                     phase.key === "planning" &&
                     data?.artifacts?.plannedTasks && (
-                      <SdlcPlanTaskList
-                        tasks={data.artifacts.plannedTasks}
-                        taskSummary={data.artifacts.plannedTaskSummary}
-                        showApprove={
-                          data.state === "planning" &&
-                          data.planApprovalPolicy === "human_required" &&
-                          data.artifacts.planningArtifact?.status !== "accepted"
-                        }
-                        threadId={threadId}
-                        threadChatId={threadChatId}
-                      />
+                      <>
+                        {planCardModel ? (
+                          <SdlcPlanReviewCard plan={planCardModel} className="mt-1.5" />
+                        ) : null}
+                        <SdlcPlanTaskList
+                          tasks={data.artifacts.plannedTasks}
+                          taskSummary={data.artifacts.plannedTaskSummary}
+                          showApprove={
+                            data.state === "planning" &&
+                            data.planApprovalPolicy === "human_required" &&
+                            data.artifacts.planningArtifact?.status !== "accepted"
+                          }
+                          threadId={threadId}
+                          threadChatId={threadChatId}
+                        />
+                      </>
                     )}
 
                   {phases.length > index + 1 ? (
