@@ -2844,7 +2844,10 @@ function shouldResetFixAttemptCountOnTransition({
   previousState: SdlcLoopState;
   nextState: SdlcLoopState;
 }): boolean {
-  if (previousState === nextState || nextState === "blocked_on_human_feedback") {
+  if (
+    previousState === nextState ||
+    nextState === "blocked_on_human_feedback"
+  ) {
     return false;
   }
   if (previousState === "planning" && nextState === "implementing") {
@@ -2859,7 +2862,10 @@ function shouldResetFixAttemptCountOnTransition({
   if (previousState === "ui_testing" && nextState === "pr_babysitting") {
     return true;
   }
-  if (previousState === "blocked_on_human_feedback" && nextState === "implementing") {
+  if (
+    previousState === "blocked_on_human_feedback" &&
+    nextState === "implementing"
+  ) {
     return true;
   }
   return false;

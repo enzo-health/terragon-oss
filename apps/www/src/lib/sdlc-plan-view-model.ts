@@ -35,7 +35,9 @@ function parseHeadingTitle(markdown: string): string {
   return "Implementation Plan";
 }
 
-function splitMarkdownSections(markdown: string): Array<{ heading: string; body: string }> {
+function splitMarkdownSections(
+  markdown: string,
+): Array<{ heading: string; body: string }> {
   const lines = markdown.split("\n");
   const sections: Array<{ heading: string; body: string }> = [];
 
@@ -86,7 +88,10 @@ function parseTasksFromNumberedList(markdown: string): PlanTaskViewModel[] {
       if (currentTask) {
         tasks.push(currentTask);
       }
-      const title = numberedMatch[2].replace(/\*\*/g, "").replace(/:$/, "").trim();
+      const title = numberedMatch[2]
+        .replace(/\*\*/g, "")
+        .replace(/:$/, "")
+        .trim();
       const stableTaskId = normalizeStableTaskId(title, tasks.length);
       currentTask = {
         stableTaskId,
@@ -143,17 +148,20 @@ function parseProposedPlan(markdown: string): PlanSpecViewModel | null {
   }
 
   const sections = splitMarkdownSections(normalized);
-  const summarySection = sections.find((section) => section.heading === "summary");
-  const assumptionSection = sections.find((section) =>
-    section.heading === "assumptions / defaults" ||
-    section.heading === "assumptions" ||
-    section.heading === "defaults",
+  const summarySection = sections.find(
+    (section) => section.heading === "summary",
+  );
+  const assumptionSection = sections.find(
+    (section) =>
+      section.heading === "assumptions / defaults" ||
+      section.heading === "assumptions" ||
+      section.heading === "defaults",
   );
 
   const parsed = parsePlanSpec(normalized);
   const parsedTasks = parsed.ok ? mapParsedTasks(parsed.plan.tasks) : [];
   const numberedTasks = parseTasksFromNumberedList(normalized);
-  const tasks = parsedTasks.length > 0 ? parsedTasks : numberedTasks;
+  const tasks = numberedTasks.length > 0 ? numberedTasks : parsedTasks;
 
   if (tasks.length === 0) {
     return null;
@@ -163,7 +171,9 @@ function parseProposedPlan(markdown: string): PlanSpecViewModel | null {
     title: parseHeadingTitle(normalized),
     summary: summarySection?.body || normalized,
     tasks,
-    assumptions: assumptionSection ? parseSectionBullets(assumptionSection.body) : [],
+    assumptions: assumptionSection
+      ? parseSectionBullets(assumptionSection.body)
+      : [],
     source: "proposed_plan_tag",
   };
 }
