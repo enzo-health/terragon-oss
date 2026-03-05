@@ -34,8 +34,13 @@ RUN apt-get update && apt-get install -y \\
     jq \\
     ripgrep \\
     supervisor \\
+    postgresql \\
+    redis-server \\
     && rm -rf /var/lib/apt/lists/*
 
+# Configure PostgreSQL for passwordless local dev access
+RUN printf 'local all all trust\\nhost all all 127.0.0.1/32 trust\\nhost all all ::1/128 trust\\n' > /etc/postgresql/16/main/pg_hba.conf \\
+    && sed -i "s/#listen_addresses = 'localhost'/listen_addresses = 'localhost'/" /etc/postgresql/16/main/postgresql.conf
 
 # Install Node.js 22
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\
