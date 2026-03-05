@@ -17,6 +17,7 @@ export const MCP_SERVER_JSON_FILE_PATH = "/tmp/mcp-server.json";
 export const DAEMON_LOG_FILE_PATH = "/tmp/terragon-daemon.log";
 const DAEMON_SEND_MAX_ATTEMPTS = 4;
 const DAEMON_SEND_BASE_BACKOFF_MS = 150;
+const DAEMON_SEND_TIMEOUT_MS = 5000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,6 +39,9 @@ function isTransientDaemonSendError(error: unknown): boolean {
     msg.includes("timeout") ||
     msg.includes("closed before ack") ||
     msg.includes("not ready") ||
+    msg.includes("enoent") ||
+    msg.includes("no such file") ||
+    msg.includes("socket") ||
     msg.includes("econnrefused") ||
     msg.includes("econnreset") ||
     msg.includes("broken pipe")
@@ -279,7 +283,7 @@ export async function sendMessage({
     try {
       await session.runCommand(
         `echo '${b64}' | base64 -d | node ${DAEMON_FILE_PATH} --write`,
-        { timeoutMs: 5000, cwd: "/" },
+        { timeoutMs: DAEMON_SEND_TIMEOUT_MS, cwd: "/" },
       );
       console.log("Message sent to daemon", { attempt: attempt + 1 });
       return;

@@ -321,10 +321,14 @@ export async function setupGitCredentials(
   session: ISandboxSession,
   options: CreateSandboxOptions,
 ) {
-  // Combine into a single round-trip: || true handles .gitconfig.lock race condition
+  // Keep credential setup idempotent so hot resumptions don't rewrite secrets when
+  // the token is unchanged.
   await session.runCommand(
-    "(git config --global credential.helper store 2>/dev/null || true)" +
-      ' && echo "https://${GITHUB_USER_NAME}:${GITHUB_ACCESS_TOKEN}@github.com" > ~/.git-credentials',
+    'CREDENTIAL_ENTRY="https://${GITHUB_USER_NAME}:${GITHUB_ACCESS_TOKEN}@github.com" && ' +
+      "if [ -f ~/.git-credentials ] && grep -Fxq \"$CREDENTIAL_ENTRY\" ~/.git-credentials; then " +
+      ' :; else ' +
+      'echo "$CREDENTIAL_ENTRY" > ~/.git-credentials; ' +
+      "fi && (git config --global credential.helper store 2>/dev/null || true)",
     {
       cwd: "/",
       env: {
@@ -345,34 +349,70 @@ export async function setupSandboxEveryTime({
   isCreatingSandbox: boolean;
 }) {
   // All setup operations that don't depend on each other run in parallel.
-  // restartDaemonIfNotRunning is deferred until after updateDaemonIfOutdated
-  // completes so it sees the latest daemon state.
   const parallelOps: Promise<void>[] = [
     setupGitCredentials(session, options),
     probeSandboxAgentEndpoint({ session, options }),
   ];
-  if (!options.fastResume) {
-    if (options.agent) {
-      parallelOps.push(
-        updateAgentFiles({
-          session,
-          customSystemPrompt: options.customSystemPrompt,
-          agent: options.agent,
-          agentCredentials: options.agentCredentials,
-          isCreatingSandbox,
-          mcpConfig: options.mcpConfig,
-          publicUrl: options.publicUrl,
-        }),
-      );
-    }
-    if (options.autoUpdateDaemon && !isCreatingSandbox) {
-      parallelOps.push(updateDaemonIfOutdated({ session, options }));
-    }
+  const shouldRunSetupAgentFiles = !options.fastResume && options.agent;
+  if (shouldRunSetupAgentFiles) {
+    parallelOps.push(
+      updateAgentFiles({
+        session,
+        customSystemPrompt: options.customSystemPrompt,
+        agent: options.agent,
+        agentCredentials: options.agentCredentials,
+        isCreatingSandbox,
+        mcpConfig: options.mcpConfig,
+        publicUrl: options.publicUrl,
+      }),
+    );
   }
-  await Promise.all(parallelOps);
-  if (!options.fastResume && !isCreatingSandbox) {
-    await restartDaemonIfNotRunning({ session, options });
+
+  const ensureDaemonStarted = isCreatingSandbox
+    ? installDaemon({
+        session,
+        environmentVariables: options.environmentVariables || [],
+        githubAccessToken: options.githubAccessToken,
+        agentCredentials: options.agentCredentials,
+        userMcpConfig: options.mcpConfig,
+        publicUrl: options.publicUrl,
+        featureFlags: options.featureFlags,
+      })
+    : !options.fastResume && options.autoUpdateDaemon
+      ? (async () => {
+          await updateDaemonIfOutdated({ session, options });
+          await restartDaemonIfNotRunning({ session, options });
+        })()
+      : restartDaemonIfNotRunning({ session, options });
+
+  parallelOps.push(ensureDaemonStarted);
+
+  if (options.skipSetupScript || options.snapshotTemplateId) {
+    // Setup script execution is skipped when the snapshot already includes it
+    // or when callers explicitly opt out.
+    console.log("Skipping setup script (snapshot or explicit skip)");
+    await Promise.all(parallelOps);
+    return;
   }
+
+  // Keep daemon startup and setup script execution in parallel to reduce tail latency.
+  await options.onStatusUpdate({
+    sandboxId: session.sandboxId,
+    sandboxStatus: "booting",
+    bootingStatus: "running-setup-script",
+  });
+  await Promise.all([
+    ...parallelOps,
+    runSetupScript({
+      session,
+      options: {
+        environmentVariables: options.environmentVariables,
+        githubAccessToken: options.githubAccessToken,
+        agentCredentials: options.agentCredentials,
+        setupScript: options.setupScript,
+      },
+    }),
+  ]);
 }
 
 async function updateAgentFilesShared({

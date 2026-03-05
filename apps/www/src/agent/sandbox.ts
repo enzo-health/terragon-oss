@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { DB } from "@terragon/shared/db";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { AIAgent, AIModel, AIAgentCredentials } from "@terragon/agent/types";
 import {
   getThreadMinimal,
   updateThread,
@@ -16,6 +16,10 @@ import {
   getDecryptedGlobalEnvironmentVariables,
   getReadySnapshot,
 } from "@terragon/shared/model/environments";
+import {
+  getSetupScriptHash,
+  getSnapshotBaseTemplateId,
+} from "@terragon/sandbox/snapshot-builder";
 import { env } from "@terragon/env/apps-www";
 import type {
   CreateSandboxOptions,
@@ -29,15 +33,15 @@ import {
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { trackSandboxCreation } from "@/lib/rate-limit";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
+import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
 import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
-import type { UserSettings } from "@terragon/shared";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
+import { createHash } from "node:crypto";
 
 async function getOrCreateSandboxWithTimeout(
   sandboxId: string | null,
@@ -138,162 +142,280 @@ async function getOrCreateSandboxForThread({
   if (!thread) {
     throw new Error("Thread not found");
   }
+  const shouldFastResume =
+    (fastResume || thread.sandboxStatus === "running") &&
+    !!thread.codesandboxId;
+
   let agentOrNull: AIAgent | null = null;
   let modelOrNull: AIModel | null = null;
-  if (threadChatIdOrNull) {
-    const threadChat = await getThreadChat({
-      db,
-      threadId,
-      threadChatId: threadChatIdOrNull,
-      userId,
-    });
-    if (threadChat) {
-      agentOrNull = ensureAgent(threadChat.agent);
-      modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
-    }
-  }
-  const [
-    userFeatureFlags,
-    userSettings,
-    agentCredentialsOrNull,
-    repositoryEnvironment,
-  ] = await Promise.all([
+
+  const [userFeatureFlags, githubAccessToken] = await Promise.all([
     getFeatureFlagsForUser({ db, userId }),
-    getUserSettings({ db, userId }),
-    (async () => {
-      return agentOrNull
-        ? await getAndVerifyCredentials({
-            agent: agentOrNull,
-            model: modelOrNull,
-            userId,
-          })
-        : null;
-    })(),
-    // Fetch the environment to get environment variables
-    getOrCreateEnvironment({
-      db,
-      userId,
-      repoFullName: thread.githubRepoFullName,
-    }),
-  ]);
-  const [
-    repositoryEnvironmentVariables,
-    globalEnvironmentVariables,
-    mcpConfig,
-    githubAccessToken,
-  ] = await Promise.all([
-    getDecryptedEnvironmentVariables({
-      db,
-      userId,
-      environmentId: repositoryEnvironment.id,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    }),
-    getDecryptedGlobalEnvironmentVariables({
-      db,
-      userId,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    }),
-    getDecryptedMcpConfig({
-      db,
-      userId,
-      environmentId: repositoryEnvironment.id,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    }),
     getGitHubUserAccessToken({ userId }),
   ]);
   if (!githubAccessToken) {
     throw new Error("No GitHub access token found");
   }
 
-  // Merge global and environment-specific variables
-  // Environment-specific variables take precedence over global ones
-  const mergedEnvironmentVariables = [
-    ...globalEnvironmentVariables,
-    ...repositoryEnvironmentVariables,
-  ].reduce(
-    (acc, variable) => {
-      acc[variable.key] = variable.value;
-      return acc;
-    },
-    {} as Record<string, string>,
-  );
-  if (
-    userFeatureFlags.sandboxAgentAcpTransport &&
-    !mergedEnvironmentVariables.SANDBOX_AGENT_BASE_URL?.trim()
-  ) {
-    mergedEnvironmentVariables.SANDBOX_AGENT_BASE_URL = "http://127.0.0.1:2468";
-  }
-  const finalEnvironmentVariables = Object.entries(
-    mergedEnvironmentVariables,
-  ).map(([key, value]) => ({ key, value }));
-  const branchPrefix = userSettings.branchNamePrefix;
-  const generateBranchNameWithPrefix = (threadName: string | null) =>
-    generateBranchName(threadName, branchPrefix);
-  const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-  // Check for per-repo snapshot (only for new Daytona sandboxes)
-  const snapshot =
-    !thread.codesandboxId && thread.sandboxProvider === "daytona"
-      ? getReadySnapshot(repositoryEnvironment, "daytona", sandboxSize)
-      : null;
-  const startTime = Date.now();
-  const session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
-    threadName: thread.name,
-    agent: agentOrNull,
-    agentCredentials: agentCredentialsOrNull,
-    userName: user.name,
-    userEmail: user.email,
-    githubAccessToken,
-    githubRepoFullName: thread.githubRepoFullName,
-    repoBaseBranchName: thread.repoBaseBranchName,
-    userId,
-    sandboxProvider: thread.sandboxProvider,
-    sandboxSize,
-    environmentVariables: finalEnvironmentVariables,
-    createNewBranch,
-    branchName,
-    mcpConfig: mcpConfig || undefined,
-    autoUpdateDaemon: !!userFeatureFlags.autoUpdateDaemon,
-    customSystemPrompt: userSettings.customSystemPrompt,
-    setupScript: repositoryEnvironment.setupScript,
-    skipSetupScript: thread.skipSetup,
-    snapshotTemplateId: snapshot?.snapshotName ?? undefined,
-    fastResume:
-      (fastResume || thread.sandboxStatus === "running") &&
-      !!thread.codesandboxId,
-    publicUrl: nonLocalhostPublicAppUrl(),
-    featureFlags: userFeatureFlags,
-    generateBranchName: generateBranchNameWithPrefix,
-    onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
-      if (sandboxId && bootingStatus === "provisioning-done") {
-        getPostHogServer().capture({
-          distinctId: userId,
-          event: "sandbox_provisioned",
-          properties: {
-            threadId,
-            sandboxId,
-            sandboxProvider: thread.sandboxProvider,
-            githubRepoFullName: thread.githubRepoFullName,
-            durationMs: Date.now() - startTime,
-          },
-        });
+  const applyAcpTransportDefaults = (
+    variables: Array<{ key: string; value: string }>,
+  ): Array<{ key: string; value: string }> => {
+    if (!userFeatureFlags.sandboxAgentAcpTransport) {
+      return variables;
+    }
+
+    return variables.some(
+      (entry) =>
+        entry.key === "SANDBOX_AGENT_BASE_URL" && entry.value.trim().length > 0,
+    )
+      ? variables
+      : [
+          ...variables.filter(
+            (entry) => entry.key !== "SANDBOX_AGENT_BASE_URL",
+          ),
+          { key: "SANDBOX_AGENT_BASE_URL", value: "http://127.0.0.1:2468" },
+        ];
+  };
+
+  type BootstrapContext = {
+    repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>> | null;
+    agent: AIAgent | null;
+    agentCredentialsOrNull: AIAgentCredentials | null;
+    finalEnvironmentVariables: Array<{ key: string; value: string }>;
+    environmentVariablesHash: string;
+    mcpConfigHash: string;
+    customSystemPrompt: string | null;
+    generateBranchNameWithPrefix: (
+      threadName: string | null,
+    ) => Promise<string | null>;
+    mcpConfig: CreateSandboxOptions["mcpConfig"];
+  };
+
+  let bootstrapContext: BootstrapContext | null = null;
+  const getBootstrapContext = async (): Promise<BootstrapContext> => {
+    if (bootstrapContext) {
+      return bootstrapContext;
+    }
+
+    if (threadChatIdOrNull) {
+      const threadChat = await getThreadChat({
+        db,
+        threadId,
+        threadChatId: threadChatIdOrNull,
+        userId,
+      });
+      if (threadChat) {
+        agentOrNull = ensureAgent(threadChat.agent);
+        modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
       }
-      await onStatusUpdate({
+    }
+    const [userSettings, repositoryEnvironment, agentCredentialsOrNull] = await Promise.all([
+      getUserSettings({ db, userId }),
+      getOrCreateEnvironment({
+        db,
+        userId,
+        repoFullName: thread.githubRepoFullName,
+      }),
+      (async () =>
+        agentOrNull
+          ? getAndVerifyCredentials({
+              agent: agentOrNull,
+              model: modelOrNull,
+              userId,
+            })
+          : Promise.resolve(null))(),
+    ]);
+    const [
+      repositoryEnvironmentVariables,
+      globalEnvironmentVariables,
+      resolvedMcpConfig,
+    ] = await Promise.all([
+      getDecryptedEnvironmentVariables({
+        db,
+        userId,
+        environmentId: repositoryEnvironment.id,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedGlobalEnvironmentVariables({
+        db,
+        userId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedMcpConfig({
+        db,
+        userId,
+        environmentId: repositoryEnvironment.id,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+    ]);
+    // Merge global and environment-specific variables
+    // Environment-specific variables take precedence over global ones
+    const mergedEnvironmentVariables = [
+      ...globalEnvironmentVariables,
+      ...repositoryEnvironmentVariables,
+    ].reduce(
+      (acc, variable) => {
+        acc[variable.key] = variable.value;
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
+    const mergedEnvironmentEntries = Object.entries(mergedEnvironmentVariables).map(
+      ([key, value]) => ({ key, value }),
+    );
+    const environmentVariablesHash = hashEnvironmentVariables(mergedEnvironmentEntries);
+    const normalizedEnvironmentVariables = applyAcpTransportDefaults(
+      mergedEnvironmentEntries,
+    );
+    const mcpConfigHash = hashMcpConfig(resolvedMcpConfig);
+
+    bootstrapContext = {
+      repositoryEnvironment,
+      agent: agentOrNull,
+      agentCredentialsOrNull,
+      finalEnvironmentVariables: normalizedEnvironmentVariables,
+      environmentVariablesHash,
+      mcpConfigHash,
+      customSystemPrompt: userSettings.customSystemPrompt,
+      generateBranchNameWithPrefix: (threadName) =>
+        generateBranchName(threadName, userSettings.branchNamePrefix),
+      mcpConfig: resolvedMcpConfig || undefined,
+    };
+    return bootstrapContext;
+  };
+
+  const isRecoverableSandboxIdError = (error: unknown): boolean => {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("sandbox not found") ||
+      message.includes("not found") ||
+      message.includes("no such sandbox") ||
+      message.includes("does not exist")
+    );
+  };
+
+  const buildSandboxOptions = (context: BootstrapContext): CreateSandboxOptions => {
+    const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
+    const setupScriptHash = getSetupScriptHash(context.repositoryEnvironment?.setupScript ?? null);
+    const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
+    const snapshot =
+      !thread.codesandboxId &&
+      thread.sandboxProvider === "daytona" &&
+      context.repositoryEnvironment
+        ? getReadySnapshot(context.repositoryEnvironment, "daytona", sandboxSize, {
+            setupScriptHash,
+            baseDockerfileHash,
+            environmentVariablesHash: context.environmentVariablesHash,
+            mcpConfigHash: context.mcpConfigHash,
+          })
+        : null;
+
+    return {
+      threadName: thread.name,
+      agent: context.agent,
+      agentCredentials: context.agentCredentialsOrNull,
+      userName: user.name,
+      userEmail: user.email,
+      githubAccessToken,
+      githubRepoFullName: thread.githubRepoFullName,
+      repoBaseBranchName: thread.repoBaseBranchName,
+      userId,
+      sandboxProvider: thread.sandboxProvider,
+      sandboxSize,
+      environmentVariables: context.finalEnvironmentVariables,
+      createNewBranch,
+      branchName,
+      mcpConfig: context.mcpConfig || undefined,
+      autoUpdateDaemon: !!userFeatureFlags.autoUpdateDaemon,
+      customSystemPrompt: context.customSystemPrompt,
+      setupScript: context.repositoryEnvironment?.setupScript || null,
+      skipSetupScript: thread.skipSetup,
+      snapshotTemplateId: snapshot?.snapshotName ?? undefined,
+      publicUrl: nonLocalhostPublicAppUrl(),
+      featureFlags: userFeatureFlags,
+      generateBranchName: context.generateBranchNameWithPrefix,
+      onStatusUpdate: async ({
         sandboxId,
         sandboxStatus,
         bootingStatus,
-      });
-    },
-  });
+      }) => {
+        if (sandboxId && bootingStatus === "provisioning-done") {
+          getPostHogServer().capture({
+            distinctId: userId,
+            event: "sandbox_provisioned",
+            properties: {
+              threadId,
+              sandboxId,
+              sandboxProvider: thread.sandboxProvider,
+              githubRepoFullName: thread.githubRepoFullName,
+              durationMs: Date.now() - startTime,
+            },
+          });
+        }
+        await onStatusUpdate({
+          sandboxId,
+          sandboxStatus,
+          bootingStatus,
+        });
+      },
+    };
+  };
 
-  if (!thread.codesandboxId) {
+  const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
+  const startTime = Date.now();
+  const bootstrapContext = await getBootstrapContext();
+  let session: ISandboxSession;
+  try {
+    const bootstrapOptions = buildSandboxOptions(
+      bootstrapContext,
+    );
+    session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
+      ...bootstrapOptions,
+      fastResume: shouldFastResume,
+    });
+  } catch (error) {
+    if (!shouldFastResume) {
+      throw error;
+    }
+    const bootstrapOptions = buildSandboxOptions(bootstrapContext);
+    try {
+      session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
+        ...bootstrapOptions,
+        fastResume: false,
+      });
+    } catch (reconcileError) {
+      if (!isRecoverableSandboxIdError(reconcileError)) {
+        throw reconcileError;
+      }
+      session = await getOrCreateSandboxWithTimeout(null, {
+        ...bootstrapOptions,
+        fastResume: false,
+      });
+    }
+  }
+
+  if (
+    !thread.codesandboxId ||
+    thread.codesandboxId !== session.sandboxId ||
+    thread.sandboxSize !== sandboxSize
+  ) {
+    const updates: {
+      codesandboxId?: string;
+      sandboxSize: SandboxSize;
+    } = {
+      sandboxSize,
+    };
+    if (!thread.codesandboxId || thread.codesandboxId !== session.sandboxId) {
+      updates.codesandboxId = session.sandboxId;
+    }
     await updateThread({
       db,
       userId,
       threadId,
-      updates: {
-        codesandboxId: session.sandboxId,
-        sandboxSize,
-      },
+      updates,
     });
   }
   return session;
@@ -339,6 +461,53 @@ export async function createSandboxForThread({
     }
     throw wrapError("sandbox-creation-failed", error);
   }
+}
+
+function hashEnvironmentVariables(
+  environmentVariables: Array<{ key: string; value: string }>,
+): string {
+  return hashValue(
+    [...environmentVariables]
+      .map((variable) => ({
+        key: variable.key,
+        value: variable.value,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  );
+}
+
+function hashMcpConfig(
+  mcpConfig: CreateSandboxOptions["mcpConfig"] | null,
+): string {
+  return hashValue(mcpConfig);
+}
+
+function hashValue(value: unknown): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        normalizeForHash(value),
+      ),
+    )
+    .digest("hex");
+}
+
+function normalizeForHash(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeForHash);
+  }
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reduce(
+      (acc, key) => {
+        acc[key] = normalizeForHash((value as Record<string, unknown>)[key]);
+        return acc;
+      },
+      {} as Record<string, unknown>,
+    );
 }
 
 export async function maybeHibernateSandbox({

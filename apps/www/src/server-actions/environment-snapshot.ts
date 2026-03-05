@@ -2,12 +2,16 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
+import { createHash } from "node:crypto";
 import { getGitHubUserAccessToken } from "@/lib/github";
 import { UserFacingError } from "@/lib/server-actions";
 import { env } from "@terragon/env/apps-www";
+import type { McpConfig } from "@terragon/sandbox/mcp-config";
 import {
   getEnvironment,
+  getDecryptedGlobalEnvironmentVariables,
   getDecryptedEnvironmentVariables,
+  getDecryptedMcpConfig,
   updateEnvironment,
   updateEnvironmentSnapshot,
   getReadySnapshot,
@@ -46,6 +50,37 @@ export const buildEnvironmentSnapshot = userOnlyAction(
 
     const setupScriptHash = getSetupScriptHash(environment.setupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(size);
+    const [
+      repositoryEnvironmentVariables,
+      globalEnvironmentVariables,
+      resolvedMcpConfig,
+    ] = await Promise.all([
+      getDecryptedEnvironmentVariables({
+        db,
+        userId,
+        environmentId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedGlobalEnvironmentVariables({
+        db,
+        userId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+      getDecryptedMcpConfig({
+        db,
+        userId,
+        environmentId,
+        encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
+      }),
+    ]);
+    const mergedEnvironmentVariables = mergeEnvironmentVariables(
+      globalEnvironmentVariables,
+      repositoryEnvironmentVariables,
+    );
+    const environmentVariablesHash = hashEnvironmentVariables(
+      mergedEnvironmentVariables,
+    );
+    const mcpConfigHash = hashMcpConfig(resolvedMcpConfig);
 
     // Set status to building immediately
     const buildingEntry: EnvironmentSnapshot = {
@@ -55,6 +90,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
       status: "building",
       setupScriptHash,
       baseDockerfileHash,
+      environmentVariablesHash,
+      mcpConfigHash,
       builtAt: new Date().toISOString(),
     };
     await updateEnvironmentSnapshot({
@@ -64,20 +101,13 @@ export const buildEnvironmentSnapshot = userOnlyAction(
       snapshot: buildingEntry,
     });
 
-    const environmentVariables = await getDecryptedEnvironmentVariables({
-      db,
-      userId,
-      environmentId,
-      encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
-    });
-
     // Fire and forget — the build runs in the background
     buildRepoSnapshot({
       repoFullName: environment.repoFullName,
       baseBranch: "main", // Default to main; could be configurable
       githubAccessToken,
       setupScript: environment.setupScript,
-      environmentVariables,
+      environmentVariables: mergedEnvironmentVariables,
       size,
       onLogs: (chunk) => console.log(`[snapshot-build] ${chunk}`),
     })
@@ -89,6 +119,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
           status: "ready",
           setupScriptHash,
           baseDockerfileHash,
+          environmentVariablesHash,
+          mcpConfigHash,
           builtAt: new Date().toISOString(),
         };
         await updateEnvironmentSnapshot({
@@ -110,6 +142,8 @@ export const buildEnvironmentSnapshot = userOnlyAction(
           status: "failed",
           setupScriptHash,
           baseDockerfileHash,
+          environmentVariablesHash,
+          mcpConfigHash,
           error: error instanceof Error ? error.message : String(error),
           builtAt: new Date().toISOString(),
         };
@@ -193,3 +227,65 @@ export const getSnapshotStatus = userOnlyAction(
   },
   { defaultErrorMessage: "Failed to get snapshot status" },
 );
+
+function hashEnvironmentVariables(
+  environmentVariables: Array<{ key: string; value: string }>,
+): string {
+  return hashValue(
+    [...environmentVariables]
+      .map((variable) => ({
+        key: variable.key,
+        value: variable.value,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  );
+}
+
+function mergeEnvironmentVariables(
+  globalEnvironmentVariables: Array<{ key: string; value: string }>,
+  repositoryEnvironmentVariables: Array<{ key: string; value: string }>,
+): Array<{ key: string; value: string }> {
+  return Object.entries(
+    [...globalEnvironmentVariables, ...repositoryEnvironmentVariables].reduce(
+      (acc, variable) => {
+        acc[variable.key] = variable.value;
+        return acc;
+      },
+      {} as Record<string, string>,
+    ),
+  ).map(([key, value]) => ({ key, value }));
+}
+
+function hashMcpConfig(
+  mcpConfig: McpConfig | null,
+): string {
+  return hashValue(mcpConfig);
+}
+
+function hashValue(value: unknown): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        normalizeForHash(value),
+      ),
+    )
+    .digest("hex");
+}
+
+function normalizeForHash(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeForHash);
+  }
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reduce(
+      (acc, key) => {
+        acc[key] = normalizeForHash((value as Record<string, unknown>)[key]);
+        return acc;
+      },
+      {} as Record<string, unknown>,
+    );
+}

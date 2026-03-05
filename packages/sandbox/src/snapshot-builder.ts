@@ -75,19 +75,47 @@ export async function buildRepoSnapshot({
     try {
       const setupScriptPath = path.join(tmpDir, "terragon-setup.sh");
       fs.writeFileSync(setupScriptPath, setupScript);
+      const setupCommand = [
+        "PG_CLUSTER_LINE=\"$(pg_lsclusters --no-header 2>/dev/null | awk 'NF>=2 {print $1\" \"$2; exit}')\"",
+        "if [ -z \"$PG_CLUSTER_LINE\" ]; then",
+        "  PG_CLUSTER_LINE=\"16 main\"",
+        "fi",
+        "PG_CLUSTER_VERSION=\"$(echo \"$PG_CLUSTER_LINE\" | awk '{print $1}')\"",
+        "PG_CLUSTER_NAME=\"$(echo \"$PG_CLUSTER_LINE\" | awk '{print $2}')\"",
+        "pg_ctlcluster \"$PG_CLUSTER_VERSION\" \"$PG_CLUSTER_NAME\" start",
+        "redis-server --bind 127.0.0.1 --daemonize yes",
+        "for _ in $(seq 1 30); do",
+        "  pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && break",
+        "  sleep 1",
+        "done",
+        "if ! pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then",
+        "  echo \"PostgreSQL failed to start\"",
+        "  pg_ctlcluster \"$PG_CLUSTER_VERSION\" \"$PG_CLUSTER_NAME\" stop || true",
+        "  redis-cli shutdown || true",
+        "  exit 1",
+        "fi",
+        "for _ in $(seq 1 30); do",
+        "  redis-cli ping >/dev/null 2>&1 && break",
+        "  sleep 1",
+        "done",
+        "if ! redis-cli ping >/dev/null 2>&1; then",
+        "  echo \"Redis failed to start\"",
+        "  pg_ctlcluster \"$PG_CLUSTER_VERSION\" \"$PG_CLUSTER_NAME\" stop || true",
+        "  exit 1",
+        "fi",
+        "cd /root/repo && bash -x /tmp/terragon-setup.sh",
+        "EXIT_CODE=$?",
+        "pg_ctlcluster \"$PG_CLUSTER_VERSION\" \"$PG_CLUSTER_NAME\" stop || true",
+        "redis-cli shutdown || true",
+        "rm -f /tmp/terragon-setup.sh",
+        "exit \"$EXIT_CODE\"",
+      ].join(" && ");
       image = image
         .addLocalFile(setupScriptPath, "/tmp/terragon-setup.sh")
         .runCommands(
           "chmod +x /tmp/terragon-setup.sh",
           // Start services, run setup, stop services — all in one RUN layer
-          "pg_ctlcluster 16 main start" +
-            " && redis-server --bind 127.0.0.1 --daemonize yes" +
-            " && cd /root/repo && bash -x /tmp/terragon-setup.sh" +
-            " ; EXIT_CODE=$?" +
-            " ; pg_ctlcluster 16 main stop || true" +
-            " ; redis-cli shutdown || true" +
-            " ; rm -f /tmp/terragon-setup.sh" +
-            " ; exit $EXIT_CODE",
+          setupCommand,
         );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

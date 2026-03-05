@@ -321,10 +321,31 @@ export function getReadySnapshot(
   environment: { snapshots: EnvironmentSnapshot[] | null },
   provider: "daytona",
   size: SandboxSize,
+  filters?: {
+    setupScriptHash?: string;
+    baseDockerfileHash?: string;
+    environmentVariablesHash?: string;
+    mcpConfigHash?: string;
+  },
 ): EnvironmentSnapshot | null {
+  const {
+    setupScriptHash,
+    baseDockerfileHash,
+    environmentVariablesHash,
+    mcpConfigHash,
+  } = filters ?? {};
   return (
     environment.snapshots?.find(
-      (s) => s.provider === provider && s.size === size && s.status === "ready",
+      (s) =>
+        s.provider === provider &&
+        s.size === size &&
+        s.status === "ready" &&
+        (setupScriptHash ? s.setupScriptHash === setupScriptHash : true) &&
+        (baseDockerfileHash ? s.baseDockerfileHash === baseDockerfileHash : true) &&
+        (environmentVariablesHash
+          ? s.environmentVariablesHash === environmentVariablesHash
+          : true) &&
+        (mcpConfigHash ? s.mcpConfigHash === mcpConfigHash : true),
     ) ?? null
   );
 }
