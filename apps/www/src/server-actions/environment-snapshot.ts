@@ -18,7 +18,7 @@ import {
   buildRepoSnapshot,
   deleteRepoSnapshot,
   getSetupScriptHash,
-  getSnapshotDockerfileHash,
+  getSnapshotBaseTemplateId,
 } from "@terragon/sandbox/snapshot-builder";
 
 export const buildEnvironmentSnapshot = userOnlyAction(
@@ -45,7 +45,7 @@ export const buildEnvironmentSnapshot = userOnlyAction(
     }
 
     const setupScriptHash = getSetupScriptHash(environment.setupScript);
-    const baseDockerfileHash = getSnapshotDockerfileHash();
+    const baseDockerfileHash = getSnapshotBaseTemplateId(size);
 
     // Set status to building immediately
     const buildingEntry: EnvironmentSnapshot = {
