@@ -255,13 +255,13 @@ export async function setupSandboxOneTime(
   }
   await session.runCommand(`git clean -fxd`);
 
-  // Install daemon while setup script runs in background
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
     sandboxStatus: "booting",
     bootingStatus: "installing-agent",
   });
-  const daemonPromise = installDaemon({
+
+  const daemonInstallAndProbe = installDaemon({
     session,
     environmentVariables: options.environmentVariables || [],
     githubAccessToken: options.githubAccessToken,
@@ -269,33 +269,32 @@ export async function setupSandboxOneTime(
     userMcpConfig: options.mcpConfig,
     publicUrl: options.publicUrl,
     featureFlags: options.featureFlags,
-  });
-
-  // Wait for daemon to be ready (it has its own 1 second wait)
-  await daemonPromise;
-  await probeSandboxAgentEndpoint({
-    session,
-    options,
-  });
+  }).then(() => probeSandboxAgentEndpoint({ session, options }));
 
   // Only run terragon-setup.sh if not explicitly skipped and no snapshot
   if (options.skipSetupScript || options.snapshotTemplateId) {
     console.log("Skipping setup script (snapshot or explicit skip)");
+    await daemonInstallAndProbe;
   } else {
+    // Daemon startup (~15s for Node.js spawn on Daytona) and the setup script
+    // are fully independent — run them in parallel to hide the spawn latency.
     await options.onStatusUpdate({
       sandboxId: session.sandboxId,
       sandboxStatus: "booting",
       bootingStatus: "running-setup-script",
     });
-    await runSetupScript({
-      session,
-      options: {
-        environmentVariables: options.environmentVariables,
-        githubAccessToken: options.githubAccessToken,
-        agentCredentials: options.agentCredentials,
-        setupScript: options.setupScript,
-      },
-    });
+    await Promise.all([
+      daemonInstallAndProbe,
+      runSetupScript({
+        session,
+        options: {
+          environmentVariables: options.environmentVariables,
+          githubAccessToken: options.githubAccessToken,
+          agentCredentials: options.agentCredentials,
+          setupScript: options.setupScript,
+        },
+      }),
+    ]);
   }
 }
 

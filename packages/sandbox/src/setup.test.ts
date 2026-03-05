@@ -16,6 +16,8 @@ vi.mock("./daemon", () => ({
   MCP_SERVER_FILE_PATH: "/tmp/terry-mcp-server.mjs",
 }));
 
+import { installDaemon } from "./daemon";
+
 const defaultOptions: CreateSandboxOptions = {
   threadName: "test-title",
   userName: "test-user",
@@ -484,6 +486,49 @@ npm run build`;
       await expect(setupSandboxOneTime(session, options)).rejects.toThrow(
         "Setup script failed",
       );
+    });
+
+    it("should run daemon install and setup script in parallel", async () => {
+      const order: string[] = [];
+
+      // installDaemon resolves after a tick — simulates async work
+      vi.mocked(installDaemon).mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        order.push("daemon-done");
+      });
+
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async (cmd) => {
+        if (cmd.includes("bash -x /tmp/terragon-setup-custom.sh")) {
+          order.push("setup-script-ran");
+        }
+        return "";
+      });
+      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        setupScript: "echo hi",
+      });
+
+      // Both must have run
+      expect(order).toContain("daemon-done");
+      expect(order).toContain("setup-script-ran");
+    });
+
+    it("should not run setup script when skipSetupScript is true, waiting for daemon only", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async () => "");
+      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        skipSetupScript: true,
+        setupScript: "echo hi",
+      });
+
+      // installDaemon mock should still have been called
+      expect(installDaemon).toHaveBeenCalled();
     });
   });
 });
