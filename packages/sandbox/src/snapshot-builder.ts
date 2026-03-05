@@ -12,6 +12,23 @@ const RESOURCE_MAP: Record<SandboxSize, Resources> = {
   large: { cpu: 4, memory: 8, disk: 10 },
 };
 
+// Keep in sync with packages/sandbox-image/supervisord.conf
+const SUPERVISORD_CONF = `[supervisord]
+nodaemon=true               ; run supervisord in the foreground
+logfile=/dev/null           ; don't log to a file
+pidfile=/var/run/supervisord.pid
+
+[program:dockerd]
+command=/usr/bin/dockerd -D
+priority=10
+autostart=true
+autorestart=true
+stdout_logfile=/dev/fd/1
+stderr_logfile=/dev/fd/2
+stdout_logfile_maxbytes=0
+stderr_logfile_maxbytes=0
+`;
+
 function getDaytonaClient(): Daytona {
   const apiKey = process.env.DAYTONA_API_KEY;
   if (!apiKey) throw new Error("DAYTONA_API_KEY is not set");
@@ -43,6 +60,9 @@ export async function buildRepoSnapshot({
     const dockerfileContent = renderDockerfile("daytona");
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(dockerfilePath, dockerfileContent);
+
+    // Write supervisord.conf — required by COPY instruction in the Dockerfile
+    fs.writeFileSync(path.join(tmpDir, "supervisord.conf"), SUPERVISORD_CONF);
 
     // Build image from base Dockerfile + repo-specific layers
     let image = Image.fromDockerfile(dockerfilePath);
