@@ -257,7 +257,9 @@ async function getOrCreateSandboxForThread({
     setupScript: repositoryEnvironment.setupScript,
     skipSetupScript: thread.skipSetup,
     snapshotTemplateId: snapshot?.snapshotName ?? undefined,
-    fastResume: fastResume && !!thread.codesandboxId,
+    fastResume:
+      (fastResume || thread.sandboxStatus === "running") &&
+      !!thread.codesandboxId,
     publicUrl: nonLocalhostPublicAppUrl(),
     featureFlags: userFeatureFlags,
     generateBranchName: generateBranchNameWithPrefix,
