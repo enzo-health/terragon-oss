@@ -366,11 +366,17 @@ async function getOrCreateSandboxForThread({
 
     const resolvedSetupScript =
       resolvedRepositoryEnvironment.setupScript ??
-      (resolvedRepositoryEnvironment.repoFullName
+      (resolvedRepositoryEnvironment.repoFullName && githubAccessToken
         ? await getSetupScriptFromRepo({
             db,
             userId,
             environmentId: resolvedRepositoryEnvironment.id,
+          }).catch((err) => {
+            console.warn(
+              "[sandbox] Could not fetch terragon-setup.sh, skipping:",
+              err instanceof Error ? err.message : String(err),
+            );
+            return null;
           })
         : null);
 
