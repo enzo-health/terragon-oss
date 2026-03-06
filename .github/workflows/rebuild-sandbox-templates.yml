@@ -17,6 +17,9 @@ on:
           - e2b:small
           - e2b:large
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest

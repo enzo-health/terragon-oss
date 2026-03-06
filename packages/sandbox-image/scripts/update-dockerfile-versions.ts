@@ -5,9 +5,14 @@
  * - @openai/codex
  * - @sourcegraph/amp
  * - opencode-ai
+ * - @sandbox-agent/cli
  *
  * Fetches versions using `npm view <pkg> version --json`.
- * Run with: bun packages/sandbox-image/scripts/update-dockerfile-versions.ts [--dry-run]
+ * Run with: bun packages/sandbox-image/scripts/update-dockerfile-versions.ts [--dry-run] [--check]
+ *
+ * --dry-run  Show what would change without writing files.
+ * --check    Verify Dockerfile.hbs and src/daytona-base.ts have identical version
+ *            pins without fetching from npm. Exits 1 if they differ.
  */
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -51,6 +56,11 @@ const PACKAGES: Pkg[] = [
     name: "@google/gemini-cli",
     // Matches @google/gemini-cli@<semver>
     regex: /@google\/gemini-cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
+  },
+  {
+    name: "@sandbox-agent/cli",
+    // Matches @sandbox-agent/cli@<semver>
+    regex: /@sandbox-agent\/cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
   },
 ];
 

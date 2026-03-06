@@ -23,7 +23,7 @@
     "create-template:e2b:large": "NODE_ENV=production tsx scripts/create-template.ts --size=large --provider=e2b",
     "create-template:daytona:small": "NODE_ENV=production tsx scripts/create-template.ts --size=small --provider=daytona",
     "create-template:daytona:large": "NODE_ENV=production tsx scripts/create-template.ts --size=large --provider=daytona",
-    "create-template:all": "pnpm create-template:e2b:small && pnpm create-template:e2b:large && pnpm create-template:daytona:small && pnpm create-template:daytona:large",
+    "create-template:all": "pnpm update-dockerfile-versions && SKIP_VERSION_UPDATE=true pnpm create-template:e2b:small && SKIP_VERSION_UPDATE=true pnpm create-template:e2b:large && SKIP_VERSION_UPDATE=true pnpm create-template:daytona:small && SKIP_VERSION_UPDATE=true pnpm create-template:daytona:large",
     "update-dockerfile-versions": "bun scripts/update-dockerfile-versions.ts",
     "check-versions-sync": "bun scripts/update-dockerfile-versions.ts --check"
   },

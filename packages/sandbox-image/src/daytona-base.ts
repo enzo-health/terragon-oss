@@ -35,7 +35,7 @@ export function getDaytonaBaseCommands(): string[] {
     "RUN curl -fsSL https://bun.sh/install | bash && ln -s /root/.bun/bin/bun /usr/local/bin/bun",
 
     // npm global packages (pinned versions — keep in sync with Dockerfile.daytona)
-    "RUN npm install -g pnpm @anthropic-ai/claude-code@2.1.70 @google/gemini-cli@0.32.1 @sourcegraph/amp@0.0.1772802427-gaf6d64 @openai/codex@0.111.0 opencode-ai@1.2.20 @sandbox-agent/cli@0.2.1",
+    "RUN npm install -g pnpm @anthropic-ai/claude-code@2.1.70 @google/gemini-cli@0.32.1 @sourcegraph/amp@0.0.1772802427-gaf6d64 @openai/codex@0.111.0 opencode-ai@1.2.20 @sandbox-agent/cli@0.2.2",
 
     // Codex config (replaces heredoc)
     "RUN mkdir -p /root/.codex && printf '[model_providers.openai]\\nname = \"openai\"\\nstream_idle_timeout_ms = 600000\\nstream_max_retries = 20\\n' > /root/.codex/config.toml",
