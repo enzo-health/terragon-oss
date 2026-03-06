@@ -22,7 +22,6 @@
  */
 
 import { Daytona, Image } from "@daytonaio/sdk";
-import crypto from "crypto";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN!;
 const DAYTONA_JWT = process.env.DAYTONA_JWT!;
@@ -125,54 +124,29 @@ async function testFullSnapshotBuild(daytona: Daytona) {
     "#!/bin/bash\nset -e\necho 'terragon-setup.sh executed successfully'\n";
 
   // Determine base image ref.
-  // Production uses DAYTONA_API_KEY and resolves the template via snapshot.get().ref.
-  // JWT-only test falls back to ubuntu:22.04 to exercise the API call flow without
-  // requiring private registry auth (cr.app.daytona.io requires service-account creds).
+  // All Daytona snapshots (including templates) live in cr.app.daytona.io/sbox/ which
+  // Docker build workers cannot pull from with personal API keys. A service-account key
+  // is required for production builds using the Terragon template. The JWT-only /
+  // ubuntu:22.04 path confirms the full code flow (git clone, setup script, snapshot
+  // lifecycle) without registry auth.
   let baseImageRef: string;
   if (DAYTONA_API_KEY) {
-    console.log(`  Mode: production (API key) — using relay approach`);
+    console.log(`  Mode: production (API key) — using Terragon template`);
     const apiKeyDaytona = new Daytona({ apiKey: DAYTONA_API_KEY });
-
-    // Relay: copy template into our org via imageName string API (no Docker pull needed).
-    // Daytona resolves the template server-side; the resulting relay snapshot lives in
-    // our namespace and is freely pullable by our build workers.
-    const relayHash = crypto
-      .createHash("sha256")
-      .update(TEMPLATE_SNAPSHOT_NAME)
-      .digest("hex")
-      .slice(0, 16);
-    const relayName = `terragon-relay-${relayHash}`;
-
-    // Fetch the template's ref first (requires tag format for imageName API)
-    const templateSnapshot = (await (apiKeyDaytona as any).snapshot.get(
+    const templateSnapshot = await (apiKeyDaytona as any).snapshot.get(
       TEMPLATE_SNAPSHOT_NAME,
-    )) as any;
-    const templateRef: string = templateSnapshot.ref ?? TEMPLATE_SNAPSHOT_NAME;
-    console.log(`  Template ref: ${templateRef}`);
-
-    let relayRef: string | undefined;
-    try {
-      const existing = (await (apiKeyDaytona as any).snapshot.get(
-        relayName,
-      )) as any;
-      relayRef = existing.ref;
-      console.log(`  Relay: found existing ${relayName}`);
-    } catch {
-      // Use templateRef (has :daytona tag) as imageName — Daytona may handle
-      // auth to its own registry server-side (unlike Dockerfile FROM)
-      console.log(`  Relay: creating from ref ${templateRef}...`);
-      const relay = (await (apiKeyDaytona as any).snapshot.create(
-        { name: relayName, image: templateRef },
-        {
-          onLogs: (chunk: string) => process.stdout.write(`  [relay] ${chunk}`),
-          timeout: 0,
-        },
-      )) as any;
-      relayRef = relay.ref;
-      console.log(`  Relay: created ${relayName} → ${relayRef}`);
-    }
-    baseImageRef = relayRef ?? relayName;
-    console.log(`  Base image ref: ${baseImageRef}`);
+    );
+    baseImageRef = templateSnapshot.ref ?? TEMPLATE_SNAPSHOT_NAME;
+    console.log(`  Template ref: ${baseImageRef}`);
+    console.log(
+      `  ⚠️  Build will fail with personal API keys — needs service-account key`,
+    );
+    console.log(
+      `     Reason: Docker build workers can't pull from cr.app.daytona.io/sbox/`,
+    );
+    console.log(
+      `     Fix: contact Daytona support for service-account credentials`,
+    );
   } else {
     console.log(
       `  Mode: JWT-only — falling back to ubuntu:22.04 (skips private registry auth)`,
