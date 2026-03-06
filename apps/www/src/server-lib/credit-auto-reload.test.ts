@@ -58,6 +58,13 @@ describe("maybeTriggerCreditAutoReload", () => {
     vi.clearAllMocks();
     vi.resetAllMocks();
 
+    vi.spyOn(stripeConfig, "isStripeConfiguredForCredits").mockReturnValue(
+      true,
+    );
+    vi.spyOn(stripeConfig, "getStripeCreditPackPriceId").mockReturnValue(
+      "STRIPE_PRICE_CREDIT_PACK_TEST",
+    );
+
     stripeInvoicesCreateSpy = vi
       .spyOn(stripeConfig, "stripeInvoicesCreate")
       .mockResolvedValue({

@@ -94,12 +94,22 @@ export async function handleAppMention({
     );
     return;
   }
-  const knownAccount = await isKnownGitHubAccount({
-    gitHubAccountId: commentGitHubAccountId,
-  });
-  if (!knownAccount) {
+  // Find all Terragon users who should get tasks created
+  const [knownAccount, usersToTriggerTasks] = await Promise.all([
+    isKnownGitHubAccount({
+      gitHubAccountId: commentGitHubAccountId,
+    }),
+    getUsersToTriggerTasks({
+      repoFullName,
+      issueOrPrType,
+      issueOrPrNumber,
+      commentGitHubUsername,
+      commentGitHubAccountId,
+    }),
+  ]);
+  if (!knownAccount && usersToTriggerTasks.length === 0) {
     console.log(
-      `GitHub user ${commentGitHubUsername} has no access, posting setup guidance comment`,
+      `GitHub user ${commentGitHubUsername} has no access and no matching automation, posting setup guidance comment`,
     );
     await postIntegrationSetupComment({
       octokit,
@@ -112,13 +122,12 @@ export async function handleAppMention({
   }
 
   // Find all Terragon users who should get tasks created
-  const usersToTriggerTasks = await getUsersToTriggerTasks({
-    repoFullName,
-    issueOrPrType,
-    issueOrPrNumber,
-    commentGitHubUsername,
-    commentGitHubAccountId,
-  });
+  if (!knownAccount && usersToTriggerTasks.length > 0) {
+    console.log(
+      `GitHub user ${commentGitHubUsername} has no direct access, but matched automation recipients were found`,
+      { usersToTriggerTasks: usersToTriggerTasks.length },
+    );
+  }
   if (usersToTriggerTasks.length === 0) {
     console.log(`No users to create tasks for mention`, {
       issueOrPrType,

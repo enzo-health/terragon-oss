@@ -650,20 +650,11 @@ async function getLatestPendingBypassForImplementation({
 
   for (const candidate of candidates) {
     const payload = candidate.payload as SdlcHumanInterventionPayload;
-    const requestedAt =
-      typeof payload.requestedAt === "string"
-        ? Date.parse(payload.requestedAt)
-        : Number.NaN;
-    const now = Date.now();
-    const diffMs = now - requestedAt;
-    const requestIsFresh =
-      Number.isFinite(requestedAt) && diffMs >= 0 && diffMs <= 30 * 60 * 1000;
     if (
       payload.kind === "bypass_once" &&
       payload.gate === "quality" &&
       payload.actorUserId === expectedActorUserId &&
-      payload.loopVersion === expectedLoopVersion &&
-      requestIsFresh
+      payload.loopVersion === expectedLoopVersion
     ) {
       return { artifactId: candidate.id };
     }
@@ -1085,32 +1076,24 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       completions: completionUpdates,
     });
 
-    // Check for agent completion signal — until the agent signals
-    // phaseComplete, this is a progress checkpoint only (no gate, no follow-up)
-    const phaseComplete = detectPhaseCompleteSignal(
-      threadChat?.messages ?? null,
-    );
-
-    if (!phaseComplete) {
-      // Agent hasn't signaled completion — silent return
-      return true;
-    }
-
     const pendingBypass = await getLatestPendingBypassForImplementation({
       loopId: activeLoop.id,
       expectedActorUserId: userId,
       expectedLoopVersion: activeLoop.loopVersion,
     });
-    const bypassQualityGateOnce = pendingBypass
-      ? await consumeHumanInterventionArtifact({
-          artifactId: pendingBypass.artifactId,
-          loopId: activeLoop.id,
-          expectedActorUserId: userId,
-          expectedLoopVersion: activeLoop.loopVersion,
-        })
-      : false;
 
-    // Agent signaled phaseComplete — NOW evaluate the implementation gate
+    // Until completion is signaled (by agent or explicit human bypass),
+    // this is a progress checkpoint only (no gate, no follow-up).
+    const phaseComplete = detectPhaseCompleteSignal(
+      threadChat?.messages ?? null,
+    );
+    const shouldEvaluateImplementationGate = phaseComplete || !!pendingBypass;
+
+    if (!shouldEvaluateImplementationGate) {
+      return true;
+    }
+
+    // Completion has been signaled — NOW evaluate the implementation gate.
     if (!hasCodeDiffArtifact(diffOutput)) {
       const escalated = await transitionImplementationGateBlocked({
         db,
@@ -1190,6 +1173,14 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
 
     // Quality gate: lint, typecheck, test must pass
+    const bypassQualityGateOnce = pendingBypass
+      ? await consumeHumanInterventionArtifact({
+          artifactId: pendingBypass.artifactId,
+          loopId: activeLoop.id,
+          expectedActorUserId: userId,
+          expectedLoopVersion: activeLoop.loopVersion,
+        })
+      : false;
     const qualityResult =
       bypassQualityGateOnce || env.SKIP_LOCAL_QUALITY_CHECKS
         ? { gatePassed: true, failures: [] as string[] }
