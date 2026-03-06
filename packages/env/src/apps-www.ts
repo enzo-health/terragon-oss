@@ -138,6 +138,7 @@ export const env = envsafe(
     // Others
     RESEND_API_KEY: str({ allowEmpty: true, default: "" }),
     DISABLE_ONE_TIME_TOKEN_SIGNIN: bool({ default: true }),
+    SKIP_LOCAL_QUALITY_CHECKS: bool({ default: false }),
 
     // Comma-separated initial admin emails for internal bootstrap
     INITIAL_ADMIN_EMAILS: str({ allowEmpty: true, default: "" }),

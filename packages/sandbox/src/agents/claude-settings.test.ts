@@ -29,4 +29,11 @@ describe("buildClaudeCodeSettings", () => {
     expect(hookConfig.command).toBe("/tmp/terragon-quality-check.sh");
     expect(hookConfig.timeout).toBe(300);
   });
+
+  it("can disable Stop hook wiring", () => {
+    const parsed = JSON.parse(
+      buildClaudeCodeSettings({ enableStopHook: false }),
+    );
+    expect(parsed.hooks.Stop).toEqual([]);
+  });
 });

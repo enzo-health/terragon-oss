@@ -1182,9 +1182,10 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
 
     // Quality gate: lint, typecheck, test must pass
-    const qualityResult = bypassQualityGateOnce
-      ? { gatePassed: true, failures: [] as string[] }
-      : await runQualityCheckGateInSandbox(session);
+    const qualityResult =
+      bypassQualityGateOnce || env.SKIP_LOCAL_QUALITY_CHECKS
+        ? { gatePassed: true, failures: [] as string[] }
+        : await runQualityCheckGateInSandbox(session);
     if (!qualityResult.gatePassed) {
       const escalated = await transitionImplementationGateBlocked({
         db,

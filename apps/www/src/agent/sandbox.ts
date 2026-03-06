@@ -462,6 +462,7 @@ async function getOrCreateSandboxForThread({
       mcpConfig: context.mcpConfig || undefined,
       autoUpdateDaemon: !!userFeatureFlags.autoUpdateDaemon,
       customSystemPrompt: context.customSystemPrompt,
+      skipLocalQualityChecks: env.SKIP_LOCAL_QUALITY_CHECKS,
       setupScript: context.resolvedSetupScript,
       skipSetupScript: thread.skipSetup,
       snapshotTemplateId: snapshot?.snapshotName ?? undefined,

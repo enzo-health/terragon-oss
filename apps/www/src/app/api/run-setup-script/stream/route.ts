@@ -128,6 +128,7 @@ export async function POST(request: NextRequest) {
         environmentVariables: [],
         agentCredentials: null,
         autoUpdateDaemon: false,
+        skipLocalQualityChecks: env.SKIP_LOCAL_QUALITY_CHECKS,
         skipSetupScript: true,
         publicUrl: nonLocalhostPublicAppUrl(),
         featureFlags: featureFlags,
