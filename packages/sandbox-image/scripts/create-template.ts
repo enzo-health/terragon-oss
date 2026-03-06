@@ -108,6 +108,20 @@ function getDockerfileHash(): string {
   return crypto.createHash("sha256").update(dockerfileHbsContent).digest("hex");
 }
 
+function getLastBuiltHash(
+  provider: SandboxProvider,
+  size: SandboxSize,
+): string | null {
+  if (!fs.existsSync(templatesJsonPath)) return null;
+  const templates: any[] = JSON.parse(
+    fs.readFileSync(templatesJsonPath, "utf-8"),
+  );
+  const matches = templates.filter(
+    (t) => t.provider === provider && t.size === size,
+  );
+  return matches[matches.length - 1]?.dockerfileHash ?? null;
+}
+
 async function buildE2BTemplate(templateArgs: TemplateArgs) {
   // Render the Dockerfile for e2b
   const dockerfileContent = renderDockerfile("e2b");
@@ -137,6 +151,8 @@ async function buildDaytonaTemplate(templateArgs: TemplateArgs) {
   return name;
 }
 
+const MAX_TEMPLATES_PER_SLOT = 3;
+
 async function updateTemplatesJson({
   templateName,
   dockerfileHash,
@@ -157,8 +173,7 @@ async function updateTemplatesJson({
     const content = fs.readFileSync(templatesJsonPath, "utf-8");
     templates = JSON.parse(content);
   }
-  // Add or update the template entry
-  templates.push({
+  const newEntry = {
     name: templateName,
     dockerfileHash,
     cpuCount,
@@ -166,8 +181,43 @@ async function updateTemplatesJson({
     provider,
     size,
     createdAt: new Date().toISOString(),
-  });
-  fs.writeFileSync(templatesJsonPath, JSON.stringify(templates, null, 2));
+  };
+  // Prune old entries for this slot — keep the most recent MAX_TEMPLATES_PER_SLOT - 1
+  // so after adding the new entry we have exactly MAX_TEMPLATES_PER_SLOT.
+  const others = templates.filter(
+    (t) => !(t.provider === provider && t.size === size),
+  );
+  const slot = templates
+    .filter((t) => t.provider === provider && t.size === size)
+    .slice(-(MAX_TEMPLATES_PER_SLOT - 1));
+  fs.writeFileSync(
+    templatesJsonPath,
+    JSON.stringify([...others, ...slot, newEntry], null, 2),
+  );
+}
+
+async function commitAndPush({
+  templateName,
+  provider,
+  size,
+}: {
+  templateName: string;
+  provider: SandboxProvider;
+  size: SandboxSize;
+}) {
+  const filesToStage = [
+    dockerfileHbsPath,
+    path.join(__dirname, "../src/daytona-base.ts"),
+    getDockerfilePath(provider),
+    templatesJsonPath,
+  ].join(" ");
+
+  await runCommand(`git add ${filesToStage}`);
+  // Only commit if there are staged changes
+  await runCommand(
+    `git diff --staged --quiet || git commit -m "chore(sandbox-image): bump tool versions + new ${provider}/${size} template (${templateName})"`,
+  );
+  await runCommand("git push origin HEAD");
 }
 
 async function main() {
@@ -177,10 +227,29 @@ async function main() {
   if (!provider) {
     throw new Error("Provider is required");
   }
+
+  // Pull latest npm versions for all pinned tools before building.
+  // Skipped when SKIP_VERSION_UPDATE=true (set by create-template:all to avoid
+  // redundant npm fetches — the :all script runs the update once upfront).
+  if (!process.env.SKIP_VERSION_UPDATE) {
+    console.log("Updating tool versions to latest...");
+    await runCommand("pnpm run update-dockerfile-versions");
+  }
+
   // Default to 2vCPU/4GB if not specified
   const cpuCount = size === "large" ? 4 : 2;
   const memoryGB = size === "large" ? 8 : 4;
   const dockerfileHash = getDockerfileHash();
+
+  // Skip the build if Dockerfile.hbs hasn't changed since the last template
+  // for this provider+size. Prevents redundant weekly rebuilds.
+  const lastHash = getLastBuiltHash(provider, size);
+  if (lastHash === dockerfileHash) {
+    console.log(
+      `Dockerfile unchanged since last ${provider}/${size} build. Skipping.`,
+    );
+    return;
+  }
   console.log(`Creating ${provider} template for ${size} size...`);
   console.log(` * CPU: ${cpuCount} vCPU`);
   console.log(` * Memory: ${memoryGB}GB`);
@@ -216,6 +285,9 @@ async function main() {
     size,
     durationMs: Date.now() - startTime,
   });
+
+  // Commit version bumps + rendered Dockerfile + new templates.json entry
+  await commitAndPush({ templateName, provider, size });
 }
 
 main().catch((e) => {
