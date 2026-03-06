@@ -45,6 +45,9 @@ export async function buildRepoSnapshot({
   // Use the snapshot's `ref` (a Daytona container-registry URI) as the FROM base.
   // Template names like "terry-vCPU-2-RAM-4GB-..." contain uppercase letters which
   // Docker rejects in FROM directives; the `ref` is always a lowercase SHA digest URI.
+  // NOTE: pulling from cr.app.daytona.io/sbox/ requires Daytona build workers to have
+  // registry credentials. This works with a service-account API key; personal API keys
+  // may fail with "unauthorized". Contact Daytona support if builds fail here.
   const templateSnapshot = (await daytona.snapshot.get(baseTemplateId)) as any;
   const baseImageRef: string = templateSnapshot.ref ?? baseTemplateId;
   let image = Image.base(baseImageRef);
