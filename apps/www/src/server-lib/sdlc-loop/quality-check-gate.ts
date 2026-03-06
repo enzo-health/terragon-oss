@@ -5,8 +5,17 @@ export type QualityCheckResult = {
   failures: string[];
 };
 
-const COMMAND_TIMEOUT_MS = 120_000;
+const COMMAND_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_LENGTH = 2000;
+
+// Sandbox has 48+ visible CPUs but only 8GB RAM. Limit worker parallelism to
+// prevent test runners from spawning 48 workers and OOM-killing with SIGKILL.
+const QUALITY_CHECK_ENV = {
+  NODE_OPTIONS: "--max-old-space-size=4096",
+  VITEST_MAX_WORKERS: "4",
+  JEST_WORKER_COUNT: "4",
+  UV_THREADPOOL_SIZE: "4",
+};
 
 function truncateOutput(output: string): string {
   if (output.length > MAX_OUTPUT_LENGTH) {
@@ -167,6 +176,7 @@ async function runScript(
     const output = await session.runCommand(`${pm} run ${script}`, {
       cwd,
       timeoutMs: COMMAND_TIMEOUT_MS,
+      env: QUALITY_CHECK_ENV,
     });
     return { passed: true, output };
   } catch (error) {
