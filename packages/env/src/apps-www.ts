@@ -142,6 +142,9 @@ export const env = envsafe(
     // Comma-separated initial admin emails for internal bootstrap
     INITIAL_ADMIN_EMAILS: str({ allowEmpty: true, default: "" }),
 
+    // If set, only GitHub users that are active members of this org can sign in
+    GITHUB_REQUIRED_ORG: str({ allowEmpty: true, default: "" }),
+
     // Loops (marketing email & events)
     LOOPS_API_KEY: str({ allowEmpty: true, default: "" }),
   },

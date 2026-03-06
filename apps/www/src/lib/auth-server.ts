@@ -25,6 +25,7 @@ import {
 } from "./server-actions";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import * as schema from "@terragon/shared/db/schema";
+import { isGitHubOrgMember } from "./github";
 
 const initialAdminEmails = new Set(
   env.INITIAL_ADMIN_EMAILS.split(",")
@@ -44,6 +45,16 @@ export const getSessionOrNull = cache(
       return null;
     }
     const user = await ensureAdminBootstrap(session.user);
+    const requiredOrg = env.GITHUB_REQUIRED_ORG.trim().toLowerCase();
+    if (requiredOrg) {
+      const isMember = await isGitHubOrgMember({
+        userId: user.id,
+        org: requiredOrg,
+      });
+      if (!isMember) {
+        return null;
+      }
+    }
     return {
       ...session,
       user,

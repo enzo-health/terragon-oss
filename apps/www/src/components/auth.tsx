@@ -39,7 +39,7 @@ export async function signInWithGithub({
     {
       provider: "github",
       callbackURL,
-      scopes: ["repo", "workflow"],
+      scopes: ["read:org", "repo", "workflow"],
     },
     {
       onRequest: (_ctx) => {

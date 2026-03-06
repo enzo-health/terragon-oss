@@ -24,6 +24,43 @@ const initialAdminEmails = new Set(
     .filter((email) => email.length > 0),
 );
 
+async function isRequiredGitHubOrgMember({
+  userId,
+}: {
+  userId: string;
+}): Promise<boolean> {
+  const requiredOrg = env.GITHUB_REQUIRED_ORG.trim().toLowerCase();
+  if (!requiredOrg) {
+    return true;
+  }
+
+  const accessTokenResult = await auth.api.getAccessToken({
+    body: { providerId: "github", userId },
+  });
+  const accessToken = accessTokenResult?.accessToken;
+  if (!accessToken) {
+    return false;
+  }
+
+  const response = await fetch(
+    `https://api.github.com/user/memberships/orgs/${encodeURIComponent(requiredOrg)}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "Terragon",
+      },
+      cache: "no-store",
+    },
+  );
+  if (!response.ok) {
+    return false;
+  }
+
+  const membership = (await response.json()) as { state?: string };
+  return membership.state === "active";
+}
+
 export const auth = betterAuth({
   account: {
     encryptOAuthTokens: true,
@@ -121,6 +158,12 @@ export const auth = betterAuth({
     account: {
       create: {
         after: async (account) => {
+          if (
+            account.providerId === "github" &&
+            !(await isRequiredGitHubOrgMember({ userId: account.userId }))
+          ) {
+            throw new Error("GitHub organization membership required");
+          }
           await maybeGrantSignupBonus({ db, userId: account.userId });
         },
       },
@@ -130,7 +173,7 @@ export const auth = betterAuth({
     github: {
       clientId: env.GITHUB_CLIENT_ID,
       clientSecret: env.GITHUB_CLIENT_SECRET,
-      scope: ["read:user", "user:email", "repo", "workflow"],
+      scope: ["read:user", "user:email", "read:org", "repo", "workflow"],
     },
   },
   plugins: [
