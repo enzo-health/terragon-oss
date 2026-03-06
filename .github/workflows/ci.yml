@@ -40,6 +40,8 @@ jobs:
         run: pnpm turbo lint
       - name: Check formatting
         run: pnpm turbo format-check
+      - name: Check sandbox image versions in sync
+        run: pnpm -C packages/sandbox-image check-versions-sync
       # Run tests
       - name: Tests
         run: pnpm turbo test --concurrency=1

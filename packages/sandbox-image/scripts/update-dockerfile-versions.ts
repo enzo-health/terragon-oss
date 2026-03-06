@@ -19,6 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DRY_RUN = process.argv.includes("--dry-run");
+const CHECK = process.argv.includes("--check");
 
 type Pkg = {
   name: string;
@@ -124,6 +125,52 @@ function updateDockerfile(
   }
 
   return { updated: before !== after, before, after, changes };
+}
+
+/** Extract the first version match for each package from a file's contents. */
+function extractVersions(contents: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  for (const { name, regex } of PACKAGES) {
+    // Reset lastIndex since regexes have the global flag
+    regex.lastIndex = 0;
+    const m = regex.exec(contents);
+    if (m) found[name] = m[1]!;
+  }
+  return found;
+}
+
+/**
+ * --check mode: verify Dockerfile.hbs and src/daytona-base.ts have identical
+ * version pins. Exits 1 if they differ. Does not fetch from npm.
+ */
+function checkSync() {
+  const dockerfileHbsPath = join(__dirname, "..", "Dockerfile.hbs");
+  const daytonaBasePath = join(__dirname, "..", "src", "daytona-base.ts");
+
+  const hbsVersions = extractVersions(readFileSync(dockerfileHbsPath, "utf8"));
+  const tsVersions = extractVersions(readFileSync(daytonaBasePath, "utf8"));
+
+  let allInSync = true;
+  for (const { name } of PACKAGES) {
+    const hbs = hbsVersions[name];
+    const ts = tsVersions[name];
+    if (!hbs && !ts) continue;
+    if (hbs !== ts) {
+      console.error(
+        `✗ ${name}: Dockerfile.hbs has ${hbs ?? "(missing)"}, daytona-base.ts has ${ts ?? "(missing)"}`,
+      );
+      allInSync = false;
+    }
+  }
+
+  if (!allInSync) {
+    console.error(
+      "\nRun `pnpm -C packages/sandbox-image update-dockerfile-versions` to fix.",
+    );
+    process.exit(1);
+  }
+
+  console.log("✓ Dockerfile.hbs and src/daytona-base.ts are in sync.");
 }
 
 function logChanges(
@@ -262,7 +309,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (CHECK) {
+  checkSync();
+} else {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
