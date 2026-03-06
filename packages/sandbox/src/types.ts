@@ -38,6 +38,7 @@ export type CreateSandboxOptions = {
   mcpConfig?: McpConfig;
   autoUpdateDaemon: boolean;
   customSystemPrompt?: string | null; // Custom system prompt to append to Claude
+  skipLocalQualityChecks?: boolean; // Skip local lint/typecheck/test enforcement hooks and gates
   skipSetupScript?: boolean; // Skip running terragon-setup.sh during sandbox setup
   snapshotTemplateId?: string; // Per-repo Daytona snapshot name to use instead of generic template
   setupScript?: string | null; // Custom setup script to override repository's terragon-setup.sh

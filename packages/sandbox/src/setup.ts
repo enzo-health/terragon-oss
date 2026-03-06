@@ -361,6 +361,7 @@ export async function setupSandboxEveryTime({
         customSystemPrompt: options.customSystemPrompt,
         agent,
         agentCredentials: options.agentCredentials,
+        skipLocalQualityChecks: options.skipLocalQualityChecks ?? false,
         isCreatingSandbox,
         mcpConfig: options.mcpConfig,
         publicUrl: options.publicUrl,
@@ -466,6 +467,7 @@ async function updateAgentFiles({
   customSystemPrompt,
   agent,
   isCreatingSandbox,
+  skipLocalQualityChecks,
   mcpConfig,
   publicUrl,
 }: {
@@ -474,6 +476,7 @@ async function updateAgentFiles({
   agentCredentials: AIAgentCredentials | null;
   customSystemPrompt: string | null | undefined;
   isCreatingSandbox: boolean;
+  skipLocalQualityChecks: boolean;
   mcpConfig: McpConfig | undefined;
   publicUrl: CreateSandboxOptions["publicUrl"];
 }) {
@@ -492,14 +495,23 @@ async function updateAgentFiles({
         otherFiles: [
           {
             filename: "settings.json",
-            content: buildClaudeCodeSettings(),
+            content: buildClaudeCodeSettings({
+              enableStopHook: !skipLocalQualityChecks,
+            }),
           },
         ],
       });
       // Write quality check script to /tmp (outside config dir)
       const qualityCheckPath = "/tmp/terragon-quality-check.sh";
-      await session.writeTextFile(qualityCheckPath, buildQualityCheckScript());
-      await session.runCommand(`chmod +x ${qualityCheckPath}`, { cwd: "/" });
+      if (skipLocalQualityChecks) {
+        await session.runCommand(`rm -f ${qualityCheckPath}`, { cwd: "/" });
+      } else {
+        await session.writeTextFile(
+          qualityCheckPath,
+          buildQualityCheckScript(),
+        );
+        await session.runCommand(`chmod +x ${qualityCheckPath}`, { cwd: "/" });
+      }
       break;
     }
     case "codex": {

@@ -306,6 +306,47 @@ describe("sandbox-setup", () => {
       );
     });
 
+    it("should disable local quality hooks for claudeCode when skipLocalQualityChecks is true", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async (cmd) => {
+          if (cmd === "cd && pwd") return "/home/user";
+          return "";
+        });
+      const writeTextFileSpy = vi
+        .spyOn(session, "writeTextFile")
+        .mockImplementation(async () => {});
+
+      const options = {
+        ...defaultOptions,
+        agent: "claudeCode" as const,
+        skipLocalQualityChecks: true,
+      };
+
+      await setupSandboxEveryTime({
+        session,
+        options,
+        isCreatingSandbox: false,
+      });
+
+      const settingsCall = writeTextFileSpy.mock.calls.find(
+        ([filePath]) => filePath === "/home/user/.claude/settings.json",
+      );
+      expect(settingsCall).toBeDefined();
+      const parsedSettings = JSON.parse((settingsCall?.[1] as string) ?? "{}");
+      expect(parsedSettings?.hooks?.Stop).toEqual([]);
+
+      expect(writeTextFileSpy).not.toHaveBeenCalledWith(
+        "/tmp/terragon-quality-check.sh",
+        expect.any(String),
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        "rm -f /tmp/terragon-quality-check.sh",
+        { cwd: "/" },
+      );
+    });
+
     it("should not run the setup script during resume setup", async () => {
       const session = new MockSession("mock-sandbox");
       vi.mocked(installDaemon).mockClear();
