@@ -312,7 +312,10 @@ export async function maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
       messages: threadChat.messages,
-      queuedMessagesForRetry: queuedMessagesSnapshot,
+      // Queued messages were already appended into `messages` by
+      // appendAndResetQueuedMessages. Re-queueing here would duplicate the
+      // same user prompts on subsequent retries.
+      queuedMessagesForRetry: [],
       error,
     });
   }

@@ -1093,15 +1093,6 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       return true;
     }
 
-    const bypassQualityGateOnce = pendingBypass
-      ? await consumeHumanInterventionArtifact({
-          artifactId: pendingBypass.artifactId,
-          loopId: activeLoop.id,
-          expectedActorUserId: userId,
-          expectedLoopVersion: activeLoop.loopVersion,
-        })
-      : false;
-
     // Completion has been signaled — NOW evaluate the implementation gate.
     if (!hasCodeDiffArtifact(diffOutput)) {
       const escalated = await transitionImplementationGateBlocked({
@@ -1182,6 +1173,14 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
 
     // Quality gate: lint, typecheck, test must pass
+    const bypassQualityGateOnce = pendingBypass
+      ? await consumeHumanInterventionArtifact({
+          artifactId: pendingBypass.artifactId,
+          loopId: activeLoop.id,
+          expectedActorUserId: userId,
+          expectedLoopVersion: activeLoop.loopVersion,
+        })
+      : false;
     const qualityResult =
       bypassQualityGateOnce || env.SKIP_LOCAL_QUALITY_CHECKS
         ? { gatePassed: true, failures: [] as string[] }
