@@ -30,6 +30,13 @@ export function getSandboxProvider(
       );
     case "daytona":
       return new DaytonaProvider();
+    case "opensandbox":
+      // OpenSandboxProvider requires DB callbacks injected at the apps/www layer.
+      // Use CreateSandboxOptions.providerInstance instead of this factory.
+      throw new Error(
+        "OpenSandboxProvider cannot be instantiated via getSandboxProvider(). " +
+          "Pass a pre-built instance via CreateSandboxOptions.providerInstance.",
+      );
     default:
       const _exhaustiveCheck: never = provider;
       throw new Error(`Unknown sandbox provider: ${_exhaustiveCheck}`);

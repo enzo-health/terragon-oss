@@ -2035,3 +2035,90 @@ export const linearWebhookDeliveries = pgTable("linear_webhook_deliveries", {
   threadId: text("thread_id"), // set once thread is created
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// Mac Mini Worker Fleet (OpenSandbox provider)
+// ---------------------------------------------------------------------------
+
+/**
+ * Registry of Mac Mini machines running the OpenSandbox lifecycle server.
+ * Workers are paired via QR code during setup and tracked here for allocation.
+ */
+export const macMiniWorker = pgTable(
+  "mac_mini_worker",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    hostname: text("hostname").notNull(), // Tailscale IP, e.g. "100.64.1.5"
+    port: integer("port").notNull().default(8080),
+    apiKeyEncrypted: text("api_key_encrypted").notNull(),
+    status: text("status")
+      .$type<"online" | "offline" | "draining" | "maintenance">()
+      .notNull()
+      .default("offline"),
+    // With 1 sandbox per Mac Mini, this is effectively a boolean (0 or 1)
+    maxConcurrentSandboxes: integer("max_concurrent_sandboxes")
+      .notNull()
+      .default(1),
+    currentSandboxCount: integer("current_sandbox_count").notNull().default(0),
+    lastHealthCheckAt: timestamp("last_health_check_at", { mode: "date" }),
+    lastHealthCheckSuccess: boolean("last_health_check_success"),
+    consecutiveHealthFailures: integer("consecutive_health_failures")
+      .notNull()
+      .default(0),
+    // Hardware info populated from health checks / QR code payload
+    cpuCores: integer("cpu_cores"),
+    memoryGB: integer("memory_gb"),
+    osVersion: text("os_version"),
+    openSandboxVersion: text("opensandbox_version"),
+    dockerVersion: text("docker_version"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("mac_mini_worker_status_idx").on(table.status),
+    uniqueIndex("mac_mini_worker_hostname_port_idx").on(
+      table.hostname,
+      table.port,
+    ),
+  ],
+);
+
+/**
+ * Tracks which OpenSandbox container is running on which Mac Mini worker.
+ * One row per active/paused sandbox. Deleted when a sandbox is fully shut down.
+ */
+export const macMiniSandboxAllocation = pgTable(
+  "mac_mini_sandbox_allocation",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workerId: text("worker_id")
+      .notNull()
+      .references(() => macMiniWorker.id, { onDelete: "cascade" }),
+    sandboxId: text("sandbox_id").notNull(), // Container ID on the Mac Mini
+    threadId: text("thread_id").references(() => thread.id, {
+      onDelete: "set null",
+    }),
+    status: text("status")
+      .$type<"running" | "paused" | "stopped">()
+      .notNull()
+      .default("running"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("mac_mini_alloc_worker_idx").on(table.workerId),
+    uniqueIndex("mac_mini_alloc_sandbox_idx").on(table.sandboxId),
+    index("mac_mini_alloc_thread_idx").on(table.threadId),
+  ],
+);

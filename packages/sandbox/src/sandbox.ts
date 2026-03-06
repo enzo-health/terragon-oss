@@ -1,5 +1,5 @@
 import type { SandboxProvider } from "@terragon/types/sandbox";
-import type { CreateSandboxOptions } from "./types";
+import type { CreateSandboxOptions, ISandboxProvider } from "./types";
 import { getSandboxProvider } from "./provider";
 import { setupSandboxEveryTime, setupSandboxOneTime } from "./setup";
 
@@ -7,7 +7,8 @@ export async function getOrCreateSandbox(
   sandboxId: string | null,
   options: CreateSandboxOptions,
 ) {
-  const provider = getSandboxProvider(options.sandboxProvider);
+  const provider =
+    options.providerInstance ?? getSandboxProvider(options.sandboxProvider);
   const log = (msg: string) => {
     console.log(`[${options.sandboxProvider}] ${msg}`);
   };
@@ -60,32 +61,38 @@ export async function getOrCreateSandbox(
 export async function hibernateSandbox({
   sandboxProvider,
   sandboxId,
+  providerInstance,
 }: {
   sandboxProvider: SandboxProvider;
   sandboxId: string;
+  providerInstance?: ISandboxProvider;
 }) {
-  const provider = getSandboxProvider(sandboxProvider);
+  const provider = providerInstance ?? getSandboxProvider(sandboxProvider);
   await provider.hibernateById(sandboxId);
 }
 
 export async function extendSandboxLife({
   sandboxProvider,
   sandboxId,
+  providerInstance,
 }: {
   sandboxProvider: SandboxProvider;
   sandboxId: string;
+  providerInstance?: ISandboxProvider;
 }) {
-  const provider = getSandboxProvider(sandboxProvider);
+  const provider = providerInstance ?? getSandboxProvider(sandboxProvider);
   await provider.extendLife(sandboxId);
 }
 
 export async function getSandboxOrNull({
   sandboxProvider,
   sandboxId,
+  providerInstance,
 }: {
   sandboxProvider: SandboxProvider;
   sandboxId: string;
+  providerInstance?: ISandboxProvider;
 }) {
-  const provider = getSandboxProvider(sandboxProvider);
+  const provider = providerInstance ?? getSandboxProvider(sandboxProvider);
   return await provider.getSandboxOrNull(sandboxId);
 }

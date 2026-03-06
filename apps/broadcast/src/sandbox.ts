@@ -91,6 +91,7 @@ async function resumeSandboxSession({
     }
     case "docker":
     case "mock":
+    case "opensandbox":
       throw new Error("Unsupported sandbox provider");
     default:
       const _exhaustiveCheck: never = sandboxProvider;

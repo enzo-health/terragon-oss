@@ -1,5 +1,7 @@
 export const devDefaultDatabaseUrl =
   "postgresql://postgres:postgres@localhost:5432/postgres";
+export const devDefaultWwwDatabaseUrl =
+  "postgresql://postgres:postgres@localhost:5432/terragon";
 export const devDefaultBetterAuthUrl = "http://localhost:3000";
 export const devDefaultAppUrl = devDefaultBetterAuthUrl;
 export const devDefaultWwwPort = 3000;

@@ -10,6 +10,7 @@ export function isSandboxTerminalSupported(sandboxProvider: SandboxProvider) {
       return false;
     case "docker":
     case "mock":
+    case "opensandbox":
       return false;
     default:
       const _exhaustiveCheck: never = sandboxProvider;

@@ -21,6 +21,9 @@ export type BootingSubstatus =
   | "booting-done";
 
 export type CreateSandboxOptions = {
+  /** Pre-built provider instance. When set, bypasses the getSandboxProvider factory.
+   * Required for providers that need external dependencies (e.g. OpenSandbox needs DB). */
+  providerInstance?: ISandboxProvider;
   threadName: string | null;
   agent: AIAgent | null;
   agentCredentials: AIAgentCredentials | null;

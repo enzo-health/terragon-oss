@@ -84,6 +84,16 @@ export const featureFlagsDefinitions = {
     description:
       "Forces the user to use Daytona sandbox provider regardless of their sandbox provider setting.",
   },
+  opensandboxProvider: {
+    defaultValue: false,
+    description:
+      "Enables the Mac Mini (OpenSandbox) provider option in settings.",
+  },
+  forceOpenSandbox: {
+    defaultValue: false,
+    description:
+      "Forces OpenSandbox provider for all tasks, regardless of user settings.",
+  },
   batchGitHubMentions: {
     defaultValue: false,
     enabledForPreview: false,

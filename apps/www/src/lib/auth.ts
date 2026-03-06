@@ -65,6 +65,9 @@ export const auth = betterAuth({
   account: {
     encryptOAuthTokens: true,
   },
+  emailAndPassword: {
+    enabled: true,
+  },
   baseUrl:
     process.env.NEXT_PUBLIC_VERCEL_ENV !== "preview"
       ? env.BETTER_AUTH_URL

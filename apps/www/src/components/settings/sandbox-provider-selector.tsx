@@ -8,10 +8,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 
 export function SandboxProviderSelector() {
   const userSettings = useAtomValue(userSettingsAtom);
   const userSettingsMutation = useUpdateUserSettingsMutation();
+  const isOpensandboxProviderEnabled = useFeatureFlag("opensandboxProvider");
   return (
     <Select
       value={userSettings?.sandboxProvider}
@@ -28,6 +30,9 @@ export function SandboxProviderSelector() {
         <SelectItem value="default">Default</SelectItem>
         <SelectItem value="e2b">E2B</SelectItem>
         <SelectItem value="daytona">Daytona</SelectItem>
+        {isOpensandboxProviderEnabled && (
+          <SelectItem value="opensandbox">Mac Mini (OpenSandbox)</SelectItem>
+        )}
       </SelectContent>
     </Select>
   );
