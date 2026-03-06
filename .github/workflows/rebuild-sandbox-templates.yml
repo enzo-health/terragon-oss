@@ -1,0 +1,59 @@
+name: Rebuild sandbox templates
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 6am UTC
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which templates to build"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - daytona:small
+          - daytona:large
+          - e2b:small
+          - e2b:large
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need write access to push version bumps + templates.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Install Daytona CLI
+        run: curl -sf -L https://download.daytona.io/daytona/install.sh | bash
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build templates
+        run: |
+          TARGET="${{ github.event.inputs.target || 'all' }}"
+          pnpm -C packages/sandbox-image "create-template:${TARGET}"
+        env:
+          NODE_ENV: production
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
