@@ -18,6 +18,11 @@ const QUALITY_CHECK_ENV = {
   // Monorepo task runners also parallelise across packages — cap them too
   TURBO_CONCURRENCY: "4",
   NX_MAX_PARALLEL: "4",
+  // tsgo (Go-based TypeScript checker) uses the Go runtime — NODE_OPTIONS has
+  // no effect on it. GOMEMLIMIT sets a soft cap so the Go GC cleans up before
+  // hitting the 8GB cgroup hard limit. GOMAXPROCS prevents 48-thread sprawl.
+  GOMEMLIMIT: "6GiB",
+  GOMAXPROCS: "4",
 };
 
 function truncateOutput(output: string): string {

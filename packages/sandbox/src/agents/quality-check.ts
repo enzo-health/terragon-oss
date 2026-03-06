@@ -59,6 +59,9 @@ export JEST_WORKER_COUNT=4
 export UV_THREADPOOL_SIZE=4
 export TURBO_CONCURRENCY=4
 export NX_MAX_PARALLEL=4
+# tsgo (Go-based tsc) ignores NODE_OPTIONS — use Go runtime vars instead
+export GOMEMLIMIT=6GiB
+export GOMAXPROCS=4
 
 # Install deps if missing
 if [ ! -d node_modules ]; then
