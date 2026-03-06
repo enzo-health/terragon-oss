@@ -52,6 +52,7 @@ const adminCategories: AdminCategory[] = [
       { title: "Environments", href: "/internal/admin/environment" },
       { title: "Active Sandboxes", href: "/internal/admin/sandboxes" },
       { title: "Sandbox Logs", href: "/internal/admin/sandbox" },
+      { title: "Mac Mini Workers", href: "/internal/admin/mac-minis" },
       { title: "Automations", href: "/internal/admin/automations" },
     ],
   },

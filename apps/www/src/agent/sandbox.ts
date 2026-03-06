@@ -31,7 +31,18 @@ import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
 import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
+  OpenSandboxProvider,
+  type OpenSandboxCallbacks,
+  type WorkerInfo,
 } from "@terragon/sandbox";
+import {
+  allocateMacMiniWorker,
+  getMacMiniWorkerById,
+  createAllocation,
+  releaseWorker as releaseMacMiniWorker,
+  updateAllocationStatus,
+} from "@terragon/shared/model/mac-mini-workers";
+import { decryptValue } from "@terragon/utils/encryption";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -46,6 +57,50 @@ import { ensureAgent } from "@terragon/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import type { UserSettings } from "@terragon/shared";
 import { redis } from "@/lib/redis";
+
+// ---------------------------------------------------------------------------
+// OpenSandbox provider factory (DB callbacks injected here to break the
+// packages/sandbox → @terragon/shared circular dependency)
+// ---------------------------------------------------------------------------
+
+function buildOpenSandboxProvider(): OpenSandboxProvider {
+  const encryptionKey = process.env.ENCRYPTION_MASTER_KEY;
+  if (!encryptionKey) throw new Error("ENCRYPTION_MASTER_KEY is not set");
+
+  const callbacks: OpenSandboxCallbacks = {
+    async allocateWorker(): Promise<WorkerInfo> {
+      const worker = await allocateMacMiniWorker(db);
+      if (!worker) throw new Error("No Mac Mini workers available");
+      return {
+        id: worker.id,
+        hostname: worker.hostname,
+        port: worker.port,
+        apiKey: decryptValue(worker.apiKeyEncrypted, encryptionKey),
+      };
+    },
+    async getWorker(workerId: string): Promise<WorkerInfo | null> {
+      const worker = await getMacMiniWorkerById(db, workerId);
+      if (!worker) return null;
+      return {
+        id: worker.id,
+        hostname: worker.hostname,
+        port: worker.port,
+        apiKey: decryptValue(worker.apiKeyEncrypted, encryptionKey),
+      };
+    },
+    async recordAllocation(workerId: string, containerId: string) {
+      await createAllocation(db, { workerId, sandboxId: containerId });
+    },
+    async releaseAllocation(containerId: string, _workerId: string) {
+      if (containerId) await releaseMacMiniWorker(db, containerId);
+    },
+    async setAllocationPaused(containerId: string) {
+      await updateAllocationStatus(db, containerId, "paused");
+    },
+  };
+
+  return new OpenSandboxProvider(callbacks);
+}
 
 const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
 const SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS = 120;
@@ -618,7 +673,14 @@ export async function maybeHibernateSandboxInternal({
   if (!shouldHibernate) {
     return false;
   }
-  await hibernateSandboxInternal({ sandboxProvider, sandboxId });
+  await hibernateSandboxInternal({
+    sandboxProvider,
+    sandboxId,
+    providerInstance:
+      sandboxProvider === "opensandbox"
+        ? buildOpenSandboxProvider()
+        : undefined,
+  });
   return true;
 }
 
@@ -662,6 +724,9 @@ export async function getSandboxProvider({
 
   // Check if user has forceDaytonaSandbox feature flag enabled
   const featureFlags = await getFeatureFlagsForUser({ db, userId });
+  if (featureFlags.forceOpenSandbox) {
+    return "opensandbox";
+  }
   if (featureFlags.forceDaytonaSandbox) {
     return "daytona";
   }
@@ -677,6 +742,8 @@ export async function getSandboxProvider({
       return "docker";
     case "mock":
       return "mock";
+    case "opensandbox":
+      return "opensandbox";
     default:
       const _exhaustiveCheck: never = userSetting;
       throw new Error(`Unknown sandbox provider: ${_exhaustiveCheck}`);
@@ -692,7 +759,33 @@ export async function getOrCreateSandbox(
   }
   const startTime = Date.now();
   try {
-    const sandbox = await getOrCreateSandboxInternal(sandboxId, options);
+    let sandbox: Awaited<ReturnType<typeof getOrCreateSandboxInternal>>;
+    if (options.sandboxProvider === "opensandbox") {
+      try {
+        sandbox = await getOrCreateSandboxInternal(sandboxId, {
+          ...options,
+          providerInstance: buildOpenSandboxProvider(),
+        });
+      } catch (opensandboxError) {
+        if (
+          opensandboxError instanceof Error &&
+          opensandboxError.message === "No Mac Mini workers available"
+        ) {
+          console.warn(
+            "OpenSandbox unavailable, falling back to Daytona",
+            opensandboxError,
+          );
+          sandbox = await getOrCreateSandboxInternal(sandboxId, {
+            ...options,
+            sandboxProvider: "daytona",
+          });
+        } else {
+          throw opensandboxError;
+        }
+      }
+    } else {
+      sandbox = await getOrCreateSandboxInternal(sandboxId, options);
+    }
     const duration = Date.now() - startTime;
     // Log sandbox creation or resume time to PostHog
     getPostHogServer().capture({

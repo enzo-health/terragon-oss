@@ -1,0 +1,7 @@
+{
+  "name": "@terragon/mac-mini-setup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mac Mini sandbox worker setup script for Terragon",
+  "packageManager": "pnpm@10.14.0"
+}

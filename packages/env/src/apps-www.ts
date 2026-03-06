@@ -7,7 +7,7 @@ import {
   num,
 } from "envsafe";
 import {
-  devDefaultDatabaseUrl,
+  devDefaultWwwDatabaseUrl,
   devDefaultBetterAuthSecret,
   devDefaultCronSecret,
   devDefaultInternalSharedSecret,
@@ -36,7 +36,7 @@ function shouldSkipEnvValidation(): boolean {
 export const env = envsafe(
   {
     DATABASE_URL: str({
-      devDefault: devDefaultDatabaseUrl,
+      devDefault: devDefaultWwwDatabaseUrl,
     }),
     REDIS_URL: str({
       devDefault: devDefaultRedisUrl,

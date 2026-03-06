@@ -16,7 +16,7 @@ import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { UserCookies } from "@/lib/cookies";
 import { getUserCookies } from "./cookies-server";
 import { redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   ServerActionOptions,
   wrapServerActionInternal,
@@ -47,6 +47,21 @@ export const getSessionOrNull = cache(
     const user = await ensureAdminBootstrap(session.user);
     const requiredOrg = env.GITHUB_REQUIRED_ORG.trim().toLowerCase();
     if (requiredOrg) {
+      const githubAccount = await db.query.account.findFirst({
+        where: and(
+          eq(schema.account.userId, user.id),
+          eq(schema.account.providerId, "github"),
+        ),
+      });
+
+      // Only enforce org membership once a user has linked a GitHub identity.
+      if (!githubAccount) {
+        return {
+          ...session,
+          user,
+        };
+      }
+
       const isMember = await isGitHubOrgMember({
         userId: user.id,
         org: requiredOrg,
