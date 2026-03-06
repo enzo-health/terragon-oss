@@ -170,6 +170,30 @@ async function updateTemplatesJson({
   fs.writeFileSync(templatesJsonPath, JSON.stringify(templates, null, 2));
 }
 
+async function commitAndPush({
+  templateName,
+  provider,
+  size,
+}: {
+  templateName: string;
+  provider: SandboxProvider;
+  size: SandboxSize;
+}) {
+  const filesToStage = [
+    dockerfileHbsPath,
+    path.join(__dirname, "../src/daytona-base.ts"),
+    getDockerfilePath(provider),
+    templatesJsonPath,
+  ].join(" ");
+
+  await runCommand(`git add ${filesToStage}`);
+  // Only commit if there are staged changes
+  await runCommand(
+    `git diff --staged --quiet || git commit -m "chore(sandbox-image): bump tool versions + new ${provider}/${size} template (${templateName})"`,
+  );
+  await runCommand("git push");
+}
+
 async function main() {
   if (!size) {
     throw new Error("Size is required");
@@ -177,6 +201,14 @@ async function main() {
   if (!provider) {
     throw new Error("Provider is required");
   }
+
+  // Pull latest npm versions for all pinned tools before building.
+  // This updates Dockerfile.hbs and src/daytona-base.ts in place.
+  console.log("Updating tool versions to latest...");
+  await runCommand(
+    `bun ${path.join(__dirname, "update-dockerfile-versions.ts")}`,
+  );
+
   // Default to 2vCPU/4GB if not specified
   const cpuCount = size === "large" ? 4 : 2;
   const memoryGB = size === "large" ? 8 : 4;
@@ -216,6 +248,9 @@ async function main() {
     size,
     durationMs: Date.now() - startTime,
   });
+
+  // Commit version bumps + rendered Dockerfile + new templates.json entry
+  await commitAndPush({ templateName, provider, size });
 }
 
 main().catch((e) => {
