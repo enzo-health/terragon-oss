@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { unwrapResult } from "@/lib/server-actions";
-import { createTestThread, createTestUser } from "@terragon/shared/model/test-helpers";
+import {
+  createTestThread,
+  createTestUser,
+} from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
 import { enrollSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
 import * as schema from "@terragon/shared/db/schema";
@@ -108,6 +111,57 @@ describe("sdlc-interventions", () => {
     ).toBe(loop?.loopVersion);
   });
 
+  it("does not create duplicate bypass markers for stale pending requests", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: { githubRepoFullName: "owner/repo" },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "blocked_on_human_feedback" })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    await db.insert(schema.sdlcPhaseArtifact).values({
+      loopId: loop!.id,
+      phase: "implementing",
+      artifactType: "human_intervention",
+      loopVersion: loop!.loopVersion,
+      generatedBy: "human",
+      status: "generated",
+      payload: {
+        kind: "bypass_once",
+        gate: "quality",
+        actorUserId: user.id,
+        loopVersion: loop!.loopVersion,
+        requestedAt: "2000-01-01T00:00:00.000Z",
+      },
+    });
+
+    await bypassOnce({ threadId, threadChatId: null });
+
+    const markers = await db.query.sdlcPhaseArtifact.findMany({
+      where: and(
+        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
+        eq(schema.sdlcPhaseArtifact.phase, "implementing"),
+        eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
+        eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
+        eq(schema.sdlcPhaseArtifact.status, "generated"),
+      ),
+    });
+    expect(markers).toHaveLength(1);
+  });
+
   it("rejects intervention when user is logged out", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({
@@ -118,9 +172,9 @@ describe("sdlc-interventions", () => {
 
     await mockLoggedOutUser();
 
-    await expect(
-      bypassOnce({ threadId, threadChatId: null }),
-    ).rejects.toThrow("Unauthorized");
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Unauthorized",
+    );
   });
 
   it("rejects resume when loop is not blocked", async () => {

@@ -816,7 +816,7 @@ function buildSdlcPhasePromptPrefix(
         "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
         "2. Linting passes (run the project's lint command if available)",
         "3. Type checking passes (run the project's typecheck command if available)",
-        "4. Tests pass (run the project's test command if available)",
+        "4. Tests pass (run targeted tests for affected package(s)/files; avoid full monorepo test runs unless explicitly required by the task or requested by the user)",
         "Fix any failures before setting phaseComplete: true.",
         "",
         "Only set phaseComplete: true when ALL planned tasks are implemented.",

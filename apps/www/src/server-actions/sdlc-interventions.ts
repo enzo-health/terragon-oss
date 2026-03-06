@@ -207,33 +207,21 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
           payload: true,
         },
       });
-      const hasMatchingFreshBypass = existingBypasses.some((candidate) => {
+      const hasMatchingBypass = existingBypasses.some((candidate) => {
         const payload = candidate.payload as {
           kind?: unknown;
           gate?: unknown;
           actorUserId?: unknown;
           loopVersion?: unknown;
-          requestedAt?: unknown;
         };
-        const requestedAt =
-          typeof payload.requestedAt === "string"
-            ? Date.parse(payload.requestedAt)
-            : Number.NaN;
-        const now = Date.now();
-        const diffMs = now - requestedAt;
-        const isFresh =
-          Number.isFinite(requestedAt) &&
-          diffMs >= 0 &&
-          diffMs <= 30 * 60 * 1000;
         return (
           payload.kind === "bypass_once" &&
           payload.gate === "quality" &&
           payload.actorUserId === userId &&
-          payload.loopVersion === lockedLoop.loopVersion &&
-          isFresh
+          payload.loopVersion === lockedLoop.loopVersion
         );
       });
-      if (hasMatchingFreshBypass) {
+      if (hasMatchingBypass) {
         return;
       }
 

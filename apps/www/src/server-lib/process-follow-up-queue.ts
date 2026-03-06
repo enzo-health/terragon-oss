@@ -6,7 +6,11 @@ import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import type { DBMessage, DBSystemMessage } from "@terragon/shared";
+import type {
+  DBMessage,
+  DBSystemMessage,
+  DBUserMessage,
+} from "@terragon/shared";
 
 const MAX_FOLLOW_UP_RETRIES = 3;
 
@@ -37,12 +41,14 @@ async function handleFollowUpFailure({
   threadId,
   threadChatId,
   messages,
+  queuedMessagesForRetry,
   error,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
   messages: DBMessage[] | null;
+  queuedMessagesForRetry: DBUserMessage[];
   error: unknown;
 }) {
   const formattedError = formatFollowUpError(error);
@@ -90,6 +96,7 @@ async function handleFollowUpFailure({
         threadChatId,
         eventType: "system.error",
         chatUpdates: {
+          replaceQueuedMessages: queuedMessagesForRetry,
           appendMessages: [
             {
               type: "system",
@@ -205,6 +212,7 @@ export async function maybeProcessFollowUpQueue({
     threadId,
     threadChatId: threadChat.id,
   });
+  const queuedMessagesSnapshot = [...threadChat.queuedMessages];
 
   // If the first queued message is a slash command, send it to the agent separately.
   // TODO: If there's slash commands in side of the queued messages and the slash command
@@ -261,6 +269,7 @@ export async function maybeProcessFollowUpQueue({
         threadId,
         threadChatId,
         messages: threadChat.messages,
+        queuedMessagesForRetry: queuedMessagesSnapshot,
         error,
       });
     }
@@ -303,6 +312,7 @@ export async function maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
       messages: threadChat.messages,
+      queuedMessagesForRetry: queuedMessagesSnapshot,
       error,
     });
   }
