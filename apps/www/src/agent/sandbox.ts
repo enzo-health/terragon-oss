@@ -366,7 +366,7 @@ async function getOrCreateSandboxForThread({
 
     const resolvedSetupScript =
       resolvedRepositoryEnvironment.setupScript ??
-      (resolvedRepositoryEnvironment.id
+      (resolvedRepositoryEnvironment.repoFullName
         ? await getSetupScriptFromRepo({
             db,
             userId,
