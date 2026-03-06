@@ -4,24 +4,29 @@
  * Tests:
  *  1. getDefaultBranchForRepo returns correct branch (Fix 1)
  *  2. getSetupScriptFromRepo fetches terragon-setup.sh (Fix 3)
- *  3. Daytona SDK auth via JWT token works
- *  4. Full buildRepoSnapshot call (Fix 1 + 2 + 3 wired together)
+ *  3. Daytona SDK auth works (API key preferred, falls back to JWT)
+ *  4. Full buildRepoSnapshot call using ubuntu:24.04 + getDaytonaBaseCommands()
  *
  * Usage:
- *   GITHUB_TOKEN=<token> DAYTONA_JWT=<jwt> DAYTONA_ORG_ID=<orgId> \
- *     pnpm tsx scripts/test-snapshot-e2e.ts [--full]
+ *   GITHUB_TOKEN=<token> DAYTONA_API_KEY=<key> \
+ *     pnpm -C apps/www exec tsx ../../scripts/test-snapshot-e2e.ts [--full]
  *
- * --full  runs an actual Daytona snapshot build (takes 5–15 min, costs resources)
+ *   # Or with JWT (expires every 24h):
+ *   GITHUB_TOKEN=<token> DAYTONA_JWT=<jwt> DAYTONA_ORG_ID=<orgId> \
+ *     pnpm -C apps/www exec tsx ../../scripts/test-snapshot-e2e.ts [--full]
+ *
+ * --full  runs an actual Daytona snapshot build (~30-45 min first run, faster after
+ *         Docker layer cache warms up on Daytona's build workers).
  *
  * Notes on Test 4:
- *   - If DAYTONA_API_KEY is set, uses the relay approach: creates (or reuses) a relay
- *     snapshot from the Terragon template via the imageName string API, then uses the
- *     relay's `ref` as the Docker FROM base. This avoids cross-namespace registry auth.
- *   - If only DAYTONA_JWT is set, falls back to ubuntu:22.04 as base image to verify
- *     the API call flow without requiring private registry access.
+ *   Now builds from ubuntu:24.04 (public) via getDaytonaBaseCommands(), which
+ *   replicates Dockerfile.daytona inline. This avoids the private
+ *   cr.app.daytona.io/sbox/ registry that Docker build workers cannot pull from
+ *   with personal API keys. No special credentials needed.
  */
 
 import { Daytona, Image } from "@daytonaio/sdk";
+import { getDaytonaBaseCommands } from "@terragon/sandbox-image";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN!;
 const DAYTONA_JWT = process.env.DAYTONA_JWT!;
@@ -29,10 +34,6 @@ const DAYTONA_ORG_ID = process.env.DAYTONA_ORG_ID!;
 const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
 const REPO = "enzo-health/bonaparte";
 const FULL = process.argv.includes("--full");
-
-// latest daytona/small from templates.json
-const TEMPLATE_SNAPSHOT_NAME =
-  "terry-vCPU-2-RAM-4GB-2026-03-05-05-14-16-qe3p4m";
 
 function assert(condition: boolean, msg: string) {
   if (!condition) {
@@ -118,75 +119,35 @@ async function testDaytonaAuth() {
 async function testFullSnapshotBuild(daytona: Daytona) {
   console.log("\n── Test 4: Full buildRepoSnapshot (--full mode) ──");
   console.log("  Building snapshot for enzo-health/bonaparte...");
-
-  // Minimal setup script to prove it runs
-  const setupScript =
-    "#!/bin/bash\nset -e\necho 'terragon-setup.sh executed successfully'\n";
-
-  // Determine base image ref.
-  // All Daytona snapshots (including templates) live in cr.app.daytona.io/sbox/ which
-  // Docker build workers cannot pull from with personal API keys. A service-account key
-  // is required for production builds using the Terragon template. The JWT-only /
-  // ubuntu:22.04 path confirms the full code flow (git clone, setup script, snapshot
-  // lifecycle) without registry auth.
-  let baseImageRef: string;
-  if (DAYTONA_API_KEY) {
-    console.log(`  Mode: production (API key) — using Terragon template`);
-    const apiKeyDaytona = new Daytona({ apiKey: DAYTONA_API_KEY });
-    const templateSnapshot = await (apiKeyDaytona as any).snapshot.get(
-      TEMPLATE_SNAPSHOT_NAME,
-    );
-    baseImageRef = templateSnapshot.ref ?? TEMPLATE_SNAPSHOT_NAME;
-    console.log(`  Template ref: ${baseImageRef}`);
-    console.log(
-      `  ⚠️  Build will fail with personal API keys — needs service-account key`,
-    );
-    console.log(
-      `     Reason: Docker build workers can't pull from cr.app.daytona.io/sbox/`,
-    );
-    console.log(
-      `     Fix: contact Daytona support for service-account credentials`,
-    );
-  } else {
-    console.log(
-      `  Mode: JWT-only — falling back to ubuntu:22.04 (skips private registry auth)`,
-    );
-    console.log(
-      `  ⚠️  Set DAYTONA_API_KEY to test with the actual Terragon template`,
-    );
-    baseImageRef = "ubuntu:22.04";
-  }
   console.log(
-    `  Base image: ${baseImageRef}\n  Build time: ~5–15 min (full template) or ~2 min (ubuntu)\n`,
+    "  Base: ubuntu:24.04 + getDaytonaBaseCommands() (public — no registry auth needed)",
+  );
+  console.log(
+    "  Build time: ~30-45 min first run, faster after Docker layer cache warms up\n",
   );
 
-  let image = Image.base(baseImageRef);
-
-  // ubuntu:22.04 fallback needs git installed; Terragon template already has it
-  if (!DAYTONA_API_KEY) {
-    image = image.runCommands(
-      "apt-get update -qq && apt-get install -y -qq git",
-    );
-  }
+  // Use the same approach as the production snapshot builder:
+  // ubuntu:24.04 (public) + all Terragon tools via getDaytonaBaseCommands()
+  let image = Image.base("ubuntu:24.04").dockerfileCommands(
+    getDaytonaBaseCommands(),
+  );
 
   const cloneUrl = `https://${GITHUB_TOKEN}@github.com/${REPO}.git`;
   image = image.runCommands(
     `git clone --filter=blob:none --no-recurse-submodules --branch main ${cloneUrl} /root/repo`,
   );
-  if (!DAYTONA_API_KEY) {
-    // ubuntu:22.04 doesn't have pnpm/node — just verify git clone + setup script work
-    image = image.runCommands("git -C /root/repo log --oneline -1");
-    // no package install step
-  } else {
-    image = image.runCommands(
-      `cd /root/repo && ` +
-        `if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; ` +
-        `elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; ` +
-        `elif [ -f package.json ]; then npm install; fi`,
-    );
-  }
+  image = image.runCommands(
+    `cd /root/repo && ` +
+      `if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; ` +
+      `elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; ` +
+      `elif [ -f bun.lockb ] || [ -f bun.lock ]; then bun install --frozen-lockfile; ` +
+      `elif [ -f package-lock.json ]; then npm ci; ` +
+      `elif [ -f package.json ]; then npm install; fi`,
+  );
 
-  // Inline setup script
+  // Minimal setup script to prove it runs
+  const setupScript =
+    "#!/bin/bash\nset -e\necho 'terragon-setup.sh executed successfully'\n";
   const fs = await import("fs");
   const path = await import("path");
   const os = await import("os");
