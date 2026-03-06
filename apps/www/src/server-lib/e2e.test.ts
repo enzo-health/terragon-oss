@@ -36,7 +36,7 @@ import {
 import { handleDaemonEvent } from "./handle-daemon-event";
 import { internalPOST } from "./internal-request";
 import { maybeStartQueuedThreadChat } from "./process-queued-thread";
-import { maxConcurrentTasksPerUser } from "@/lib/subscription-tiers";
+import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import { stopThread } from "@/server-actions/stop-thread";
 import { retryThread as retryThreadAction } from "@/server-actions/retry-thread";
 import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
@@ -273,7 +273,7 @@ describe("end-to-end", () => {
       message: {
         model: "sonnet",
         prompt: expect.stringContaining("Hello, again"),
-        sessionId: threadChatUpdated!.sessionId,
+        sessionId: null,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
         agent: threadChatUpdated!.agent,
@@ -335,10 +335,11 @@ describe("end-to-end", () => {
     await saveClaudeTokensForTest({ userId: user.id });
     expect(await getThreads({ db, userId: user.id })).toEqual([]);
 
-    // Create maxConcurrentTasksPerUser threads
+    const maxConcurrentTasks = await getMaxConcurrentTaskCountForUser(user.id);
+    // Create maxConcurrentTasks threads
     const activeThreadsChatIds: { threadId: string; threadChatId: string }[] =
       [];
-    for (let i = 0; i < maxConcurrentTasksPerUser; i++) {
+    for (let i = 0; i < maxConcurrentTasks; i++) {
       const { threadId, threadChatId } = await createTestThread({
         db,
         userId: user.id,
@@ -565,7 +566,7 @@ describe("end-to-end", () => {
       message: {
         model: "sonnet",
         prompt: expect.stringContaining("Hello, again"),
-        sessionId: threadChatUpdated!.sessionId,
+        sessionId: null,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
         agent: threadChatUpdated!.agent,
