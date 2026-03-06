@@ -359,6 +359,48 @@ export async function getGitHubUserAccessToken({
   }
 }
 
+type GitHubMembershipResponse = {
+  state?: string;
+};
+
+export async function isGitHubOrgMember({
+  userId,
+  org,
+}: {
+  userId: string;
+  org: string;
+}): Promise<boolean> {
+  const normalizedOrg = org.trim().toLowerCase();
+  if (!normalizedOrg) {
+    return true;
+  }
+
+  const token = await getGitHubUserAccessToken({ userId });
+  if (!token) {
+    return false;
+  }
+
+  const response = await fetch(
+    `https://api.github.com/user/memberships/orgs/${encodeURIComponent(normalizedOrg)}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "Terragon",
+      },
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const membership: GitHubMembershipResponse =
+    (await response.json()) as GitHubMembershipResponse;
+  return membership.state === "active";
+}
+
 export async function getOctokitForUser({
   userId,
 }: {
