@@ -108,13 +108,13 @@ describe("stopThread", () => {
         },
       });
 
-    expect(async () => {
+    await expect(async () => {
       await stopThread({
         threadId: otherUserThreadId,
         threadChatId: otherUserThreadChatId,
       });
       await waitUntilResolved();
-    }).rejects.toThrow("Thread chat not found");
+    }).rejects.toThrow("Thread not found");
     const ownerThreadChat = await getThreadChat({
       db,
       userId: otherUser.user.id,
@@ -127,9 +127,9 @@ describe("stopThread", () => {
   it("should handle non-existent thread", async () => {
     await mockWaitUntil();
     await mockLoggedInUser(session);
-    expect(async () => {
+    await expect(async () => {
       await stopThread({ threadId: "non-existent-thread-id", threadChatId });
       await waitUntilResolved();
-    }).rejects.toThrow("Thread chat not found");
+    }).rejects.toThrow("Thread not found");
   });
 });
