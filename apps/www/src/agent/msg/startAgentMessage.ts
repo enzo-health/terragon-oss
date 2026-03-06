@@ -62,6 +62,7 @@ import { randomUUID } from "node:crypto";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { redis } from "@/lib/redis";
+import { env } from "@terragon/env/apps-www";
 
 const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
@@ -812,12 +813,19 @@ function buildSdlcPhasePromptPrefix(
         '{ "taskUpdates": [{ "stableTaskId": "task-id", "status": "done", "note": "..." }], "phaseComplete": true }',
         "```",
         "",
-        "Before signaling phaseComplete, you MUST verify:",
-        "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
-        "2. Linting passes (run the project's lint command if available)",
-        "3. Type checking passes (run the project's typecheck command if available)",
-        "4. Tests pass (run the project's test command if available)",
-        "Fix any failures before setting phaseComplete: true.",
+        ...(env.SKIP_LOCAL_QUALITY_CHECKS
+          ? [
+              "Local lint/typecheck/test checks are temporarily skipped in this environment.",
+              "Rely on required GitHub CI checks before merge.",
+            ]
+          : [
+              "Before signaling phaseComplete, you MUST verify:",
+              "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
+              "2. Linting passes (run the project's lint command if available)",
+              "3. Type checking passes (run the project's typecheck command if available)",
+              "4. Tests pass (run the project's test command if available)",
+              "Fix any failures before setting phaseComplete: true.",
+            ]),
         "",
         "Only set phaseComplete: true when ALL planned tasks are implemented.",
         "Do not skip directly to PR babysitting in this phase.",
