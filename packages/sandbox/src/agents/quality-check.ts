@@ -57,6 +57,8 @@ export NODE_OPTIONS="\${NODE_OPTIONS:+\$NODE_OPTIONS }--max-old-space-size=4096"
 export VITEST_MAX_WORKERS=4
 export JEST_WORKER_COUNT=4
 export UV_THREADPOOL_SIZE=4
+export TURBO_CONCURRENCY=4
+export NX_MAX_PARALLEL=4
 
 # Install deps if missing
 if [ ! -d node_modules ]; then

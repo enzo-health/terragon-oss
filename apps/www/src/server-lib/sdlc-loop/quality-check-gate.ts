@@ -15,6 +15,9 @@ const QUALITY_CHECK_ENV = {
   VITEST_MAX_WORKERS: "4",
   JEST_WORKER_COUNT: "4",
   UV_THREADPOOL_SIZE: "4",
+  // Monorepo task runners also parallelise across packages — cap them too
+  TURBO_CONCURRENCY: "4",
+  NX_MAX_PARALLEL: "4",
 };
 
 function truncateOutput(output: string): string {
