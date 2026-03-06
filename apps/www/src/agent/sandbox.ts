@@ -37,6 +37,7 @@ import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
+import { getSetupScriptFromRepo } from "@/server-lib/environment";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
@@ -275,6 +276,7 @@ async function getOrCreateSandboxForThread({
       threadName: string | null,
     ) => Promise<string | null>;
     mcpConfig: CreateSandboxOptions["mcpConfig"];
+    resolvedSetupScript: string | null;
   };
 
   let bootstrapContext: BootstrapContext | null = null;
@@ -362,6 +364,16 @@ async function getOrCreateSandboxForThread({
     );
     const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 
+    const resolvedSetupScript =
+      resolvedRepositoryEnvironment.setupScript ??
+      (resolvedRepositoryEnvironment.id
+        ? await getSetupScriptFromRepo({
+            db,
+            userId,
+            environmentId: resolvedRepositoryEnvironment.id,
+          })
+        : null);
+
     if (!cachedResumeContext) {
       await setCachedSandboxResumeContext({
         userId,
@@ -385,6 +397,7 @@ async function getOrCreateSandboxForThread({
       generateBranchNameWithPrefix: (threadName) =>
         generateBranchName(threadName, resolvedUserSettings.branchNamePrefix),
       mcpConfig: resolvedMcpConfig || undefined,
+      resolvedSetupScript,
     };
     return bootstrapContext;
   };
@@ -406,9 +419,7 @@ async function getOrCreateSandboxForThread({
     context: BootstrapContext,
   ): CreateSandboxOptions => {
     const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-    const setupScriptHash = getSetupScriptHash(
-      context.repositoryEnvironment?.setupScript ?? null,
-    );
+    const setupScriptHash = getSetupScriptHash(context.resolvedSetupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
     const snapshot =
       !thread.codesandboxId &&
@@ -445,7 +456,7 @@ async function getOrCreateSandboxForThread({
       mcpConfig: context.mcpConfig || undefined,
       autoUpdateDaemon: !!userFeatureFlags.autoUpdateDaemon,
       customSystemPrompt: context.customSystemPrompt,
-      setupScript: context.repositoryEnvironment?.setupScript || null,
+      setupScript: context.resolvedSetupScript,
       skipSetupScript: thread.skipSetup,
       snapshotTemplateId: snapshot?.snapshotName ?? undefined,
       publicUrl: nonLocalhostPublicAppUrl(),
