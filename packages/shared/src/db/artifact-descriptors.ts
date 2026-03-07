@@ -50,6 +50,11 @@ export type ArtifactDescriptorOrigin =
       fingerprint: string;
     };
 
+type MessageArtifactOrigin = Extract<
+  ArtifactDescriptorOrigin,
+  { type: "user-message-part" | "tool-part" }
+>;
+
 type BaseArtifactDescriptor<
   TKind extends ArtifactDescriptorKind,
   TPart extends ArtifactDescriptorPart,
@@ -294,7 +299,7 @@ function createDescriptor({
 }: {
   part: MessageArtifactPart;
   id: string;
-  origin: Exclude<ArtifactDescriptorOrigin, { type: "thread" | "system-message" }>;
+  origin: MessageArtifactOrigin;
   updatedAt?: string;
 }): ArtifactDescriptor {
   switch (part.type) {

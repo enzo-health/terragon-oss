@@ -66,9 +66,7 @@ describe("getArtifactDescriptors", () => {
       role: "agent",
       agent: "claudeCode",
       parts: [
-        ...(includeLeadingText
-          ? ([{ type: "text", text: "streaming status" }] as const)
-          : []),
+        ...(includeLeadingText ? [{ type: "text" as const, text: "streaming status" }] : []),
         {
           type: "tool",
           id: "tool-outer",
