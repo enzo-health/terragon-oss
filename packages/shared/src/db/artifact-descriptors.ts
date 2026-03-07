@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import type { GitDiffStats } from "./types";
 import type {
   UIGitDiffPart,
   UIImagePart,
   UIMessage,
+  UIPart,
   UIPdfPart,
   UIRichTextPart,
   UITextFilePart,
@@ -12,12 +14,14 @@ export type ArtifactDescriptorKind = "git-diff" | "document" | "file" | "media";
 
 export type ArtifactDescriptorStatus = "ready";
 
-export type ArtifactDescriptorPart =
-  | UIGitDiffPart
-  | UIRichTextPart
-  | UIImagePart
-  | UIPdfPart
-  | UITextFilePart;
+type MessageArtifactPart = UIRichTextPart | UIImagePart | UIPdfPart | UITextFilePart;
+
+export type ArtifactDescriptorPart = UIGitDiffPart | MessageArtifactPart;
+
+type ToolCallOrigin = {
+  id: string;
+  name: string;
+};
 
 export type ArtifactDescriptorOrigin =
   | {
@@ -26,16 +30,24 @@ export type ArtifactDescriptorOrigin =
       field: "gitDiff";
     }
   | {
-      type: "message-part";
-      messageIndex: number;
-      partIndex: number;
-      messageRole: "user" | "agent";
+      type: "user-message-part";
+      messageTimestamp?: string;
+      partType: MessageArtifactPart["type"];
+      fingerprint: string;
+    }
+  | {
+      type: "tool-part";
+      toolCallId: string;
+      toolCallName: string;
+      toolCallPath: string[];
+      partType: MessageArtifactPart["type"];
+      fingerprint: string;
     }
   | {
       type: "system-message";
-      messageIndex: number;
-      partIndex: number;
       messageType: "git-diff";
+      timestamp?: string;
+      fingerprint: string;
     };
 
 type BaseArtifactDescriptor<
@@ -87,9 +99,9 @@ export type ArtifactDescriptorThreadInput = {
 
 /**
  * Derives artifact descriptors from the canonical UI message model plus
- * optional thread-level git diff state. The descriptor keeps the source `part`
- * object (or a synthesized `UIGitDiffPart` for thread state) so renderers can
- * continue to rely on the existing message-part contract.
+ * optional thread-level git diff state. Agent-backed artifacts are only emitted
+ * when they are anchored to a stable tool-call id; top-level streamed agent
+ * parts are intentionally omitted until the source model exposes a durable id.
  */
 export function getArtifactDescriptors({
   messages,
@@ -99,6 +111,7 @@ export function getArtifactDescriptors({
   thread?: ArtifactDescriptorThreadInput | null;
 }): ArtifactDescriptor[] {
   const descriptors: ArtifactDescriptor[] = [];
+  const duplicateCounts = new Map<string, number>();
 
   if (thread?.gitDiff) {
     descriptors.push({
@@ -121,28 +134,21 @@ export function getArtifactDescriptors({
     });
   }
 
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    const message = messages[messageIndex];
-    if (!message) {
-      continue;
-    }
-
+  for (const message of messages) {
     if (message.role === "system") {
       if (message.message_type !== "git-diff") {
         continue;
       }
 
-      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-        const part = message.parts[partIndex];
-        if (!part) {
-          continue;
-        }
-
+      for (const part of message.parts) {
+        const fingerprint = getGitDiffFingerprint(part);
         descriptors.push({
-          id: buildSystemGitDiffArtifactId({
-            messageIndex,
-            partIndex,
-            timestamp: part.timestamp,
+          id: buildStableId({
+            baseId: buildSystemGitDiffArtifactBaseId({
+              timestamp: part.timestamp,
+              fingerprint,
+            }),
+            duplicateCounts,
           }),
           kind: "git-diff",
           title: part.description?.trim() || "Diff checkpoint",
@@ -150,9 +156,9 @@ export function getArtifactDescriptors({
           part,
           origin: {
             type: "system-message",
-            messageIndex,
-            partIndex,
             messageType: "git-diff",
+            timestamp: part.timestamp,
+            fingerprint,
           },
           updatedAt: part.timestamp,
           summary: buildGitDiffSummary(part.diffStats),
@@ -162,33 +168,182 @@ export function getArtifactDescriptors({
       continue;
     }
 
-    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-      const part = message.parts[partIndex];
-      if (!part || !isArtifactMessagePart(part)) {
-        continue;
-      }
-
-      const descriptor = buildMessagePartArtifactDescriptor({
-        message,
-        messageIndex,
-        part,
-        partIndex,
-      });
-      if (descriptor) {
-        descriptors.push(descriptor);
-      }
-    }
+    collectArtifactDescriptorsFromParts({
+      descriptors,
+      duplicateCounts,
+      parts: message.parts,
+      messageRole: message.role,
+      messageTimestamp:
+        message.role === "user" ? normalizeTimestamp(message.timestamp) : undefined,
+      toolPath: [],
+    });
   }
 
   return descriptors;
 }
 
-function isArtifactMessagePart(
-  part: Extract<UIMessage, { role: "user" | "agent" }>["parts"][number],
-): part is Extract<
-  ArtifactDescriptorPart,
-  { type: "image" | "rich-text" | "pdf" | "text-file" }
-> {
+function collectArtifactDescriptorsFromParts({
+  descriptors,
+  duplicateCounts,
+  parts,
+  messageRole,
+  messageTimestamp,
+  toolPath,
+}: {
+  descriptors: ArtifactDescriptor[];
+  duplicateCounts: Map<string, number>;
+  parts: UIPart[];
+  messageRole: "user" | "agent";
+  messageTimestamp?: string;
+  toolPath: ToolCallOrigin[];
+}) {
+  for (const part of parts) {
+    if (part.type === "tool") {
+      collectArtifactDescriptorsFromParts({
+        descriptors,
+        duplicateCounts,
+        parts: part.parts,
+        messageRole,
+        messageTimestamp,
+        toolPath: [...toolPath, { id: part.id, name: part.name }],
+      });
+      continue;
+    }
+
+    if (!isMessageArtifactPart(part)) {
+      continue;
+    }
+
+    const descriptor = buildMessageArtifactDescriptor({
+      part,
+      messageRole,
+      messageTimestamp,
+      toolPath,
+      duplicateCounts,
+    });
+
+    if (descriptor) {
+      descriptors.push(descriptor);
+    }
+  }
+}
+
+function buildMessageArtifactDescriptor({
+  part,
+  messageRole,
+  messageTimestamp,
+  toolPath,
+  duplicateCounts,
+}: {
+  part: MessageArtifactPart;
+  messageRole: "user" | "agent";
+  messageTimestamp?: string;
+  toolPath: ToolCallOrigin[];
+  duplicateCounts: Map<string, number>;
+}): ArtifactDescriptor | null {
+  const fingerprint = getMessageArtifactFingerprint(part);
+
+  if (toolPath.length > 0) {
+    const leafTool = toolPath[toolPath.length - 1]!;
+    return createDescriptor({
+      part,
+      id: buildStableId({
+        baseId: buildToolArtifactBaseId({ toolPath, part, fingerprint }),
+        duplicateCounts,
+      }),
+      origin: {
+        type: "tool-part",
+        toolCallId: leafTool.id,
+        toolCallName: leafTool.name,
+        toolCallPath: toolPath.map((tool) => tool.id),
+        partType: part.type,
+        fingerprint,
+      },
+    });
+  }
+
+  if (messageRole !== "user") {
+    return null;
+  }
+
+  return createDescriptor({
+    part,
+    id: buildStableId({
+      baseId: buildUserArtifactBaseId({
+        messageTimestamp,
+        part,
+        fingerprint,
+      }),
+      duplicateCounts,
+    }),
+    origin: {
+      type: "user-message-part",
+      messageTimestamp,
+      partType: part.type,
+      fingerprint,
+    },
+    updatedAt: messageTimestamp,
+  });
+}
+
+function createDescriptor({
+  part,
+  id,
+  origin,
+  updatedAt,
+}: {
+  part: MessageArtifactPart;
+  id: string;
+  origin: Exclude<ArtifactDescriptorOrigin, { type: "thread" | "system-message" }>;
+  updatedAt?: string;
+}): ArtifactDescriptor {
+  switch (part.type) {
+    case "rich-text":
+      return {
+        id,
+        kind: "document",
+        title: "Document",
+        status: "ready",
+        part,
+        origin,
+        updatedAt,
+        summary: summarizeRichText(part),
+      };
+    case "text-file":
+      return {
+        id,
+        kind: "file",
+        title: part.filename?.trim() || "Text file",
+        status: "ready",
+        part,
+        origin,
+        updatedAt,
+        summary: part.mime_type,
+      };
+    case "image":
+      return {
+        id,
+        kind: "media",
+        title: "Image",
+        status: "ready",
+        part,
+        origin,
+        updatedAt,
+      };
+    case "pdf":
+      return {
+        id,
+        kind: "media",
+        title: part.filename?.trim() || "PDF",
+        status: "ready",
+        part,
+        origin,
+        updatedAt,
+      };
+  }
+}
+
+function isMessageArtifactPart(part: UIPart): part is MessageArtifactPart {
   return (
     part.type === "image" ||
     part.type === "rich-text" ||
@@ -197,140 +352,86 @@ function isArtifactMessagePart(
   );
 }
 
-function buildMessagePartArtifactDescriptor({
-  message,
-  messageIndex,
-  part,
-  partIndex,
-}: {
-  message: Extract<UIMessage, { role: "user" | "agent" }>;
-  messageIndex: number;
-  part: Extract<ArtifactDescriptorPart, { type: "image" | "rich-text" | "pdf" | "text-file" }>;
-  partIndex: number;
-}): ArtifactDescriptor | null {
-  const updatedAt = message.role === "user" ? normalizeTimestamp(message.timestamp) : undefined;
-
-  switch (part.type) {
-    case "rich-text":
-      return {
-        id: buildMessagePartArtifactId({
-          message,
-          messageIndex,
-          partIndex,
-          suffix: part.type,
-        }),
-        kind: "document",
-        title: "Document",
-        status: "ready",
-        part,
-        origin: {
-          type: "message-part",
-          messageIndex,
-          partIndex,
-          messageRole: message.role,
-        },
-        updatedAt,
-        summary: summarizeRichText(part),
-      };
-    case "text-file":
-      return {
-        id: buildMessagePartArtifactId({
-          message,
-          messageIndex,
-          partIndex,
-          suffix: part.type,
-        }),
-        kind: "file",
-        title: part.filename?.trim() || "Text file",
-        status: "ready",
-        part,
-        origin: {
-          type: "message-part",
-          messageIndex,
-          partIndex,
-          messageRole: message.role,
-        },
-        updatedAt,
-        summary: part.mime_type,
-      };
-    case "image":
-      return {
-        id: buildMessagePartArtifactId({
-          message,
-          messageIndex,
-          partIndex,
-          suffix: part.type,
-        }),
-        kind: "media",
-        title: "Image",
-        status: "ready",
-        part,
-        origin: {
-          type: "message-part",
-          messageIndex,
-          partIndex,
-          messageRole: message.role,
-        },
-        updatedAt,
-      };
-    case "pdf":
-      return {
-        id: buildMessagePartArtifactId({
-          message,
-          messageIndex,
-          partIndex,
-          suffix: part.type,
-        }),
-        kind: "media",
-        title: part.filename?.trim() || "PDF",
-        status: "ready",
-        part,
-        origin: {
-          type: "message-part",
-          messageIndex,
-          partIndex,
-          messageRole: message.role,
-        },
-        updatedAt,
-      };
-    default:
-      return null;
-  }
-}
-
 function buildThreadGitDiffArtifactId(threadId: string): string {
   return `artifact:thread:${threadId}:git-diff`;
 }
 
-function buildSystemGitDiffArtifactId({
-  messageIndex,
-  partIndex,
+function buildSystemGitDiffArtifactBaseId({
   timestamp,
+  fingerprint,
 }: {
-  messageIndex: number;
-  partIndex: number;
   timestamp?: string;
+  fingerprint: string;
 }): string {
-  return timestamp
-    ? `artifact:system:git-diff:${timestamp}:${partIndex}`
-    : `artifact:system:git-diff:${messageIndex}:${partIndex}`;
+  return `artifact:system:git-diff:${timestamp ?? fingerprint}`;
 }
 
-function buildMessagePartArtifactId({
-  message,
-  messageIndex,
-  partIndex,
-  suffix,
+function buildUserArtifactBaseId({
+  messageTimestamp,
+  part,
+  fingerprint,
 }: {
-  message: Extract<UIMessage, { role: "user" | "agent" }>;
-  messageIndex: number;
-  partIndex: number;
-  suffix: string;
+  messageTimestamp?: string;
+  part: MessageArtifactPart;
+  fingerprint: string;
 }): string {
-  const timestamp = message.role === "user" ? normalizeTimestamp(message.timestamp) : undefined;
-  return timestamp
-    ? `artifact:${message.role}:${timestamp}:${partIndex}:${suffix}`
-    : `artifact:${message.role}:${messageIndex}:${partIndex}:${suffix}`;
+  return `artifact:user:${messageTimestamp ?? "untimed"}:${part.type}:${fingerprint}`;
+}
+
+function buildToolArtifactBaseId({
+  toolPath,
+  part,
+  fingerprint,
+}: {
+  toolPath: ToolCallOrigin[];
+  part: MessageArtifactPart;
+  fingerprint: string;
+}): string {
+  return `artifact:tool:${toolPath.map((tool) => tool.id).join("/")}:${part.type}:${fingerprint}`;
+}
+
+function buildStableId({
+  baseId,
+  duplicateCounts,
+}: {
+  baseId: string;
+  duplicateCounts: Map<string, number>;
+}): string {
+  const count = duplicateCounts.get(baseId) ?? 0;
+  duplicateCounts.set(baseId, count + 1);
+  return count === 0 ? baseId : `${baseId}:${count + 1}`;
+}
+
+function getMessageArtifactFingerprint(part: MessageArtifactPart): string {
+  switch (part.type) {
+    case "rich-text":
+      return shortHash(part.nodes);
+    case "text-file":
+      return shortHash({
+        file_url: part.file_url,
+        filename: part.filename,
+        mime_type: part.mime_type,
+      });
+    case "image":
+      return shortHash({ image_url: part.image_url });
+    case "pdf":
+      return shortHash({ pdf_url: part.pdf_url, filename: part.filename });
+  }
+}
+
+function getGitDiffFingerprint(part: UIGitDiffPart): string {
+  return shortHash({
+    diff: part.diff,
+    diffStats: part.diffStats,
+    description: part.description,
+  });
+}
+
+function shortHash(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function normalizeTimestamp(timestamp?: Date | string | null): string | undefined {
