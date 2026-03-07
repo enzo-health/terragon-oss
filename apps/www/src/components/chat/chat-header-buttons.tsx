@@ -79,7 +79,7 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
           variant="ghost"
           size="icon"
           onClick={() => setIsSecondaryPanelOpen(!isSecondaryPanelOpen)}
-          aria-label="Toggle secondary panel"
+          aria-label="Toggle artifact workspace"
         >
           {isSmallScreen ? (
             <PanelBottom className="size-4" isOpen={isSecondaryPanelOpen} />
