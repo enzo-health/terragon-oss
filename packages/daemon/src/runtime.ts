@@ -36,7 +36,7 @@ function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
   return body.seq >= 0;
 }
 
-function parseSdlcSelfDispatchPayload(
+export function parseSdlcSelfDispatchPayload(
   body: unknown,
 ): SdlcSelfDispatchPayload | null {
   if (!body || typeof body !== "object") {

@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { DaemonRuntime, writeToUnixSocket } from "./runtime";
+import {
+  DaemonRuntime,
+  writeToUnixSocket,
+  parseSdlcSelfDispatchPayload,
+} from "./runtime";
 import { nanoid } from "nanoid/non-secure";
 import fs from "node:fs";
 
@@ -325,5 +329,96 @@ describe("runtime", () => {
 
     // Should have detected the process exit through either events or polling
     expect(onCloseMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("parseSdlcSelfDispatchPayload", () => {
+  const validPayload = {
+    selfDispatch: {
+      token: "tok",
+      prompt: "do stuff",
+      runId: "run-1",
+      threadId: "t-1",
+      threadChatId: "tc-1",
+      tokenNonce: "nonce",
+      model: "claude-4",
+      agent: "claude-code",
+      agentVersion: 1,
+      protocolVersion: 2,
+      transportMode: "legacy",
+      permissionMode: "allowAll",
+      sessionId: null as string | null,
+      featureFlags: { sdlcDaemonSelfDispatch: true },
+    },
+  };
+
+  it("returns null for null/undefined/non-object body", () => {
+    expect(parseSdlcSelfDispatchPayload(null)).toBeNull();
+    expect(parseSdlcSelfDispatchPayload(undefined)).toBeNull();
+    expect(parseSdlcSelfDispatchPayload("string")).toBeNull();
+    expect(parseSdlcSelfDispatchPayload(42)).toBeNull();
+  });
+
+  it("returns null when selfDispatch is missing or not an object", () => {
+    expect(parseSdlcSelfDispatchPayload({})).toBeNull();
+    expect(parseSdlcSelfDispatchPayload({ selfDispatch: null })).toBeNull();
+    expect(parseSdlcSelfDispatchPayload({ selfDispatch: "bad" })).toBeNull();
+    expect(parseSdlcSelfDispatchPayload({ selfDispatch: 123 })).toBeNull();
+  });
+
+  it("returns null when required string fields are missing", () => {
+    const requiredStrings = [
+      "token",
+      "prompt",
+      "runId",
+      "threadId",
+      "threadChatId",
+      "tokenNonce",
+      "model",
+      "agent",
+      "transportMode",
+      "permissionMode",
+    ];
+    for (const field of requiredStrings) {
+      const bad = structuredClone(validPayload);
+      delete (bad.selfDispatch as Record<string, unknown>)[field];
+      expect(parseSdlcSelfDispatchPayload(bad)).toBeNull();
+    }
+  });
+
+  it("returns null when number fields are wrong type", () => {
+    for (const field of ["agentVersion", "protocolVersion"]) {
+      const bad = structuredClone(validPayload);
+      (bad.selfDispatch as Record<string, unknown>)[field] = "not-a-number";
+      expect(parseSdlcSelfDispatchPayload(bad)).toBeNull();
+    }
+  });
+
+  it("returns null when featureFlags is null or not an object", () => {
+    const bad1 = structuredClone(validPayload);
+    (bad1.selfDispatch as Record<string, unknown>).featureFlags = null;
+    expect(parseSdlcSelfDispatchPayload(bad1)).toBeNull();
+
+    const bad2 = structuredClone(validPayload);
+    (bad2.selfDispatch as Record<string, unknown>).featureFlags = "bad";
+    expect(parseSdlcSelfDispatchPayload(bad2)).toBeNull();
+  });
+
+  it("returns null when sessionId is not string or null", () => {
+    const bad = structuredClone(validPayload);
+    (bad.selfDispatch as Record<string, unknown>).sessionId = 123;
+    expect(parseSdlcSelfDispatchPayload(bad)).toBeNull();
+  });
+
+  it("returns valid payload with sessionId: null", () => {
+    const result = parseSdlcSelfDispatchPayload(validPayload);
+    expect(result).toEqual(validPayload.selfDispatch);
+  });
+
+  it("returns valid payload with sessionId as string", () => {
+    const withSession = structuredClone(validPayload);
+    withSession.selfDispatch.sessionId = "sess-1";
+    const result = parseSdlcSelfDispatchPayload(withSession);
+    expect(result).toEqual(withSession.selfDispatch);
   });
 });
