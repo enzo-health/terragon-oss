@@ -828,41 +828,47 @@ export async function POST(request: Request) {
 
     if (selfDispatchEnabled) {
       try {
-        // Fetch thread chat to get queued messages and agent info
-        const threadChatForDispatch = await getThreadChat({
-          db,
-          userId,
-          threadId,
-          threadChatId,
-        });
-        if (
-          !threadChatForDispatch ||
-          !threadChatForDispatch.queuedMessages ||
-          threadChatForDispatch.queuedMessages.length === 0
-        ) {
+        // Use the queued message directly from the tick result to avoid
+        // a race with handleThreadFinish's maybeProcessFollowUpQueue which
+        // can consume queued messages from the DB before we read them.
+        const feedbackMsg = tickResult.feedbackQueuedMessage;
+        if (!feedbackMsg) {
           console.warn(
-            "[sdlc-loop] self-dispatch: no queued messages found, falling back",
+            "[sdlc-loop] self-dispatch: no feedback message from tick result, falling back",
             { userId, threadId, threadChatId, loopId },
           );
           // Fall through to existing path
         } else {
+          // Also need thread chat for agent info
+          const threadChatForDispatch = await getThreadChat({
+            db,
+            userId,
+            threadId,
+            threadChatId,
+          });
           const threadForDispatch = await getThreadMinimal({
             db,
             threadId,
             userId,
           });
-          if (!threadForDispatch || !threadForDispatch.codesandboxId) {
+          if (!threadChatForDispatch) {
+            console.warn(
+              "[sdlc-loop] self-dispatch: thread chat not found, falling back",
+              { userId, threadId, threadChatId, loopId },
+            );
+          } else if (!threadForDispatch || !threadForDispatch.codesandboxId) {
             console.warn(
               "[sdlc-loop] self-dispatch: thread or sandbox not found, falling back",
               { userId, threadId, loopId },
             );
           } else {
-            // Build prompt from queued messages (text parts only).
+            // Build prompt from the feedback message (text parts only).
             // If any non-text parts exist, fall back to the queue path
             // which handles the full message format.
+            const queuedMessages = [feedbackMsg];
             const promptParts: string[] = [];
             let hasNonTextParts = false;
-            for (const qMsg of threadChatForDispatch.queuedMessages) {
+            for (const qMsg of queuedMessages) {
               if ("parts" in qMsg && Array.isArray(qMsg.parts)) {
                 for (const part of qMsg.parts) {
                   if (
