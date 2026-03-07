@@ -13,6 +13,36 @@ import type {
 } from "@terragon/shared";
 
 const MAX_FOLLOW_UP_RETRIES = 3;
+const FOLLOW_UP_RETRY_BASE_DELAY_MS = 2_000;
+const FOLLOW_UP_ACTIVE_PROCESSING_STATUSES = new Set([
+  "queued",
+  "queued-blocked",
+  "queued-sandbox-creation-rate-limit",
+  "queued-tasks-concurrency",
+  "queued-agent-rate-limit",
+  "booting",
+  "working",
+  "stopping",
+  "checkpointing",
+]);
+
+export type FollowUpQueueProcessingResult = {
+  processed: boolean;
+  reason:
+    | "missing_run_context"
+    | "run_context_mismatch"
+    | "run_not_terminal"
+    | "thread_chat_not_found"
+    | "agent_rate_limited"
+    | "no_queued_messages"
+    | "status_transition_noop_busy"
+    | "dispatch_started_slash"
+    | "dispatch_started_batch"
+    | "dispatch_retry_scheduled"
+    | "dispatch_retry_exhausted";
+  retryCount?: number;
+  maxRetries?: number;
+};
 
 /**
  * Shared retry handler for follow-up processing failures.
@@ -50,7 +80,7 @@ async function handleFollowUpFailure({
   messages: DBMessage[] | null;
   queuedMessagesForRetry: DBUserMessage[];
   error: unknown;
-}) {
+}): Promise<{ retriesUsed: number; exhausted: boolean }> {
   const formattedError = formatFollowUpError(error);
   console.error("handleFollowUpFailure invoked", {
     threadId,
@@ -64,6 +94,10 @@ async function handleFollowUpFailure({
   ).length;
 
   try {
+    const retriesUsed = existingRetries + 1;
+    const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
+    const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
+
     if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
       await updateThreadChatWithTransition({
         userId,
@@ -104,7 +138,7 @@ async function handleFollowUpFailure({
               parts: [
                 {
                   type: "text" as const,
-                  text: `Follow-up attempt ${existingRetries + 1} of ${MAX_FOLLOW_UP_RETRIES} failed. Retrying...`,
+                  text: `Follow-up attempt ${retriesUsed} of ${MAX_FOLLOW_UP_RETRIES} failed. Retrying in ~${Math.ceil(retryDelayMs / 1000)}s...`,
                 },
               ],
               timestamp: new Date().toISOString(),
@@ -113,12 +147,20 @@ async function handleFollowUpFailure({
         },
       });
     }
+    return {
+      retriesUsed,
+      exhausted,
+    };
   } catch (updateError) {
     console.error("Failed to record follow-up retry failure", {
       threadId,
       threadChatId,
       updateError,
     });
+    return {
+      retriesUsed: existingRetries + 1,
+      exhausted: existingRetries >= MAX_FOLLOW_UP_RETRIES - 1,
+    };
   }
 }
 
@@ -132,7 +174,7 @@ export async function maybeProcessFollowUpQueue({
   threadId: string;
   threadChatId: string;
   runId?: string | null;
-}) {
+}): Promise<FollowUpQueueProcessingResult> {
   console.log("Checking if we have queued follow up messages", {
     threadId,
     threadChatId,
@@ -155,7 +197,7 @@ export async function maybeProcessFollowUpQueue({
         threadChatId,
         runId,
       });
-      return;
+      return { processed: false, reason: "missing_run_context" };
     }
     if (
       runContext.threadId !== threadId ||
@@ -171,7 +213,7 @@ export async function maybeProcessFollowUpQueue({
           runContextThreadChatId: runContext.threadChatId,
         },
       );
-      return;
+      return { processed: false, reason: "run_context_mismatch" };
     }
     if (
       runContext.status !== "completed" &&
@@ -184,7 +226,7 @@ export async function maybeProcessFollowUpQueue({
         runId,
         runStatus: runContext.status,
       });
-      return;
+      return { processed: false, reason: "run_not_terminal" };
     }
   }
   if (!threadChat) {
@@ -192,7 +234,7 @@ export async function maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
     });
-    return;
+    return { processed: false, reason: "thread_chat_not_found" };
   }
   // Don't process follow up messages if the thread is rate limited by the agent.
   if (threadChat.status === "queued-agent-rate-limit") {
@@ -203,10 +245,10 @@ export async function maybeProcessFollowUpQueue({
         threadChatId: threadChat.id,
       },
     );
-    return;
+    return { processed: false, reason: "agent_rate_limited" };
   }
   if (!threadChat.queuedMessages || threadChat.queuedMessages.length === 0) {
-    return;
+    return { processed: false, reason: "no_queued_messages" };
   }
   console.log("Processing queued follow up messages on thread", {
     threadId,
@@ -232,7 +274,26 @@ export async function maybeProcessFollowUpQueue({
       },
     });
     if (!didUpdateStatus) {
-      throw new Error("Failed to process follow up message");
+      const latestThreadChat = await getThreadChat({
+        db,
+        threadId,
+        threadChatId,
+        userId,
+      });
+      if (
+        latestThreadChat &&
+        FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
+      ) {
+        console.warn(
+          "Skipping follow-up dispatch after noop status transition; chat is already active",
+          {
+            threadId,
+            threadChatId,
+            status: latestThreadChat.status,
+          },
+        );
+        return { processed: false, reason: "status_transition_noop_busy" };
+      }
     }
     const messageWithModel = {
       ...firstQueuedMessage,
@@ -258,13 +319,14 @@ export async function maybeProcessFollowUpQueue({
         threadChatId,
         isNewThread: false,
       });
+      return { processed: true, reason: "dispatch_started_slash" };
     } catch (error) {
       console.error("Follow-up processing failed", {
         threadId,
         threadChatId,
         error,
       });
-      await handleFollowUpFailure({
+      const failure = await handleFollowUpFailure({
         userId,
         threadId,
         threadChatId,
@@ -272,8 +334,15 @@ export async function maybeProcessFollowUpQueue({
         queuedMessagesForRetry: queuedMessagesSnapshot,
         error,
       });
+      return {
+        processed: false,
+        reason: failure.exhausted
+          ? "dispatch_retry_exhausted"
+          : "dispatch_retry_scheduled",
+        retryCount: failure.retriesUsed,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      };
     }
-    return;
   }
 
   const { didUpdateStatus } = await updateThreadChatWithTransition({
@@ -286,7 +355,26 @@ export async function maybeProcessFollowUpQueue({
     },
   });
   if (!didUpdateStatus) {
-    throw new Error("Failed to process follow up message");
+    const latestThreadChat = await getThreadChat({
+      db,
+      threadId,
+      threadChatId,
+      userId,
+    });
+    if (
+      latestThreadChat &&
+      FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
+    ) {
+      console.warn(
+        "Skipping follow-up dispatch after noop status transition; chat is already active",
+        {
+          threadId,
+          threadChatId,
+          status: latestThreadChat.status,
+        },
+      );
+      return { processed: false, reason: "status_transition_noop_busy" };
+    }
   }
   console.log("Processing follow-up", {
     threadId,
@@ -301,22 +389,28 @@ export async function maybeProcessFollowUpQueue({
       threadChatId,
       isNewThread: false,
     });
+    return { processed: true, reason: "dispatch_started_batch" };
   } catch (error) {
     console.error("Follow-up processing failed", {
       threadId,
       threadChatId,
       error,
     });
-    await handleFollowUpFailure({
+    const failure = await handleFollowUpFailure({
       userId,
       threadId,
       threadChatId,
       messages: threadChat.messages,
-      // Queued messages were already appended into `messages` by
-      // appendAndResetQueuedMessages. Re-queueing here would duplicate the
-      // same user prompts on subsequent retries.
-      queuedMessagesForRetry: [],
+      queuedMessagesForRetry: queuedMessagesSnapshot,
       error,
     });
+    return {
+      processed: false,
+      reason: failure.exhausted
+        ? "dispatch_retry_exhausted"
+        : "dispatch_retry_scheduled",
+      retryCount: failure.retriesUsed,
+      maxRetries: MAX_FOLLOW_UP_RETRIES,
+    };
   }
 }

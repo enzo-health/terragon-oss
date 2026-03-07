@@ -20,6 +20,9 @@ import {
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
+import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { waitUntil } from "@vercel/functions";
+import { redis } from "@/lib/redis";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -52,6 +55,14 @@ type DaemonEventCommitResult =
     };
 
 const DAEMON_EVENT_CLAIM_STALE_MS = 5 * 60 * 1000;
+const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
+
+type DaemonTerminalErrorCategory =
+  | "provider_not_configured"
+  | "acp_sse_not_found"
+  | "daemon_custom_error"
+  | "daemon_result_error"
+  | "unknown";
 
 function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
   const iterationCount =
@@ -128,6 +139,63 @@ function deriveRunStatusFromMessages(
   return "processing";
 }
 
+function classifyDaemonTerminalErrorCategory(
+  errorMessage: string | null,
+): DaemonTerminalErrorCategory {
+  if (!errorMessage) {
+    return "unknown";
+  }
+  if (errorMessage.includes("provider not configured")) {
+    return "provider_not_configured";
+  }
+  if (errorMessage.includes("SSE failed (404")) {
+    return "acp_sse_not_found";
+  }
+  return "daemon_custom_error";
+}
+
+function deriveDaemonTerminalErrorInfo(
+  messages: DaemonEventAPIBody["messages"],
+): { errorMessage: string | null; errorCategory: DaemonTerminalErrorCategory } {
+  for (const message of messages) {
+    if (message.type === "custom-error") {
+      const errorMessage = message.error_info ?? null;
+      return {
+        errorMessage,
+        errorCategory: classifyDaemonTerminalErrorCategory(errorMessage),
+      };
+    }
+    if (message.type === "result" && message.is_error) {
+      const errorMessage =
+        "error" in message && typeof message.error === "string"
+          ? message.error
+          : null;
+      return {
+        errorMessage,
+        errorCategory: "daemon_result_error",
+      };
+    }
+  }
+  return {
+    errorMessage: null,
+    errorCategory: "unknown",
+  };
+}
+
+function getSdlcDaemonRecoveryKey({
+  loopId,
+  loopVersion,
+}: {
+  loopId: string;
+  loopVersion: number;
+}) {
+  return `sdlc-daemon-follow-up-recovery:${loopId}:${loopVersion}`;
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseDaemonCapabilitiesHeader(
   daemonCapabilitiesHeader: string | null,
 ): Set<string> {
@@ -166,11 +234,17 @@ async function claimEnrolledLoopDaemonEvent({
   threadId,
   threadChatId,
   envelope,
+  daemonRunStatus,
+  daemonErrorMessage,
+  daemonErrorCategory,
 }: {
   loopId: string;
   threadId: string;
   threadChatId: string;
   envelope: DaemonEventEnvelopeV2;
+  daemonRunStatus: "processing" | "completed" | "failed" | "stopped";
+  daemonErrorMessage: string | null;
+  daemonErrorCategory: DaemonTerminalErrorCategory;
 }): Promise<DaemonEventClaimResult> {
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -288,12 +362,16 @@ async function claimEnrolledLoopDaemonEvent({
         signalHeadShaOrNull: null,
         causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
         payload: {
+          eventType: "daemon_terminal",
           payloadVersion: envelope.payloadVersion,
           eventId: envelope.eventId,
           runId: envelope.runId,
           seq: envelope.seq,
           threadId,
           threadChatId,
+          daemonRunStatus,
+          daemonErrorMessage,
+          daemonErrorCategory,
         },
       })
       .onConflictDoNothing()
@@ -637,6 +715,9 @@ export async function POST(request: Request) {
     return Response.json({ success: true });
   }
 
+  const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
+  const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
+
   const enrolledLoop = await getActiveSdlcLoopForThread({
     db,
     userId,
@@ -692,6 +773,88 @@ export async function POST(request: Request) {
     }
   };
 
+  const maybeProcessDaemonTerminalFollowUp = async ({
+    tickResult,
+    loopId,
+    loopVersion,
+    eventId,
+    seq,
+  }: {
+    tickResult: Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>;
+    loopId: string;
+    loopVersion: number;
+    eventId: string;
+    seq: number;
+  }) => {
+    if (
+      !tickResult.processed ||
+      tickResult.causeType !== "daemon_terminal" ||
+      tickResult.runtimeAction !== "feedback_follow_up_queued"
+    ) {
+      return;
+    }
+
+    const followUpResult = await maybeProcessFollowUpQueue({
+      threadId,
+      threadChatId,
+      userId,
+      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+    });
+    console.log(
+      "[sdlc-loop] daemon terminal follow-up queue processing completed",
+      {
+        userId,
+        threadId,
+        threadChatId,
+        loopId,
+        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+        eventId,
+        seq,
+        runtimeRouting: tickResult.runtimeRouting ?? null,
+        followUpResult,
+      },
+    );
+
+    if (
+      followUpResult.processed ||
+      followUpResult.reason !== "status_transition_noop_busy"
+    ) {
+      return;
+    }
+
+    const recoveryKey = getSdlcDaemonRecoveryKey({ loopId, loopVersion });
+    const didScheduleRecovery = await redis.set(recoveryKey, "1", {
+      nx: true,
+      ex: SDLC_DAEMON_RECOVERY_TTL_SECONDS,
+    });
+    if (didScheduleRecovery !== "OK") {
+      return;
+    }
+
+    waitUntil(
+      (async () => {
+        await sleep(1_500);
+        const retryResult = await maybeProcessFollowUpQueue({
+          threadId,
+          threadChatId,
+          userId,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+        });
+        console.log("[sdlc-loop] daemon follow-up recovery retry completed", {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          loopVersion,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          eventId,
+          seq,
+          retryResult,
+        });
+      })(),
+    );
+  };
+
   if (enrolledLoop) {
     if (!envelopeV2) {
       console.error(
@@ -721,6 +884,9 @@ export async function POST(request: Request) {
         threadId,
         threadChatId,
         envelope: envelopeV2,
+        daemonRunStatus: daemonRunStatusFromMessages,
+        daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+        daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
       });
       if (!claimResult.claimed) {
         if (claimResult.reason === "claim_in_progress") {
@@ -738,11 +904,19 @@ export async function POST(request: Request) {
             const guardrailRuntime = buildCoordinatorGuardrailRuntime(
               enrolledLoop.loopVersion,
             );
-            await runBestEffortSdlcSignalInboxTick({
+            const signalTickResult = await runBestEffortSdlcSignalInboxTick({
               db,
               loopId: enrolledLoop.id,
               leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
               guardrailRuntime,
+              includeRuntimeRouting: true,
+            });
+            await maybeProcessDaemonTerminalFollowUp({
+              tickResult: signalTickResult,
+              loopId: enrolledLoop.id,
+              loopVersion: enrolledLoop.loopVersion,
+              eventId: envelopeV2.eventId,
+              seq: envelopeV2.seq,
             });
             await runBestEffortSdlcPublicationCoordinator({
               db,
@@ -868,7 +1042,7 @@ export async function POST(request: Request) {
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
-  const resolvedStatus = deriveRunStatusFromMessages(messages);
+  const resolvedStatus = daemonRunStatusFromMessages;
 
   if (runContext) {
     await updateAgentRunContext({
@@ -879,6 +1053,17 @@ export async function POST(request: Request) {
         resolvedSessionId,
         status: resolvedStatus,
       },
+    });
+  }
+
+  if (resolvedStatus === "failed") {
+    console.warn("[daemon-event] daemon run ended with terminal failure", {
+      userId,
+      threadId,
+      threadChatId,
+      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      errorCategory: daemonTerminalErrorInfo.errorCategory,
+      errorMessage: daemonTerminalErrorInfo.errorMessage,
     });
   }
 
@@ -979,12 +1164,34 @@ export async function POST(request: Request) {
       const guardrailRuntime = buildCoordinatorGuardrailRuntime(
         enrolledLoop.loopVersion,
       );
-      await runBestEffortSdlcSignalInboxTick({
+      const signalTickResult = await runBestEffortSdlcSignalInboxTick({
         db,
         loopId: enrolledLoop.id,
         leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
         guardrailRuntime,
+        includeRuntimeRouting: true,
       });
+      await maybeProcessDaemonTerminalFollowUp({
+        tickResult: signalTickResult,
+        loopId: enrolledLoop.id,
+        loopVersion: enrolledLoop.loopVersion,
+        eventId: envelopeV2.eventId,
+        seq: envelopeV2.seq,
+      });
+      if (!signalTickResult.processed) {
+        console.log(
+          "[sdlc-loop] daemon event tick skipped follow-up dispatch",
+          {
+            userId,
+            threadId,
+            threadChatId,
+            loopId: enrolledLoop.id,
+            eventId: envelopeV2.eventId,
+            seq: envelopeV2.seq,
+            reason: signalTickResult.reason,
+          },
+        );
+      }
 
       await runBestEffortSdlcPublicationCoordinator({
         db,

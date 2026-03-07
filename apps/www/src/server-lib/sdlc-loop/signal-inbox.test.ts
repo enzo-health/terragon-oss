@@ -346,6 +346,46 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     );
   });
 
+  it("routes daemon_terminal signals as runtime follow-ups during implementing work", async () => {
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-daemon-terminal-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-123",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-123",
+        daemonRunStatus: "failed",
+        daemonErrorCategory: "provider_not_configured",
+        daemonErrorMessage:
+          "Internal error: API Error: 503 Anthropic provider not configured on this server",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:event-123:4",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-daemon-terminal-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "feedback_follow_up_queued",
+      }),
+    );
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+      }),
+    );
+  });
+
   it("escapes untrusted feedback markers before queueing follow-up text", async () => {
     dbMocks.signalFindFirst.mockResolvedValueOnce({
       id: "signal-escape-1",

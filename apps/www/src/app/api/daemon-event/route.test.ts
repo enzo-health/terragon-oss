@@ -9,6 +9,7 @@ import {
 } from "@terragon/shared/model/agent-run-context";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
+import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -109,6 +110,10 @@ vi.mock("@/server-lib/sdlc-loop/publication", () => ({
 
 vi.mock("@/server-lib/sdlc-loop/signal-inbox", () => ({
   runBestEffortSdlcSignalInboxTick: vi.fn(),
+}));
+
+vi.mock("@/server-lib/process-follow-up-queue", () => ({
+  maybeProcessFollowUpQueue: vi.fn(),
 }));
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
@@ -214,6 +219,10 @@ describe("daemon-event route", () => {
     vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
       processed: false,
       reason: "no_unprocessed_signal",
+    });
+    vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
+      processed: false,
+      reason: "no_queued_messages",
     });
     dbMocks.execute.mockResolvedValue([]);
     dbMocks.selectWhere.mockResolvedValue([]);
@@ -616,6 +625,7 @@ describe("daemon-event route", () => {
       db: expect.any(Object),
       loopId: "loop-1",
       leaseOwnerToken: "daemon-event:event-1:1",
+      includeRuntimeRouting: true,
       guardrailRuntime: {
         killSwitchEnabled: false,
         cooldownUntil: null,
