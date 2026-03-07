@@ -159,7 +159,11 @@ export async function queueFollowUpInternal({
         appendOrReplace === "replace" ? messages : undefined,
     },
   });
-  if (!isAgentWorking(threadChat.status)) {
+  const shouldProcessImmediately =
+    !isAgentWorking(threadChat.status) ||
+    threadChat.status === "working-done" ||
+    threadChat.status === "working-error";
+  if (shouldProcessImmediately) {
     waitUntil(maybeProcessFollowUpQueue({ userId, threadId, threadChatId }));
   }
 }

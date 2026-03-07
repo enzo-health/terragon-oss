@@ -42,6 +42,7 @@ const terminalSdlcLoopStates: ReadonlySet<SdlcLoopState> = new Set([
   "stopped",
 ]);
 const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
+  "daemon_terminal",
   "check_run.completed",
   "check_suite.completed",
   "pull_request_review",
@@ -54,6 +55,13 @@ const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
 const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
 
 type RuntimeActionOutcome = "none" | "feedback_follow_up_queued";
+type RuntimeRoutingReason =
+  | "follow_up_queued"
+  | "non_feedback_signal"
+  | "gate_eval_no_follow_up"
+  | "suppressed_for_loop_state"
+  | "missing_pr_link"
+  | "follow_up_enqueue_failed";
 
 type PendingSignal = {
   id: string;
@@ -86,6 +94,12 @@ export type SdlcSignalInboxTickResult =
   | {
       processed: false;
       reason: SdlcSignalInboxTickNoopReason;
+      runtimeRouting?: {
+        routed: boolean;
+        followUpQueued: boolean;
+        reason: RuntimeRoutingReason;
+        error: string | null;
+      };
     }
   | {
       processed: true;
@@ -93,6 +107,12 @@ export type SdlcSignalInboxTickResult =
       causeType: SdlcLoopCauseType;
       runtimeAction: RuntimeActionOutcome;
       outboxId: string | null;
+      runtimeRouting?: {
+        routed: boolean;
+        followUpQueued: boolean;
+        reason: RuntimeRoutingReason;
+        error: string | null;
+      };
     };
 
 export type SdlcDurableSignalInboxDrainResult = {
@@ -170,6 +190,20 @@ function sanitizeUntrustedFeedbackText(text: string): string {
       "[END_UNTRUSTED_GITHUB_FEEDBACK_ESCAPED]",
     )
     .trim();
+}
+
+function stringifyError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function buildSafeExternalFeedbackSection({
@@ -377,6 +411,10 @@ async function persistGateEvaluationForSignal({
   signal: PendingSignal;
   now: Date;
 }): Promise<boolean> {
+  if (signal.causeType === "daemon_terminal") {
+    return true;
+  }
+
   if (
     signal.causeType !== "check_run.completed" &&
     signal.causeType !== "check_suite.completed" &&
@@ -628,9 +666,39 @@ function buildFeedbackFollowUpMessage({
   payload: Record<string, unknown> | null;
 }): DBUserMessage {
   const eventType = getPayloadText(payload, "eventType") ?? signalCauseType;
-  const sections: string[] = [
-    `The "${eventType}" event was triggered for PR #${loopPrNumber} in ${loopRepoFullName}.`,
-  ];
+  const sections: string[] = [];
+
+  if (signalCauseType === "daemon_terminal") {
+    const daemonRunStatus = getPayloadText(payload, "daemonRunStatus");
+    const daemonErrorCategory = getPayloadText(payload, "daemonErrorCategory");
+    const daemonErrorMessage = getPayloadText(payload, "daemonErrorMessage");
+    const runId = getPayloadText(payload, "runId");
+    sections.push(
+      `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for PR #${loopPrNumber} in ${loopRepoFullName}.`,
+    );
+    if (daemonRunStatus) {
+      sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
+    }
+    if (daemonErrorCategory) {
+      sections.push(`Detected failure category: ${daemonErrorCategory}.`);
+    }
+    if (daemonErrorMessage) {
+      const safeSection = buildSafeExternalFeedbackSection({
+        heading: "Daemon terminal error details",
+        text: daemonErrorMessage,
+      });
+      if (safeSection) {
+        sections.push(safeSection);
+      }
+    }
+    sections.push(
+      "If this failure is external (provider/config/transport), document the blocker and retry once dependencies are healthy. If code-related, apply a fix and continue.",
+    );
+  } else {
+    sections.push(
+      `The "${eventType}" event was triggered for PR #${loopPrNumber} in ${loopRepoFullName}.`,
+    );
+  }
 
   const reviewBody = getPayloadText(payload, "reviewBody");
   if (reviewBody) {
@@ -696,7 +764,10 @@ async function getNextUnprocessedSignal({
         ),
       ),
     ),
-    orderBy: [schema.sdlcLoopSignalInbox.receivedAt],
+    orderBy: [
+      sql`case when ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal' then 0 else 1 end`,
+      schema.sdlcLoopSignalInbox.receivedAt,
+    ],
   });
 
   if (!signal) {
@@ -942,12 +1013,14 @@ export async function runBestEffortSdlcSignalInboxTick({
   leaseOwnerToken,
   now = new Date(),
   guardrailRuntime,
+  includeRuntimeRouting = false,
 }: {
   db: DB;
   loopId: string;
   leaseOwnerToken: string;
   now?: Date;
   guardrailRuntime?: SdlcSignalInboxGuardrailRuntimeInput;
+  includeRuntimeRouting?: boolean;
 }): Promise<SdlcSignalInboxTickResult> {
   const loop = await db.query.sdlcLoop.findFirst({
     where: eq(schema.sdlcLoop.id, loopId),
@@ -1023,6 +1096,17 @@ export async function runBestEffortSdlcSignalInboxTick({
     }
 
     let runtimeAction: RuntimeActionOutcome = "none";
+    const runtimeRouting: {
+      routed: boolean;
+      followUpQueued: boolean;
+      reason: RuntimeRoutingReason;
+      error: string | null;
+    } = {
+      routed: false,
+      followUpQueued: false,
+      reason: "non_feedback_signal",
+      error: null,
+    };
     const shouldSuppressFeedbackRuntimeAction =
       feedbackSignalCauseTypes.has(signal.causeType) &&
       nonBabysitFeedbackSuppressedStates.has(loop.state);
@@ -1044,6 +1128,9 @@ export async function runBestEffortSdlcSignalInboxTick({
           signal,
         });
         runtimeAction = "feedback_follow_up_queued";
+        runtimeRouting.routed = true;
+        runtimeRouting.followUpQueued = true;
+        runtimeRouting.reason = "follow_up_queued";
       } catch (error) {
         console.error("[sdlc-loop] feedback runtime action failed", {
           loopId,
@@ -1054,6 +1141,15 @@ export async function runBestEffortSdlcSignalInboxTick({
         return {
           processed: false,
           reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
+          ...(includeRuntimeRouting
+            ? {
+                runtimeRouting: {
+                  ...runtimeRouting,
+                  reason: "follow_up_enqueue_failed",
+                  error: stringifyError(error),
+                },
+              }
+            : {}),
         };
       }
     } else if (
@@ -1061,6 +1157,7 @@ export async function runBestEffortSdlcSignalInboxTick({
       shouldQueueRuntimeFollowUp &&
       shouldSuppressFeedbackRuntimeAction
     ) {
+      runtimeRouting.reason = "suppressed_for_loop_state";
       console.log(
         "[sdlc-loop] suppressing feedback runtime action outside PR babysitting phase",
         {
@@ -1074,6 +1171,7 @@ export async function runBestEffortSdlcSignalInboxTick({
       feedbackSignalCauseTypes.has(signal.causeType) &&
       shouldQueueRuntimeFollowUp
     ) {
+      runtimeRouting.reason = "missing_pr_link";
       console.warn(
         "[sdlc-loop] skipping feedback runtime action due to missing PR link",
         {
@@ -1082,6 +1180,8 @@ export async function runBestEffortSdlcSignalInboxTick({
           causeType: signal.causeType,
         },
       );
+    } else if (feedbackSignalCauseTypes.has(signal.causeType)) {
+      runtimeRouting.reason = "gate_eval_no_follow_up";
     }
 
     const refreshedLoop = await db.query.sdlcLoop.findFirst({
@@ -1188,6 +1288,7 @@ export async function runBestEffortSdlcSignalInboxTick({
       causeType: signal.causeType,
       runtimeAction,
       outboxId,
+      ...(includeRuntimeRouting ? { runtimeRouting } : {}),
     };
   } finally {
     const released = await releaseSdlcLoopLease({
