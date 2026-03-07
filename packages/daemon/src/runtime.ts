@@ -59,7 +59,10 @@ function parseSdlcSelfDispatchPayload(
     typeof sd.agentVersion !== "number" ||
     typeof sd.protocolVersion !== "number" ||
     typeof sd.transportMode !== "string" ||
-    typeof sd.permissionMode !== "string"
+    typeof sd.permissionMode !== "string" ||
+    (sd.sessionId !== null && typeof sd.sessionId !== "string") ||
+    typeof sd.featureFlags !== "object" ||
+    sd.featureFlags === null
   ) {
     return null;
   }
