@@ -27,10 +27,7 @@ import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue"
 import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
-import {
-  getFeatureFlagForUser,
-  getFeatureFlagsForUser,
-} from "@terragon/shared/model/feature-flags";
+import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import {
   getThreadChat,
   getThreadMinimal,
@@ -814,19 +811,19 @@ export async function POST(request: Request) {
       return;
     }
 
-    // Check if daemon supports self-dispatch AND feature flag is enabled
+    // Check if daemon supports self-dispatch AND feature flag is enabled.
+    // Fetch all flags once — reused later for the self-dispatch payload.
     const daemonSupportsSelfDispatch = daemonCapabilities.has(
       DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
     );
-    const selfDispatchEnabled = daemonSupportsSelfDispatch
-      ? await getFeatureFlagForUser({
-          db,
-          userId,
-          flagName: "sdlcDaemonSelfDispatch",
-        })
-      : false;
+    const userFeatureFlags = daemonSupportsSelfDispatch
+      ? await getFeatureFlagsForUser({ db, userId })
+      : null;
+    const selfDispatchEnabled =
+      daemonSupportsSelfDispatch &&
+      (userFeatureFlags?.sdlcDaemonSelfDispatch ?? false);
 
-    if (selfDispatchEnabled) {
+    if (selfDispatchEnabled && userFeatureFlags) {
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -840,17 +837,10 @@ export async function POST(request: Request) {
           // Fall through to existing path
         } else {
           // Also need thread chat for agent info
-          const threadChatForDispatch = await getThreadChat({
-            db,
-            userId,
-            threadId,
-            threadChatId,
-          });
-          const threadForDispatch = await getThreadMinimal({
-            db,
-            threadId,
-            userId,
-          });
+          const [threadChatForDispatch, threadForDispatch] = await Promise.all([
+            getThreadChat({ db, userId, threadId, threadChatId }),
+            getThreadMinimal({ db, threadId, userId }),
+          ]);
           if (!threadChatForDispatch) {
             console.warn(
               "[sdlc-loop] self-dispatch: thread chat not found, falling back",
@@ -974,12 +964,6 @@ export async function POST(request: Request) {
                   agent,
                   transportMode,
                   protocolVersion,
-                });
-
-                // Get feature flags for the payload
-                const userFeatureFlags = await getFeatureFlagsForUser({
-                  db,
-                  userId,
                 });
 
                 selfDispatchPayload = {

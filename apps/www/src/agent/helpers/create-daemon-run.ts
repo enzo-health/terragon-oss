@@ -46,7 +46,7 @@ export async function createDaemonRunCredentials({
   agent: AIAgent;
   transportMode: "legacy" | "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
-}): Promise<{ token: string; daemonTokenKeyId: string | null }> {
+}): Promise<{ token: string }> {
   const nowMs = Date.now();
   const daemonRunClaims = {
     kind: "daemon-run" as const,
@@ -89,5 +89,5 @@ export async function createDaemonRunCredentials({
     },
   });
 
-  return { token: apiKey.key, daemonTokenKeyId };
+  return { token: apiKey.key };
 }

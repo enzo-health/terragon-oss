@@ -37,12 +37,10 @@ export function getPrimaryThreadChat(
     activeThreadStatuses.has(chat.status),
   );
   const candidateChats = activeChats.length > 0 ? activeChats : threadChats;
-  const threadChat = candidateChats
-    .slice()
-    .sort(
-      (left, right) =>
-        getThreadChatTimestampValue(right) - getThreadChatTimestampValue(left),
-    )[0];
+  const threadChat = candidateChats.sort(
+    (left, right) =>
+      getThreadChatTimestampValue(right) - getThreadChatTimestampValue(left),
+  )[0];
   if (!threadChat) {
     throw new Error(`Thread ${thread.id} does not have any thread chats`);
   }

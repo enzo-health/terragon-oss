@@ -12,6 +12,34 @@ import type {
   DBUserMessage,
 } from "@terragon/shared";
 
+async function checkNoopBusy({
+  threadId,
+  threadChatId,
+  userId,
+}: {
+  threadId: string;
+  threadChatId: string;
+  userId: string;
+}): Promise<FollowUpQueueProcessingResult | null> {
+  const latestThreadChat = await getThreadChat({
+    db,
+    threadId,
+    threadChatId,
+    userId,
+  });
+  if (
+    latestThreadChat &&
+    FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
+  ) {
+    console.warn(
+      "Skipping follow-up dispatch after noop status transition; chat is already active",
+      { threadId, threadChatId, status: latestThreadChat.status },
+    );
+    return { processed: false, reason: "status_transition_noop_busy" };
+  }
+  return null;
+}
+
 const MAX_FOLLOW_UP_RETRIES = 3;
 const FOLLOW_UP_RETRY_BASE_DELAY_MS = 2_000;
 const FOLLOW_UP_ACTIVE_PROCESSING_STATUSES = new Set([
@@ -274,26 +302,12 @@ export async function maybeProcessFollowUpQueue({
       },
     });
     if (!didUpdateStatus) {
-      const latestThreadChat = await getThreadChat({
-        db,
+      const busyResult = await checkNoopBusy({
         threadId,
         threadChatId,
         userId,
       });
-      if (
-        latestThreadChat &&
-        FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
-      ) {
-        console.warn(
-          "Skipping follow-up dispatch after noop status transition; chat is already active",
-          {
-            threadId,
-            threadChatId,
-            status: latestThreadChat.status,
-          },
-        );
-        return { processed: false, reason: "status_transition_noop_busy" };
-      }
+      if (busyResult) return busyResult;
     }
     const messageWithModel = {
       ...firstQueuedMessage,
@@ -355,26 +369,8 @@ export async function maybeProcessFollowUpQueue({
     },
   });
   if (!didUpdateStatus) {
-    const latestThreadChat = await getThreadChat({
-      db,
-      threadId,
-      threadChatId,
-      userId,
-    });
-    if (
-      latestThreadChat &&
-      FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
-    ) {
-      console.warn(
-        "Skipping follow-up dispatch after noop status transition; chat is already active",
-        {
-          threadId,
-          threadChatId,
-          status: latestThreadChat.status,
-        },
-      );
-      return { processed: false, reason: "status_transition_noop_busy" };
-    }
+    const busyResult = await checkNoopBusy({ threadId, threadChatId, userId });
+    if (busyResult) return busyResult;
   }
   console.log("Processing follow-up", {
     threadId,
