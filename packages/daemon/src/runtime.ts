@@ -12,9 +12,11 @@ import { Logger, OutputFormat } from "./logger";
 import {
   DaemonEventAPIBody,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DAEMON_VERSION,
+  SdlcSelfDispatchPayload,
 } from "./shared";
 import { nanoid } from "nanoid/non-secure";
 
@@ -32,6 +34,29 @@ function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
     return false;
   }
   return body.seq >= 0;
+}
+
+function parseSdlcSelfDispatchPayload(
+  body: unknown,
+): SdlcSelfDispatchPayload | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const selfDispatch = (body as { selfDispatch?: unknown }).selfDispatch;
+  if (!selfDispatch || typeof selfDispatch !== "object") {
+    return null;
+  }
+  const sd = selfDispatch as Record<string, unknown>;
+  if (
+    typeof sd.token !== "string" ||
+    typeof sd.prompt !== "string" ||
+    typeof sd.runId !== "string" ||
+    typeof sd.threadId !== "string" ||
+    typeof sd.threadChatId !== "string"
+  ) {
+    return null;
+  }
+  return selfDispatch as SdlcSelfDispatchPayload;
 }
 
 function extractDaemonServerErrorCode(body: unknown): string | null {
@@ -98,7 +123,10 @@ export interface IDaemonRuntime {
   teardown: () => Promise<void>;
   onTeardown: (callback: () => Promise<void> | void) => void;
 
-  serverPost: (body: DaemonEventAPIBody, token: string) => Promise<void>;
+  serverPost: (
+    body: DaemonEventAPIBody,
+    token: string,
+  ) => Promise<SdlcSelfDispatchPayload | null>;
 
   listenToUnixSocket: (callback: (data: string) => void) => Promise<void>;
 
@@ -155,6 +183,7 @@ export class DaemonRuntime implements IDaemonRuntime {
   readonly url: string;
   readonly logger: Logger;
   readonly unixSocketPath: string;
+  public additionalCapabilities: Set<string> = new Set();
   private skipReportingDaemonEvents: boolean = false;
   private isTerminated = false;
   private eventEmitter = new EventEmitter();
@@ -253,12 +282,15 @@ export class DaemonRuntime implements IDaemonRuntime {
     this.eventEmitter.on("teardown", callback);
   }
 
-  async serverPost(body: DaemonEventAPIBody, token: string) {
+  async serverPost(
+    body: DaemonEventAPIBody,
+    token: string,
+  ): Promise<SdlcSelfDispatchPayload | null> {
     const url = `${this.url}/api/daemon-event`;
     const logArgs = { url, body: JSON.stringify(body) };
     if (this.skipReportingDaemonEvents) {
       this.logger.info(`[SKIPPED] POST to ${url}`, logArgs);
-      return;
+      return null;
     }
     this.logger.info(`POST to ${url}`, logArgs);
     const headers: Record<string, string> = {
@@ -266,9 +298,15 @@ export class DaemonRuntime implements IDaemonRuntime {
       "X-Daemon-Token": token,
       [DAEMON_EVENT_VERSION_HEADER]: DAEMON_VERSION,
     };
+    const allCapabilities: string[] = [];
     if (hasDaemonEventEnvelopeV2(body)) {
-      headers[DAEMON_EVENT_CAPABILITIES_HEADER] =
-        DAEMON_CAPABILITY_EVENT_ENVELOPE_V2;
+      allCapabilities.push(DAEMON_CAPABILITY_EVENT_ENVELOPE_V2);
+    }
+    for (const cap of this.additionalCapabilities) {
+      allCapabilities.push(cap);
+    }
+    if (allCapabilities.length > 0) {
+      headers[DAEMON_EVENT_CAPABILITIES_HEADER] = allCapabilities.join(",");
     }
     const response = await fetch(url, {
       method: "POST",
@@ -311,7 +349,19 @@ export class DaemonRuntime implements IDaemonRuntime {
           `Daemon event ack mismatch for ${body.eventId}:${body.seq}`,
         );
       }
+      return parseSdlcSelfDispatchPayload(responseBody);
     }
+
+    if (this.additionalCapabilities.has(DAEMON_CAPABILITY_SDLC_SELF_DISPATCH)) {
+      let responseBody: unknown = null;
+      try {
+        responseBody = await response.json();
+      } catch {
+        responseBody = null;
+      }
+      return parseSdlcSelfDispatchPayload(responseBody);
+    }
+    return null;
   }
 
   async listenToUnixSocket(
