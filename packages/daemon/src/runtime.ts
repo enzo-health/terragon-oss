@@ -52,7 +52,14 @@ function parseSdlcSelfDispatchPayload(
     typeof sd.prompt !== "string" ||
     typeof sd.runId !== "string" ||
     typeof sd.threadId !== "string" ||
-    typeof sd.threadChatId !== "string"
+    typeof sd.threadChatId !== "string" ||
+    typeof sd.tokenNonce !== "string" ||
+    typeof sd.model !== "string" ||
+    typeof sd.agent !== "string" ||
+    typeof sd.agentVersion !== "number" ||
+    typeof sd.protocolVersion !== "number" ||
+    typeof sd.transportMode !== "string" ||
+    typeof sd.permissionMode !== "string"
   ) {
     return null;
   }
@@ -122,6 +129,8 @@ export interface IDaemonRuntime {
 
   teardown: () => Promise<void>;
   onTeardown: (callback: () => Promise<void> | void) => void;
+
+  additionalCapabilities?: Set<string>;
 
   serverPost: (
     body: DaemonEventAPIBody,

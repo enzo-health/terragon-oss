@@ -34,6 +34,7 @@ import {
 import {
   getThreadChat,
   getThreadMinimal,
+  updateThreadChat,
 } from "@terragon/shared/model/threads";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
@@ -856,8 +857,11 @@ export async function POST(request: Request) {
               { userId, threadId, loopId },
             );
           } else {
-            // Build prompt from queued messages
+            // Build prompt from queued messages (text parts only).
+            // If any non-text parts exist, fall back to the queue path
+            // which handles the full message format.
             const promptParts: string[] = [];
+            let hasNonTextParts = false;
             for (const qMsg of threadChatForDispatch.queuedMessages) {
               if ("parts" in qMsg && Array.isArray(qMsg.parts)) {
                 for (const part of qMsg.parts) {
@@ -868,29 +872,32 @@ export async function POST(request: Request) {
                     typeof part.text === "string"
                   ) {
                     promptParts.push(part.text);
+                  } else if (part && typeof part === "object") {
+                    hasNonTextParts = true;
                   }
                 }
               }
             }
-            const prompt = promptParts.join("\n\n");
 
-            if (!prompt.trim()) {
+            if (hasNonTextParts) {
+              console.warn(
+                "[sdlc-loop] self-dispatch: non-text message parts detected, falling back",
+                { userId, threadId, threadChatId, loopId },
+              );
+            } else if (!promptParts.join("\n\n").trim()) {
               console.warn(
                 "[sdlc-loop] self-dispatch: empty prompt from queued messages, falling back",
                 { userId, threadId, threadChatId, loopId },
               );
             } else {
-              // Transition status: working-done → working via user.message
+              const prompt = promptParts.join("\n\n");
+              // Transition status first WITHOUT chat updates to avoid clearing
+              // queued messages on failure (chatUpdates apply unconditionally).
               const { didUpdateStatus } = await updateThreadChatWithTransition({
                 userId,
                 threadId,
                 threadChatId,
                 eventType: "user.message",
-                chatUpdates: {
-                  appendAndResetQueuedMessages: true,
-                  errorMessage: null,
-                  errorMessageInfo: null,
-                },
               });
 
               if (!didUpdateStatus) {
@@ -899,6 +906,18 @@ export async function POST(request: Request) {
                   { userId, threadId, threadChatId, loopId },
                 );
               } else {
+                // Only clear queued messages after confirmed transition
+                await updateThreadChat({
+                  db,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  updates: {
+                    appendAndResetQueuedMessages: true,
+                    errorMessage: null,
+                    errorMessageInfo: null,
+                  },
+                });
                 const newRunId = randomUUID();
                 const newTokenNonce = randomUUID();
                 const agent = threadChatForDispatch.agent;
@@ -915,6 +934,10 @@ export async function POST(request: Request) {
                 const protocolVersion =
                   (runContext?.protocolVersion as 1 | 2) ?? 1;
 
+                // SDLC follow-ups always use allowAll — same as startAgentMessage
+                // which forces allowAll when activeSdlcLoop is true.
+                const effectivePermissionMode = "allowAll" as const;
+
                 // Create run context
                 await upsertAgentRunContext({
                   db,
@@ -926,7 +949,7 @@ export async function POST(request: Request) {
                   transportMode,
                   protocolVersion,
                   agent,
-                  permissionMode: "allowAll",
+                  permissionMode: effectivePermissionMode,
                   requestedSessionId: null,
                   resolvedSessionId: null,
                   status: "pending",
@@ -963,7 +986,7 @@ export async function POST(request: Request) {
                   agentVersion,
                   sessionId: null,
                   featureFlags: userFeatureFlags,
-                  permissionMode: "allowAll",
+                  permissionMode: effectivePermissionMode,
                   transportMode,
                   protocolVersion,
                   threadId,

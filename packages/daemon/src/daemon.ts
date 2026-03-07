@@ -707,11 +707,8 @@ export class TerragonDaemon {
       });
     }
     // Advertise SDLC self-dispatch capability when feature flag is enabled
-    if (
-      input.featureFlags?.sdlcDaemonSelfDispatch &&
-      "additionalCapabilities" in this.runtime
-    ) {
-      (this.runtime as any).additionalCapabilities.add(
+    if (input.featureFlags?.sdlcDaemonSelfDispatch) {
+      this.runtime.additionalCapabilities?.add(
         DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
       );
     }
@@ -3526,6 +3523,7 @@ export class TerragonDaemon {
           protocolVersion: payload.protocolVersion,
           threadId: payload.threadId,
           threadChatId: payload.threadChatId,
+          runId: payload.runId,
         };
         this.runtime.logger.info("SDLC self-dispatch: starting follow-up run", {
           threadId: payload.threadId,
