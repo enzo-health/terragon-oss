@@ -534,7 +534,7 @@ function buildSdlcFixFollowUpMessage({
   };
 }
 
-async function queueSdlcFollowUpMessage({
+export async function queueSdlcFollowUpMessage({
   userId,
   threadId,
   threadChatId,
@@ -778,7 +778,7 @@ async function runUiSmokeGate({
   });
 }
 
-function formatReviewFindings({
+export function formatReviewFindings({
   label,
   findings,
 }: {

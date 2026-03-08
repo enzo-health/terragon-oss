@@ -48,7 +48,10 @@ import {
   getUnresolvedBlockingDeepReviewFindings,
   getUnresolvedBlockingCarmackReviewFindings,
 } from "@terragon/shared/model/sdlc-loop";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import {
+  formatReviewFindings,
+  queueSdlcFollowUpMessage,
+} from "@/server-lib/checkpoint-thread-internal";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type {
   ThreadSourceMetadata,
@@ -891,95 +894,72 @@ async function handleThreadFinish({
   // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
   // and isError is still true, re-queue the actual review findings so the next agent run
   // has actionable context. This reuses sdlcLoopForErrorRecovery to avoid a duplicate DB call.
+  // Note: sdlcLoopForErrorRecovery is only populated when the first block's guard
+  // (!isPromptTooLong && !isOAuthTokenRevoked) was met, so this is implicitly safe
+  // even though the outer guard here is broader.
   if (isError && !isRateLimited) {
     try {
       const activeSdlcLoop = sdlcLoopForErrorRecovery;
-      if (
-        activeSdlcLoop &&
-        activeSdlcLoop.state === "implementing" &&
-        !activeSdlcLoop.currentHeadSha
-      ) {
-        console.warn(
-          "SDLC error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
-          { threadId, loopId: activeSdlcLoop.id },
-        );
-      }
-      if (
-        activeSdlcLoop &&
-        activeSdlcLoop.state === "implementing" &&
-        activeSdlcLoop.currentHeadSha
-      ) {
-        const [deepFindings, carmackFindings] = await Promise.all([
-          getUnresolvedBlockingDeepReviewFindings({
-            db,
-            loopId: activeSdlcLoop.id,
-            headSha: activeSdlcLoop.currentHeadSha,
-          }),
-          getUnresolvedBlockingCarmackReviewFindings({
-            db,
-            loopId: activeSdlcLoop.id,
-            headSha: activeSdlcLoop.currentHeadSha,
-          }),
-        ]);
-
-        if (deepFindings.length > 0 || carmackFindings.length > 0) {
-          const reviewSections: string[] = [];
-          if (deepFindings.length > 0) {
-            reviewSections.push(
-              "Deep review blocking findings:",
-              ...deepFindings
-                .slice(0, 8)
-                .map(
-                  (f, i) =>
-                    `${i + 1}. [${(f.severity ?? "high").toUpperCase()}] ${f.title} (${f.category})\n${f.detail}`,
-                ),
-            );
-          }
-          if (carmackFindings.length > 0) {
-            reviewSections.push(
-              "Carmack review blocking findings:",
-              ...carmackFindings
-                .slice(0, 8)
-                .map(
-                  (f, i) =>
-                    `${i + 1}. [${(f.severity ?? "high").toUpperCase()}] ${f.title} (${f.category})\n${f.detail}`,
-                ),
-            );
-          }
-
-          await queueFollowUpInternal({
-            userId,
-            threadId,
-            threadChatId,
-            messages: [
-              {
-                type: "user",
-                model: null,
-                timestamp: new Date().toISOString(),
-                parts: [
-                  {
-                    type: "text",
-                    text: [
-                      "SDLC review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
-                      ...reviewSections,
-                    ].join("\n\n"),
-                  },
-                ],
-              },
-            ],
-            appendOrReplace: "append",
-            source: "www",
-          });
-
-          shouldProcessFollowUpQueue = true;
-          console.log(
-            "SDLC error recovery: re-queued review findings for crashed implementing agent",
-            {
-              threadId,
-              deepCount: deepFindings.length,
-              carmackCount: carmackFindings.length,
-            },
+      if (activeSdlcLoop && activeSdlcLoop.state === "implementing") {
+        if (!activeSdlcLoop.currentHeadSha) {
+          console.warn(
+            "SDLC error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
+            { threadId, loopId: activeSdlcLoop.id },
           );
+        } else {
+          const [deepFindings, carmackFindings] = await Promise.all([
+            getUnresolvedBlockingDeepReviewFindings({
+              db,
+              loopId: activeSdlcLoop.id,
+              headSha: activeSdlcLoop.currentHeadSha,
+            }),
+            getUnresolvedBlockingCarmackReviewFindings({
+              db,
+              loopId: activeSdlcLoop.id,
+              headSha: activeSdlcLoop.currentHeadSha,
+            }),
+          ]);
+
+          const details = [
+            formatReviewFindings({
+              label: "Deep review blocking findings",
+              findings: deepFindings.map((f) => ({
+                ...f,
+                severity: f.severity ?? "high",
+              })),
+            }),
+            formatReviewFindings({
+              label: "Carmack review blocking findings",
+              findings: carmackFindings.map((f) => ({
+                ...f,
+                severity: f.severity ?? "high",
+              })),
+            }),
+          ].filter((s): s is string => Boolean(s));
+
+          if (details.length > 0) {
+            // queueSdlcFollowUpMessage calls queueFollowUpInternal which
+            // already triggers maybeProcessFollowUpQueue when the thread
+            // is in error/done state, so we don't need to set
+            // shouldProcessFollowUpQueue here.
+            await queueSdlcFollowUpMessage({
+              userId,
+              threadId,
+              threadChatId,
+              heading:
+                "SDLC review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
+              details,
+            });
+
+            console.log(
+              "SDLC error recovery: re-queued review findings for crashed implementing agent",
+              {
+                threadId,
+                deepCount: deepFindings.length,
+                carmackCount: carmackFindings.length,
+              },
+            );
+          }
         }
       }
     } catch (sdlcQueueError) {
