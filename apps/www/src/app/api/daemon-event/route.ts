@@ -812,15 +812,12 @@ export async function POST(request: Request) {
     }
 
     // Check if daemon supports self-dispatch.
-    // Fetch all flags once — reused later for the self-dispatch payload.
     const daemonSupportsSelfDispatch = daemonCapabilities.has(
       DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
     );
-    const userFeatureFlags = daemonSupportsSelfDispatch
-      ? await getFeatureFlagsForUser({ db, userId })
-      : null;
 
     if (daemonSupportsSelfDispatch) {
+      const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which

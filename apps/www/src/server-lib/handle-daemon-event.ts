@@ -622,14 +622,20 @@ export async function handleDaemonEvent({
     }
   }
 
-  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases
+  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
+  // This variable is hoisted so the follow-up recovery block below can reuse it
+  // without a duplicate DB call.
+  let sdlcLoopForErrorRecovery: Awaited<
+    ReturnType<typeof getActiveSdlcLoopForThread>
+  > = null;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
-      const activeSdlcLoop = await getActiveSdlcLoopForThread({
+      sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
         db,
         userId,
         threadId,
       });
+      const activeSdlcLoop = sdlcLoopForErrorRecovery;
 
       if (activeSdlcLoop && SDLC_AUTO_RETRY_PHASES.has(activeSdlcLoop.state)) {
         console.log(
@@ -882,15 +888,22 @@ async function handleThreadFinish({
 
   let shouldProcessFollowUpQueue = !isRateLimited && !isError;
 
-  // Fix: allow SDLC loops to recover from agent crashes by re-queuing
-  // review findings and processing the follow-up queue even on error.
+  // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
+  // and isError is still true, re-queue the actual review findings so the next agent run
+  // has actionable context. This reuses sdlcLoopForErrorRecovery to avoid a duplicate DB call.
   if (isError && !isRateLimited) {
     try {
-      const activeSdlcLoop = await getActiveSdlcLoopForThread({
-        db,
-        userId,
-        threadId,
-      });
+      const activeSdlcLoop = sdlcLoopForErrorRecovery;
+      if (
+        activeSdlcLoop &&
+        activeSdlcLoop.state === "implementing" &&
+        !activeSdlcLoop.currentHeadSha
+      ) {
+        console.warn(
+          "SDLC error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
+          { threadId, loopId: activeSdlcLoop.id },
+        );
+      }
       if (
         activeSdlcLoop &&
         activeSdlcLoop.state === "implementing" &&
