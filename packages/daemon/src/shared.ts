@@ -19,7 +19,6 @@ export type FeatureFlags = {
   sdlcLoopCoordinatorRouting?: boolean;
   sandboxAgentAcpTransport?: boolean;
   codexAppServerTransport?: boolean;
-  sdlcDaemonSelfDispatch?: boolean;
 };
 
 export const DaemonTransportModeSchema = z.enum([
