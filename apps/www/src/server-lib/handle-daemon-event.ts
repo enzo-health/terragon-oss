@@ -628,9 +628,9 @@ export async function handleDaemonEvent({
   // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
   // This variable is hoisted so the follow-up recovery block below can reuse it
   // without a duplicate DB call.
-  let sdlcLoopForErrorRecovery: Awaited<
-    ReturnType<typeof getActiveSdlcLoopForThread>
-  > = null;
+  let sdlcLoopForErrorRecovery:
+    | Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>
+    | undefined;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
       sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
