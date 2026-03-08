@@ -1,6 +1,9 @@
 import { Daytona, Image } from "@daytonaio/sdk";
 import type { Resources } from "@daytonaio/sdk";
-import { getTemplateIdForSize } from "@terragon/sandbox-image";
+import {
+  getTemplateIdForSize,
+  getDaytonaBaseCommands,
+} from "@terragon/sandbox-image";
 import type { SandboxSize } from "@terragon/types/sandbox";
 import crypto from "crypto";
 import fs from "fs";
@@ -37,20 +40,14 @@ export async function buildRepoSnapshot({
 }): Promise<{ snapshotName: string }> {
   const daytona = getDaytonaClient();
 
-  // Start from the pre-built Daytona base template (already has Node, tools, etc.)
-  const baseTemplateId = getTemplateIdForSize({
-    provider: "daytona",
-    size,
-  });
-  // Use the snapshot's `ref` (a Daytona container-registry URI) as the FROM base.
-  // Template names like "terry-vCPU-2-RAM-4GB-..." contain uppercase letters which
-  // Docker rejects in FROM directives; the `ref` is always a lowercase SHA digest URI.
-  // NOTE: pulling from cr.app.daytona.io/sbox/ requires Daytona build workers to have
-  // registry credentials. This works with a service-account API key; personal API keys
-  // may fail with "unauthorized". Contact Daytona support if builds fail here.
-  const templateSnapshot = (await daytona.snapshot.get(baseTemplateId)) as any;
-  const baseImageRef: string = templateSnapshot.ref ?? baseTemplateId;
-  let image = Image.base(baseImageRef);
+  // Build from ubuntu:24.04 (public) with all Terragon tools installed inline.
+  // This replicates Dockerfile.daytona programmatically via getDaytonaBaseCommands(),
+  // avoiding the private cr.app.daytona.io/sbox/ registry that Docker build workers
+  // cannot authenticate to with personal API keys. Docker layer caching on Daytona's
+  // build workers means the base layers are fast after the first build.
+  let image = Image.base("ubuntu:24.04").dockerfileCommands(
+    getDaytonaBaseCommands(),
+  );
 
   // Set environment variables for build
   if (environmentVariables.length > 0) {

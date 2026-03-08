@@ -2,6 +2,7 @@ import templates from "../templates.json";
 import type { SandboxSize, SandboxProvider } from "@terragon/types/sandbox";
 
 export { renderDockerfile } from "./render-dockerfile";
+export { getDaytonaBaseCommands } from "./daytona-base";
 
 interface TemplateEntry {
   name: string;

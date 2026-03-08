@@ -5,9 +5,14 @@
  * - @openai/codex
  * - @sourcegraph/amp
  * - opencode-ai
+ * - @sandbox-agent/cli
  *
  * Fetches versions using `npm view <pkg> version --json`.
- * Run with: bun packages/sandbox-image/scripts/update-dockerfile-versions.ts [--dry-run]
+ * Run with: bun packages/sandbox-image/scripts/update-dockerfile-versions.ts [--dry-run] [--check]
+ *
+ * --dry-run  Show what would change without writing files.
+ * --check    Verify Dockerfile.hbs and src/daytona-base.ts have identical version
+ *            pins without fetching from npm. Exits 1 if they differ.
  */
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -19,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DRY_RUN = process.argv.includes("--dry-run");
+const CHECK = process.argv.includes("--check");
 
 type Pkg = {
   name: string;
@@ -50,6 +56,11 @@ const PACKAGES: Pkg[] = [
     name: "@google/gemini-cli",
     // Matches @google/gemini-cli@<semver>
     regex: /@google\/gemini-cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
+  },
+  {
+    name: "@sandbox-agent/cli",
+    // Matches @sandbox-agent/cli@<semver>
+    regex: /@sandbox-agent\/cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
   },
 ];
 
@@ -126,6 +137,87 @@ function updateDockerfile(
   return { updated: before !== after, before, after, changes };
 }
 
+/** Extract the first version match for each package from a file's contents. */
+function extractVersions(contents: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  for (const { name, regex } of PACKAGES) {
+    // Reset lastIndex since regexes have the global flag
+    regex.lastIndex = 0;
+    const m = regex.exec(contents);
+    if (m) found[name] = m[1]!;
+  }
+  return found;
+}
+
+/**
+ * --check mode: verify Dockerfile.hbs and src/daytona-base.ts have identical
+ * version pins. Exits 1 if they differ. Does not fetch from npm.
+ */
+function checkSync() {
+  const dockerfileHbsPath = join(__dirname, "..", "Dockerfile.hbs");
+  const daytonaBasePath = join(__dirname, "..", "src", "daytona-base.ts");
+
+  const hbsVersions = extractVersions(readFileSync(dockerfileHbsPath, "utf8"));
+  const tsVersions = extractVersions(readFileSync(daytonaBasePath, "utf8"));
+
+  let allInSync = true;
+  for (const { name } of PACKAGES) {
+    const hbs = hbsVersions[name];
+    const ts = tsVersions[name];
+    if (!hbs && !ts) continue;
+    if (hbs !== ts) {
+      console.error(
+        `✗ ${name}: Dockerfile.hbs has ${hbs ?? "(missing)"}, daytona-base.ts has ${ts ?? "(missing)"}`,
+      );
+      allInSync = false;
+    }
+  }
+
+  if (!allInSync) {
+    console.error(
+      "\nRun `pnpm -C packages/sandbox-image update-dockerfile-versions` to fix.",
+    );
+    process.exit(1);
+  }
+
+  console.log("✓ Dockerfile.hbs and src/daytona-base.ts are in sync.");
+}
+
+function logChanges(
+  label: string,
+  changes: Array<{
+    name: string;
+    from?: string;
+    to: string;
+    occurrences: number;
+  }>,
+) {
+  console.log(`\n${label}:`);
+  for (const c of changes) {
+    if (c.occurrences === 0) {
+      console.warn(`  Warning: No occurrences found for ${c.name}.`);
+    } else if (c.from === c.to) {
+      console.log(`  ${c.name} already up-to-date at ${c.to}.`);
+    } else {
+      console.log(`  ${c.name}: ${c.from ?? "unknown"} -> ${c.to}`);
+    }
+  }
+}
+
+function printDiff(before: string, after: string) {
+  const beforeLines = before.split(/\r?\n/);
+  const afterLines = after.split(/\r?\n/);
+  const max = Math.max(beforeLines.length, afterLines.length);
+  for (let i = 0; i < max; i++) {
+    const a = beforeLines[i];
+    const b = afterLines[i];
+    if (a !== b) {
+      console.log(`- ${a ?? ""}`);
+      console.log(`+ ${b ?? ""}`);
+    }
+  }
+}
+
 async function main() {
   const pkgVersions: Record<string, string> = {};
 
@@ -134,32 +226,29 @@ async function main() {
     pkgVersions[name] = version;
   }
 
+  // ── Dockerfile.hbs ────────────────────────────────────────────────────────
   const dockerfileHbsPath = join(__dirname, "..", "Dockerfile.hbs");
   const {
     updated: dockerUpdated,
-    before,
-    after,
-    changes,
+    before: dockerBefore,
+    after: dockerAfter,
+    changes: dockerChanges,
   } = updateDockerfile(dockerfileHbsPath, pkgVersions);
+  logChanges("Dockerfile.hbs", dockerChanges);
 
-  // Log Dockerfile summary
-  for (const c of changes) {
-    if (c.occurrences === 0) {
-      console.warn(
-        `Warning: No occurrences found for ${c.name} in Dockerfile.`,
-      );
-    } else if (c.from === c.to) {
-      console.log(
-        `${c.name} already up-to-date at ${c.to} (found ${c.occurrences}).`,
-      );
-    } else {
-      console.log(
-        `${c.name}: ${c.from ?? "unknown"} -> ${c.to} (updated ${c.occurrences}).`,
-      );
-    }
-  }
+  // ── daytona-base.ts ───────────────────────────────────────────────────────
+  // Keeps getDaytonaBaseCommands() in sync with Dockerfile.hbs.
+  // Same version strings appear verbatim, so the identical regexes apply.
+  const daytonaBasePath = join(__dirname, "..", "src", "daytona-base.ts");
+  const {
+    updated: daytonaUpdated,
+    before: daytonaBefore,
+    after: daytonaAfter,
+    changes: daytonaChanges,
+  } = updateDockerfile(daytonaBasePath, pkgVersions);
+  logChanges("src/daytona-base.ts", daytonaChanges);
 
-  // Prepare test updates (currently only claude --version inline snapshot)
+  // ── template.test.ts ──────────────────────────────────────────────────────
   const templateTestPath = join(__dirname, "..", "template.test.ts");
   const testExists = existsSync(templateTestPath);
   const beforeTest = testExists ? readFileSync(templateTestPath, "utf8") : "";
@@ -186,35 +275,21 @@ async function main() {
 
   if (DRY_RUN) {
     if (dockerUpdated) {
-      console.log("--dry-run: Dockerfile.hbs changes\n");
-      const beforeLines = before.split(/\r?\n/);
-      const afterLines = after.split(/\r?\n/);
-      const max = Math.max(beforeLines.length, afterLines.length);
-      for (let i = 0; i < max; i++) {
-        const a = beforeLines[i];
-        const b = afterLines[i];
-        if (a !== b) {
-          console.log(`- ${a ?? ""}`);
-          console.log(`+ ${b ?? ""}`);
-        }
-      }
+      console.log("\n--dry-run: Dockerfile.hbs changes");
+      printDiff(dockerBefore, dockerAfter);
     } else {
-      console.log("Dockerfile.hbs already up-to-date. No changes.");
+      console.log("Dockerfile.hbs already up-to-date.");
+    }
+    if (daytonaUpdated) {
+      console.log("\n--dry-run: src/daytona-base.ts changes");
+      printDiff(daytonaBefore, daytonaAfter);
+    } else {
+      console.log("src/daytona-base.ts already up-to-date.");
     }
     if (testExists) {
       if (testUpdated) {
-        console.log("\n--dry-run: template.test.ts changes\n");
-        const beforeLines = beforeTest.split(/\r?\n/);
-        const afterLines = afterTest.split(/\r?\n/);
-        const max = Math.max(beforeLines.length, afterLines.length);
-        for (let i = 0; i < max; i++) {
-          const a = beforeLines[i];
-          const b = afterLines[i];
-          if (a !== b) {
-            console.log(`- ${a ?? ""}`);
-            console.log(`+ ${b ?? ""}`);
-          }
-        }
+        console.log("\n--dry-run: template.test.ts changes");
+        printDiff(beforeTest, afterTest);
       } else {
         console.log("No test updates needed in template.test.ts");
       }
@@ -223,25 +298,32 @@ async function main() {
   }
 
   if (dockerUpdated) {
-    writeFileSync(dockerfileHbsPath, after, "utf8");
+    writeFileSync(dockerfileHbsPath, dockerAfter, "utf8");
     console.log(`Updated ${dockerfileHbsPath}`);
   } else {
     console.log("Dockerfile.hbs already up-to-date.");
   }
 
-  if (testExists) {
-    if (testUpdated) {
-      writeFileSync(templateTestPath, afterTest, "utf8");
-      console.log(
-        `Updated ${templateTestPath} inline snapshots for Claude Code.`,
-      );
-    } else {
-      console.log(`No test updates needed in ${templateTestPath}.`);
-    }
+  if (daytonaUpdated) {
+    writeFileSync(daytonaBasePath, daytonaAfter, "utf8");
+    console.log(`Updated ${daytonaBasePath}`);
+  } else {
+    console.log("src/daytona-base.ts already up-to-date.");
+  }
+
+  if (testExists && testUpdated) {
+    writeFileSync(templateTestPath, afterTest, "utf8");
+    console.log(
+      `Updated ${templateTestPath} inline snapshots for Claude Code.`,
+    );
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (CHECK) {
+  checkSync();
+} else {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
