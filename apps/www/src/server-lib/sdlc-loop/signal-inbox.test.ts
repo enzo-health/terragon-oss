@@ -206,6 +206,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       causeType: "check_run.completed",
       runtimeAction: "feedback_follow_up_queued",
       outboxId: "outbox-1",
+      feedbackQueuedMessage: expect.any(Object),
     });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -301,6 +302,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       causeType: "check_run.completed",
       runtimeAction: "none",
       outboxId: null,
+      feedbackQueuedMessage: null,
     });
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();

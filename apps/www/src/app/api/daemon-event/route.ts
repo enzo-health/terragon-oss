@@ -2,9 +2,11 @@ import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
+  type SdlcSelfDispatchPayload,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
@@ -15,6 +17,7 @@ import {
 } from "@terragon/shared/model/sdlc-loop";
 import {
   getAgentRunContextByRunId,
+  upsertAgentRunContext,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -23,6 +26,19 @@ import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
+import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
+import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import {
+  getThreadChat,
+  getThreadMinimal,
+  updateThreadChat,
+} from "@terragon/shared/model/threads";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import {
+  normalizedModelForDaemon,
+  getDefaultModelForAgent,
+} from "@terragon/agent/utils";
+import { randomUUID } from "node:crypto";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -510,6 +526,7 @@ export async function POST(request: Request) {
       ? rawThreadChatId
       : LEGACY_THREAD_CHAT_ID;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
+  let selfDispatchPayload: SdlcSelfDispatchPayload | null = null;
   const daemonAuthContext = await getDaemonTokenAuthContextOrNull(request);
   if (!daemonAuthContext) {
     return new Response("Unauthorized", { status: 401 });
@@ -794,6 +811,209 @@ export async function POST(request: Request) {
       return;
     }
 
+    // Check if daemon supports self-dispatch AND feature flag is enabled.
+    // Fetch all flags once — reused later for the self-dispatch payload.
+    const daemonSupportsSelfDispatch = daemonCapabilities.has(
+      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
+    );
+    const userFeatureFlags = daemonSupportsSelfDispatch
+      ? await getFeatureFlagsForUser({ db, userId })
+      : null;
+    const selfDispatchEnabled =
+      daemonSupportsSelfDispatch &&
+      (userFeatureFlags?.sdlcDaemonSelfDispatch ?? false);
+
+    if (selfDispatchEnabled && userFeatureFlags) {
+      try {
+        // Use the queued message directly from the tick result to avoid
+        // a race with handleThreadFinish's maybeProcessFollowUpQueue which
+        // can consume queued messages from the DB before we read them.
+        const feedbackMsg = tickResult.feedbackQueuedMessage;
+        if (!feedbackMsg) {
+          console.warn(
+            "[sdlc-loop] self-dispatch: no feedback message from tick result, falling back",
+            { userId, threadId, threadChatId, loopId },
+          );
+          // Fall through to existing path
+        } else {
+          // Also need thread chat for agent info
+          const [threadChatForDispatch, threadForDispatch] = await Promise.all([
+            getThreadChat({ db, userId, threadId, threadChatId }),
+            getThreadMinimal({ db, threadId, userId }),
+          ]);
+          if (!threadChatForDispatch) {
+            console.warn(
+              "[sdlc-loop] self-dispatch: thread chat not found, falling back",
+              { userId, threadId, threadChatId, loopId },
+            );
+          } else if (!threadForDispatch || !threadForDispatch.codesandboxId) {
+            console.warn(
+              "[sdlc-loop] self-dispatch: thread or sandbox not found, falling back",
+              { userId, threadId, loopId },
+            );
+          } else {
+            // Build prompt from the feedback message (text parts only).
+            // If any non-text parts exist, fall back to the queue path
+            // which handles the full message format.
+            const queuedMessages = [feedbackMsg];
+            const promptParts: string[] = [];
+            let hasNonTextParts = false;
+            for (const qMsg of queuedMessages) {
+              if ("parts" in qMsg && Array.isArray(qMsg.parts)) {
+                for (const part of qMsg.parts) {
+                  if (
+                    part &&
+                    typeof part === "object" &&
+                    "text" in part &&
+                    typeof part.text === "string"
+                  ) {
+                    promptParts.push(part.text);
+                  } else if (part && typeof part === "object") {
+                    hasNonTextParts = true;
+                  }
+                }
+              }
+            }
+
+            if (hasNonTextParts) {
+              console.warn(
+                "[sdlc-loop] self-dispatch: non-text message parts detected, falling back",
+                { userId, threadId, threadChatId, loopId },
+              );
+            } else if (!promptParts.join("\n\n").trim()) {
+              console.warn(
+                "[sdlc-loop] self-dispatch: empty prompt from queued messages, falling back",
+                { userId, threadId, threadChatId, loopId },
+              );
+            } else {
+              const prompt = promptParts.join("\n\n");
+              // Transition status first WITHOUT chat updates to avoid clearing
+              // queued messages on failure (chatUpdates apply unconditionally).
+              const { didUpdateStatus } = await updateThreadChatWithTransition({
+                userId,
+                threadId,
+                threadChatId,
+                eventType: "user.message",
+              });
+
+              if (!didUpdateStatus) {
+                console.warn(
+                  "[sdlc-loop] self-dispatch: status transition failed, falling back",
+                  { userId, threadId, threadChatId, loopId },
+                );
+              } else {
+                // Only clear queued messages after confirmed transition
+                await updateThreadChat({
+                  db,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  updates: {
+                    appendAndResetQueuedMessages: true,
+                    errorMessage: null,
+                    errorMessageInfo: null,
+                  },
+                });
+                const newRunId = randomUUID();
+                const newTokenNonce = randomUUID();
+                const agent = threadChatForDispatch.agent;
+                const agentVersion = threadChatForDispatch.agentVersion;
+                const model = normalizedModelForDaemon(
+                  getDefaultModelForAgent({ agent, agentVersion }),
+                );
+                const sandboxId = threadForDispatch.codesandboxId;
+                const transportMode =
+                  (runContext?.transportMode as
+                    | "legacy"
+                    | "acp"
+                    | "codex-app-server") ?? "legacy";
+                const protocolVersion =
+                  (runContext?.protocolVersion as 1 | 2) ?? 1;
+
+                // SDLC follow-ups always use allowAll — same as startAgentMessage
+                // which forces allowAll when activeSdlcLoop is true.
+                const effectivePermissionMode = "allowAll" as const;
+
+                // Create run context
+                await upsertAgentRunContext({
+                  db,
+                  runId: newRunId,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  sandboxId,
+                  transportMode,
+                  protocolVersion,
+                  agent,
+                  permissionMode: effectivePermissionMode,
+                  requestedSessionId: null,
+                  resolvedSessionId: null,
+                  status: "pending",
+                  tokenNonce: newTokenNonce,
+                  daemonTokenKeyId: null,
+                });
+
+                // Create API key
+                const { token } = await createDaemonRunCredentials({
+                  userId,
+                  threadId,
+                  threadChatId,
+                  sandboxId,
+                  runId: newRunId,
+                  tokenNonce: newTokenNonce,
+                  agent,
+                  transportMode,
+                  protocolVersion,
+                });
+
+                selfDispatchPayload = {
+                  token,
+                  prompt,
+                  runId: newRunId,
+                  tokenNonce: newTokenNonce,
+                  model,
+                  agent,
+                  agentVersion,
+                  sessionId: null,
+                  featureFlags: userFeatureFlags,
+                  permissionMode: effectivePermissionMode,
+                  transportMode,
+                  protocolVersion,
+                  threadId,
+                  threadChatId,
+                };
+
+                console.log("[sdlc-loop] self-dispatch payload prepared", {
+                  userId,
+                  threadId,
+                  threadChatId,
+                  loopId,
+                  runId: newRunId,
+                  eventId,
+                  seq,
+                });
+                return; // Skip maybeProcessFollowUpQueue
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error(
+          "[sdlc-loop] self-dispatch preparation failed, falling back to queue",
+          {
+            userId,
+            threadId,
+            threadChatId,
+            loopId,
+            eventId,
+            seq,
+            error,
+          },
+        );
+      }
+    }
+
+    // Existing fallback path
     const followUpResult = await maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
@@ -1218,5 +1438,6 @@ export async function POST(request: Request) {
     success: true,
     acknowledgedEventId: envelopeV2?.eventId ?? null,
     acknowledgedSeq: envelopeV2?.seq ?? null,
+    ...(selfDispatchPayload ? { selfDispatch: selfDispatchPayload } : {}),
   });
 }

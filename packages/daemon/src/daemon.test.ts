@@ -5,6 +5,7 @@ import {
   DAEMON_VERSION,
   DaemonMessageStop,
   DaemonMessageClaude,
+  SdlcSelfDispatchPayload,
 } from "./shared";
 import {
   DaemonRuntime,
@@ -94,7 +95,7 @@ describe("daemon", () => {
         processId: ++spawnPid,
         pollInterval: undefined,
       }));
-    serverPostMock = vi.spyOn(runtime, "serverPost").mockResolvedValue();
+    serverPostMock = vi.spyOn(runtime, "serverPost").mockResolvedValue(null);
     execSyncMock = vi
       .spyOn(runtime, "execSync")
       .mockReturnValue("NOT_EXISTS\n");
@@ -1069,6 +1070,7 @@ describe("daemon", () => {
       if (apiCallCount === 1) {
         throw new Error("transient failure");
       }
+      return null;
     });
 
     const inputMessage: DaemonMessageClaude = {
@@ -1318,6 +1320,7 @@ describe("daemon", () => {
     serverPostMock.mockImplementation(async () => {
       serverPostCallCount++;
       await sleep(50); // Simulate 50ms API call
+      return null;
     });
 
     await daemon.start();
@@ -1398,6 +1401,7 @@ describe("daemon", () => {
     // Make serverPost take some time
     serverPostMock.mockImplementation(async () => {
       await sleep(30);
+      return null;
     });
 
     await daemon.start();
@@ -1450,6 +1454,7 @@ describe("daemon", () => {
         throw new Error("Network error");
       }
       // Subsequent calls succeed
+      return null;
     });
 
     await daemon.start();
@@ -1537,6 +1542,7 @@ describe("daemon", () => {
           },
         });
       }
+      return null;
     });
 
     await daemon.start();
@@ -1581,6 +1587,7 @@ describe("daemon", () => {
         await sleep(30); // Simulate network delay
         throw new Error("API error");
       }
+      return null;
     });
 
     await daemon.start();
@@ -1650,6 +1657,7 @@ describe("daemon", () => {
         await sleep(40);
         throw new Error("transient failure");
       }
+      return null;
     });
 
     const v2InputMessage: DaemonMessageClaude = {
@@ -1762,6 +1770,7 @@ describe("daemon", () => {
       if (apiCallCount <= 3) {
         throw new Error(`API error ${apiCallCount}`);
       }
+      return null;
     });
 
     await daemon.start();
@@ -2529,6 +2538,7 @@ describe("daemon", () => {
           chatOneFailureCount += 1;
           throw new Error("CHAT_1 temporary failure");
         }
+        return null;
       });
 
       await daemon.start();
@@ -2920,6 +2930,7 @@ describe("daemon", () => {
         if (payload.messages?.length === 0) {
           throw new Error("Network error");
         }
+        return null;
       });
 
       // Wait for heartbeat to attempt and fail
@@ -2954,6 +2965,117 @@ describe("daemon", () => {
       expect(heartbeatCalls).toHaveLength(0);
 
       delete process.env.HEARTBEAT_INTERVAL_MS;
+    });
+  });
+
+  describe("SDLC self-dispatch", () => {
+    const selfDispatchPayload: SdlcSelfDispatchPayload = {
+      token: "SELF_DISPATCH_TOKEN",
+      prompt: "SDLC follow-up prompt",
+      runId: "self-dispatch-run-id",
+      tokenNonce: "self-dispatch-nonce",
+      model: "opus",
+      agent: "claudeCode",
+      agentVersion: 0,
+      sessionId: null,
+      featureFlags: { sdlcDaemonSelfDispatch: true },
+      permissionMode: "allowAll" as const,
+      transportMode: "legacy" as const,
+      protocolVersion: 1 as const,
+      threadId: "TEST_THREAD_ID_STRING",
+      threadChatId: "TEST_THREAD_CHAT_ID_STRING",
+    };
+
+    it("starts follow-up run when serverPost returns self-dispatch payload on terminal batch", async () => {
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      // Configure serverPost to return a self-dispatch payload
+      serverPostMock.mockResolvedValue(selfDispatchPayload);
+
+      // Emit a terminal "result" message from the spawned process
+      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "result",
+          result: "done",
+        }),
+      );
+
+      // Close the process so no active process blocks self-dispatch
+      spawnCommandLineMock.mock.calls[0]![1].onClose(0);
+
+      // Wait for flush + self-dispatch to trigger a second spawn
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
+
+      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not self-dispatch when serverPost returns null", async () => {
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      // serverPost returns null (default mock behavior)
+
+      // Emit a terminal "result" message
+      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "result",
+          result: "done",
+        }),
+      );
+
+      // Close the process
+      spawnCommandLineMock.mock.calls[0]![1].onClose(0);
+
+      // Wait for flush to complete
+      await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
+      // Extra sleep to ensure no delayed self-dispatch
+      await sleep(50);
+
+      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not self-dispatch on non-terminal messages", async () => {
+      await daemon.start();
+      await writeToUnixSocket({
+        unixSocketPath: runtime.unixSocketPath,
+        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+      });
+      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+      // Configure serverPost to return a self-dispatch payload
+      serverPostMock.mockResolvedValue(selfDispatchPayload);
+
+      // Emit a non-terminal "system" message (not result/custom-error/custom-stop)
+      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
+        JSON.stringify({
+          type: "system",
+          subtype: "init",
+          session_id: "test-session",
+          tools: [],
+          mcp_servers: [],
+        }),
+      );
+
+      // Close the process
+      spawnCommandLineMock.mock.calls[0]![1].onClose(0);
+
+      // Wait for flush to complete
+      await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
+      // Extra sleep to ensure no delayed self-dispatch
+      await sleep(50);
+
+      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
     });
   });
 });

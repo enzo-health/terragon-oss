@@ -11,6 +11,7 @@ export const DAEMON_VERSION = "1";
 export const DAEMON_EVENT_VERSION_HEADER = "X-Daemon-Version";
 export const DAEMON_EVENT_CAPABILITIES_HEADER = "X-Daemon-Capabilities";
 export const DAEMON_CAPABILITY_EVENT_ENVELOPE_V2 = "daemon_event_envelope_v2";
+export const DAEMON_CAPABILITY_SDLC_SELF_DISPATCH = "sdlc_self_dispatch";
 
 // TODO sawyer: we don't want to depend on shared so mirror the ones we need here.
 export type FeatureFlags = {
@@ -18,6 +19,7 @@ export type FeatureFlags = {
   sdlcLoopCoordinatorRouting?: boolean;
   sandboxAgentAcpTransport?: boolean;
   codexAppServerTransport?: boolean;
+  sdlcDaemonSelfDispatch?: boolean;
 };
 
 export const DaemonTransportModeSchema = z.enum([
@@ -203,6 +205,23 @@ export type ClaudeMessage =
         status: string;
       }[];
     };
+
+export type SdlcSelfDispatchPayload = {
+  token: string;
+  prompt: string;
+  runId: string;
+  tokenNonce: string;
+  model: string;
+  agent: z.infer<typeof AIAgentSchema>;
+  agentVersion: number;
+  sessionId: string | null;
+  featureFlags: FeatureFlags;
+  permissionMode: "allowAll" | "plan";
+  transportMode: DaemonTransportMode;
+  protocolVersion: 1 | 2;
+  threadId: string;
+  threadChatId: string;
+};
 
 export type DaemonEventAPIBody = {
   threadId: string;

@@ -107,6 +107,7 @@ export type SdlcSignalInboxTickResult =
       causeType: SdlcLoopCauseType;
       runtimeAction: RuntimeActionOutcome;
       outboxId: string | null;
+      feedbackQueuedMessage: DBUserMessage | null;
       runtimeRouting?: {
         routed: boolean;
         followUpQueued: boolean;
@@ -828,7 +829,12 @@ async function routeFeedbackSignalToEnrolledThread({
     source: "github",
   });
 
-  return { loopId, threadId: loopThreadId, threadChatId: threadChat.id };
+  return {
+    loopId,
+    threadId: loopThreadId,
+    threadChatId: threadChat.id,
+    queuedMessage: message,
+  };
 }
 
 function resolveSignalTransitionSeq({
@@ -1096,6 +1102,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     }
 
     let runtimeAction: RuntimeActionOutcome = "none";
+    let feedbackQueuedMessage: DBUserMessage | null = null;
     const runtimeRouting: {
       routed: boolean;
       followUpQueued: boolean;
@@ -1118,7 +1125,7 @@ export async function runBestEffortSdlcSignalInboxTick({
       typeof loop.prNumber === "number"
     ) {
       try {
-        await routeFeedbackSignalToEnrolledThread({
+        const routeResult = await routeFeedbackSignalToEnrolledThread({
           db,
           loopId,
           loopUserId: loop.userId,
@@ -1128,6 +1135,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           signal,
         });
         runtimeAction = "feedback_follow_up_queued";
+        feedbackQueuedMessage = routeResult.queuedMessage;
         runtimeRouting.routed = true;
         runtimeRouting.followUpQueued = true;
         runtimeRouting.reason = "follow_up_queued";
@@ -1288,6 +1296,7 @@ export async function runBestEffortSdlcSignalInboxTick({
       causeType: signal.causeType,
       runtimeAction,
       outboxId,
+      feedbackQueuedMessage,
       ...(includeRuntimeRouting ? { runtimeRouting } : {}),
     };
   } finally {

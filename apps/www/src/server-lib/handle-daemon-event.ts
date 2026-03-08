@@ -821,6 +821,23 @@ async function handleThreadFinish({
   sourceMetadata: ThreadSourceMetadata | null;
   runId: string | null;
 }) {
+  // Re-read current thread chat status. If SDLC self-dispatch already
+  // transitioned to "working", bail — the sandbox must stay active.
+  const currentChat = await getThreadChat({
+    db,
+    threadId,
+    threadChatId,
+    userId,
+  });
+  if (currentChat && currentChat.status === "working") {
+    console.log("[handleThreadFinish] Thread already re-dispatched, skipping", {
+      threadId,
+      threadChatId,
+      currentStatus: currentChat.status,
+    });
+    return;
+  }
+
   // Deactivate the sandbox immediately so hibernation is never blocked,
   // even if Vercel kills the function before the rest of the cleanup runs.
   await setActiveThreadChat({ sandboxId, threadChatId, isActive: false });

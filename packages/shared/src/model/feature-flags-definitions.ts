@@ -159,6 +159,11 @@ export const featureFlagsDefinitions = {
     description:
       "Renders SDLC plans from agent output in a structured review card in chat and stepper views.",
   },
+  sdlcDaemonSelfDispatch: {
+    defaultValue: false,
+    description:
+      "Daemon self-dispatches SDLC follow-ups via HTTP response instead of server queue",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;
