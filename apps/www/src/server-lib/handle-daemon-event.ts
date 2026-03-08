@@ -628,9 +628,9 @@ export async function handleDaemonEvent({
   // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
   // This variable is hoisted so the follow-up recovery block below can reuse it
   // without a duplicate DB call.
-  let sdlcLoopForErrorRecovery: Awaited<
-    ReturnType<typeof getActiveSdlcLoopForThread>
-  > = null;
+  let sdlcLoopForErrorRecovery:
+    | Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>
+    | undefined;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
       sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
@@ -804,6 +804,7 @@ export async function handleDaemonEvent({
         sourceType: thread.sourceType ?? null,
         sourceMetadata: thread.sourceMetadata ?? null,
         runId,
+        sdlcLoopForErrorRecovery,
       }),
     );
   }
@@ -822,6 +823,7 @@ async function handleThreadFinish({
   sourceType,
   sourceMetadata,
   runId,
+  sdlcLoopForErrorRecovery,
 }: {
   userId: string;
   threadId: string;
@@ -834,6 +836,9 @@ async function handleThreadFinish({
   sourceType: string | null;
   sourceMetadata: ThreadSourceMetadata | null;
   runId: string | null;
+  sdlcLoopForErrorRecovery?: Awaited<
+    ReturnType<typeof getActiveSdlcLoopForThread>
+  >;
 }) {
   // Re-read current thread chat status. If SDLC self-dispatch already
   // transitioned to "working", bail — the sandbox must stay active.
