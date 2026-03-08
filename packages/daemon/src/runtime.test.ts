@@ -348,7 +348,7 @@ describe("parseSdlcSelfDispatchPayload", () => {
       transportMode: "legacy",
       permissionMode: "allowAll",
       sessionId: null as string | null,
-      featureFlags: { sdlcDaemonSelfDispatch: true },
+      featureFlags: {},
     },
   };
 

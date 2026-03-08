@@ -706,12 +706,10 @@ export class TerragonDaemon {
         featureFlags: this.featureFlags,
       });
     }
-    // Advertise SDLC self-dispatch capability when feature flag is enabled
-    if (input.featureFlags?.sdlcDaemonSelfDispatch) {
-      this.runtime.additionalCapabilities?.add(
-        DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
-      );
-    }
+    // Always advertise SDLC self-dispatch capability
+    this.runtime.additionalCapabilities?.add(
+      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
+    );
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
     await this.stopAppServerTurn({

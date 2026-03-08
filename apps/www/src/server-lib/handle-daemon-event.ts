@@ -43,7 +43,15 @@ import {
   updateAgentSession,
 } from "./linear-agent-activity";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import {
+  getActiveSdlcLoopForThread,
+  getUnresolvedBlockingDeepReviewFindings,
+  getUnresolvedBlockingCarmackReviewFindings,
+} from "@terragon/shared/model/sdlc-loop";
+import {
+  formatReviewFindings,
+  queueSdlcFollowUpMessage,
+} from "@/server-lib/checkpoint-thread-internal";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type {
   ThreadSourceMetadata,
@@ -617,14 +625,20 @@ export async function handleDaemonEvent({
     }
   }
 
-  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases
+  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
+  // This variable is hoisted so the follow-up recovery block below can reuse it
+  // without a duplicate DB call.
+  let sdlcLoopForErrorRecovery:
+    | Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>
+    | undefined;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
-      const activeSdlcLoop = await getActiveSdlcLoopForThread({
+      sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
         db,
         userId,
         threadId,
       });
+      const activeSdlcLoop = sdlcLoopForErrorRecovery;
 
       if (activeSdlcLoop && SDLC_AUTO_RETRY_PHASES.has(activeSdlcLoop.state)) {
         console.log(
@@ -876,6 +890,86 @@ async function handleThreadFinish({
   }
 
   let shouldProcessFollowUpQueue = !isRateLimited && !isError;
+
+  // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
+  // and isError is still true, re-queue the actual review findings so the next agent run
+  // has actionable context. This reuses sdlcLoopForErrorRecovery to avoid a duplicate DB call.
+  // Note: sdlcLoopForErrorRecovery is only populated when the first block's guard
+  // (!isPromptTooLong && !isOAuthTokenRevoked) was met, so this is implicitly safe
+  // even though the outer guard here is broader.
+  if (isError && !isRateLimited) {
+    try {
+      const activeSdlcLoop = sdlcLoopForErrorRecovery;
+      if (activeSdlcLoop && activeSdlcLoop.state === "implementing") {
+        if (!activeSdlcLoop.currentHeadSha) {
+          console.warn(
+            "SDLC error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
+            { threadId, loopId: activeSdlcLoop.id },
+          );
+        } else {
+          const [deepFindings, carmackFindings] = await Promise.all([
+            getUnresolvedBlockingDeepReviewFindings({
+              db,
+              loopId: activeSdlcLoop.id,
+              headSha: activeSdlcLoop.currentHeadSha,
+            }),
+            getUnresolvedBlockingCarmackReviewFindings({
+              db,
+              loopId: activeSdlcLoop.id,
+              headSha: activeSdlcLoop.currentHeadSha,
+            }),
+          ]);
+
+          const details = [
+            formatReviewFindings({
+              label: "Deep review blocking findings",
+              findings: deepFindings.map((f) => ({
+                ...f,
+                severity: f.severity ?? "high",
+              })),
+            }),
+            formatReviewFindings({
+              label: "Carmack review blocking findings",
+              findings: carmackFindings.map((f) => ({
+                ...f,
+                severity: f.severity ?? "high",
+              })),
+            }),
+          ].filter((s): s is string => Boolean(s));
+
+          if (details.length > 0) {
+            // queueSdlcFollowUpMessage calls queueFollowUpInternal which
+            // already triggers maybeProcessFollowUpQueue when the thread
+            // is in error/done state, so we don't need to set
+            // shouldProcessFollowUpQueue here.
+            await queueSdlcFollowUpMessage({
+              userId,
+              threadId,
+              threadChatId,
+              heading:
+                "SDLC review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
+              details,
+            });
+
+            console.log(
+              "SDLC error recovery: re-queued review findings for crashed implementing agent",
+              {
+                threadId,
+                deepCount: deepFindings.length,
+                carmackCount: carmackFindings.length,
+              },
+            );
+          }
+        }
+      }
+    } catch (sdlcQueueError) {
+      console.error(
+        "SDLC follow-up queue recovery failed, falling through to normal error path",
+        { threadId, error: sdlcQueueError },
+      );
+    }
+  }
+
   if (shouldProcessFollowUpQueue) {
     const threadChat = await getThreadChat({
       db,

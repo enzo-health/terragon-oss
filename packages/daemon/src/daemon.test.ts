@@ -2978,7 +2978,7 @@ describe("daemon", () => {
       agent: "claudeCode",
       agentVersion: 0,
       sessionId: null,
-      featureFlags: { sdlcDaemonSelfDispatch: true },
+      featureFlags: {},
       permissionMode: "allowAll" as const,
       transportMode: "legacy" as const,
       protocolVersion: 1 as const,
