@@ -7,15 +7,7 @@ import type {
   DeliveryLoopSelectedAgent,
   DeliveryLoopState,
 } from "@terragon/shared/model/delivery-loop";
-import {
-  createDispatchIntent as createDispatchIntentDB,
-  markDispatchIntentDispatched,
-  markDispatchIntentAcknowledged,
-  markDispatchIntentCompleted as markDispatchIntentCompletedDB,
-  markDispatchIntentFailed,
-} from "@terragon/shared/model/delivery-loop";
 import { redis } from "@/lib/redis";
-import { db } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -113,9 +105,8 @@ export type CreateDispatchIntentParams = {
 };
 
 /**
- * Persist a new dispatch intent to Redis (fast lookup) and PostgreSQL (durable
- * persistence). Redis serves as a hot cache for real-time dispatch tracking;
- * PostgreSQL is the durable source of truth for crash recovery.
+ * Persist a new dispatch intent to Redis for real-time dispatch tracking.
+ * DB migration for durable persistence comes later.
  */
 export async function createDispatchIntent(
   params: CreateDispatchIntentParams,
@@ -140,32 +131,15 @@ export async function createDispatchIntent(
     lastFailureCategory: null,
   };
 
-  // Write to Redis (hot cache) and PostgreSQL (durable) in parallel.
-  await Promise.all([
-    (async () => {
-      const key = redisKey(params.threadChatId);
-      await redis.hset(key, serializeIntent(intent));
-      await redis.expire(key, ACTIVE_TTL_SECONDS);
-    })(),
-    createDispatchIntentDB(db, {
-      loopId: params.loopId,
-      threadId: params.threadId,
-      threadChatId: params.threadChatId,
-      runId: params.runId,
-      targetPhase: params.targetPhase,
-      selectedAgent: params.selectedAgent,
-      executionClass: params.executionClass,
-      dispatchMechanism: params.dispatchMechanism,
-      retryCount: 0,
-    }),
-  ]);
+  const key = redisKey(params.threadChatId);
+  await redis.hset(key, serializeIntent(intent));
+  await redis.expire(key, ACTIVE_TTL_SECONDS);
 
   return intent;
 }
 
 /**
- * Partially update an existing dispatch intent. Merges the provided fields
- * in Redis and persists status transitions to PostgreSQL.
+ * Partially update an existing dispatch intent in Redis.
  */
 export async function updateDispatchIntent(
   id: string,
@@ -176,8 +150,6 @@ export async function updateDispatchIntent(
       "status" | "retryCount" | "lastError" | "lastFailureCategory"
     >
   >,
-  /** The runId for this intent, used to update the durable DB record. */
-  runId?: string,
 ): Promise<void> {
   const key = redisKey(threadChatId);
   const patch: Record<string, string> = {
@@ -192,28 +164,7 @@ export async function updateDispatchIntent(
   if (updates.lastFailureCategory !== undefined)
     patch.lastFailureCategory = updates.lastFailureCategory ?? "";
 
-  // Update Redis.
   await redis.hset(key, patch);
-
-  // Persist status transitions to PostgreSQL when runId is available.
-  if (runId && updates.status) {
-    switch (updates.status) {
-      case "dispatched":
-        await markDispatchIntentDispatched(db, runId);
-        break;
-      case "acknowledged":
-        await markDispatchIntentAcknowledged(db, runId);
-        break;
-      case "failed":
-        await markDispatchIntentFailed(
-          db,
-          runId,
-          updates.lastFailureCategory ?? null,
-          updates.lastError ?? null,
-        );
-        break;
-    }
-  }
 }
 
 /**
@@ -231,12 +182,11 @@ export async function getActiveDispatchIntent(
 
 /**
  * Mark a dispatch intent as completed. Redis entry gets a short TTL (5 minutes)
- * for debugging. PostgreSQL record is permanently marked completed.
+ * for post-completion inspection.
  */
 export async function completeDispatchIntent(
   id: string,
   threadChatId: string,
-  runId?: string,
 ): Promise<void> {
   const key = redisKey(threadChatId);
   await redis.hset(key, {
@@ -244,9 +194,4 @@ export async function completeDispatchIntent(
     updatedAt: new Date().toISOString(),
   });
   await redis.expire(key, COMPLETED_TTL_SECONDS);
-
-  // Persist to durable store.
-  if (runId) {
-    await markDispatchIntentCompletedDB(db, runId);
-  }
 }

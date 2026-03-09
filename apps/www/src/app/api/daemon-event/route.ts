@@ -14,7 +14,13 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
+  type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
+import {
+  createDispatchIntent,
+  buildDispatchIntentId,
+  updateDispatchIntent,
+} from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   getAgentRunContextByRunId,
   upsertAgentRunContext,
@@ -859,6 +865,24 @@ export async function POST(request: Request) {
     threadId,
   });
 
+  // Acknowledge dispatch intent on first event for this run
+  if (enrolledLoop && envelopeV2 && envelopeV2.seq === 1) {
+    const intentId = buildDispatchIntentId(enrolledLoop.id, envelopeV2.runId);
+    try {
+      await updateDispatchIntent(intentId, threadChatId, {
+        status: "acknowledged",
+      });
+    } catch (ackError) {
+      console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
+        intentId,
+        threadId,
+        threadChatId,
+        runId: envelopeV2.runId,
+        error: ackError,
+      });
+    }
+  }
+
   let claimedSignalInboxId: string | null = null;
   let claimedProcessingEvent = false;
 
@@ -1083,6 +1107,19 @@ export async function POST(request: Request) {
                     errorMessage: null,
                     errorMessageInfo: null,
                   },
+                });
+
+                // Persist dispatch intent before sending payload to daemon
+                await createDispatchIntent({
+                  loopId,
+                  threadId,
+                  threadChatId,
+                  targetPhase: "implementing",
+                  selectedAgent: agent as DeliveryLoopSelectedAgent,
+                  executionClass: "implementation_runtime",
+                  dispatchMechanism: "self_dispatch",
+                  runId: newRunId,
+                  maxRetries: 3,
                 });
 
                 selfDispatchPayload = {
