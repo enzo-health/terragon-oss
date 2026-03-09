@@ -3532,6 +3532,7 @@ export class TerragonDaemon {
           threadId: payload.threadId,
           threadChatId: payload.threadChatId,
           runId: payload.runId,
+          useCredits: payload.useCredits,
         };
         this.runtime.logger.info(
           "Delivery Loop self-dispatch: starting follow-up run",

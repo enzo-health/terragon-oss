@@ -16,7 +16,11 @@ import {
   SDLC_CAUSE_IDENTITY_VERSION,
   type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
-import { createDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
+import {
+  createDispatchIntent,
+  getReplayableSelfDispatch,
+  storeSelfDispatchReplay,
+} from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   handleAckReceived,
   startAckTimeout,
@@ -44,7 +48,9 @@ import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   normalizedModelForDaemon,
   getDefaultModelForAgent,
+  isConnectedCredentialsSupported,
 } from "@terragon/agent/utils";
+import { getUserCredentials } from "@/server-lib/user-credentials";
 import { randomUUID } from "node:crypto";
 
 type DaemonEventEnvelopeV2 = {
@@ -97,6 +103,47 @@ type DaemonProcessingEventClaimResult =
       claimed: false;
       reason: "claim_in_progress" | "duplicate_event";
     };
+
+type TerminalAckState =
+  | {
+      kind: "ack_only";
+      status?: number;
+      deduplicated?: true;
+      reason?: string;
+      loopId?: string;
+      runId?: string;
+      acknowledgedEventId: string | null;
+      acknowledgedSeq: number | null;
+    }
+  | {
+      kind: "self_dispatch";
+      status?: number;
+      deduplicated?: true;
+      reason?: string;
+      loopId?: string;
+      runId?: string;
+      acknowledgedEventId: string | null;
+      acknowledgedSeq: number | null;
+      selfDispatch: SdlcSelfDispatchPayload;
+    };
+
+function jsonTerminalAckResponse(state: TerminalAckState): Response {
+  return Response.json(
+    {
+      success: true,
+      ...(state.deduplicated ? { deduplicated: true } : {}),
+      ...(state.reason ? { reason: state.reason } : {}),
+      ...(state.loopId ? { loopId: state.loopId } : {}),
+      ...(state.runId ? { runId: state.runId } : {}),
+      acknowledgedEventId: state.acknowledgedEventId,
+      acknowledgedSeq: state.acknowledgedSeq,
+      ...(state.kind === "self_dispatch"
+        ? { selfDispatch: state.selfDispatch }
+        : {}),
+    },
+    { status: state.status ?? 200 },
+  );
+}
 
 function getDaemonProcessingEventClaimKey({
   loopId,
@@ -829,16 +876,36 @@ export async function POST(request: Request) {
       runContext.status === "failed" ||
       runContext.status === "stopped"
     ) {
-      return Response.json(
-        {
-          success: true,
-          deduplicated: true,
-          reason: "run_terminal_ignored",
-          runId: runContext.runId,
-          acknowledgedEventId: envelopeV2?.eventId ?? null,
-          acknowledgedSeq: envelopeV2?.seq ?? null,
-        },
-        { status: 202 },
+      const replayedSelfDispatch =
+        envelopeV2 && threadChatId !== LEGACY_THREAD_CHAT_ID
+          ? await getReplayableSelfDispatch({
+              threadChatId,
+              sourceEventId: envelopeV2.eventId,
+              sourceSeq: envelopeV2.seq,
+              sourceRunId: runContext.runId,
+            })
+          : null;
+      return jsonTerminalAckResponse(
+        replayedSelfDispatch
+          ? {
+              kind: "self_dispatch",
+              status: 202,
+              deduplicated: true,
+              reason: "run_terminal_ignored",
+              runId: runContext.runId,
+              acknowledgedEventId: envelopeV2?.eventId ?? null,
+              acknowledgedSeq: envelopeV2?.seq ?? null,
+              selfDispatch: replayedSelfDispatch,
+            }
+          : {
+              kind: "ack_only",
+              status: 202,
+              deduplicated: true,
+              reason: "run_terminal_ignored",
+              runId: runContext.runId,
+              acknowledgedEventId: envelopeV2?.eventId ?? null,
+              acknowledgedSeq: envelopeV2?.seq ?? null,
+            },
       );
     }
   }
@@ -945,12 +1012,14 @@ export async function POST(request: Request) {
     tickResult,
     loopId,
     loopVersion,
+    sourceRunId,
     eventId,
     seq,
   }: {
     tickResult: Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>;
     loopId: string;
     loopVersion: number;
+    sourceRunId: string;
     eventId: string;
     seq: number;
   }) => {
@@ -968,7 +1037,10 @@ export async function POST(request: Request) {
     );
 
     if (daemonSupportsSelfDispatch) {
-      const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
+      const [userFeatureFlags, userCredentials] = await Promise.all([
+        getFeatureFlagsForUser({ db, userId }),
+        getUserCredentials({ userId }),
+      ]);
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -1072,7 +1144,7 @@ export async function POST(request: Request) {
                   : shouldUseAcpTransport
                     ? ("acp" as const)
                     : ("legacy" as const);
-                const protocolVersion = transportMode === "acp" ? 2 : 1;
+                const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
 
                 // Create run context
                 await upsertAgentRunContext({
@@ -1118,7 +1190,7 @@ export async function POST(request: Request) {
                 });
 
                 // Persist dispatch intent before sending payload to daemon
-                await createDispatchIntent({
+                const dispatchIntent = await createDispatchIntent({
                   loopId,
                   threadId,
                   threadChatId,
@@ -1141,7 +1213,12 @@ export async function POST(request: Request) {
                   threadChatId,
                 });
 
-                selfDispatchPayload = {
+                const shouldUseCredits =
+                  (agent === "codex" && !userCredentials.hasOpenAI) ||
+                  (agent === "claudeCode" && !userCredentials.hasClaude) ||
+                  !isConnectedCredentialsSupported(agent);
+
+                const preparedSelfDispatchPayload = {
                   token,
                   prompt,
                   runId: newRunId,
@@ -1156,7 +1233,18 @@ export async function POST(request: Request) {
                   protocolVersion,
                   threadId,
                   threadChatId,
+                  useCredits: shouldUseCredits || undefined,
                 };
+                await storeSelfDispatchReplay({
+                  threadChatId,
+                  sourceEventId: eventId,
+                  sourceSeq: seq,
+                  sourceRunId,
+                  dispatchIntentId: dispatchIntent.id,
+                  destinationRunId: newRunId,
+                  payload: preparedSelfDispatchPayload,
+                });
+                selfDispatchPayload = preparedSelfDispatchPayload;
 
                 console.log("[sdlc-loop] self-dispatch payload prepared", {
                   userId,
@@ -1385,6 +1473,7 @@ export async function POST(request: Request) {
               tickResult: signalTickResult,
               loopId: enrolledLoop.id,
               loopVersion: enrolledLoop.loopVersion,
+              sourceRunId: envelopeV2.runId,
               eventId: envelopeV2.eventId,
               seq: envelopeV2.seq,
             });
@@ -1429,16 +1518,36 @@ export async function POST(request: Request) {
             );
           }
         }
-        return Response.json(
-          {
-            success: true,
-            deduplicated: true,
-            reason: claimResult.reason,
-            loopId: enrolledLoop.id,
-            acknowledgedEventId: envelopeV2.eventId,
-            acknowledgedSeq: envelopeV2.seq,
-          },
-          { status: 202 },
+        const replayedSelfDispatch =
+          claimResult.reason === "duplicate_event"
+            ? await getReplayableSelfDispatch({
+                threadChatId,
+                sourceEventId: envelopeV2.eventId,
+                sourceSeq: envelopeV2.seq,
+                sourceRunId: envelopeV2.runId,
+              })
+            : null;
+        return jsonTerminalAckResponse(
+          replayedSelfDispatch
+            ? {
+                kind: "self_dispatch",
+                status: 202,
+                deduplicated: true,
+                reason: claimResult.reason,
+                loopId: enrolledLoop.id,
+                acknowledgedEventId: envelopeV2.eventId,
+                acknowledgedSeq: envelopeV2.seq,
+                selfDispatch: replayedSelfDispatch,
+              }
+            : {
+                kind: "ack_only",
+                status: 202,
+                deduplicated: true,
+                reason: claimResult.reason,
+                loopId: enrolledLoop.id,
+                acknowledgedEventId: envelopeV2.eventId,
+                acknowledgedSeq: envelopeV2.seq,
+              },
         );
       }
       claimedSignalInboxId = claimResult.signalInboxId;
@@ -1680,6 +1789,7 @@ export async function POST(request: Request) {
         tickResult: signalTickResult,
         loopId: enrolledLoop.id,
         loopVersion: enrolledLoop.loopVersion,
+        sourceRunId: envelopeV2.runId,
         eventId: envelopeV2.eventId,
         seq: envelopeV2.seq,
       });
@@ -1719,10 +1829,18 @@ export async function POST(request: Request) {
     }
   }
 
-  return Response.json({
-    success: true,
-    acknowledgedEventId: envelopeV2?.eventId ?? null,
-    acknowledgedSeq: envelopeV2?.seq ?? null,
-    ...(selfDispatchPayload ? { selfDispatch: selfDispatchPayload } : {}),
-  });
+  return jsonTerminalAckResponse(
+    selfDispatchPayload
+      ? {
+          kind: "self_dispatch",
+          acknowledgedEventId: envelopeV2?.eventId ?? null,
+          acknowledgedSeq: envelopeV2?.seq ?? null,
+          selfDispatch: selfDispatchPayload,
+        }
+      : {
+          kind: "ack_only",
+          acknowledgedEventId: envelopeV2?.eventId ?? null,
+          acknowledgedSeq: envelopeV2?.seq ?? null,
+        },
+  );
 }

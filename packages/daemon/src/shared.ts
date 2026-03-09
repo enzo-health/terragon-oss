@@ -223,6 +223,7 @@ export type DeliveryLoopSelfDispatchPayload = {
   protocolVersion: 1 | 2;
   threadId: string;
   threadChatId: string;
+  useCredits?: boolean;
 };
 
 /** @deprecated Use DeliveryLoopSelfDispatchPayload */
