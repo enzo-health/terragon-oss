@@ -20,6 +20,7 @@ import {
   createDispatchIntent,
   getReplayableSelfDispatch,
   storeSelfDispatchReplay,
+  updateDispatchIntent,
 } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   handleAckReceived,
@@ -88,6 +89,13 @@ const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 
+/**
+ * Circuit breaker: maximum number of consecutive auto-dispatched follow-up
+ * runs (daemon_terminal with daemonRunStatus=completed) before we stop
+ * auto-dispatching to prevent infinite loops.
+ */
+const MAX_CONSECUTIVE_AUTO_DISPATCHES = 10;
+
 type DaemonTerminalErrorCategory =
   | "provider_not_configured"
   | "acp_sse_not_found"
@@ -143,6 +151,30 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
     },
     { status: state.status ?? 200 },
   );
+}
+
+/**
+ * Count how many consecutive daemon_terminal signals with
+ * daemonRunStatus=completed have been processed for this loop.
+ * Used as a circuit breaker to prevent infinite auto-dispatch loops.
+ */
+async function countConsecutiveCompletedAutoDispatches({
+  loopId,
+}: {
+  loopId: string;
+}): Promise<number> {
+  const result = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.sdlcLoopSignalInbox)
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.loopId, loopId),
+        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
+        sql`${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'`,
+        sql`${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL`,
+      ),
+    );
+  return Number(result[0]?.count ?? 0);
 }
 
 function getDaemonProcessingEventClaimKey({
@@ -1031,6 +1063,27 @@ export async function POST(request: Request) {
       return;
     }
 
+    // Circuit breaker: prevent infinite consecutive auto-dispatch loops.
+    const completedCount = await countConsecutiveCompletedAutoDispatches({
+      loopId,
+    });
+    if (completedCount >= MAX_CONSECUTIVE_AUTO_DISPATCHES) {
+      console.warn(
+        "[sdlc-loop] circuit breaker: too many consecutive auto-dispatches, skipping follow-up",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          completedCount,
+          threshold: MAX_CONSECUTIVE_AUTO_DISPATCHES,
+          eventId,
+          seq,
+        },
+      );
+      return;
+    }
+
     // Check if daemon supports self-dispatch.
     const daemonSupportsSelfDispatch = daemonCapabilities.has(
       DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
@@ -1041,6 +1094,8 @@ export async function POST(request: Request) {
         getFeatureFlagsForUser({ db, userId }),
         getUserCredentials({ userId }),
       ]);
+      let preparedDispatchIntentId: string | null = null;
+      let preparedRunId: string | null = null;
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -1201,17 +1256,8 @@ export async function POST(request: Request) {
                   runId: newRunId,
                   maxRetries: 3,
                 });
-
-                // Start ack timeout — if no daemon event arrives within
-                // the timeout window, the intent will be classified as
-                // dispatch_ack_timeout and retried. The cron sweep in
-                // ack-timeout.ts provides a durable fallback.
-                startAckTimeout({
-                  db,
-                  runId: newRunId,
-                  loopId,
-                  threadChatId,
-                });
+                preparedDispatchIntentId = dispatchIntent.id;
+                preparedRunId = newRunId;
 
                 const shouldUseCredits =
                   (agent === "codex" && !userCredentials.hasOpenAI) ||
@@ -1244,6 +1290,14 @@ export async function POST(request: Request) {
                   destinationRunId: newRunId,
                   payload: preparedSelfDispatchPayload,
                 });
+                // Only arm the timeout once the replay record exists and the
+                // self-dispatch payload is actually recoverable on retries.
+                startAckTimeout({
+                  db,
+                  runId: newRunId,
+                  loopId,
+                  threadChatId,
+                });
                 selfDispatchPayload = preparedSelfDispatchPayload;
 
                 console.log("[sdlc-loop] self-dispatch payload prepared", {
@@ -1261,6 +1315,38 @@ export async function POST(request: Request) {
           }
         }
       } catch (error) {
+        if (preparedDispatchIntentId && preparedRunId) {
+          try {
+            await updateDispatchIntent(preparedDispatchIntentId, threadChatId, {
+              status: "failed",
+              lastError:
+                error instanceof Error
+                  ? error.message
+                  : "self-dispatch preparation failed",
+              lastFailureCategory: "config_error",
+            });
+            await updateAgentRunContext({
+              db,
+              runId: preparedRunId,
+              userId,
+              updates: {
+                status: "failed",
+              },
+            });
+          } catch (cleanupError) {
+            console.error(
+              "[sdlc-loop] failed to clean up abandoned self-dispatch run",
+              {
+                userId,
+                threadId,
+                threadChatId,
+                loopId,
+                runId: preparedRunId,
+                cleanupError,
+              },
+            );
+          }
+        }
         console.error(
           "[sdlc-loop] self-dispatch preparation failed, falling back to queue",
           {
@@ -1518,15 +1604,12 @@ export async function POST(request: Request) {
             );
           }
         }
-        const replayedSelfDispatch =
-          claimResult.reason === "duplicate_event"
-            ? await getReplayableSelfDispatch({
-                threadChatId,
-                sourceEventId: envelopeV2.eventId,
-                sourceSeq: envelopeV2.seq,
-                sourceRunId: envelopeV2.runId,
-              })
-            : null;
+        const replayedSelfDispatch = await getReplayableSelfDispatch({
+          threadChatId,
+          sourceEventId: envelopeV2.eventId,
+          sourceSeq: envelopeV2.seq,
+          sourceRunId: envelopeV2.runId,
+        });
         return jsonTerminalAckResponse(
           replayedSelfDispatch
             ? {

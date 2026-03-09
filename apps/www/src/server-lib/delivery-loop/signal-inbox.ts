@@ -659,14 +659,42 @@ async function persistGateEvaluationForSignal({
   );
 }
 
+function resolveDaemonTerminalPhaseText(loopState: SdlcLoopState): {
+  phaseLabel: string;
+  followUpInstruction: string;
+} {
+  switch (loopState) {
+    case "planning":
+      return {
+        phaseLabel: "the planning phase",
+        followUpInstruction:
+          "Please continue developing the implementation plan.",
+      };
+    case "babysitting":
+      return {
+        phaseLabel: "while babysitting",
+        followUpInstruction: "Please check if any further action is needed.",
+      };
+    case "implementing":
+    default:
+      return {
+        phaseLabel: "the implementing phase",
+        followUpInstruction:
+          "Please verify the changes, run relevant checks, and continue with the next step.",
+      };
+  }
+}
+
 function buildFeedbackFollowUpMessage({
   loopRepoFullName,
   loopPrNumber,
+  loopState,
   signalCauseType,
   payload,
 }: {
   loopRepoFullName: string;
   loopPrNumber: number | null;
+  loopState: SdlcLoopState;
   signalCauseType: SdlcLoopCauseType;
   payload: Record<string, unknown> | null;
 }): DBUserMessage {
@@ -677,7 +705,8 @@ function buildFeedbackFollowUpMessage({
     const daemonRunStatus = getPayloadText(payload, "daemonRunStatus");
     const daemonErrorCategory = getPayloadText(payload, "daemonErrorCategory");
     const daemonErrorMessage = getPayloadText(payload, "daemonErrorMessage");
-    const runId = getPayloadText(payload, "runId");
+    const { phaseLabel, followUpInstruction } =
+      resolveDaemonTerminalPhaseText(loopState);
     const repoRef =
       loopPrNumber === null
         ? loopRepoFullName
@@ -685,15 +714,10 @@ function buildFeedbackFollowUpMessage({
 
     if (daemonRunStatus === "completed") {
       sections.push(
-        `The agent run${runId ? ` (${runId})` : ""} completed in the implementing phase for ${repoRef}.`,
-      );
-      sections.push(
-        "Please verify the changes, run relevant checks, and continue with the next step.",
+        `The agent run completed in ${phaseLabel} for ${repoRef}. ${followUpInstruction}`,
       );
     } else {
-      sections.push(
-        `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for ${repoRef}.`,
-      );
+      sections.push(`The agent run ended in ${phaseLabel} for ${repoRef}.`);
       if (daemonRunStatus) {
         sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
       }
@@ -860,6 +884,7 @@ async function routeFeedbackSignalToEnrolledThread({
   loopThreadId,
   repoFullName,
   prNumber,
+  loopState,
   signal,
 }: {
   db: DB;
@@ -868,6 +893,7 @@ async function routeFeedbackSignalToEnrolledThread({
   loopThreadId: string;
   repoFullName: string;
   prNumber: number | null;
+  loopState: SdlcLoopState;
   signal: PendingSignal;
 }) {
   const thread = await getThread({
@@ -885,6 +911,7 @@ async function routeFeedbackSignalToEnrolledThread({
   const message = buildFeedbackFollowUpMessage({
     loopRepoFullName: repoFullName,
     loopPrNumber: prNumber,
+    loopState,
     signalCauseType: signal.causeType,
     payload: signal.payload,
   });
@@ -1211,6 +1238,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopThreadId: loop.threadId,
           repoFullName: loop.repoFullName,
           prNumber: loop.prNumber ?? null,
+          loopState: loop.state,
           signal,
         });
         runtimeAction = "feedback_follow_up_queued";
