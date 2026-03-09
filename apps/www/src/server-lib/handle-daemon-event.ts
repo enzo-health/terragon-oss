@@ -47,7 +47,8 @@ import {
   getActiveSdlcLoopForThread,
   getUnresolvedBlockingDeepReviewFindings,
   getUnresolvedBlockingCarmackReviewFindings,
-} from "@terragon/shared/model/sdlc-loop";
+  type DeliveryLoopFailureCategory,
+} from "@terragon/shared/model/delivery-loop";
 import {
   formatReviewFindings,
   queueSdlcFollowUpMessage,
@@ -71,8 +72,62 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "blocked_on_review_threads",
 ]);
 
+/** Failure categories that should NOT be auto-retried — a config error or gate
+ *  failure won't resolve on its own. */
+const NON_RETRYABLE_FAILURE_CATEGORIES: ReadonlySet<DeliveryLoopFailureCategory> =
+  new Set(["config_error", "gate_failed"]);
+
+/**
+ * Classify a daemon-reported error message into a DeliveryLoopFailureCategory.
+ * This mirrors the classification in `apps/www/src/agent/daemon.ts` but operates
+ * on the error string the daemon sends back via its event stream.
+ */
+function classifyDaemonEventError(
+  errorMessage: string | null,
+): DeliveryLoopFailureCategory {
+  if (!errorMessage) return "unknown";
+  const msg = errorMessage.toLowerCase();
+  if (
+    /unix socket|econnrefused|enoent.*socket|daemon.*not running|daemon.*dead/.test(
+      msg,
+    )
+  )
+    return "daemon_unreachable";
+  if (/spawn|fork|exec|eacces|cannot find module/.test(msg))
+    return "daemon_spawn_failed";
+  if (/timeout|timed out|ack.*timeout/.test(msg)) return "dispatch_ack_timeout";
+  if (/codex.*app.?server.*exit/.test(msg)) return "codex_app_server_exit";
+  if (/codex.*subagent/.test(msg)) return "codex_subagent_failed";
+  if (/codex.*turn.*fail|codex.*error/.test(msg)) return "codex_turn_failed";
+  if (/claude.*exit|claude.*crash|claude.*runtime/.test(msg))
+    return "claude_runtime_exit";
+  if (/claude.*dispatch|dispatch.*fail/.test(msg))
+    return "claude_dispatch_failed";
+  if (/gate.*fail|gate.*block/.test(msg)) return "gate_failed";
+  return "unknown";
+}
+
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
+const ACTIVE_PROCESSING_STATUSES: ReadonlySet<ThreadStatus> = new Set([
+  "queued",
+  "queued-blocked",
+  "queued-sandbox-creation-rate-limit",
+  "queued-tasks-concurrency",
+  "queued-agent-rate-limit",
+  "booting",
+  "working",
+  "stopping",
+  "checkpointing",
+]);
+const FOLLOW_UP_ACK_PENDING_STATUSES: ReadonlySet<ThreadStatus> = new Set([
+  "queued",
+  "queued-blocked",
+  "queued-sandbox-creation-rate-limit",
+  "queued-tasks-concurrency",
+  "queued-agent-rate-limit",
+  "booting",
+]);
 
 function getFirstAssistantTrackedKey(runId: string) {
   return `${FIRST_ASSISTANT_TRACKED_PREFIX}${runId}`;
@@ -436,6 +491,13 @@ export async function handleDaemonEvent({
     errorMessageInfo: null,
     contextLength: contextUsage ?? undefined,
   };
+  if (
+    runId &&
+    (threadChat.queuedMessages?.length ?? 0) > 0 &&
+    FOLLOW_UP_ACK_PENDING_STATUSES.has(statusBeforeUpdate)
+  ) {
+    threadChatUpdates.replaceQueuedMessages = [];
+  }
   if (isError) {
     if (isPromptTooLong) {
       threadChatUpdates.errorMessage = "prompt-too-long";
@@ -454,6 +516,7 @@ export async function handleDaemonEvent({
       properties: {
         threadId,
         errorType: threadChatUpdates.errorMessage,
+        failureCategory: classifyDaemonEventError(customErrorMessage),
       },
     });
   }
@@ -640,84 +703,94 @@ export async function handleDaemonEvent({
       });
       const activeSdlcLoop = sdlcLoopForErrorRecovery;
 
+      const failureCategory = classifyDaemonEventError(customErrorMessage);
+
       if (activeSdlcLoop && SDLC_AUTO_RETRY_PHASES.has(activeSdlcLoop.state)) {
         console.log(
-          `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", checking for retry`,
-          { threadId, threadChatId: threadChat.id },
+          `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", failureCategory="${failureCategory}", checking for retry`,
+          { threadId, threadChatId: threadChat.id, failureCategory },
         );
 
-        // Check if we've already retried by looking for an sdlc-error-retry system message
-        const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
-        let alreadyRetried = false;
-        for (let i = allMessages.length - 1; i >= 0; i--) {
-          const msg = allMessages[i];
-          if (msg?.type === "user") {
-            const msgBefore = allMessages[i - 1];
-            const isRetryAndContinue =
-              msg.parts.length === 1 &&
-              msg.parts[0]?.type === "text" &&
-              msg.parts[0]?.text.toLowerCase().includes("continue") &&
-              msgBefore?.type === "system" &&
-              msgBefore?.message_type === "sdlc-error-retry";
-            if (isRetryAndContinue) {
-              alreadyRetried = true;
-              console.log(
-                "Skipping SDLC error retry because we already retried once",
-                { threadId, threadChatId: threadChat.id },
-              );
+        if (NON_RETRYABLE_FAILURE_CATEGORIES.has(failureCategory)) {
+          console.log(
+            `Skipping SDLC error retry: failure category "${failureCategory}" is non-retryable`,
+            { threadId, threadChatId: threadChat.id },
+          );
+        } else {
+          // Check if we've already retried by looking for an sdlc-error-retry system message
+          const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
+          let alreadyRetried = false;
+          for (let i = allMessages.length - 1; i >= 0; i--) {
+            const msg = allMessages[i];
+            if (msg?.type === "user") {
+              const msgBefore = allMessages[i - 1];
+              const isRetryAndContinue =
+                msg.parts.length === 1 &&
+                msg.parts[0]?.type === "text" &&
+                msg.parts[0]?.text.toLowerCase().includes("continue") &&
+                msgBefore?.type === "system" &&
+                msgBefore?.message_type === "sdlc-error-retry";
+              if (isRetryAndContinue) {
+                alreadyRetried = true;
+                console.log(
+                  "Skipping SDLC error retry because we already retried once",
+                  { threadId, threadChatId: threadChat.id },
+                );
+                break;
+              }
               break;
             }
-            break;
           }
-        }
 
-        if (!alreadyRetried) {
-          console.log("Adding sdlc-error-retry and queueing retry");
-          // Add a system message about the retry
-          const sdlcErrorRetryMessage: DBSystemMessage = {
-            type: "system",
-            message_type: "sdlc-error-retry",
-            parts: [],
-            timestamp: new Date().toISOString(),
-          };
+          if (!alreadyRetried) {
+            console.log("Adding sdlc-error-retry and queueing retry");
+            // Add a system message about the retry
+            const sdlcErrorRetryMessage: DBSystemMessage = {
+              type: "system",
+              message_type: "sdlc-error-retry",
+              parts: [],
+              timestamp: new Date().toISOString(),
+            };
 
-          // Ensure appendMessages is an array before pushing
-          if (!threadChatUpdates.appendMessages) {
-            threadChatUpdates.appendMessages = [];
+            // Ensure appendMessages is an array before pushing
+            if (!threadChatUpdates.appendMessages) {
+              threadChatUpdates.appendMessages = [];
+            }
+            threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
+
+            // Create a "Continue" message to restart the agent
+            const continueMessage: DBUserMessage = {
+              type: "user",
+              model: null,
+              parts: [{ type: "text", text: "Continue" }],
+              timestamp: new Date().toISOString(),
+            };
+
+            // Queue the Continue message to be processed after the thread update
+            threadChatUpdates.appendQueuedMessages = [continueMessage];
+
+            // Clear the error since we've handled it with retry
+            threadChatUpdates.errorMessage = null;
+            threadChatUpdates.errorMessageInfo = null;
+
+            // Force a fresh session to avoid stale session issues
+            threadChatUpdates.sessionId = null;
+
+            // Mark that we've recovered from the error and the thread is done
+            isError = false;
+            isDone = true; // Mark as done so the thread completes normally
+
+            getPostHogServer().capture({
+              distinctId: userId,
+              event: "sdlc_error_retry",
+              properties: {
+                threadId,
+                sdlcPhase: activeSdlcLoop.state,
+                failureCategory,
+              },
+            });
           }
-          threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
-
-          // Create a "Continue" message to restart the agent
-          const continueMessage: DBUserMessage = {
-            type: "user",
-            model: null,
-            parts: [{ type: "text", text: "Continue" }],
-            timestamp: new Date().toISOString(),
-          };
-
-          // Queue the Continue message to be processed after the thread update
-          threadChatUpdates.appendQueuedMessages = [continueMessage];
-
-          // Clear the error since we've handled it with retry
-          threadChatUpdates.errorMessage = null;
-          threadChatUpdates.errorMessageInfo = null;
-
-          // Force a fresh session to avoid stale session issues
-          threadChatUpdates.sessionId = null;
-
-          // Mark that we've recovered from the error and the thread is done
-          isError = false;
-          isDone = true; // Mark as done so the thread completes normally
-
-          getPostHogServer().capture({
-            distinctId: userId,
-            event: "sdlc_error_retry",
-            properties: {
-              threadId,
-              sdlcPhase: activeSdlcLoop.state,
-            },
-          });
-        }
+        } // close retryable else
       }
     } catch (sdlcLookupError) {
       console.error(
@@ -843,7 +916,7 @@ async function handleThreadFinish({
     threadChatId,
     userId,
   });
-  if (currentChat && currentChat.status === "working") {
+  if (currentChat && ACTIVE_PROCESSING_STATUSES.has(currentChat.status)) {
     console.log("[handleThreadFinish] Thread already re-dispatched, skipping", {
       threadId,
       threadChatId,
@@ -854,7 +927,12 @@ async function handleThreadFinish({
 
   // Deactivate the sandbox immediately so hibernation is never blocked,
   // even if Vercel kills the function before the rest of the cleanup runs.
-  await setActiveThreadChat({ sandboxId, threadChatId, isActive: false });
+  await setActiveThreadChat({
+    sandboxId,
+    threadChatId,
+    isActive: false,
+    runId,
+  });
 
   // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
   if (sourceType === "linear-mention" && sourceMetadata != null) {
