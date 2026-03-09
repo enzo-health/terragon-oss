@@ -678,29 +678,41 @@ function buildFeedbackFollowUpMessage({
     const daemonErrorCategory = getPayloadText(payload, "daemonErrorCategory");
     const daemonErrorMessage = getPayloadText(payload, "daemonErrorMessage");
     const runId = getPayloadText(payload, "runId");
-    sections.push(
+    const repoRef =
       loopPrNumber === null
-        ? `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for ${loopRepoFullName}.`
-        : `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for PR #${loopPrNumber} in ${loopRepoFullName}.`,
-    );
-    if (daemonRunStatus) {
-      sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
-    }
-    if (daemonErrorCategory) {
-      sections.push(`Detected failure category: ${daemonErrorCategory}.`);
-    }
-    if (daemonErrorMessage) {
-      const safeSection = buildSafeExternalFeedbackSection({
-        heading: "Daemon terminal error details",
-        text: daemonErrorMessage,
-      });
-      if (safeSection) {
-        sections.push(safeSection);
+        ? loopRepoFullName
+        : `PR #${loopPrNumber} in ${loopRepoFullName}`;
+
+    if (daemonRunStatus === "completed") {
+      sections.push(
+        `The agent run${runId ? ` (${runId})` : ""} completed in the implementing phase for ${repoRef}.`,
+      );
+      sections.push(
+        "Please verify the changes, run relevant checks, and continue with the next step.",
+      );
+    } else {
+      sections.push(
+        `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for ${repoRef}.`,
+      );
+      if (daemonRunStatus) {
+        sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
       }
+      if (daemonErrorCategory && daemonErrorCategory !== "unknown") {
+        sections.push(`Detected failure category: ${daemonErrorCategory}.`);
+      }
+      if (daemonErrorMessage) {
+        const safeSection = buildSafeExternalFeedbackSection({
+          heading: "Daemon terminal error details",
+          text: daemonErrorMessage,
+        });
+        if (safeSection) {
+          sections.push(safeSection);
+        }
+      }
+      sections.push(
+        "If this failure is external (provider/config/transport), document the blocker and retry once dependencies are healthy. If code-related, apply a fix and continue.",
+      );
     }
-    sections.push(
-      "If this failure is external (provider/config/transport), document the blocker and retry once dependencies are healthy. If code-related, apply a fix and continue.",
-    );
   } else {
     sections.push(
       `The "${eventType}" event was triggered for PR #${loopPrNumber} in ${loopRepoFullName}.`,
