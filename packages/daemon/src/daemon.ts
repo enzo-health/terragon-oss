@@ -3533,13 +3533,16 @@ export class TerragonDaemon {
           threadChatId: payload.threadChatId,
           runId: payload.runId,
         };
-        this.runtime.logger.info("SDLC self-dispatch: starting follow-up run", {
-          threadId: payload.threadId,
-          threadChatId: payload.threadChatId,
-          runId: payload.runId,
-        });
+        this.runtime.logger.info(
+          "Delivery Loop self-dispatch: starting follow-up run",
+          {
+            threadId: payload.threadId,
+            threadChatId: payload.threadChatId,
+            runId: payload.runId,
+          },
+        );
         this.runCommand(syntheticInput).catch(async (error) => {
-          this.runtime.logger.error("SDLC self-dispatch failed", {
+          this.runtime.logger.error("Delivery Loop self-dispatch failed", {
             error: formatError(error),
             runId: payload.runId,
             threadChatId: payload.threadChatId,
@@ -3552,8 +3555,8 @@ export class TerragonDaemon {
               duration_ms: 0,
               error_info:
                 error instanceof Error
-                  ? `SDLC self-dispatch failed: ${error.message}`
-                  : "SDLC self-dispatch failed",
+                  ? `Delivery Loop self-dispatch failed: ${error.message}`
+                  : "Delivery Loop self-dispatch failed",
             },
             threadId: payload.threadId,
             threadChatId: payload.threadChatId,
@@ -3563,7 +3566,7 @@ export class TerragonDaemon {
         });
       } else {
         this.runtime.logger.warn(
-          "SDLC self-dispatch skipped: active process exists",
+          "Delivery Loop self-dispatch skipped: active process exists",
           { threadChatId: originalThreadChatId },
         );
       }

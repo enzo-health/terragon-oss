@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
       leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
     });
     console.log(
-      "SDLC signal inbox durable drain completed",
+      "Delivery Loop signal inbox durable drain completed",
       sdlcSignalInboxDrain,
     );
 
@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
       leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
     });
     console.log(
-      "SDLC publication durable drain completed",
+      "Delivery Loop publication durable drain completed",
       sdlcPublicationDrain,
     );
 

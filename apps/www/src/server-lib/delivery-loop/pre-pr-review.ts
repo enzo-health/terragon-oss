@@ -75,11 +75,11 @@ function buildSdlcPrePrReviewSummary({
 }): string {
   const sections: string[] = [
     hasExecutionFailure
-      ? "SDLC pre-PR review could not fully complete, so PR creation is paused."
-      : "SDLC pre-PR review found blocking issues, so PR creation is paused.",
+      ? "Delivery Loop pre-PR review could not fully complete, so PR creation is paused."
+      : "Delivery Loop pre-PR review found blocking issues, so PR creation is paused.",
     hasExecutionFailure
-      ? "The SDLC loop will automatically retry these checks and re-attempt PR creation."
-      : "The SDLC loop has queued an automatic fix pass. Fix all blocking findings below, then continue to checkpoint; PR creation will be retried automatically.",
+      ? "The Delivery Loop will automatically retry these checks and re-attempt PR creation."
+      : "The Delivery Loop has queued an automatic fix pass. Fix all blocking findings below, then continue to checkpoint; PR creation will be retried automatically.",
     `Repository: ${repoFullName}`,
     `Branch: ${branchName}`,
     `Head SHA: ${headSha}`,
@@ -207,7 +207,7 @@ export async function maybeRunSdlcPrePrReview({
       threadId: thread.id,
       threadChatId,
       messageText: [
-        "SDLC pre-PR review is required before opening a PR, but the current diff is too large to evaluate.",
+        "Delivery Loop pre-PR review is required before opening a PR, but the current diff is too large to evaluate.",
         "PR creation is paused. Reduce the current diff scope, then signal phaseComplete: true again to retry pre-PR review and PR creation.",
       ].join("\n\n"),
     });

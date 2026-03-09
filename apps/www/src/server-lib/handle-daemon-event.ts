@@ -775,7 +775,7 @@ export async function handleDaemonEvent({
       }
     } catch (sdlcLookupError) {
       console.error(
-        "SDLC error recovery lookup failed, falling through to normal error path",
+        "Delivery Loop error recovery lookup failed, falling through to normal error path",
         { threadId, error: sdlcLookupError },
       );
     }
@@ -971,7 +971,7 @@ async function handleThreadFinish({
       if (activeSdlcLoop && activeSdlcLoop.state === "implementing") {
         if (!activeSdlcLoop.currentHeadSha) {
           console.warn(
-            "SDLC error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
+            "Delivery Loop error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
             { threadId, loopId: activeSdlcLoop.id },
           );
         } else {
@@ -1015,12 +1015,12 @@ async function handleThreadFinish({
               threadId,
               threadChatId,
               heading:
-                "SDLC review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
+                "Delivery Loop review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
               details,
             });
 
             console.log(
-              "SDLC error recovery: re-queued review findings for crashed implementing agent",
+              "Delivery Loop error recovery: re-queued review findings for crashed implementing agent",
               {
                 threadId,
                 deepCount: deepFindings.length,
@@ -1032,7 +1032,7 @@ async function handleThreadFinish({
       }
     } catch (sdlcQueueError) {
       console.error(
-        "SDLC follow-up queue recovery failed, falling through to normal error path",
+        "Delivery Loop follow-up queue recovery failed, falling through to normal error path",
         { threadId, error: sdlcQueueError },
       );
     }

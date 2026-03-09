@@ -1764,7 +1764,7 @@ export async function checkpointThreadAndPush({
       });
     } catch (sdlcError) {
       console.error(
-        "SDLC checkpoint pipeline failed — falling through to normal checkpoint",
+        "Delivery Loop checkpoint pipeline failed — falling through to normal checkpoint",
         {
           threadId,
           threadChatId,

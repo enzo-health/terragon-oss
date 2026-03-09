@@ -2968,10 +2968,10 @@ describe("daemon", () => {
     });
   });
 
-  describe("SDLC self-dispatch", () => {
+  describe("Delivery Loop self-dispatch", () => {
     const selfDispatchPayload: SdlcSelfDispatchPayload = {
       token: "SELF_DISPATCH_TOKEN",
-      prompt: "SDLC follow-up prompt",
+      prompt: "Delivery Loop follow-up prompt",
       runId: "self-dispatch-run-id",
       tokenNonce: "self-dispatch-nonce",
       model: "opus",

@@ -195,6 +195,6 @@ describe("sdlc-interventions", () => {
 
     await expect(
       resumeFromBlocked({ threadId, threadChatId: null }),
-    ).rejects.toThrow("SDLC loop is not blocked on human feedback");
+    ).rejects.toThrow("Delivery Loop is not blocked on human feedback");
   });
 });
