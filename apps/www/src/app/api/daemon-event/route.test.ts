@@ -127,10 +127,18 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
   updateAgentRunContext: vi.fn(),
 }));
 
+// Explicit mock for threads module — only mock the functions the route directly imports.
+// Using a factory (not auto-mock) prevents transitive consumers like @/agent/update-status
+// from receiving mocked versions of functions they rely on internally.
 vi.mock("@terragon/shared/model/threads", () => ({
-  getThreadChat: vi.fn().mockResolvedValue(null),
-  getThreadMinimal: vi.fn().mockResolvedValue(null),
+  getThreadChat: vi.fn(),
+  getThreadMinimal: vi.fn(),
   updateThreadChat: vi.fn(),
+}));
+
+// Mock update-status to isolate the route from the real thread state-machine logic.
+vi.mock("@/agent/update-status", () => ({
+  updateThreadChatWithTransition: vi.fn(),
 }));
 
 function createDaemonRequest(
