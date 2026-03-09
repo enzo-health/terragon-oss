@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const mockPipeline = vi.hoisted(() => ({
+  incr: vi.fn().mockReturnThis(),
+  expire: vi.fn().mockReturnThis(),
+  exec: vi.fn(),
+}));
+
 const mockRedis = vi.hoisted(() => ({
   incr: vi.fn(),
   expire: vi.fn(),
   del: vi.fn(),
+  pipeline: vi.fn(() => mockPipeline),
 }));
 
 vi.mock("@/lib/redis", () => ({
@@ -94,8 +101,7 @@ describe("evaluateRetryDecision", () => {
 
   describe("retryable categories", () => {
     it("returns retry for daemon_unreachable on first attempt", async () => {
-      mockRedis.incr.mockResolvedValue(1);
-      mockRedis.expire.mockResolvedValue(1);
+      mockPipeline.exec.mockResolvedValue([1, 1]);
 
       const result = await evaluateRetryDecision({
         threadChatId: "tc-2",
@@ -108,24 +114,25 @@ describe("evaluateRetryDecision", () => {
         expect(result.attempt).toBe(1);
         expect(result.backoffMs).toBeGreaterThanOrEqual(0);
       }
-      expect(mockRedis.incr).toHaveBeenCalledWith("dlr:tc-2");
-      expect(mockRedis.expire).toHaveBeenCalledWith("dlr:tc-2", 60 * 60);
+      expect(mockPipeline.incr).toHaveBeenCalledWith("dlr:tc-2");
+      expect(mockPipeline.expire).toHaveBeenCalledWith("dlr:tc-2", 60 * 60);
     });
 
-    it("sets TTL only on first attempt", async () => {
-      mockRedis.incr.mockResolvedValue(2);
+    it("always refreshes TTL via pipeline (not just first attempt)", async () => {
+      mockPipeline.exec.mockResolvedValue([2, 1]);
 
       await evaluateRetryDecision({
         threadChatId: "tc-3",
         failureCategory: "dispatch_ack_timeout",
       });
 
-      expect(mockRedis.expire).not.toHaveBeenCalled();
+      // Pipeline always includes both INCR and EXPIRE
+      expect(mockPipeline.incr).toHaveBeenCalledWith("dlr:tc-3");
+      expect(mockPipeline.expire).toHaveBeenCalledWith("dlr:tc-3", 60 * 60);
     });
 
     it("returns retry_same_intent for dispatch_ack_timeout", async () => {
-      mockRedis.incr.mockResolvedValue(1);
-      mockRedis.expire.mockResolvedValue(1);
+      mockPipeline.exec.mockResolvedValue([1, 1]);
 
       const result = await evaluateRetryDecision({
         threadChatId: "tc-4",
@@ -139,7 +146,7 @@ describe("evaluateRetryDecision", () => {
     });
 
     it("returns retry_if_budget for claude_runtime_exit", async () => {
-      mockRedis.incr.mockResolvedValue(2);
+      mockPipeline.exec.mockResolvedValue([2, 1]);
 
       const result = await evaluateRetryDecision({
         threadChatId: "tc-5",
@@ -154,7 +161,7 @@ describe("evaluateRetryDecision", () => {
     });
 
     it("returns budget_exhausted when attempts exceed max", async () => {
-      mockRedis.incr.mockResolvedValue(MAX_RETRY_ATTEMPTS + 1);
+      mockPipeline.exec.mockResolvedValue([MAX_RETRY_ATTEMPTS + 1, 1]);
 
       const result = await evaluateRetryDecision({
         threadChatId: "tc-6",
@@ -169,7 +176,7 @@ describe("evaluateRetryDecision", () => {
     });
 
     it("returns retry on exactly MAX_RETRY_ATTEMPTS", async () => {
-      mockRedis.incr.mockResolvedValue(MAX_RETRY_ATTEMPTS);
+      mockPipeline.exec.mockResolvedValue([MAX_RETRY_ATTEMPTS, 1]);
 
       const result = await evaluateRetryDecision({
         threadChatId: "tc-7",

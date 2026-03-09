@@ -101,14 +101,12 @@ export async function evaluateRetryDecision({
     };
   }
 
-  // Retryable — atomically increment attempt counter
+  // Retryable — atomically increment attempt counter and refresh TTL
   const key = retryCounterKey(threadChatId);
-  const attempt = await redis.incr(key);
-
-  // Set TTL on first attempt (INCR creates the key if absent, returning 1)
-  if (attempt === 1) {
-    await redis.expire(key, RETRY_COUNTER_TTL_SECONDS);
-  }
+  const pipeline = redis.pipeline();
+  pipeline.incr(key);
+  pipeline.expire(key, RETRY_COUNTER_TTL_SECONDS);
+  const [attempt] = (await pipeline.exec()) as [number, unknown];
 
   if (attempt > MAX_RETRY_ATTEMPTS) {
     return {

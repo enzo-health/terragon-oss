@@ -19,6 +19,12 @@ const KEY_PREFIX = "dl:dispatch:";
 /** TTL for active dispatch intents — 1 hour. */
 const ACTIVE_TTL_SECONDS = 60 * 60;
 
+/** Statuses that represent a finished intent (safe to overwrite). */
+const TERMINAL_DISPATCH_STATUSES = new Set<DeliveryLoopDispatchStatus>([
+  "completed",
+  "failed",
+]);
+
 /** Short TTL for completed intents — 5 minutes for post-completion inspection. */
 const COMPLETED_TTL_SECONDS = 5 * 60;
 
@@ -111,6 +117,14 @@ export type CreateDispatchIntentParams = {
 export async function createDispatchIntent(
   params: CreateDispatchIntentParams,
 ): Promise<DeliveryLoopDispatchIntent> {
+  // Guard: prevent overwriting an active (non-terminal) intent
+  const existing = await getActiveDispatchIntent(params.threadChatId);
+  if (existing && !TERMINAL_DISPATCH_STATUSES.has(existing.status)) {
+    throw new Error(
+      `Cannot create dispatch intent: active intent "${existing.id}" exists for threadChat "${params.threadChatId}" with status "${existing.status}"`,
+    );
+  }
+
   const now = new Date();
   const intent: DeliveryLoopDispatchIntent = {
     id: buildDispatchIntentId(params.loopId, params.runId),
