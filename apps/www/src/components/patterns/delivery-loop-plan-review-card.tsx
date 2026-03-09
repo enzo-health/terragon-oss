@@ -11,7 +11,10 @@ export function SdlcPlanReviewCard({
   return (
     <section
       aria-label="SDLC plan review"
-      className={cn("rounded-lg border bg-card p-3 text-card-foreground", className)}
+      className={cn(
+        "rounded-lg border bg-card p-3 text-card-foreground",
+        className,
+      )}
     >
       <header className="space-y-1">
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -29,10 +32,15 @@ export function SdlcPlanReviewCard({
         </h4>
         <ol className="space-y-2">
           {plan.tasks.map((task) => (
-            <li key={task.stableTaskId} className="rounded-md border bg-muted/30 p-2">
+            <li
+              key={task.stableTaskId}
+              className="rounded-md border bg-muted/30 p-2"
+            >
               <p className="text-xs font-semibold">{task.title}</p>
               {task.description && (
-                <p className="mt-1 text-xs text-muted-foreground">{task.description}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {task.description}
+                </p>
               )}
               {task.acceptance.length > 0 && (
                 <div className="mt-1.5">
@@ -41,7 +49,9 @@ export function SdlcPlanReviewCard({
                   </p>
                   <ul className="mt-1 list-disc pl-4 text-xs text-foreground">
                     {task.acceptance.map((criterion) => (
-                      <li key={`${task.stableTaskId}-${criterion}`}>{criterion}</li>
+                      <li key={`${task.stableTaskId}-${criterion}`}>
+                        {criterion}
+                      </li>
                     ))}
                   </ul>
                 </div>

@@ -134,6 +134,152 @@ export const DELIVERY_LOOP_CANONICAL_STATES: readonly DeliveryLoopState[] = [
 export const DELIVERY_LOOP_CANONICAL_STATE_SET: ReadonlySet<DeliveryLoopState> =
   new Set(DELIVERY_LOOP_CANONICAL_STATES);
 
+/**
+ * Maps legacy SdlcLoopState values to their canonical DeliveryLoopState
+ * equivalents. Used by migration task (#14) to translate persisted state
+ * values. States that already exist in the canonical set map to themselves.
+ */
+export const legacyStateMapping: Record<SdlcLoopState, DeliveryLoopState> = {
+  // Canonical — identity mappings.
+  planning: "planning",
+  implementing: "implementing",
+  review_gate: "review_gate",
+  ci_gate: "ci_gate",
+  ui_gate: "ui_gate",
+  awaiting_pr_link: "awaiting_pr_link",
+  babysitting: "babysitting",
+  blocked: "blocked",
+  done: "done",
+  stopped: "stopped",
+  terminated_pr_closed: "terminated_pr_closed",
+  terminated_pr_merged: "terminated_pr_merged",
+  // Legacy → canonical.
+  reviewing: "review_gate",
+  ui_testing: "ui_gate",
+  pr_babysitting: "babysitting",
+  enrolled: "planning",
+  gates_running: "review_gate",
+  video_pending: "ui_gate",
+  human_review_ready: "awaiting_pr_link",
+  video_degraded_ready: "awaiting_pr_link",
+  blocked_on_agent_fixes: "blocked",
+  blocked_on_ci: "blocked",
+  blocked_on_review_threads: "blocked",
+  blocked_on_human_feedback: "blocked",
+};
+
+/**
+ * Canonical Delivery Loop v2 transition event types.
+ * These map to the primary transitions defined in the architecture RFC.
+ */
+export type DeliveryLoopTransitionEvent =
+  | "plan_completed"
+  | "plan_gate_blocked"
+  | "implementation_completed"
+  | "implementation_gate_blocked"
+  | "review_gate_passed"
+  | "review_gate_blocked"
+  | "ci_gate_passed"
+  | "ci_gate_blocked"
+  | "ui_gate_passed_with_pr"
+  | "ui_gate_passed_without_pr"
+  | "ui_gate_blocked"
+  | "pr_linked"
+  | "babysit_passed"
+  | "babysit_blocked"
+  | "exhausted_retryable_failure"
+  | "blocked_resume"
+  | "manual_stop"
+  | "pr_closed_unmerged"
+  | "pr_merged"
+  | "mark_done";
+
+/**
+ * Resolves the next canonical DeliveryLoopState given a current state and
+ * transition event. Returns null if the transition is invalid.
+ */
+export function resolveDeliveryLoopNextState({
+  currentState,
+  event,
+}: {
+  currentState: DeliveryLoopState;
+  event: DeliveryLoopTransitionEvent;
+}): DeliveryLoopState | null {
+  // Terminal states accept no transitions.
+  if (
+    currentState === "done" ||
+    currentState === "stopped" ||
+    currentState === "terminated_pr_closed" ||
+    currentState === "terminated_pr_merged"
+  ) {
+    // Allow idempotent mark_done on done.
+    if (currentState === "done" && event === "mark_done") {
+      return "done";
+    }
+    return null;
+  }
+
+  // Global transitions from any active state.
+  switch (event) {
+    case "pr_closed_unmerged":
+      return "terminated_pr_closed";
+    case "pr_merged":
+      return "terminated_pr_merged";
+    case "manual_stop":
+      return "stopped";
+    case "exhausted_retryable_failure":
+      return "blocked";
+    default:
+      break;
+  }
+
+  // Per-state transitions.
+  switch (currentState) {
+    case "planning":
+      if (event === "plan_completed") return "implementing";
+      if (event === "plan_gate_blocked") return "planning";
+      return null;
+
+    case "implementing":
+      if (event === "implementation_completed") return "review_gate";
+      if (event === "implementation_gate_blocked") return "implementing";
+      return null;
+
+    case "review_gate":
+      if (event === "review_gate_passed") return "ci_gate";
+      if (event === "review_gate_blocked") return "implementing";
+      return null;
+
+    case "ci_gate":
+      if (event === "ci_gate_passed") return "ui_gate";
+      if (event === "ci_gate_blocked") return "implementing";
+      return null;
+
+    case "ui_gate":
+      if (event === "ui_gate_passed_with_pr") return "babysitting";
+      if (event === "ui_gate_passed_without_pr") return "awaiting_pr_link";
+      if (event === "ui_gate_blocked") return "implementing";
+      return null;
+
+    case "awaiting_pr_link":
+      if (event === "pr_linked") return "babysitting";
+      return null;
+
+    case "babysitting":
+      if (event === "babysit_passed" || event === "mark_done") return "done";
+      if (event === "babysit_blocked") return "implementing";
+      return null;
+
+    case "blocked":
+      if (event === "blocked_resume") return "implementing";
+      if (event === "mark_done") return "done";
+      return null;
+
+    default:
+      return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 const activeSdlcLoopStates = [
