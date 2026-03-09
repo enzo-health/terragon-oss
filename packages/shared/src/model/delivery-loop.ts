@@ -46,6 +46,9 @@ import {
   SdlcReviewThreadEvaluationSource,
   SdlcReviewThreadGateStatus,
   SdlcVideoFailureClass,
+  DispatchIntentStatus,
+  DispatchIntentExecutionClass,
+  DispatchIntentDispatchMechanism,
 } from "../db/types";
 
 // ---------------------------------------------------------------------------
@@ -82,7 +85,8 @@ export type DeliveryLoopDispatchStatus =
   | "retrying"
   | "dispatched"
   | "acknowledged"
-  | "failed";
+  | "failed"
+  | "completed";
 
 /**
  * Companion fields for Delivery Loop v2 state tracking.
@@ -135,11 +139,11 @@ export const DELIVERY_LOOP_CANONICAL_STATE_SET: ReadonlySet<DeliveryLoopState> =
   new Set(DELIVERY_LOOP_CANONICAL_STATES);
 
 /**
- * Maps legacy SdlcLoopState values to their canonical DeliveryLoopState
- * equivalents. Used by migration task (#14) to translate persisted state
- * values. States that already exist in the canonical set map to themselves.
+ * Maps legacy SDLC state string values (that may still exist in the DB)
+ * to their canonical DeliveryLoopState equivalents. Used by the migration
+ * backfill to translate any persisted legacy state values.
  */
-export const legacyStateMapping: Record<SdlcLoopState, DeliveryLoopState> = {
+export const legacyStateMapping: Record<string, DeliveryLoopState> = {
   // Canonical — identity mappings.
   planning: "planning",
   implementing: "implementing",
@@ -285,26 +289,12 @@ export function resolveDeliveryLoopNextState({
 const activeSdlcLoopStates = [
   "planning",
   "implementing",
-  // Canonical gate states (Delivery Loop v2).
   "review_gate",
   "ci_gate",
   "ui_gate",
   "awaiting_pr_link",
   "babysitting",
   "blocked",
-  // Legacy active states retained during migration.
-  "reviewing",
-  "ui_testing",
-  "pr_babysitting",
-  "enrolled",
-  "gates_running",
-  "video_pending",
-  "human_review_ready",
-  "video_degraded_ready",
-  "blocked_on_agent_fixes",
-  "blocked_on_ci",
-  "blocked_on_review_threads",
-  "blocked_on_human_feedback",
 ] as const satisfies readonly SdlcLoopState[];
 const activeSdlcLoopStateList: SdlcLoopState[] = [...activeSdlcLoopStates];
 const activeSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
@@ -374,6 +364,42 @@ export const DELIVERY_LOOP_FAILURE_ACTION_TABLE: Record<
   gate_failed: "return_to_implementing",
   config_error: "blocked",
   unknown: "retry_if_budget",
+};
+
+/**
+ * Execution class determines which runtime handles the dispatch.
+ */
+export type DeliveryLoopExecutionClass =
+  | "implementation_runtime"
+  | "gate_runtime";
+
+/**
+ * Mechanism used to dispatch work to the sandbox daemon.
+ */
+export type DeliveryLoopDispatchMechanism = "self_dispatch" | "queue_fallback";
+
+/**
+ * A durable record of a dispatch intent. Persisted before any dispatch
+ * so that failed dispatches are recoverable. Stored in Redis with a TTL;
+ * DB migration comes later.
+ */
+export type DeliveryLoopDispatchIntent = {
+  id: string;
+  loopId: string;
+  threadId: string;
+  threadChatId: string;
+  targetPhase: DeliveryLoopState;
+  selectedAgent: DeliveryLoopSelectedAgent;
+  executionClass: DeliveryLoopExecutionClass;
+  dispatchMechanism: DeliveryLoopDispatchMechanism;
+  runId: string;
+  status: DeliveryLoopDispatchStatus;
+  retryCount: number;
+  maxRetries: number;
+  createdAt: Date;
+  updatedAt: Date;
+  lastError: string | null;
+  lastFailureCategory: DeliveryLoopFailureCategory | null;
 };
 
 export type SdlcLoopTransitionEvent =
@@ -452,10 +478,11 @@ const phaseToLoopPointerColumn: Record<
 > = {
   planning: "activePlanArtifactId",
   implementing: "activeImplementationArtifactId",
-  reviewing: "activeReviewArtifactId",
-  ui_testing: "activeUiArtifactId",
-  pr_linking: null,
-  pr_babysitting: "activeBabysitArtifactId",
+  review_gate: "activeReviewArtifactId",
+  ci_gate: null,
+  ui_gate: "activeUiArtifactId",
+  awaiting_pr_link: null,
+  babysitting: "activeBabysitArtifactId",
 };
 
 export function isSdlcLoopTerminalState(state: SdlcLoopState): boolean {
@@ -491,7 +518,7 @@ export function resolveSdlcLoopNextState({
     pr_closed_unmerged: "terminated_pr_closed",
     pr_merged: "terminated_pr_merged",
     manual_stop: "stopped",
-    human_feedback_requested: "blocked_on_human_feedback",
+    human_feedback_requested: "blocked",
   };
   if (event in globalTransitions) {
     return globalTransitions[event] ?? null;
@@ -499,25 +526,15 @@ export function resolveSdlcLoopNextState({
 
   switch (currentState) {
     case "planning":
-      if (event === "plan_completed") {
-        return "implementing";
-      }
-      if (event === "plan_gate_blocked") {
-        return "planning";
-      }
+      if (event === "plan_completed") return "implementing";
+      if (event === "plan_gate_blocked") return "planning";
       return null;
     case "implementing":
-      if (event === "implementation_progress") {
-        return "implementing";
-      }
-      if (event === "implementation_gate_blocked") {
-        return "implementing";
-      }
-      if (event === "implementation_completed") {
-        return "reviewing";
-      }
+      if (event === "implementation_progress") return "implementing";
+      if (event === "implementation_gate_blocked") return "implementing";
+      if (event === "implementation_completed") return "review_gate";
       return null;
-    case "reviewing":
+    case "review_gate":
       if (
         event === "review_blocked" ||
         event === "deep_review_gate_blocked" ||
@@ -525,28 +542,44 @@ export function resolveSdlcLoopNextState({
       ) {
         return "implementing";
       }
-      if (event === "review_passed") {
-        return "ui_testing";
-      }
+      if (event === "review_passed") return "ci_gate";
       if (
         event === "deep_review_gate_passed" ||
         event === "carmack_review_gate_passed"
       ) {
-        return "reviewing";
+        return "review_gate";
       }
       return null;
-    case "ui_testing":
+    case "ci_gate":
+      if (
+        event === "ci_gate_blocked" ||
+        event === "review_threads_gate_blocked"
+      ) {
+        return "implementing";
+      }
+      if (
+        event === "ci_gate_passed" ||
+        event === "review_threads_gate_passed"
+      ) {
+        return "ui_gate";
+      }
+      return null;
+    case "ui_gate":
       if (event === "ui_smoke_failed" || event === "video_capture_failed") {
         return "implementing";
       }
       if (event === "ui_smoke_passed" || event === "video_capture_started") {
-        return "ui_testing";
+        return "ui_gate";
       }
       if (event === "pr_linked" || event === "video_capture_succeeded") {
-        return "pr_babysitting";
+        return "babysitting";
       }
       return null;
-    case "pr_babysitting":
+    case "awaiting_pr_link":
+      if (event === "pr_linked") return "babysitting";
+      if (event === "mark_done") return "done";
+      return null;
+    case "babysitting":
       if (
         event === "babysit_blocked" ||
         event === "ci_gate_blocked" ||
@@ -556,9 +589,7 @@ export function resolveSdlcLoopNextState({
       ) {
         return "implementing";
       }
-      if (event === "babysit_passed" || event === "mark_done") {
-        return "done";
-      }
+      if (event === "babysit_passed" || event === "mark_done") return "done";
       if (
         event === "pr_linked" ||
         event === "ci_gate_passed" ||
@@ -566,70 +597,18 @@ export function resolveSdlcLoopNextState({
         event === "deep_review_gate_passed" ||
         event === "carmack_review_gate_passed"
       ) {
-        return "pr_babysitting";
+        return "babysitting";
       }
       return null;
-    // Legacy migration states.
-    case "enrolled":
-      if (event === "plan_completed") {
-        return "implementing";
-      }
-      return null;
-    case "gates_running":
+    case "blocked":
       if (
-        event === "review_blocked" ||
-        event === "deep_review_gate_blocked" ||
-        event === "carmack_review_gate_blocked"
+        event === "blocked_resume_requested" ||
+        event === "blocked_bypass_once_requested" ||
+        event === "implementation_progress"
       ) {
         return "implementing";
       }
-      if (event === "review_passed") {
-        return "ui_testing";
-      }
-      if (
-        event === "deep_review_gate_passed" ||
-        event === "carmack_review_gate_passed"
-      ) {
-        return "gates_running";
-      }
-      return null;
-    case "video_pending":
-      if (event === "video_capture_failed") {
-        return "implementing";
-      }
-      if (event === "video_capture_succeeded") {
-        return "pr_babysitting";
-      }
-      if (event === "video_capture_started") {
-        return "video_pending";
-      }
-      return null;
-    case "human_review_ready":
-    case "video_degraded_ready":
-      if (event === "pr_linked") {
-        return "pr_babysitting";
-      }
-      if (event === "mark_done") {
-        return "done";
-      }
-      return null;
-    case "blocked_on_agent_fixes":
-    case "blocked_on_ci":
-    case "blocked_on_review_threads":
-      if (event === "implementation_progress") {
-        return "implementing";
-      }
-      return null;
-    case "blocked_on_human_feedback":
-      if (event === "blocked_resume_requested") {
-        return "implementing";
-      }
-      if (event === "blocked_bypass_once_requested") {
-        return "implementing";
-      }
-      if (event === "mark_done") {
-        return "done";
-      }
+      if (event === "mark_done") return "done";
       return null;
     default:
       return null;
@@ -1743,7 +1722,7 @@ export async function createReviewBundleArtifactForHead({
   return await createHeadScopedArtifact({
     db,
     loopId,
-    phase: "reviewing",
+    phase: "review_gate",
     artifactType: "review_bundle",
     headSha,
     loopVersion,
@@ -1776,7 +1755,7 @@ export async function createUiSmokeArtifactForHead({
   return await createHeadScopedArtifact({
     db,
     loopId,
-    phase: "ui_testing",
+    phase: "ui_gate",
     artifactType: "ui_smoke_result",
     headSha,
     loopVersion,
@@ -1814,7 +1793,7 @@ export async function createPrLinkArtifact({
       .where(
         and(
           eq(schema.sdlcPhaseArtifact.loopId, loopId),
-          eq(schema.sdlcPhaseArtifact.phase, "pr_linking"),
+          eq(schema.sdlcPhaseArtifact.phase, "awaiting_pr_link"),
           inArray(schema.sdlcPhaseArtifact.status, [
             "generated",
             "approved",
@@ -1827,7 +1806,7 @@ export async function createPrLinkArtifact({
       .insert(schema.sdlcPhaseArtifact)
       .values({
         loopId,
-        phase: "pr_linking",
+        phase: "awaiting_pr_link",
         artifactType: "pr_link",
         headSha: null,
         loopVersion,
@@ -1868,7 +1847,7 @@ export async function createBabysitEvaluationArtifactForHead({
   return await createHeadScopedArtifact({
     db,
     loopId,
-    phase: "pr_babysitting",
+    phase: "babysitting",
     artifactType: "babysit_evaluation",
     headSha,
     loopVersion,
@@ -2709,7 +2688,7 @@ export function resolveSdlcReadyStateAfterVideoCapture({
 }: {
   currentState: SdlcLoopState;
   artifactR2Key: string | null;
-}): Extract<SdlcLoopState, "pr_babysitting" | "implementing" | "done"> | null {
+}): Extract<SdlcLoopState, "babysitting" | "implementing" | "done"> | null {
   const transitionEvent: SdlcLoopTransitionEvent = artifactR2Key
     ? "video_capture_succeeded"
     : "video_capture_failed";
@@ -2718,7 +2697,7 @@ export function resolveSdlcReadyStateAfterVideoCapture({
     event: transitionEvent,
   });
 
-  if (nextState === "pr_babysitting" || nextState === "implementing") {
+  if (nextState === "babysitting" || nextState === "implementing") {
     return nextState;
   }
 
@@ -3139,28 +3118,25 @@ function shouldResetFixAttemptCountOnTransition({
   previousState: SdlcLoopState;
   nextState: SdlcLoopState;
 }): boolean {
-  if (
-    previousState === nextState ||
-    nextState === "blocked_on_human_feedback"
-  ) {
+  if (previousState === nextState || nextState === "blocked") {
     return false;
   }
   if (previousState === "planning" && nextState === "implementing") {
     return true;
   }
-  if (previousState === "implementing" && nextState === "reviewing") {
+  if (previousState === "implementing" && nextState === "review_gate") {
     return true;
   }
-  if (previousState === "reviewing" && nextState === "ui_testing") {
+  if (previousState === "review_gate" && nextState === "ci_gate") {
     return true;
   }
-  if (previousState === "ui_testing" && nextState === "pr_babysitting") {
+  if (previousState === "ci_gate" && nextState === "ui_gate") {
     return true;
   }
-  if (
-    previousState === "blocked_on_human_feedback" &&
-    nextState === "implementing"
-  ) {
+  if (previousState === "ui_gate" && nextState === "babysitting") {
+    return true;
+  }
+  if (previousState === "blocked" && nextState === "implementing") {
     return true;
   }
   return false;
@@ -3231,7 +3207,7 @@ async function persistGuardedGateLoopState({
     shouldIncrementFixAttempt &&
     incrementedFixAttemptCount > Math.max(loop.maxFixAttempts, 0)
   ) {
-    nextState = "blocked_on_human_feedback";
+    nextState = "blocked";
   }
 
   if (normalizedLoopVersion !== null) {
@@ -3257,7 +3233,7 @@ async function persistGuardedGateLoopState({
     fixAttemptCount?: number;
     phaseEnteredAt?: Date | null;
   } = {
-    state: nextState,
+    state: nextState!,
     updatedAt: now,
   };
   if (shouldIncrementFixAttempt) {
@@ -4510,3 +4486,148 @@ export const completeDeliveryLoopOutboxActionExecution =
   completeSdlcOutboxActionExecution;
 export const transitionDeliveryLoopState = transitionSdlcLoopState;
 export const evaluateDeliveryLoopParitySlo = evaluateSdlcParitySlo;
+
+// ---------------------------------------------------------------------------
+// Dispatch Intent persistence
+// ---------------------------------------------------------------------------
+
+export type CreateDispatchIntentInput = {
+  loopId: string;
+  threadId: string;
+  threadChatId: string;
+  runId: string;
+  targetPhase: SdlcLoopState;
+  selectedAgent: string;
+  executionClass: DispatchIntentExecutionClass;
+  dispatchMechanism: DispatchIntentDispatchMechanism;
+  retryCount?: number;
+};
+
+/**
+ * Persist a new dispatch intent before any dispatch work begins.
+ * Returns the generated intent ID.
+ */
+export async function createDispatchIntent(
+  db: DB,
+  input: CreateDispatchIntentInput,
+): Promise<string> {
+  const [row] = await db
+    .insert(schema.deliveryLoopDispatchIntent)
+    .values({
+      loopId: input.loopId,
+      threadId: input.threadId,
+      threadChatId: input.threadChatId,
+      runId: input.runId,
+      targetPhase: input.targetPhase,
+      selectedAgent: input.selectedAgent,
+      executionClass: input.executionClass,
+      dispatchMechanism: input.dispatchMechanism,
+      status: "pending",
+      retryCount: input.retryCount ?? 0,
+    })
+    .returning({ id: schema.deliveryLoopDispatchIntent.id });
+  return row!.id;
+}
+
+/**
+ * Transition a dispatch intent to "dispatched" — daemon message has been sent.
+ */
+export async function markDispatchIntentDispatched(
+  db: DB,
+  runId: string,
+): Promise<void> {
+  await db
+    .update(schema.deliveryLoopDispatchIntent)
+    .set({
+      status: "dispatched" as DispatchIntentStatus,
+      dispatchedAt: new Date(),
+    })
+    .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
+}
+
+/**
+ * Transition a dispatch intent to "acknowledged" — first daemon event received.
+ */
+export async function markDispatchIntentAcknowledged(
+  db: DB,
+  runId: string,
+): Promise<void> {
+  await db
+    .update(schema.deliveryLoopDispatchIntent)
+    .set({
+      status: "acknowledged" as DispatchIntentStatus,
+      acknowledgedAt: new Date(),
+    })
+    .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
+}
+
+/**
+ * Transition a dispatch intent to "completed" — run finished successfully.
+ */
+export async function markDispatchIntentCompleted(
+  db: DB,
+  runId: string,
+): Promise<void> {
+  await db
+    .update(schema.deliveryLoopDispatchIntent)
+    .set({
+      status: "completed" as DispatchIntentStatus,
+      completedAt: new Date(),
+    })
+    .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
+}
+
+/**
+ * Transition a dispatch intent to "failed" with failure details.
+ */
+export async function markDispatchIntentFailed(
+  db: DB,
+  runId: string,
+  failureCategory: string | null,
+  failureMessage: string | null,
+): Promise<void> {
+  await db
+    .update(schema.deliveryLoopDispatchIntent)
+    .set({
+      status: "failed" as DispatchIntentStatus,
+      failedAt: new Date(),
+      failureCategory,
+      failureMessage,
+    })
+    .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
+}
+
+/**
+ * Get the most recent dispatch intent for a loop, optionally filtered by
+ * status. Useful for crash recovery — find "dispatched" intents that never
+ * got acknowledged.
+ */
+export async function getLatestDispatchIntentForLoop(
+  db: DB,
+  loopId: string,
+  statusFilter?: DispatchIntentStatus,
+) {
+  const conditions = [eq(schema.deliveryLoopDispatchIntent.loopId, loopId)];
+  if (statusFilter) {
+    conditions.push(eq(schema.deliveryLoopDispatchIntent.status, statusFilter));
+  }
+  const [row] = await db
+    .select()
+    .from(schema.deliveryLoopDispatchIntent)
+    .where(and(...conditions))
+    .orderBy(desc(schema.deliveryLoopDispatchIntent.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Get a dispatch intent by its runId.
+ */
+export async function getDispatchIntentByRunId(db: DB, runId: string) {
+  const [row] = await db
+    .select()
+    .from(schema.deliveryLoopDispatchIntent)
+    .where(eq(schema.deliveryLoopDispatchIntent.runId, runId))
+    .limit(1);
+  return row ?? null;
+}
