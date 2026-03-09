@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bonaparte Test Runner"
+  short_description: "Run Bonaparte tests with infra-aware mode selection"
+  default_prompt: "Run Bonaparte tests safely: preflight Docker/Prisma/global setup, choose full or unit mode, execute, and report blockers clearly."
