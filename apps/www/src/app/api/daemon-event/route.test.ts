@@ -2,18 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
+import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
+import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
+import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -99,16 +101,16 @@ vi.mock("@/lib/db", () => ({
   db: dbMocks.db,
 }));
 
-vi.mock("@terragon/shared/model/sdlc-loop", () => ({
+vi.mock("@terragon/shared/model/delivery-loop", () => ({
   getActiveSdlcLoopForThread: vi.fn(),
   SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
-vi.mock("@/server-lib/sdlc-loop/publication", () => ({
+vi.mock("@/server-lib/delivery-loop/publication", () => ({
   runBestEffortSdlcPublicationCoordinator: vi.fn(),
 }));
 
-vi.mock("@/server-lib/sdlc-loop/signal-inbox", () => ({
+vi.mock("@/server-lib/delivery-loop/signal-inbox", () => ({
   runBestEffortSdlcSignalInboxTick: vi.fn(),
 }));
 
@@ -116,9 +118,27 @@ vi.mock("@/server-lib/process-follow-up-queue", () => ({
   maybeProcessFollowUpQueue: vi.fn(),
 }));
 
+vi.mock("@/server-lib/follow-up", () => ({
+  queueFollowUpInternal: vi.fn(),
+}));
+
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
   updateAgentRunContext: vi.fn(),
+}));
+
+// Explicit mock for threads module — only mock the functions the route directly imports.
+// Using a factory (not auto-mock) prevents transitive consumers like @/agent/update-status
+// from receiving mocked versions of functions they rely on internally.
+vi.mock("@terragon/shared/model/threads", () => ({
+  getThreadChat: vi.fn(),
+  getThreadMinimal: vi.fn(),
+  updateThreadChat: vi.fn(),
+}));
+
+// Mock update-status to isolate the route from the real thread state-machine logic.
+vi.mock("@/agent/update-status", () => ({
+  updateThreadChatWithTransition: vi.fn(),
 }));
 
 function createDaemonRequest(
@@ -224,6 +244,7 @@ describe("daemon-event route", () => {
       processed: false,
       reason: "no_queued_messages",
     });
+    vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
     dbMocks.execute.mockResolvedValue([]);
     dbMocks.selectWhere.mockResolvedValue([]);
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
@@ -329,12 +350,81 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("requires threadChatId for non-legacy daemon payloads", async () => {
+  it("accepts legacy daemon payloads with the legacy threadChat sentinel", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: LEGACY_THREAD_CHAT_ID,
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "legacy",
+        protocolVersion: 1,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    } as any);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: LEGACY_THREAD_CHAT_ID,
+      sandboxId: "sandbox-1",
+      transportMode: "legacy",
+      protocolVersion: 1,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: LEGACY_THREAD_CHAT_ID,
+        messages: [
+          {
+            type: "system",
+            subtype: "init",
+            session_id: "session-1",
+            tools: [],
+            mcp_servers: [],
+          },
+        ],
+        timezone: "UTC",
+        transportMode: "legacy",
+        payloadVersion: 2,
+        eventId: "event-legacy",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    expect(data.acknowledgedEventId).toBe("event-legacy");
+    expect(data.acknowledgedSeq).toBe(0);
+  });
+
+  it("requires threadChatId for ACP daemon payloads", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         messages: [],
         timezone: "UTC",
+        transportMode: "acp",
+        protocolVersion: 2,
         payloadVersion: 2,
         eventId: "event-1",
         runId: "run-1",
@@ -346,6 +436,147 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(400);
     expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("requires a real threadChatId for codex app-server payloads", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: LEGACY_THREAD_CHAT_ID,
+        messages: [],
+        timezone: "UTC",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        payloadVersion: 2,
+        eventId: "event-1",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns v2 acknowledgements when a run is already terminal", async () => {
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "legacy",
+      protocolVersion: 1,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "system",
+            subtype: "init",
+            session_id: "session-1",
+            tools: [],
+            mcp_servers: [],
+          },
+        ],
+        timezone: "UTC",
+        transportMode: "legacy",
+        payloadVersion: 2,
+        eventId: "event-terminal",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(data.reason).toBe("run_terminal_ignored");
+    expect(data.acknowledgedEventId).toBe("event-terminal");
+    expect(data.acknowledgedSeq).toBe(0);
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("re-enqueues daemon-terminal feedback when runtime follow-up is expected but queue is empty", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      loopVersion: 7,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
+      processed: true,
+      signalId: "signal-1",
+      causeType: "daemon_terminal",
+      runtimeAction: "feedback_follow_up_queued",
+      outboxId: null,
+      feedbackQueuedMessage: {
+        type: "user",
+        model: null,
+        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+        parts: [{ type: "text", text: "Please address this feedback." }],
+      },
+      runtimeRouting: {
+        routed: true,
+        followUpQueued: true,
+        reason: "follow_up_queued",
+        error: null,
+      },
+    });
+    vi.mocked(maybeProcessFollowUpQueue)
+      .mockResolvedValueOnce({
+        processed: false,
+        reason: "no_queued_messages",
+      } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>)
+      .mockResolvedValueOnce({
+        processed: true,
+        reason: "dispatch_started_batch",
+      } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-follow-up",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          expect.objectContaining({
+            parts: [{ type: "text", text: "Please address this feedback." }],
+          }),
+        ],
+        appendOrReplace: "append",
+        source: "github",
+      }),
+    );
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(2);
+    expect(data.acknowledgedEventId).toBe("event-follow-up");
+    expect(data.acknowledgedSeq).toBe(0);
   });
 
   it("persists codexPreviousResponseId for successful codex app-server completions", async () => {
@@ -513,7 +744,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "enrolled",
+      state: "planning",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.updateSet.mockImplementationOnce(() => {
@@ -599,7 +830,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "enrolled",
+      state: "planning",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
 
@@ -652,7 +883,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "blocked_on_ci",
+      state: "blocked",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
 

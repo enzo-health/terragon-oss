@@ -24,7 +24,7 @@ import { getDiffContextStr } from "./utils";
 import { createAutomation } from "@terragon/shared/model/automations";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { redis } from "@/lib/redis";
-import { enrollSdlcLoopForGithubPR } from "@terragon/shared/model/sdlc-loop";
+import { enrollSdlcLoopForGithubPR } from "@terragon/shared/model/delivery-loop";
 import * as threadModel from "@terragon/shared/model/threads";
 
 vi.mock("@/server-lib/new-thread-internal", () => ({

@@ -4,15 +4,15 @@ import { useCallback, useState } from "react";
 import type {
   SdlcLoopStatusCheck,
   SdlcLoopStatusCheckStatus,
-} from "@/lib/sdlc-loop-status";
+} from "@/lib/delivery-loop-status";
 import { cn } from "@/lib/utils";
-import { useSdlcLoopStatusQuery } from "@/queries/sdlc-loop-status-queries";
+import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { approvePlan } from "@/server-actions/approve-plan";
 import {
-  requestSdlcBypassCurrentGateOnce,
-  requestSdlcResumeFromBlocked,
-} from "@/server-actions/sdlc-interventions";
+  requestDeliveryLoopBypassCurrentGateOnce,
+  requestDeliveryLoopResumeFromBlocked,
+} from "@/server-actions/delivery-loop-interventions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -20,8 +20,8 @@ import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import {
   buildArtifactFallbackPlanSpecViewModel,
   type PlanTaskViewModel,
-} from "@/lib/sdlc-plan-view-model";
-import { SdlcPlanReviewCard } from "./sdlc-plan-review-card";
+} from "@/lib/delivery-loop-plan-view-model";
+import { DeliveryLoopPlanReviewCard } from "./delivery-loop-plan-review-card";
 import {
   Stepper,
   StepperIndicator,
@@ -168,7 +168,7 @@ function getPlanningStatus({
   if (!state) {
     return isLoading ? "pending" : "not_started";
   }
-  if (state === "planning" || state === "enrolled") {
+  if (state === "planning") {
     return "pending";
   }
   return "passed";
@@ -187,10 +187,8 @@ function getImplementingStatus({
 
   switch (state) {
     case "planning":
-    case "enrolled":
       return "not_started";
     case "implementing":
-    case "blocked_on_agent_fixes":
       return "pending";
     case "terminated_pr_closed":
     case "stopped":
@@ -213,11 +211,7 @@ function getReviewingStatus({
     return isLoading ? "pending" : "not_started";
   }
 
-  if (
-    state === "planning" ||
-    state === "enrolled" ||
-    state === "implementing"
-  ) {
+  if (state === "planning" || state === "implementing") {
     return "not_started";
   }
 
@@ -225,21 +219,16 @@ function getReviewingStatus({
     return "degraded";
   }
 
-  if (
-    state === "blocked_on_review_threads" ||
-    state === "blocked_on_agent_fixes" ||
-    state === "blocked_on_human_feedback"
-  ) {
+  if (state === "blocked") {
     return "blocked";
   }
 
   if (
-    state === "reviewing" ||
-    state === "ui_testing" ||
-    state === "pr_babysitting" ||
-    state === "video_pending" ||
-    state === "human_review_ready" ||
-    state === "video_degraded_ready" ||
+    state === "review_gate" ||
+    state === "ci_gate" ||
+    state === "ui_gate" ||
+    state === "awaiting_pr_link" ||
+    state === "babysitting" ||
     state === "done" ||
     state === "terminated_pr_merged"
   ) {
@@ -257,10 +246,10 @@ function getReviewingStatus({
   );
 
   const reviewAggregatePendingStates: SdlcLoopState[] = [
-    "gates_running",
-    "reviewing",
-    "pr_babysitting",
-    "blocked_on_ci",
+    "review_gate",
+    "ci_gate",
+    "ui_gate",
+    "babysitting",
   ];
 
   if (
@@ -288,20 +277,18 @@ function getCiStatus({
 
   if (
     state === "planning" ||
-    state === "enrolled" ||
     state === "implementing" ||
-    state === "reviewing" ||
-    state === "ui_testing"
+    state === "review_gate"
   ) {
     return "not_started";
   }
 
-  if (state === "blocked_on_ci") {
-    return "blocked";
-  }
-
   if (state === "terminated_pr_closed" || state === "stopped") {
     return "degraded";
+  }
+
+  if (state === "blocked") {
+    return "blocked";
   }
 
   const ciStatus = getCheckStatusOrDefault({
@@ -312,10 +299,7 @@ function getCiStatus({
 
   if (
     ciStatus === "not_started" &&
-    (state === "gates_running" ||
-      state === "pr_babysitting" ||
-      state === "blocked_on_review_threads" ||
-      state === "blocked_on_agent_fixes")
+    (state === "ci_gate" || state === "babysitting")
   ) {
     return "pending";
   }
@@ -338,31 +322,19 @@ function getUiTestingStatus({
 
   if (
     state === "planning" ||
-    state === "enrolled" ||
     state === "implementing" ||
-    state === "reviewing" ||
-    state === "gates_running" ||
-    state === "blocked_on_agent_fixes" ||
-    state === "blocked_on_ci" ||
-    state === "blocked_on_review_threads"
+    state === "review_gate" ||
+    state === "ci_gate"
   ) {
     return "not_started";
   }
 
-  if (state === "ui_testing") {
+  if (state === "ui_gate") {
     return "pending";
   }
 
-  if (state === "pr_babysitting") {
+  if (state === "babysitting") {
     return "passed";
-  }
-
-  if (state === "video_pending") {
-    return "pending";
-  }
-
-  if (state === "video_degraded_ready") {
-    return "degraded";
   }
 
   if (state === "terminated_pr_closed" || state === "stopped") {
@@ -375,11 +347,7 @@ function getUiTestingStatus({
     isLoading,
   });
 
-  if (
-    state === "human_review_ready" ||
-    state === "done" ||
-    state === "terminated_pr_merged"
-  ) {
+  if (state === "done" || state === "terminated_pr_merged") {
     if (videoStatus === "blocked" || videoStatus === "degraded") {
       return "degraded";
     }
@@ -389,7 +357,7 @@ function getUiTestingStatus({
     return "passed";
   }
 
-  if (state === "blocked_on_human_feedback") {
+  if (state === "blocked") {
     if (videoStatus === "blocked") {
       return "degraded";
     }
@@ -551,10 +519,10 @@ function SdlcInterventionControls({
   loopState: SdlcLoopState;
 }) {
   const resumeMutation = useServerActionMutation({
-    mutationFn: requestSdlcResumeFromBlocked,
+    mutationFn: requestDeliveryLoopResumeFromBlocked,
   });
   const bypassMutation = useServerActionMutation({
-    mutationFn: requestSdlcBypassCurrentGateOnce,
+    mutationFn: requestDeliveryLoopBypassCurrentGateOnce,
   });
 
   const handleResume = useCallback(async () => {
@@ -570,7 +538,7 @@ function SdlcInterventionControls({
         size="sm"
         variant="outline"
         className="h-7 text-xs"
-        disabled={resumeMutation.isPending || loopState !== "blocked_on_human_feedback"}
+        disabled={resumeMutation.isPending || loopState !== "blocked"}
         onClick={handleResume}
       >
         {resumeMutation.isPending ? "Resuming…" : "Resume"}
@@ -588,7 +556,7 @@ function SdlcInterventionControls({
   );
 }
 
-export function SdlcTopProgressStepper({
+export function DeliveryLoopTopProgressStepper({
   threadId,
   threadChatId,
   enabled,
@@ -598,7 +566,7 @@ export function SdlcTopProgressStepper({
   enabled: boolean;
 }) {
   const [expandedPhase, setExpandedPhase] = useState<SdlcPhaseKey | null>(null);
-  const { data, isLoading, isError } = useSdlcLoopStatusQuery({
+  const { data, isLoading, isError } = useDeliveryLoopStatusQuery({
     threadId,
     enabled,
   });
@@ -619,8 +587,7 @@ export function SdlcTopProgressStepper({
   const needsAttention = data?.needsAttention.isBlocked ?? false;
   const blockerCount = data?.needsAttention.blockerCount ?? 0;
   const showInterventionControls =
-    data?.state === "blocked_on_human_feedback" ||
-    data?.state === "implementing";
+    data?.state === "blocked" || data?.state === "implementing";
   const planCardModel =
     data && sdlcPlanReviewCard
       ? buildArtifactFallbackPlanSpecViewModel({
@@ -642,7 +609,7 @@ export function SdlcTopProgressStepper({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              SDLC Loop
+              Delivery Loop
             </p>
             <p className="truncate text-sm font-semibold text-foreground">
               {stateLabel}
@@ -769,7 +736,10 @@ export function SdlcTopProgressStepper({
                     data?.artifacts?.plannedTasks && (
                       <>
                         {planCardModel ? (
-                          <SdlcPlanReviewCard plan={planCardModel} className="mt-1.5" />
+                          <DeliveryLoopPlanReviewCard
+                            plan={planCardModel}
+                            className="mt-1.5"
+                          />
                         ) : null}
                         <SdlcPlanTaskList
                           tasks={data.artifacts.plannedTasks}
@@ -777,7 +747,8 @@ export function SdlcTopProgressStepper({
                           showApprove={
                             data.state === "planning" &&
                             data.planApprovalPolicy === "human_required" &&
-                            data.artifacts.planningArtifact?.status !== "accepted"
+                            data.artifacts.planningArtifact?.status !==
+                              "accepted"
                           }
                           threadId={threadId}
                           threadChatId={threadChatId}
@@ -802,3 +773,6 @@ export function SdlcTopProgressStepper({
     </div>
   );
 }
+
+/** @deprecated Use DeliveryLoopTopProgressStepper */
+export const SdlcTopProgressStepper = DeliveryLoopTopProgressStepper;

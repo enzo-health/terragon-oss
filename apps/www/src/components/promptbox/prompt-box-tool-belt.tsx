@@ -61,13 +61,13 @@ interface PromptBoxToolBeltProps {
   /** Whether to disable create new branch button */
   createNewBranchDisabled?: boolean;
 
-  /** Whether to show SDLC loop opt-in toggle */
+  /** Whether to show Delivery Loop opt-in toggle */
   showSdlcLoopOptIn?: boolean;
-  /** Value for SDLC loop opt-in toggle */
+  /** Value for Delivery Loop opt-in toggle */
   sdlcLoopOptInValue?: boolean;
-  /** Handler for SDLC loop opt-in toggle */
+  /** Handler for Delivery Loop opt-in toggle */
   onSdlcLoopOptInChange?: (value: boolean) => void;
-  /** Whether to disable SDLC loop opt-in toggle */
+  /** Whether to disable Delivery Loop opt-in toggle */
   sdlcLoopOptInDisabled?: boolean;
 }
 
@@ -162,13 +162,13 @@ export function PromptBoxToolBelt({
           aria-pressed={sdlcLoopOptInValue}
           aria-label={
             sdlcLoopOptInValue
-              ? "Run task in SDLC loop"
-              : "Run task without SDLC loop"
+              ? "Run task in Delivery Loop"
+              : "Run task without Delivery Loop"
           }
           title={
             sdlcLoopOptInValue
-              ? "Run task in SDLC loop"
-              : "Run task without SDLC loop"
+              ? "Run task in Delivery Loop"
+              : "Run task without Delivery Loop"
           }
           disabled={sdlcLoopOptInDisabled}
           onClick={() => {
@@ -179,8 +179,8 @@ export function PromptBoxToolBelt({
             onSdlcLoopOptInChange?.(nextValue);
             toast.success(
               nextValue
-                ? "SDLC loop will run for this task"
-                : "SDLC loop is off for this task",
+                ? "Delivery Loop will run for this task"
+                : "Delivery Loop is off for this task",
             );
           }}
         >

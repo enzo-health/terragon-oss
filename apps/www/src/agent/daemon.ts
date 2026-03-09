@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { DaemonMessage } from "@terragon/daemon/shared";
+import { ThreadErrorType } from "@terragon/shared";
 import { ISandboxSession } from "@terragon/sandbox/types";
 import { sendMessage } from "@terragon/sandbox/daemon";
 import { setActiveThreadChat } from "./sandbox-resource";
@@ -8,6 +9,8 @@ import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { db } from "@/lib/db";
 import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { AIAgent } from "@terragon/agent/types";
+import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends any
   ? Omit<T, K>
@@ -20,8 +23,6 @@ type RunContext = {
   protocolVersion: 1 | 2;
   agent: AIAgent;
 };
-
-type DaemonTokenProvider = "openai" | "anthropic" | "google" | "openrouter";
 
 type SendDaemonMessageArgsBase = {
   threadId: string;
@@ -54,27 +55,6 @@ type SendDaemonMessageArgs =
       runContext?: null;
     });
 
-function providersForAgent(agent: AIAgent): DaemonTokenProvider[] {
-  switch (agent) {
-    case "claudeCode":
-      return ["anthropic"];
-    case "codex":
-      return ["openai"];
-    case "gemini":
-      return ["google"];
-    case "amp":
-      return ["anthropic"];
-    case "opencode":
-      return ["openrouter", "openai", "anthropic"];
-    default: {
-      const _exhaustiveCheck: never = agent;
-      throw new Error(
-        `unsupported agent for daemon token scope: ${_exhaustiveCheck}`,
-      );
-    }
-  }
-}
-
 function isInfrastructureError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message.toLowerCase();
@@ -89,6 +69,97 @@ function isInfrastructureError(error: unknown): boolean {
   );
 }
 
+function classifyDaemonError(
+  msg: string,
+  error: unknown,
+): {
+  errorType: ThreadErrorType;
+  failureCategory: DeliveryLoopFailureCategory;
+} {
+  if (isInfrastructureError(error)) {
+    return { errorType: "unknown-error", failureCategory: "config_error" };
+  }
+  const lower = msg.toLowerCase();
+
+  // Daemon process unreachable (socket gone, connection refused, ping failed)
+  if (
+    /unix socket|econnrefused|enoent.*socket|no such file|connect failed/i.test(
+      msg,
+    ) ||
+    /daemon.*not running|daemon.*dead|ping.*fail/i.test(msg)
+  ) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "daemon_unreachable",
+    };
+  }
+
+  // Daemon spawn/start failure
+  if (/spawn|fork|exec|eacces|enoent.*daemon|cannot find module/i.test(msg)) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "daemon_spawn_failed",
+    };
+  }
+
+  // Dispatch acknowledgement timeout
+  if (/timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(msg)) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "dispatch_ack_timeout",
+    };
+  }
+
+  // Codex app-server exited
+  if (/codex.*app.?server.*exit|app.?server.*crash/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "codex_app_server_exit",
+    };
+  }
+
+  // Codex turn/subagent failures
+  if (/codex.*subagent|subagent.*fail/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "codex_subagent_failed",
+    };
+  }
+  if (/codex.*turn.*fail|codex.*error/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "codex_turn_failed",
+    };
+  }
+
+  // Claude runtime exit / dispatch failure
+  if (/claude.*exit|claude.*crash|claude.*runtime/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "claude_runtime_exit",
+    };
+  }
+  if (/claude.*dispatch|dispatch.*fail/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "claude_dispatch_failed",
+    };
+  }
+
+  // Gate failures
+  if (/gate.*fail|gate.*block/i.test(msg)) {
+    return { errorType: "agent-generic-error", failureCategory: "gate_failed" };
+  }
+
+  // Generic daemon-related errors (message includes "daemon" but didn't match above)
+  if (lower.includes("daemon") || lower.includes("write message")) {
+    return { errorType: "agent-generic-error", failureCategory: "unknown" };
+  }
+
+  // Fallback
+  return { errorType: "agent-not-responding", failureCategory: "unknown" };
+}
+
 export async function sendDaemonMessage({
   message,
   userId,
@@ -99,88 +170,55 @@ export async function sendDaemonMessage({
   runContext,
 }: SendDaemonMessageArgs) {
   try {
-    await setActiveThreadChat({ sandboxId, threadChatId, isActive: true });
-    const nowMs = Date.now();
-    let daemonRunClaims: {
-      kind: "daemon-run";
-      runId: string;
-      threadId: string;
-      threadChatId: string;
-      sandboxId: string;
-      agent: AIAgent;
-      transportMode: "legacy" | "acp" | "codex-app-server";
-      protocolVersion: 1 | 2;
-      providers: DaemonTokenProvider[];
-      nonce: string;
-      issuedAt: number;
-      exp: number;
-    } | null = null;
+    await setActiveThreadChat({
+      sandboxId,
+      threadChatId,
+      isActive: true,
+      runId: runContext?.runId ?? null,
+    });
+
+    let finalMessage: DaemonMessage;
+
     if (message.type === "claude") {
       if (!runContext) {
         throw new Error("run context is required for claude daemon messages");
       }
-      daemonRunClaims = {
-        kind: "daemon-run" as const,
-        runId: runContext.runId,
+      const [{ token }, featureFlags] = await Promise.all([
+        createDaemonRunCredentials({
+          userId,
+          threadId,
+          threadChatId,
+          sandboxId,
+          runId: runContext.runId,
+          tokenNonce: runContext.tokenNonce,
+          agent: runContext.agent,
+          transportMode: runContext.transportMode,
+          protocolVersion: runContext.protocolVersion,
+        }),
+        getFeatureFlagsForUser({ db, userId }),
+      ]);
+      finalMessage = {
+        ...message,
+        token,
         threadId,
         threadChatId,
-        sandboxId,
-        agent: runContext.agent,
-        transportMode: runContext.transportMode,
-        protocolVersion: runContext.protocolVersion,
-        providers: providersForAgent(runContext.agent),
-        nonce: runContext.tokenNonce,
-        issuedAt: nowMs,
-        exp: nowMs + 1000 * 60 * 60 * 24,
+        featureFlags,
       };
-    }
-    const [apiKey, featureFlags] = await Promise.all([
-      auth.api.createApiKey({
+    } else {
+      const apiKey = await auth.api.createApiKey({
         body: {
           name: sandboxId,
-          expiresIn: 60 * 60 * 24 * 1, // 1 day,
+          expiresIn: 60 * 60 * 24 * 1, // 1 day
           userId,
-          ...(daemonRunClaims
-            ? {
-                metadata: {
-                  daemonRun: daemonRunClaims,
-                },
-              }
-            : {}),
         },
-      } as any),
-      getFeatureFlagsForUser({ db, userId }),
-    ]);
-
-    if (daemonRunClaims) {
-      await updateAgentRunContext({
-        db,
-        userId,
-        runId: daemonRunClaims.runId,
-        updates: {
-          daemonTokenKeyId:
-            typeof (apiKey as { id?: unknown }).id === "string"
-              ? ((apiKey as { id?: string }).id ?? null)
-              : null,
-          status: "dispatched",
-        },
-      });
+      } as any);
+      finalMessage = {
+        ...message,
+        token: apiKey.key,
+        threadId,
+        threadChatId,
+      };
     }
-
-    const baseMessage = {
-      ...message,
-      token: apiKey.key,
-      threadId,
-      threadChatId,
-    };
-
-    const finalMessage: DaemonMessage =
-      baseMessage.type === "claude"
-        ? {
-            ...baseMessage,
-            featureFlags: featureFlags,
-          }
-        : baseMessage;
 
     await sendMessage({
       session,
@@ -204,9 +242,12 @@ export async function sendDaemonMessage({
         });
       }
     }
-    const errorType = isInfrastructureError(error)
-      ? "unknown-error"
-      : "agent-not-responding";
-    throw wrapError(errorType, error);
+    const errorMessage =
+      error instanceof Error ? error.message : String(error ?? "");
+    const { errorType, failureCategory } = classifyDaemonError(
+      errorMessage,
+      error,
+    );
+    throw wrapError(errorType, error, failureCategory);
   }
 }

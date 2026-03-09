@@ -141,7 +141,30 @@ async function readStdinOrTimeout(timeoutMs: number): Promise<string> {
 }
 
 // Parse arguments and start the daemon
+let runtime: DaemonRuntime | undefined;
+
+function handleFatalError(label: string, error: unknown): void {
+  const errorString =
+    error instanceof Error
+      ? `${error.message}\n${error.stack ?? ""}`
+      : String(error);
+  if (runtime) {
+    runtime.logger.error(label, { error: errorString });
+  } else {
+    console.error(`❌ ${label}:`, error);
+  }
+  // Brief delay to allow log output to flush before exit
+  setTimeout(() => process.exit(1), 100);
+}
+
 try {
+  process.on("unhandledRejection", (error) => {
+    handleFatalError("Unhandled daemon promise rejection", error);
+  });
+  process.on("uncaughtException", (error) => {
+    handleFatalError("Uncaught daemon exception", error);
+  });
+
   const cliArgs = parseCliArgs();
   if (cliArgs.version) {
     console.log(`Terragon Daemon v${DAEMON_VERSION}`);
@@ -169,7 +192,7 @@ try {
         process.exit(1);
       });
   } else {
-    const runtime = new DaemonRuntime({
+    runtime = new DaemonRuntime({
       url: cliArgs.url,
       outputFormat: cliArgs.outputFormat,
       unixSocketPath: defaultUnixSocketPath,
@@ -180,8 +203,7 @@ try {
       mcpConfigPath: cliArgs.mcpConfigPath,
     });
     daemon.start().catch((error) => {
-      console.error("❌ Failed to start daemon:", error);
-      process.exit(1);
+      handleFatalError("Failed to start daemon", error);
     });
   }
 } catch (error) {

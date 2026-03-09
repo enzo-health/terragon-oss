@@ -25,7 +25,7 @@ import {
 import {
   getActiveSdlcLoopsForGithubPR,
   transitionActiveSdlcLoopsForGithubPREvent,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import {
   runPullRequestAutomation,
   runIssueAutomation,

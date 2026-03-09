@@ -46,26 +46,26 @@ export async function GET(request: NextRequest) {
     }
 
     const { drainDueSdlcSignalInboxActions } = await import(
-      "@/server-lib/sdlc-loop/signal-inbox"
+      "@/server-lib/delivery-loop/signal-inbox"
     );
     const sdlcSignalInboxDrain = await drainDueSdlcSignalInboxActions({
       db,
       leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
     });
     console.log(
-      "SDLC signal inbox durable drain completed",
+      "Delivery Loop signal inbox durable drain completed",
       sdlcSignalInboxDrain,
     );
 
     const { drainDueSdlcPublicationOutboxActions } = await import(
-      "@/server-lib/sdlc-loop/publication"
+      "@/server-lib/delivery-loop/publication"
     );
     const sdlcPublicationDrain = await drainDueSdlcPublicationOutboxActions({
       db,
       leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
     });
     console.log(
-      "SDLC publication durable drain completed",
+      "Delivery Loop publication durable drain completed",
       sdlcPublicationDrain,
     );
 

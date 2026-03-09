@@ -14,11 +14,11 @@ import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/sdlc-loop/enrollment";
+} from "@/server-lib/delivery-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
-import { buildSdlcCanonicalCause } from "@terragon/shared/model/sdlc-loop";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
+import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
+import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
+import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 
 const {
   postHogCapture,
@@ -92,19 +92,19 @@ vi.mock("@/lib/posthog-server", () => ({
   }),
 }));
 
-vi.mock("@/server-lib/sdlc-loop/enrollment", () => ({
+vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled: vi.fn(),
   getActiveSdlcLoopForGithubPRIfEnabled: vi.fn(),
   isSdlcLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
-vi.mock("@/server-lib/sdlc-loop/signal-inbox", () => ({
+vi.mock("@/server-lib/delivery-loop/signal-inbox", () => ({
   SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED:
     "feedback_follow_up_enqueue_failed",
   runBestEffortSdlcSignalInboxTick: vi.fn(),
 }));
 
-vi.mock("@/server-lib/sdlc-loop/publication", () => ({
+vi.mock("@/server-lib/delivery-loop/publication", () => ({
   runBestEffortSdlcPublicationCoordinator: vi.fn(),
 }));
 

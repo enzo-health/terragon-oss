@@ -27,11 +27,11 @@ import { ISandboxSession } from "@terragon/sandbox/types";
 import {
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/sdlc-loop/enrollment";
+} from "@/server-lib/delivery-loop/enrollment";
 import {
   linkSdlcLoopToGithubPRForThread,
   transitionSdlcLoopState,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 
 export async function openPullRequestForThread({
   threadId,

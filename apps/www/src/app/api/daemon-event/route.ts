@@ -2,9 +2,11 @@ import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
+  type SdlcSelfDispatchPayload,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
@@ -12,17 +14,38 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
-} from "@terragon/shared/model/sdlc-loop";
+  type DeliveryLoopSelectedAgent,
+} from "@terragon/shared/model/delivery-loop";
+import { createDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
+import {
+  handleAckReceived,
+  startAckTimeout,
+} from "@/server-lib/delivery-loop/ack-lifecycle";
 import {
   getAgentRunContextByRunId,
+  upsertAgentRunContext,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
+import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
+import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
+import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
+import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import {
+  getThreadChat,
+  getThreadMinimal,
+  updateThreadChat,
+} from "@terragon/shared/model/threads";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import {
+  normalizedModelForDaemon,
+  getDefaultModelForAgent,
+} from "@terragon/agent/utils";
+import { randomUUID } from "node:crypto";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -56,6 +79,8 @@ type DaemonEventCommitResult =
 
 const DAEMON_EVENT_CLAIM_STALE_MS = 5 * 60 * 1000;
 const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
+const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
+const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 
 type DaemonTerminalErrorCategory =
   | "provider_not_configured"
@@ -63,6 +88,115 @@ type DaemonTerminalErrorCategory =
   | "daemon_custom_error"
   | "daemon_result_error"
   | "unknown";
+
+type DaemonProcessingEventClaimResult =
+  | {
+      claimed: true;
+    }
+  | {
+      claimed: false;
+      reason: "claim_in_progress" | "duplicate_event";
+    };
+
+function getDaemonProcessingEventClaimKey({
+  loopId,
+  eventId,
+}: {
+  loopId: string;
+  eventId: string;
+}): string {
+  return `sdlc:daemon-processing-event:claim:${loopId}:${eventId}`;
+}
+
+function getDaemonProcessingEventCommittedKey({
+  loopId,
+  eventId,
+}: {
+  loopId: string;
+  eventId: string;
+}): string {
+  return `sdlc:daemon-processing-event:committed:${loopId}:${eventId}`;
+}
+
+async function claimEnrolledLoopProcessingEvent({
+  loopId,
+  envelope,
+}: {
+  loopId: string;
+  envelope: DaemonEventEnvelopeV2;
+}): Promise<DaemonProcessingEventClaimResult> {
+  const claimKey = getDaemonProcessingEventClaimKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  const committedKey = getDaemonProcessingEventCommittedKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+
+  const alreadyCommitted = await redis.get<string>(committedKey);
+  if (alreadyCommitted) {
+    return {
+      claimed: false,
+      reason: "duplicate_event",
+    };
+  }
+
+  const claimed = await redis.set(claimKey, new Date().toISOString(), {
+    nx: true,
+    ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
+  });
+  if (claimed === "OK") {
+    return {
+      claimed: true,
+    };
+  }
+
+  const committedAfterClaimFailure = await redis.get<string>(committedKey);
+  return {
+    claimed: false,
+    reason: committedAfterClaimFailure
+      ? "duplicate_event"
+      : "claim_in_progress",
+  };
+}
+
+async function commitEnrolledLoopProcessingEvent({
+  loopId,
+  envelope,
+}: {
+  loopId: string;
+  envelope: DaemonEventEnvelopeV2;
+}): Promise<void> {
+  const claimKey = getDaemonProcessingEventClaimKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  const committedKey = getDaemonProcessingEventCommittedKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  const pipeline = redis.pipeline();
+  pipeline.set(committedKey, new Date().toISOString(), {
+    ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
+  });
+  pipeline.del(claimKey);
+  await pipeline.exec();
+}
+
+async function rollbackEnrolledLoopProcessingEventClaim({
+  loopId,
+  envelope,
+}: {
+  loopId: string;
+  envelope: DaemonEventEnvelopeV2;
+}): Promise<void> {
+  const claimKey = getDaemonProcessingEventClaimKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  await redis.del(claimKey);
+}
 
 function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
   const iterationCount =
@@ -353,6 +487,13 @@ async function claimEnrolledLoopDaemonEvent({
       };
     }
 
+    if (daemonRunStatus === "processing") {
+      return {
+        claimed: false,
+        reason: "duplicate_event",
+      };
+    }
+
     const inserted = await tx
       .insert(schema.sdlcLoopSignalInbox)
       .values({
@@ -510,6 +651,7 @@ export async function POST(request: Request) {
       ? rawThreadChatId
       : LEGACY_THREAD_CHAT_ID;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
+  let selfDispatchPayload: SdlcSelfDispatchPayload | null = null;
   const daemonAuthContext = await getDaemonTokenAuthContextOrNull(request);
   if (!daemonAuthContext) {
     return new Response("Unauthorized", { status: 401 });
@@ -538,6 +680,7 @@ export async function POST(request: Request) {
   }
 
   if (
+    transportMode !== "legacy" &&
     hasNonLegacyDaemonPayload(json) &&
     !hasRequiredThreadChatIdForNonLegacyPayload(rawThreadChatId)
   ) {
@@ -692,6 +835,8 @@ export async function POST(request: Request) {
           deduplicated: true,
           reason: "run_terminal_ignored",
           runId: runContext.runId,
+          acknowledgedEventId: envelopeV2?.eventId ?? null,
+          acknowledgedSeq: envelopeV2?.seq ?? null,
         },
         { status: 202 },
       );
@@ -724,7 +869,30 @@ export async function POST(request: Request) {
     threadId,
   });
 
+  // Acknowledge dispatch intent on first event for this run.
+  // Updates both Redis (real-time) and DB (durable) intent records,
+  // and resets the retry counter since the dispatch succeeded.
+  if (enrolledLoop && envelopeV2 && envelopeV2.seq === 1) {
+    try {
+      await handleAckReceived({
+        db,
+        runId: envelopeV2.runId,
+        loopId: enrolledLoop.id,
+        threadChatId,
+      });
+    } catch (ackError) {
+      console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
+        loopId: enrolledLoop.id,
+        threadId,
+        threadChatId,
+        runId: envelopeV2.runId,
+        error: ackError,
+      });
+    }
+  }
+
   let claimedSignalInboxId: string | null = null;
+  let claimedProcessingEvent = false;
 
   const rollbackClaimedSignal = async ({
     reason,
@@ -794,7 +962,234 @@ export async function POST(request: Request) {
       return;
     }
 
-    const followUpResult = await maybeProcessFollowUpQueue({
+    // Check if daemon supports self-dispatch.
+    const daemonSupportsSelfDispatch = daemonCapabilities.has(
+      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
+    );
+
+    if (daemonSupportsSelfDispatch) {
+      const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
+      try {
+        // Use the queued message directly from the tick result to avoid
+        // a race with handleThreadFinish's maybeProcessFollowUpQueue which
+        // can consume queued messages from the DB before we read them.
+        const feedbackMsg = tickResult.feedbackQueuedMessage;
+        if (!feedbackMsg) {
+          console.warn(
+            "[sdlc-loop] self-dispatch: no feedback message from tick result, falling back",
+            { userId, threadId, threadChatId, loopId },
+          );
+          // Fall through to existing path
+        } else {
+          // Also need thread chat for agent info
+          const [threadChatForDispatch, threadForDispatch] = await Promise.all([
+            getThreadChat({ db, userId, threadId, threadChatId }),
+            getThreadMinimal({ db, threadId, userId }),
+          ]);
+          if (!threadChatForDispatch) {
+            console.warn(
+              "[sdlc-loop] self-dispatch: thread chat not found, falling back",
+              { userId, threadId, threadChatId, loopId },
+            );
+          } else if (!threadForDispatch || !threadForDispatch.codesandboxId) {
+            console.warn(
+              "[sdlc-loop] self-dispatch: thread or sandbox not found, falling back",
+              { userId, threadId, loopId },
+            );
+          } else {
+            // Build prompt from the feedback message (text parts only).
+            // If any non-text parts exist, fall back to the queue path
+            // which handles the full message format.
+            const queuedMessages = [feedbackMsg];
+            const promptParts: string[] = [];
+            let hasNonTextParts = false;
+            for (const qMsg of queuedMessages) {
+              if ("parts" in qMsg && Array.isArray(qMsg.parts)) {
+                for (const part of qMsg.parts) {
+                  if (
+                    part &&
+                    typeof part === "object" &&
+                    "text" in part &&
+                    typeof part.text === "string"
+                  ) {
+                    promptParts.push(part.text);
+                  } else if (part && typeof part === "object") {
+                    hasNonTextParts = true;
+                  }
+                }
+              }
+            }
+
+            if (hasNonTextParts) {
+              console.warn(
+                "[sdlc-loop] self-dispatch: non-text message parts detected, falling back",
+                { userId, threadId, threadChatId, loopId },
+              );
+            } else if (!promptParts.join("\n\n").trim()) {
+              console.warn(
+                "[sdlc-loop] self-dispatch: empty prompt from queued messages, falling back",
+                { userId, threadId, threadChatId, loopId },
+              );
+            } else {
+              const prompt = promptParts.join("\n\n");
+              // Transition status first WITHOUT chat updates to avoid clearing
+              // queued messages on failure (chatUpdates apply unconditionally).
+              const { didUpdateStatus } = await updateThreadChatWithTransition({
+                userId,
+                threadId,
+                threadChatId,
+                eventType: "user.message",
+              });
+
+              if (!didUpdateStatus) {
+                console.warn(
+                  "[sdlc-loop] self-dispatch: status transition failed, falling back",
+                  { userId, threadId, threadChatId, loopId },
+                );
+              } else {
+                const newRunId = randomUUID();
+                const newTokenNonce = randomUUID();
+                const agent = threadChatForDispatch.agent;
+                const agentVersion = threadChatForDispatch.agentVersion;
+                const model = normalizedModelForDaemon(
+                  getDefaultModelForAgent({ agent, agentVersion }),
+                );
+                const sandboxId = threadForDispatch.codesandboxId;
+
+                // SDLC follow-ups always use allowAll — same as startAgentMessage
+                // which forces allowAll when activeSdlcLoop is true.
+                const effectivePermissionMode = "allowAll" as const;
+                const supportsAcp =
+                  agent === "codex" || agent === "amp" || agent === "opencode";
+                const shouldUseCodexAppServerTransport =
+                  agent === "codex" && userFeatureFlags.codexAppServerTransport;
+                const shouldUseAcpTransport =
+                  !shouldUseCodexAppServerTransport &&
+                  userFeatureFlags.sandboxAgentAcpTransport &&
+                  supportsAcp;
+                const transportMode = shouldUseCodexAppServerTransport
+                  ? ("codex-app-server" as const)
+                  : shouldUseAcpTransport
+                    ? ("acp" as const)
+                    : ("legacy" as const);
+                const protocolVersion = transportMode === "acp" ? 2 : 1;
+
+                // Create run context
+                await upsertAgentRunContext({
+                  db,
+                  runId: newRunId,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  sandboxId,
+                  transportMode,
+                  protocolVersion,
+                  agent,
+                  permissionMode: effectivePermissionMode,
+                  requestedSessionId: null,
+                  resolvedSessionId: null,
+                  status: "pending",
+                  tokenNonce: newTokenNonce,
+                  daemonTokenKeyId: null,
+                });
+
+                // Create API key
+                const { token } = await createDaemonRunCredentials({
+                  userId,
+                  threadId,
+                  threadChatId,
+                  sandboxId,
+                  runId: newRunId,
+                  tokenNonce: newTokenNonce,
+                  agent,
+                  transportMode,
+                  protocolVersion,
+                });
+
+                await updateThreadChat({
+                  db,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  updates: {
+                    errorMessage: null,
+                    errorMessageInfo: null,
+                  },
+                });
+
+                // Persist dispatch intent before sending payload to daemon
+                await createDispatchIntent({
+                  loopId,
+                  threadId,
+                  threadChatId,
+                  targetPhase: "implementing",
+                  selectedAgent: agent as DeliveryLoopSelectedAgent,
+                  executionClass: "implementation_runtime",
+                  dispatchMechanism: "self_dispatch",
+                  runId: newRunId,
+                  maxRetries: 3,
+                });
+
+                // Start ack timeout — if no daemon event arrives within
+                // the timeout window, the intent will be classified as
+                // dispatch_ack_timeout and retried. The cron sweep in
+                // ack-timeout.ts provides a durable fallback.
+                startAckTimeout({
+                  db,
+                  runId: newRunId,
+                  loopId,
+                  threadChatId,
+                });
+
+                selfDispatchPayload = {
+                  token,
+                  prompt,
+                  runId: newRunId,
+                  tokenNonce: newTokenNonce,
+                  model,
+                  agent,
+                  agentVersion,
+                  sessionId: null,
+                  featureFlags: userFeatureFlags,
+                  permissionMode: effectivePermissionMode,
+                  transportMode,
+                  protocolVersion,
+                  threadId,
+                  threadChatId,
+                };
+
+                console.log("[sdlc-loop] self-dispatch payload prepared", {
+                  userId,
+                  threadId,
+                  threadChatId,
+                  loopId,
+                  runId: newRunId,
+                  eventId,
+                  seq,
+                });
+                return; // Skip maybeProcessFollowUpQueue
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error(
+          "[sdlc-loop] self-dispatch preparation failed, falling back to queue",
+          {
+            userId,
+            threadId,
+            threadChatId,
+            loopId,
+            eventId,
+            seq,
+            error,
+          },
+        );
+      }
+    }
+
+    // Existing fallback path
+    let followUpResult = await maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
       userId,
@@ -814,6 +1209,52 @@ export async function POST(request: Request) {
         followUpResult,
       },
     );
+
+    if (
+      !followUpResult.processed &&
+      followUpResult.reason === "no_queued_messages" &&
+      tickResult.feedbackQueuedMessage
+    ) {
+      console.warn(
+        "[sdlc-loop] daemon terminal follow-up invariant violated; re-enqueueing feedback message",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          eventId,
+          seq,
+        },
+      );
+      await queueFollowUpInternal({
+        userId,
+        threadId,
+        threadChatId,
+        messages: [tickResult.feedbackQueuedMessage],
+        appendOrReplace: "append",
+        source: "github",
+      });
+      followUpResult = await maybeProcessFollowUpQueue({
+        threadId,
+        threadChatId,
+        userId,
+        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      });
+      console.log(
+        "[sdlc-loop] daemon terminal follow-up queue recovery completed",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          eventId,
+          seq,
+          followUpResult,
+        },
+      );
+    }
 
     if (
       followUpResult.processed ||
@@ -878,7 +1319,36 @@ export async function POST(request: Request) {
       );
     }
 
-    if (envelopeV2) {
+    if (envelopeV2 && daemonRunStatusFromMessages === "processing") {
+      const processingClaimResult = await claimEnrolledLoopProcessingEvent({
+        loopId: enrolledLoop.id,
+        envelope: envelopeV2,
+      });
+      if (!processingClaimResult.claimed) {
+        if (processingClaimResult.reason === "claim_in_progress") {
+          return Response.json(
+            {
+              success: false,
+              error: "daemon_event_claim_in_progress",
+              loopId: enrolledLoop.id,
+            },
+            { status: 409 },
+          );
+        }
+        return Response.json(
+          {
+            success: true,
+            deduplicated: true,
+            reason: processingClaimResult.reason,
+            loopId: enrolledLoop.id,
+            acknowledgedEventId: envelopeV2.eventId,
+            acknowledgedSeq: envelopeV2.seq,
+          },
+          { status: 202 },
+        );
+      }
+      claimedProcessingEvent = true;
+    } else if (envelopeV2) {
       const claimResult = await claimEnrolledLoopDaemonEvent({
         loopId: enrolledLoop.id,
         threadId,
@@ -924,6 +1394,22 @@ export async function POST(request: Request) {
               leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
               guardrailRuntime,
             });
+            const duplicateThreadChat = await getThreadChat({
+              db,
+              userId,
+              threadId,
+              threadChatId,
+            });
+            if ((duplicateThreadChat?.queuedMessages?.length ?? 0) > 0) {
+              waitUntil(
+                maybeProcessFollowUpQueue({
+                  threadId,
+                  threadChatId,
+                  userId,
+                  runId: runContext?.runId ?? envelopeV2.runId,
+                }),
+              );
+            }
           } catch (error) {
             console.error(
               "[sdlc-loop] duplicate daemon event dedupe tick failed",
@@ -1016,6 +1502,12 @@ export async function POST(request: Request) {
         },
       });
     }
+    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+      await rollbackEnrolledLoopProcessingEventClaim({
+        loopId: enrolledLoop.id,
+        envelope: envelopeV2,
+      });
+    }
     await rollbackClaimedSignal({
       reason: "handle_daemon_event_threw",
       error,
@@ -1034,11 +1526,24 @@ export async function POST(request: Request) {
         },
       });
     }
+    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+      await rollbackEnrolledLoopProcessingEventClaim({
+        loopId: enrolledLoop.id,
+        envelope: envelopeV2,
+      });
+    }
     await rollbackClaimedSignal({
       reason: "handle_daemon_event_failed",
       error: result.error,
     });
     return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    await commitEnrolledLoopProcessingEvent({
+      loopId: enrolledLoop.id,
+      envelope: envelopeV2,
+    });
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
@@ -1218,5 +1723,6 @@ export async function POST(request: Request) {
     success: true,
     acknowledgedEventId: envelopeV2?.eventId ?? null,
     acknowledgedSeq: envelopeV2?.seq ?? null,
+    ...(selfDispatchPayload ? { selfDispatch: selfDispatchPayload } : {}),
   });
 }

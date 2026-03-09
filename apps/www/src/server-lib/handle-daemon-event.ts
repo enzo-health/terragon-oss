@@ -15,7 +15,10 @@ import {
   touchThreadChatUpdatedAt,
 } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
-import { setActiveThreadChat } from "@/agent/sandbox-resource";
+import {
+  hasOtherActiveRuns,
+  setActiveThreadChat,
+} from "@/agent/sandbox-resource";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import {
@@ -43,7 +46,15 @@ import {
   updateAgentSession,
 } from "./linear-agent-activity";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import {
+  getActiveSdlcLoopForThread,
+  getUnresolvedBlockingDeepReviewFindings,
+  getUnresolvedBlockingCarmackReviewFindings,
+} from "@terragon/shared/model/delivery-loop";
+import {
+  formatReviewFindings,
+  queueSdlcFollowUpMessage,
+} from "@/server-lib/checkpoint-thread-internal";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type {
   ThreadSourceMetadata,
@@ -51,20 +62,31 @@ import type {
 } from "@terragon/shared/db/types";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { redis } from "@/lib/redis";
+import {
+  evaluateRetryDecision,
+  resetRetryCounter,
+} from "@/server-lib/delivery-loop/retry-policy";
+import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
 
 /** SDLC phases eligible for auto-retry on generic agent error. */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "implementing",
-  "reviewing",
-  "ui_testing",
-  "pr_babysitting",
-  "blocked_on_agent_fixes",
-  "blocked_on_ci",
-  "blocked_on_review_threads",
+  "review_gate",
+  "ci_gate",
+  "ui_gate",
+  "babysitting",
 ]);
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
+const FOLLOW_UP_ACK_PENDING_STATUSES: ReadonlySet<ThreadStatus> = new Set([
+  "queued",
+  "queued-blocked",
+  "queued-sandbox-creation-rate-limit",
+  "queued-tasks-concurrency",
+  "queued-agent-rate-limit",
+  "booting",
+]);
 
 function getFirstAssistantTrackedKey(runId: string) {
   return `${FIRST_ASSISTANT_TRACKED_PREFIX}${runId}`;
@@ -428,6 +450,13 @@ export async function handleDaemonEvent({
     errorMessageInfo: null,
     contextLength: contextUsage ?? undefined,
   };
+  if (
+    runId &&
+    (threadChat.queuedMessages?.length ?? 0) > 0 &&
+    FOLLOW_UP_ACK_PENDING_STATUSES.has(statusBeforeUpdate)
+  ) {
+    threadChatUpdates.replaceQueuedMessages = [];
+  }
   if (isError) {
     if (isPromptTooLong) {
       threadChatUpdates.errorMessage = "prompt-too-long";
@@ -446,6 +475,7 @@ export async function handleDaemonEvent({
       properties: {
         threadId,
         errorType: threadChatUpdates.errorMessage,
+        failureCategory: classifyDaemonEventError(customErrorMessage),
       },
     });
   }
@@ -617,48 +647,45 @@ export async function handleDaemonEvent({
     }
   }
 
-  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases
+  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
+  // This variable is hoisted so the follow-up recovery block below can reuse it
+  // without a duplicate DB call.
+  let sdlcLoopForErrorRecovery:
+    | Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>
+    | undefined;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
-      const activeSdlcLoop = await getActiveSdlcLoopForThread({
+      sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
         db,
         userId,
         threadId,
       });
+      const activeSdlcLoop = sdlcLoopForErrorRecovery;
+
+      const failureCategory = classifyDaemonEventError(customErrorMessage);
 
       if (activeSdlcLoop && SDLC_AUTO_RETRY_PHASES.has(activeSdlcLoop.state)) {
         console.log(
-          `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", checking for retry`,
-          { threadId, threadChatId: threadChat.id },
+          `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", failureCategory="${failureCategory}", checking for retry`,
+          { threadId, threadChatId: threadChat.id, failureCategory },
         );
 
-        // Check if we've already retried by looking for an sdlc-error-retry system message
-        const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
-        let alreadyRetried = false;
-        for (let i = allMessages.length - 1; i >= 0; i--) {
-          const msg = allMessages[i];
-          if (msg?.type === "user") {
-            const msgBefore = allMessages[i - 1];
-            const isRetryAndContinue =
-              msg.parts.length === 1 &&
-              msg.parts[0]?.type === "text" &&
-              msg.parts[0]?.text.toLowerCase().includes("continue") &&
-              msgBefore?.type === "system" &&
-              msgBefore?.message_type === "sdlc-error-retry";
-            if (isRetryAndContinue) {
-              alreadyRetried = true;
-              console.log(
-                "Skipping SDLC error retry because we already retried once",
-                { threadId, threadChatId: threadChat.id },
-              );
-              break;
-            }
-            break;
-          }
-        }
+        const retryDecision = await evaluateRetryDecision({
+          threadChatId: threadChat.id,
+          failureCategory,
+        });
 
-        if (!alreadyRetried) {
-          console.log("Adding sdlc-error-retry and queueing retry");
+        if (!retryDecision.shouldRetry) {
+          console.log(
+            `SDLC error retry denied: ${retryDecision.reason}, action="${retryDecision.action}", attempt=${retryDecision.attempt}/${retryDecision.maxAttempts}`,
+            { threadId, threadChatId: threadChat.id, failureCategory },
+          );
+        } else {
+          console.log(
+            `SDLC error retry approved: action="${retryDecision.action}", attempt=${retryDecision.attempt}/${retryDecision.maxAttempts}, backoffMs=${retryDecision.backoffMs}`,
+            { threadId, threadChatId: threadChat.id, failureCategory },
+          );
+
           // Add a system message about the retry
           const sdlcErrorRetryMessage: DBSystemMessage = {
             type: "system",
@@ -667,21 +694,18 @@ export async function handleDaemonEvent({
             timestamp: new Date().toISOString(),
           };
 
-          // Ensure appendMessages is an array before pushing
           if (!threadChatUpdates.appendMessages) {
             threadChatUpdates.appendMessages = [];
           }
           threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
 
-          // Create a "Continue" message to restart the agent
+          // Queue a "Continue" message to restart the agent
           const continueMessage: DBUserMessage = {
             type: "user",
             model: null,
             parts: [{ type: "text", text: "Continue" }],
             timestamp: new Date().toISOString(),
           };
-
-          // Queue the Continue message to be processed after the thread update
           threadChatUpdates.appendQueuedMessages = [continueMessage];
 
           // Clear the error since we've handled it with retry
@@ -693,7 +717,7 @@ export async function handleDaemonEvent({
 
           // Mark that we've recovered from the error and the thread is done
           isError = false;
-          isDone = true; // Mark as done so the thread completes normally
+          isDone = true;
 
           getPostHogServer().capture({
             distinctId: userId,
@@ -701,13 +725,17 @@ export async function handleDaemonEvent({
             properties: {
               threadId,
               sdlcPhase: activeSdlcLoop.state,
+              failureCategory,
+              retryAction: retryDecision.action,
+              attempt: retryDecision.attempt,
+              maxAttempts: retryDecision.maxAttempts,
             },
           });
         }
       }
     } catch (sdlcLookupError) {
       console.error(
-        "SDLC error recovery lookup failed, falling through to normal error path",
+        "Delivery Loop error recovery lookup failed, falling through to normal error path",
         { threadId, error: sdlcLookupError },
       );
     }
@@ -753,6 +781,15 @@ export async function handleDaemonEvent({
   if (isDone && !isError) {
     // Source of truth is the thread setting
     shouldSkipCheckpoint = isStop || !!thread.disableGitCheckpointing;
+
+    // Reset retry counter on successful completion so the next error cycle
+    // starts fresh.
+    resetRetryCounter(threadChat.id).catch((err) =>
+      console.warn("Failed to reset retry counter", {
+        threadChatId: threadChat.id,
+        error: err,
+      }),
+    );
   }
 
   const { didUpdateStatus } = await updateThreadChatWithTransition({
@@ -821,9 +858,65 @@ async function handleThreadFinish({
   sourceMetadata: ThreadSourceMetadata | null;
   runId: string | null;
 }) {
+  // Check if another run is still active for this threadChat on this sandbox.
+  // If so, skip cleanup — the sandbox must stay active for the other run.
+  if (runId) {
+    const otherRunsActive = await hasOtherActiveRuns({
+      sandboxId,
+      threadChatId,
+      excludeRunId: runId,
+    });
+    if (otherRunsActive) {
+      console.log(
+        "[handleThreadFinish] Other runs still active, skipping sandbox deactivation",
+        {
+          threadId,
+          threadChatId,
+          runId,
+        },
+      );
+      // Still deactivate THIS run but don't remove the threadChat from the sandbox
+      await setActiveThreadChat({
+        sandboxId,
+        threadChatId,
+        isActive: false,
+        runId,
+      });
+      return;
+    }
+  }
+
+  // Fallback: re-read thread chat status for legacy paths without runId.
+  // Only bail if the thread is actively "working" (already re-dispatched).
+  // Queued states like queued-agent-rate-limit should still proceed to checkpoint.
+  if (!runId) {
+    const currentChat = await getThreadChat({
+      db,
+      threadId,
+      threadChatId,
+      userId,
+    });
+    if (currentChat && currentChat.status === "working") {
+      console.log(
+        "[handleThreadFinish] Thread already re-dispatched, skipping",
+        {
+          threadId,
+          threadChatId,
+          currentStatus: currentChat.status,
+        },
+      );
+      return;
+    }
+  }
+
   // Deactivate the sandbox immediately so hibernation is never blocked,
   // even if Vercel kills the function before the rest of the cleanup runs.
-  await setActiveThreadChat({ sandboxId, threadChatId, isActive: false });
+  await setActiveThreadChat({
+    sandboxId,
+    threadChatId,
+    isActive: false,
+    runId,
+  });
 
   // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
   if (sourceType === "linear-mention" && sourceMetadata != null) {
@@ -859,6 +952,87 @@ async function handleThreadFinish({
   }
 
   let shouldProcessFollowUpQueue = !isRateLimited && !isError;
+
+  // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
+  // and isError is still true, re-queue the actual review findings so the next agent run
+  // has actionable context.
+  if (isError && !isRateLimited) {
+    try {
+      const activeSdlcLoop = await getActiveSdlcLoopForThread({
+        db,
+        userId,
+        threadId,
+      });
+      if (activeSdlcLoop && activeSdlcLoop.state === "implementing") {
+        if (!activeSdlcLoop.currentHeadSha) {
+          console.warn(
+            "Delivery Loop error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
+            { threadId, loopId: activeSdlcLoop.id },
+          );
+        } else {
+          const [deepFindings, carmackFindings] = await Promise.all([
+            getUnresolvedBlockingDeepReviewFindings({
+              db,
+              loopId: activeSdlcLoop.id,
+              headSha: activeSdlcLoop.currentHeadSha,
+            }),
+            getUnresolvedBlockingCarmackReviewFindings({
+              db,
+              loopId: activeSdlcLoop.id,
+              headSha: activeSdlcLoop.currentHeadSha,
+            }),
+          ]);
+
+          const details = [
+            formatReviewFindings({
+              label: "Deep review blocking findings",
+              findings: deepFindings.map((f) => ({
+                ...f,
+                severity: f.severity ?? "high",
+              })),
+            }),
+            formatReviewFindings({
+              label: "Carmack review blocking findings",
+              findings: carmackFindings.map((f) => ({
+                ...f,
+                severity: f.severity ?? "high",
+              })),
+            }),
+          ].filter((s): s is string => Boolean(s));
+
+          if (details.length > 0) {
+            // queueSdlcFollowUpMessage calls queueFollowUpInternal which
+            // already triggers maybeProcessFollowUpQueue when the thread
+            // is in error/done state, so we don't need to set
+            // shouldProcessFollowUpQueue here.
+            await queueSdlcFollowUpMessage({
+              userId,
+              threadId,
+              threadChatId,
+              heading:
+                "Delivery Loop review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
+              details,
+            });
+
+            console.log(
+              "Delivery Loop error recovery: re-queued review findings for crashed implementing agent",
+              {
+                threadId,
+                deepCount: deepFindings.length,
+                carmackCount: carmackFindings.length,
+              },
+            );
+          }
+        }
+      }
+    } catch (sdlcQueueError) {
+      console.error(
+        "Delivery Loop follow-up queue recovery failed, falling through to normal error path",
+        { threadId, error: sdlcQueueError },
+      );
+    }
+  }
+
   if (shouldProcessFollowUpQueue) {
     const threadChat = await getThreadChat({
       db,

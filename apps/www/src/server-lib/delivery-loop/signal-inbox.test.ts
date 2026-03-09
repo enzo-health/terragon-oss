@@ -17,7 +17,7 @@ import {
   releaseSdlcLoopLease,
   transitionSdlcLoopState,
   transitionSdlcLoopStateWithArtifact,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import type { DB } from "@terragon/shared/db";
 
 const dbMocks = vi.hoisted(() => {
@@ -84,7 +84,7 @@ vi.mock("@terragon/shared/utils/thread-utils", () => ({
   getPrimaryThreadChat: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/sdlc-loop", () => ({
+vi.mock("@terragon/shared/model/delivery-loop", () => ({
   acquireSdlcLoopLease: vi.fn(),
   createBabysitEvaluationArtifactForHead: vi.fn(),
   enqueueSdlcOutboxAction: vi.fn(),
@@ -206,6 +206,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       causeType: "check_run.completed",
       runtimeAction: "feedback_follow_up_queued",
       outboxId: "outbox-1",
+      feedbackQueuedMessage: expect.any(Object),
     });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -301,6 +302,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       causeType: "check_run.completed",
       runtimeAction: "none",
       outboxId: null,
+      feedbackQueuedMessage: null,
     });
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();

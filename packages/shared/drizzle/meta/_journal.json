@@ -78,6 +78,13 @@
       "when": 1772663387423,
       "tag": "0010_bitter_obadiah_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1773089950966,
+      "tag": "0011_freezing_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

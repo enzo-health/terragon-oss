@@ -1,0 +1,194 @@
+import { ISandboxSession } from "@terragon/sandbox/types";
+
+export type QualityCheckResult = {
+  gatePassed: boolean;
+  failures: string[];
+};
+
+const COMMAND_TIMEOUT_MS = 300_000;
+const MAX_OUTPUT_LENGTH = 2000;
+
+// Sandbox has 48+ visible CPUs but only 8GB RAM. Limit worker parallelism to
+// prevent test runners from spawning 48 workers and OOM-killing with SIGKILL.
+const QUALITY_CHECK_ENV = {
+  NODE_OPTIONS: "--max-old-space-size=4096",
+  VITEST_MAX_WORKERS: "4",
+  JEST_WORKER_COUNT: "4",
+  UV_THREADPOOL_SIZE: "4",
+  // Monorepo task runners also parallelise across packages — cap them too
+  TURBO_CONCURRENCY: "4",
+  NX_MAX_PARALLEL: "4",
+  // tsgo (Go-based TypeScript checker) uses the Go runtime — NODE_OPTIONS has
+  // no effect on it. GOMEMLIMIT sets a soft cap so the Go GC cleans up before
+  // hitting the 8GB cgroup hard limit. GOMAXPROCS prevents 48-thread sprawl.
+  GOMEMLIMIT: "6GiB",
+  GOMAXPROCS: "4",
+};
+
+function truncateOutput(output: string): string {
+  if (output.length > MAX_OUTPUT_LENGTH) {
+    return output.slice(0, MAX_OUTPUT_LENGTH) + "... (truncated)";
+  }
+  return output;
+}
+
+/**
+ * Detects package manager, installs deps if missing, and runs
+ * lint/typecheck/test commands in the sandbox. Returns structured
+ * pass/fail result for the implementation quality gate.
+ *
+ * Works for ALL agents (Claude Code, Codex, Amp, Gemini, OpenCode).
+ */
+export async function runQualityCheckGateInSandbox(
+  session: ISandboxSession,
+): Promise<QualityCheckResult> {
+  const cwd = session.repoDir;
+  const failures: string[] = [];
+
+  // Check if this is a JS/TS project
+  const hasPackageJson = await session
+    .runCommand("test -f package.json && echo yes", { cwd })
+    .then((out) => out.trim() === "yes")
+    .catch(() => false);
+
+  if (!hasPackageJson) {
+    return { gatePassed: true, failures: [] };
+  }
+
+  // Detect package manager
+  const pm = await detectPackageManager(session, cwd);
+
+  // Install deps if missing
+  const hasNodeModules = await session
+    .runCommand("test -d node_modules && echo yes", { cwd })
+    .then((out) => out.trim() === "yes")
+    .catch(() => false);
+
+  if (!hasNodeModules) {
+    try {
+      await session.runCommand(`${pm} install`, {
+        cwd,
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      });
+    } catch (error) {
+      failures.push(
+        `${pm} install failed: ${truncateOutput(error instanceof Error ? error.message : String(error))}`,
+      );
+      return { gatePassed: false, failures };
+    }
+  }
+
+  // Get available scripts from package.json
+  const scriptsResult = await getAvailableScripts(session, cwd);
+  if (!scriptsResult.ok) {
+    failures.push(
+      `Failed to read scripts from package.json: ${truncateOutput(scriptsResult.error)}`,
+    );
+    return { gatePassed: false, failures };
+  }
+  const availableScripts = scriptsResult.scripts;
+
+  // Group 1: Lint (non-mutating only — no lint:fix)
+  const lintScript = ["lint"].find((s) => availableScripts.includes(s));
+  if (lintScript) {
+    const result = await runScript(session, pm, lintScript, cwd);
+    if (!result.passed) {
+      failures.push(
+        `${pm} run ${lintScript} failed:\n${truncateOutput(result.output)}`,
+      );
+    }
+  }
+
+  // Group 2: Typecheck
+  const typecheckScript = ["typecheck", "type-check", "tsc"].find((s) =>
+    availableScripts.includes(s),
+  );
+  if (typecheckScript) {
+    const result = await runScript(session, pm, typecheckScript, cwd);
+    if (!result.passed) {
+      failures.push(
+        `${pm} run ${typecheckScript} failed:\n${truncateOutput(result.output)}`,
+      );
+    }
+  }
+
+  // Group 3: Test
+  const testScript = ["test"].find((s) => availableScripts.includes(s));
+  if (testScript) {
+    const result = await runScript(session, pm, testScript, cwd);
+    if (!result.passed) {
+      failures.push(
+        `${pm} run ${testScript} failed:\n${truncateOutput(result.output)}`,
+      );
+    }
+  }
+
+  return {
+    gatePassed: failures.length === 0,
+    failures,
+  };
+}
+
+async function detectPackageManager(
+  session: ISandboxSession,
+  cwd: string,
+): Promise<string> {
+  const checks = [
+    { file: "pnpm-lock.yaml", pm: "pnpm" },
+    { file: "bun.lockb", pm: "bun" },
+    { file: "bun.lock", pm: "bun" },
+    { file: "yarn.lock", pm: "yarn" },
+  ];
+
+  for (const { file, pm } of checks) {
+    const exists = await session
+      .runCommand(`test -f ${file} && echo yes`, { cwd })
+      .then((out) => out.trim() === "yes")
+      .catch(() => false);
+    if (exists) return pm;
+  }
+  return "npm";
+}
+
+async function getAvailableScripts(
+  session: ISandboxSession,
+  cwd: string,
+): Promise<{ ok: true; scripts: string[] } | { ok: false; error: string }> {
+  try {
+    const output = await session.runCommand(
+      `node -e "const p=require('./package.json'); console.log(Object.keys(p.scripts||{}).join(','))"`,
+      { cwd },
+    );
+    return {
+      ok: true,
+      scripts: output
+        .trim()
+        .split(",")
+        .filter((s) => s.length > 0),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function runScript(
+  session: ISandboxSession,
+  pm: string,
+  script: string,
+  cwd: string,
+): Promise<{ passed: boolean; output: string }> {
+  try {
+    const output = await session.runCommand(`${pm} run ${script}`, {
+      cwd,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      env: QUALITY_CHECK_ENV,
+    });
+    return { passed: true, output };
+  } catch (error) {
+    const output = error instanceof Error ? error.message : String(error);
+    return { passed: false, output };
+  }
+}

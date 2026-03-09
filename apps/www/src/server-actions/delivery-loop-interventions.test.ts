@@ -6,29 +6,29 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { enrollSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import { enrollSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 import {
-  requestSdlcBypassCurrentGateOnce,
-  requestSdlcResumeFromBlocked,
-} from "./sdlc-interventions";
+  requestDeliveryLoopBypassCurrentGateOnce,
+  requestDeliveryLoopResumeFromBlocked,
+} from "./delivery-loop-interventions";
 
 async function resumeFromBlocked(input: {
   threadId: string;
   threadChatId: string | null;
 }) {
-  return unwrapResult(await requestSdlcResumeFromBlocked(input));
+  return unwrapResult(await requestDeliveryLoopResumeFromBlocked(input));
 }
 
 async function bypassOnce(input: {
   threadId: string;
   threadChatId: string | null;
 }) {
-  return unwrapResult(await requestSdlcBypassCurrentGateOnce(input));
+  return unwrapResult(await requestDeliveryLoopBypassCurrentGateOnce(input));
 }
 
-describe("sdlc-interventions", () => {
+describe("delivery-loop-interventions", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
   });
@@ -51,7 +51,7 @@ describe("sdlc-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked_on_human_feedback" })
+      .set({ state: "blocked" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await resumeFromBlocked({ threadId, threadChatId: null });
@@ -90,7 +90,7 @@ describe("sdlc-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked_on_human_feedback" })
+      .set({ state: "blocked" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await bypassOnce({ threadId, threadChatId: null });
@@ -129,7 +129,7 @@ describe("sdlc-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked_on_human_feedback" })
+      .set({ state: "blocked" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await db.insert(schema.sdlcPhaseArtifact).values({
@@ -195,6 +195,6 @@ describe("sdlc-interventions", () => {
 
     await expect(
       resumeFromBlocked({ threadId, threadChatId: null }),
-    ).rejects.toThrow("SDLC loop is not blocked on human feedback");
+    ).rejects.toThrow("Delivery Loop is not blocked on human feedback");
   });
 });

@@ -13,6 +13,8 @@ import {
   DaemonMessage,
   DAEMON_VERSION,
   DaemonTransportMode,
+  SdlcSelfDispatchPayload,
+  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
 } from "./shared";
 import {
   parseAcpLineToClaudeMessages,
@@ -226,7 +228,7 @@ type ActiveProcessState = {
   threadId: string;
   threadChatId: string;
   token: string;
-  processId: number | null;
+  processId: number | undefined;
   sessionId: string | null;
   startTime: number;
   stderr: string[];
@@ -704,6 +706,10 @@ export class TerragonDaemon {
         featureFlags: this.featureFlags,
       });
     }
+    // Always advertise SDLC self-dispatch capability
+    this.runtime.additionalCapabilities?.add(
+      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
+    );
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
     await this.stopAppServerTurn({
@@ -744,7 +750,7 @@ export class TerragonDaemon {
     // Create new process state for this threadChatId
     const runId = input.runId ?? randomUUID();
     const newProcessState: ActiveProcessState = {
-      processId: null,
+      processId: undefined,
       agent: input.agent,
       sessionId: null,
       startTime: Date.now(),
@@ -2811,10 +2817,20 @@ export class TerragonDaemon {
           },
         },
       );
-      this.runtime.logger.info("Spawned agent process", {
-        agentName,
-        processId,
-      });
+      if (!processId) {
+        this.runtime.logger.error("Spawn failed: child process has no pid", {
+          agentName,
+          threadChatId: input.threadChatId,
+        });
+        // The child "error" event will fire and trigger handleProcessClose,
+        // which will report the failure to the server. No early return here
+        // so that the onClose callback path handles cleanup consistently.
+      } else {
+        this.runtime.logger.info("Spawned agent process", {
+          agentName,
+          processId,
+        });
+      }
       if (processId) {
         spawnedProcessId = processId;
         this.updateActiveProcessState(input.threadChatId, {
@@ -3263,6 +3279,10 @@ export class TerragonDaemon {
     this.pendingFlushRequired = false;
 
     let retryDelayOverrideMs: number | null = null;
+    let pendingSelfDispatch: {
+      payload: SdlcSelfDispatchPayload;
+      originalThreadChatId: string;
+    } | null = null;
     try {
       if (this.messageFlushTimer) {
         clearTimeout(this.messageFlushTimer);
@@ -3332,7 +3352,7 @@ export class TerragonDaemon {
           const codexPreviousResponseId = codexPreviousResponseEntry
             ? codexPreviousResponseEntry.codexPreviousResponseId
             : undefined;
-          await this.sendMessagesToAPI({
+          const selfDispatchResult = await this.sendMessagesToAPI({
             messages: messagesToSend,
             entryCount: entriesToSend.length,
             timezone,
@@ -3341,6 +3361,21 @@ export class TerragonDaemon {
             threadChatId,
             codexPreviousResponseId,
           });
+          // Track self-dispatch payload from terminal batches
+          if (selfDispatchResult) {
+            const hasTerminalMessage = messagesToSend.some(
+              (m) =>
+                m.type === "result" ||
+                m.type === "custom-error" ||
+                m.type === "custom-stop",
+            );
+            if (hasTerminalMessage) {
+              pendingSelfDispatch = {
+                payload: selfDispatchResult,
+                originalThreadChatId: threadChatId,
+              };
+            }
+          }
           for (const entry of entriesToSend) {
             handledEntries.add(entry);
           }
@@ -3476,6 +3511,66 @@ export class TerragonDaemon {
       }, delay);
     }
     this.maybeCleanupAllDaemonEventRunStates();
+
+    // SDLC self-dispatch: if the server included a follow-up payload in the
+    // terminal batch response, start the new run now that flush is complete.
+    if (pendingSelfDispatch) {
+      const { payload, originalThreadChatId } = pendingSelfDispatch;
+      if (!this.activeProcesses.has(originalThreadChatId)) {
+        const syntheticInput: DaemonMessageClaude = {
+          type: "claude",
+          token: payload.token,
+          prompt: payload.prompt,
+          model: payload.model,
+          agent: payload.agent,
+          agentVersion: payload.agentVersion,
+          sessionId: payload.sessionId,
+          featureFlags: payload.featureFlags,
+          permissionMode: payload.permissionMode,
+          transportMode: payload.transportMode,
+          protocolVersion: payload.protocolVersion,
+          threadId: payload.threadId,
+          threadChatId: payload.threadChatId,
+          runId: payload.runId,
+        };
+        this.runtime.logger.info(
+          "Delivery Loop self-dispatch: starting follow-up run",
+          {
+            threadId: payload.threadId,
+            threadChatId: payload.threadChatId,
+            runId: payload.runId,
+          },
+        );
+        this.runCommand(syntheticInput).catch(async (error) => {
+          this.runtime.logger.error("Delivery Loop self-dispatch failed", {
+            error: formatError(error),
+            runId: payload.runId,
+            threadChatId: payload.threadChatId,
+          });
+          this.addMessageToBuffer({
+            agent: payload.agent,
+            message: {
+              type: "custom-error",
+              session_id: null,
+              duration_ms: 0,
+              error_info:
+                error instanceof Error
+                  ? `Delivery Loop self-dispatch failed: ${error.message}`
+                  : "Delivery Loop self-dispatch failed",
+            },
+            threadId: payload.threadId,
+            threadChatId: payload.threadChatId,
+            token: payload.token,
+          });
+          await this.flushMessageBuffer();
+        });
+      } else {
+        this.runtime.logger.warn(
+          "Delivery Loop self-dispatch skipped: active process exists",
+          { threadChatId: originalThreadChatId },
+        );
+      }
+    }
   }
 
   /**
@@ -3497,7 +3592,7 @@ export class TerragonDaemon {
     threadId: string;
     threadChatId: string;
     codexPreviousResponseId?: string | null;
-  }): Promise<void> {
+  }): Promise<SdlcSelfDispatchPayload | null> {
     try {
       this.runtime.logger.info("Sending messages to API", {
         messageCount: messages.length,
@@ -3526,7 +3621,7 @@ export class TerragonDaemon {
         ...(envelopeV2 ?? {}),
       };
 
-      await this.runtime.serverPost(payload, token);
+      const selfDispatchPayload = await this.runtime.serverPost(payload, token);
       if (envelopeV2) {
         this.markDaemonEventEnvelopeDelivered({
           threadChatId,
@@ -3536,6 +3631,7 @@ export class TerragonDaemon {
       this.runtime.logger.info("Messages sent successfully", {
         messageCount: messages.length,
       });
+      return selfDispatchPayload;
     } catch (error) {
       this.runtime.logger.error("Failed to send messages to API", {
         error: formatError(error),

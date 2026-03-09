@@ -1,14 +1,17 @@
 import { ThreadErrorType } from "@terragon/shared";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
 
 export class ThreadError extends Error {
   type: ThreadErrorType;
   info: string;
   originalError: Error | null;
+  failureCategory: DeliveryLoopFailureCategory | null;
 
   constructor(
     type: ThreadErrorType,
     info: string,
     originalError: Error | null,
+    failureCategory?: DeliveryLoopFailureCategory | null,
   ) {
     super(`Thread error: ${type}${info ? `: ${info}` : ""}`, {
       cause: originalError,
@@ -16,18 +19,26 @@ export class ThreadError extends Error {
     this.type = type;
     this.info = info;
     this.originalError = originalError;
+    this.failureCategory = failureCategory ?? null;
     this.name = "ThreadError";
   }
 }
 
-export function wrapError(type: ThreadErrorType, error: unknown): ThreadError {
+export function wrapError(
+  type: ThreadErrorType,
+  error: unknown,
+  failureCategory?: DeliveryLoopFailureCategory,
+): ThreadError {
   if (error instanceof ThreadError) {
+    if (failureCategory && !error.failureCategory) {
+      error.failureCategory = failureCategory;
+    }
     return error;
   }
   if (error instanceof Error) {
-    return new ThreadError(type, error.message, error);
+    return new ThreadError(type, error.message, error, failureCategory);
   }
-  return new ThreadError(type, String(error), null);
+  return new ThreadError(type, String(error), null, failureCategory);
 }
 
 export const allThreadErrors: Record<ThreadErrorType, boolean> = {

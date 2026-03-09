@@ -13,8 +13,8 @@ import {
   getLatestAcceptedArtifact,
   replacePlanTasksForArtifact,
   transitionSdlcLoopStateWithArtifact,
-} from "@terragon/shared/model/sdlc-loop";
-import { parsePlanSpec } from "@/server-lib/sdlc-loop/parse-plan-spec";
+} from "@terragon/shared/model/delivery-loop";
+import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 
 export const approvePlan = userOnlyAction(
@@ -44,11 +44,13 @@ export const approvePlan = userOnlyAction(
       threadId,
     });
     if (!activeLoop) {
-      throw new UserFacingError("No active SDLC loop found for this thread");
+      throw new UserFacingError(
+        "No active Delivery Loop found for this thread",
+      );
     }
     if (activeLoop.state !== "planning") {
       throw new UserFacingError(
-        "Plan can only be approved while the SDLC loop is in planning phase",
+        "Plan can only be approved while the Delivery Loop is in planning phase",
       );
     }
 
@@ -124,7 +126,7 @@ export const approvePlan = userOnlyAction(
       });
       if (!maybeApproved) {
         throw new UserFacingError(
-          "Failed to approve plan artifact for this SDLC loop",
+          "Failed to approve plan artifact for this Delivery Loop",
         );
       }
       approvedArtifact = maybeApproved;

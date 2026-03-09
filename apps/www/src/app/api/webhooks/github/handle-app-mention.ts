@@ -36,7 +36,7 @@ import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/sdlc-loop/enrollment";
+} from "@/server-lib/delivery-loop/enrollment";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({
@@ -433,7 +433,7 @@ async function triggerTasksForUser({
           });
         } catch (error) {
           console.warn(
-            "SDLC enrollment wiring failed for PR mention routing; continuing with standard thread flow",
+            "Delivery Loop enrollment wiring failed for PR mention routing; continuing with standard thread flow",
             {
               userId,
               repoFullName,
@@ -560,7 +560,7 @@ async function triggerTasksForUser({
         }
 
         console.warn(
-          "SDLC loop enrollment found but thread/chat is not routable; falling back to standard mention routing",
+          "Delivery Loop enrollment found but thread/chat is not routable; falling back to standard mention routing",
           {
             userId,
             repoFullName,
