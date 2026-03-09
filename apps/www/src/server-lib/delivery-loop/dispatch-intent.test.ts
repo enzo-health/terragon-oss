@@ -84,7 +84,6 @@ describe("createDispatchIntent", () => {
       maxRetries: 5,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hashArg = (mockRedis.hset.mock.calls[0] as any)[1] as Record<
       string,
       string
@@ -118,7 +117,6 @@ describe("updateDispatchIntent", () => {
       lastFailureCategory: null,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hashArg = (mockRedis.hset.mock.calls[0] as any)[1] as Record<
       string,
       string
@@ -136,7 +134,6 @@ describe("updateDispatchIntent", () => {
       lastFailureCategory: "daemon_unreachable",
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hashArg = (mockRedis.hset.mock.calls[0] as any)[1] as Record<
       string,
       string
