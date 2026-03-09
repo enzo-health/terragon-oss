@@ -1,15 +1,8 @@
-import type { AIAgent } from "@terragon/agent/types";
 import type {
   DeliveryLoopDispatchStatus,
   DeliveryLoopFailureCategory,
+  DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
-
-/**
- * Execution class determines how the agent run is executed.
- * - "daemon": spawned via daemon on a sandbox (Claude Code, Codex)
- * - "api": direct API call (future: Gemini, Amp)
- */
-export type ExecutionClass = "daemon" | "api";
 
 /**
  * A fully prepared run ready for dispatch. Created by
@@ -17,9 +10,9 @@ export type ExecutionClass = "daemon" | "api";
  */
 export type PreparedRun = {
   runId: string;
-  agent: AIAgent;
-  executionClass: ExecutionClass;
-  dispatchIntentId: string | null;
+  agent: DeliveryLoopSelectedAgent;
+  executionClass: "implementation_runtime";
+  dispatchIntentId: string;
   sessionId: string | null;
 };
 
@@ -27,12 +20,11 @@ export type PreparedRun = {
  * Status of an active or completed run, as reported by daemon events.
  */
 export type RunStatus =
-  | "preparing"
-  | "dispatched"
-  | "acknowledged"
+  | "pending"
   | "running"
   | "completed"
-  | "failed";
+  | "failed"
+  | "stopped";
 
 /**
  * A normalized view of a run update, produced by
@@ -43,28 +35,44 @@ export type RunStatus =
 export type NormalizedRunUpdate = {
   runId: string;
   runStatus: RunStatus;
-  dispatchStatus: DeliveryLoopDispatchStatus | null;
+  dispatchStatus: DeliveryLoopDispatchStatus;
   firstEventAt: Date | null;
   completedAt: Date | null;
   terminalErrorCategory: DeliveryLoopFailureCategory | null;
   terminalErrorMessage: string | null;
-  usedSubAgents: string[];
+  usedSubAgents: boolean;
   subAgentFailureCount: number;
   sessionId: string | null;
   headShaAtCompletion: string | null;
-  diagnostics: Record<string, unknown> | null;
+  diagnostics: Record<string, unknown>;
 };
 
 /**
- * Context passed to adapter methods so they can interact with
- * the sandbox, thread, and loop without knowing the specifics.
+ * Input required to prepare and dispatch an implementation run.
  */
-export type AdapterContext = {
+export type DeliveryLoopDispatchInput = {
   userId: string;
   threadId: string;
   threadChatId: string;
   sandboxId: string;
   loopId: string;
+  prompt: string;
+  model: string;
+};
+
+/**
+ * Daemon event as received by the adapter. This is a subset of the
+ * full daemon event payload, normalized for adapter consumption.
+ */
+export type DeliveryLoopDaemonEvent = {
+  runId: string;
+  type: "first_event" | "progress" | "terminal";
+  isError: boolean;
+  errorMessage: string | null;
+  sessionId: string | null;
+  headSha: string | null;
+  exitCode: number | null;
+  timestamp: Date;
 };
 
 /**
@@ -73,62 +81,31 @@ export type AdapterContext = {
  * in a uniform way.
  */
 export interface ImplementationRuntimeAdapter {
-  readonly agent: AIAgent;
-  readonly executionClass: ExecutionClass;
+  readonly agent: DeliveryLoopSelectedAgent;
 
   /**
    * Resume the sandbox, ensure the daemon is healthy, create a runId,
    * persist a dispatch intent, and create credentials.
    * Returns a PreparedRun ready for `dispatch()`.
    */
-  prepare(ctx: AdapterContext): Promise<PreparedRun>;
+  prepare(input: DeliveryLoopDispatchInput): Promise<PreparedRun>;
 
   /**
    * Send the daemon message tagged with the runId from `prepare()`.
    * Persists dispatchStatus = "dispatched".
    */
-  dispatch(ctx: AdapterContext, run: PreparedRun): Promise<void>;
+  dispatch(prepared: PreparedRun): Promise<void>;
 
   /**
    * Process an inbound daemon event for the given runId.
    * First event for a runId transitions dispatchStatus to "acknowledged".
    * Returns a NormalizedRunUpdate reflecting the current run state.
    */
-  onDaemonEvent(
-    ctx: AdapterContext,
-    runId: string,
-    event: DaemonEventInput,
-  ): NormalizedRunUpdate;
+  onDaemonEvent(event: DeliveryLoopDaemonEvent): Promise<NormalizedRunUpdate>;
 
   /**
    * Classify a terminal daemon event (error or completion) into a
    * NormalizedRunUpdate with agent-specific failure categories.
    */
-  classifyTerminal(
-    ctx: AdapterContext,
-    runId: string,
-    event: DaemonTerminalInput,
-  ): NormalizedRunUpdate;
+  classifyTerminal(event: DeliveryLoopDaemonEvent): NormalizedRunUpdate;
 }
-
-/**
- * Minimal daemon event shape consumed by the adapter.
- * This is a subset of the full daemon event payload.
- */
-export type DaemonEventInput = {
-  type: "first_event" | "progress" | "terminal";
-  isError: boolean;
-  errorMessage: string | null;
-  sessionId: string | null;
-  headSha: string | null;
-  timestamp: Date;
-};
-
-/**
- * Terminal event input with additional classification fields.
- */
-export type DaemonTerminalInput = DaemonEventInput & {
-  type: "terminal";
-  exitCode: number | null;
-  rawErrorMessage: string | null;
-};

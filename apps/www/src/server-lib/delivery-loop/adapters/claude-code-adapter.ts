@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
 import type {
-  AdapterContext,
-  DaemonEventInput,
-  DaemonTerminalInput,
+  DeliveryLoopDaemonEvent,
+  DeliveryLoopDispatchInput,
   ImplementationRuntimeAdapter,
   NormalizedRunUpdate,
   PreparedRun,
@@ -22,7 +21,6 @@ function classifyClaudeTerminalError(
       ? "claude_runtime_exit"
       : "unknown";
   }
-  const msg = rawErrorMessage.toLowerCase();
 
   if (
     /unix socket|econnrefused|enoent.*socket|no such file|connect failed/i.test(
@@ -50,9 +48,6 @@ function classifyClaudeTerminalError(
   if (/claude.*exit|claude.*crash|claude.*runtime/i.test(rawErrorMessage)) {
     return "claude_runtime_exit";
   }
-  if (msg.includes("daemon") || msg.includes("write message")) {
-    return "unknown";
-  }
   return "unknown";
 }
 
@@ -62,17 +57,17 @@ function buildRunUpdate(
 ): NormalizedRunUpdate {
   return {
     runId,
-    runStatus: "preparing",
-    dispatchStatus: null,
+    runStatus: "pending",
+    dispatchStatus: "prepared",
     firstEventAt: null,
     completedAt: null,
     terminalErrorCategory: null,
     terminalErrorMessage: null,
-    usedSubAgents: [],
+    usedSubAgents: false,
     subAgentFailureCount: 0,
     sessionId: null,
     headShaAtCompletion: null,
-    diagnostics: null,
+    diagnostics: {},
     ...overrides,
   };
 }
@@ -87,40 +82,46 @@ function buildRunUpdate(
  *
  * Actual side effects (sandbox resume, credential creation, message sending)
  * are performed by the caller using the existing infrastructure. This adapter
- * provides the prepare/dispatch/classify contract without duplicating that logic.
+ * provides the prepare/dispatch/classify contract without duplicating that
+ * logic.
  */
 export class ClaudeCodeImplementationAdapter
   implements ImplementationRuntimeAdapter
 {
   readonly agent = "claudeCode" as const;
-  readonly executionClass = "daemon" as const;
 
-  async prepare(_ctx: AdapterContext): Promise<PreparedRun> {
+  /** Tracks which runIds have received their first daemon event. */
+  private acknowledgedRuns = new Set<string>();
+
+  async prepare(input: DeliveryLoopDispatchInput): Promise<PreparedRun> {
     const runId = randomUUID();
+    const dispatchIntentId = `di_${input.loopId}_${runId}`;
     return {
       runId,
       agent: this.agent,
-      executionClass: this.executionClass,
-      dispatchIntentId: null,
+      executionClass: "implementation_runtime",
+      dispatchIntentId,
       sessionId: null,
     };
   }
 
-  async dispatch(_ctx: AdapterContext, _run: PreparedRun): Promise<void> {
+  async dispatch(_prepared: PreparedRun): Promise<void> {
     // Dispatch is handled by the caller via sendDaemonMessage.
-    // This method exists to satisfy the interface contract.
-    // In the future, dispatch intent persistence and status tracking
-    // will be implemented here (Task #7).
+    // The caller tags the daemon message with prepared.runId and calls
+    // sendDaemonMessage from apps/www/src/agent/daemon.ts.
+    // Dispatch intent persistence will be added in Task #7.
   }
 
-  onDaemonEvent(
-    _ctx: AdapterContext,
-    runId: string,
-    event: DaemonEventInput,
-  ): NormalizedRunUpdate {
-    if (event.type === "first_event") {
+  async onDaemonEvent(
+    event: DeliveryLoopDaemonEvent,
+  ): Promise<NormalizedRunUpdate> {
+    const { runId } = event;
+
+    // First event for this runId transitions to "acknowledged".
+    if (!this.acknowledgedRuns.has(runId)) {
+      this.acknowledgedRuns.add(runId);
       return buildRunUpdate(runId, {
-        runStatus: "acknowledged",
+        runStatus: "running",
         dispatchStatus: "acknowledged",
         firstEventAt: event.timestamp,
         sessionId: event.sessionId,
@@ -128,15 +129,10 @@ export class ClaudeCodeImplementationAdapter
     }
 
     if (event.type === "terminal") {
-      return this.classifyTerminal(_ctx, runId, {
-        ...event,
-        type: "terminal",
-        exitCode: null,
-        rawErrorMessage: event.errorMessage,
-      });
+      return this.classifyTerminal(event);
     }
 
-    // Progress events
+    // Progress events.
     return buildRunUpdate(runId, {
       runStatus: "running",
       dispatchStatus: "acknowledged",
@@ -145,11 +141,9 @@ export class ClaudeCodeImplementationAdapter
     });
   }
 
-  classifyTerminal(
-    _ctx: AdapterContext,
-    runId: string,
-    event: DaemonTerminalInput,
-  ): NormalizedRunUpdate {
+  classifyTerminal(event: DeliveryLoopDaemonEvent): NormalizedRunUpdate {
+    const { runId } = event;
+
     if (!event.isError) {
       return buildRunUpdate(runId, {
         runStatus: "completed",
@@ -161,7 +155,7 @@ export class ClaudeCodeImplementationAdapter
     }
 
     const category = classifyClaudeTerminalError(
-      event.rawErrorMessage,
+      event.errorMessage,
       event.exitCode,
     );
     return buildRunUpdate(runId, {
@@ -169,9 +163,13 @@ export class ClaudeCodeImplementationAdapter
       dispatchStatus: "failed",
       completedAt: event.timestamp,
       terminalErrorCategory: category,
-      terminalErrorMessage: event.rawErrorMessage,
+      terminalErrorMessage: event.errorMessage,
       sessionId: event.sessionId,
       headShaAtCompletion: event.headSha,
+      diagnostics: {
+        exitCode: event.exitCode,
+        failureCategory: category,
+      },
     });
   }
 }
