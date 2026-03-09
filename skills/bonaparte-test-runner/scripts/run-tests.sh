@@ -22,7 +22,7 @@ Options:
 Exit codes:
   0 success
   1 test command failed
-  2 blocked (missing required infrastructure or unsupported mode)
+  2 blocked (missing required infrastructure or unsupported mode, except in --dry-run)
 EOF
 }
 
@@ -204,6 +204,10 @@ if [[ "$selected_mode" == "blocked" ]]; then
   log "1) Install/start Docker."
   log "2) Generate Prisma client (for example: pnpm prisma generate)."
   log "3) Add a dedicated unit test script (e.g. test:unit) to bypass infra-heavy setup."
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Dry run enabled; reporting blocker without failing."
+    exit 0
+  fi
   exit 2
 fi
 
