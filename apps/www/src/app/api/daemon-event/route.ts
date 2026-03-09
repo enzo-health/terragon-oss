@@ -154,27 +154,39 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
 }
 
 /**
- * Count how many consecutive daemon_terminal signals with
- * daemonRunStatus=completed have been processed for this loop.
- * Used as a circuit breaker to prevent infinite auto-dispatch loops.
+ * Count trailing consecutive daemon_terminal signals with
+ * daemonRunStatus=completed for this loop. Any non-completed signal
+ * (failed, stopped, or non-daemon_terminal cause) resets the streak,
+ * so user-initiated actions or failures unblock the breaker.
  */
 async function countConsecutiveCompletedAutoDispatches({
   loopId,
 }: {
   loopId: string;
 }): Promise<number> {
-  const result = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(schema.sdlcLoopSignalInbox)
-    .where(
-      and(
-        eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        sql`${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'`,
-        sql`${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL`,
-      ),
-    );
-  return Number(result[0]?.count ?? 0);
+  // Single query: count completed daemon_terminal signals that appear after
+  // the most recent non-completed one (i.e. trailing consecutive completed).
+  const result = await db.execute(sql`
+    SELECT count(*) AS count
+    FROM ${schema.sdlcLoopSignalInbox}
+    WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
+      AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
+      AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
+      AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
+      AND ${schema.sdlcLoopSignalInbox.processedAt} > COALESCE(
+        (SELECT ${schema.sdlcLoopSignalInbox.processedAt}
+         FROM ${schema.sdlcLoopSignalInbox}
+         WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
+           AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
+           AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
+           AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' != 'completed'
+         ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
+         LIMIT 1),
+        '1970-01-01'::timestamptz
+      )
+  `);
+  const rows = result as unknown as Array<{ count: string | number }>;
+  return Number(rows[0]?.count ?? 0);
 }
 
 function getDaemonProcessingEventClaimKey({

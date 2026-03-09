@@ -77,6 +77,7 @@ const dbMocks = vi.hoisted(() => {
     signalInboxFindFirst,
     transaction,
     db: {
+      execute,
       transaction,
       select,
       delete: deleteFrom,
@@ -788,11 +789,8 @@ describe("daemon-event route", () => {
         error: null,
       },
     });
-    // Return a count >= MAX_CONSECUTIVE_AUTO_DISPATCHES (10)
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: null }]);
-    dbMocks.selectWhere.mockResolvedValueOnce([{ count: 10 }]);
+    // Circuit breaker uses db.execute() — return count >= MAX_CONSECUTIVE_AUTO_DISPATCHES (10)
+    dbMocks.execute.mockResolvedValue([{ count: 10 }]);
 
     const response = await POST(
       createDaemonRequest({
