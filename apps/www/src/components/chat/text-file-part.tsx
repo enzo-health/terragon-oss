@@ -1,3 +1,4 @@
+import React from "react";
 import { FileText, Download, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -41,8 +42,9 @@ export function TextFilePart({
           className="size-6 flex-shrink-0"
           onClick={onOpenInArtifactWorkspace}
           title="Open in artifact panel"
+          aria-label={`Open ${displayName} in artifact workspace`}
         >
-          <ExternalLink className="size-3" />
+          <ExternalLink className="size-3" aria-hidden="true" />
         </Button>
       )}
       <Button
@@ -51,8 +53,9 @@ export function TextFilePart({
         className="size-6 flex-shrink-0"
         onClick={handleDownload}
         title="Download file"
+        aria-label={`Download ${displayName}`}
       >
-        <Download className="size-3" />
+        <Download className="size-3" aria-hidden="true" />
       </Button>
     </div>
   );

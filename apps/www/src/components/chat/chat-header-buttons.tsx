@@ -34,6 +34,7 @@ import posthog from "posthog-js";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { useThread } from "./thread-context";
 import { useSecondaryPanel } from "./hooks";
+import { ARTIFACT_WORKSPACE_PANEL_ID } from "./secondary-panel";
 
 export const ChatHeaderButtons = memo(function ChatHeaderButtons({
   thread,
@@ -80,11 +81,22 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
           size="icon"
           onClick={() => setIsSecondaryPanelOpen(!isSecondaryPanelOpen)}
           aria-label="Toggle artifact workspace"
+          aria-expanded={isSecondaryPanelOpen}
+          aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
+          aria-haspopup={isSmallScreen ? "dialog" : undefined}
         >
           {isSmallScreen ? (
-            <PanelBottom className="size-4" isOpen={isSecondaryPanelOpen} />
+            <PanelBottom
+              className="size-4"
+              isOpen={isSecondaryPanelOpen}
+              aria-hidden="true"
+            />
           ) : (
-            <PanelRight className="size-4" isOpen={isSecondaryPanelOpen} />
+            <PanelRight
+              className="size-4"
+              isOpen={isSecondaryPanelOpen}
+              aria-hidden="true"
+            />
           )}
         </Button>
         {!isReadOnly && !isSmallScreen && <CodeButton thread={thread} />}

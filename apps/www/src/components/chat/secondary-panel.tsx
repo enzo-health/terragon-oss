@@ -2,7 +2,12 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Drawer, DrawerContent } from "@/components/ui/drawer";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import {
   ThreadInfoFull,
   type UIGitDiffPart,
@@ -28,6 +33,10 @@ import { ExternalLink, FileDiff, X } from "lucide-react";
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
 const SECONDARY_PANEL_DEFAULT_WIDTH = 0.5;
+const SECONDARY_PANEL_RESIZE_STEP = 32;
+const SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH = 1024;
+
+export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
 
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 
@@ -77,44 +86,7 @@ export function findArtifactDescriptorForPart({
   artifacts: Pick<ArtifactDescriptor, "id" | "part">[];
   part: ArtifactWorkspaceComparablePart;
 }) {
-  return (
-    artifacts.find(
-      (artifact) =>
-        artifact.part === part ||
-        areArtifactPartsEquivalent(artifact.part, part),
-    ) ?? null
-  );
-}
-
-function areArtifactPartsEquivalent(
-  left: ArtifactDescriptor["part"],
-  right: ArtifactWorkspaceComparablePart,
-) {
-  if (left.type === "git-diff" && right.type === "git-diff") {
-    return left.timestamp === right.timestamp && left.diff === right.diff;
-  }
-
-  if (left.type === "image" && right.type === "image") {
-    return left.image_url === right.image_url;
-  }
-
-  if (left.type === "pdf" && right.type === "pdf") {
-    return left.pdf_url === right.pdf_url && left.filename === right.filename;
-  }
-
-  if (left.type === "text-file" && right.type === "text-file") {
-    return (
-      left.file_url === right.file_url &&
-      left.filename === right.filename &&
-      left.mime_type === right.mime_type
-    );
-  }
-
-  if (left.type === "rich-text" && right.type === "rich-text") {
-    return JSON.stringify(left.nodes) === JSON.stringify(right.nodes);
-  }
-
-  return false;
+  return artifacts.find((artifact) => artifact.part === part) ?? null;
 }
 
 export function getArtifactWorkspaceViewState(
@@ -258,7 +230,7 @@ export function SecondaryPanel({
     [artifactDescriptors, thread],
   );
 
-  const { width, isResizing, handleMouseDown } = useResizablePanel({
+  const { width, setWidth, isResizing, handleMouseDown } = useResizablePanel({
     minWidth: SECONDARY_PANEL_MIN_WIDTH,
     maxWidth: SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE,
     defaultWidth: SECONDARY_PANEL_DEFAULT_WIDTH,
@@ -268,10 +240,54 @@ export function SecondaryPanel({
     enabled: isOpen && platform === "desktop",
   });
 
+  const getSecondaryPanelMaxWidth = () => {
+    const containerWidth =
+      containerRef.current?.offsetWidth ??
+      (typeof window !== "undefined"
+        ? window.innerWidth
+        : SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH);
+
+    return containerWidth * SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE;
+  };
+
+  const clampSecondaryPanelWidth = (nextWidth: number) => {
+    return Math.min(
+      Math.max(nextWidth, SECONDARY_PANEL_MIN_WIDTH),
+      getSecondaryPanelMaxWidth(),
+    );
+  };
+
+  const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextWidth = width;
+
+    switch (event.key) {
+      case "ArrowLeft":
+        nextWidth = width + SECONDARY_PANEL_RESIZE_STEP;
+        break;
+      case "ArrowRight":
+        nextWidth = width - SECONDARY_PANEL_RESIZE_STEP;
+        break;
+      case "Home":
+        nextWidth = SECONDARY_PANEL_MIN_WIDTH;
+        break;
+      case "End":
+        nextWidth = getSecondaryPanelMaxWidth();
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    setWidth(clampSecondaryPanelWidth(nextWidth));
+  };
+
   if (platform === "mobile") {
     return (
       <Drawer open={isOpen} onOpenChange={onOpenChange}>
         <DrawerContent className="h-[80vh] overflow-hidden p-0">
+          <DrawerHeader className="sr-only">
+            <DrawerTitle>Artifact workspace</DrawerTitle>
+          </DrawerHeader>
           <SecondaryPanelContent
             artifacts={artifacts}
             activeArtifactId={activeArtifactId}
@@ -293,6 +309,17 @@ export function SecondaryPanel({
           isResizing && "bg-blue-500/50",
         )}
         onMouseDown={handleMouseDown}
+        onKeyDown={handleResizeKeyDown}
+        role="separator"
+        tabIndex={0}
+        aria-label="Resize artifact workspace"
+        aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
+        aria-orientation="vertical"
+        aria-valuemin={SECONDARY_PANEL_MIN_WIDTH}
+        aria-valuemax={Math.round(getSecondaryPanelMaxWidth())}
+        aria-valuenow={Math.round(width)}
+        aria-valuetext={`${Math.round(width)} pixels wide`}
+        title="Drag or use arrow keys to resize the artifact workspace"
       />
       <div
         className="flex-shrink-0 border-l bg-background flex flex-col h-full"
@@ -363,7 +390,10 @@ function ArtifactWorkspaceShell({
   const headerSummary = activeArtifact?.summary ?? emptyState.description;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div
+      id={ARTIFACT_WORKSPACE_PANEL_ID}
+      className="flex h-full min-h-0 flex-col bg-background"
+    >
       <div className="border-b px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">

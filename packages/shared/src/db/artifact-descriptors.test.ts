@@ -31,7 +31,9 @@ describe("getArtifactDescriptors", () => {
       "file",
     ]);
     expect(descriptors[0]).toMatchObject({
-      id: expect.stringMatching(/^artifact:user:2024-01-01T00:00:00Z:rich-text:/),
+      id: expect.stringMatching(
+        /^artifact:user:2024-01-01T00:00:00Z:rich-text:/,
+      ),
       title: "Document",
       summary: "Build release notes",
       origin: {
@@ -66,7 +68,9 @@ describe("getArtifactDescriptors", () => {
       role: "agent",
       agent: "claudeCode",
       parts: [
-        ...(includeLeadingText ? [{ type: "text" as const, text: "streaming status" }] : []),
+        ...(includeLeadingText
+          ? [{ type: "text" as const, text: "streaming status" }]
+          : []),
         {
           type: "tool",
           id: "tool-outer",
@@ -106,22 +110,69 @@ describe("getArtifactDescriptors", () => {
         toolCallId: "tool-outer",
         toolCallName: "Write",
         toolCallPath: ["tool-outer"],
+        artifactOrdinal: 1,
         partType: "rich-text",
         fingerprint: expect.any(String),
       },
     });
     expect(first[1]).toMatchObject({
-      id: expect.stringMatching(/^artifact:tool:tool-outer\/tool-inner:text-file:/),
+      id: expect.stringMatching(
+        /^artifact:tool:tool-outer\/tool-inner:text-file:/,
+      ),
       origin: {
         type: "tool-part",
         toolCallId: "tool-inner",
         toolCallName: "Capture",
         toolCallPath: ["tool-outer", "tool-inner"],
+        artifactOrdinal: 1,
         partType: "text-file",
         fingerprint: expect.any(String),
       },
     });
     expect(first[2]?.part).toBe(imagePart);
+  });
+
+  it("keeps tool-backed artifact ids stable when streamed tool content changes in place", () => {
+    const buildMessage = (richText: string, fileUrl: string): UIMessage => ({
+      role: "agent",
+      agent: "claudeCode",
+      parts: [
+        {
+          type: "tool",
+          id: "tool-outer",
+          agent: "claudeCode",
+          name: "Write",
+          parameters: {},
+          status: "completed",
+          result: "done",
+          parts: [
+            {
+              type: "rich-text",
+              nodes: [{ type: "text", text: richText }],
+            },
+            {
+              type: "text-file",
+              file_url: fileUrl,
+              filename: "output.txt",
+              mime_type: "text/plain",
+            },
+          ],
+        },
+      ],
+    });
+
+    const first = getArtifactDescriptors({
+      messages: [buildMessage("First revision", "https://example.com/one.txt")],
+    });
+    const second = getArtifactDescriptors({
+      messages: [
+        buildMessage("Second revision", "https://example.com/two.txt"),
+      ],
+    });
+
+    expect(first.map((descriptor) => descriptor.id)).toEqual(
+      second.map((descriptor) => descriptor.id),
+    );
   });
 
   it("omits top-level streamed agent artifacts until a durable source id exists", () => {

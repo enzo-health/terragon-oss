@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { GitDiffStats } from "./types";
 import type {
   UIGitDiffPart,
@@ -14,7 +13,11 @@ export type ArtifactDescriptorKind = "git-diff" | "document" | "file" | "media";
 
 export type ArtifactDescriptorStatus = "ready";
 
-type MessageArtifactPart = UIRichTextPart | UIImagePart | UIPdfPart | UITextFilePart;
+type MessageArtifactPart =
+  | UIRichTextPart
+  | UIImagePart
+  | UIPdfPart
+  | UITextFilePart;
 
 export type ArtifactDescriptorPart = UIGitDiffPart | MessageArtifactPart;
 
@@ -40,6 +43,7 @@ export type ArtifactDescriptorOrigin =
       toolCallId: string;
       toolCallName: string;
       toolCallPath: string[];
+      artifactOrdinal: number;
       partType: MessageArtifactPart["type"];
       fingerprint: string;
     }
@@ -179,7 +183,9 @@ export function getArtifactDescriptors({
       parts: message.parts,
       messageRole: message.role,
       messageTimestamp:
-        message.role === "user" ? normalizeTimestamp(message.timestamp) : undefined,
+        message.role === "user"
+          ? normalizeTimestamp(message.timestamp)
+          : undefined,
       toolPath: [],
     });
   }
@@ -202,6 +208,8 @@ function collectArtifactDescriptorsFromParts({
   messageTimestamp?: string;
   toolPath: ToolCallOrigin[];
 }) {
+  let toolArtifactOrdinal = 0;
+
   for (const part of parts) {
     if (part.type === "tool") {
       collectArtifactDescriptorsFromParts({
@@ -219,11 +227,14 @@ function collectArtifactDescriptorsFromParts({
       continue;
     }
 
+    toolArtifactOrdinal += 1;
+
     const descriptor = buildMessageArtifactDescriptor({
       part,
       messageRole,
       messageTimestamp,
       toolPath,
+      toolArtifactOrdinal,
       duplicateCounts,
     });
 
@@ -238,12 +249,14 @@ function buildMessageArtifactDescriptor({
   messageRole,
   messageTimestamp,
   toolPath,
+  toolArtifactOrdinal,
   duplicateCounts,
 }: {
   part: MessageArtifactPart;
   messageRole: "user" | "agent";
   messageTimestamp?: string;
   toolPath: ToolCallOrigin[];
+  toolArtifactOrdinal: number;
   duplicateCounts: Map<string, number>;
 }): ArtifactDescriptor | null {
   const fingerprint = getMessageArtifactFingerprint(part);
@@ -253,7 +266,11 @@ function buildMessageArtifactDescriptor({
     return createDescriptor({
       part,
       id: buildStableId({
-        baseId: buildToolArtifactBaseId({ toolPath, part, fingerprint }),
+        baseId: buildToolArtifactBaseId({
+          toolPath,
+          part,
+          artifactOrdinal: toolArtifactOrdinal,
+        }),
         duplicateCounts,
       }),
       origin: {
@@ -261,6 +278,7 @@ function buildMessageArtifactDescriptor({
         toolCallId: leafTool.id,
         toolCallName: leafTool.name,
         toolCallPath: toolPath.map((tool) => tool.id),
+        artifactOrdinal: toolArtifactOrdinal,
         partType: part.type,
         fingerprint,
       },
@@ -386,13 +404,13 @@ function buildUserArtifactBaseId({
 function buildToolArtifactBaseId({
   toolPath,
   part,
-  fingerprint,
+  artifactOrdinal,
 }: {
   toolPath: ToolCallOrigin[];
   part: MessageArtifactPart;
-  fingerprint: string;
+  artifactOrdinal: number;
 }): string {
-  return `artifact:tool:${toolPath.map((tool) => tool.id).join("/")}:${part.type}:${fingerprint}`;
+  return `artifact:tool:${toolPath.map((tool) => tool.id).join("/")}:${part.type}:${artifactOrdinal}`;
 }
 
 function buildStableId({
@@ -433,13 +451,26 @@ function getGitDiffFingerprint(part: UIGitDiffPart): string {
 }
 
 function shortHash(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(value))
-    .digest("hex")
-    .slice(0, 16);
+  const input = JSON.stringify(value);
+  const first = fnv1a(input, 0x811c9dc5);
+  const second = fnv1a(input, 0x9e3779b9);
+  return `${first}${second}`;
 }
 
-function normalizeTimestamp(timestamp?: Date | string | null): string | undefined {
+function fnv1a(input: string, seed: number): string {
+  let hash = seed;
+
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function normalizeTimestamp(
+  timestamp?: Date | string | null,
+): string | undefined {
   if (!timestamp) {
     return undefined;
   }

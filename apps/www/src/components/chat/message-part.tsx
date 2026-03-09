@@ -91,7 +91,13 @@ export const MessagePart = memo(function MessagePart({
     }
     case "image": {
       const imagePart = part as UIImagePart;
-      return <ImagePart imageUrl={imagePart.image_url} onClick={onClick} />;
+      return (
+        <ImagePart
+          imageUrl={imagePart.image_url}
+          onClick={onClick}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
+        />
+      );
     }
     case "rich-text": {
       const richTextPart = part as UIRichTextPart;
@@ -104,7 +110,13 @@ export const MessagePart = memo(function MessagePart({
     }
     case "pdf": {
       const pdfPart = part as UIPdfPart;
-      return <PdfPart pdfUrl={pdfPart.pdf_url} filename={pdfPart.filename} />;
+      return (
+        <PdfPart
+          pdfUrl={pdfPart.pdf_url}
+          filename={pdfPart.filename}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
+        />
+      );
     }
     case "text-file": {
       const textFilePart = part as UITextFilePart;

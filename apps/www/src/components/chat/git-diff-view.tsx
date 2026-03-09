@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AnnotationSide,
   type DiffLineEventBaseProps,
@@ -474,7 +474,7 @@ function FileDiffWrapper({
   );
 }
 
-function FilesChangedHeader({
+export function FilesChangedHeader({
   fileCount,
   viewMode,
   onViewModeChange,
@@ -485,6 +485,7 @@ function FilesChangedHeader({
   additions,
   deletions,
   isSmallScreen,
+  fileTreeId,
 }: {
   fileCount: number;
   viewMode: "split" | "unified";
@@ -496,6 +497,7 @@ function FilesChangedHeader({
   additions: number;
   deletions: number;
   isSmallScreen: boolean;
+  fileTreeId: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 px-4 py-3">
@@ -529,9 +531,15 @@ function FilesChangedHeader({
       {fileCount > 0 && (
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
+            type="button"
             onClick={onToggleFileTree}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
             title={showFileTree ? "Hide file tree" : "Show file tree"}
+            aria-label={
+              showFileTree ? "Hide changed files" : "Show changed files"
+            }
+            aria-expanded={showFileTree}
+            aria-controls={fileTreeId}
           >
             {showFileTree ? (
               <PanelLeftClose className="w-3.5 h-3.5" />
@@ -540,9 +548,12 @@ function FilesChangedHeader({
             )}
           </button>
           <button
+            type="button"
             onClick={onToggleAll}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
             title={allExpanded ? "Collapse all" : "Expand all"}
+            aria-label={allExpanded ? "Collapse all files" : "Expand all files"}
+            aria-pressed={allExpanded}
           >
             {allExpanded ? (
               <ChevronsDownUp className="w-3.5 h-3.5" />
@@ -554,22 +565,30 @@ function FilesChangedHeader({
             </span>
           </button>
           {!isSmallScreen && (
-            <div className="flex items-center rounded-md border bg-background">
+            <div
+              className="flex items-center rounded-md border bg-background"
+              role="group"
+              aria-label="Diff view mode"
+            >
               <button
+                type="button"
                 onClick={() => onViewModeChange("unified")}
                 className={cn(
                   "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
                   viewMode === "unified" ? "bg-muted" : "hover:bg-muted/50",
                 )}
+                aria-pressed={viewMode === "unified"}
               >
                 Unified
               </button>
               <button
+                type="button"
                 onClick={() => onViewModeChange("split")}
                 className={cn(
                   "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
                   viewMode === "split" ? "bg-muted" : "hover:bg-muted/50",
                 )}
+                aria-pressed={viewMode === "split"}
               >
                 Split
               </button>
@@ -658,6 +677,7 @@ export function GitDiffView({
   diffPart,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const fileTreeId = useId();
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [isWideScreen, setIsWideScreen] = useState(false);
   const { resolvedTheme } = useTheme();
@@ -833,6 +853,7 @@ export function GitDiffView({
             additions={headerStats.additions}
             deletions={headerStats.deletions}
             isSmallScreen={isSmallScreen}
+            fileTreeId={fileTreeId}
           />
         </div>
         <div className="flex items-center justify-center text-muted-foreground/50 py-8">
@@ -857,6 +878,7 @@ export function GitDiffView({
             additions={headerStats.additions}
             deletions={headerStats.deletions}
             isSmallScreen={isSmallScreen}
+            fileTreeId={fileTreeId}
           />
         </div>
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -880,6 +902,7 @@ export function GitDiffView({
           additions={headerStats.additions}
           deletions={headerStats.deletions}
           isSmallScreen={isSmallScreen}
+          fileTreeId={fileTreeId}
         />
       </div>
       <div className="flex flex-1 overflow-hidden relative">
@@ -894,10 +917,12 @@ export function GitDiffView({
         {/* File tree sidebar */}
         {showFileTree && (
           <div
+            id={fileTreeId}
             className={cn(
               "w-64 border-r overflow-y-auto flex-shrink-0 bg-background",
               isSmallScreen && "absolute inset-y-0 left-0 z-40 shadow-lg",
             )}
+            aria-label="Changed files"
           >
             <div className="p-2">
               {fileTree.map((node) => (

@@ -254,6 +254,7 @@ const ToolPart = memo(function ToolPart({
                   key={artifactDescriptor?.id ?? index}
                   pdfUrl={(part as UIPdfPart).pdf_url}
                   filename={(part as UIPdfPart).filename}
+                  onOpenInArtifactWorkspace={handleOpenArtifact}
                 />
               );
             case "image":
@@ -261,6 +262,7 @@ const ToolPart = memo(function ToolPart({
                 <ImagePart
                   key={artifactDescriptor?.id ?? index}
                   imageUrl={(part as UIImagePart).image_url}
+                  onOpenInArtifactWorkspace={handleOpenArtifact}
                 />
               );
             default:
