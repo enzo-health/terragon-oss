@@ -36,13 +36,12 @@ import { checkShadowBanTaskCreationRateLimit } from "@/lib/rate-limit";
 import { getDefaultModel } from "./default-ai-model";
 import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
 import { getSandboxSizeForUser } from "@/lib/subscription-tiers";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getThreadChatHistory } from "./compact";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "./sdlc-loop/enrollment";
+} from "./delivery-loop/enrollment";
 
 export interface CreateThreadOptions {
   userId: string;
@@ -103,7 +102,6 @@ export async function createNewThread({
     modelOrDefault,
     userSettings,
     sandboxSize,
-    enableThreadChatCreation,
     _enableEnvironmentCreation,
     _ensureBaseBranchExists,
     _ensureHeadBranchExists,
@@ -115,12 +113,6 @@ export async function createNewThread({
     getUserSettings({ db, userId }),
     // Get sandbox size for user
     getSandboxSizeForUser(userId),
-    // Get feature flag for user
-    getFeatureFlagForUser({
-      db,
-      userId,
-      flagName: "enableThreadChatCreation",
-    }),
     // Ensure the environment exists for this repo
     getOrCreateEnvironment({ db, userId, repoFullName: githubRepoFullName }),
     // Make sure that the repo base branch exists in the repo
@@ -221,7 +213,7 @@ export async function createNewThread({
       permissionMode: message.permissionMode || "allowAll",
       status: scheduleAt ? "scheduled" : saveAsDraft ? "draft" : "queued",
     },
-    enableThreadChatCreation,
+    enableThreadChatCreation: true,
   });
 
   const enrollmentAllowedForThread = isSdlcLoopEnrollmentAllowedForThread({
@@ -255,7 +247,7 @@ export async function createNewThread({
       waitUntil(
         ensureThreadScopedSdlcEnrollment().catch((error) => {
           console.warn(
-            "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+            "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
             {
               userId,
               threadId,
@@ -292,7 +284,7 @@ export async function createNewThread({
         });
       } catch (error) {
         console.warn(
-          "[createNewThread] failed to ensure SDLC loop enrollment for opted-in thread",
+          "[createNewThread] failed to ensure Delivery Loop enrollment for opted-in thread",
           {
             userId,
             threadId,
@@ -365,7 +357,7 @@ export async function createNewThread({
       waitUntil(
         ensureThreadScopedSdlcEnrollment().catch((error) => {
           console.warn(
-            "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+            "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
             {
               userId,
               threadId,
@@ -416,7 +408,7 @@ export async function createNewThread({
       await ensureThreadScopedSdlcEnrollment();
     } catch (error) {
       console.warn(
-        "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+        "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
         {
           userId,
           threadId,

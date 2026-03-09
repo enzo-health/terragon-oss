@@ -22,13 +22,13 @@ import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/sdlc-loop/enrollment";
-import { buildSdlcCanonicalCause } from "@terragon/shared/model/sdlc-loop";
+} from "@/server-lib/delivery-loop/enrollment";
+import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
 import {
   SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
   runBestEffortSdlcSignalInboxTick,
-} from "@/server-lib/sdlc-loop/signal-inbox";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
+} from "@/server-lib/delivery-loop/signal-inbox";
+import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 
 export type FeedbackRoutingMode =
   | "reused_existing"

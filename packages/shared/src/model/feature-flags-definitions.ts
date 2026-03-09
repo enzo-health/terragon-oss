@@ -90,12 +90,6 @@ export const featureFlagsDefinitions = {
     description:
       "Batches concurrent GitHub @-mentions within a 1-minute window to prevent creating multiple sandboxes when users submit code reviews with many mentions.",
   },
-  enableThreadChatCreation: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Enables the creation of thread chats data model vs regular threads.",
-  },
   opencodeGemini3ProModelOption: {
     defaultValue: false,
     enabledForPreview: false,
@@ -139,7 +133,7 @@ export const featureFlagsDefinitions = {
     defaultValue: false,
     enabledForPreview: false,
     description:
-      "Routes GitHub webhook feedback for enrolled PR loops to the SDLC coordinator instead of direct follow-up queueing.",
+      "Routes GitHub webhook feedback for enrolled PR loops to the Delivery Loop coordinator instead of direct follow-up queueing.",
   },
   sandboxAgentAcpTransport: {
     defaultValue: false,
@@ -157,7 +151,7 @@ export const featureFlagsDefinitions = {
     defaultValue: false,
     enabledForPreview: false,
     description:
-      "Renders SDLC plans from agent output in a structured review card in chat and stepper views.",
+      "Renders Delivery Loop plans from agent output in a structured review card in chat and stepper views.",
   },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 

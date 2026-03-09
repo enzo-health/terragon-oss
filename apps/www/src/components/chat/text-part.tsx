@@ -8,8 +8,8 @@ import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { parsePlanSpecViewModelFromText } from "@/lib/sdlc-plan-view-model";
-import { SdlcPlanReviewCard } from "@/components/patterns/sdlc-plan-review-card";
+import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
 
 interface TextPartProps {
   text: string;
@@ -362,7 +362,7 @@ const TextPart = memo(function TextPart({
   return (
     <div>
       {parsedPlan ? (
-        <SdlcPlanReviewCard plan={parsedPlan} className="mb-2" />
+        <DeliveryLoopPlanReviewCard plan={parsedPlan} className="mb-2" />
       ) : null}
       <div className="prose prose-sm max-w-none" ref={containerRef}>
         <Streamdown

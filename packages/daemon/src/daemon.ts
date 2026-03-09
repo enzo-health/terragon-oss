@@ -228,7 +228,7 @@ type ActiveProcessState = {
   threadId: string;
   threadChatId: string;
   token: string;
-  processId: number | null;
+  processId: number | undefined;
   sessionId: string | null;
   startTime: number;
   stderr: string[];
@@ -750,7 +750,7 @@ export class TerragonDaemon {
     // Create new process state for this threadChatId
     const runId = input.runId ?? randomUUID();
     const newProcessState: ActiveProcessState = {
-      processId: null,
+      processId: undefined,
       agent: input.agent,
       sessionId: null,
       startTime: Date.now(),
@@ -2817,10 +2817,20 @@ export class TerragonDaemon {
           },
         },
       );
-      this.runtime.logger.info("Spawned agent process", {
-        agentName,
-        processId,
-      });
+      if (!processId) {
+        this.runtime.logger.error("Spawn failed: child process has no pid", {
+          agentName,
+          threadChatId: input.threadChatId,
+        });
+        // The child "error" event will fire and trigger handleProcessClose,
+        // which will report the failure to the server. No early return here
+        // so that the onClose callback path handles cleanup consistently.
+      } else {
+        this.runtime.logger.info("Spawned agent process", {
+          agentName,
+          processId,
+        });
+      }
       if (processId) {
         spawnedProcessId = processId;
         this.updateActiveProcessState(input.threadChatId, {
@@ -3523,19 +3533,40 @@ export class TerragonDaemon {
           threadChatId: payload.threadChatId,
           runId: payload.runId,
         };
-        this.runtime.logger.info("SDLC self-dispatch: starting follow-up run", {
-          threadId: payload.threadId,
-          threadChatId: payload.threadChatId,
-          runId: payload.runId,
-        });
-        this.runCommand(syntheticInput).catch((error) => {
-          this.runtime.logger.error("SDLC self-dispatch failed", {
+        this.runtime.logger.info(
+          "Delivery Loop self-dispatch: starting follow-up run",
+          {
+            threadId: payload.threadId,
+            threadChatId: payload.threadChatId,
+            runId: payload.runId,
+          },
+        );
+        this.runCommand(syntheticInput).catch(async (error) => {
+          this.runtime.logger.error("Delivery Loop self-dispatch failed", {
             error: formatError(error),
+            runId: payload.runId,
+            threadChatId: payload.threadChatId,
           });
+          this.addMessageToBuffer({
+            agent: payload.agent,
+            message: {
+              type: "custom-error",
+              session_id: null,
+              duration_ms: 0,
+              error_info:
+                error instanceof Error
+                  ? `Delivery Loop self-dispatch failed: ${error.message}`
+                  : "Delivery Loop self-dispatch failed",
+            },
+            threadId: payload.threadId,
+            threadChatId: payload.threadChatId,
+            token: payload.token,
+          });
+          await this.flushMessageBuffer();
         });
       } else {
         this.runtime.logger.warn(
-          "SDLC self-dispatch skipped: active process exists",
+          "Delivery Loop self-dispatch skipped: active process exists",
           { threadChatId: originalThreadChatId },
         );
       }

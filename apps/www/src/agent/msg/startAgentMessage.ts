@@ -51,7 +51,7 @@ import {
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
   getActiveSdlcLoopForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/sdlc-loop/enrollment";
+} from "@/server-lib/delivery-loop/enrollment";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
   getThreadContextMessageToGenerate,
@@ -60,9 +60,9 @@ import {
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { randomUUID } from "node:crypto";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { redis } from "@/lib/redis";
 import { env } from "@terragon/env/apps-www";
+import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
 
 const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
@@ -552,7 +552,7 @@ export async function startAgentMessage({
               });
             } catch (error) {
               console.warn(
-                "[startAgentMessage] failed to self-heal SDLC loop enrollment",
+                "[startAgentMessage] failed to self-heal Delivery Loop enrollment",
                 {
                   userId,
                   threadId,
@@ -565,22 +565,21 @@ export async function startAgentMessage({
           if (sdlcEligibleForThread && !activeSdlcLoop) {
             throw new ThreadError(
               "unknown-error",
-              "SDLC loop enrollment missing for eligible thread",
+              "Delivery Loop enrollment missing for eligible thread",
               null,
             );
           }
-          const sdlcPhasePrefix = buildSdlcPhasePromptPrefix(
-            activeSdlcLoop?.state ?? null,
-          );
+          const deliveryLoopPhasePromptPrefix =
+            buildDeliveryLoopPhasePromptPrefix(activeSdlcLoop?.state ?? null);
 
           const sanitizedPrompt = finalPrompt.replace(
             /(?:^|\s)\/compact(?=\s|$)/g,
             "",
           );
           const finalFinalPrompt =
-            sdlcPhasePrefix === null
+            deliveryLoopPhasePromptPrefix === null
               ? sanitizedPrompt
-              : `${sdlcPhasePrefix}\n\n${sanitizedPrompt}`;
+              : `${deliveryLoopPhasePromptPrefix}\n\n${sanitizedPrompt}`;
 
           if (!finalFinalPrompt.trim()) {
             throw new ThreadError("no-user-message", "", null);
@@ -597,58 +596,45 @@ export async function startAgentMessage({
             db,
             userId,
           });
-          const supportsAcp =
-            threadChat.agent === "claudeCode" ||
-            threadChat.agent === "codex" ||
-            threadChat.agent === "amp" ||
-            threadChat.agent === "opencode";
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
           const effectivePermissionMode = activeSdlcLoop
             ? "allowAll"
             : rawPermissionMode;
-          const transportEligible =
-            effectivePermissionMode !== "plan" &&
-            threadChatId !== LEGACY_THREAD_CHAT_ID;
-          const shouldUseCodexAppServerTransport =
-            transportEligible &&
-            threadChat.agent === "codex" &&
-            featureFlags.codexAppServerTransport;
-          const shouldUseAcpTransport =
-            transportEligible &&
-            featureFlags.sandboxAgentAcpTransport &&
-            supportsAcp;
-          const transportMode = shouldUseCodexAppServerTransport
-            ? ("codex-app-server" as const)
-            : shouldUseAcpTransport
-              ? ("acp" as const)
-              : ("legacy" as const);
-          if (transportMode !== "codex-app-server") {
-            if (codexPreviousResponseId !== null) {
-              await updateThreadChat({
-                db,
-                userId,
-                threadId,
-                threadChatId,
-                updates: {
-                  codexPreviousResponseId: null,
-                },
-              });
-            }
-            codexPreviousResponseId = null;
+          const implementationDispatch = resolveImplementationRuntimeAdapter(
+            threadChat.agent,
+          ).createDispatch({
+            agent: threadChat.agent,
+            agentVersion: threadChat.agentVersion,
+            normalizedModel: normalizedModelForDaemon(model),
+            prompt: finalFinalPrompt,
+            permissionMode: effectivePermissionMode,
+            runId,
+            sessionId,
+            codexPreviousResponseId,
+            shouldUseCredits,
+            threadChatId,
+            featureFlags: {
+              sandboxAgentAcpTransport: featureFlags.sandboxAgentAcpTransport,
+              codexAppServerTransport: featureFlags.codexAppServerTransport,
+            },
+          });
+          if (
+            implementationDispatch.codexPreviousResponseId !==
+            codexPreviousResponseId
+          ) {
+            await updateThreadChat({
+              db,
+              userId,
+              threadId,
+              threadChatId,
+              updates: {
+                codexPreviousResponseId:
+                  implementationDispatch.codexPreviousResponseId,
+              },
+            });
+            codexPreviousResponseId =
+              implementationDispatch.codexPreviousResponseId;
           }
-          // Each ACP turn bootstraps a new server (new runId → new acpServerId).
-          // The previous session is bound to the old server and invalid here.
-          // The "booting" status check (line 412) normally handles this, but
-          // this guard covers edge cases where status isn't "booting".
-          if (transportMode === "acp") {
-            sessionId = null;
-            codexPreviousResponseId = null;
-          }
-          const protocolVersion = transportMode === "acp" ? 2 : 1;
-          const acpServerId =
-            transportMode === "acp" ? `terragon-${runId}` : null;
-          const acpSessionId =
-            transportMode === "acp" ? (sessionId ?? null) : null;
 
           await upsertAgentRunContext({
             db,
@@ -657,11 +643,11 @@ export async function startAgentMessage({
             threadId,
             threadChatId,
             sandboxId: session.sandboxId,
-            transportMode,
-            protocolVersion,
+            transportMode: implementationDispatch.transportMode,
+            protocolVersion: implementationDispatch.protocolVersion,
             agent: threadChat.agent,
             permissionMode: effectivePermissionMode,
-            requestedSessionId: sessionId ?? null,
+            requestedSessionId: implementationDispatch.requestedSessionId,
             resolvedSessionId: null,
             status: "pending",
             tokenNonce,
@@ -669,26 +655,7 @@ export async function startAgentMessage({
           });
 
           await sendDaemonMessage({
-            message: {
-              type: "claude",
-              model: normalizedModelForDaemon(model),
-              agent: threadChat.agent,
-              agentVersion: threadChat.agentVersion,
-              prompt: finalFinalPrompt,
-              sessionId,
-              codexPreviousResponseId,
-              permissionMode: effectivePermissionMode,
-              runId,
-              transportMode,
-              protocolVersion,
-              ...(transportMode === "acp"
-                ? {
-                    acpServerId,
-                    acpSessionId,
-                  }
-                : {}),
-              ...(shouldUseCredits ? { useCredits: true } : {}),
-            },
+            message: implementationDispatch.message,
             userId,
             threadId,
             threadChatId,
@@ -697,8 +664,8 @@ export async function startAgentMessage({
             runContext: {
               runId,
               tokenNonce,
-              transportMode,
-              protocolVersion,
+              transportMode: implementationDispatch.transportMode,
+              protocolVersion: implementationDispatch.protocolVersion,
               agent: threadChat.agent,
             },
           });
@@ -779,7 +746,7 @@ async function preparePromptForModel({
   return { prompt };
 }
 
-function buildSdlcPhasePromptPrefix(
+function buildDeliveryLoopPhasePromptPrefix(
   state: SdlcLoopState | null,
 ): string | null {
   if (!state) {
@@ -789,7 +756,7 @@ function buildSdlcPhasePromptPrefix(
   switch (state) {
     case "planning":
       return [
-        "SDLC phase: planning. Generate an implementation plan only.",
+        "Delivery Loop phase: planning. Generate an implementation plan only.",
         "Output your plan as a JSON code block. Example:",
         "",
         "```json",
@@ -805,7 +772,7 @@ function buildSdlcPhasePromptPrefix(
       ].join("\n");
     case "implementing":
       return [
-        "SDLC phase: implementing.",
+        "Delivery Loop phase: implementing.",
         "Implement the approved plan with concrete code changes.",
         "Mark completed tasks with evidence and signal completion:",
         "",
@@ -830,33 +797,35 @@ function buildSdlcPhasePromptPrefix(
         "Only set phaseComplete: true when ALL planned tasks are implemented.",
         "Do not skip directly to PR babysitting in this phase.",
       ].join("\n");
-    case "reviewing":
+    case "review_gate":
       return [
-        "SDLC phase: reviewing.",
+        "Delivery Loop phase: review_gate.",
         "Perform deep bug review and architecture review until there are zero blocking findings.",
         "If findings exist, fix them before proceeding.",
       ].join(" ");
-    case "ui_testing":
+    case "ci_gate":
       return [
-        "SDLC phase: ui_testing.",
+        "Delivery Loop phase: ci_gate.",
+        "Run lint, typecheck, and tests. Fix any failures before proceeding.",
+      ].join(" ");
+    case "ui_gate":
+      return [
+        "Delivery Loop phase: ui_gate.",
         "Run browser smoke tests against the changed UI paths and fix any blocking issues.",
       ].join(" ");
-    case "pr_babysitting":
+    case "awaiting_pr_link":
       return [
-        "SDLC phase: pr_babysitting.",
+        "Delivery Loop phase: awaiting_pr_link.",
+        "Create or link a pull request, then signal phaseComplete: true.",
+      ].join(" ");
+    case "babysitting":
+      return [
+        "Delivery Loop phase: babysitting.",
         "Focus on CI and review feedback resolution until required CI passes and blockers are zero.",
       ].join(" ");
-    case "blocked_on_agent_fixes":
-    case "blocked_on_ci":
-    case "blocked_on_review_threads":
+    case "blocked":
       return [
-        `SDLC phase: ${state}.`,
-        "Resolve blockers before advancing.",
-        "When fixes are complete, signal with phaseComplete: true in your task update JSON.",
-      ].join(" ");
-    case "blocked_on_human_feedback":
-      return [
-        "SDLC phase: blocked_on_human_feedback.",
+        "Delivery Loop phase: blocked.",
         "Wait for explicit human feedback before making additional loop progression decisions.",
         "Use explicit human-triggered controls to resume or bypass.",
       ].join(" ");
@@ -864,7 +833,7 @@ function buildSdlcPhasePromptPrefix(
     case "stopped":
     case "terminated_pr_closed":
     case "terminated_pr_merged":
-      return `SDLC phase: ${state}. Avoid new SDLC actions unless explicitly requested.`;
+      return `Delivery Loop phase: ${state}. Avoid new Delivery Loop actions unless explicitly requested.`;
     default:
       return null;
   }

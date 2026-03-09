@@ -8,9 +8,9 @@ import {
   classifySdlcVideoCaptureFailure,
   persistSdlcVideoCaptureOutcome,
   transitionSdlcLoopState,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 
-vi.mock("@terragon/shared/model/sdlc-loop", () => ({
+vi.mock("@terragon/shared/model/delivery-loop", () => ({
   classifySdlcVideoCaptureFailure: vi.fn(),
   persistSdlcVideoCaptureOutcome: vi.fn(),
   transitionSdlcLoopState: vi.fn(),

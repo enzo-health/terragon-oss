@@ -5,7 +5,7 @@ import { createTestUser } from "@terragon/shared/model/test-helpers";
 import { User, DBUserMessage } from "@terragon/shared";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
 import { getThread } from "@terragon/shared/model/threads";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {

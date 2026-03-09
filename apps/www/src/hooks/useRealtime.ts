@@ -96,6 +96,7 @@ function useRealtimeBase({
   onMessage,
   debounceMs,
   disconnectOnDismount,
+  trackReadyState = false,
 }: {
   party: string;
   channel: string;
@@ -103,6 +104,7 @@ function useRealtimeBase({
   matches: (message: BroadcastMessage) => boolean;
   onMessage: (message: BroadcastMessage) => void;
   disconnectOnDismount: boolean;
+  trackReadyState?: boolean;
 }) {
   const authToken = useAtomValue(bearerTokenAtom);
   const [socketReadyState, setSocketReadyState] = useState<number>(
@@ -139,6 +141,9 @@ function useRealtimeBase({
 
   useEffect(() => {
     if (!socket) return;
+    if (!trackReadyState) {
+      return;
+    }
     const onReadyStateChange = () => {
       setSocketReadyState(socket.readyState);
     };
@@ -160,7 +165,7 @@ function useRealtimeBase({
       window.removeEventListener("online", handleOnline);
       socket.removeEventListener("message", onMessageWrapper);
     };
-  }, [socket, onMessageWrapper]);
+  }, [socket, onMessageWrapper, trackReadyState]);
 
   const sendMessage = useCallback(
     (message: BroadcastClientMessage) => {
@@ -170,7 +175,9 @@ function useRealtimeBase({
   );
   return {
     sendMessage,
-    socketReadyState,
+    socketReadyState: trackReadyState
+      ? socketReadyState
+      : (socket?.readyState ?? WebSocket.CLOSED),
   };
 }
 
@@ -282,5 +289,6 @@ export function useRealtimeSandbox({
       }
     },
     disconnectOnDismount: true,
+    trackReadyState: true,
   });
 }

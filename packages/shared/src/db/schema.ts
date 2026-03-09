@@ -72,6 +72,9 @@ import {
   SdlcReviewThreadGateStatus,
   SdlcVideoCaptureStatus,
   SdlcVideoFailureClass,
+  DispatchIntentStatus,
+  DispatchIntentExecutionClass,
+  DispatchIntentDispatchMechanism,
 } from "./types";
 import {
   AutomationAction,
@@ -2035,3 +2038,54 @@ export const linearWebhookDeliveries = pgTable("linear_webhook_deliveries", {
   threadId: text("thread_id"), // set once thread is created
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
+
+export const deliveryLoopDispatchIntent = pgTable(
+  "delivery_loop_dispatch_intent",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id")
+      .notNull()
+      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id").notNull(),
+    runId: text("run_id").notNull(),
+    targetPhase: text("target_phase").$type<SdlcLoopState>().notNull(),
+    selectedAgent: text("selected_agent").notNull(),
+    executionClass: text("execution_class")
+      .$type<DispatchIntentExecutionClass>()
+      .notNull(),
+    dispatchMechanism: text("dispatch_mechanism")
+      .$type<DispatchIntentDispatchMechanism>()
+      .notNull(),
+    status: text("status")
+      .$type<DispatchIntentStatus>()
+      .notNull()
+      .default("pending"),
+    retryCount: integer("retry_count").notNull().default(0),
+    failureCategory: text("failure_category"),
+    failureMessage: text("failure_message"),
+    dispatchedAt: timestamp("dispatched_at", { mode: "date" }),
+    acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
+    completedAt: timestamp("completed_at", { mode: "date" }),
+    failedAt: timestamp("failed_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("delivery_loop_dispatch_intent_run_id_unique").on(table.runId),
+    index("delivery_loop_dispatch_intent_loop_status_index").on(
+      table.loopId,
+      table.status,
+    ),
+    index("delivery_loop_dispatch_intent_thread_chat_index").on(
+      table.threadChatId,
+    ),
+  ],
+);

@@ -71,7 +71,7 @@ describe("runStructuredCodexGateInSandbox", () => {
 
     expect(result).toEqual({ gatePassed: true });
     expect(writeTextFile).toHaveBeenCalledWith(
-      "/tmp/sdlc-deep-review-prompt-00000000-0000-0000-0000-000000000001.txt",
+      "/tmp/dl-deep-review-prompt-00000000-0000-0000-0000-000000000001.txt",
       "gate prompt",
     );
     const firstCommand = runCommand.mock.calls[0]?.[0] ?? "";

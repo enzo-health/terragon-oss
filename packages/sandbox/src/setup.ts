@@ -368,15 +368,17 @@ export async function setupSandboxEveryTime({
       }),
     );
   }
-  if (!isCreatingSandbox && !options.fastResume) {
-    parallelOps.push(
-      options.autoUpdateDaemon
-        ? (async () => {
-            await updateDaemonIfOutdated({ session, options });
-            await restartDaemonIfNotRunning({ session, options });
-          })()
-        : restartDaemonIfNotRunning({ session, options }),
-    );
+  if (!isCreatingSandbox) {
+    if (options.autoUpdateDaemon && !options.fastResume) {
+      parallelOps.push(
+        (async () => {
+          await updateDaemonIfOutdated({ session, options });
+          await restartDaemonIfNotRunning({ session, options });
+        })(),
+      );
+    } else {
+      parallelOps.push(restartDaemonIfNotRunning({ session, options }));
+    }
   }
 
   await Promise.all(parallelOps);

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { DaemonMessage } from "@terragon/daemon/shared";
+import { ThreadErrorType } from "@terragon/shared";
 import { ISandboxSession } from "@terragon/sandbox/types";
 import { sendMessage } from "@terragon/sandbox/daemon";
 import { setActiveThreadChat } from "./sandbox-resource";
@@ -9,6 +10,7 @@ import { db } from "@/lib/db";
 import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { AIAgent } from "@terragon/agent/types";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends any
   ? Omit<T, K>
@@ -67,6 +69,97 @@ function isInfrastructureError(error: unknown): boolean {
   );
 }
 
+function classifyDaemonError(
+  msg: string,
+  error: unknown,
+): {
+  errorType: ThreadErrorType;
+  failureCategory: DeliveryLoopFailureCategory;
+} {
+  if (isInfrastructureError(error)) {
+    return { errorType: "unknown-error", failureCategory: "config_error" };
+  }
+  const lower = msg.toLowerCase();
+
+  // Daemon process unreachable (socket gone, connection refused, ping failed)
+  if (
+    /unix socket|econnrefused|enoent.*socket|no such file|connect failed/i.test(
+      msg,
+    ) ||
+    /daemon.*not running|daemon.*dead|ping.*fail/i.test(msg)
+  ) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "daemon_unreachable",
+    };
+  }
+
+  // Daemon spawn/start failure
+  if (/spawn|fork|exec|eacces|enoent.*daemon|cannot find module/i.test(msg)) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "daemon_spawn_failed",
+    };
+  }
+
+  // Dispatch acknowledgement timeout
+  if (/timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(msg)) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "dispatch_ack_timeout",
+    };
+  }
+
+  // Codex app-server exited
+  if (/codex.*app.?server.*exit|app.?server.*crash/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "codex_app_server_exit",
+    };
+  }
+
+  // Codex turn/subagent failures
+  if (/codex.*subagent|subagent.*fail/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "codex_subagent_failed",
+    };
+  }
+  if (/codex.*turn.*fail|codex.*error/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "codex_turn_failed",
+    };
+  }
+
+  // Claude runtime exit / dispatch failure
+  if (/claude.*exit|claude.*crash|claude.*runtime/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "claude_runtime_exit",
+    };
+  }
+  if (/claude.*dispatch|dispatch.*fail/i.test(msg)) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "claude_dispatch_failed",
+    };
+  }
+
+  // Gate failures
+  if (/gate.*fail|gate.*block/i.test(msg)) {
+    return { errorType: "agent-generic-error", failureCategory: "gate_failed" };
+  }
+
+  // Generic daemon-related errors (message includes "daemon" but didn't match above)
+  if (lower.includes("daemon") || lower.includes("write message")) {
+    return { errorType: "agent-generic-error", failureCategory: "unknown" };
+  }
+
+  // Fallback
+  return { errorType: "agent-not-responding", failureCategory: "unknown" };
+}
+
 export async function sendDaemonMessage({
   message,
   userId,
@@ -77,7 +170,12 @@ export async function sendDaemonMessage({
   runContext,
 }: SendDaemonMessageArgs) {
   try {
-    await setActiveThreadChat({ sandboxId, threadChatId, isActive: true });
+    await setActiveThreadChat({
+      sandboxId,
+      threadChatId,
+      isActive: true,
+      runId: runContext?.runId ?? null,
+    });
 
     let finalMessage: DaemonMessage;
 
@@ -144,9 +242,12 @@ export async function sendDaemonMessage({
         });
       }
     }
-    const errorType = isInfrastructureError(error)
-      ? "unknown-error"
-      : "agent-not-responding";
-    throw wrapError(errorType, error);
+    const errorMessage =
+      error instanceof Error ? error.message : String(error ?? "");
+    const { errorType, failureCategory } = classifyDaemonError(
+      errorMessage,
+      error,
+    );
+    throw wrapError(errorType, error, failureCategory);
   }
 }

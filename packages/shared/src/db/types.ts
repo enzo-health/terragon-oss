@@ -77,6 +77,10 @@ export type AgentProviderCredentials =
   typeof schema.agentProviderCredentials.$inferSelect;
 export type AgentProviderCredentialsInsert =
   typeof schema.agentProviderCredentials.$inferInsert;
+export type DeliveryLoopDispatchIntentRow =
+  typeof schema.deliveryLoopDispatchIntent.$inferSelect;
+export type DeliveryLoopDispatchIntentInsert =
+  typeof schema.deliveryLoopDispatchIntent.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;
@@ -543,19 +547,12 @@ export type AgentProviderMetadata =
 export type SdlcLoopState =
   | "planning"
   | "implementing"
-  | "reviewing"
-  | "ui_testing"
-  | "pr_babysitting"
-  // Legacy states kept for compatibility during migration.
-  | "enrolled"
-  | "gates_running"
-  | "video_pending"
-  | "human_review_ready"
-  | "video_degraded_ready"
-  | "blocked_on_agent_fixes"
-  | "blocked_on_ci"
-  | "blocked_on_review_threads"
-  | "blocked_on_human_feedback"
+  | "review_gate"
+  | "ci_gate"
+  | "ui_gate"
+  | "awaiting_pr_link"
+  | "babysitting"
+  | "blocked"
   | "terminated_pr_closed"
   | "terminated_pr_merged"
   | "done"
@@ -564,10 +561,11 @@ export type SdlcLoopState =
 export type SdlcPhase =
   | "planning"
   | "implementing"
-  | "reviewing"
-  | "ui_testing"
-  | "pr_linking"
-  | "pr_babysitting";
+  | "review_gate"
+  | "ci_gate"
+  | "ui_gate"
+  | "awaiting_pr_link"
+  | "babysitting";
 
 export type SdlcArtifactType =
   | "plan_spec"
@@ -729,3 +727,18 @@ export type SdlcVideoCaptureStatus = "not_started" | "captured" | "failed";
 export type SdlcVideoFailureClass = "auth" | "quota" | "script" | "infra";
 
 export type SdlcParityTargetClass = "coordinator";
+
+export type DispatchIntentStatus =
+  | "pending"
+  | "dispatched"
+  | "acknowledged"
+  | "failed"
+  | "completed";
+
+export type DispatchIntentExecutionClass =
+  | "implementation_runtime"
+  | "gate_runtime";
+
+export type DispatchIntentDispatchMechanism =
+  | "self_dispatch"
+  | "queue_fallback";

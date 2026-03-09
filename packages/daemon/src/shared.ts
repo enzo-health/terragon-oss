@@ -11,7 +11,10 @@ export const DAEMON_VERSION = "1";
 export const DAEMON_EVENT_VERSION_HEADER = "X-Daemon-Version";
 export const DAEMON_EVENT_CAPABILITIES_HEADER = "X-Daemon-Capabilities";
 export const DAEMON_CAPABILITY_EVENT_ENVELOPE_V2 = "daemon_event_envelope_v2";
+/** @deprecated Use DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH */
 export const DAEMON_CAPABILITY_SDLC_SELF_DISPATCH = "sdlc_self_dispatch";
+export const DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH =
+  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH;
 
 // TODO sawyer: we don't want to depend on shared so mirror the ones we need here.
 export type FeatureFlags = {
@@ -205,7 +208,7 @@ export type ClaudeMessage =
       }[];
     };
 
-export type SdlcSelfDispatchPayload = {
+export type DeliveryLoopSelfDispatchPayload = {
   token: string;
   prompt: string;
   runId: string;
@@ -221,6 +224,9 @@ export type SdlcSelfDispatchPayload = {
   threadId: string;
   threadChatId: string;
 };
+
+/** @deprecated Use DeliveryLoopSelfDispatchPayload */
+export type SdlcSelfDispatchPayload = DeliveryLoopSelfDispatchPayload;
 
 export type DaemonEventAPIBody = {
   threadId: string;

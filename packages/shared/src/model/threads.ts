@@ -768,7 +768,7 @@ export async function createThread({
   userId,
   threadValues,
   initialChatValues,
-  enableThreadChatCreation,
+  enableThreadChatCreation = true,
 }: {
   db: DB;
   userId: string;

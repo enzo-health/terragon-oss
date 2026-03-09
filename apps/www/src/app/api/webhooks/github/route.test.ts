@@ -14,7 +14,7 @@ import {
 import {
   getActiveSdlcLoopsForGithubPR,
   transitionActiveSdlcLoopsForGithubPREvent,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import * as schema from "@terragon/shared/db/schema";
 import { eq } from "drizzle-orm";
 import { env } from "@terragon/env/apps-www";
@@ -31,10 +31,10 @@ vi.mock("./route-feedback", () => ({
   }),
 }));
 
-vi.mock("@terragon/shared/model/sdlc-loop", async () => {
+vi.mock("@terragon/shared/model/delivery-loop", async () => {
   const actual = await vi.importActual<
-    typeof import("@terragon/shared/model/sdlc-loop")
-  >("@terragon/shared/model/sdlc-loop");
+    typeof import("@terragon/shared/model/delivery-loop")
+  >("@terragon/shared/model/delivery-loop");
   return {
     ...actual,
     getActiveSdlcLoopsForGithubPR: vi.fn(),

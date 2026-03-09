@@ -71,6 +71,38 @@ describe("thread", () => {
       expect(threads[0]!.id).toBe(threadId);
     });
 
+    it("should create a separate thread chat by default", async () => {
+      const { threadId, threadChatId } = await createThread({
+        db,
+        userId: user.id,
+        threadValues: {
+          githubRepoFullName: "terragon/terragon",
+          repoBaseBranchName: "main",
+          sandboxProvider: "e2b",
+        },
+        initialChatValues: {
+          agent: "claudeCode",
+          status: "queued",
+        },
+      });
+
+      expect(threadId).toBeDefined();
+      expect(threadChatId).toBeDefined();
+      expect(threadChatId).not.toBe(LEGACY_THREAD_CHAT_ID);
+
+      const thread = await getThread({ db, threadId, userId: user.id });
+      expect(thread).toBeDefined();
+      expect(thread!.threadChats).toHaveLength(1);
+      expect(thread!.threadChats[0]!.id).toBe(threadChatId);
+      expect(thread!.threadChats[0]!.status).toBe("queued");
+
+      const dbThreadChat = await db.query.threadChat.findFirst({
+        where: eq(schema.threadChat.id, threadChatId),
+      });
+      expect(dbThreadChat).toBeDefined();
+      expect(dbThreadChat!.threadId).toBe(threadId);
+    });
+
     describe("enableThreadChatCreation parameter", () => {
       it("should create legacy thread when enableThreadChatCreation is false", async () => {
         const scheduleAt = new Date();
