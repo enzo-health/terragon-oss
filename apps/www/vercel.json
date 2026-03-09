@@ -27,7 +27,7 @@
     },
     {
       "path": "/api/internal/cron/dispatch-ack-timeout",
-      "schedule": "*/1 * * * *"
+      "schedule": "*/10 * * * *"
     }
   ]
 }
