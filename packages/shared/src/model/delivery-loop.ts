@@ -3136,9 +3136,6 @@ function shouldResetFixAttemptCountOnTransition({
   if (previousState === "ui_gate" && nextState === "babysitting") {
     return true;
   }
-  if (previousState === "blocked" && nextState === "implementing") {
-    return true;
-  }
   return false;
 }
 

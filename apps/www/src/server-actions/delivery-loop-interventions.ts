@@ -51,8 +51,8 @@ function buildBypassFollowUpMessage(): DBUserMessage {
   };
 }
 
-export const requestSdlcResumeFromBlocked = userOnlyAction(
-  async function requestSdlcResumeFromBlocked(
+export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
+  async function requestDeliveryLoopResumeFromBlocked(
     userId: string,
     {
       threadId,
@@ -121,7 +121,7 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
         });
       } catch (error) {
         console.warn(
-          "[sdlc-interventions] failed to enqueue resume follow-up",
+          "[delivery-loop-interventions] failed to enqueue resume follow-up",
           {
             threadId,
             loopId: activeLoop.id,
@@ -134,8 +134,8 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
   { defaultErrorMessage: "Failed to resume Delivery Loop" },
 );
 
-export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
-  async function requestSdlcBypassCurrentGateOnce(
+export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
+  async function requestDeliveryLoopBypassCurrentGateOnce(
     userId: string,
     {
       threadId,
@@ -259,7 +259,7 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
         });
       } catch (error) {
         console.warn(
-          "[sdlc-interventions] failed to enqueue bypass follow-up",
+          "[delivery-loop-interventions] failed to enqueue bypass follow-up",
           {
             threadId,
             loopId: activeLoop.id,
@@ -272,10 +272,9 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
   { defaultErrorMessage: "Failed to bypass delivery loop gate" },
 );
 
-// Delivery Loop aliases
 /** @deprecated Use requestDeliveryLoopResumeFromBlocked */
-export const requestDeliveryLoopResumeFromBlocked =
-  requestSdlcResumeFromBlocked;
+export const requestSdlcResumeFromBlocked =
+  requestDeliveryLoopResumeFromBlocked;
 /** @deprecated Use requestDeliveryLoopBypassCurrentGateOnce */
-export const requestDeliveryLoopBypassCurrentGateOnce =
-  requestSdlcBypassCurrentGateOnce;
+export const requestSdlcBypassCurrentGateOnce =
+  requestDeliveryLoopBypassCurrentGateOnce;

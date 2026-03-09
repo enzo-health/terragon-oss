@@ -60,7 +60,7 @@ import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { usePlatform } from "@/hooks/use-platform";
-import { SdlcTopProgressStepper } from "@/components/patterns/p-stepper-7";
+import { DeliveryLoopTopProgressStepper } from "@/components/patterns/p-stepper-7";
 
 function ChatUI({
   threadId,
@@ -246,7 +246,7 @@ function ChatUI({
           onHeaderClick={platform === "mobile" ? scrollToTop : undefined}
           onTerminalClick={() => setShowTerminal(true)}
         />
-        <SdlcTopProgressStepper
+        <DeliveryLoopTopProgressStepper
           threadId={threadId}
           threadChatId={threadChatId ?? null}
           enabled={shouldShowSdlcLoopStatus}

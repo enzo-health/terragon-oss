@@ -255,7 +255,7 @@ export async function createNewThread({
       waitUntil(
         ensureThreadScopedSdlcEnrollment().catch((error) => {
           console.warn(
-            "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+            "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
             {
               userId,
               threadId,
@@ -292,7 +292,7 @@ export async function createNewThread({
         });
       } catch (error) {
         console.warn(
-          "[createNewThread] failed to ensure SDLC loop enrollment for opted-in thread",
+          "[createNewThread] failed to ensure Delivery Loop enrollment for opted-in thread",
           {
             userId,
             threadId,
@@ -365,7 +365,7 @@ export async function createNewThread({
       waitUntil(
         ensureThreadScopedSdlcEnrollment().catch((error) => {
           console.warn(
-            "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+            "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
             {
               userId,
               threadId,
@@ -416,7 +416,7 @@ export async function createNewThread({
       await ensureThreadScopedSdlcEnrollment();
     } catch (error) {
       console.warn(
-        "[createNewThread] failed to ensure thread-scoped SDLC loop enrollment",
+        "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
         {
           userId,
           threadId,

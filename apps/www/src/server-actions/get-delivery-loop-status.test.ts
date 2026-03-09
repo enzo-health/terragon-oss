@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { unwrapResult } from "@/lib/server-actions";
-import { getSdlcLoopStatusAction } from "./get-sdlc-loop-status";
+import { getDeliveryLoopStatusAction } from "./get-delivery-loop-status";
 import {
   createTestThread,
   createTestUser,
@@ -17,11 +17,11 @@ import {
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
-async function getSdlcLoopStatus(threadId: string) {
-  return unwrapResult(await getSdlcLoopStatusAction(threadId));
+async function getDeliveryLoopStatus(threadId: string) {
+  return unwrapResult(await getDeliveryLoopStatusAction(threadId));
 }
 
-describe("getSdlcLoopStatusAction", () => {
+describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
   });
@@ -118,7 +118,7 @@ describe("getSdlcLoopStatusAction", () => {
       },
     });
 
-    const status = await getSdlcLoopStatus(threadId);
+    const status = await getDeliveryLoopStatus(threadId);
     expect(status).not.toBeNull();
     expect(status?.loopId).toBe(loop!.id);
     expect(status?.links.pullRequestUrl).toBeNull();
@@ -148,7 +148,7 @@ describe("getSdlcLoopStatusAction", () => {
     });
     await mockLoggedInUser(session);
 
-    const status = await getSdlcLoopStatus(threadId);
+    const status = await getDeliveryLoopStatus(threadId);
     expect(status).toBeNull();
   });
 
@@ -160,7 +160,9 @@ describe("getSdlcLoopStatusAction", () => {
     });
     await mockLoggedOutUser();
 
-    await expect(getSdlcLoopStatus(threadId)).rejects.toThrow("Unauthorized");
+    await expect(getDeliveryLoopStatus(threadId)).rejects.toThrow(
+      "Unauthorized",
+    );
   });
 
   it("exposes latest planning artifact when active pointer is null", async () => {
@@ -216,7 +218,7 @@ describe("getSdlcLoopStatusAction", () => {
       .set({ activePlanArtifactId: null })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
-    const status = await getSdlcLoopStatus(threadId);
+    const status = await getDeliveryLoopStatus(threadId);
     expect(status?.artifacts.planningArtifact?.id).toBe(planArtifact.id);
 
     const persistedTasks = await db.query.sdlcPlanTask.findMany({

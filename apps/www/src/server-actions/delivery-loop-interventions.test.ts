@@ -10,25 +10,25 @@ import { enrollSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 import {
-  requestSdlcBypassCurrentGateOnce,
-  requestSdlcResumeFromBlocked,
+  requestDeliveryLoopBypassCurrentGateOnce,
+  requestDeliveryLoopResumeFromBlocked,
 } from "./delivery-loop-interventions";
 
 async function resumeFromBlocked(input: {
   threadId: string;
   threadChatId: string | null;
 }) {
-  return unwrapResult(await requestSdlcResumeFromBlocked(input));
+  return unwrapResult(await requestDeliveryLoopResumeFromBlocked(input));
 }
 
 async function bypassOnce(input: {
   threadId: string;
   threadChatId: string | null;
 }) {
-  return unwrapResult(await requestSdlcBypassCurrentGateOnce(input));
+  return unwrapResult(await requestDeliveryLoopBypassCurrentGateOnce(input));
 }
 
-describe("sdlc-interventions", () => {
+describe("delivery-loop-interventions", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
   });

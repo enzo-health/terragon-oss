@@ -248,8 +248,8 @@ function buildNeedsAttention({
   };
 }
 
-export const getSdlcLoopStatusAction = userOnlyAction(
-  async function getSdlcLoopStatusAction(
+export const getDeliveryLoopStatusAction = userOnlyAction(
+  async function getDeliveryLoopStatusAction(
     userId: string,
     threadId: string,
   ): Promise<SdlcLoopStatus | null> {
@@ -569,4 +569,4 @@ export const getSdlcLoopStatusAction = userOnlyAction(
 );
 
 /** @deprecated Use getDeliveryLoopStatusAction */
-export const getDeliveryLoopStatusAction = getSdlcLoopStatusAction;
+export const getSdlcLoopStatusAction = getDeliveryLoopStatusAction;

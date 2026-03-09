@@ -44,7 +44,7 @@ function resolveCodexCliModelSpec(modelName: string): CodexCliModelSpec {
       return { cliModel: "gpt-5.3-codex-spark", reasoningEffort: "high" };
     default:
       throw new Error(
-        `Unsupported SDLC sandbox gate model "${modelName}". Use configured gpt-5.3 codex variants.`,
+        `Unsupported Delivery Loop sandbox gate model "${modelName}". Use configured gpt-5.3 codex variants.`,
       );
   }
 }

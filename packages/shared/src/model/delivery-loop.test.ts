@@ -1419,7 +1419,7 @@ describe("sdlc loop model", () => {
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("gates_running");
+    expect(reloadedLoop?.state).toBe("ci_gate");
     expect(reloadedLoop?.loopVersion).toBe(20);
     expect(reloadedLoop?.currentHeadSha).toBe("sha-current");
   });
@@ -1463,7 +1463,7 @@ describe("sdlc loop model", () => {
     let reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("blocked_on_ci");
+    expect(reloadedLoop?.state).toBe("blocked");
     expect(reloadedLoop?.loopVersion).toBe(5);
 
     const versioned = await transitionSdlcLoopState({
@@ -1663,7 +1663,7 @@ describe("sdlc loop model", () => {
     const reloaded = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloaded?.state).toBe("reviewing");
+    expect(reloaded?.state).toBe("review_gate");
     expect(reloaded?.fixAttemptCount).toBe(0);
   });
 
@@ -2642,7 +2642,7 @@ describe("sdlc loop model", () => {
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("gates_running");
+    expect(reloadedLoop?.state).toBe("ci_gate");
     expect(reloadedLoop?.loopVersion).toBe(30);
     expect(reloadedLoop?.currentHeadSha).toBe("sha-current");
     expect(reloadedLoop?.latestVideoArtifactR2Key).toBeNull();

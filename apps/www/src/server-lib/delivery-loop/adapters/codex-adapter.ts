@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
+import type { DB } from "@terragon/shared/db";
 import type { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
+import {
+  createDispatchIntent,
+  markDispatchIntentDispatched,
+  markDispatchIntentAcknowledged,
+  markDispatchIntentCompleted,
+  markDispatchIntentFailed,
+} from "@terragon/shared/model/delivery-loop";
 import type {
   DeliveryLoopDaemonEvent,
   DeliveryLoopDispatchInput,
@@ -130,9 +138,21 @@ export class CodexImplementationAdapter
   /** Tracks which runIds have received their first daemon event. */
   private acknowledgedRuns = new Set<string>();
 
-  async prepare(input: DeliveryLoopDispatchInput): Promise<PreparedRun> {
+  async prepare(
+    input: DeliveryLoopDispatchInput,
+    db: DB,
+  ): Promise<PreparedRun> {
     const runId = randomUUID();
-    const dispatchIntentId = `di_${input.loopId}_${runId}`;
+    const dispatchIntentId = await createDispatchIntent(db, {
+      loopId: input.loopId,
+      threadId: input.threadId,
+      threadChatId: input.threadChatId,
+      runId,
+      targetPhase: input.targetPhase,
+      selectedAgent: this.agent,
+      executionClass: "implementation_runtime",
+      dispatchMechanism: input.dispatchMechanism,
+    });
     return {
       runId,
       agent: this.agent,
@@ -142,15 +162,15 @@ export class CodexImplementationAdapter
     };
   }
 
-  async dispatch(_prepared: PreparedRun): Promise<void> {
-    // Dispatch is handled by the caller via sendDaemonMessage.
-    // The caller uses the codex-app-server transport mode and tags
-    // the daemon message with prepared.runId.
-    // Dispatch intent persistence will be added in Task #7.
+  async dispatch(prepared: PreparedRun, db: DB): Promise<void> {
+    // Mark the intent as dispatched — daemon message is being sent by the
+    // caller via the codex-app-server transport mode.
+    await markDispatchIntentDispatched(db, prepared.runId);
   }
 
   async onDaemonEvent(
     event: DeliveryLoopDaemonEvent,
+    db: DB,
   ): Promise<NormalizedRunUpdate> {
     const { runId } = event;
     const subAgentInfo = detectSubAgentUsage(event);
@@ -158,6 +178,7 @@ export class CodexImplementationAdapter
     // First event for this runId transitions to "acknowledged".
     if (!this.acknowledgedRuns.has(runId)) {
       this.acknowledgedRuns.add(runId);
+      await markDispatchIntentAcknowledged(db, runId);
       return buildRunUpdate(runId, {
         runStatus: "running",
         dispatchStatus: "acknowledged",
@@ -168,7 +189,18 @@ export class CodexImplementationAdapter
     }
 
     if (event.type === "terminal") {
-      return this.classifyTerminal(event);
+      const update = this.classifyTerminal(event);
+      if (update.runStatus === "completed") {
+        await markDispatchIntentCompleted(db, runId);
+      } else if (update.runStatus === "failed") {
+        await markDispatchIntentFailed(
+          db,
+          runId,
+          update.terminalErrorCategory,
+          update.terminalErrorMessage,
+        );
+      }
+      return update;
     }
 
     // Progress events.

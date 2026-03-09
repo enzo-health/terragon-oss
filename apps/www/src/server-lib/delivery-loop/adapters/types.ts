@@ -1,7 +1,9 @@
+import type { DB } from "@terragon/shared/db";
 import type {
   DeliveryLoopDispatchStatus,
   DeliveryLoopFailureCategory,
   DeliveryLoopSelectedAgent,
+  DeliveryLoopState,
 } from "@terragon/shared/model/delivery-loop";
 
 /**
@@ -58,6 +60,8 @@ export type DeliveryLoopDispatchInput = {
   loopId: string;
   prompt: string;
   model: string;
+  targetPhase: DeliveryLoopState;
+  dispatchMechanism: "self_dispatch" | "queue_fallback";
 };
 
 /**
@@ -88,20 +92,23 @@ export interface ImplementationRuntimeAdapter {
    * persist a dispatch intent, and create credentials.
    * Returns a PreparedRun ready for `dispatch()`.
    */
-  prepare(input: DeliveryLoopDispatchInput): Promise<PreparedRun>;
+  prepare(input: DeliveryLoopDispatchInput, db: DB): Promise<PreparedRun>;
 
   /**
    * Send the daemon message tagged with the runId from `prepare()`.
    * Persists dispatchStatus = "dispatched".
    */
-  dispatch(prepared: PreparedRun): Promise<void>;
+  dispatch(prepared: PreparedRun, db: DB): Promise<void>;
 
   /**
    * Process an inbound daemon event for the given runId.
    * First event for a runId transitions dispatchStatus to "acknowledged".
    * Returns a NormalizedRunUpdate reflecting the current run state.
    */
-  onDaemonEvent(event: DeliveryLoopDaemonEvent): Promise<NormalizedRunUpdate>;
+  onDaemonEvent(
+    event: DeliveryLoopDaemonEvent,
+    db: DB,
+  ): Promise<NormalizedRunUpdate>;
 
   /**
    * Classify a terminal daemon event (error or completion) into a

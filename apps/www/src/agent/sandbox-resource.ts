@@ -8,6 +8,7 @@ import { redis } from "@/lib/redis";
  */
 
 const THREAD_CHATS_PREFIX = "sandbox-active-thread-chats:";
+const THREAD_CHAT_RUNS_PREFIX = "sandbox-active-thread-chat-runs:";
 const TERMINAL_STATUS_PREFIX = "sandbox-terminal-status:";
 const ACTIVE_USERS_PREFIX = "sandbox-active-users:";
 const LAST_ACTIVITY_PREFIX = "sandbox-last-activity:";
@@ -79,15 +80,23 @@ export async function setActiveThreadChat({
   sandboxId,
   threadChatId,
   isActive,
+  runId,
 }: {
   sandboxId: string;
   threadChatId: string;
   isActive: boolean;
+  runId?: string | null;
 }) {
+  const threadChatsKey = `${THREAD_CHATS_PREFIX}${sandboxId}`;
+  const threadChatRunsKey = `${THREAD_CHAT_RUNS_PREFIX}${sandboxId}:${threadChatId}`;
   if (isActive) {
     const pipeline = redis.pipeline();
-    pipeline.sadd(`${THREAD_CHATS_PREFIX}${sandboxId}`, threadChatId);
-    pipeline.expire(`${THREAD_CHATS_PREFIX}${sandboxId}`, 60 * 60 * 24); // 1 day
+    pipeline.sadd(threadChatsKey, threadChatId);
+    pipeline.expire(threadChatsKey, 60 * 60 * 24); // 1 day
+    if (runId) {
+      pipeline.sadd(threadChatRunsKey, runId);
+      pipeline.expire(threadChatRunsKey, 60 * 60 * 24); // 1 day
+    }
     pipeline.set(
       `${LAST_ACTIVITY_PREFIX}${sandboxId}`,
       new Date().toISOString(),
@@ -106,7 +115,25 @@ export async function setActiveThreadChat({
         error,
       );
     }
-    await redis.srem(`${THREAD_CHATS_PREFIX}${sandboxId}`, threadChatId);
+    if (!runId) {
+      await redis.srem(threadChatsKey, threadChatId);
+      return;
+    }
+
+    const pipeline = redis.pipeline();
+    pipeline.srem(threadChatRunsKey, runId);
+    pipeline.scard(threadChatRunsKey);
+    const [, remainingRunCountRaw] = await pipeline.exec();
+    const remainingRunCount =
+      typeof remainingRunCountRaw === "number" ? remainingRunCountRaw : 0;
+    if (remainingRunCount > 0) {
+      return;
+    }
+
+    const cleanupPipeline = redis.pipeline();
+    cleanupPipeline.del(threadChatRunsKey);
+    cleanupPipeline.srem(threadChatsKey, threadChatId);
+    await cleanupPipeline.exec();
   }
 }
 

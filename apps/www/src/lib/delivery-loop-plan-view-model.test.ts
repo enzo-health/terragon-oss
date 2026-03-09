@@ -5,7 +5,7 @@ import {
   parsePlanSpecViewModelFromText,
 } from "./delivery-loop-plan-view-model";
 
-describe("sdlc-plan-view-model", () => {
+describe("delivery-loop-plan-view-model", () => {
   it("extracts proposed_plan block content", () => {
     const input = [
       "intro",
@@ -21,7 +21,7 @@ describe("sdlc-plan-view-model", () => {
   it("parses proposed plan markdown to a review model", () => {
     const input = [
       "<proposed_plan>",
-      "## SDLC Unstick",
+      "## Delivery Loop Unstick",
       "### Summary",
       "Keep strict checks with one-time bypass.",
       "### What We\u2019re Adding",

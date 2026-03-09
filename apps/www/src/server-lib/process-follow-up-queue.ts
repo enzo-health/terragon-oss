@@ -243,11 +243,7 @@ export async function maybeProcessFollowUpQueue({
       );
       return { processed: false, reason: "run_context_mismatch" };
     }
-    if (
-      runContext.status !== "completed" &&
-      runContext.status !== "failed" &&
-      runContext.status !== "stopped"
-    ) {
+    if (runContext.status !== "completed" && runContext.status !== "failed") {
       console.log("Skipping follow-up queue: run not terminal yet", {
         threadId,
         threadChatId,

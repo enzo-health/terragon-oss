@@ -556,7 +556,7 @@ function SdlcInterventionControls({
   );
 }
 
-export function SdlcTopProgressStepper({
+export function DeliveryLoopTopProgressStepper({
   threadId,
   threadChatId,
   enabled,
@@ -773,3 +773,6 @@ export function SdlcTopProgressStepper({
     </div>
   );
 }
+
+/** @deprecated Use DeliveryLoopTopProgressStepper */
+export const SdlcTopProgressStepper = DeliveryLoopTopProgressStepper;

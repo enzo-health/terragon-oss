@@ -265,7 +265,7 @@ describe("sdlc publication", () => {
         payload: {
           repoFullName: "owner/repo",
           prNumber: 9,
-          title: "Terragon SDLC Loop",
+          title: "Terragon Delivery Loop",
           summary: "Gate summary",
           status: "completed",
           conclusion: "success",
@@ -283,7 +283,7 @@ describe("sdlc publication", () => {
       payload: {
         repoFullName: "owner/repo",
         prNumber: 9,
-        title: "Terragon SDLC Loop",
+        title: "Terragon Delivery Loop",
         summary: "Gate summary",
         status: "completed",
         conclusion: "success",
