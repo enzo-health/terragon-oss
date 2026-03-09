@@ -15,10 +15,12 @@ import type {
   NormalizedRunUpdate,
   PreparedRun,
 } from "./types";
+import { buildRunUpdate, classifyDaemonError } from "./shared";
 
 /**
  * Maps raw error messages from Claude Code daemon events into
- * DeliveryLoopFailureCategory values.
+ * DeliveryLoopFailureCategory values. Tries Claude-specific patterns
+ * first, then falls through to shared daemon-level patterns.
  */
 function classifyClaudeTerminalError(
   rawErrorMessage: string | null,
@@ -30,54 +32,16 @@ function classifyClaudeTerminalError(
       : "unknown";
   }
 
-  if (
-    /unix socket|econnrefused|enoent.*socket|no such file|connect failed/i.test(
-      rawErrorMessage,
-    ) ||
-    /daemon.*not running|daemon.*dead|ping.*fail/i.test(rawErrorMessage)
-  ) {
-    return "daemon_unreachable";
-  }
-  if (
-    /spawn|fork|exec|eacces|enoent.*daemon|cannot find module/i.test(
-      rawErrorMessage,
-    )
-  ) {
-    return "daemon_spawn_failed";
-  }
-  if (
-    /timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(rawErrorMessage)
-  ) {
-    return "dispatch_ack_timeout";
-  }
+  // Claude-specific patterns.
   if (/claude.*dispatch|dispatch.*fail/i.test(rawErrorMessage)) {
     return "claude_dispatch_failed";
   }
   if (/claude.*exit|claude.*crash|claude.*runtime/i.test(rawErrorMessage)) {
     return "claude_runtime_exit";
   }
-  return "unknown";
-}
 
-function buildRunUpdate(
-  runId: string,
-  overrides: Partial<NormalizedRunUpdate>,
-): NormalizedRunUpdate {
-  return {
-    runId,
-    runStatus: "pending",
-    dispatchStatus: "prepared",
-    firstEventAt: null,
-    completedAt: null,
-    terminalErrorCategory: null,
-    terminalErrorMessage: null,
-    usedSubAgents: false,
-    subAgentFailureCount: 0,
-    sessionId: null,
-    headShaAtCompletion: null,
-    diagnostics: {},
-    ...overrides,
-  };
+  // Shared daemon-level patterns.
+  return classifyDaemonError(rawErrorMessage, exitCode) ?? "unknown";
 }
 
 /**
@@ -97,9 +61,6 @@ export class ClaudeCodeImplementationAdapter
   implements ImplementationRuntimeAdapter
 {
   readonly agent = "claudeCode" as const;
-
-  /** Tracks which runIds have received their first daemon event. */
-  private acknowledgedRuns = new Set<string>();
 
   async prepare(
     input: DeliveryLoopDispatchInput,
@@ -138,9 +99,10 @@ export class ClaudeCodeImplementationAdapter
     const { runId } = event;
 
     // First event for this runId transitions to "acknowledged".
-    if (!this.acknowledgedRuns.has(runId)) {
-      this.acknowledgedRuns.add(runId);
-      await markDispatchIntentAcknowledged(db, runId);
+    // markDispatchIntentAcknowledged is idempotent (WHERE status = 'dispatched'),
+    // so concurrent serverless invocations are safe.
+    const isFirstEvent = await markDispatchIntentAcknowledged(db, runId);
+    if (isFirstEvent) {
       return buildRunUpdate(runId, {
         runStatus: "running",
         dispatchStatus: "acknowledged",

@@ -4544,18 +4544,33 @@ export async function markDispatchIntentDispatched(
 
 /**
  * Transition a dispatch intent to "acknowledged" — first daemon event received.
+ *
+ * Idempotent: only updates if the current status is "dispatched", so concurrent
+ * serverless invocations cannot double-acknowledge. Returns `true` when this
+ * call performed the transition (i.e. this is the first event), `false` if the
+ * row was already acknowledged or missing.
  */
 export async function markDispatchIntentAcknowledged(
   db: DB,
   runId: string,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(schema.deliveryLoopDispatchIntent)
     .set({
       status: "acknowledged" as DispatchIntentStatus,
       acknowledgedAt: new Date(),
     })
-    .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
+    .where(
+      and(
+        eq(schema.deliveryLoopDispatchIntent.runId, runId),
+        eq(
+          schema.deliveryLoopDispatchIntent.status,
+          "dispatched" as DispatchIntentStatus,
+        ),
+      ),
+    )
+    .returning({ id: schema.deliveryLoopDispatchIntent.id });
+  return rows.length > 0;
 }
 
 /**

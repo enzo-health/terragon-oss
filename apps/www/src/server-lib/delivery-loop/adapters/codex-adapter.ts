@@ -15,16 +15,12 @@ import type {
   NormalizedRunUpdate,
   PreparedRun,
 } from "./types";
+import { buildRunUpdate, classifyDaemonError } from "./shared";
 
 /**
  * Maps raw error messages from Codex daemon events into
- * DeliveryLoopFailureCategory values.
- *
- * Codex-specific patterns cover:
- * - codex-app-server process exit/crash
- * - codex turn failures (API errors, rate limits)
- * - collab_tool_call sub-agent failures
- * - daemon-level errors (shared with Claude adapter)
+ * DeliveryLoopFailureCategory values. Tries Codex-specific patterns
+ * first, then falls through to shared daemon-level patterns.
  */
 function classifyCodexTerminalError(
   rawErrorMessage: string | null,
@@ -51,50 +47,8 @@ function classifyCodexTerminalError(
     return "codex_turn_failed";
   }
 
-  // Daemon-level errors (shared patterns with Claude adapter).
-  if (
-    /unix socket|econnrefused|enoent.*socket|no such file|connect failed/i.test(
-      rawErrorMessage,
-    ) ||
-    /daemon.*not running|daemon.*dead|ping.*fail/i.test(rawErrorMessage)
-  ) {
-    return "daemon_unreachable";
-  }
-  if (
-    /spawn|fork|exec|eacces|enoent.*daemon|cannot find module/i.test(
-      rawErrorMessage,
-    )
-  ) {
-    return "daemon_spawn_failed";
-  }
-  if (
-    /timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(rawErrorMessage)
-  ) {
-    return "dispatch_ack_timeout";
-  }
-
-  return "unknown";
-}
-
-function buildRunUpdate(
-  runId: string,
-  overrides: Partial<NormalizedRunUpdate>,
-): NormalizedRunUpdate {
-  return {
-    runId,
-    runStatus: "pending",
-    dispatchStatus: "prepared",
-    firstEventAt: null,
-    completedAt: null,
-    terminalErrorCategory: null,
-    terminalErrorMessage: null,
-    usedSubAgents: false,
-    subAgentFailureCount: 0,
-    sessionId: null,
-    headShaAtCompletion: null,
-    diagnostics: {},
-    ...overrides,
-  };
+  // Shared daemon-level patterns.
+  return classifyDaemonError(rawErrorMessage, exitCode) ?? "unknown";
 }
 
 /**
@@ -135,9 +89,6 @@ export class CodexImplementationAdapter
 {
   readonly agent = "codex" as const;
 
-  /** Tracks which runIds have received their first daemon event. */
-  private acknowledgedRuns = new Set<string>();
-
   async prepare(
     input: DeliveryLoopDispatchInput,
     db: DB,
@@ -176,9 +127,10 @@ export class CodexImplementationAdapter
     const subAgentInfo = detectSubAgentUsage(event);
 
     // First event for this runId transitions to "acknowledged".
-    if (!this.acknowledgedRuns.has(runId)) {
-      this.acknowledgedRuns.add(runId);
-      await markDispatchIntentAcknowledged(db, runId);
+    // markDispatchIntentAcknowledged is idempotent (WHERE status = 'dispatched'),
+    // so concurrent serverless invocations are safe.
+    const isFirstEvent = await markDispatchIntentAcknowledged(db, runId);
+    if (isFirstEvent) {
       return buildRunUpdate(runId, {
         runStatus: "running",
         dispatchStatus: "acknowledged",
