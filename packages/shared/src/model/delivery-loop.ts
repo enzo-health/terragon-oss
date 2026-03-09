@@ -340,6 +340,42 @@ export type DeliveryLoopFailureCategory =
   | "config_error"
   | "unknown";
 
+/**
+ * Retry action to take for a given failure category.
+ * - rerun_prepare_and_retry: Re-run sandbox preparation (daemon health check)
+ *   then retry the dispatch. Appropriate when the daemon may have died.
+ * - retry_same_intent: Retry the same dispatch without re-preparing.
+ *   Appropriate for transient transport issues.
+ * - retry_if_budget: Retry only if the retry budget hasn't been exhausted.
+ *   Appropriate for runtime crashes that may or may not recur.
+ * - return_to_implementing: The failure indicates the current phase output is
+ *   bad; loop back to implementing to re-attempt.
+ * - blocked: Non-retryable. Surface the error to the user.
+ */
+export type DeliveryLoopRetryAction =
+  | "rerun_prepare_and_retry"
+  | "retry_same_intent"
+  | "retry_if_budget"
+  | "return_to_implementing"
+  | "blocked";
+
+export const DELIVERY_LOOP_FAILURE_ACTION_TABLE: Record<
+  DeliveryLoopFailureCategory,
+  DeliveryLoopRetryAction
+> = {
+  daemon_unreachable: "rerun_prepare_and_retry",
+  daemon_spawn_failed: "rerun_prepare_and_retry",
+  dispatch_ack_timeout: "retry_same_intent",
+  codex_app_server_exit: "retry_if_budget",
+  codex_turn_failed: "retry_if_budget",
+  codex_subagent_failed: "return_to_implementing",
+  claude_runtime_exit: "retry_if_budget",
+  claude_dispatch_failed: "rerun_prepare_and_retry",
+  gate_failed: "return_to_implementing",
+  config_error: "blocked",
+  unknown: "retry_if_budget",
+};
+
 export type SdlcLoopTransitionEvent =
   | "plan_completed"
   | "plan_gate_blocked"
@@ -4421,3 +4457,56 @@ export async function shouldQueueFollowUpForCarmackReview({
   });
   return unresolved.length > 0;
 }
+
+// ────────────────────────────────────────────────────────────────
+// Delivery Loop aliases — new canonical names for Sdlc-prefixed exports
+// Consumers should migrate to these names over time.
+// ────────────────────────────────────────────────────────────────
+
+// Type aliases
+// DeliveryLoopTransitionEvent is now a canonical type defined above.
+export type DeliveryLoopCanonicalCauseInput = SdlcCanonicalCauseInput;
+export type DeliveryLoopCanonicalCause = SdlcCanonicalCause;
+export type DeliveryLoopGuardrailReasonCode = SdlcGuardrailReasonCode;
+export type DeliveryLoopTransitionWithArtifactOutcome =
+  SdlcTransitionWithArtifactOutcome;
+export type DeliveryLoopLeaseAcquireResult = SdlcLoopLeaseAcquireResult;
+export type DeliveryLoopOutboxErrorClass = SdlcOutboxErrorClass;
+export type DeliveryLoopParityBucketStats = SdlcParityBucketStats;
+export type DeliveryLoopGateUpdateOutcome = SdlcGateLoopUpdateOutcome;
+
+// Constant aliases
+export const DELIVERY_LOOP_CAUSE_IDENTITY_VERSION = SDLC_CAUSE_IDENTITY_VERSION;
+
+// Function aliases
+export const isDeliveryLoopTerminalState = isSdlcLoopTerminalState;
+// resolveDeliveryLoopNextState is now a canonical function defined above.
+export const resolveLegacySdlcLoopNextState = resolveSdlcLoopNextState;
+export const getDeliveryLoopOutboxSupersessionGroup =
+  getSdlcOutboxSupersessionGroup;
+export const buildDeliveryLoopCanonicalCause = buildSdlcCanonicalCause;
+export const evaluateDeliveryLoopGuardrails = evaluateSdlcLoopGuardrails;
+export const getActiveDeliveryLoopForGithubPRAndUser =
+  getActiveSdlcLoopForGithubPRAndUser;
+export const getActiveDeliveryLoopsForGithubPR = getActiveSdlcLoopsForGithubPR;
+export const getPreferredActiveDeliveryLoopForGithubPRAndUser =
+  getPreferredActiveSdlcLoopForGithubPRAndUser;
+export const getActiveDeliveryLoopForGithubPR = getActiveSdlcLoopForGithubPR;
+export const transitionActiveDeliveryLoopsForGithubPREvent =
+  transitionActiveSdlcLoopsForGithubPREvent;
+export const enrollDeliveryLoopForGithubPR = enrollSdlcLoopForGithubPR;
+export const enrollDeliveryLoopForThread = enrollSdlcLoopForThread;
+export const linkDeliveryLoopToGithubPRForThread =
+  linkSdlcLoopToGithubPRForThread;
+export const getActiveDeliveryLoopForThread = getActiveSdlcLoopForThread;
+export const transitionDeliveryLoopStateWithArtifact =
+  transitionSdlcLoopStateWithArtifact;
+export const acquireDeliveryLoopLease = acquireSdlcLoopLease;
+export const releaseDeliveryLoopLease = releaseSdlcLoopLease;
+export const enqueueDeliveryLoopOutboxAction = enqueueSdlcOutboxAction;
+export const claimNextDeliveryLoopOutboxActionForExecution =
+  claimNextSdlcOutboxActionForExecution;
+export const completeDeliveryLoopOutboxActionExecution =
+  completeSdlcOutboxActionExecution;
+export const transitionDeliveryLoopState = transitionSdlcLoopState;
+export const evaluateDeliveryLoopParitySlo = evaluateSdlcParitySlo;

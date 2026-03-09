@@ -47,6 +47,7 @@ import {
   getActiveSdlcLoopForThread,
   getUnresolvedBlockingDeepReviewFindings,
   getUnresolvedBlockingCarmackReviewFindings,
+  DELIVERY_LOOP_FAILURE_ACTION_TABLE,
   type DeliveryLoopFailureCategory,
 } from "@terragon/shared/model/delivery-loop";
 import {
@@ -72,10 +73,11 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "blocked_on_review_threads",
 ]);
 
-/** Failure categories that should NOT be auto-retried — a config error or gate
- *  failure won't resolve on its own. */
-const NON_RETRYABLE_FAILURE_CATEGORIES: ReadonlySet<DeliveryLoopFailureCategory> =
-  new Set(["config_error", "gate_failed"]);
+/** Check whether a failure category should block auto-retry using the
+ *  canonical action table from the delivery loop model. */
+function isNonRetryableFailure(category: DeliveryLoopFailureCategory): boolean {
+  return DELIVERY_LOOP_FAILURE_ACTION_TABLE[category] === "blocked";
+}
 
 /**
  * Classify a daemon-reported error message into a DeliveryLoopFailureCategory.
@@ -711,7 +713,7 @@ export async function handleDaemonEvent({
           { threadId, threadChatId: threadChat.id, failureCategory },
         );
 
-        if (NON_RETRYABLE_FAILURE_CATEGORIES.has(failureCategory)) {
+        if (isNonRetryableFailure(failureCategory)) {
           console.log(
             `Skipping SDLC error retry: failure category "${failureCategory}" is non-retryable`,
             { threadId, threadChatId: threadChat.id },
