@@ -62,15 +62,23 @@ function toGateResult(
   pipelineResult: GatePipelineResult,
   headSha: string,
 ): GateResult {
-  const firstStart = pipelineResult.gateResults.reduce(
-    (min, r) => (r.provenance.startedAt < min ? r.provenance.startedAt : min),
-    new Date(),
-  );
-  const lastComplete = pipelineResult.gateResults.reduce(
-    (max, r) =>
-      r.provenance.completedAt > max ? r.provenance.completedAt : max,
-    new Date(0),
-  );
+  const now = new Date();
+  const firstStart =
+    pipelineResult.gateResults.length > 0
+      ? pipelineResult.gateResults.reduce(
+          (min, r) =>
+            r.provenance.startedAt < min ? r.provenance.startedAt : min,
+          pipelineResult.gateResults[0]!.provenance.startedAt,
+        )
+      : now;
+  const lastComplete =
+    pipelineResult.gateResults.length > 0
+      ? pipelineResult.gateResults.reduce(
+          (max, r) =>
+            r.provenance.completedAt > max ? r.provenance.completedAt : max,
+          pipelineResult.gateResults[0]!.provenance.completedAt,
+        )
+      : now;
 
   let failureReason: string | null = null;
   if (!pipelineResult.allPassed) {

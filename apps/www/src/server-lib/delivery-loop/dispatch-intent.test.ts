@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockRedis = vi.hoisted(() => ({
   hset: vi.fn(),
+  hget: vi.fn(),
   hgetall: vi.fn(),
   expire: vi.fn(),
 }));

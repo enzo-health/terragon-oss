@@ -139,7 +139,9 @@ async function getHeadShaOrNull({
     ).trim();
     return headSha.length > 0 ? headSha : null;
   } catch (error) {
-    console.warn("[sdlc-pre-pr-review] failed to resolve head SHA", { error });
+    console.warn("[delivery-loop/pre-pr-review] failed to resolve head SHA", {
+      error,
+    });
     return null;
   }
 }
@@ -212,7 +214,7 @@ export async function maybeRunSdlcPrePrReview({
       ].join("\n\n"),
     });
     console.warn(
-      "[sdlc-pre-pr-review] blocked PR creation because diff is too large",
+      "[delivery-loop/pre-pr-review] blocked PR creation because diff is too large",
       {
         userId,
         threadId: thread.id,
@@ -277,7 +279,7 @@ export async function maybeRunSdlcPrePrReview({
   if (!isDeepReviewBlocked && !isCarmackReviewBlocked) {
     if (hasExecutionFailure) {
       console.warn(
-        "[sdlc-pre-pr-review] gate execution failed without blocking findings; proceeding with PR",
+        "[delivery-loop/pre-pr-review] gate execution failed without blocking findings; proceeding with PR",
         {
           userId,
           threadId: thread.id,
@@ -291,16 +293,19 @@ export async function maybeRunSdlcPrePrReview({
   }
 
   if (deepReviewExecutionFailed) {
-    console.warn("[sdlc-pre-pr-review] deep review gate failed; blocking PR", {
-      userId,
-      threadId: thread.id,
-      repoFullName: thread.githubRepoFullName,
-      error: deepReviewResult.reason,
-    });
+    console.warn(
+      "[delivery-loop/pre-pr-review] deep review gate failed; blocking PR",
+      {
+        userId,
+        threadId: thread.id,
+        repoFullName: thread.githubRepoFullName,
+        error: deepReviewResult.reason,
+      },
+    );
   }
   if (carmackReviewExecutionFailed) {
     console.warn(
-      "[sdlc-pre-pr-review] carmack review gate failed; blocking PR",
+      "[delivery-loop/pre-pr-review] carmack review gate failed; blocking PR",
       {
         userId,
         threadId: thread.id,
@@ -332,7 +337,7 @@ export async function maybeRunSdlcPrePrReview({
     }),
   });
 
-  console.log("[sdlc-pre-pr-review] blocked PR creation", {
+  console.log("[delivery-loop/pre-pr-review] blocked PR creation", {
     userId,
     threadId: thread.id,
     repoFullName: thread.githubRepoFullName,

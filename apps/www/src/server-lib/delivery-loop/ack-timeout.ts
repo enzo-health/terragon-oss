@@ -8,7 +8,7 @@ import { handleAckTimeout, DEFAULT_ACK_TIMEOUT_MS } from "./ack-lifecycle";
 
 export type AckTimeoutResult = {
   stalledCount: number;
-  failedCount: number;
+  processedCount: number;
   retriedCount: number;
 };
 
@@ -26,10 +26,10 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
   const stalled = await getStalledDispatchIntents(db, DEFAULT_ACK_TIMEOUT_MS);
 
   if (stalled.length === 0) {
-    return { stalledCount: 0, failedCount: 0, retriedCount: 0 };
+    return { stalledCount: 0, processedCount: 0, retriedCount: 0 };
   }
 
-  let failedCount = 0;
+  let processedCount = 0;
   let retriedCount = 0;
 
   const BATCH_SIZE = 10;
@@ -48,7 +48,7 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
 
     for (const result of results) {
       if (result.status === "fulfilled") {
-        failedCount++;
+        processedCount++;
         if (result.value.shouldRetry) {
           retriedCount++;
         }
@@ -60,5 +60,5 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
     }
   }
 
-  return { stalledCount: stalled.length, failedCount, retriedCount };
+  return { stalledCount: stalled.length, processedCount, retriedCount };
 }

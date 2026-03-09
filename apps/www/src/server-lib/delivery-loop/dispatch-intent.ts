@@ -83,7 +83,7 @@ function deserializeIntent(
     dispatchMechanism: (raw.dispatchMechanism ??
       "self_dispatch") as DeliveryLoopDispatchMechanism,
     runId: raw.runId ?? "",
-    status: (raw.status ?? "prepared") as DeliveryLoopDispatchStatus,
+    status: (raw.status ?? "pending") as DeliveryLoopDispatchStatus,
     retryCount: Number(raw.retryCount ?? 0),
     maxRetries: Number(raw.maxRetries ?? 0),
     createdAt: new Date(raw.createdAt ?? 0),

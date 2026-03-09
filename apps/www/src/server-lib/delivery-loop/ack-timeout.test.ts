@@ -31,7 +31,7 @@ describe("sweepAckTimeouts", () => {
 
     expect(result).toEqual({
       stalledCount: 0,
-      failedCount: 0,
+      processedCount: 0,
       retriedCount: 0,
     });
     expect(mockHandleAckTimeout).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe("sweepAckTimeouts", () => {
 
     expect(result).toEqual({
       stalledCount: 1,
-      failedCount: 1,
+      processedCount: 1,
       retriedCount: 1,
     });
     expect(mockHandleAckTimeout).toHaveBeenCalledWith({
@@ -86,7 +86,7 @@ describe("sweepAckTimeouts", () => {
 
     expect(result).toEqual({
       stalledCount: 1,
-      failedCount: 1,
+      processedCount: 1,
       retriedCount: 0,
     });
   });
@@ -118,7 +118,7 @@ describe("sweepAckTimeouts", () => {
 
     expect(result).toEqual({
       stalledCount: 2,
-      failedCount: 1,
+      processedCount: 1,
       retriedCount: 1,
     });
   });
