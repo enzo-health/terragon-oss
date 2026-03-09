@@ -117,11 +117,19 @@ export type CreateDispatchIntentParams = {
 export async function createDispatchIntent(
   params: CreateDispatchIntentParams,
 ): Promise<DeliveryLoopDispatchIntent> {
-  // Guard: prevent overwriting an active (non-terminal) intent
-  const existing = await getActiveDispatchIntent(params.threadChatId);
-  if (existing && !TERMINAL_DISPATCH_STATUSES.has(existing.status)) {
+  // Guard: prevent overwriting an active (non-terminal) intent.
+  // Only fetch the status field to avoid deserializing the full intent on the hot path.
+  const key = redisKey(params.threadChatId);
+  const existingStatus = await redis.hget<string>(key, "status");
+  if (
+    existingStatus &&
+    !TERMINAL_DISPATCH_STATUSES.has(
+      existingStatus as DeliveryLoopDispatchStatus,
+    )
+  ) {
+    const existingId = await redis.hget<string>(key, "id");
     throw new Error(
-      `Cannot create dispatch intent: active intent "${existing.id}" exists for threadChat "${params.threadChatId}" with status "${existing.status}"`,
+      `Cannot create dispatch intent: active intent "${existingId}" exists for threadChat "${params.threadChatId}" with status "${existingStatus}"`,
     );
   }
 
@@ -145,7 +153,6 @@ export async function createDispatchIntent(
     lastFailureCategory: null,
   };
 
-  const key = redisKey(params.threadChatId);
   await redis.hset(key, serializeIntent(intent));
   await redis.expire(key, ACTIVE_TTL_SECONDS);
 

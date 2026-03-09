@@ -106,7 +106,7 @@ export async function evaluateRetryDecision({
   const pipeline = redis.pipeline();
   pipeline.incr(key);
   pipeline.expire(key, RETRY_COUNTER_TTL_SECONDS);
-  const [attempt] = (await pipeline.exec()) as [number, unknown];
+  const [attempt] = (await pipeline.exec()) as [number, number];
 
   if (attempt > MAX_RETRY_ATTEMPTS) {
     return {
