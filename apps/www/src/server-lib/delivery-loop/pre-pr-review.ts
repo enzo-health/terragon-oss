@@ -3,7 +3,7 @@ import type { DBUserMessage } from "@terragon/shared";
 import type {
   CarmackReviewGateOutput,
   DeepReviewGateOutput,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import { getCurrentBranchName } from "@terragon/sandbox/commands";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { queueFollowUpInternal } from "../follow-up";

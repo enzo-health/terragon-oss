@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { drainDueSdlcSignalInboxActions } = await import(
-      "@/server-lib/sdlc-loop/signal-inbox"
+      "@/server-lib/delivery-loop/signal-inbox"
     );
     const sdlcSignalInboxDrain = await drainDueSdlcSignalInboxActions({
       db,
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
     );
 
     const { drainDueSdlcPublicationOutboxActions } = await import(
-      "@/server-lib/sdlc-loop/publication"
+      "@/server-lib/delivery-loop/publication"
     );
     const sdlcPublicationDrain = await drainDueSdlcPublicationOutboxActions({
       db,

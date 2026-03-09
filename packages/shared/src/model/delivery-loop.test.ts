@@ -52,7 +52,7 @@ import {
   transitionSdlcLoopState,
   transitionLoopToStoppedAndCancelPendingOutbox,
   verifyPlanTaskCompletionForHead,
-} from "./sdlc-loop";
+} from "./delivery-loop";
 
 const db = createDb(env.DATABASE_URL!);
 

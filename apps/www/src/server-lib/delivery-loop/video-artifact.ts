@@ -3,7 +3,7 @@ import {
   classifySdlcVideoCaptureFailure,
   persistSdlcVideoCaptureOutcome,
   transitionSdlcLoopState,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import type { SdlcVideoFailureClass } from "@terragon/shared/db/types";
 import { z } from "zod/v4";
 

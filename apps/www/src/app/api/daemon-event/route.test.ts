@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
+import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
+import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
@@ -99,16 +99,16 @@ vi.mock("@/lib/db", () => ({
   db: dbMocks.db,
 }));
 
-vi.mock("@terragon/shared/model/sdlc-loop", () => ({
+vi.mock("@terragon/shared/model/delivery-loop", () => ({
   getActiveSdlcLoopForThread: vi.fn(),
   SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
-vi.mock("@/server-lib/sdlc-loop/publication", () => ({
+vi.mock("@/server-lib/delivery-loop/publication", () => ({
   runBestEffortSdlcPublicationCoordinator: vi.fn(),
 }));
 
-vi.mock("@/server-lib/sdlc-loop/signal-inbox", () => ({
+vi.mock("@/server-lib/delivery-loop/signal-inbox", () => ({
   runBestEffortSdlcSignalInboxTick: vi.fn(),
 }));
 

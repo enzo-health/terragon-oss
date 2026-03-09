@@ -7,7 +7,7 @@ import {
   getSdlcLoopStateSummary,
   type SdlcLoopStatusCheck,
   type SdlcLoopStatusCheckKey,
-} from "@/lib/sdlc-loop-status";
+} from "@/lib/delivery-loop-status";
 import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
@@ -15,7 +15,7 @@ import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 
@@ -588,5 +588,8 @@ export const getSdlcLoopStatusAction = userOnlyAction(
 
     return sdlcLoopStatusSchema.parse(response) as SdlcLoopStatus;
   },
-  { defaultErrorMessage: "Failed to get SDLC loop status" },
+  { defaultErrorMessage: "Failed to get delivery loop status" },
 );
+
+/** @deprecated Use getDeliveryLoopStatusAction */
+export const getDeliveryLoopStatusAction = getSdlcLoopStatusAction;

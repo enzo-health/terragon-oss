@@ -6,13 +6,13 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { enrollSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import { enrollSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 import {
   requestSdlcBypassCurrentGateOnce,
   requestSdlcResumeFromBlocked,
-} from "./sdlc-interventions";
+} from "./delivery-loop-interventions";
 
 async function resumeFromBlocked(input: {
   threadId: string;

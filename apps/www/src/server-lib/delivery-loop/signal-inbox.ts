@@ -1,4 +1,4 @@
-import { DBUserMessage } from "@terragon/shared";
+import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type {
@@ -15,7 +15,7 @@ import {
   releaseSdlcLoopLease,
   transitionSdlcLoopStateWithArtifact,
   type SdlcGuardrailReasonCode,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import { getThread } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import {
@@ -413,6 +413,10 @@ async function persistGateEvaluationForSignal({
   now: Date;
 }): Promise<boolean> {
   if (signal.causeType === "daemon_terminal") {
+    const daemonRunStatus = getPayloadText(signal.payload, "daemonRunStatus");
+    if (daemonRunStatus === "stopped") {
+      return false;
+    }
     return true;
   }
 
@@ -662,7 +666,7 @@ function buildFeedbackFollowUpMessage({
   payload,
 }: {
   loopRepoFullName: string;
-  loopPrNumber: number;
+  loopPrNumber: number | null;
   signalCauseType: SdlcLoopCauseType;
   payload: Record<string, unknown> | null;
 }): DBUserMessage {
@@ -675,7 +679,9 @@ function buildFeedbackFollowUpMessage({
     const daemonErrorMessage = getPayloadText(payload, "daemonErrorMessage");
     const runId = getPayloadText(payload, "runId");
     sections.push(
-      `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for PR #${loopPrNumber} in ${loopRepoFullName}.`,
+      loopPrNumber === null
+        ? `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for ${loopRepoFullName}.`
+        : `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for PR #${loopPrNumber} in ${loopRepoFullName}.`,
     );
     if (daemonRunStatus) {
       sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
@@ -746,6 +752,57 @@ function buildFeedbackFollowUpMessage({
   };
 }
 
+function areEquivalentUserMessages(
+  left: DBUserMessage,
+  right: DBUserMessage,
+): boolean {
+  return (
+    left.model === right.model &&
+    left.permissionMode === right.permissionMode &&
+    JSON.stringify(left.parts) === JSON.stringify(right.parts)
+  );
+}
+
+function getLatestUserMessage(
+  messages: DBMessage[] | null | undefined,
+): DBUserMessage | null {
+  if (!messages || messages.length === 0) {
+    return null;
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.type === "user") {
+      return message;
+    }
+  }
+  return null;
+}
+
+function hasEquivalentRoutedFollowUp({
+  queuedMessages,
+  messages,
+  candidate,
+}: {
+  queuedMessages: DBUserMessage[] | null | undefined;
+  messages: DBMessage[] | null | undefined;
+  candidate: DBUserMessage;
+}): boolean {
+  const latestQueuedMessage =
+    queuedMessages && queuedMessages.length > 0
+      ? queuedMessages[queuedMessages.length - 1]
+      : null;
+  if (
+    latestQueuedMessage &&
+    areEquivalentUserMessages(latestQueuedMessage, candidate)
+  ) {
+    return true;
+  }
+  const latestUserMessage = getLatestUserMessage(messages);
+  return latestUserMessage
+    ? areEquivalentUserMessages(latestUserMessage, candidate)
+    : false;
+}
+
 async function getNextUnprocessedSignal({
   db,
   loopId,
@@ -798,7 +855,7 @@ async function routeFeedbackSignalToEnrolledThread({
   loopUserId: string;
   loopThreadId: string;
   repoFullName: string;
-  prNumber: number;
+  prNumber: number | null;
   signal: PendingSignal;
 }) {
   const thread = await getThread({
@@ -820,14 +877,22 @@ async function routeFeedbackSignalToEnrolledThread({
     payload: signal.payload,
   });
 
-  await queueFollowUpInternal({
-    userId: loopUserId,
-    threadId: loopThreadId,
-    threadChatId: threadChat.id,
-    messages: [message],
-    appendOrReplace: "append",
-    source: "github",
-  });
+  if (
+    !hasEquivalentRoutedFollowUp({
+      queuedMessages: threadChat.queuedMessages,
+      messages: threadChat.messages,
+      candidate: message,
+    })
+  ) {
+    await queueFollowUpInternal({
+      userId: loopUserId,
+      threadId: loopThreadId,
+      threadChatId: threadChat.id,
+      messages: [message],
+      appendOrReplace: "append",
+      source: "github",
+    });
+  }
 
   return {
     loopId,
@@ -1116,13 +1181,15 @@ export async function runBestEffortSdlcSignalInboxTick({
     };
     const shouldSuppressFeedbackRuntimeAction =
       feedbackSignalCauseTypes.has(signal.causeType) &&
+      signal.causeType !== "daemon_terminal" &&
       nonBabysitFeedbackSuppressedStates.has(loop.state);
+    const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
 
     if (
       feedbackSignalCauseTypes.has(signal.causeType) &&
       shouldQueueRuntimeFollowUp &&
       !shouldSuppressFeedbackRuntimeAction &&
-      typeof loop.prNumber === "number"
+      (typeof loop.prNumber === "number" || canRouteWithoutPrNumber)
     ) {
       try {
         const routeResult = await routeFeedbackSignalToEnrolledThread({
@@ -1131,7 +1198,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopUserId: loop.userId,
           loopThreadId: loop.threadId,
           repoFullName: loop.repoFullName,
-          prNumber: loop.prNumber,
+          prNumber: loop.prNumber ?? null,
           signal,
         });
         runtimeAction = "feedback_follow_up_queued";

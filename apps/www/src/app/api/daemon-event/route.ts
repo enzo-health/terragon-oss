@@ -14,15 +14,15 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import {
   getAgentRunContextByRunId,
   upsertAgentRunContext,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/sdlc-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/sdlc-loop/signal-inbox";
+import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
+import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
@@ -72,6 +72,8 @@ type DaemonEventCommitResult =
 
 const DAEMON_EVENT_CLAIM_STALE_MS = 5 * 60 * 1000;
 const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
+const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
+const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 
 type DaemonTerminalErrorCategory =
   | "provider_not_configured"
@@ -79,6 +81,115 @@ type DaemonTerminalErrorCategory =
   | "daemon_custom_error"
   | "daemon_result_error"
   | "unknown";
+
+type DaemonProcessingEventClaimResult =
+  | {
+      claimed: true;
+    }
+  | {
+      claimed: false;
+      reason: "claim_in_progress" | "duplicate_event";
+    };
+
+function getDaemonProcessingEventClaimKey({
+  loopId,
+  eventId,
+}: {
+  loopId: string;
+  eventId: string;
+}): string {
+  return `sdlc:daemon-processing-event:claim:${loopId}:${eventId}`;
+}
+
+function getDaemonProcessingEventCommittedKey({
+  loopId,
+  eventId,
+}: {
+  loopId: string;
+  eventId: string;
+}): string {
+  return `sdlc:daemon-processing-event:committed:${loopId}:${eventId}`;
+}
+
+async function claimEnrolledLoopProcessingEvent({
+  loopId,
+  envelope,
+}: {
+  loopId: string;
+  envelope: DaemonEventEnvelopeV2;
+}): Promise<DaemonProcessingEventClaimResult> {
+  const claimKey = getDaemonProcessingEventClaimKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  const committedKey = getDaemonProcessingEventCommittedKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+
+  const alreadyCommitted = await redis.get<string>(committedKey);
+  if (alreadyCommitted) {
+    return {
+      claimed: false,
+      reason: "duplicate_event",
+    };
+  }
+
+  const claimed = await redis.set(claimKey, new Date().toISOString(), {
+    nx: true,
+    ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
+  });
+  if (claimed === "OK") {
+    return {
+      claimed: true,
+    };
+  }
+
+  const committedAfterClaimFailure = await redis.get<string>(committedKey);
+  return {
+    claimed: false,
+    reason: committedAfterClaimFailure
+      ? "duplicate_event"
+      : "claim_in_progress",
+  };
+}
+
+async function commitEnrolledLoopProcessingEvent({
+  loopId,
+  envelope,
+}: {
+  loopId: string;
+  envelope: DaemonEventEnvelopeV2;
+}): Promise<void> {
+  const claimKey = getDaemonProcessingEventClaimKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  const committedKey = getDaemonProcessingEventCommittedKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  const pipeline = redis.pipeline();
+  pipeline.set(committedKey, new Date().toISOString(), {
+    ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
+  });
+  pipeline.del(claimKey);
+  await pipeline.exec();
+}
+
+async function rollbackEnrolledLoopProcessingEventClaim({
+  loopId,
+  envelope,
+}: {
+  loopId: string;
+  envelope: DaemonEventEnvelopeV2;
+}): Promise<void> {
+  const claimKey = getDaemonProcessingEventClaimKey({
+    loopId,
+    eventId: envelope.eventId,
+  });
+  await redis.del(claimKey);
+}
 
 function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
   const iterationCount =
@@ -366,6 +477,13 @@ async function claimEnrolledLoopDaemonEvent({
       return {
         claimed: false,
         reason: "out_of_order_or_duplicate_seq",
+      };
+    }
+
+    if (daemonRunStatus === "processing") {
+      return {
+        claimed: false,
+        reason: "duplicate_event",
       };
     }
 
@@ -742,6 +860,7 @@ export async function POST(request: Request) {
   });
 
   let claimedSignalInboxId: string | null = null;
+  let claimedProcessingEvent = false;
 
   const rollbackClaimedSignal = async ({
     reason,
@@ -896,18 +1015,6 @@ export async function POST(request: Request) {
                   { userId, threadId, threadChatId, loopId },
                 );
               } else {
-                // Only clear queued messages after confirmed transition
-                await updateThreadChat({
-                  db,
-                  userId,
-                  threadId,
-                  threadChatId,
-                  updates: {
-                    appendAndResetQueuedMessages: true,
-                    errorMessage: null,
-                    errorMessageInfo: null,
-                  },
-                });
                 const newRunId = randomUUID();
                 const newTokenNonce = randomUUID();
                 const agent = threadChatForDispatch.agent;
@@ -916,17 +1023,24 @@ export async function POST(request: Request) {
                   getDefaultModelForAgent({ agent, agentVersion }),
                 );
                 const sandboxId = threadForDispatch.codesandboxId;
-                const transportMode =
-                  (runContext?.transportMode as
-                    | "legacy"
-                    | "acp"
-                    | "codex-app-server") ?? "legacy";
-                const protocolVersion =
-                  (runContext?.protocolVersion as 1 | 2) ?? 1;
 
                 // SDLC follow-ups always use allowAll — same as startAgentMessage
                 // which forces allowAll when activeSdlcLoop is true.
                 const effectivePermissionMode = "allowAll" as const;
+                const supportsAcp =
+                  agent === "codex" || agent === "amp" || agent === "opencode";
+                const shouldUseCodexAppServerTransport =
+                  agent === "codex" && userFeatureFlags.codexAppServerTransport;
+                const shouldUseAcpTransport =
+                  !shouldUseCodexAppServerTransport &&
+                  userFeatureFlags.sandboxAgentAcpTransport &&
+                  supportsAcp;
+                const transportMode = shouldUseCodexAppServerTransport
+                  ? ("codex-app-server" as const)
+                  : shouldUseAcpTransport
+                    ? ("acp" as const)
+                    : ("legacy" as const);
+                const protocolVersion = transportMode === "acp" ? 2 : 1;
 
                 // Create run context
                 await upsertAgentRunContext({
@@ -958,6 +1072,17 @@ export async function POST(request: Request) {
                   agent,
                   transportMode,
                   protocolVersion,
+                });
+
+                await updateThreadChat({
+                  db,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  updates: {
+                    errorMessage: null,
+                    errorMessageInfo: null,
+                  },
                 });
 
                 selfDispatchPayload = {
@@ -1092,7 +1217,36 @@ export async function POST(request: Request) {
       );
     }
 
-    if (envelopeV2) {
+    if (envelopeV2 && daemonRunStatusFromMessages === "processing") {
+      const processingClaimResult = await claimEnrolledLoopProcessingEvent({
+        loopId: enrolledLoop.id,
+        envelope: envelopeV2,
+      });
+      if (!processingClaimResult.claimed) {
+        if (processingClaimResult.reason === "claim_in_progress") {
+          return Response.json(
+            {
+              success: false,
+              error: "daemon_event_claim_in_progress",
+              loopId: enrolledLoop.id,
+            },
+            { status: 409 },
+          );
+        }
+        return Response.json(
+          {
+            success: true,
+            deduplicated: true,
+            reason: processingClaimResult.reason,
+            loopId: enrolledLoop.id,
+            acknowledgedEventId: envelopeV2.eventId,
+            acknowledgedSeq: envelopeV2.seq,
+          },
+          { status: 202 },
+        );
+      }
+      claimedProcessingEvent = true;
+    } else if (envelopeV2) {
       const claimResult = await claimEnrolledLoopDaemonEvent({
         loopId: enrolledLoop.id,
         threadId,
@@ -1138,6 +1292,22 @@ export async function POST(request: Request) {
               leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
               guardrailRuntime,
             });
+            const duplicateThreadChat = await getThreadChat({
+              db,
+              userId,
+              threadId,
+              threadChatId,
+            });
+            if ((duplicateThreadChat?.queuedMessages?.length ?? 0) > 0) {
+              waitUntil(
+                maybeProcessFollowUpQueue({
+                  threadId,
+                  threadChatId,
+                  userId,
+                  runId: runContext?.runId ?? envelopeV2.runId,
+                }),
+              );
+            }
           } catch (error) {
             console.error(
               "[sdlc-loop] duplicate daemon event dedupe tick failed",
@@ -1230,6 +1400,12 @@ export async function POST(request: Request) {
         },
       });
     }
+    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+      await rollbackEnrolledLoopProcessingEventClaim({
+        loopId: enrolledLoop.id,
+        envelope: envelopeV2,
+      });
+    }
     await rollbackClaimedSignal({
       reason: "handle_daemon_event_threw",
       error,
@@ -1248,11 +1424,24 @@ export async function POST(request: Request) {
         },
       });
     }
+    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+      await rollbackEnrolledLoopProcessingEventClaim({
+        loopId: enrolledLoop.id,
+        envelope: envelopeV2,
+      });
+    }
     await rollbackClaimedSignal({
       reason: "handle_daemon_event_failed",
       error: result.error,
     });
     return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    await commitEnrolledLoopProcessingEvent({
+      loopId: enrolledLoop.id,
+      envelope: envelopeV2,
+    });
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);

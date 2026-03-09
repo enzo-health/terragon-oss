@@ -36,7 +36,7 @@ import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   getActiveSdlcLoopForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/sdlc-loop/enrollment";
+} from "@/server-lib/delivery-loop/enrollment";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({

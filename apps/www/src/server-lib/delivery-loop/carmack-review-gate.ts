@@ -1,13 +1,13 @@
 import {
   CarmackReviewGateOutput,
   carmackReviewGateOutputSchema,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { runStructuredCodexGateInSandbox } from "./sandbox-codex-gate";
 
 export const CARMACK_REVIEW_GATE_PROMPT_VERSION = 1;
 
-export const CARMACK_REVIEW_GATE_SYSTEM_PROMPT = `You are the Carmack Review gate for an autonomous SDLC loop.
+export const CARMACK_REVIEW_GATE_SYSTEM_PROMPT = `You are the Carmack Review gate for an autonomous Delivery Loop.
 Return strict JSON only.
 Focus on architectural correctness, determinism, idempotency, race safety, and edge-case handling.
 Only include findings that must be fixed before progression.

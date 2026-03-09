@@ -2,7 +2,7 @@ import {
   normalizeStableTaskId,
   parsePlanSpec,
   type ParsedPlanTask,
-} from "@/server-lib/sdlc-loop/parse-plan-spec";
+} from "@/server-lib/delivery-loop/parse-plan-spec";
 
 export type PlanRenderSource =
   | "proposed_plan_tag"

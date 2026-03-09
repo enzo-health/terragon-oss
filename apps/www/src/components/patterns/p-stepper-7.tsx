@@ -4,15 +4,15 @@ import { useCallback, useState } from "react";
 import type {
   SdlcLoopStatusCheck,
   SdlcLoopStatusCheckStatus,
-} from "@/lib/sdlc-loop-status";
+} from "@/lib/delivery-loop-status";
 import { cn } from "@/lib/utils";
-import { useSdlcLoopStatusQuery } from "@/queries/sdlc-loop-status-queries";
+import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { approvePlan } from "@/server-actions/approve-plan";
 import {
-  requestSdlcBypassCurrentGateOnce,
-  requestSdlcResumeFromBlocked,
-} from "@/server-actions/sdlc-interventions";
+  requestDeliveryLoopBypassCurrentGateOnce,
+  requestDeliveryLoopResumeFromBlocked,
+} from "@/server-actions/delivery-loop-interventions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -20,8 +20,8 @@ import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import {
   buildArtifactFallbackPlanSpecViewModel,
   type PlanTaskViewModel,
-} from "@/lib/sdlc-plan-view-model";
-import { SdlcPlanReviewCard } from "./sdlc-plan-review-card";
+} from "@/lib/delivery-loop-plan-view-model";
+import { DeliveryLoopPlanReviewCard } from "./delivery-loop-plan-review-card";
 import {
   Stepper,
   StepperIndicator,
@@ -551,10 +551,10 @@ function SdlcInterventionControls({
   loopState: SdlcLoopState;
 }) {
   const resumeMutation = useServerActionMutation({
-    mutationFn: requestSdlcResumeFromBlocked,
+    mutationFn: requestDeliveryLoopResumeFromBlocked,
   });
   const bypassMutation = useServerActionMutation({
-    mutationFn: requestSdlcBypassCurrentGateOnce,
+    mutationFn: requestDeliveryLoopBypassCurrentGateOnce,
   });
 
   const handleResume = useCallback(async () => {
@@ -570,7 +570,9 @@ function SdlcInterventionControls({
         size="sm"
         variant="outline"
         className="h-7 text-xs"
-        disabled={resumeMutation.isPending || loopState !== "blocked_on_human_feedback"}
+        disabled={
+          resumeMutation.isPending || loopState !== "blocked_on_human_feedback"
+        }
         onClick={handleResume}
       >
         {resumeMutation.isPending ? "Resuming…" : "Resume"}
@@ -598,7 +600,7 @@ export function SdlcTopProgressStepper({
   enabled: boolean;
 }) {
   const [expandedPhase, setExpandedPhase] = useState<SdlcPhaseKey | null>(null);
-  const { data, isLoading, isError } = useSdlcLoopStatusQuery({
+  const { data, isLoading, isError } = useDeliveryLoopStatusQuery({
     threadId,
     enabled,
   });
@@ -642,7 +644,7 @@ export function SdlcTopProgressStepper({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              SDLC Loop
+              Delivery Loop
             </p>
             <p className="truncate text-sm font-semibold text-foreground">
               {stateLabel}
@@ -769,7 +771,10 @@ export function SdlcTopProgressStepper({
                     data?.artifacts?.plannedTasks && (
                       <>
                         {planCardModel ? (
-                          <SdlcPlanReviewCard plan={planCardModel} className="mt-1.5" />
+                          <DeliveryLoopPlanReviewCard
+                            plan={planCardModel}
+                            className="mt-1.5"
+                          />
                         ) : null}
                         <SdlcPlanTaskList
                           tasks={data.artifacts.plannedTasks}
@@ -777,7 +782,8 @@ export function SdlcTopProgressStepper({
                           showApprove={
                             data.state === "planning" &&
                             data.planApprovalPolicy === "human_required" &&
-                            data.artifacts.planningArtifact?.status !== "accepted"
+                            data.artifacts.planningArtifact?.status !==
+                              "accepted"
                           }
                           threadId={threadId}
                           threadChatId={threadChatId}

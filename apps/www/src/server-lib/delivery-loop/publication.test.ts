@@ -9,7 +9,7 @@ import {
   persistSdlcCanonicalCheckRunReference,
   persistSdlcCanonicalStatusCommentReference,
   releaseSdlcLoopLease,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 
 vi.mock("@/lib/github", () => ({
   getOctokitForApp: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("@terragon/env/next-public", () => ({
   publicAppUrl: vi.fn(() => "https://terragon.example"),
 }));
 
-vi.mock("@terragon/shared/model/sdlc-loop", () => ({
+vi.mock("@terragon/shared/model/delivery-loop", () => ({
   acquireSdlcLoopLease: vi.fn(),
   claimNextSdlcOutboxActionForExecution: vi.fn(),
   completeSdlcOutboxActionExecution: vi.fn(),

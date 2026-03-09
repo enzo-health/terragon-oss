@@ -6,7 +6,7 @@ import { UserFacingError } from "@/lib/server-actions";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { DBUserMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/sdlc-loop";
+import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import { type DB } from "@terragon/shared/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 
@@ -35,7 +35,7 @@ async function transitionBlockedLoopToImplementing({
     .returning({ id: schema.sdlcLoop.id });
   if (!updated) {
     throw new UserFacingError(
-      "Failed to transition SDLC loop from blocked to implementing",
+      "Failed to transition Delivery Loop from blocked to implementing",
     );
   }
 }
@@ -48,7 +48,7 @@ function buildBypassFollowUpMessage(): DBUserMessage {
     parts: [
       {
         type: "text",
-        text: "Bypass the quality-check gate once and continue SDLC progression. Signal phaseComplete: true when ready.",
+        text: "Bypass the quality-check gate once and continue Delivery Loop progression. Signal phaseComplete: true when ready.",
       },
     ],
   };
@@ -68,10 +68,14 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
       threadId,
     });
     if (!activeLoop) {
-      throw new UserFacingError("No active SDLC loop found for this thread");
+      throw new UserFacingError(
+        "No active Delivery Loop found for this thread",
+      );
     }
     if (activeLoop.state !== "blocked_on_human_feedback") {
-      throw new UserFacingError("SDLC loop is not blocked on human feedback");
+      throw new UserFacingError(
+        "Delivery Loop is not blocked on human feedback",
+      );
     }
 
     await db.transaction(async (tx) => {
@@ -112,7 +116,7 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
               parts: [
                 {
                   type: "text",
-                  text: "Resume implementation and continue with the SDLC loop.",
+                  text: "Resume implementation and continue with the Delivery Loop.",
                 },
               ],
             },
@@ -130,7 +134,7 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
       }
     }
   },
-  { defaultErrorMessage: "Failed to resume SDLC loop" },
+  { defaultErrorMessage: "Failed to resume Delivery Loop" },
 );
 
 export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
@@ -147,14 +151,16 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
       threadId,
     });
     if (!activeLoop) {
-      throw new UserFacingError("No active SDLC loop found for this thread");
+      throw new UserFacingError(
+        "No active Delivery Loop found for this thread",
+      );
     }
     const stateAllowsBypass =
       activeLoop.state === "blocked_on_human_feedback" ||
       activeLoop.state === "implementing";
     if (!stateAllowsBypass) {
       throw new UserFacingError(
-        "SDLC loop bypass is only available while implementing or blocked",
+        "Delivery Loop bypass is only available while implementing or blocked",
       );
     }
 
@@ -172,14 +178,16 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
         },
       });
       if (!lockedLoop) {
-        throw new UserFacingError("No active SDLC loop found for this thread");
+        throw new UserFacingError(
+          "No active Delivery Loop found for this thread",
+        );
       }
       const stateAllowsBypassInTx =
         lockedLoop.state === "blocked_on_human_feedback" ||
         lockedLoop.state === "implementing";
       if (!stateAllowsBypassInTx) {
         throw new UserFacingError(
-          "SDLC loop bypass is only available while implementing or blocked",
+          "Delivery Loop bypass is only available while implementing or blocked",
         );
       }
       if (lockedLoop.state === "blocked_on_human_feedback") {
@@ -264,5 +272,13 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
       }
     }
   },
-  { defaultErrorMessage: "Failed to bypass SDLC gate" },
+  { defaultErrorMessage: "Failed to bypass delivery loop gate" },
 );
+
+// Delivery Loop aliases
+/** @deprecated Use requestDeliveryLoopResumeFromBlocked */
+export const requestDeliveryLoopResumeFromBlocked =
+  requestSdlcResumeFromBlocked;
+/** @deprecated Use requestDeliveryLoopBypassCurrentGateOnce */
+export const requestDeliveryLoopBypassCurrentGateOnce =
+  requestSdlcBypassCurrentGateOnce;

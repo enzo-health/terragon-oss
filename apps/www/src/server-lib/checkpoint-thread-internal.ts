@@ -35,7 +35,7 @@ import {
   transitionSdlcLoopStateWithArtifact,
   transitionSdlcLoopState,
   verifyPlanTaskCompletionForHead,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import {
   getThread,
   getThreadChat,
@@ -48,16 +48,16 @@ import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
 import * as schema from "@terragon/shared/db/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import * as z from "zod/v4";
-import { runCarmackReviewGate } from "./sdlc-loop/carmack-review-gate";
-import { runDeepReviewGate } from "./sdlc-loop/deep-review-gate";
+import { runCarmackReviewGate } from "./delivery-loop/carmack-review-gate";
+import { runDeepReviewGate } from "./delivery-loop/deep-review-gate";
 import {
   parsePlanSpec,
   type ParsedPlanSpec as SharedParsedPlanSpec,
-} from "./sdlc-loop/parse-plan-spec";
+} from "./delivery-loop/parse-plan-spec";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
-import { runStructuredCodexGateInSandbox } from "./sdlc-loop/sandbox-codex-gate";
-import { runQualityCheckGateInSandbox } from "./sdlc-loop/quality-check-gate";
+import { runStructuredCodexGateInSandbox } from "./delivery-loop/sandbox-codex-gate";
+import { runQualityCheckGateInSandbox } from "./delivery-loop/quality-check-gate";
 import { sendSystemMessage } from "./send-system-message";
 
 const SDLC_UI_SMOKE_PROMPT_VERSION = 1;
@@ -600,7 +600,7 @@ async function transitionImplementationGateBlocked({
       userId,
       threadId,
       threadChatId,
-      heading: "SDLC implementation: max retries exceeded.",
+      heading: "Delivery Loop implementation: max retries exceeded.",
       details: escalationDetails,
     });
     return true;
@@ -752,7 +752,7 @@ async function runUiSmokeGate({
   }
 
   const prompt = [
-    "You are the SDLC UI smoke gate.",
+    "You are the Delivery Loop UI smoke gate.",
     "Use the existing agent-browser runtime path only (no Playwright suite).",
     "Run a focused browser smoke check against the changed UI paths and verify no obvious runtime/UI breakage.",
     "Return strict JSON only.",
@@ -871,7 +871,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
           userId,
           threadId,
           threadChatId,
-          heading: "SDLC planning: max retries exceeded.",
+          heading: "Delivery Loop planning: max retries exceeded.",
           details: [
             "The planning gate has failed too many times.",
             "Human intervention is required to unblock. Review the plan format and retry.",
@@ -883,7 +883,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         userId,
         threadId,
         threadChatId,
-        heading: "SDLC planning gate blocked.",
+        heading: "Delivery Loop planning gate blocked.",
         details: planningGate.reasons,
       });
       return true;
@@ -891,7 +891,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
 
     if (!planParseResult || !planParseResult.ok) {
       console.warn(
-        "SDLC planning gate: plan parse failed or returned no result",
+        "Delivery Loop planning gate: plan parse failed or returned no result",
         {
           threadId,
           threadChatId,
@@ -941,7 +941,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         threadId,
         threadChatId,
         heading:
-          "SDLC plan captured. Human approval required before implementation.",
+          "Delivery Loop plan captured. Human approval required before implementation.",
         details: [
           "Use the Approve action to move from planning to implementing.",
           "No code changes should be made until approval is recorded.",
@@ -964,7 +964,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         threadId,
         threadChatId,
         heading:
-          "SDLC phase advanced to implementing. Execute the approved plan now.",
+          "Delivery Loop phase advanced to implementing. Execute the approved plan now.",
         details: [
           "Implement the planned changes directly in code.",
           "After implementing, signal phaseComplete: true again to trigger mandatory review, UI smoke, and PR steps.",
@@ -982,7 +982,8 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         userId,
         threadId,
         threadChatId,
-        heading: "SDLC planning gate could not transition to implementing.",
+        heading:
+          "Delivery Loop planning gate could not transition to implementing.",
         details: [
           "Plan artifact was saved, but transition preconditions were not met.",
           "Signal phaseComplete: true again or re-approve the plan.",
@@ -1045,7 +1046,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         userId,
         threadId,
         threadChatId,
-        heading: "SDLC implementation gate blocked.",
+        heading: "Delivery Loop implementation gate blocked.",
         details: [
           "No accepted/approved plan artifact is available for this loop.",
           "Return to planning and regenerate a structured plan.",
@@ -1109,7 +1110,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
           threadId,
           threadChatId,
           heading:
-            "SDLC implementation: completion signaled but no code changes detected.",
+            "Delivery Loop implementation: completion signaled but no code changes detected.",
           details: [
             "You indicated phaseComplete but no git diff was found.",
             "Write code and signal phaseComplete again when done.",
@@ -1165,7 +1166,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
           threadId,
           threadChatId,
           heading:
-            "SDLC implementation: completion signaled but tasks incomplete.",
+            "Delivery Loop implementation: completion signaled but tasks incomplete.",
           details: reasons,
         });
       }
@@ -1201,7 +1202,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
           userId,
           threadId,
           threadChatId,
-          heading: "SDLC implementation: quality checks failed.",
+          heading: "Delivery Loop implementation: quality checks failed.",
           details: [
             "You indicated phaseComplete but quality checks did not pass.",
             ...qualityResult.failures,
@@ -1244,7 +1245,8 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         userId,
         threadId,
         threadChatId,
-        heading: "SDLC implementation gate could not transition to reviewing.",
+        heading:
+          "Delivery Loop implementation gate could not transition to reviewing.",
         details: [
           "Implementation artifact was persisted, but transition preconditions were not met.",
           "Signal phaseComplete: true again to continue.",
@@ -1280,7 +1282,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         userId,
         threadId,
         threadChatId,
-        heading: "SDLC review phase blocked: diff is not reviewable.",
+        heading: "Delivery Loop review phase blocked: diff is not reviewable.",
         details: [
           "Deep + Carmack reviews are mandatory before PR actions.",
           "Reduce the diff scope and signal phaseComplete: true again.",
@@ -1426,7 +1428,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         threadId,
         threadChatId,
         heading:
-          "SDLC review phase blocked. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
+          "Delivery Loop review phase blocked. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
         details:
           reviewSections.length > 0
             ? reviewSections
@@ -1513,7 +1515,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       threadId,
       threadChatId,
       heading:
-        "SDLC UI smoke phase blocked. Run browser smoke checks and fix the issues.",
+        "Delivery Loop UI smoke phase blocked. Run browser smoke checks and fix the issues.",
       details: [
         uiSmokeError
           ? `UI smoke gate failed to execute: ${uiSmokeError}`
@@ -1539,7 +1541,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       userId,
       threadId,
       threadChatId,
-      heading: "SDLC UI gate could not transition to PR linking.",
+      heading: "Delivery Loop UI gate could not transition to PR linking.",
       details: [
         "UI smoke artifact was persisted, but transition preconditions were not met.",
         "Signal phaseComplete: true again to continue.",
@@ -1557,7 +1559,8 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       userId,
       threadId,
       threadChatId,
-      heading: "SDLC PR phase is waiting: automatic PR creation is disabled.",
+      heading:
+        "Delivery Loop PR phase is waiting: automatic PR creation is disabled.",
       details: [
         "Create or link a PR for this thread, then checkpoint again to enter PR babysitting.",
       ],

@@ -4,7 +4,7 @@ import {
   getActiveSdlcLoopForThread,
   getPreferredActiveSdlcLoopForGithubPRAndUser,
   linkSdlcLoopToGithubPRForThread,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
 

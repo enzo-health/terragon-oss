@@ -42,7 +42,7 @@ import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
-} from "./sdlc-loop/enrollment";
+} from "./delivery-loop/enrollment";
 
 export interface CreateThreadOptions {
   userId: string;

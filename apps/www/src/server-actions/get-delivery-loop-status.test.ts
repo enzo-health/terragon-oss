@@ -13,7 +13,7 @@ import {
   enrollSdlcLoopForThread,
   markPlanTasksCompletedByAgent,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 

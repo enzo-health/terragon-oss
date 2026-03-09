@@ -3,7 +3,7 @@ import {
   buildArtifactFallbackPlanSpecViewModel,
   extractProposedPlanBlock,
   parsePlanSpecViewModelFromText,
-} from "./sdlc-plan-view-model";
+} from "./delivery-loop-plan-view-model";
 
 describe("sdlc-plan-view-model", () => {
   it("extracts proposed_plan block content", () => {

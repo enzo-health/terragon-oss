@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
-import type { PlanSpecViewModel } from "@/lib/sdlc-plan-view-model";
+import type { PlanSpecViewModel } from "@/lib/delivery-loop-plan-view-model";
 
-export function SdlcPlanReviewCard({
+export function DeliveryLoopPlanReviewCard({
   plan,
   className,
 }: {
@@ -10,7 +10,7 @@ export function SdlcPlanReviewCard({
 }) {
   return (
     <section
-      aria-label="SDLC plan review"
+      aria-label="Delivery loop plan review"
       className={cn(
         "rounded-lg border bg-card p-3 text-card-foreground",
         className,
@@ -76,3 +76,6 @@ export function SdlcPlanReviewCard({
     </section>
   );
 }
+
+/** @deprecated Use DeliveryLoopPlanReviewCard */
+export const SdlcPlanReviewCard = DeliveryLoopPlanReviewCard;

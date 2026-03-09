@@ -11,7 +11,7 @@ import { updateThreadChat } from "@terragon/shared/model/threads";
 import {
   enrollSdlcLoopForThread,
   getActiveSdlcLoopForThread,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";

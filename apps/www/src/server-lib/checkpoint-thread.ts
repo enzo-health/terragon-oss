@@ -18,7 +18,7 @@ import { maybeUpdateGitHubCheckRunForThreadChat } from "./github";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { isSdlcLoopEnrollmentAllowedForThread } from "./sdlc-loop/enrollment";
+import { isSdlcLoopEnrollmentAllowedForThread } from "./delivery-loop/enrollment";
 
 export async function checkpointThread({
   userId,

@@ -1,13 +1,13 @@
 import {
   DeepReviewGateOutput,
   deepReviewGateOutputSchema,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { runStructuredCodexGateInSandbox } from "./sandbox-codex-gate";
 
 export const DEEP_REVIEW_GATE_PROMPT_VERSION = 1;
 
-export const DEEP_REVIEW_GATE_SYSTEM_PROMPT = `You are the Deep Review gate for an autonomous SDLC loop.
+export const DEEP_REVIEW_GATE_SYSTEM_PROMPT = `You are the Deep Review gate for an autonomous Delivery Loop.
 Return strict JSON only.
 Identify only actionable, code-level defects that must be fixed before progression.
 Each finding must include stable fields so retries remain deterministic.

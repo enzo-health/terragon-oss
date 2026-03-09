@@ -11,7 +11,7 @@ import {
   releaseSdlcLoopLease,
   type ClaimedSdlcOutboxAction,
   type SdlcOutboxErrorClass,
-} from "@terragon/shared/model/sdlc-loop";
+} from "@terragon/shared/model/delivery-loop";
 import type { DB } from "@terragon/shared/db";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
@@ -36,7 +36,7 @@ const STATUS_COMMENT_PAYLOAD_SCHEMA = z.object({
 const CHECK_SUMMARY_PAYLOAD_SCHEMA = z.object({
   repoFullName: z.string().min(1),
   prNumber: z.number().int().positive(),
-  title: z.string().min(1).default("Terragon SDLC Loop"),
+  title: z.string().min(1).default("Terragon Delivery Loop"),
   summary: z.string().min(1),
   status: z.enum(["queued", "in_progress", "completed"]).default("completed"),
   conclusion: z
@@ -226,7 +226,7 @@ export async function upsertSdlcCanonicalStatusComment({
   });
 
   if (!loop) {
-    throw new Error(`SDLC loop not found: ${loopId}`);
+    throw new Error(`Delivery Loop not found: ${loopId}`);
   }
 
   const [owner, repo] = parseRepoFullName(repoFullName);
@@ -328,7 +328,7 @@ export async function upsertSdlcCanonicalCheckSummary({
   });
 
   if (!loop) {
-    throw new Error(`SDLC loop not found: ${loopId}`);
+    throw new Error(`Delivery Loop not found: ${loopId}`);
   }
 
   const [owner, repo] = parseRepoFullName(payload.repoFullName);
@@ -567,7 +567,7 @@ async function executeClaimedPublicationAction({
   }
 
   throw new Error(
-    `Unsupported SDLC publication action: ${claimedAction.actionType}`,
+    `Unsupported Delivery Loop publication action: ${claimedAction.actionType}`,
   );
 }
 
