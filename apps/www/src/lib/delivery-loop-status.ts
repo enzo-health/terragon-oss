@@ -83,6 +83,39 @@ const SDLC_STATE_SUMMARY = {
       "Monitoring CI and review feedback until all blockers are resolved.",
     progressPercent: 85,
   },
+  // Canonical Delivery Loop v2 states.
+  review_gate: {
+    stateLabel: "Review Gate",
+    explanation: "Deep and architecture review gates are running.",
+    progressPercent: 45,
+  },
+  ci_gate: {
+    stateLabel: "CI Gate",
+    explanation: "Required CI checks are running.",
+    progressPercent: 55,
+  },
+  ui_gate: {
+    stateLabel: "UI Gate",
+    explanation: "Browser smoke testing is validating UI behavior.",
+    progressPercent: 65,
+  },
+  awaiting_pr_link: {
+    stateLabel: "Awaiting PR",
+    explanation:
+      "Quality gates passed. Waiting for PR to be created or linked.",
+    progressPercent: 75,
+  },
+  babysitting: {
+    stateLabel: "Babysitting",
+    explanation:
+      "Monitoring CI and review feedback until all blockers are resolved.",
+    progressPercent: 85,
+  },
+  blocked: {
+    stateLabel: "Blocked",
+    explanation: "The loop is blocked and waiting for resolution.",
+    progressPercent: 50,
+  },
   gates_running: {
     stateLabel: "Gates Running",
     explanation: "Automated quality gates are evaluating the current head.",
@@ -491,3 +524,17 @@ export function buildSdlcLoopStatusChecks({
     videoCheck,
   ];
 }
+
+// Delivery Loop aliases for exported symbols
+/** @deprecated Use DeliveryLoopStatusCheckKey */
+export type DeliveryLoopStatusCheckKey = SdlcLoopStatusCheckKey;
+/** @deprecated Use DeliveryLoopStatusCheckStatus */
+export type DeliveryLoopStatusCheckStatus = SdlcLoopStatusCheckStatus;
+/** @deprecated Use DeliveryLoopStatusCheck */
+export type DeliveryLoopStatusCheck = SdlcLoopStatusCheck;
+/** @deprecated Use DeliveryLoopStatusStateSummary */
+export type DeliveryLoopStatusStateSummary = SdlcLoopStatusStateSummary;
+/** @deprecated Use getDeliveryLoopStateSummary */
+export const getDeliveryLoopStateSummary = getSdlcLoopStateSummary;
+/** @deprecated Use buildDeliveryLoopStatusChecks */
+export const buildDeliveryLoopStatusChecks = buildSdlcLoopStatusChecks;
