@@ -3,7 +3,15 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const vitestCliPath = require.resolve("vitest/vitest.mjs");
-const vitestSubcommands = new Set(["run", "watch", "dev", "bench", "list"]);
+const vitestSubcommands = new Set([
+  "run",
+  "related",
+  "watch",
+  "dev",
+  "bench",
+  "init",
+  "list",
+]);
 
 const forwardedArgs = process.argv.slice(2);
 const vitestArgs =

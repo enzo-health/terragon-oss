@@ -8,7 +8,10 @@ import {
   UIRichTextPart,
   DBMessage,
 } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import {
+  type ArtifactDescriptor,
+  extractProposedPlanText,
+} from "@terragon/shared/db/artifact-descriptors";
 import { TextPart } from "./text-part";
 import { ImagePart } from "./image-part";
 import { PdfPart } from "./pdf-part";
@@ -60,12 +63,19 @@ export const MessagePart = memo(function MessagePart({
       ? () => onOpenArtifact(artifactDescriptor.id)
       : undefined;
 
-  // Find a plan artifact descriptor for text parts containing delivery-loop plans
+  // Find the plan artifact descriptor matching this specific text part's plan content
   const planArtifactDescriptor = useMemo(() => {
     if (part.type !== "text") return null;
+    const planText = extractProposedPlanText(part.text);
+    if (!planText) return null;
     return (
       artifactDescriptors.find(
-        (d) => d.kind === "plan" && d.origin.type === "tool-part",
+        (d) =>
+          d.kind === "plan" &&
+          d.origin.type === "tool-part" &&
+          d.origin.toolCallName === "proposed_plan" &&
+          "planText" in d.part &&
+          d.part.planText === planText,
       ) ?? null
     );
   }, [part, artifactDescriptors]);

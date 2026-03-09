@@ -602,7 +602,7 @@ function summarizeRichText(part: UIRichTextPart): string | undefined {
 
 const PROPOSED_PLAN_RE = /<proposed_plan>/i;
 
-function extractProposedPlanText(text: string): string | null {
+export function extractProposedPlanText(text: string): string | null {
   const match = text.match(/<proposed_plan>\s*([\s\S]*?)\s*<\/proposed_plan>/i);
   return match?.[1]?.trim() || null;
 }
