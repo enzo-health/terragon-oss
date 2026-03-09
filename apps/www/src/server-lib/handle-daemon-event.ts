@@ -79,17 +79,6 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
-const ACTIVE_PROCESSING_STATUSES: ReadonlySet<ThreadStatus> = new Set([
-  "queued",
-  "queued-blocked",
-  "queued-sandbox-creation-rate-limit",
-  "queued-tasks-concurrency",
-  "queued-agent-rate-limit",
-  "booting",
-  "working",
-  "stopping",
-  "checkpointing",
-]);
 const FOLLOW_UP_ACK_PENDING_STATUSES: ReadonlySet<ThreadStatus> = new Set([
   "queued",
   "queued-blocked",
@@ -897,20 +886,27 @@ async function handleThreadFinish({
     }
   }
 
-  // Fallback: re-read thread chat status for cases without runId (legacy paths)
-  const currentChat = await getThreadChat({
-    db,
-    threadId,
-    threadChatId,
-    userId,
-  });
-  if (currentChat && ACTIVE_PROCESSING_STATUSES.has(currentChat.status)) {
-    console.log("[handleThreadFinish] Thread already re-dispatched, skipping", {
+  // Fallback: re-read thread chat status for legacy paths without runId.
+  // Only bail if the thread is actively "working" (already re-dispatched).
+  // Queued states like queued-agent-rate-limit should still proceed to checkpoint.
+  if (!runId) {
+    const currentChat = await getThreadChat({
+      db,
       threadId,
       threadChatId,
-      currentStatus: currentChat.status,
+      userId,
     });
-    return;
+    if (currentChat && currentChat.status === "working") {
+      console.log(
+        "[handleThreadFinish] Thread already re-dispatched, skipping",
+        {
+          threadId,
+          threadChatId,
+          currentStatus: currentChat.status,
+        },
+      );
+      return;
+    }
   }
 
   // Deactivate the sandbox immediately so hibernation is never blocked,
