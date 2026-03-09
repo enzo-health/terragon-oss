@@ -32,25 +32,31 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
   let failedCount = 0;
   let retriedCount = 0;
 
-  for (const intent of stalled) {
-    try {
-      const outcome = await handleAckTimeout({
-        db,
-        runId: intent.runId,
-        threadChatId: intent.threadChatId,
-        timeoutMs: DEFAULT_ACK_TIMEOUT_MS,
-      });
-      failedCount++;
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < stalled.length; i += BATCH_SIZE) {
+    const batch = stalled.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((intent) =>
+        handleAckTimeout({
+          db,
+          runId: intent.runId,
+          threadChatId: intent.threadChatId,
+          timeoutMs: DEFAULT_ACK_TIMEOUT_MS,
+        }),
+      ),
+    );
 
-      if (outcome.shouldRetry) {
-        retriedCount++;
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        failedCount++;
+        if (result.value.shouldRetry) {
+          retriedCount++;
+        }
+      } else {
+        console.error("[ack-timeout] failed to process stalled intent", {
+          error: result.reason,
+        });
       }
-    } catch (error) {
-      console.error("[ack-timeout] failed to process stalled intent", {
-        runId: intent.runId,
-        loopId: intent.loopId,
-        error,
-      });
     }
   }
 

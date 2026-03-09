@@ -15,7 +15,10 @@ import {
   touchThreadChatUpdatedAt,
 } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
-import { setActiveThreadChat } from "@/agent/sandbox-resource";
+import {
+  hasOtherActiveRuns,
+  setActiveThreadChat,
+} from "@/agent/sandbox-resource";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import {
@@ -47,7 +50,6 @@ import {
   getActiveSdlcLoopForThread,
   getUnresolvedBlockingDeepReviewFindings,
   getUnresolvedBlockingCarmackReviewFindings,
-  type DeliveryLoopFailureCategory,
 } from "@terragon/shared/model/delivery-loop";
 import {
   formatReviewFindings,
@@ -64,6 +66,7 @@ import {
   evaluateRetryDecision,
   resetRetryCounter,
 } from "@/server-lib/delivery-loop/retry-policy";
+import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
 
 /** SDLC phases eligible for auto-retry on generic agent error. */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
@@ -73,36 +76,6 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "ui_gate",
   "babysitting",
 ]);
-
-/**
- * Classify a daemon-reported error message into a DeliveryLoopFailureCategory.
- * This mirrors the classification in `apps/www/src/agent/daemon.ts` but operates
- * on the error string the daemon sends back via its event stream.
- */
-function classifyDaemonEventError(
-  errorMessage: string | null,
-): DeliveryLoopFailureCategory {
-  if (!errorMessage) return "unknown";
-  const msg = errorMessage.toLowerCase();
-  if (
-    /unix socket|econnrefused|enoent.*socket|daemon.*not running|daemon.*dead/.test(
-      msg,
-    )
-  )
-    return "daemon_unreachable";
-  if (/spawn|fork|exec|eacces|cannot find module/.test(msg))
-    return "daemon_spawn_failed";
-  if (/timeout|timed out|ack.*timeout/.test(msg)) return "dispatch_ack_timeout";
-  if (/codex.*app.?server.*exit/.test(msg)) return "codex_app_server_exit";
-  if (/codex.*subagent/.test(msg)) return "codex_subagent_failed";
-  if (/codex.*turn.*fail|codex.*error/.test(msg)) return "codex_turn_failed";
-  if (/claude.*exit|claude.*crash|claude.*runtime/.test(msg))
-    return "claude_runtime_exit";
-  if (/claude.*dispatch|dispatch.*fail/.test(msg))
-    return "claude_dispatch_failed";
-  if (/gate.*fail|gate.*block/.test(msg)) return "gate_failed";
-  return "unknown";
-}
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
@@ -896,8 +869,35 @@ async function handleThreadFinish({
   sourceMetadata: ThreadSourceMetadata | null;
   runId: string | null;
 }) {
-  // Re-read current thread chat status. If SDLC self-dispatch already
-  // transitioned to "working", bail — the sandbox must stay active.
+  // Check if another run is still active for this threadChat on this sandbox.
+  // If so, skip cleanup — the sandbox must stay active for the other run.
+  if (runId) {
+    const otherRunsActive = await hasOtherActiveRuns({
+      sandboxId,
+      threadChatId,
+      excludeRunId: runId,
+    });
+    if (otherRunsActive) {
+      console.log(
+        "[handleThreadFinish] Other runs still active, skipping sandbox deactivation",
+        {
+          threadId,
+          threadChatId,
+          runId,
+        },
+      );
+      // Still deactivate THIS run but don't remove the threadChat from the sandbox
+      await setActiveThreadChat({
+        sandboxId,
+        threadChatId,
+        isActive: false,
+        runId,
+      });
+      return;
+    }
+  }
+
+  // Fallback: re-read thread chat status for cases without runId (legacy paths)
   const currentChat = await getThreadChat({
     db,
     threadId,

@@ -137,6 +137,25 @@ export async function setActiveThreadChat({
   }
 }
 
+/**
+ * Check if there are other active runs for a threadChat on a sandbox,
+ * excluding the specified runId. Uses the Redis run-tracking set
+ * (THREAD_CHAT_RUNS_PREFIX).
+ */
+export async function hasOtherActiveRuns({
+  sandboxId,
+  threadChatId,
+  excludeRunId,
+}: {
+  sandboxId: string;
+  threadChatId: string;
+  excludeRunId: string;
+}): Promise<boolean> {
+  const key = `${THREAD_CHAT_RUNS_PREFIX}${sandboxId}:${threadChatId}`;
+  const members = await redis.smembers(key);
+  return members.some((id) => id !== excludeRunId);
+}
+
 export async function withSandboxResource<T>({
   sandboxId,
   label,
