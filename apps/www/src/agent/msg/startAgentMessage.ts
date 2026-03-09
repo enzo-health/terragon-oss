@@ -39,7 +39,7 @@ import {
   modelToAgent,
   getDefaultModelForAgent,
   normalizedModelForDaemon,
-  isConnectedCredentialsSupported,
+  shouldUseCredits as shouldUseCreditsUtil,
   modelRequiresChatGptOAuth,
 } from "@terragon/agent/utils";
 import { handleSlashCommand } from "@/agent/slash-command-handler";
@@ -316,17 +316,26 @@ export async function startAgentMessage({
         });
       }
 
-      await updateThreadChatWithTransition({
-        userId,
-        threadId,
-        threadChatId,
-        eventType: "system.boot",
-        chatUpdates: {
-          errorMessage: null,
-          errorMessageInfo: null,
-          appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
-        },
-      });
+      const { didUpdateStatus: didBootStatusUpdate } =
+        await updateThreadChatWithTransition({
+          userId,
+          threadId,
+          threadChatId,
+          eventType: "system.boot",
+          chatUpdates: {
+            errorMessage: null,
+            errorMessageInfo: null,
+            appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
+          },
+          requireStatusTransitionForChatUpdates: true,
+        });
+      if (!didBootStatusUpdate) {
+        throw new ThreadError(
+          "unknown-error",
+          "Failed to transition thread to booting before start",
+          null,
+        );
+      }
       // Get or create sandbox for the thread
       const startTime = Date.now();
       // We need to provide onStatusUpdate for both new and resumed threads
@@ -585,10 +594,10 @@ export async function startAgentMessage({
             throw new ThreadError("no-user-message", "", null);
           }
 
-          const shouldUseCredits =
-            (agentForModel === "codex" && !userCredentials.hasOpenAI) ||
-            (agentForModel === "claudeCode" && !userCredentials.hasClaude) ||
-            !isConnectedCredentialsSupported(agentForModel);
+          const shouldUseCredits = shouldUseCreditsUtil(
+            agentForModel,
+            userCredentials,
+          );
 
           const runId = randomUUID();
           const tokenNonce = randomUUID();

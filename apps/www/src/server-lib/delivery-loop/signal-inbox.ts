@@ -38,6 +38,7 @@ const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
+const DURABLE_SIGNAL_INBOX_MAX_ITERATIONS = 15;
 const terminalSdlcLoopStates: ReadonlySet<SdlcLoopState> = new Set([
   "terminated_pr_closed",
   "terminated_pr_merged",
@@ -51,7 +52,7 @@ const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
   "pull_request_review",
   "pull_request_review_comment",
 ]);
-const nonBabysitFeedbackSuppressedStates: ReadonlySet<SdlcLoopState> = new Set([
+const nonBabysitFeedbackSuppressedStates: ReadonlySet<string> = new Set([
   "planning",
 ]);
 const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
@@ -411,12 +412,14 @@ async function persistGateEvaluationForSignal({
     loopVersion: number;
     currentHeadSha: string | null;
     state: SdlcLoopState;
+    blockedFromState: SdlcLoopState | null;
   };
   signal: PendingSignal;
   now: Date;
 }): Promise<boolean> {
   const loopSnapshot = buildPersistedDeliveryLoopSnapshot({
     state: loop.state,
+    blockedFromState: loop.blockedFromState,
   });
   const effectiveLoopPhase = getEffectiveDeliveryLoopPhase(loopSnapshot);
 
@@ -702,12 +705,14 @@ function buildFeedbackFollowUpMessage({
   loopRepoFullName,
   loopPrNumber,
   loopState,
+  loopBlockedFromState,
   signalCauseType,
   payload,
 }: {
   loopRepoFullName: string;
   loopPrNumber: number | null;
   loopState: SdlcLoopState;
+  loopBlockedFromState?: SdlcLoopState | null;
   signalCauseType: SdlcLoopCauseType;
   payload: Record<string, unknown> | null;
 }): DBUserMessage {
@@ -721,6 +726,7 @@ function buildFeedbackFollowUpMessage({
     const { phaseLabel, followUpInstruction } = resolveDaemonTerminalPhaseText(
       buildPersistedDeliveryLoopSnapshot({
         state: loopState,
+        blockedFromState: loopBlockedFromState,
       }),
     );
     const repoRef =
@@ -901,6 +907,7 @@ async function routeFeedbackSignalToEnrolledThread({
   repoFullName,
   prNumber,
   loopState,
+  loopBlockedFromState,
   signal,
 }: {
   db: DB;
@@ -910,6 +917,7 @@ async function routeFeedbackSignalToEnrolledThread({
   repoFullName: string;
   prNumber: number | null;
   loopState: SdlcLoopState;
+  loopBlockedFromState?: SdlcLoopState | null;
   signal: PendingSignal;
 }) {
   const thread = await getThread({
@@ -928,6 +936,7 @@ async function routeFeedbackSignalToEnrolledThread({
     loopRepoFullName: repoFullName,
     loopPrNumber: prNumber,
     loopState,
+    loopBlockedFromState,
     signalCauseType: signal.causeType,
     payload: signal.payload,
   });
@@ -1020,7 +1029,7 @@ function buildDurableSignalInboxGuardrailRuntime() {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: 15,
+    maxIterations: DURABLE_SIGNAL_INBOX_MAX_ITERATIONS,
     manualIntentAllowed: true,
     // iterationCount intentionally omitted — resolveSignalInboxGuardrailInputs
     // will use the loop's actual loopVersion as the iteration count.
@@ -1209,6 +1218,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopVersion: loop.loopVersion,
           currentHeadSha: loop.currentHeadSha,
           state: loop.state,
+          blockedFromState: loop.blockedFromState,
         },
         signal,
         now,
@@ -1226,6 +1236,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     let feedbackQueuedMessage: DBUserMessage | null = null;
     const loopSnapshot = buildPersistedDeliveryLoopSnapshot({
       state: loop.state,
+      blockedFromState: loop.blockedFromState,
     });
     const effectiveLoopPhase = getEffectiveDeliveryLoopPhase(loopSnapshot);
     const runtimeRouting: {
@@ -1242,9 +1253,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     const shouldSuppressFeedbackRuntimeAction =
       feedbackSignalCauseTypes.has(signal.causeType) &&
       signal.causeType !== "daemon_terminal" &&
-      nonBabysitFeedbackSuppressedStates.has(
-        effectiveLoopPhase as SdlcLoopState,
-      );
+      nonBabysitFeedbackSuppressedStates.has(effectiveLoopPhase);
     const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
 
     if (
@@ -1271,7 +1280,8 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopThreadId: loop.threadId,
           repoFullName: loop.repoFullName,
           prNumber: loop.prNumber ?? null,
-          loopState: effectiveLoopPhase as SdlcLoopState,
+          loopState: effectiveLoopPhase,
+          loopBlockedFromState: loop.blockedFromState,
           signal,
         });
         runtimeAction = "feedback_follow_up_queued";
@@ -1337,12 +1347,14 @@ export async function runBestEffortSdlcSignalInboxTick({
       columns: {
         state: true,
         currentHeadSha: true,
+        blockedFromState: true,
       },
     });
 
     const refreshedLoopSnapshot = refreshedLoop
       ? buildPersistedDeliveryLoopSnapshot({
           state: refreshedLoop.state,
+          blockedFromState: refreshedLoop.blockedFromState,
         })
       : null;
     if (

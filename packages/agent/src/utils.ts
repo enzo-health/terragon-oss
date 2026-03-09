@@ -279,6 +279,17 @@ export function isConnectedCredentialsSupported(agent: AIAgent): boolean {
   }
 }
 
+export function shouldUseCredits(
+  agent: AIAgent,
+  userCredentials: { hasOpenAI: boolean; hasClaude: boolean },
+): boolean {
+  return (
+    (agent === "codex" && !userCredentials.hasOpenAI) ||
+    (agent === "claudeCode" && !userCredentials.hasClaude) ||
+    !isConnectedCredentialsSupported(agent)
+  );
+}
+
 export function isAgentSupportedForCredits(agent: AIAgent): boolean {
   switch (agent) {
     case "claudeCode":

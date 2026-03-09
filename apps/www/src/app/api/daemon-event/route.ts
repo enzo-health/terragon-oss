@@ -49,7 +49,7 @@ import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   normalizedModelForDaemon,
   getDefaultModelForAgent,
-  isConnectedCredentialsSupported,
+  shouldUseCredits,
 } from "@terragon/agent/utils";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import { randomUUID } from "node:crypto";
@@ -112,28 +112,31 @@ type DaemonProcessingEventClaimResult =
       reason: "claim_in_progress" | "duplicate_event";
     };
 
+type TerminalAckBase = {
+  status?: number;
+  deduplicated?: true;
+  reason?: string;
+  loopId?: string;
+  runId?: string;
+  acknowledgedEventId: string | null;
+  acknowledgedSeq: number | null;
+};
+
 type TerminalAckState =
-  | {
-      kind: "ack_only";
-      status?: number;
-      deduplicated?: true;
-      reason?: string;
-      loopId?: string;
-      runId?: string;
-      acknowledgedEventId: string | null;
-      acknowledgedSeq: number | null;
-    }
-  | {
+  | (TerminalAckBase & { kind: "ack_only" })
+  | (TerminalAckBase & {
       kind: "self_dispatch";
-      status?: number;
-      deduplicated?: true;
-      reason?: string;
-      loopId?: string;
-      runId?: string;
-      acknowledgedEventId: string | null;
-      acknowledgedSeq: number | null;
       selfDispatch: SdlcSelfDispatchPayload;
-    };
+    });
+
+function buildTerminalAckState(
+  base: TerminalAckBase,
+  selfDispatch: SdlcSelfDispatchPayload | null,
+): TerminalAckState {
+  return selfDispatch
+    ? { ...base, kind: "self_dispatch", selfDispatch }
+    : { ...base, kind: "ack_only" };
+}
 
 function jsonTerminalAckResponse(state: TerminalAckState): Response {
   return Response.json(
@@ -182,7 +185,7 @@ async function countConsecutiveCompletedAutoDispatches({
            AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' != 'completed'
          ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
          LIMIT 1),
-        '1970-01-01'::timestamptz
+        '1970-01-01'::timestamp
       )
   `);
   const rows = result as unknown as Array<{ count: string | number }>;
@@ -930,26 +933,17 @@ export async function POST(request: Request) {
             })
           : null;
       return jsonTerminalAckResponse(
-        replayedSelfDispatch
-          ? {
-              kind: "self_dispatch",
-              status: 202,
-              deduplicated: true,
-              reason: "run_terminal_ignored",
-              runId: runContext.runId,
-              acknowledgedEventId: envelopeV2?.eventId ?? null,
-              acknowledgedSeq: envelopeV2?.seq ?? null,
-              selfDispatch: replayedSelfDispatch,
-            }
-          : {
-              kind: "ack_only",
-              status: 202,
-              deduplicated: true,
-              reason: "run_terminal_ignored",
-              runId: runContext.runId,
-              acknowledgedEventId: envelopeV2?.eventId ?? null,
-              acknowledgedSeq: envelopeV2?.seq ?? null,
-            },
+        buildTerminalAckState(
+          {
+            status: 202,
+            deduplicated: true,
+            reason: "run_terminal_ignored",
+            runId: runContext.runId,
+            acknowledgedEventId: envelopeV2?.eventId ?? null,
+            acknowledgedSeq: envelopeV2?.seq ?? null,
+          },
+          replayedSelfDispatch,
+        ),
       );
     }
   }
@@ -1271,10 +1265,7 @@ export async function POST(request: Request) {
                 preparedDispatchIntentId = dispatchIntent.id;
                 preparedRunId = newRunId;
 
-                const shouldUseCredits =
-                  (agent === "codex" && !userCredentials.hasOpenAI) ||
-                  (agent === "claudeCode" && !userCredentials.hasClaude) ||
-                  !isConnectedCredentialsSupported(agent);
+                const useCredits = shouldUseCredits(agent, userCredentials);
 
                 const preparedSelfDispatchPayload = {
                   token,
@@ -1291,7 +1282,7 @@ export async function POST(request: Request) {
                   protocolVersion,
                   threadId,
                   threadChatId,
-                  useCredits: shouldUseCredits || undefined,
+                  useCredits: useCredits || undefined,
                 };
                 await storeSelfDispatchReplay({
                   threadChatId,
@@ -1623,26 +1614,17 @@ export async function POST(request: Request) {
           sourceRunId: envelopeV2.runId,
         });
         return jsonTerminalAckResponse(
-          replayedSelfDispatch
-            ? {
-                kind: "self_dispatch",
-                status: 202,
-                deduplicated: true,
-                reason: claimResult.reason,
-                loopId: enrolledLoop.id,
-                acknowledgedEventId: envelopeV2.eventId,
-                acknowledgedSeq: envelopeV2.seq,
-                selfDispatch: replayedSelfDispatch,
-              }
-            : {
-                kind: "ack_only",
-                status: 202,
-                deduplicated: true,
-                reason: claimResult.reason,
-                loopId: enrolledLoop.id,
-                acknowledgedEventId: envelopeV2.eventId,
-                acknowledgedSeq: envelopeV2.seq,
-              },
+          buildTerminalAckState(
+            {
+              status: 202,
+              deduplicated: true,
+              reason: claimResult.reason,
+              loopId: enrolledLoop.id,
+              acknowledgedEventId: envelopeV2.eventId,
+              acknowledgedSeq: envelopeV2.seq,
+            },
+            replayedSelfDispatch,
+          ),
         );
       }
       claimedSignalInboxId = claimResult.signalInboxId;
@@ -1925,17 +1907,12 @@ export async function POST(request: Request) {
   }
 
   return jsonTerminalAckResponse(
-    selfDispatchPayload
-      ? {
-          kind: "self_dispatch",
-          acknowledgedEventId: envelopeV2?.eventId ?? null,
-          acknowledgedSeq: envelopeV2?.seq ?? null,
-          selfDispatch: selfDispatchPayload,
-        }
-      : {
-          kind: "ack_only",
-          acknowledgedEventId: envelopeV2?.eventId ?? null,
-          acknowledgedSeq: envelopeV2?.seq ?? null,
-        },
+    buildTerminalAckState(
+      {
+        acknowledgedEventId: envelopeV2?.eventId ?? null,
+        acknowledgedSeq: envelopeV2?.seq ?? null,
+      },
+      selfDispatchPayload,
+    ),
   );
 }
