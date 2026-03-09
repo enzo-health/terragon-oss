@@ -4631,3 +4631,27 @@ export async function getDispatchIntentByRunId(db: DB, runId: string) {
     .limit(1);
   return row ?? null;
 }
+
+/**
+ * Find dispatch intents stuck in "dispatched" status for longer than the
+ * given timeout. These are dispatches where the daemon never sent its first
+ * event back (ack). Used by the ack-timeout cron to detect and fail them.
+ */
+export async function getStalledDispatchIntents(
+  db: DB,
+  timeoutMs: number,
+  limit = 50,
+) {
+  const cutoff = new Date(Date.now() - timeoutMs);
+  return db
+    .select()
+    .from(schema.deliveryLoopDispatchIntent)
+    .where(
+      and(
+        eq(schema.deliveryLoopDispatchIntent.status, "dispatched"),
+        lte(schema.deliveryLoopDispatchIntent.dispatchedAt, cutoff),
+      ),
+    )
+    .orderBy(schema.deliveryLoopDispatchIntent.dispatchedAt)
+    .limit(limit);
+}

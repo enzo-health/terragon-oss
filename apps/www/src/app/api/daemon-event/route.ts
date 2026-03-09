@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
+  markDispatchIntentAcknowledged,
   SDLC_CAUSE_IDENTITY_VERSION,
   type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
@@ -21,6 +22,7 @@ import {
   buildDispatchIntentId,
   updateDispatchIntent,
 } from "@/server-lib/delivery-loop/dispatch-intent";
+import { resetRetryCounter } from "@/server-lib/delivery-loop/retry-policy";
 import {
   getAgentRunContextByRunId,
   upsertAgentRunContext,
@@ -865,13 +867,19 @@ export async function POST(request: Request) {
     threadId,
   });
 
-  // Acknowledge dispatch intent on first event for this run
+  // Acknowledge dispatch intent on first event for this run.
+  // Updates both Redis (real-time) and DB (durable) intent records,
+  // and resets the retry counter since the dispatch succeeded.
   if (enrolledLoop && envelopeV2 && envelopeV2.seq === 1) {
     const intentId = buildDispatchIntentId(enrolledLoop.id, envelopeV2.runId);
     try {
-      await updateDispatchIntent(intentId, threadChatId, {
-        status: "acknowledged",
-      });
+      await Promise.all([
+        updateDispatchIntent(intentId, threadChatId, {
+          status: "acknowledged",
+        }),
+        markDispatchIntentAcknowledged(db, envelopeV2.runId),
+        resetRetryCounter(threadChatId),
+      ]);
     } catch (ackError) {
       console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
         intentId,
