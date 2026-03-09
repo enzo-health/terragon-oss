@@ -235,6 +235,158 @@ describe("getArtifactDescriptors", () => {
     expect(second[0]?.updatedAt).toBe("2024-01-01T00:01:00Z");
   });
 
+  it("creates a plan artifact from an ExitPlanMode tool call with reference equality", () => {
+    const exitPlanToolPart = {
+      type: "tool" as const,
+      id: "exit-plan-1",
+      agent: "claudeCode" as const,
+      name: "ExitPlanMode" as const,
+      parameters: { plan: "## My Plan\n\n1. Do thing A\n2. Do thing B" },
+      status: "completed" as const,
+      result: "done",
+      parts: [],
+    };
+    const messages: UIMessage[] = [
+      {
+        role: "agent",
+        agent: "claudeCode",
+        parts: [exitPlanToolPart],
+      },
+    ];
+
+    const descriptors = getArtifactDescriptors({ messages });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      id: "artifact:plan:exit-plan-1",
+      kind: "plan",
+      title: "Plan",
+      status: "ready",
+      origin: {
+        type: "plan-tool",
+        toolCallId: "exit-plan-1",
+        fingerprint: expect.any(String),
+      },
+      summary: "Agent plan via ExitPlanMode",
+    });
+    // Reference equality — the tool part object is stored directly
+    expect(descriptors[0]?.part).toBe(exitPlanToolPart);
+  });
+
+  it("creates separate artifacts for multiple ExitPlanMode calls with unique IDs", () => {
+    const messages: UIMessage[] = [
+      {
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "tool",
+            id: "exit-plan-1",
+            agent: "claudeCode",
+            name: "ExitPlanMode",
+            parameters: { plan: "Plan A" },
+            status: "completed",
+            result: "done",
+            parts: [],
+          },
+          {
+            type: "tool",
+            id: "exit-plan-2",
+            agent: "claudeCode",
+            name: "ExitPlanMode",
+            parameters: { plan: "Plan B" },
+            status: "completed",
+            result: "done",
+            parts: [],
+          },
+        ],
+      },
+    ];
+
+    const descriptors = getArtifactDescriptors({ messages });
+
+    expect(descriptors).toHaveLength(2);
+    expect(descriptors[0]?.id).toBe("artifact:plan:exit-plan-1");
+    expect(descriptors[1]?.id).toBe("artifact:plan:exit-plan-2");
+  });
+
+  it("creates a plan artifact from an ExitPlanMode tool call even with empty plan text", () => {
+    const messages: UIMessage[] = [
+      {
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "tool",
+            id: "exit-plan-empty",
+            agent: "claudeCode",
+            name: "ExitPlanMode",
+            parameters: { plan: "" },
+            status: "completed",
+            result: "done",
+            parts: [],
+          },
+        ],
+      },
+    ];
+
+    const descriptors = getArtifactDescriptors({ messages });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]?.kind).toBe("plan");
+  });
+
+  it("creates a plan artifact from agent text with proposed_plan tags", () => {
+    const messages: UIMessage[] = [
+      {
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "text",
+            text: "Here is my plan:\n<proposed_plan>\n# Implementation Plan\n\n## Summary\nBuild the feature\n\n## Tasks\n1. Task one\n2. Task two\n</proposed_plan>",
+          },
+        ],
+      },
+    ];
+
+    const descriptors = getArtifactDescriptors({ messages });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      kind: "plan",
+      title: "Implementation Plan",
+      status: "ready",
+      origin: {
+        type: "tool-part",
+        toolCallName: "proposed_plan",
+        partType: "plan",
+        fingerprint: expect.any(String),
+      },
+    });
+    expect(descriptors[0]?.id).toMatch(/^artifact:plan:text:/);
+    // Part is a UIPlanPart with the extracted text
+    expect((descriptors[0]?.part as { type: string }).type).toBe("plan");
+  });
+
+  it("does not create plan artifacts from user text with proposed_plan tags", () => {
+    const messages: UIMessage[] = [
+      {
+        role: "user",
+        model: null,
+        parts: [
+          {
+            type: "text",
+            text: "<proposed_plan>A plan</proposed_plan>",
+          },
+        ],
+      },
+    ];
+
+    const descriptors = getArtifactDescriptors({ messages });
+    expect(descriptors).toHaveLength(0);
+  });
+
   it("turns git diff system messages into checkpoint descriptors without positional ids", () => {
     const gitDiffPart = {
       type: "git-diff" as const,

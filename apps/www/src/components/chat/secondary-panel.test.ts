@@ -114,6 +114,65 @@ describe("secondary-panel artifact shell helpers", () => {
     ).toBeNull();
   });
 
+  it("creates a plan artifact summary with correct labels for ExitPlanMode origin", () => {
+    const items = getArtifactWorkspaceItems({
+      messages: [
+        {
+          role: "agent",
+          agent: "claudeCode",
+          parts: [
+            {
+              type: "tool",
+              id: "exit-plan-1",
+              agent: "claudeCode",
+              name: "ExitPlanMode",
+              parameters: { plan: "My plan content" },
+              status: "completed",
+              result: "done",
+              parts: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: "plan",
+      title: "Plan",
+      status: "ready",
+      sourceLabel: "Agent plan",
+      responseActionLabel: "Plan",
+      summary: "Agent plan via ExitPlanMode",
+    });
+  });
+
+  it("creates a plan artifact summary for delivery-loop plan from proposed_plan tags", () => {
+    const items = getArtifactWorkspaceItems({
+      messages: [
+        {
+          role: "agent",
+          agent: "claudeCode",
+          parts: [
+            {
+              type: "text",
+              text: "<proposed_plan>\n# Build Feature\n\n## Summary\nDo it\n\n## Tasks\n1. Step one\n</proposed_plan>",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: "plan",
+      title: "Implementation Plan",
+      status: "ready",
+      sourceLabel: "Tool output",
+      responseActionLabel: "proposed_plan",
+    });
+  });
+
   it("returns no artifacts when neither the thread nor messages expose artifacts", () => {
     expect(getArtifactWorkspaceItems({ messages: [], thread: null })).toEqual(
       [],

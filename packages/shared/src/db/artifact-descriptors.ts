@@ -1,15 +1,27 @@
 import type { GitDiffStats } from "./types";
 import type {
+  AllToolParts,
   UIGitDiffPart,
   UIImagePart,
   UIMessage,
   UIPart,
   UIPdfPart,
+  UIPlanPart,
   UIRichTextPart,
   UITextFilePart,
 } from "./ui-messages";
 
-export type ArtifactDescriptorKind = "git-diff" | "document" | "file" | "media";
+export type ExitPlanModeToolPart = Extract<
+  AllToolParts,
+  { name: "ExitPlanMode" }
+>;
+
+export type ArtifactDescriptorKind =
+  | "git-diff"
+  | "document"
+  | "file"
+  | "media"
+  | "plan";
 
 export type ArtifactDescriptorStatus = "ready";
 
@@ -17,9 +29,13 @@ type MessageArtifactPart =
   | UIRichTextPart
   | UIImagePart
   | UIPdfPart
-  | UITextFilePart;
+  | UITextFilePart
+  | UIPlanPart;
 
-export type ArtifactDescriptorPart = UIGitDiffPart | MessageArtifactPart;
+export type ArtifactDescriptorPart =
+  | UIGitDiffPart
+  | MessageArtifactPart
+  | ExitPlanModeToolPart;
 
 type ToolCallOrigin = {
   id: string;
@@ -51,6 +67,11 @@ export type ArtifactDescriptorOrigin =
       type: "system-message";
       messageType: "git-diff";
       timestamp?: string;
+      fingerprint: string;
+    }
+  | {
+      type: "plan-tool";
+      toolCallId: string;
       fingerprint: string;
     };
 
@@ -93,11 +114,17 @@ export type MediaArtifactDescriptor = BaseArtifactDescriptor<
   UIImagePart | UIPdfPart
 >;
 
+export type PlanArtifactDescriptor = BaseArtifactDescriptor<
+  "plan",
+  UIPlanPart | ExitPlanModeToolPart
+>;
+
 export type ArtifactDescriptor =
   | GitDiffArtifactDescriptor
   | DocumentArtifactDescriptor
   | FileArtifactDescriptor
-  | MediaArtifactDescriptor;
+  | MediaArtifactDescriptor
+  | PlanArtifactDescriptor;
 
 export type ArtifactDescriptorThreadInput = {
   id: string;
@@ -211,7 +238,65 @@ function collectArtifactDescriptorsFromParts({
   let toolArtifactOrdinal = 0;
 
   for (const part of parts) {
+    // Detect delivery-loop plans in agent text parts
+    if (
+      part.type === "text" &&
+      messageRole === "agent" &&
+      PROPOSED_PLAN_RE.test(part.text)
+    ) {
+      const planText = extractProposedPlanText(part.text);
+      if (planText) {
+        const planPart: UIPlanPart = {
+          type: "plan",
+          planText,
+          title: "Implementation Plan",
+        };
+        const fingerprint = shortHash({ planText });
+        descriptors.push({
+          id: buildStableId({
+            baseId: `artifact:plan:text:${fingerprint}`,
+            duplicateCounts,
+          }),
+          kind: "plan",
+          title: "Implementation Plan",
+          status: "ready",
+          part: planPart,
+          origin: {
+            type: "tool-part",
+            toolCallId: `plan-text-${fingerprint}`,
+            toolCallName: "proposed_plan",
+            toolCallPath: [],
+            artifactOrdinal: 0,
+            partType: "plan",
+            fingerprint,
+          },
+        });
+      }
+      continue;
+    }
+
     if (part.type === "tool") {
+      if (part.name === "ExitPlanMode") {
+        const fingerprint = shortHash({ toolCallId: part.id });
+        descriptors.push({
+          id: buildStableId({
+            baseId: `artifact:plan:${part.id}`,
+            duplicateCounts,
+          }),
+          kind: "plan",
+          title: "Plan",
+          status: "ready",
+          part: part as ExitPlanModeToolPart,
+          origin: {
+            type: "plan-tool",
+            toolCallId: part.id,
+            fingerprint,
+          },
+          summary: "Agent plan via ExitPlanMode",
+        });
+        continue;
+      }
+
       collectArtifactDescriptorsFromParts({
         descriptors,
         duplicateCounts,
@@ -363,6 +448,20 @@ function createDescriptor({
         origin,
         updatedAt,
       };
+    case "plan":
+      return {
+        id,
+        kind: "plan",
+        title: part.title ?? "Plan",
+        status: "ready",
+        part,
+        origin,
+        updatedAt,
+        summary:
+          part.taskCount != null
+            ? `${part.taskCount} task${part.taskCount === 1 ? "" : "s"}`
+            : undefined,
+      };
   }
 }
 
@@ -371,7 +470,8 @@ function isMessageArtifactPart(part: UIPart): part is MessageArtifactPart {
     part.type === "image" ||
     part.type === "rich-text" ||
     part.type === "pdf" ||
-    part.type === "text-file"
+    part.type === "text-file" ||
+    part.type === "plan"
   );
 }
 
@@ -439,6 +539,8 @@ function getMessageArtifactFingerprint(part: MessageArtifactPart): string {
       return shortHash({ image_url: part.image_url });
     case "pdf":
       return shortHash({ pdf_url: part.pdf_url, filename: part.filename });
+    case "plan":
+      return shortHash({ planText: part.planText, title: part.title });
   }
 }
 
@@ -496,4 +598,11 @@ function summarizeRichText(part: UIRichTextPart): string | undefined {
   }
 
   return text.length <= 80 ? text : `${text.slice(0, 77)}...`;
+}
+
+const PROPOSED_PLAN_RE = /<proposed_plan>/i;
+
+function extractProposedPlanText(text: string): string | null {
+  const match = text.match(/<proposed_plan>\s*([\s\S]*?)\s*<\/proposed_plan>/i);
+  return match?.[1]?.trim() || null;
 }

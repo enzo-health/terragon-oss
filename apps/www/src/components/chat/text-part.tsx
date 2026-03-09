@@ -17,6 +17,7 @@ interface TextPartProps {
   branchName?: string;
   baseBranchName?: string;
   hasCheckpoint?: boolean;
+  onOpenInArtifactWorkspace?: () => void;
 }
 
 const codePlugin = createCodePlugin({
@@ -132,6 +133,7 @@ const TextPart = memo(function TextPart({
   branchName,
   baseBranchName,
   hasCheckpoint,
+  onOpenInArtifactWorkspace,
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
@@ -362,7 +364,11 @@ const TextPart = memo(function TextPart({
   return (
     <div>
       {parsedPlan ? (
-        <DeliveryLoopPlanReviewCard plan={parsedPlan} className="mb-2" />
+        <DeliveryLoopPlanReviewCard
+          plan={parsedPlan}
+          className="mb-2"
+          onOpenInArtifactWorkspace={onOpenInArtifactWorkspace}
+        />
       ) : null}
       <div className="prose prose-sm max-w-none" ref={containerRef}>
         <Streamdown

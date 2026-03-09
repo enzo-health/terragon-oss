@@ -167,6 +167,8 @@ const ToolPart = memo(function ToolPart({
             toolPart={
               toolPart as Extract<AllToolParts, { name: "ExitPlanMode" }>
             }
+            artifactDescriptors={artifactDescriptors}
+            onOpenArtifact={onOpenArtifact}
           />
         );
       case "PermissionRequest":

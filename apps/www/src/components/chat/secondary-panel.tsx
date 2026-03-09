@@ -14,6 +14,7 @@ import {
   type UIImagePart,
   type UIPart,
   type UIPdfPart,
+  type UIPlanPart,
   type UIRichTextPart,
   type UITextFilePart,
 } from "@terragon/shared";
@@ -21,10 +22,15 @@ import {
   getArtifactDescriptors,
   type ArtifactDescriptor,
   type ArtifactDescriptorOrigin,
+  type ExitPlanModeToolPart,
+  type PlanArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
 import { useResizablePanel } from "@/hooks/use-resizable-panel";
 import { GitDiffView } from "./git-diff-view";
 import { RichTextPart } from "./rich-text-part";
+import { TextPart } from "./text-part";
+import { resolvePlanText } from "./tools/plan-utils";
+import { useThread } from "./thread-context";
 import { usePlatform } from "@/hooks/use-platform";
 import { useSecondaryPanel } from "./hooks";
 import { Button } from "@/components/ui/button";
@@ -161,6 +167,8 @@ function getArtifactSourceLabel(origin: ArtifactDescriptorOrigin) {
       return "Tool output";
     case "system-message":
       return "Checkpoint";
+    case "plan-tool":
+      return "Agent plan";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;
@@ -178,6 +186,8 @@ function getArtifactResponseActionLabel(origin: ArtifactDescriptorOrigin) {
       return "Working tree";
     case "user-message-part":
       return undefined;
+    case "plan-tool":
+      return "Plan";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;
@@ -222,6 +232,12 @@ export function SecondaryPanel({
               );
             case "media":
               return <MediaArtifactRenderer mediaPart={descriptor.part} />;
+            case "plan":
+              return (
+                <PlanArtifactRenderer
+                  descriptor={descriptor as PlanArtifactDescriptor}
+                />
+              );
             default:
               return null;
           }
@@ -648,6 +664,46 @@ function MediaArtifactRenderer({
         title={mediaPart.filename || "PDF document"}
         className="min-h-0 h-full w-full"
       />
+    </div>
+  );
+}
+
+function PlanArtifactRenderer({
+  descriptor,
+}: {
+  descriptor: PlanArtifactDescriptor;
+}) {
+  const { threadChat } = useThread();
+
+  const planText = useMemo(() => {
+    // ExitPlanMode tool part — resolve plan text from parameters or Write fallback
+    if (descriptor.origin.type === "plan-tool") {
+      const toolPart = descriptor.part as ExitPlanModeToolPart;
+      return resolvePlanText({
+        planParam: toolPart.parameters?.plan,
+        messages: threadChat?.messages ?? null,
+        exitPlanModeToolId: toolPart.id,
+      });
+    }
+
+    // Delivery-loop plan — plan text is stored directly in the UIPlanPart
+    const planPart = descriptor.part as UIPlanPart;
+    return planPart.planText;
+  }, [descriptor, threadChat?.messages]);
+
+  return (
+    <div className="h-full overflow-auto p-4">
+      <div className="rounded-xl border bg-card p-4 shadow-sm">
+        <div className="max-w-none font-sans prose prose-sm">
+          {planText ? (
+            <TextPart text={planText} />
+          ) : (
+            <p className="text-muted-foreground italic">
+              (No plan content available)
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -19,6 +19,7 @@ import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
 import { useThread } from "./thread-context";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
+import { useSecondaryPanel } from "./hooks";
 
 interface MessagePartProps {
   part: UIPart;
@@ -38,6 +39,7 @@ export const MessagePart = memo(function MessagePart({
   onOpenArtifact,
 }: MessagePartProps) {
   const { thread, threadChat } = useThread();
+  const { setIsSecondaryPanelOpen } = useSecondaryPanel();
   const githubRepoFullName = thread?.githubRepoFullName;
   const branchName = thread?.branchName || undefined;
   const baseBranchName = thread?.repoBaseBranchName || undefined;
@@ -58,6 +60,24 @@ export const MessagePart = memo(function MessagePart({
       ? () => onOpenArtifact(artifactDescriptor.id)
       : undefined;
 
+  // Find a plan artifact descriptor for text parts containing delivery-loop plans
+  const planArtifactDescriptor = useMemo(() => {
+    if (part.type !== "text") return null;
+    return (
+      artifactDescriptors.find(
+        (d) => d.kind === "plan" && d.origin.type === "tool-part",
+      ) ?? null
+    );
+  }, [part, artifactDescriptors]);
+
+  const handleOpenPlanArtifact = useMemo(() => {
+    if (!planArtifactDescriptor || !onOpenArtifact) return undefined;
+    return () => {
+      onOpenArtifact(planArtifactDescriptor.id);
+      setIsSecondaryPanelOpen(true);
+    };
+  }, [planArtifactDescriptor, onOpenArtifact, setIsSecondaryPanelOpen]);
+
   switch (part.type) {
     case "text": {
       return (
@@ -67,6 +87,7 @@ export const MessagePart = memo(function MessagePart({
           branchName={branchName}
           baseBranchName={baseBranchName}
           hasCheckpoint={hasCheckpoint}
+          onOpenInArtifactWorkspace={handleOpenPlanArtifact}
         />
       );
     }
@@ -129,6 +150,9 @@ export const MessagePart = memo(function MessagePart({
         />
       );
     }
+    case "plan":
+      // Plan parts are rendered via the artifact workspace panel, not inline
+      return null;
     default:
       assertNever(part);
   }
