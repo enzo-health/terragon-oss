@@ -860,7 +860,7 @@ describe("daemon-event route", () => {
       guardrailRuntime: {
         killSwitchEnabled: false,
         cooldownUntil: null,
-        maxIterations: null,
+        maxIterations: 15,
         manualIntentAllowed: true,
         iterationCount: 11,
       },
@@ -872,7 +872,7 @@ describe("daemon-event route", () => {
       guardrailRuntime: {
         killSwitchEnabled: false,
         cooldownUntil: null,
-        maxIterations: null,
+        maxIterations: 15,
         manualIntentAllowed: true,
         iterationCount: 11,
       },

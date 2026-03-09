@@ -977,7 +977,7 @@ function buildDurableSignalInboxGuardrailRuntime() {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: null,
+    maxIterations: 15,
     manualIntentAllowed: true,
     iterationCount: 0,
   } satisfies SdlcSignalInboxGuardrailRuntimeInput;
@@ -1218,6 +1218,16 @@ export async function runBestEffortSdlcSignalInboxTick({
         runtimeRouting.routed = true;
         runtimeRouting.followUpQueued = true;
         runtimeRouting.reason = "follow_up_queued";
+
+        // Increment loopVersion so the guardrail iterationCount tracks
+        // follow-up iterations and maxIterations can prevent infinite loops.
+        await db
+          .update(schema.sdlcLoop)
+          .set({
+            loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
+            updatedAt: now,
+          })
+          .where(eq(schema.sdlcLoop.id, loopId));
       } catch (error) {
         console.error("[sdlc-loop] feedback runtime action failed", {
           loopId,

@@ -253,7 +253,7 @@ function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: null,
+    maxIterations: 15,
     manualIntentAllowed: true,
     iterationCount,
   };
