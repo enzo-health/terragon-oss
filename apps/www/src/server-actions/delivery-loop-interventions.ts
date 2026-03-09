@@ -175,6 +175,7 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
           id: true,
           state: true,
           loopVersion: true,
+          currentHeadSha: true,
         },
       });
       if (!lockedLoop) {
@@ -245,6 +246,7 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
           gate: "quality",
           actorUserId: userId,
           loopVersion: lockedLoop.loopVersion,
+          headSha: lockedLoop.currentHeadSha ?? undefined,
           requestedAt: new Date().toISOString(),
         },
       });

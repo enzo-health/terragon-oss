@@ -93,6 +93,7 @@ type SdlcHumanInterventionPayload = {
   actorUserId?: unknown;
   loopVersion?: unknown;
   requestedAt?: unknown;
+  headSha?: unknown;
 };
 
 type SdlcPhaseGateEvaluation = {
@@ -624,10 +625,12 @@ async function getLatestPendingBypassForImplementation({
   loopId,
   expectedActorUserId,
   expectedLoopVersion,
+  headSha,
 }: {
   loopId: string;
   expectedActorUserId: string;
   expectedLoopVersion: number;
+  headSha: string;
 }): Promise<{ artifactId: string } | null> {
   const candidates = await db.query.sdlcPhaseArtifact.findMany({
     where: and(
@@ -656,6 +659,12 @@ async function getLatestPendingBypassForImplementation({
       payload.actorUserId === expectedActorUserId &&
       payload.loopVersion === expectedLoopVersion
     ) {
+      // SHA-scoped: if the bypass was created with a headSha, it can only
+      // be consumed when the current head matches. Bypasses without a
+      // headSha (legacy) are consumable on any SHA.
+      if (payload.headSha && payload.headSha !== headSha) {
+        continue;
+      }
       return { artifactId: candidate.id };
     }
   }
@@ -1081,6 +1090,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       loopId: activeLoop.id,
       expectedActorUserId: userId,
       expectedLoopVersion: activeLoop.loopVersion,
+      headSha,
     });
 
     // Until completion is signaled (by agent or explicit human bypass),
