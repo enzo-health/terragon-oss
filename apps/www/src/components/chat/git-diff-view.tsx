@@ -22,7 +22,7 @@ import {
   X,
   Image,
 } from "lucide-react";
-import { ThreadInfoFull } from "@terragon/shared";
+import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
 import { cn } from "@/lib/utils";
 import {
   parseMultiFileDiff,
@@ -54,6 +54,7 @@ interface GitDiffViewProps {
   thread: ThreadInfoFull;
   mode?: "split" | "unified";
   enableComments?: boolean;
+  diffPart?: UIGitDiffPart;
 }
 
 interface FileTreeNode {
@@ -654,6 +655,7 @@ function FileTreeItem({
 export function GitDiffView({
   thread,
   enableComments = false,
+  diffPart,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -702,17 +704,19 @@ export function GitDiffView({
 
   // Force unified mode on small screens
   const effectiveViewMode = isSmallScreen ? "unified" : viewMode;
+  const activeDiff = diffPart?.diff ?? thread.gitDiff;
+  const activeDiffStats = diffPart?.diffStats ?? thread.gitDiffStats;
 
   const diffInstances = useMemo(() => {
-    if (!thread.gitDiff || thread.gitDiff === "too-large") return [];
+    if (!activeDiff || activeDiff === "too-large") return [];
 
     try {
-      return parseMultiFileDiff(thread.gitDiff);
+      return parseMultiFileDiff(activeDiff);
     } catch (e) {
       console.error("Failed to create diff instances:", e);
       return [];
     }
-  }, [thread.gitDiff]);
+  }, [activeDiff]);
 
   const fileTree = useMemo(() => buildFileTree(diffInstances), [diffInstances]);
 
@@ -799,14 +803,14 @@ export function GitDiffView({
   }, [diffInstances]);
 
   const headerStats = useMemo(() => {
-    const stats = thread.gitDiffStats;
+    const stats = activeDiffStats;
 
     return {
       files: stats?.files ?? computedDiffStats.files,
       additions: stats?.additions ?? computedDiffStats.additions,
       deletions: stats?.deletions ?? computedDiffStats.deletions,
     };
-  }, [thread.gitDiffStats, computedDiffStats]);
+  }, [activeDiffStats, computedDiffStats]);
 
   // Handle manual view mode change
   const handleViewModeChange = (mode: "split" | "unified") => {
@@ -814,7 +818,7 @@ export function GitDiffView({
     setManuallySelectedMode(true);
   };
 
-  if (!thread.gitDiff) {
+  if (!activeDiff) {
     return (
       <div ref={containerRef} className="flex flex-col h-full">
         <div className="border-b">

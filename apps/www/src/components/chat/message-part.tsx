@@ -8,6 +8,7 @@ import {
   UIRichTextPart,
   DBMessage,
 } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { TextPart } from "./text-part";
 import { ImagePart } from "./image-part";
 import { PdfPart } from "./pdf-part";
@@ -17,12 +18,15 @@ import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
 import { useThread } from "./thread-context";
+import { findArtifactDescriptorForPart } from "./secondary-panel";
 
 interface MessagePartProps {
   part: UIPart;
   onClick?: () => void;
   isLatest?: boolean;
   isAgentWorking?: boolean;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }
 
 export const MessagePart = memo(function MessagePart({
@@ -30,6 +34,8 @@ export const MessagePart = memo(function MessagePart({
   onClick,
   isLatest = false,
   isAgentWorking = false,
+  artifactDescriptors = [],
+  onOpenArtifact,
 }: MessagePartProps) {
   const { thread, threadChat } = useThread();
   const githubRepoFullName = thread?.githubRepoFullName;
@@ -42,6 +48,15 @@ export const MessagePart = memo(function MessagePart({
     const messages = threadChat.messages as DBMessage[];
     return messages.some((msg) => msg.type === "git-diff");
   }, [threadChat?.messages]);
+  const artifactDescriptor = useMemo(
+    () =>
+      findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
+    [artifactDescriptors, part],
+  );
+  const handleOpenArtifact =
+    artifactDescriptor && onOpenArtifact
+      ? () => onOpenArtifact(artifactDescriptor.id)
+      : undefined;
 
   switch (part.type) {
     case "text": {
@@ -66,7 +81,13 @@ export const MessagePart = memo(function MessagePart({
     }
     case "tool": {
       const toolPart = part as AllToolParts;
-      return <ToolPart toolPart={toolPart} />;
+      return (
+        <ToolPart
+          toolPart={toolPart}
+          artifactDescriptors={artifactDescriptors}
+          onOpenArtifact={onOpenArtifact}
+        />
+      );
     }
     case "image": {
       const imagePart = part as UIImagePart;
@@ -74,7 +95,12 @@ export const MessagePart = memo(function MessagePart({
     }
     case "rich-text": {
       const richTextPart = part as UIRichTextPart;
-      return <RichTextPart richTextPart={richTextPart} />;
+      return (
+        <RichTextPart
+          richTextPart={richTextPart}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
+        />
+      );
     }
     case "pdf": {
       const pdfPart = part as UIPdfPart;
@@ -87,6 +113,7 @@ export const MessagePart = memo(function MessagePart({
           textFileUrl={textFilePart.file_url}
           filename={textFilePart.filename}
           mimeType={textFilePart.mime_type}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
         />
       );
     }

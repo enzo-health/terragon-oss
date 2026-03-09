@@ -8,6 +8,7 @@ import {
   UIUserMessage,
   UIGitDiffPart,
 } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { AIAgent } from "@terragon/agent/types";
 import { MessagePart } from "./message-part";
 import { cn } from "@/lib/utils";
@@ -128,9 +129,13 @@ function groupParts({
 function ImageGroup({
   group,
   isLatestMessage = false,
+  artifactDescriptors,
+  onOpenArtifact,
 }: {
   group: PartGroup;
   isLatestMessage?: boolean;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
 }) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
@@ -152,6 +157,8 @@ function ImageGroup({
               part={part}
               onClick={() => setExpandedIndex(partIndex)}
               isLatest={isLatestMessage && partIndex === numParts - 1}
+              artifactDescriptors={artifactDescriptors}
+              onOpenArtifact={onOpenArtifact}
             />
           );
         })}
@@ -205,14 +212,24 @@ export const ChatMessage = memo(function ChatMessage({
   className,
   isLatestMessage = false,
   isAgentWorking = false,
+  artifactDescriptors = [],
+  onOpenArtifact = () => {},
 }: {
   message: UIMessage;
   className?: string;
   isLatestMessage?: boolean;
   isAgentWorking?: boolean;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }) {
   if (message.role === "system") {
-    return <SystemMessage message={message} />;
+    return (
+      <SystemMessage
+        message={message}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
+      />
+    );
   }
   const groups = groupParts({
     parts: message.parts,
@@ -242,6 +259,8 @@ export const ChatMessage = memo(function ChatMessage({
                 group={group}
                 isLatestMessage={isLatestMessage}
                 isAgentWorking={isAgentWorking}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
               />
             );
           }
@@ -251,6 +270,8 @@ export const ChatMessage = memo(function ChatMessage({
                 key={groupIndex}
                 group={group}
                 isLatestMessage={isLatestMessage}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
               />
             );
           }
@@ -263,6 +284,8 @@ export const ChatMessage = memo(function ChatMessage({
                     part={part}
                     isLatest={isLatestMessage && groupIndex === lastGroupIndex}
                     isAgentWorking={isAgentWorking}
+                    artifactDescriptors={artifactDescriptors}
+                    onOpenArtifact={onOpenArtifact}
                   />
                 );
               })}
@@ -285,6 +308,8 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   isFirstUserMessage = false,
   isAgentWorking = false,
   isLatestAgentMessage = false,
+  artifactDescriptors = [],
+  onOpenArtifact = () => {},
 }: {
   message: UIMessage;
   messageIndex: number;
@@ -293,6 +318,8 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   isLatestMessage: boolean;
   isAgentWorking: boolean;
   isLatestAgentMessage: boolean;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }) {
   return (
     <div
@@ -304,6 +331,8 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         className={className}
         isLatestMessage={isLatestMessage}
         isAgentWorking={isAgentWorking}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
       />
       <MessageToolbar
         message={message}
@@ -316,7 +345,15 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   );
 });
 
-function SystemMessage({ message }: { message: UISystemMessage }) {
+function SystemMessage({
+  message,
+  artifactDescriptors,
+  onOpenArtifact,
+}: {
+  message: UISystemMessage;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
+}) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const getLabel = () => {
     switch (message.message_type) {
@@ -380,7 +417,11 @@ function SystemMessage({ message }: { message: UISystemMessage }) {
   if (message.message_type === "git-diff") {
     return (
       <div className="p-2">
-        <GitDiffPart gitDiffPart={message.parts[0] as UIGitDiffPart} />
+        <GitDiffPart
+          gitDiffPart={message.parts[0] as UIGitDiffPart}
+          artifactDescriptors={artifactDescriptors}
+          onOpenArtifact={onOpenArtifact}
+        />
       </div>
     );
   }
@@ -447,11 +488,15 @@ function CollapsibleAgentActivityGroup({
   agent,
   isLatestMessage = false,
   isAgentWorking = false,
+  artifactDescriptors,
+  onOpenArtifact,
 }: {
   group: PartGroup;
   agent: AIAgent | null;
   isLatestMessage: boolean;
   isAgentWorking: boolean;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const numParts = group.parts.length;
@@ -480,6 +525,8 @@ function CollapsibleAgentActivityGroup({
                 part={part}
                 isLatest={isLatestMessage && partIndex === numParts - 1}
                 isAgentWorking={isAgentWorking}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
               />
             );
           })}

@@ -56,6 +56,7 @@ import { TerminalPanel } from "./terminal-panel";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
 import { ensureAgent } from "@terragon/agent/utils";
 import { SecondaryPanel } from "./secondary-panel";
+import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
@@ -77,6 +78,7 @@ function ChatUI({
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const platform = usePlatform();
   const [showTerminal, setShowTerminal] = useState(false);
+  const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const { shouldAutoOpenSecondaryPanel, setIsSecondaryPanelOpen } =
     useSecondaryPanel();
 
@@ -133,6 +135,28 @@ function ChatUI({
       threadStatus: threadChat?.status,
     });
   }, [threadChat]);
+  const artifactDescriptors = useMemo(
+    () =>
+      getArtifactDescriptors({
+        messages,
+        thread: thread
+          ? {
+              id: thread.id,
+              updatedAt: thread.updatedAt,
+              gitDiff: thread.gitDiff,
+              gitDiffStats: thread.gitDiffStats,
+            }
+          : null,
+      }),
+    [messages, thread],
+  );
+  const handleOpenArtifact = useCallback(
+    (artifactId: string) => {
+      setActiveArtifactId(artifactId);
+      setIsSecondaryPanelOpen(true);
+    },
+    [setIsSecondaryPanelOpen],
+  );
 
   const isAgentCurrentlyWorking = threadChat
     ? isAgentWorking(threadChat.status)
@@ -261,6 +285,8 @@ function ChatUI({
                 <ChatMessages
                   messages={messages}
                   isAgentWorking={isAgentCurrentlyWorking}
+                  artifactDescriptors={artifactDescriptors}
+                  onOpenArtifact={handleOpenArtifact}
                 />
                 {(error ||
                   threadChat.errorMessage ||
@@ -311,7 +337,13 @@ function ChatUI({
               )}
             </ScrollArea>
           </div>
-          <SecondaryPanel thread={thread} containerRef={chatContainerRef} />
+          <SecondaryPanel
+            thread={thread}
+            artifactDescriptors={artifactDescriptors}
+            activeArtifactId={activeArtifactId}
+            onActiveArtifactChange={setActiveArtifactId}
+            containerRef={chatContainerRef}
+          />
         </div>
       </div>
       {showTerminal && thread.codesandboxId && (

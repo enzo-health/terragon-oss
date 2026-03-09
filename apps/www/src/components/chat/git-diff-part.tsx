@@ -1,5 +1,6 @@
 import { memo, useState, useMemo } from "react";
 import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import {
   ChevronDown,
   ChevronRight,
@@ -15,13 +16,18 @@ import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { findArtifactDescriptorForPart } from "./secondary-panel";
 
 interface GitDiffPartProps {
   gitDiffPart: UIGitDiffPart;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }
 
 export const GitDiffPart = memo(function GitDiffPart({
   gitDiffPart,
+  artifactDescriptors = [],
+  onOpenArtifact,
 }: GitDiffPartProps) {
   const { thread, threadChat } = useThread();
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
@@ -30,6 +36,14 @@ export const GitDiffPart = memo(function GitDiffPart({
   const diffStats = useMemo(
     () => gitDiffPart.diffStats || parseGitDiffStats(gitDiffPart.diff),
     [gitDiffPart.diff, gitDiffPart.diffStats],
+  );
+  const artifactDescriptor = useMemo(
+    () =>
+      findArtifactDescriptorForPart({
+        artifacts: artifactDescriptors,
+        part: gitDiffPart,
+      }),
+    [artifactDescriptors, gitDiffPart],
   );
 
   const isLatest = useMemo(() => {
@@ -90,6 +104,9 @@ export const GitDiffPart = memo(function GitDiffPart({
 
   const handleOpenPanel = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (artifactDescriptor && onOpenArtifact) {
+      onOpenArtifact(artifactDescriptor.id);
+    }
     setIsSecondaryPanelOpen(true);
   };
 
@@ -167,7 +184,7 @@ export const GitDiffPart = memo(function GitDiffPart({
               </span>
             </button>
           )}
-          {isLatest && (
+          {(isLatest || artifactDescriptor) && (
             <button
               onClick={handleOpenPanel}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"

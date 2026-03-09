@@ -1,23 +1,229 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Drawer, DrawerContent } from "@/components/ui/drawer";
-import { ThreadInfoFull } from "@terragon/shared";
+import {
+  ThreadInfoFull,
+  type UIGitDiffPart,
+  type UIImagePart,
+  type UIPart,
+  type UIPdfPart,
+  type UIRichTextPart,
+  type UITextFilePart,
+} from "@terragon/shared";
+import {
+  getArtifactDescriptors,
+  type ArtifactDescriptor,
+  type ArtifactDescriptorOrigin,
+} from "@terragon/shared/db/artifact-descriptors";
 import { useResizablePanel } from "@/hooks/use-resizable-panel";
 import { GitDiffView } from "./git-diff-view";
+import { RichTextPart } from "./rich-text-part";
 import { usePlatform } from "@/hooks/use-platform";
 import { useSecondaryPanel } from "./hooks";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, FileDiff, X } from "lucide-react";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
 const SECONDARY_PANEL_DEFAULT_WIDTH = 0.5;
 
+export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
+
+export interface ArtifactWorkspaceItemSummary {
+  id: string;
+  kind: ArtifactDescriptor["kind"];
+  title: string;
+  status: ArtifactWorkspaceStatus;
+  summary?: string;
+  errorMessage?: string;
+  sourceLabel?: string;
+  responseActionLabel?: string;
+}
+
+interface ArtifactWorkspaceItem extends ArtifactWorkspaceItemSummary {
+  descriptor: ArtifactDescriptor;
+  render: () => React.ReactNode;
+}
+
+type ArtifactWorkspaceComparablePart = UIPart | UIGitDiffPart;
+
+export function resolveActiveArtifactId({
+  artifacts,
+  activeArtifactId,
+}: {
+  artifacts: Array<Pick<ArtifactWorkspaceItemSummary, "id">>;
+  activeArtifactId?: string | null;
+}) {
+  if (artifacts.length === 0) {
+    return null;
+  }
+
+  if (
+    activeArtifactId &&
+    artifacts.some((artifact) => artifact.id === activeArtifactId)
+  ) {
+    return activeArtifactId;
+  }
+
+  return artifacts[0]?.id ?? null;
+}
+
+export function findArtifactDescriptorForPart({
+  artifacts,
+  part,
+}: {
+  artifacts: Pick<ArtifactDescriptor, "id" | "part">[];
+  part: ArtifactWorkspaceComparablePart;
+}) {
+  return (
+    artifacts.find(
+      (artifact) =>
+        artifact.part === part ||
+        areArtifactPartsEquivalent(artifact.part, part),
+    ) ?? null
+  );
+}
+
+function areArtifactPartsEquivalent(
+  left: ArtifactDescriptor["part"],
+  right: ArtifactWorkspaceComparablePart,
+) {
+  if (left.type === "git-diff" && right.type === "git-diff") {
+    return left.timestamp === right.timestamp && left.diff === right.diff;
+  }
+
+  if (left.type === "image" && right.type === "image") {
+    return left.image_url === right.image_url;
+  }
+
+  if (left.type === "pdf" && right.type === "pdf") {
+    return left.pdf_url === right.pdf_url && left.filename === right.filename;
+  }
+
+  if (left.type === "text-file" && right.type === "text-file") {
+    return (
+      left.file_url === right.file_url &&
+      left.filename === right.filename &&
+      left.mime_type === right.mime_type
+    );
+  }
+
+  if (left.type === "rich-text" && right.type === "rich-text") {
+    return JSON.stringify(left.nodes) === JSON.stringify(right.nodes);
+  }
+
+  return false;
+}
+
+export function getArtifactWorkspaceViewState(
+  artifact?: Pick<ArtifactWorkspaceItemSummary, "status"> | null,
+) {
+  if (!artifact) {
+    return "empty" as const;
+  }
+
+  if (artifact.status === "loading") {
+    return "loading" as const;
+  }
+
+  if (artifact.status === "error") {
+    return "error" as const;
+  }
+
+  return "ready" as const;
+}
+
+export function getArtifactWorkspaceItems({
+  messages,
+  thread,
+}: {
+  messages: Parameters<typeof getArtifactDescriptors>[0]["messages"];
+  thread?: Parameters<typeof getArtifactDescriptors>[0]["thread"];
+}) {
+  const descriptors = getArtifactDescriptors({ messages, thread });
+  return descriptors.map((descriptor) =>
+    getArtifactWorkspaceItemSummary(descriptor),
+  );
+}
+
+function getArtifactWorkspaceItemSummary(
+  descriptor: ArtifactDescriptor,
+): ArtifactWorkspaceItemSummary {
+  const isDiffTooLarge =
+    descriptor.kind === "git-diff" && descriptor.part.diff === "too-large";
+
+  return {
+    id: descriptor.id,
+    kind: descriptor.kind,
+    title: descriptor.title,
+    status: isDiffTooLarge ? "error" : "ready",
+    summary: getArtifactWorkspaceSummary(descriptor),
+    errorMessage: isDiffTooLarge
+      ? "This diff is too large to render in the artifact workspace."
+      : undefined,
+    sourceLabel: getArtifactSourceLabel(descriptor.origin),
+    responseActionLabel: getArtifactResponseActionLabel(descriptor.origin),
+  };
+}
+
+function getArtifactWorkspaceSummary(descriptor: ArtifactDescriptor) {
+  if (descriptor.kind !== "git-diff" || descriptor.part.diff !== "too-large") {
+    return descriptor.summary;
+  }
+
+  const files = descriptor.part.diffStats?.files;
+  return typeof files === "number"
+    ? `${files} file${files === 1 ? "" : "s"}`
+    : descriptor.summary;
+}
+
+function getArtifactSourceLabel(origin: ArtifactDescriptorOrigin) {
+  switch (origin.type) {
+    case "thread":
+      return "Current thread";
+    case "user-message-part":
+      return "Message attachment";
+    case "tool-part":
+      return "Tool output";
+    case "system-message":
+      return "Checkpoint";
+    default: {
+      const exhaustiveCheck: never = origin;
+      return exhaustiveCheck;
+    }
+  }
+}
+
+function getArtifactResponseActionLabel(origin: ArtifactDescriptorOrigin) {
+  switch (origin.type) {
+    case "tool-part":
+      return origin.toolCallName;
+    case "system-message":
+      return "Git diff";
+    case "thread":
+      return "Working tree";
+    case "user-message-part":
+      return undefined;
+    default: {
+      const exhaustiveCheck: never = origin;
+      return exhaustiveCheck;
+    }
+  }
+}
+
 export function SecondaryPanel({
   thread,
+  artifactDescriptors,
+  activeArtifactId,
+  onActiveArtifactChange,
   containerRef,
 }: {
   thread: ThreadInfoFull;
+  artifactDescriptors: ArtifactDescriptor[];
+  activeArtifactId: string | null;
+  onActiveArtifactChange: (artifactId: string | null) => void;
   containerRef: React.RefObject<HTMLElement | null>;
 }) {
   const platform = usePlatform();
@@ -25,6 +231,33 @@ export function SecondaryPanel({
     isSecondaryPanelOpen: isOpen,
     setIsSecondaryPanelOpen: onOpenChange,
   } = useSecondaryPanel();
+  const artifacts = useMemo<ArtifactWorkspaceItem[]>(
+    () =>
+      artifactDescriptors.map((descriptor) => ({
+        ...getArtifactWorkspaceItemSummary(descriptor),
+        descriptor,
+        render: () => {
+          switch (descriptor.kind) {
+            case "git-diff":
+              return <GitDiffView thread={thread} diffPart={descriptor.part} />;
+            case "document":
+              return (
+                <DocumentArtifactRenderer richTextPart={descriptor.part} />
+              );
+            case "file":
+              return (
+                <TextFileArtifactRenderer textFilePart={descriptor.part} />
+              );
+            case "media":
+              return <MediaArtifactRenderer mediaPart={descriptor.part} />;
+            default:
+              return null;
+          }
+        },
+      })),
+    [artifactDescriptors, thread],
+  );
+
   const { width, isResizing, handleMouseDown } = useResizablePanel({
     minWidth: SECONDARY_PANEL_MIN_WIDTH,
     maxWidth: SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE,
@@ -34,16 +267,24 @@ export function SecondaryPanel({
     containerRef,
     enabled: isOpen && platform === "desktop",
   });
+
   if (platform === "mobile") {
     return (
       <Drawer open={isOpen} onOpenChange={onOpenChange}>
-        <DrawerContent className="h-[80vh]">
-          <SecondaryPanelContent thread={thread} />
+        <DrawerContent className="h-[80vh] overflow-hidden p-0">
+          <SecondaryPanelContent
+            artifacts={artifacts}
+            activeArtifactId={activeArtifactId}
+            onActiveArtifactChange={onActiveArtifactChange}
+            onClose={() => onOpenChange(false)}
+          />
         </DrawerContent>
       </Drawer>
     );
   }
+
   if (!isOpen) return null;
+
   return (
     <>
       <div
@@ -57,15 +298,343 @@ export function SecondaryPanel({
         className="flex-shrink-0 border-l bg-background flex flex-col h-full"
         style={{ width: `${width}px` }}
       >
-        <SecondaryPanelContent thread={thread} />
+        <SecondaryPanelContent
+          artifacts={artifacts}
+          activeArtifactId={activeArtifactId}
+          onActiveArtifactChange={onActiveArtifactChange}
+          onClose={() => onOpenChange(false)}
+        />
       </div>
     </>
   );
 }
 
-function SecondaryPanelContent({ thread }: { thread?: ThreadInfoFull }) {
-  if (!thread) {
-    return null;
+function SecondaryPanelContent({
+  artifacts,
+  activeArtifactId,
+  onActiveArtifactChange,
+  onClose,
+}: {
+  artifacts: ArtifactWorkspaceItem[];
+  activeArtifactId: string | null;
+  onActiveArtifactChange: (artifactId: string | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ArtifactWorkspaceShell
+      artifacts={artifacts}
+      activeArtifactId={activeArtifactId}
+      onActiveArtifactChange={onActiveArtifactChange}
+      onClose={onClose}
+      emptyState={{
+        title: "No artifacts yet",
+        description:
+          "Artifacts like diffs and generated outputs will appear here.",
+      }}
+    />
+  );
+}
+
+function ArtifactWorkspaceShell({
+  artifacts,
+  activeArtifactId,
+  onActiveArtifactChange,
+  onClose,
+  emptyState,
+}: {
+  artifacts: ArtifactWorkspaceItem[];
+  activeArtifactId: string | null;
+  onActiveArtifactChange: (artifactId: string | null) => void;
+  onClose?: () => void;
+  emptyState: {
+    title: string;
+    description: string;
+  };
+}) {
+  const resolvedActiveArtifactId = resolveActiveArtifactId({
+    artifacts,
+    activeArtifactId,
+  });
+  const activeArtifact =
+    artifacts.find((artifact) => artifact.id === resolvedActiveArtifactId) ??
+    null;
+  const viewState = getArtifactWorkspaceViewState(activeArtifact);
+  const headerTitle = activeArtifact?.title ?? emptyState.title;
+  const headerSummary = activeArtifact?.summary ?? emptyState.description;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="border-b px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold text-foreground">
+                <FileDiff className="size-3" />
+                Artifact workspace
+              </span>
+              {activeArtifact && (
+                <>
+                  <ArtifactWorkspaceChip>
+                    {activeArtifact.kind}
+                  </ArtifactWorkspaceChip>
+                  {activeArtifact.sourceLabel && (
+                    <ArtifactWorkspaceChip>
+                      {activeArtifact.sourceLabel}
+                    </ArtifactWorkspaceChip>
+                  )}
+                  {activeArtifact.responseActionLabel && (
+                    <ArtifactWorkspaceChip>
+                      {activeArtifact.responseActionLabel}
+                    </ArtifactWorkspaceChip>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="mt-2 min-w-0">
+              <h2 className="truncate text-sm font-semibold text-foreground">
+                {headerTitle}
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {headerSummary}
+              </p>
+            </div>
+          </div>
+          {onClose && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={onClose}
+              aria-label="Close artifact workspace"
+            >
+              <X className="size-4" />
+            </Button>
+          )}
+        </div>
+        {artifacts.length > 1 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {artifacts.map((artifact) => {
+              const isActive = artifact.id === resolvedActiveArtifactId;
+              return (
+                <button
+                  key={artifact.id}
+                  type="button"
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    isActive
+                      ? "border-foreground/20 bg-muted text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                  onClick={() => onActiveArtifactChange(artifact.id)}
+                  aria-pressed={isActive}
+                >
+                  {artifact.title}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {viewState === "empty" && (
+          <ArtifactWorkspaceState
+            title={emptyState.title}
+            description={emptyState.description}
+          />
+        )}
+
+        {viewState === "loading" && (
+          <ArtifactWorkspaceState
+            title="Loading artifact"
+            description="The selected artifact is still being prepared."
+          />
+        )}
+
+        {viewState === "error" && (
+          <ArtifactWorkspaceState
+            title={activeArtifact?.title ?? "Artifact unavailable"}
+            description={
+              activeArtifact?.errorMessage ??
+              "Something went wrong while preparing this artifact."
+            }
+          />
+        )}
+
+        {viewState === "ready" && activeArtifact && (
+          <div className="h-full">{activeArtifact.render()}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ArtifactWorkspaceChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold text-foreground">
+      {children}
+    </span>
+  );
+}
+
+function DocumentArtifactRenderer({
+  richTextPart,
+}: {
+  richTextPart: UIRichTextPart;
+}) {
+  return (
+    <div className="h-full overflow-auto p-4">
+      <div className="rounded-xl border bg-card p-4 shadow-sm">
+        <RichTextPart richTextPart={richTextPart} />
+      </div>
+    </div>
+  );
+}
+
+function TextFileArtifactRenderer({
+  textFilePart,
+}: {
+  textFilePart: UITextFilePart;
+}) {
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "ready"; content: string }
+    | { status: "error"; message: string }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function load() {
+      setState({ status: "loading" });
+      try {
+        const response = await fetch(textFilePart.file_url, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+        const content = await response.text();
+        setState({ status: "ready", content });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setState({
+          status: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to load file preview.",
+        });
+      }
+    }
+
+    void load();
+
+    return () => controller.abort();
+  }, [textFilePart.file_url]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-b px-4 py-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">
+            {textFilePart.filename || "Generated file"}
+          </p>
+          {textFilePart.mime_type && (
+            <p className="text-xs text-muted-foreground">
+              {textFilePart.mime_type}
+            </p>
+          )}
+        </div>
+        <Button asChild variant="outline" size="sm" className="shrink-0">
+          <a
+            href={textFilePart.file_url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink className="size-4" />
+            Open raw
+          </a>
+        </Button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto p-4">
+        {state.status === "loading" && (
+          <ArtifactWorkspaceState
+            title="Loading preview"
+            description="Fetching file contents for preview."
+          />
+        )}
+        {state.status === "error" && (
+          <ArtifactWorkspaceState
+            title="Preview unavailable"
+            description={`${state.message} You can still open the raw file.`}
+          />
+        )}
+        {state.status === "ready" && (
+          <pre className="min-h-full overflow-auto rounded-xl border bg-muted/40 p-4 text-xs leading-5 text-foreground whitespace-pre-wrap break-words font-mono">
+            {state.content}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MediaArtifactRenderer({
+  mediaPart,
+}: {
+  mediaPart: UIImagePart | UIPdfPart;
+}) {
+  if (mediaPart.type === "image") {
+    return (
+      <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 p-4">
+        <img
+          src={mediaPart.image_url}
+          alt="Artifact preview"
+          className="max-h-full max-w-full rounded-xl border bg-background object-contain shadow-sm"
+        />
+      </div>
+    );
   }
-  return <GitDiffView thread={thread} />;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-b px-4 py-3 flex items-center justify-between gap-3">
+        <p className="truncate text-sm font-medium">
+          {mediaPart.filename || "PDF document"}
+        </p>
+        <Button asChild variant="outline" size="sm" className="shrink-0">
+          <a href={mediaPart.pdf_url} target="_blank" rel="noopener noreferrer">
+            <ExternalLink className="size-4" />
+            Open PDF
+          </a>
+        </Button>
+      </div>
+      <iframe
+        src={mediaPart.pdf_url}
+        title={mediaPart.filename || "PDF document"}
+        className="min-h-0 h-full w-full"
+      />
+    </div>
+  );
+}
+
+function ArtifactWorkspaceState({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center p-6 text-center">
+      <div className="max-w-sm space-y-2">
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
 }

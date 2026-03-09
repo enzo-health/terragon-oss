@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { UIMessage, ThreadStatus } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { AIAgent } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
@@ -15,9 +16,13 @@ import { useServerActionMutation } from "@/queries/server-action-helpers";
 export const ChatMessages = memo(function ChatMessages({
   messages,
   isAgentWorking,
+  artifactDescriptors = [],
+  onOpenArtifact = () => {},
 }: {
   messages: UIMessage[];
   isAgentWorking: boolean;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }) {
   // Find the latest agent message
   let latestAgentMessageIndex = -1;
@@ -44,6 +49,8 @@ export const ChatMessages = memo(function ChatMessages({
             isLatestMessage={isLatestMessage}
             isFirstUserMessage={isFirstUserMessage}
             isLatestAgentMessage={isLatestAgentMessage}
+            artifactDescriptors={artifactDescriptors}
+            onOpenArtifact={onOpenArtifact}
           />
         );
       })}
