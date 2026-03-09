@@ -7,6 +7,8 @@ import {
   gateStateToGateTypes,
   executeReviewGate,
   executeCiGate,
+  executeUiGate,
+  executeGatePipeline,
   type GatePipelineResult,
   type BypassOnceToken,
 } from "./gate-executor";
@@ -386,5 +388,204 @@ describe("executeCiGate", () => {
 
     expect(result.allPassed).toBe(false);
     expect(runQualityCheckGateInSandbox).toHaveBeenCalled();
+  });
+});
+
+describe("executeUiGate", () => {
+  it("auto-passes when no frontend files changed", async () => {
+    const result = await executeUiGate({
+      session: mockSession,
+      repoFullName: "org/repo",
+      branchName: "feat/api-change",
+      headSha: "abc123",
+      changedFiles: ["src/server/api.ts", "README.md"],
+      model: "gpt-5.3-codex-medium",
+    });
+
+    expect(result.state).toBe("ui_gate");
+    expect(result.allPassed).toBe(true);
+    expect(result.gateResults[0]!.summary).toContain("skipped");
+    expect(mockSession.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("runs build when frontend files are changed", async () => {
+    vi.mocked(mockSession.runCommand).mockResolvedValue("Build succeeded");
+
+    const result = await executeUiGate({
+      session: mockSession,
+      repoFullName: "org/repo",
+      branchName: "feat/ui-change",
+      headSha: "abc123",
+      changedFiles: ["src/components/Button.tsx", "src/server/api.ts"],
+      model: "gpt-5.3-codex-medium",
+    });
+
+    expect(result.state).toBe("ui_gate");
+    expect(result.allPassed).toBe(true);
+    expect(result.gateResults[0]!.gateType).toBe("ui_smoke");
+    expect(mockSession.runCommand).toHaveBeenCalledWith("pnpm run build", {
+      cwd: mockSession.repoDir,
+      timeoutMs: 300_000,
+    });
+  });
+
+  it("reports failure when build fails", async () => {
+    vi.mocked(mockSession.runCommand).mockRejectedValue(
+      new Error("Build error: type mismatch"),
+    );
+
+    const result = await executeUiGate({
+      session: mockSession,
+      repoFullName: "org/repo",
+      branchName: "feat/broken-ui",
+      headSha: "abc123",
+      changedFiles: ["src/pages/index.vue"],
+      model: "gpt-5.3-codex-medium",
+    });
+
+    expect(result.allPassed).toBe(false);
+    expect(result.blockingFindings).toHaveLength(1);
+    expect(result.gateResults[0]!.error).toBe("Build error: type mismatch");
+  });
+
+  it("detects frontend patterns in nested paths", async () => {
+    vi.mocked(mockSession.runCommand).mockResolvedValue("ok");
+
+    const result = await executeUiGate({
+      session: mockSession,
+      repoFullName: "org/repo",
+      branchName: "feat/page",
+      headSha: "abc123",
+      changedFiles: ["apps/web/src/app/dashboard/page.ts"],
+      model: "gpt-5.3-codex-medium",
+    });
+
+    expect(result.allPassed).toBe(true);
+    expect(mockSession.runCommand).toHaveBeenCalled();
+  });
+});
+
+describe("executeGatePipeline", () => {
+  const basePipelineInput = {
+    reviewInput: {
+      session: mockSession,
+      repoFullName: "org/repo",
+      prNumber: 42,
+      headSha: "abc123",
+      taskContext: "test context",
+      gitDiff: "diff content",
+      model: "gpt-5.3-codex-medium",
+    },
+    ciInput: {
+      session: mockSession,
+      headSha: "abc123",
+      bypassToken: null,
+    },
+    uiInput: {
+      session: mockSession,
+      repoFullName: "org/repo",
+      branchName: "feat/test",
+      headSha: "abc123",
+      changedFiles: ["src/lib/utils.ts"],
+      model: "gpt-5.3-codex-medium",
+    },
+    hasPr: true,
+  };
+
+  it("sequences all three gates when all pass", async () => {
+    vi.mocked(runDeepReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+    vi.mocked(runCarmackReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+    vi.mocked(runQualityCheckGateInSandbox).mockResolvedValue({
+      gatePassed: true,
+      failures: [],
+    });
+
+    const result = await executeGatePipeline(basePipelineInput);
+
+    expect(result.allPassed).toBe(true);
+    expect(result.results).toHaveLength(3);
+    expect(result.results[0]!.state).toBe("review_gate");
+    expect(result.results[1]!.state).toBe("ci_gate");
+    expect(result.results[2]!.state).toBe("ui_gate");
+    expect(result.nextState).toBe("babysitting");
+    expect(result.stoppedAtGate).toBeNull();
+  });
+
+  it("returns awaiting_pr_link when all pass and no PR", async () => {
+    vi.mocked(runDeepReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+    vi.mocked(runCarmackReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+    vi.mocked(runQualityCheckGateInSandbox).mockResolvedValue({
+      gatePassed: true,
+      failures: [],
+    });
+
+    const result = await executeGatePipeline({
+      ...basePipelineInput,
+      hasPr: false,
+    });
+
+    expect(result.allPassed).toBe(true);
+    expect(result.nextState).toBe("awaiting_pr_link");
+  });
+
+  it("short-circuits at review_gate on failure", async () => {
+    vi.mocked(runDeepReviewGate).mockResolvedValue({
+      gatePassed: false,
+      blockingFindings: [
+        {
+          title: "Bug",
+          severity: "high",
+          category: "correctness",
+          detail: "Wrong logic",
+          isBlocking: true,
+        },
+      ],
+    });
+    vi.mocked(runCarmackReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+
+    const result = await executeGatePipeline(basePipelineInput);
+
+    expect(result.allPassed).toBe(false);
+    expect(result.results).toHaveLength(1);
+    expect(result.stoppedAtGate).toBe("review_gate");
+    expect(result.nextState).toBe("implementing");
+    expect(runQualityCheckGateInSandbox).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits at ci_gate on failure", async () => {
+    vi.mocked(runDeepReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+    vi.mocked(runCarmackReviewGate).mockResolvedValue({
+      gatePassed: true,
+      blockingFindings: [],
+    });
+    vi.mocked(runQualityCheckGateInSandbox).mockResolvedValue({
+      gatePassed: false,
+      failures: ["lint failed"],
+    });
+
+    const result = await executeGatePipeline(basePipelineInput);
+
+    expect(result.allPassed).toBe(false);
+    expect(result.results).toHaveLength(2);
+    expect(result.stoppedAtGate).toBe("ci_gate");
+    expect(result.nextState).toBe("implementing");
   });
 });

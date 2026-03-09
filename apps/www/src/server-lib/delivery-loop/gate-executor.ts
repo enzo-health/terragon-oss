@@ -432,6 +432,196 @@ export async function executeCiGate(
 }
 
 /**
+ * Executes the UI gate pipeline (ui_smoke).
+ * Checks whether any changed files include frontend patterns (components,
+ * pages, styles, templates). If no frontend files were changed the gate
+ * auto-passes. Otherwise it delegates to the sandbox session for a
+ * lightweight smoke check.
+ * This is a deterministic sandbox job — no daemon dependency.
+ */
+export async function executeUiGate(
+  input: UiGateInput,
+): Promise<GatePipelineResult> {
+  const frontendPatterns =
+    /\.(tsx|jsx|vue|svelte|html|css|scss|less|styl)$|\/pages\/|\/app\/|\/components\//;
+  const hasFrontendChanges = input.changedFiles.some((f) =>
+    frontendPatterns.test(f),
+  );
+
+  if (!hasFrontendChanges) {
+    const now = new Date();
+    return {
+      state: "ui_gate",
+      allPassed: true,
+      gateResults: [
+        {
+          gateType: "ui_smoke",
+          passed: true,
+          findings: [],
+          summary: "UI smoke gate skipped — no frontend files changed.",
+          error: null,
+          provenance: {
+            gateType: "ui_smoke",
+            headSha: input.headSha,
+            model: null,
+            promptVersion: null,
+            startedAt: now,
+            completedAt: now,
+            durationMs: 0,
+          },
+        },
+      ],
+      blockingFindings: [],
+    };
+  }
+
+  const startedAt = new Date();
+  try {
+    await input.session.runCommand("pnpm run build", {
+      cwd: input.session.repoDir,
+      timeoutMs: 300_000,
+    });
+    const completedAt = new Date();
+    return {
+      state: "ui_gate",
+      allPassed: true,
+      gateResults: [
+        {
+          gateType: "ui_smoke",
+          passed: true,
+          findings: [],
+          summary: "UI smoke gate passed — build succeeded.",
+          error: null,
+          provenance: {
+            gateType: "ui_smoke",
+            headSha: input.headSha,
+            model: null,
+            promptVersion: null,
+            startedAt,
+            completedAt,
+            durationMs: completedAt.getTime() - startedAt.getTime(),
+          },
+        },
+      ],
+      blockingFindings: [],
+    };
+  } catch (error) {
+    const completedAt = new Date();
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return {
+      state: "ui_gate",
+      allPassed: false,
+      gateResults: [
+        {
+          gateType: "ui_smoke",
+          passed: false,
+          findings: [
+            {
+              title: "UI smoke build failed",
+              severity: "high",
+              category: "ui_smoke",
+              detail: errorMsg,
+              suggestedFix: null,
+              isBlocking: true,
+            },
+          ],
+          summary: `UI smoke gate failed: build error.`,
+          error: errorMsg,
+          provenance: {
+            gateType: "ui_smoke",
+            headSha: input.headSha,
+            model: null,
+            promptVersion: null,
+            startedAt,
+            completedAt,
+            durationMs: completedAt.getTime() - startedAt.getTime(),
+          },
+        },
+      ],
+      blockingFindings: [
+        {
+          title: "UI smoke build failed",
+          severity: "high",
+          category: "ui_smoke",
+          detail: errorMsg,
+          suggestedFix: null,
+          isBlocking: true,
+        },
+      ],
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Full gate pipeline orchestrator
+// ---------------------------------------------------------------------------
+
+export type GatePipelineInput = {
+  reviewInput: ReviewGateInput;
+  ciInput: CiGateInput;
+  uiInput: UiGateInput;
+  hasPr: boolean;
+};
+
+export type FullGatePipelineResult = {
+  allPassed: boolean;
+  results: GatePipelineResult[];
+  nextState: DeliveryLoopState;
+  stoppedAtGate: "review_gate" | "ci_gate" | "ui_gate" | null;
+};
+
+/**
+ * Sequences the full gate pipeline: review_gate -> ci_gate -> ui_gate.
+ * Short-circuits on first gate failure — subsequent gates are not executed.
+ * Both agents (Claude Code, Codex) enter this identical pipeline.
+ */
+export async function executeGatePipeline(
+  input: GatePipelineInput,
+): Promise<FullGatePipelineResult> {
+  const results: GatePipelineResult[] = [];
+
+  const reviewResult = await executeReviewGate(input.reviewInput);
+  results.push(reviewResult);
+  if (!reviewResult.allPassed) {
+    return {
+      allPassed: false,
+      results,
+      nextState: "implementing",
+      stoppedAtGate: "review_gate",
+    };
+  }
+
+  const ciResult = await executeCiGate(input.ciInput);
+  results.push(ciResult);
+  if (!ciResult.allPassed) {
+    return {
+      allPassed: false,
+      results,
+      nextState: "implementing",
+      stoppedAtGate: "ci_gate",
+    };
+  }
+
+  const uiResult = await executeUiGate(input.uiInput);
+  results.push(uiResult);
+  if (!uiResult.allPassed) {
+    return {
+      allPassed: false,
+      results,
+      nextState: "implementing",
+      stoppedAtGate: "ui_gate",
+    };
+  }
+
+  return {
+    allPassed: true,
+    results,
+    nextState: input.hasPr ? "babysitting" : "awaiting_pr_link",
+    stoppedAtGate: null,
+  };
+}
+
+/**
  * Resolves the next canonical state after a gate pipeline completes.
  * Maps gate pass/fail to the appropriate DeliveryLoopTransitionEvent.
  */
