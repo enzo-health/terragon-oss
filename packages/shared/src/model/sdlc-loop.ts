@@ -48,13 +48,108 @@ import {
   SdlcVideoFailureClass,
 } from "../db/types";
 
+// ---------------------------------------------------------------------------
+// Delivery Loop v2: canonical state machine types
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical Delivery Loop states. This is the forward-looking state enum;
+ * `SdlcLoopState` is the backwards-compatible superset that also includes
+ * legacy migration states.
+ */
+export type DeliveryLoopState =
+  | "planning"
+  | "implementing"
+  | "review_gate"
+  | "ci_gate"
+  | "ui_gate"
+  | "awaiting_pr_link"
+  | "babysitting"
+  | "blocked"
+  | "done"
+  | "stopped"
+  | "terminated_pr_closed"
+  | "terminated_pr_merged";
+
+/** Backwards-compatible alias. */
+export type { SdlcLoopState };
+
+export type DeliveryLoopSelectedAgent = "codex" | "claudeCode";
+
+export type DeliveryLoopDispatchStatus =
+  | "prepared"
+  | "runtime_preparing"
+  | "retrying"
+  | "dispatched"
+  | "acknowledged"
+  | "failed";
+
+/**
+ * Companion fields for Delivery Loop v2 state tracking.
+ * These will be added to the DB schema in a later migration; for now they
+ * exist as a TypeScript-only contract so downstream code can program against
+ * the shape before the column migration lands.
+ */
+export type DeliveryLoopCompanionFields = {
+  selectedAgent: DeliveryLoopSelectedAgent | null;
+  nextPhaseTarget: DeliveryLoopState | null;
+  dispatchStatus: DeliveryLoopDispatchStatus | null;
+  dispatchAttemptCount: number;
+  blockedReasonCategory: string | null;
+  blockedFromState: DeliveryLoopState | null;
+  activeRunId: string | null;
+  activeGateRunId: string | null;
+  lastFailureCategory: string | null;
+};
+
+export const deliveryLoopCompanionFieldDefaults: DeliveryLoopCompanionFields = {
+  selectedAgent: null,
+  nextPhaseTarget: null,
+  dispatchStatus: null,
+  dispatchAttemptCount: 0,
+  blockedReasonCategory: null,
+  blockedFromState: null,
+  activeRunId: null,
+  activeGateRunId: null,
+  lastFailureCategory: null,
+};
+
+/** All canonical (non-legacy) DeliveryLoopState values. */
+export const DELIVERY_LOOP_CANONICAL_STATES: readonly DeliveryLoopState[] = [
+  "planning",
+  "implementing",
+  "review_gate",
+  "ci_gate",
+  "ui_gate",
+  "awaiting_pr_link",
+  "babysitting",
+  "blocked",
+  "done",
+  "stopped",
+  "terminated_pr_closed",
+  "terminated_pr_merged",
+] as const;
+
+/** Set for O(1) membership checks. */
+export const DELIVERY_LOOP_CANONICAL_STATE_SET: ReadonlySet<DeliveryLoopState> =
+  new Set(DELIVERY_LOOP_CANONICAL_STATES);
+
+// ---------------------------------------------------------------------------
+
 const activeSdlcLoopStates = [
   "planning",
   "implementing",
+  // Canonical gate states (Delivery Loop v2).
+  "review_gate",
+  "ci_gate",
+  "ui_gate",
+  "awaiting_pr_link",
+  "babysitting",
+  "blocked",
+  // Legacy active states retained during migration.
   "reviewing",
   "ui_testing",
   "pr_babysitting",
-  // Legacy active states retained during migration.
   "enrolled",
   "gates_running",
   "video_pending",
@@ -80,6 +175,24 @@ const terminalSdlcLoopStateList: SdlcLoopState[] = [...terminalSdlcLoopStates];
 const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
   terminalSdlcLoopStateList,
 );
+
+/**
+ * Categorises the root cause of a delivery-loop dispatch failure so that
+ * downstream retry logic can make an informed decision (retry, reboot sandbox,
+ * or surface to the user).
+ */
+export type DeliveryLoopFailureCategory =
+  | "daemon_unreachable"
+  | "daemon_spawn_failed"
+  | "dispatch_ack_timeout"
+  | "codex_app_server_exit"
+  | "codex_turn_failed"
+  | "codex_subagent_failed"
+  | "claude_runtime_exit"
+  | "claude_dispatch_failed"
+  | "gate_failed"
+  | "config_error"
+  | "unknown";
 
 export type SdlcLoopTransitionEvent =
   | "plan_completed"

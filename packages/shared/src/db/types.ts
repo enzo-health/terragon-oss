@@ -543,10 +543,17 @@ export type AgentProviderMetadata =
 export type SdlcLoopState =
   | "planning"
   | "implementing"
+  // Canonical gate states (Delivery Loop v2).
+  | "review_gate"
+  | "ci_gate"
+  | "ui_gate"
+  | "awaiting_pr_link"
+  | "babysitting"
+  | "blocked"
+  // Legacy states kept for compatibility during migration.
   | "reviewing"
   | "ui_testing"
   | "pr_babysitting"
-  // Legacy states kept for compatibility during migration.
   | "enrolled"
   | "gates_running"
   | "video_pending"
