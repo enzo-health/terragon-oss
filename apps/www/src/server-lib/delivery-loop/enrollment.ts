@@ -116,13 +116,11 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
     [
       "planning",
       "implementing",
-      "reviewing",
-      "ui_testing",
-      "pr_babysitting",
-      "blocked_on_agent_fixes",
-      "blocked_on_ci",
-      "blocked_on_review_threads",
-      "blocked_on_human_feedback",
+      "review_gate",
+      "ci_gate",
+      "ui_gate",
+      "babysitting",
+      "blocked",
     ].includes(activeLoop.state)
   ) {
     return activeLoop;
@@ -141,7 +139,7 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
 
   if (activeLoop) {
     console.warn(
-      "[sdlc-loop enrollment] enrollment did not yield an active loop; returning null",
+      "[delivery-loop enrollment] enrollment did not yield an active loop; returning null",
       {
         userId,
         repoFullName,

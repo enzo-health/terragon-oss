@@ -11,8 +11,8 @@ export const DAEMON_VERSION = "1";
 export const DAEMON_EVENT_VERSION_HEADER = "X-Daemon-Version";
 export const DAEMON_EVENT_CAPABILITIES_HEADER = "X-Daemon-Capabilities";
 export const DAEMON_CAPABILITY_EVENT_ENVELOPE_V2 = "daemon_event_envelope_v2";
-export const DAEMON_CAPABILITY_SDLC_SELF_DISPATCH = "sdlc_self_dispatch";
 /** @deprecated Use DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH */
+export const DAEMON_CAPABILITY_SDLC_SELF_DISPATCH = "sdlc_self_dispatch";
 export const DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH =
   DAEMON_CAPABILITY_SDLC_SELF_DISPATCH;
 

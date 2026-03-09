@@ -30,6 +30,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
@@ -679,6 +680,7 @@ export async function POST(request: Request) {
   }
 
   if (
+    transportMode !== "legacy" &&
     hasNonLegacyDaemonPayload(json) &&
     !hasRequiredThreadChatIdForNonLegacyPayload(rawThreadChatId)
   ) {
@@ -833,6 +835,8 @@ export async function POST(request: Request) {
           deduplicated: true,
           reason: "run_terminal_ignored",
           runId: runContext.runId,
+          acknowledgedEventId: envelopeV2?.eventId ?? null,
+          acknowledgedSeq: envelopeV2?.seq ?? null,
         },
         { status: 202 },
       );
@@ -1185,7 +1189,7 @@ export async function POST(request: Request) {
     }
 
     // Existing fallback path
-    const followUpResult = await maybeProcessFollowUpQueue({
+    let followUpResult = await maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
       userId,
@@ -1205,6 +1209,52 @@ export async function POST(request: Request) {
         followUpResult,
       },
     );
+
+    if (
+      !followUpResult.processed &&
+      followUpResult.reason === "no_queued_messages" &&
+      tickResult.feedbackQueuedMessage
+    ) {
+      console.warn(
+        "[sdlc-loop] daemon terminal follow-up invariant violated; re-enqueueing feedback message",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          eventId,
+          seq,
+        },
+      );
+      await queueFollowUpInternal({
+        userId,
+        threadId,
+        threadChatId,
+        messages: [tickResult.feedbackQueuedMessage],
+        appendOrReplace: "append",
+        source: "github",
+      });
+      followUpResult = await maybeProcessFollowUpQueue({
+        threadId,
+        threadChatId,
+        userId,
+        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      });
+      console.log(
+        "[sdlc-loop] daemon terminal follow-up queue recovery completed",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          eventId,
+          seq,
+          followUpResult,
+        },
+      );
+    }
 
     if (
       followUpResult.processed ||

@@ -36,7 +36,6 @@ import { checkShadowBanTaskCreationRateLimit } from "@/lib/rate-limit";
 import { getDefaultModel } from "./default-ai-model";
 import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
 import { getSandboxSizeForUser } from "@/lib/subscription-tiers";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { getThreadChatHistory } from "./compact";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
@@ -103,7 +102,6 @@ export async function createNewThread({
     modelOrDefault,
     userSettings,
     sandboxSize,
-    enableThreadChatCreation,
     _enableEnvironmentCreation,
     _ensureBaseBranchExists,
     _ensureHeadBranchExists,
@@ -115,12 +113,6 @@ export async function createNewThread({
     getUserSettings({ db, userId }),
     // Get sandbox size for user
     getSandboxSizeForUser(userId),
-    // Get feature flag for user
-    getFeatureFlagForUser({
-      db,
-      userId,
-      flagName: "enableThreadChatCreation",
-    }),
     // Ensure the environment exists for this repo
     getOrCreateEnvironment({ db, userId, repoFullName: githubRepoFullName }),
     // Make sure that the repo base branch exists in the repo
@@ -221,7 +213,7 @@ export async function createNewThread({
       permissionMode: message.permissionMode || "allowAll",
       status: scheduleAt ? "scheduled" : saveAsDraft ? "draft" : "queued",
     },
-    enableThreadChatCreation,
+    enableThreadChatCreation: true,
   });
 
   const enrollmentAllowedForThread = isSdlcLoopEnrollmentAllowedForThread({

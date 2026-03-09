@@ -90,12 +90,6 @@ export const featureFlagsDefinitions = {
     description:
       "Batches concurrent GitHub @-mentions within a 1-minute window to prevent creating multiple sandboxes when users submit code reviews with many mentions.",
   },
-  enableThreadChatCreation: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Enables the creation of thread chats data model vs regular threads.",
-  },
   opencodeGemini3ProModelOption: {
     defaultValue: false,
     enabledForPreview: false,

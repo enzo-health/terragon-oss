@@ -140,7 +140,7 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
   timeoutMs?: number;
 }): Promise<TOutput> {
   const codexModelSpec = resolveCodexCliModelSpec(model);
-  const promptFilePath = `/tmp/sdlc-${gateName}-prompt-${randomUUID()}.txt`;
+  const promptFilePath = `/tmp/dl-${gateName}-prompt-${randomUUID()}.txt`;
   const runCommand = [
     "cat",
     bashQuote(promptFilePath),
@@ -172,11 +172,14 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
     const parsed = extractJsonFromText(latestAgentMessage);
     return schema.parse(parsed);
   } catch (error) {
-    console.warn("[sdlc-pre-pr-review] sandbox Codex gate failed", {
-      gateName,
-      model,
-      error,
-    });
+    console.warn(
+      "[delivery-loop/sandbox-codex-gate] sandbox Codex gate failed",
+      {
+        gateName,
+        model,
+        error,
+      },
+    );
     throw error;
   } finally {
     await session
@@ -185,7 +188,7 @@ export async function runStructuredCodexGateInSandbox<TOutput>({
       })
       .catch((cleanupError: unknown) => {
         console.debug(
-          "[sdlc-pre-pr-review] failed to clean up Codex gate prompt file",
+          "[delivery-loop/sandbox-codex-gate] failed to clean up Codex gate prompt file",
           {
             gateName,
             promptFilePath,

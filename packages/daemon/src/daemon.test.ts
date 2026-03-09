@@ -1017,6 +1017,47 @@ describe("daemon", () => {
     }
   });
 
+  it("accepts deduplicated v2 daemon event acknowledgements", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        success: true,
+        deduplicated: true,
+        acknowledgedEventId: "event-1",
+        acknowledgedSeq: 0,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const localRuntime = new DaemonRuntime({
+      url: "http://localhost:3000",
+      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      outputFormat: "text",
+    });
+    vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
+
+    try {
+      await expect(
+        localRuntime.serverPost(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            timezone: "UTC",
+            messages: [],
+            payloadVersion: 2,
+            eventId: "event-1",
+            runId: "run-1",
+            seq: 0,
+          },
+          "token-1",
+        ),
+      ).resolves.toBeNull();
+    } finally {
+      await localRuntime.teardown();
+    }
+  });
+
   it("emits v2 daemon envelopes with stable runId and monotonic seq when coordinator routing is enabled", async () => {
     const inputMessage: DaemonMessageClaude = {
       ...TEST_INPUT_MESSAGE,
