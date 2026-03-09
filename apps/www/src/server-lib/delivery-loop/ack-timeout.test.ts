@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockGetStalledDispatchIntents = vi.hoisted(() => vi.fn());
-const mockMarkDispatchIntentFailed = vi.hoisted(() => vi.fn());
-const mockEvaluateRetryDecision = vi.hoisted(() => vi.fn());
 
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
   getStalledDispatchIntents: mockGetStalledDispatchIntents,
-  markDispatchIntentFailed: mockMarkDispatchIntentFailed,
 }));
 
-vi.mock("./retry-policy", () => ({
-  evaluateRetryDecision: mockEvaluateRetryDecision,
+const mockHandleAckTimeout = vi.hoisted(() => vi.fn());
+
+vi.mock("./ack-lifecycle", () => ({
+  handleAckTimeout: mockHandleAckTimeout,
+  DEFAULT_ACK_TIMEOUT_MS: 30_000,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -34,10 +34,10 @@ describe("sweepAckTimeouts", () => {
       failedCount: 0,
       retriedCount: 0,
     });
-    expect(mockMarkDispatchIntentFailed).not.toHaveBeenCalled();
+    expect(mockHandleAckTimeout).not.toHaveBeenCalled();
   });
 
-  it("marks stalled intents as failed with dispatch_ack_timeout", async () => {
+  it("calls handleAckTimeout for stalled intents", async () => {
     mockGetStalledDispatchIntents.mockResolvedValue([
       {
         runId: "run-1",
@@ -46,13 +46,10 @@ describe("sweepAckTimeouts", () => {
         threadChatId: "tc-1",
       },
     ]);
-    mockMarkDispatchIntentFailed.mockResolvedValue(undefined);
-    mockEvaluateRetryDecision.mockResolvedValue({
+    mockHandleAckTimeout.mockResolvedValue({
       shouldRetry: true,
       action: "retry_same_intent",
       attempt: 1,
-      maxAttempts: 3,
-      backoffMs: 500,
     });
 
     const result = await sweepAckTimeouts();
@@ -62,15 +59,11 @@ describe("sweepAckTimeouts", () => {
       failedCount: 1,
       retriedCount: 1,
     });
-    expect(mockMarkDispatchIntentFailed).toHaveBeenCalledWith(
-      {},
-      "run-1",
-      "dispatch_ack_timeout",
-      expect.stringContaining("No daemon event received"),
-    );
-    expect(mockEvaluateRetryDecision).toHaveBeenCalledWith({
+    expect(mockHandleAckTimeout).toHaveBeenCalledWith({
+      db: {},
+      runId: "run-1",
       threadChatId: "tc-1",
-      failureCategory: "dispatch_ack_timeout",
+      timeoutMs: 30_000,
     });
   });
 
@@ -83,13 +76,10 @@ describe("sweepAckTimeouts", () => {
         threadChatId: "tc-2",
       },
     ]);
-    mockMarkDispatchIntentFailed.mockResolvedValue(undefined);
-    mockEvaluateRetryDecision.mockResolvedValue({
+    mockHandleAckTimeout.mockResolvedValue({
       shouldRetry: false,
-      reason: "budget_exhausted",
       action: "retry_same_intent",
       attempt: 4,
-      maxAttempts: 3,
     });
 
     const result = await sweepAckTimeouts();
@@ -116,16 +106,13 @@ describe("sweepAckTimeouts", () => {
         threadChatId: "tc-err",
       },
     ]);
-    mockMarkDispatchIntentFailed
-      .mockResolvedValueOnce(undefined)
+    mockHandleAckTimeout
+      .mockResolvedValueOnce({
+        shouldRetry: true,
+        action: "retry_same_intent",
+        attempt: 1,
+      })
       .mockRejectedValueOnce(new Error("db error"));
-    mockEvaluateRetryDecision.mockResolvedValue({
-      shouldRetry: true,
-      action: "retry_same_intent",
-      attempt: 1,
-      maxAttempts: 3,
-      backoffMs: 500,
-    });
 
     const result = await sweepAckTimeouts();
 

@@ -13,16 +13,14 @@ import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
-  markDispatchIntentAcknowledged,
   SDLC_CAUSE_IDENTITY_VERSION,
   type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
+import { createDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
-  createDispatchIntent,
-  buildDispatchIntentId,
-  updateDispatchIntent,
-} from "@/server-lib/delivery-loop/dispatch-intent";
-import { resetRetryCounter } from "@/server-lib/delivery-loop/retry-policy";
+  handleAckReceived,
+  startAckTimeout,
+} from "@/server-lib/delivery-loop/ack-lifecycle";
 import {
   getAgentRunContextByRunId,
   upsertAgentRunContext,
@@ -871,18 +869,16 @@ export async function POST(request: Request) {
   // Updates both Redis (real-time) and DB (durable) intent records,
   // and resets the retry counter since the dispatch succeeded.
   if (enrolledLoop && envelopeV2 && envelopeV2.seq === 1) {
-    const intentId = buildDispatchIntentId(enrolledLoop.id, envelopeV2.runId);
     try {
-      await Promise.all([
-        updateDispatchIntent(intentId, threadChatId, {
-          status: "acknowledged",
-        }),
-        markDispatchIntentAcknowledged(db, envelopeV2.runId),
-        resetRetryCounter(threadChatId),
-      ]);
+      await handleAckReceived({
+        db,
+        runId: envelopeV2.runId,
+        loopId: enrolledLoop.id,
+        threadChatId,
+      });
     } catch (ackError) {
       console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
-        intentId,
+        loopId: enrolledLoop.id,
         threadId,
         threadChatId,
         runId: envelopeV2.runId,
@@ -1128,6 +1124,17 @@ export async function POST(request: Request) {
                   dispatchMechanism: "self_dispatch",
                   runId: newRunId,
                   maxRetries: 3,
+                });
+
+                // Start ack timeout — if no daemon event arrives within
+                // the timeout window, the intent will be classified as
+                // dispatch_ack_timeout and retried. The cron sweep in
+                // ack-timeout.ts provides a durable fallback.
+                startAckTimeout({
+                  db,
+                  runId: newRunId,
+                  loopId,
+                  threadChatId,
                 });
 
                 selfDispatchPayload = {

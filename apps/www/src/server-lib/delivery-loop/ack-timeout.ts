@@ -1,16 +1,6 @@
 import { db } from "@/lib/db";
-import {
-  getStalledDispatchIntents,
-  markDispatchIntentFailed,
-} from "@terragon/shared/model/delivery-loop";
-import { evaluateRetryDecision } from "./retry-policy";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** How long to wait after dispatch before declaring an ack timeout. */
-const ACK_TIMEOUT_MS = 60_000; // 60 seconds
+import { getStalledDispatchIntents } from "@terragon/shared/model/delivery-loop";
+import { handleAckTimeout, DEFAULT_ACK_TIMEOUT_MS } from "./ack-lifecycle";
 
 // ---------------------------------------------------------------------------
 // Ack timeout sweep
@@ -23,20 +13,17 @@ export type AckTimeoutResult = {
 };
 
 /**
- * Scans for dispatch intents stuck in "dispatched" status past the ack
- * timeout window. For each stalled intent:
+ * Cron-driven sweep that finds dispatch intents stuck in "dispatched"
+ * status past the ack timeout window and processes them via
+ * `handleAckTimeout`. This is a durable fallback for the in-process
+ * timer set by `startAckTimeout` — it catches cases where the server
+ * process restarted before the timer fired.
  *
- * 1. Mark the intent as failed with `dispatch_ack_timeout`.
- * 2. Evaluate the retry policy to decide next action.
- * 3. Log the outcome (actual re-dispatch is handled by the retry
- *    infrastructure that runs on the next daemon terminal event or
- *    the stalled-tasks cron — this sweep only classifies the failure).
- *
- * This runs as a cron job (every minute) and is idempotent — once an
- * intent is marked "failed" it won't be picked up again.
+ * Runs every minute and is idempotent — once an intent is marked
+ * "failed" it won't be picked up again.
  */
 export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
-  const stalled = await getStalledDispatchIntents(db, ACK_TIMEOUT_MS);
+  const stalled = await getStalledDispatchIntents(db, DEFAULT_ACK_TIMEOUT_MS);
 
   if (stalled.length === 0) {
     return { stalledCount: 0, failedCount: 0, retriedCount: 0 };
@@ -47,39 +34,16 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
 
   for (const intent of stalled) {
     try {
-      await markDispatchIntentFailed(
+      const outcome = await handleAckTimeout({
         db,
-        intent.runId,
-        "dispatch_ack_timeout",
-        `No daemon event received within ${ACK_TIMEOUT_MS}ms of dispatch`,
-      );
+        runId: intent.runId,
+        threadChatId: intent.threadChatId,
+        timeoutMs: DEFAULT_ACK_TIMEOUT_MS,
+      });
       failedCount++;
 
-      const decision = await evaluateRetryDecision({
-        threadChatId: intent.threadChatId,
-        failureCategory: "dispatch_ack_timeout",
-      });
-
-      if (decision.shouldRetry) {
+      if (outcome.shouldRetry) {
         retriedCount++;
-        console.log("[ack-timeout] stalled intent will be retried", {
-          runId: intent.runId,
-          loopId: intent.loopId,
-          threadId: intent.threadId,
-          threadChatId: intent.threadChatId,
-          attempt: decision.attempt,
-          action: decision.action,
-          backoffMs: decision.backoffMs,
-        });
-      } else {
-        console.warn("[ack-timeout] stalled intent retry budget exhausted", {
-          runId: intent.runId,
-          loopId: intent.loopId,
-          threadId: intent.threadId,
-          threadChatId: intent.threadChatId,
-          reason: decision.reason,
-          attempt: decision.attempt,
-        });
       }
     } catch (error) {
       console.error("[ack-timeout] failed to process stalled intent", {
