@@ -47,7 +47,6 @@ import {
   getActiveSdlcLoopForThread,
   getUnresolvedBlockingDeepReviewFindings,
   getUnresolvedBlockingCarmackReviewFindings,
-  DELIVERY_LOOP_FAILURE_ACTION_TABLE,
   type DeliveryLoopFailureCategory,
 } from "@terragon/shared/model/delivery-loop";
 import {
@@ -61,6 +60,10 @@ import type {
 } from "@terragon/shared/db/types";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { redis } from "@/lib/redis";
+import {
+  evaluateRetryDecision,
+  resetRetryCounter,
+} from "@/server-lib/delivery-loop/retry-policy";
 
 /** SDLC phases eligible for auto-retry on generic agent error. */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
@@ -72,12 +75,6 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "blocked_on_ci",
   "blocked_on_review_threads",
 ]);
-
-/** Check whether a failure category should block auto-retry using the
- *  canonical action table from the delivery loop model. */
-function isNonRetryableFailure(category: DeliveryLoopFailureCategory): boolean {
-  return DELIVERY_LOOP_FAILURE_ACTION_TABLE[category] === "blocked";
-}
 
 /**
  * Classify a daemon-reported error message into a DeliveryLoopFailureCategory.
@@ -713,86 +710,68 @@ export async function handleDaemonEvent({
           { threadId, threadChatId: threadChat.id, failureCategory },
         );
 
-        if (isNonRetryableFailure(failureCategory)) {
+        const retryDecision = await evaluateRetryDecision({
+          threadChatId: threadChat.id,
+          failureCategory,
+        });
+
+        if (!retryDecision.shouldRetry) {
           console.log(
-            `Skipping SDLC error retry: failure category "${failureCategory}" is non-retryable`,
-            { threadId, threadChatId: threadChat.id },
+            `SDLC error retry denied: ${retryDecision.reason}, action="${retryDecision.action}", attempt=${retryDecision.attempt}/${retryDecision.maxAttempts}`,
+            { threadId, threadChatId: threadChat.id, failureCategory },
           );
         } else {
-          // Check if we've already retried by looking for an sdlc-error-retry system message
-          const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
-          let alreadyRetried = false;
-          for (let i = allMessages.length - 1; i >= 0; i--) {
-            const msg = allMessages[i];
-            if (msg?.type === "user") {
-              const msgBefore = allMessages[i - 1];
-              const isRetryAndContinue =
-                msg.parts.length === 1 &&
-                msg.parts[0]?.type === "text" &&
-                msg.parts[0]?.text.toLowerCase().includes("continue") &&
-                msgBefore?.type === "system" &&
-                msgBefore?.message_type === "sdlc-error-retry";
-              if (isRetryAndContinue) {
-                alreadyRetried = true;
-                console.log(
-                  "Skipping SDLC error retry because we already retried once",
-                  { threadId, threadChatId: threadChat.id },
-                );
-                break;
-              }
-              break;
-            }
+          console.log(
+            `SDLC error retry approved: action="${retryDecision.action}", attempt=${retryDecision.attempt}/${retryDecision.maxAttempts}, backoffMs=${retryDecision.backoffMs}`,
+            { threadId, threadChatId: threadChat.id, failureCategory },
+          );
+
+          // Add a system message about the retry
+          const sdlcErrorRetryMessage: DBSystemMessage = {
+            type: "system",
+            message_type: "sdlc-error-retry",
+            parts: [],
+            timestamp: new Date().toISOString(),
+          };
+
+          if (!threadChatUpdates.appendMessages) {
+            threadChatUpdates.appendMessages = [];
           }
+          threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
 
-          if (!alreadyRetried) {
-            console.log("Adding sdlc-error-retry and queueing retry");
-            // Add a system message about the retry
-            const sdlcErrorRetryMessage: DBSystemMessage = {
-              type: "system",
-              message_type: "sdlc-error-retry",
-              parts: [],
-              timestamp: new Date().toISOString(),
-            };
+          // Queue a "Continue" message to restart the agent
+          const continueMessage: DBUserMessage = {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "Continue" }],
+            timestamp: new Date().toISOString(),
+          };
+          threadChatUpdates.appendQueuedMessages = [continueMessage];
 
-            // Ensure appendMessages is an array before pushing
-            if (!threadChatUpdates.appendMessages) {
-              threadChatUpdates.appendMessages = [];
-            }
-            threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
+          // Clear the error since we've handled it with retry
+          threadChatUpdates.errorMessage = null;
+          threadChatUpdates.errorMessageInfo = null;
 
-            // Create a "Continue" message to restart the agent
-            const continueMessage: DBUserMessage = {
-              type: "user",
-              model: null,
-              parts: [{ type: "text", text: "Continue" }],
-              timestamp: new Date().toISOString(),
-            };
+          // Force a fresh session to avoid stale session issues
+          threadChatUpdates.sessionId = null;
 
-            // Queue the Continue message to be processed after the thread update
-            threadChatUpdates.appendQueuedMessages = [continueMessage];
+          // Mark that we've recovered from the error and the thread is done
+          isError = false;
+          isDone = true;
 
-            // Clear the error since we've handled it with retry
-            threadChatUpdates.errorMessage = null;
-            threadChatUpdates.errorMessageInfo = null;
-
-            // Force a fresh session to avoid stale session issues
-            threadChatUpdates.sessionId = null;
-
-            // Mark that we've recovered from the error and the thread is done
-            isError = false;
-            isDone = true; // Mark as done so the thread completes normally
-
-            getPostHogServer().capture({
-              distinctId: userId,
-              event: "sdlc_error_retry",
-              properties: {
-                threadId,
-                sdlcPhase: activeSdlcLoop.state,
-                failureCategory,
-              },
-            });
-          }
-        } // close retryable else
+          getPostHogServer().capture({
+            distinctId: userId,
+            event: "sdlc_error_retry",
+            properties: {
+              threadId,
+              sdlcPhase: activeSdlcLoop.state,
+              failureCategory,
+              retryAction: retryDecision.action,
+              attempt: retryDecision.attempt,
+              maxAttempts: retryDecision.maxAttempts,
+            },
+          });
+        }
       }
     } catch (sdlcLookupError) {
       console.error(
@@ -842,6 +821,15 @@ export async function handleDaemonEvent({
   if (isDone && !isError) {
     // Source of truth is the thread setting
     shouldSkipCheckpoint = isStop || !!thread.disableGitCheckpointing;
+
+    // Reset retry counter on successful completion so the next error cycle
+    // starts fresh.
+    resetRetryCounter(threadChat.id).catch((err) =>
+      console.warn("Failed to reset retry counter", {
+        threadChatId: threadChat.id,
+        error: err,
+      }),
+    );
   }
 
   const { didUpdateStatus } = await updateThreadChatWithTransition({
