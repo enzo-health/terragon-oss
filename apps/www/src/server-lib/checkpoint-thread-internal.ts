@@ -82,9 +82,6 @@ type SdlcUiSmokeGateOutput = z.infer<typeof sdlcUiSmokeGateOutputSchema>;
 
 const sdlcImplementingStates: ReadonlySet<SdlcLoopState> = new Set([
   "implementing",
-  "blocked_on_agent_fixes",
-  "blocked_on_ci",
-  "blocked_on_review_threads",
 ]);
 
 type SdlcHumanInterventionPayload = {
@@ -596,7 +593,7 @@ async function transitionImplementationGateBlocked({
     userId,
     threadId,
   });
-  if (refreshedLoop?.state === "blocked_on_human_feedback") {
+  if (refreshedLoop?.state === "blocked") {
     await queueSdlcFollowUpMessage({
       userId,
       threadId,
@@ -836,7 +833,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     return false;
   }
 
-  if (activeLoop.state === "blocked_on_human_feedback") {
+  if (activeLoop.state === "blocked") {
     return true;
   }
 
@@ -875,7 +872,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         userId,
         threadId,
       });
-      if (refreshed?.state === "blocked_on_human_feedback") {
+      if (refreshed?.state === "blocked") {
         await queueSdlcFollowUpMessage({
           userId,
           threadId,
@@ -1002,7 +999,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     return true;
   }
 
-  if (activeLoop.state === "pr_babysitting") {
+  if (activeLoop.state === "babysitting") {
     return true;
   }
 
@@ -1027,22 +1024,6 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   });
 
   if (sdlcImplementingStates.has(activeLoop.state)) {
-    // Sub-state transitions (blocked_on_agent_fixes, etc.)
-    if (
-      activeLoop.state === "blocked_on_agent_fixes" ||
-      activeLoop.state === "blocked_on_ci" ||
-      activeLoop.state === "blocked_on_review_threads"
-    ) {
-      await transitionSdlcLoopState({
-        db,
-        loopId: activeLoop.id,
-        transitionEvent: "implementation_progress",
-        headSha,
-        loopVersion: loopVersionForGateRun,
-        now: new Date(),
-      });
-    }
-
     // Always fetch the plan artifact (needed for task bookkeeping)
     const acceptedPlanArtifact = await getLatestAcceptedArtifact({
       db,
@@ -1276,7 +1257,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   }
 
   const shouldRunReviewPhase =
-    refreshedLoopAfterImplementation.state === "reviewing";
+    refreshedLoopAfterImplementation.state === "review_gate";
 
   if (shouldRunReviewPhase) {
     const reviewLoop = refreshedLoopAfterImplementation;
@@ -1453,7 +1434,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       db,
       loopId: reviewLoop.id,
       artifactId: reviewArtifact.id,
-      expectedPhase: "reviewing",
+      expectedPhase: "review_gate",
       transitionEvent: "review_passed",
       headSha,
       loopVersion: loopVersionForGateRun,
@@ -1469,7 +1450,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   if (!loopAfterReview) {
     return true;
   }
-  if (loopAfterReview.state !== "ui_testing") {
+  if (loopAfterReview.state !== "ui_gate") {
     return true;
   }
 
@@ -1540,7 +1521,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     db,
     loopId: loopAfterReview.id,
     artifactId: uiSmokeArtifact.id,
-    expectedPhase: "ui_testing",
+    expectedPhase: "ui_gate",
     transitionEvent: "ui_smoke_passed",
     headSha,
     loopVersion: loopVersionForGateRun,
@@ -1617,7 +1598,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       db,
       loopId: linkedLoop.id,
       artifactId: prArtifact.id,
-      expectedPhase: "pr_linking",
+      expectedPhase: "awaiting_pr_link",
       transitionEvent: "pr_linked",
       loopVersion: loopVersionForGateRun,
       now: new Date(),

@@ -27,10 +27,7 @@ async function transitionBlockedLoopToImplementing({
       updatedAt: now,
     })
     .where(
-      and(
-        eq(schema.sdlcLoop.id, loopId),
-        eq(schema.sdlcLoop.state, "blocked_on_human_feedback"),
-      ),
+      and(eq(schema.sdlcLoop.id, loopId), eq(schema.sdlcLoop.state, "blocked")),
     )
     .returning({ id: schema.sdlcLoop.id });
   if (!updated) {
@@ -72,7 +69,7 @@ export const requestSdlcResumeFromBlocked = userOnlyAction(
         "No active Delivery Loop found for this thread",
       );
     }
-    if (activeLoop.state !== "blocked_on_human_feedback") {
+    if (activeLoop.state !== "blocked") {
       throw new UserFacingError(
         "Delivery Loop is not blocked on human feedback",
       );
@@ -156,8 +153,7 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
       );
     }
     const stateAllowsBypass =
-      activeLoop.state === "blocked_on_human_feedback" ||
-      activeLoop.state === "implementing";
+      activeLoop.state === "blocked" || activeLoop.state === "implementing";
     if (!stateAllowsBypass) {
       throw new UserFacingError(
         "Delivery Loop bypass is only available while implementing or blocked",
@@ -184,14 +180,13 @@ export const requestSdlcBypassCurrentGateOnce = userOnlyAction(
         );
       }
       const stateAllowsBypassInTx =
-        lockedLoop.state === "blocked_on_human_feedback" ||
-        lockedLoop.state === "implementing";
+        lockedLoop.state === "blocked" || lockedLoop.state === "implementing";
       if (!stateAllowsBypassInTx) {
         throw new UserFacingError(
           "Delivery Loop bypass is only available while implementing or blocked",
         );
       }
-      if (lockedLoop.state === "blocked_on_human_feedback") {
+      if (lockedLoop.state === "blocked") {
         await transitionBlockedLoopToImplementing({
           tx,
           loopId: lockedLoop.id,

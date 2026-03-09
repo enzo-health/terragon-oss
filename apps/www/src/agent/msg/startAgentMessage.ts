@@ -797,33 +797,35 @@ function buildDeliveryLoopPhasePromptPrefix(
         "Only set phaseComplete: true when ALL planned tasks are implemented.",
         "Do not skip directly to PR babysitting in this phase.",
       ].join("\n");
-    case "reviewing":
+    case "review_gate":
       return [
-        "Delivery Loop phase: reviewing.",
+        "Delivery Loop phase: review_gate.",
         "Perform deep bug review and architecture review until there are zero blocking findings.",
         "If findings exist, fix them before proceeding.",
       ].join(" ");
-    case "ui_testing":
+    case "ci_gate":
       return [
-        "Delivery Loop phase: ui_testing.",
+        "Delivery Loop phase: ci_gate.",
+        "Run lint, typecheck, and tests. Fix any failures before proceeding.",
+      ].join(" ");
+    case "ui_gate":
+      return [
+        "Delivery Loop phase: ui_gate.",
         "Run browser smoke tests against the changed UI paths and fix any blocking issues.",
       ].join(" ");
-    case "pr_babysitting":
+    case "awaiting_pr_link":
       return [
-        "Delivery Loop phase: pr_babysitting.",
+        "Delivery Loop phase: awaiting_pr_link.",
+        "Create or link a pull request, then signal phaseComplete: true.",
+      ].join(" ");
+    case "babysitting":
+      return [
+        "Delivery Loop phase: babysitting.",
         "Focus on CI and review feedback resolution until required CI passes and blockers are zero.",
       ].join(" ");
-    case "blocked_on_agent_fixes":
-    case "blocked_on_ci":
-    case "blocked_on_review_threads":
+    case "blocked":
       return [
-        `Delivery Loop phase: ${state}.`,
-        "Resolve blockers before advancing.",
-        "When fixes are complete, signal with phaseComplete: true in your task update JSON.",
-      ].join(" ");
-    case "blocked_on_human_feedback":
-      return [
-        "Delivery Loop phase: blocked_on_human_feedback.",
+        "Delivery Loop phase: blocked.",
         "Wait for explicit human feedback before making additional loop progression decisions.",
         "Use explicit human-triggered controls to resume or bypass.",
       ].join(" ");

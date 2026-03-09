@@ -68,12 +68,10 @@ import {
 /** SDLC phases eligible for auto-retry on generic agent error. */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
   "implementing",
-  "reviewing",
-  "ui_testing",
-  "pr_babysitting",
-  "blocked_on_agent_fixes",
-  "blocked_on_ci",
-  "blocked_on_review_threads",
+  "review_gate",
+  "ci_gate",
+  "ui_gate",
+  "babysitting",
 ]);
 
 /**
@@ -961,13 +959,14 @@ async function handleThreadFinish({
 
   // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
   // and isError is still true, re-queue the actual review findings so the next agent run
-  // has actionable context. This reuses sdlcLoopForErrorRecovery to avoid a duplicate DB call.
-  // Note: sdlcLoopForErrorRecovery is only populated when the first block's guard
-  // (!isPromptTooLong && !isOAuthTokenRevoked) was met, so this is implicitly safe
-  // even though the outer guard here is broader.
+  // has actionable context.
   if (isError && !isRateLimited) {
     try {
-      const activeSdlcLoop = sdlcLoopForErrorRecovery;
+      const activeSdlcLoop = await getActiveSdlcLoopForThread({
+        db,
+        userId,
+        threadId,
+      });
       if (activeSdlcLoop && activeSdlcLoop.state === "implementing") {
         if (!activeSdlcLoop.currentHeadSha) {
           console.warn(

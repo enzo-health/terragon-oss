@@ -57,33 +57,11 @@ const SDLC_STATE_SUMMARY = {
     explanation: "Agent is drafting an implementation plan before coding.",
     progressPercent: 10,
   },
-  enrolled: {
-    stateLabel: "Enrolled",
-    explanation: "Loop is enrolled and waiting for implementation progress.",
-    progressPercent: 10,
-  },
   implementing: {
     stateLabel: "Implementing",
     explanation: "Agent is implementing fixes and preparing gate evaluations.",
     progressPercent: 25,
   },
-  reviewing: {
-    stateLabel: "Reviewing",
-    explanation: "Deep and architecture review gates are running.",
-    progressPercent: 45,
-  },
-  ui_testing: {
-    stateLabel: "UI Testing",
-    explanation: "Browser smoke testing is validating UI behavior.",
-    progressPercent: 65,
-  },
-  pr_babysitting: {
-    stateLabel: "PR Babysitting",
-    explanation:
-      "Monitoring CI and review feedback until all blockers are resolved.",
-    progressPercent: 85,
-  },
-  // Canonical Delivery Loop v2 states.
   review_gate: {
     stateLabel: "Review Gate",
     explanation: "Deep and architecture review gates are running.",
@@ -113,51 +91,8 @@ const SDLC_STATE_SUMMARY = {
   },
   blocked: {
     stateLabel: "Blocked",
-    explanation: "The loop is blocked and waiting for resolution.",
+    explanation: "The loop is blocked and waiting for human intervention.",
     progressPercent: 50,
-  },
-  gates_running: {
-    stateLabel: "Gates Running",
-    explanation: "Automated quality gates are evaluating the current head.",
-    progressPercent: 55,
-  },
-  blocked_on_agent_fixes: {
-    stateLabel: "Blocked: Agent Fixes",
-    explanation:
-      "Blocking findings need code changes before the loop can continue.",
-    progressPercent: 45,
-  },
-  blocked_on_ci: {
-    stateLabel: "Blocked: CI",
-    explanation: "Required CI checks need to pass before moving forward.",
-    progressPercent: 65,
-  },
-  blocked_on_review_threads: {
-    stateLabel: "Blocked: Review Threads",
-    explanation: "Review threads still need resolution on the pull request.",
-    progressPercent: 75,
-  },
-  video_pending: {
-    stateLabel: "Video Pending",
-    explanation: "Capturing the session artifact before final handoff.",
-    progressPercent: 88,
-  },
-  human_review_ready: {
-    stateLabel: "Human Review Ready",
-    explanation:
-      "Automated gates passed and the change is ready for human review.",
-    progressPercent: 100,
-  },
-  video_degraded_ready: {
-    stateLabel: "Review Ready (No Video)",
-    explanation:
-      "Loop is review-ready, but video capture could not be completed.",
-    progressPercent: 100,
-  },
-  blocked_on_human_feedback: {
-    stateLabel: "Blocked: Human Feedback",
-    explanation: "Waiting for human feedback before continuing the loop.",
-    progressPercent: 95,
   },
   terminated_pr_closed: {
     stateLabel: "Terminated: PR Closed",
@@ -191,25 +126,22 @@ function inferCiStatusFromLoopState(
   loopState: SdlcLoopState,
 ): SdlcLoopStatusCheckStatus {
   switch (loopState) {
-    case "blocked_on_ci":
-      return "blocked";
-    case "pr_babysitting":
+    case "planning":
+    case "implementing":
+    case "review_gate":
+      return "not_started";
+    case "ci_gate":
       return "pending";
-    case "human_review_ready":
-    case "video_degraded_ready":
-    case "blocked_on_human_feedback":
+    case "blocked":
+      return "blocked";
+    case "babysitting":
+    case "awaiting_pr_link":
     case "done":
     case "terminated_pr_merged":
       return "passed";
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
-    case "planning":
-    case "enrolled":
-    case "implementing":
-    case "reviewing":
-    case "ui_testing":
-      return "not_started";
     default:
       return "pending";
   }
@@ -219,26 +151,23 @@ function inferReviewThreadsStatusFromLoopState(
   loopState: SdlcLoopState,
 ): SdlcLoopStatusCheckStatus {
   switch (loopState) {
-    case "blocked_on_review_threads":
-      return "blocked";
-    case "pr_babysitting":
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+      return "not_started";
+    case "babysitting":
       return "pending";
-    case "human_review_ready":
-    case "video_pending":
-    case "video_degraded_ready":
-    case "blocked_on_human_feedback":
+    case "blocked":
+      return "blocked";
+    case "awaiting_pr_link":
     case "done":
     case "terminated_pr_merged":
       return "passed";
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
-    case "planning":
-    case "enrolled":
-    case "implementing":
-    case "reviewing":
-    case "ui_testing":
-      return "not_started";
     default:
       return "pending";
   }
@@ -248,28 +177,23 @@ function inferDeepReviewStatusFromLoopState(
   loopState: SdlcLoopState,
 ): SdlcLoopStatusCheckStatus {
   switch (loopState) {
-    case "blocked_on_agent_fixes":
+    case "planning":
+    case "implementing":
+      return "not_started";
+    case "review_gate":
+      return "pending";
+    case "blocked":
       return "blocked";
-    case "ui_testing":
-    case "pr_babysitting":
-      return "passed";
-    case "human_review_ready":
-    case "video_pending":
-    case "video_degraded_ready":
-    case "blocked_on_human_feedback":
+    case "ci_gate":
+    case "ui_gate":
+    case "awaiting_pr_link":
+    case "babysitting":
     case "done":
     case "terminated_pr_merged":
       return "passed";
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
-    case "planning":
-    case "enrolled":
-    case "implementing":
-    case "reviewing":
-    case "blocked_on_ci":
-    case "blocked_on_review_threads":
-      return "not_started";
     default:
       return "pending";
   }
@@ -279,28 +203,23 @@ function inferCarmackStatusFromLoopState(
   loopState: SdlcLoopState,
 ): SdlcLoopStatusCheckStatus {
   switch (loopState) {
-    case "blocked_on_agent_fixes":
+    case "planning":
+    case "implementing":
+      return "not_started";
+    case "review_gate":
+      return "pending";
+    case "blocked":
       return "blocked";
-    case "ui_testing":
-    case "pr_babysitting":
-      return "passed";
-    case "human_review_ready":
-    case "video_pending":
-    case "video_degraded_ready":
-    case "blocked_on_human_feedback":
+    case "ci_gate":
+    case "ui_gate":
+    case "awaiting_pr_link":
+    case "babysitting":
     case "done":
     case "terminated_pr_merged":
       return "passed";
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
-    case "planning":
-    case "enrolled":
-    case "implementing":
-    case "reviewing":
-    case "blocked_on_ci":
-    case "blocked_on_review_threads":
-      return "not_started";
     default:
       return "pending";
   }
@@ -505,8 +424,7 @@ export function buildSdlcLoopStatusChecks({
         ? {
             key: "video",
             label: "Video",
-            status:
-              loopState === "video_degraded_ready" ? "degraded" : "blocked",
+            status: "blocked",
             detail: videoFailureMessage || "Video capture failed.",
           }
         : {

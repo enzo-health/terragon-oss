@@ -168,7 +168,7 @@ function getPlanningStatus({
   if (!state) {
     return isLoading ? "pending" : "not_started";
   }
-  if (state === "planning" || state === "enrolled") {
+  if (state === "planning") {
     return "pending";
   }
   return "passed";
@@ -187,10 +187,8 @@ function getImplementingStatus({
 
   switch (state) {
     case "planning":
-    case "enrolled":
       return "not_started";
     case "implementing":
-    case "blocked_on_agent_fixes":
       return "pending";
     case "terminated_pr_closed":
     case "stopped":
@@ -213,11 +211,7 @@ function getReviewingStatus({
     return isLoading ? "pending" : "not_started";
   }
 
-  if (
-    state === "planning" ||
-    state === "enrolled" ||
-    state === "implementing"
-  ) {
+  if (state === "planning" || state === "implementing") {
     return "not_started";
   }
 
@@ -225,21 +219,16 @@ function getReviewingStatus({
     return "degraded";
   }
 
-  if (
-    state === "blocked_on_review_threads" ||
-    state === "blocked_on_agent_fixes" ||
-    state === "blocked_on_human_feedback"
-  ) {
+  if (state === "blocked") {
     return "blocked";
   }
 
   if (
-    state === "reviewing" ||
-    state === "ui_testing" ||
-    state === "pr_babysitting" ||
-    state === "video_pending" ||
-    state === "human_review_ready" ||
-    state === "video_degraded_ready" ||
+    state === "review_gate" ||
+    state === "ci_gate" ||
+    state === "ui_gate" ||
+    state === "awaiting_pr_link" ||
+    state === "babysitting" ||
     state === "done" ||
     state === "terminated_pr_merged"
   ) {
@@ -257,10 +246,10 @@ function getReviewingStatus({
   );
 
   const reviewAggregatePendingStates: SdlcLoopState[] = [
-    "gates_running",
-    "reviewing",
-    "pr_babysitting",
-    "blocked_on_ci",
+    "review_gate",
+    "ci_gate",
+    "ui_gate",
+    "babysitting",
   ];
 
   if (
@@ -288,20 +277,18 @@ function getCiStatus({
 
   if (
     state === "planning" ||
-    state === "enrolled" ||
     state === "implementing" ||
-    state === "reviewing" ||
-    state === "ui_testing"
+    state === "review_gate"
   ) {
     return "not_started";
   }
 
-  if (state === "blocked_on_ci") {
-    return "blocked";
-  }
-
   if (state === "terminated_pr_closed" || state === "stopped") {
     return "degraded";
+  }
+
+  if (state === "blocked") {
+    return "blocked";
   }
 
   const ciStatus = getCheckStatusOrDefault({
@@ -312,10 +299,7 @@ function getCiStatus({
 
   if (
     ciStatus === "not_started" &&
-    (state === "gates_running" ||
-      state === "pr_babysitting" ||
-      state === "blocked_on_review_threads" ||
-      state === "blocked_on_agent_fixes")
+    (state === "ci_gate" || state === "babysitting")
   ) {
     return "pending";
   }
@@ -338,31 +322,19 @@ function getUiTestingStatus({
 
   if (
     state === "planning" ||
-    state === "enrolled" ||
     state === "implementing" ||
-    state === "reviewing" ||
-    state === "gates_running" ||
-    state === "blocked_on_agent_fixes" ||
-    state === "blocked_on_ci" ||
-    state === "blocked_on_review_threads"
+    state === "review_gate" ||
+    state === "ci_gate"
   ) {
     return "not_started";
   }
 
-  if (state === "ui_testing") {
+  if (state === "ui_gate") {
     return "pending";
   }
 
-  if (state === "pr_babysitting") {
+  if (state === "babysitting") {
     return "passed";
-  }
-
-  if (state === "video_pending") {
-    return "pending";
-  }
-
-  if (state === "video_degraded_ready") {
-    return "degraded";
   }
 
   if (state === "terminated_pr_closed" || state === "stopped") {
@@ -375,11 +347,7 @@ function getUiTestingStatus({
     isLoading,
   });
 
-  if (
-    state === "human_review_ready" ||
-    state === "done" ||
-    state === "terminated_pr_merged"
-  ) {
+  if (state === "done" || state === "terminated_pr_merged") {
     if (videoStatus === "blocked" || videoStatus === "degraded") {
       return "degraded";
     }
@@ -389,7 +357,7 @@ function getUiTestingStatus({
     return "passed";
   }
 
-  if (state === "blocked_on_human_feedback") {
+  if (state === "blocked") {
     if (videoStatus === "blocked") {
       return "degraded";
     }
@@ -570,9 +538,7 @@ function SdlcInterventionControls({
         size="sm"
         variant="outline"
         className="h-7 text-xs"
-        disabled={
-          resumeMutation.isPending || loopState !== "blocked_on_human_feedback"
-        }
+        disabled={resumeMutation.isPending || loopState !== "blocked"}
         onClick={handleResume}
       >
         {resumeMutation.isPending ? "Resuming…" : "Resume"}
@@ -621,8 +587,7 @@ export function SdlcTopProgressStepper({
   const needsAttention = data?.needsAttention.isBlocked ?? false;
   const blockerCount = data?.needsAttention.blockerCount ?? 0;
   const showInterventionControls =
-    data?.state === "blocked_on_human_feedback" ||
-    data?.state === "implementing";
+    data?.state === "blocked" || data?.state === "implementing";
   const planCardModel =
     data && sdlcPlanReviewCard
       ? buildArtifactFallbackPlanSpecViewModel({

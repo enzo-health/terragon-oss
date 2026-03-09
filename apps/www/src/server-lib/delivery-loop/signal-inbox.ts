@@ -570,7 +570,7 @@ async function persistGateEvaluationForSignal({
         },
         now,
       });
-      return evaluation.shouldQueueFollowUp || loop.state !== "pr_babysitting";
+      return evaluation.shouldQueueFollowUp || loop.state !== "babysitting";
     }
 
     const requiredCheck = buildCiRequiredCheckFromSignalPayload(signal.payload);
@@ -602,7 +602,7 @@ async function persistGateEvaluationForSignal({
       },
       now,
     });
-    return evaluation.shouldQueueFollowUp || loop.state !== "pr_babysitting";
+    return evaluation.shouldQueueFollowUp || loop.state !== "babysitting";
   }
 
   const unresolvedThreadCount = deriveReviewUnresolvedThreadCount({
@@ -655,7 +655,7 @@ async function persistGateEvaluationForSignal({
   });
   return (
     evaluation.shouldQueueFollowUp ||
-    (unresolvedThreadCount > 0 && loop.state !== "pr_babysitting")
+    (unresolvedThreadCount > 0 && loop.state !== "babysitting")
   );
 }
 
@@ -1268,7 +1268,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     });
 
     if (
-      refreshedLoop?.state === "pr_babysitting" &&
+      refreshedLoop?.state === "babysitting" &&
       feedbackSignalCauseTypes.has(signal.causeType)
     ) {
       const babysitHeadSha =
@@ -1307,7 +1307,7 @@ export async function runBestEffortSdlcSignalInboxTick({
             db,
             loopId,
             artifactId: babysitArtifact.id,
-            expectedPhase: "pr_babysitting",
+            expectedPhase: "babysitting",
             transitionEvent: "babysit_passed",
             headSha: babysitHeadSha,
             loopVersion: loopVersionForArtifact,

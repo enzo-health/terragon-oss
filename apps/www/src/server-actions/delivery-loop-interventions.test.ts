@@ -51,7 +51,7 @@ describe("sdlc-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked_on_human_feedback" })
+      .set({ state: "blocked" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await resumeFromBlocked({ threadId, threadChatId: null });
@@ -90,7 +90,7 @@ describe("sdlc-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked_on_human_feedback" })
+      .set({ state: "blocked" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await bypassOnce({ threadId, threadChatId: null });
@@ -129,7 +129,7 @@ describe("sdlc-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked_on_human_feedback" })
+      .set({ state: "blocked" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await db.insert(schema.sdlcPhaseArtifact).values({

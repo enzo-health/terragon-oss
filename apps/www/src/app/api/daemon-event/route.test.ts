@@ -513,7 +513,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "enrolled",
+      state: "planning",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.updateSet.mockImplementationOnce(() => {
@@ -599,7 +599,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "enrolled",
+      state: "planning",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
 
@@ -652,7 +652,7 @@ describe("daemon-event route", () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "blocked_on_ci",
+      state: "blocked",
       loopVersion: 11,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
 

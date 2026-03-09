@@ -945,7 +945,7 @@ describe("sdlc loop model", () => {
     });
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "reviewing" })
+      .set({ state: "review_gate" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const first = await acquireSdlcLoopLease({
@@ -1117,7 +1117,7 @@ describe("sdlc loop model", () => {
     });
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "pr_babysitting" })
+      .set({ state: "babysitting" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const result = await persistSdlcCiGateEvaluation({
@@ -1170,7 +1170,7 @@ describe("sdlc loop model", () => {
     });
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "pr_babysitting" })
+      .set({ state: "babysitting" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const blocked = await persistSdlcReviewThreadGateEvaluation({
@@ -1337,7 +1337,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "gates_running",
+        state: "ci_gate",
         loopVersion: 20,
         currentHeadSha: "sha-current",
       })
@@ -1446,7 +1446,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "blocked_on_ci",
+        state: "blocked",
         loopVersion: 5,
         currentHeadSha: "sha-blocked",
         fixAttemptCount: 3,
@@ -1535,7 +1535,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "reviewing",
+        state: "review_gate",
         fixAttemptCount: 1,
         maxFixAttempts: 1,
       })
@@ -1551,7 +1551,7 @@ describe("sdlc loop model", () => {
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("blocked_on_human_feedback");
+    expect(reloadedLoop?.state).toBe("blocked");
     expect(reloadedLoop?.fixAttemptCount).toBe(2);
     expect(reloadedLoop?.maxFixAttempts).toBe(1);
   });
@@ -1575,7 +1575,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "blocked_on_human_feedback",
+        state: "blocked",
       })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
@@ -1612,7 +1612,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "blocked_on_human_feedback",
+        state: "blocked",
       })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
@@ -1686,7 +1686,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "reviewing",
+        state: "review_gate",
         fixAttemptCount: 2,
       })
       .where(eq(schema.sdlcLoop.id, loop!.id));
@@ -1768,7 +1768,7 @@ describe("sdlc loop model", () => {
     });
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "reviewing" })
+      .set({ state: "review_gate" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const result = await persistDeepReviewGateResult({
@@ -2488,7 +2488,7 @@ describe("sdlc loop model", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "ui_testing" })
+      .set({ state: "ui_gate" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await persistSdlcVideoCaptureOutcome({
@@ -2511,7 +2511,7 @@ describe("sdlc loop model", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "ui_testing" })
+      .set({ state: "ui_gate" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await persistSdlcVideoCaptureOutcome({
@@ -2527,7 +2527,7 @@ describe("sdlc loop model", () => {
     reloaded = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloaded?.state).toBe("pr_babysitting");
+    expect(reloaded?.state).toBe("babysitting");
     expect(reloaded?.videoCaptureStatus).toBe("captured");
     expect(reloaded?.latestVideoArtifactR2Key).toBe("videos/loop-101.mp4");
     expect(reloaded?.latestVideoFailureClass).toBeNull();
@@ -2623,7 +2623,7 @@ describe("sdlc loop model", () => {
     await db
       .update(schema.sdlcLoop)
       .set({
-        state: "gates_running",
+        state: "ci_gate",
         loopVersion: 30,
         currentHeadSha: "sha-current",
       })

@@ -165,18 +165,12 @@ type NeedsAttentionInput = {
 const activeLoopStatesForStatus: ReadonlySet<SdlcLoopState> = new Set([
   "planning",
   "implementing",
-  "reviewing",
-  "ui_testing",
-  "pr_babysitting",
-  "enrolled",
-  "gates_running",
-  "video_pending",
-  "human_review_ready",
-  "video_degraded_ready",
-  "blocked_on_agent_fixes",
-  "blocked_on_ci",
-  "blocked_on_review_threads",
-  "blocked_on_human_feedback",
+  "review_gate",
+  "ci_gate",
+  "ui_gate",
+  "awaiting_pr_link",
+  "babysitting",
+  "blocked",
 ]);
 
 function buildNeedsAttention({
@@ -230,7 +224,7 @@ function buildNeedsAttention({
           },
         ]
       : []),
-    ...(loopState === "blocked_on_human_feedback"
+    ...(loopState === "blocked"
       ? [
           {
             title: "Awaiting human feedback",
@@ -240,28 +234,11 @@ function buildNeedsAttention({
       : []),
   ];
 
-  if (blockers.length === 0) {
-    if (loopState === "blocked_on_agent_fixes") {
-      blockers.push({
-        title: "Blocking findings still require agent fixes",
-        source: "deep_review",
-      });
-    } else if (loopState === "blocked_on_ci") {
-      blockers.push({
-        title: "Required CI checks are still blocking the loop",
-        source: "ci",
-      });
-    } else if (loopState === "blocked_on_review_threads") {
-      blockers.push({
-        title: "Unresolved review threads are still blocking the loop",
-        source: "review_threads",
-      });
-    } else if (loopState === "blocked_on_human_feedback") {
-      blockers.push({
-        title: "Awaiting human feedback",
-        source: "human_feedback",
-      });
-    }
+  if (blockers.length === 0 && loopState === "blocked") {
+    blockers.push({
+      title: "Awaiting human feedback",
+      source: "human_feedback",
+    });
   }
 
   return {
