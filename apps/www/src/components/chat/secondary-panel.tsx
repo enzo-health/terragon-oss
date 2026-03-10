@@ -120,7 +120,11 @@ function partsContentEqual(
     case "text-file":
       return a.file_url === (b as UITextFilePart).file_url;
     case "rich-text":
-      return a.nodes === (b as UIRichTextPart).nodes;
+      // nodes is an array — compare by reference first, then by serialized content
+      return (
+        a.nodes === (b as UIRichTextPart).nodes ||
+        JSON.stringify(a.nodes) === JSON.stringify((b as UIRichTextPart).nodes)
+      );
     case "plan":
       return (
         "planText" in a &&
