@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createTestUser,
   createTestThread,
@@ -40,6 +40,7 @@ import * as schema from "../db/schema";
 import { eq } from "drizzle-orm";
 import { tz } from "@date-fns/tz";
 import { set as setDateValues, subDays } from "date-fns";
+import * as broadcastServer from "../broadcast-server";
 
 const db = createDb(env.DATABASE_URL!);
 
@@ -49,6 +50,10 @@ describe("thread", () => {
   beforeEach(async () => {
     const testUserAndAccount = await createTestUser({ db });
     user = testUserAndAccount.user;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("createThread", () => {
@@ -372,6 +377,48 @@ describe("thread", () => {
       expect(updatedThread!.id).toBe(threadId);
       expect(updatedThread!.name).toBe("test-thread-2");
     });
+
+    it("publishes shell thread patches for thread updates", async () => {
+      const { threadId, threadChatId } = await createTestThread({
+        db,
+        userId: user.id,
+        enableThreadChatCreation: true,
+      });
+      const publishSpy = vi
+        .spyOn(broadcastServer, "publishBroadcastUserMessage")
+        .mockResolvedValue(undefined);
+
+      await updateThread({
+        db,
+        userId: user.id,
+        threadId,
+        updates: {
+          name: "Renamed thread",
+          archived: true,
+        },
+      });
+
+      expect(publishSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "user",
+          id: user.id,
+          data: {
+            threadPatches: [
+              expect.objectContaining({
+                threadId,
+                threadChatId,
+                op: "upsert",
+                shell: expect.objectContaining({
+                  name: "Renamed thread",
+                  archived: true,
+                  primaryThreadChatId: threadChatId,
+                }),
+              }),
+            ],
+          },
+        }),
+      );
+    });
   });
 
   describe("updateThreadChat", () => {
@@ -543,6 +590,71 @@ describe("thread", () => {
         expect(updatedThreadChat!.errorMessage).toBe("unknown-error");
         expect(updatedThreadChat!.messages).toHaveLength(1);
         expect(updatedThreadChat!.messages?.[0]).toEqual(message);
+      });
+
+      it("publishes append thread patches with expected message counts", async () => {
+        const { threadId, threadChatId } = await createTestThread({
+          db,
+          userId: user.id,
+          enableThreadChatCreation: true,
+        });
+        const initialMessage: DBMessage = {
+          type: "user",
+          model: null,
+          parts: [{ type: "text", text: "Initial message" }],
+        };
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendMessages: [initialMessage],
+          },
+        });
+
+        const publishSpy = vi
+          .spyOn(broadcastServer, "publishBroadcastUserMessage")
+          .mockResolvedValue(undefined);
+        const appendedMessage: DBMessage = {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [{ type: "text", text: "Appended message" }],
+        };
+
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendMessages: [appendedMessage],
+            errorMessage: "unknown-error",
+          },
+        });
+
+        expect(publishSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "user",
+            id: user.id,
+            data: {
+              threadPatches: [
+                expect.objectContaining({
+                  threadId,
+                  threadChatId,
+                  op: "upsert",
+                  chatSequence: expect.any(Number),
+                  appendMessages: [appendedMessage],
+                  expectedMessageCount: 1,
+                  chat: expect.objectContaining({
+                    errorMessage: "unknown-error",
+                    updatedAt: expect.any(String),
+                  }),
+                }),
+              ],
+            },
+          }),
+        );
       });
 
       it("should handle concurrent message appends safely", async () => {
@@ -1594,6 +1706,64 @@ describe("thread", () => {
 
         // Queued messages should be empty (not replaced)
         expect(updatedThreadChat!.queuedMessages).toHaveLength(0);
+      });
+
+      it("publishes refetch patches when queued messages are appended into history", async () => {
+        const { threadId, threadChatId } = await createTestThread({
+          db,
+          userId: user.id,
+          enableThreadChatCreation: true,
+        });
+        const queuedMessage: DBUserMessage = {
+          type: "user",
+          model: null,
+          parts: [{ type: "text", text: "Queued follow-up" }],
+        };
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendQueuedMessages: [queuedMessage],
+          },
+        });
+
+        const publishSpy = vi
+          .spyOn(broadcastServer, "publishBroadcastUserMessage")
+          .mockResolvedValue(undefined);
+
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendAndResetQueuedMessages: true,
+          },
+        });
+
+        expect(publishSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "user",
+            id: user.id,
+            data: {
+              threadPatches: [
+                expect.objectContaining({
+                  threadId,
+                  threadChatId,
+                  op: "refetch",
+                  chatSequence: expect.any(Number),
+                  refetch: ["chat"],
+                  chat: expect.objectContaining({
+                    queuedMessages: [],
+                    updatedAt: expect.any(String),
+                  }),
+                }),
+              ],
+            },
+          }),
+        );
       });
     });
   });

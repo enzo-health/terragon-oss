@@ -1,14 +1,37 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Check, Copy, Link, RefreshCw, Split } from "lucide-react";
-import { UIMessage } from "@terragon/shared";
+import { AIAgent, AIModel } from "@terragon/agent/types";
+import { DBUserMessage, GitDiffStats, UIMessage } from "@terragon/shared";
 import { cn } from "@/lib/utils";
 import { useParams } from "next/navigation";
 import { getModelDisplayName } from "@terragon/agent/utils";
 import { RedoTaskDialog } from "./redo-task-dialog";
 import { ForkTaskDialog } from "./fork-task-dialog";
-import { useThread } from "./thread-context";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+
+type RedoDialogData = {
+  threadId: string;
+  repoFullName: string;
+  repoBaseBranchName: string;
+  disableGitCheckpointing: boolean;
+  skipSetup: boolean;
+  permissionMode: "allowAll" | "plan";
+  initialUserMessage: DBUserMessage;
+};
+
+type ForkDialogData = {
+  threadId: string;
+  threadChatId: string;
+  repoFullName: string;
+  repoBaseBranchName: string;
+  branchName: string | null;
+  gitDiffStats: GitDiffStats | null;
+  disableGitCheckpointing: boolean;
+  skipSetup: boolean;
+  agent: AIAgent;
+  lastSelectedModel: AIModel | null;
+};
 
 function getTextContent(message: UIMessage): string {
   return message.parts
@@ -41,6 +64,8 @@ export function MessageToolbar({
   isFirstUserMessage,
   isLatestAgentMessage,
   isAgentWorking,
+  redoDialogData,
+  forkDialogData,
 }: {
   message: UIMessage;
   messageIndex: number;
@@ -48,8 +73,9 @@ export function MessageToolbar({
   isFirstUserMessage: boolean;
   isLatestAgentMessage: boolean;
   isAgentWorking: boolean;
+  redoDialogData?: RedoDialogData;
+  forkDialogData?: ForkDialogData;
 }) {
-  const { thread, threadChat } = useThread();
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showRedoDialog, setShowRedoDialog] = useState(false);
@@ -125,7 +151,7 @@ export function MessageToolbar({
             <span>{modelDisplay}</span>
           </span>
         )}
-        {isFirstUserMessage && threadChat && (
+        {isFirstUserMessage && redoDialogData && (
           <button
             onClick={() => setShowRedoDialog(true)}
             className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/50 transition-colors"
@@ -160,29 +186,45 @@ export function MessageToolbar({
             )}
           </button>
         )}
-        {isForkTaskEnabled && isLatestAgentMessage && !isAgentWorking && (
-          <button
-            onClick={() => setShowForkDialog(true)}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/50 transition-colors"
-            title="Fork task"
-          >
-            <Split className="h-3 w-3" />
-          </button>
-        )}
+        {isForkTaskEnabled &&
+          forkDialogData &&
+          isLatestAgentMessage &&
+          !isAgentWorking && (
+            <button
+              onClick={() => setShowForkDialog(true)}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/50 transition-colors"
+              title="Fork task"
+            >
+              <Split className="h-3 w-3" />
+            </button>
+          )}
       </div>
-      {showRedoDialog && thread && threadChat && (
+      {showRedoDialog && redoDialogData && (
         <RedoTaskDialog
           open={showRedoDialog}
-          thread={thread}
-          threadChat={threadChat}
+          threadId={redoDialogData.threadId}
+          repoFullName={redoDialogData.repoFullName}
+          repoBaseBranchName={redoDialogData.repoBaseBranchName}
+          disableGitCheckpointing={redoDialogData.disableGitCheckpointing}
+          skipSetup={redoDialogData.skipSetup}
+          permissionMode={redoDialogData.permissionMode}
+          initialUserMessage={redoDialogData.initialUserMessage}
           onOpenChange={setShowRedoDialog}
         />
       )}
-      {showForkDialog && thread && threadChat && (
+      {showForkDialog && forkDialogData && (
         <ForkTaskDialog
           open={showForkDialog}
-          thread={thread}
-          threadChat={threadChat}
+          threadId={forkDialogData.threadId}
+          threadChatId={forkDialogData.threadChatId}
+          repoFullName={forkDialogData.repoFullName}
+          repoBaseBranchName={forkDialogData.repoBaseBranchName}
+          branchName={forkDialogData.branchName}
+          gitDiffStats={forkDialogData.gitDiffStats}
+          disableGitCheckpointing={forkDialogData.disableGitCheckpointing}
+          skipSetup={forkDialogData.skipSetup}
+          agent={forkDialogData.agent}
+          lastSelectedModel={forkDialogData.lastSelectedModel}
           onOpenChange={setShowForkDialog}
         />
       )}

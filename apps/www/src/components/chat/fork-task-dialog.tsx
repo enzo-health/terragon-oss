@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,38 +8,48 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type {
-  DBUserMessage,
-  ThreadChatInfoFull,
-  ThreadInfo,
-} from "@terragon/shared";
+import type { DBUserMessage, GitDiffStats } from "@terragon/shared";
 import { GenericPromptBox } from "../promptbox/generic-promptbox";
 import { forkThread } from "@/server-actions/fork-thread";
 import { RepoBranchSelector } from "../repo-branch-selector";
 import { PromptBoxToolBelt } from "../promptbox/prompt-box-tool-belt";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { toast } from "sonner";
-import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { usePromptBoxToolBeltOptions } from "../promptbox/prompt-box-tool-belt";
+import { AIAgent, AIModel } from "@terragon/agent/types";
 
 export function ForkTaskDialog({
-  thread,
-  threadChat,
+  threadId,
+  threadChatId,
+  repoFullName,
+  repoBaseBranchName,
+  branchName: initialBranchName,
+  gitDiffStats,
+  disableGitCheckpointing: initialDisableGitCheckpointing,
+  skipSetup: initialSkipSetup,
+  agent,
+  lastSelectedModel,
   open,
   onOpenChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  thread: ThreadInfo;
-  threadChat: ThreadChatInfoFull;
+  threadId: string;
+  threadChatId: string;
+  repoFullName: string;
+  repoBaseBranchName: string;
+  branchName: string | null;
+  gitDiffStats: GitDiffStats | null;
+  disableGitCheckpointing: boolean;
+  skipSetup: boolean;
+  agent: AIAgent;
+  lastSelectedModel: AIModel | null;
 }) {
   const [branchName, setBranchName] = useState<string>(
     // Only use the thread branch name if it exists and has git diff stats, which
     // means the branch has changes and we've pushed it to GitHub.
-    thread.gitDiffStats && thread.branchName
-      ? thread.branchName
-      : thread.repoBaseBranchName,
+    gitDiffStats && initialBranchName ? initialBranchName : repoBaseBranchName,
   );
   const {
     skipSetup,
@@ -51,28 +61,24 @@ export function ForkTaskDialog({
   } = usePromptBoxToolBeltOptions({
     branchName,
     shouldUseCookieValues: false,
-    initialSkipSetup: !!thread.skipSetup,
-    initialDisableGitCheckpointing: !!thread.disableGitCheckpointing,
+    initialSkipSetup,
+    initialDisableGitCheckpointing,
     initialCreateNewBranch: true,
   });
-
-  const lastSelectedModel = useMemo(() => {
-    return (
-      getLastUserMessageModel(threadChat.messages ?? []) ??
-      getDefaultModelForAgent({
-        agent: threadChat.agent,
-        agentVersion: "latest",
-      })
-    );
-  }, [threadChat.messages, threadChat.agent]);
+  const defaultModel =
+    lastSelectedModel ??
+    getDefaultModelForAgent({
+      agent,
+      agentVersion: "latest",
+    });
 
   const forkThreadMutation = useServerActionMutation({
     mutationFn: async ({ userMessage }: { userMessage: DBUserMessage }) => {
       return await forkThread({
-        threadId: thread.id,
-        threadChatId: threadChat.id,
+        threadId,
+        threadChatId,
         userMessage,
-        repoFullName: thread.githubRepoFullName,
+        repoFullName,
         branchName,
         disableGitCheckpointing,
         skipSetup,
@@ -101,10 +107,10 @@ export function ForkTaskDialog({
             placeholder="Describe what you want to do with this task..."
             message={{
               type: "user",
-              model: lastSelectedModel,
+              model: defaultModel,
               parts: [],
             }}
-            repoFullName={thread.githubRepoFullName}
+            repoFullName={repoFullName}
             branchName={branchName}
             onSubmit={forkThreadMutation.mutateAsync}
             hideSubmitButton={false}
@@ -115,7 +121,7 @@ export function ForkTaskDialog({
           <div className="flex items-center justify-between">
             <RepoBranchSelector
               hideRepoSelector
-              selectedRepoFullName={thread.githubRepoFullName}
+              selectedRepoFullName={repoFullName}
               selectedBranch={branchName}
               onChange={(_, branchName) => {
                 if (branchName) {
@@ -130,15 +136,15 @@ export function ForkTaskDialog({
               showSkipSetup={true}
               skipSetupValue={skipSetup}
               onSkipSetupChange={setSkipSetup}
-              skipSetupDisabled={!thread.githubRepoFullName}
+              skipSetupDisabled={!repoFullName}
               showCreateNewBranchOption={true}
               createNewBranchValue={createNewBranch}
               onCreateNewBranchChange={setCreateNewBranch}
-              createNewBranchDisabled={!thread.githubRepoFullName}
+              createNewBranchDisabled={!repoFullName}
               showCheckpoint={true}
               checkpointValue={disableGitCheckpointing}
               onCheckpointChange={setDisableGitCheckpointing}
-              checkpointDisabled={!thread.githubRepoFullName}
+              checkpointDisabled={!repoFullName}
             />
           </div>
         </div>

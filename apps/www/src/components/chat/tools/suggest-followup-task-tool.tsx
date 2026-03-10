@@ -8,22 +8,29 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Sparkles, ExternalLink, Rocket } from "lucide-react";
-import { useThread } from "../thread-context";
 import Link from "next/link";
 import { selectedModelAtom } from "@/atoms/user-flags";
 import { useAtomValue } from "jotai";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { newThread } from "@/server-actions/new-thread";
+import { ChildThreadInfo } from "@terragon/shared/db/types";
 
 export function SuggestFollowupTaskTool({
   toolPart,
+  threadId,
+  childThreads,
+  githubRepoFullName,
+  repoBaseBranchName,
 }: {
   toolPart: Extract<AllToolParts, { name: "SuggestFollowupTask" }>;
+  threadId: string;
+  childThreads: ChildThreadInfo[];
+  githubRepoFullName: string;
+  repoBaseBranchName: string;
 }) {
-  const { thread } = useThread();
   const selectedModel = useAtomValue(selectedModelAtom);
   // Find if a child thread exists for this toolPart
-  const existingChildThread = thread?.childThreads?.find(
+  const existingChildThread = childThreads.find(
     (child) => child.parentToolId === toolPart.id,
   );
 
@@ -32,14 +39,11 @@ export function SuggestFollowupTaskTool({
   });
 
   const handleCreateFollowUpTask = async () => {
-    if (!thread) {
-      return;
-    }
     await createNewThreadMutation.mutateAsync({
-      githubRepoFullName: thread.githubRepoFullName,
-      branchName: thread.repoBaseBranchName,
+      githubRepoFullName,
+      branchName: repoBaseBranchName,
       sourceType: "www-suggested-followup-task",
-      parentThreadId: thread.id,
+      parentThreadId: threadId,
       parentToolId: toolPart.id,
       message: {
         type: "user",

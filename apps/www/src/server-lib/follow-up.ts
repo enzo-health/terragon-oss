@@ -160,7 +160,7 @@ export async function queueFollowUpInternal({
     },
   });
   const shouldProcessImmediately =
-    !isAgentWorking(threadChat.status) ||
+    (threadChat.status !== "scheduled" && !isAgentWorking(threadChat.status)) ||
     threadChat.status === "working-done" ||
     threadChat.status === "working-error";
   if (shouldProcessImmediately) {

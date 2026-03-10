@@ -1,4 +1,4 @@
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo, ThreadPageChat, ThreadPageShell } from "@terragon/shared";
 import {
   archiveThread,
   unarchiveThread,
@@ -25,9 +25,19 @@ import { InfiniteData, useQueryClient } from "@tanstack/react-query";
 function useThreadMutation<TVariables extends { threadId: string }>({
   mutationFn,
   updateThread,
+  updateShell,
+  onMutateExtra,
 }: {
   mutationFn: (variables: TVariables) => Promise<ServerActionResult>;
   updateThread: (thread: ThreadInfo, variables: TVariables) => ThreadInfo;
+  updateShell?: (
+    thread: ThreadPageShell,
+    variables: TVariables,
+  ) => ThreadPageShell;
+  onMutateExtra?: (
+    queryClient: ReturnType<typeof useQueryClient>,
+    variables: TVariables,
+  ) => void;
 }) {
   const queryClient = useQueryClient();
   return useServerActionMutation({
@@ -49,6 +59,12 @@ function useThreadMutation<TVariables extends { threadId: string }>({
         threadQueryKeys.detail(threadId),
         (old) => (old ? updateThreadWrapper(old) : old),
       );
+      if (updateShell) {
+        queryClient.setQueryData<ThreadPageShell>(
+          threadQueryKeys.shell(threadId),
+          (old) => (old ? updateShell(old, variables) : old),
+        );
+      }
 
       // Update all thread list queries (both filtered and unfiltered)
       const cache = queryClient.getQueryCache();
@@ -80,15 +96,18 @@ function useThreadMutation<TVariables extends { threadId: string }>({
           },
         );
       });
+
+      onMutateExtra?.(queryClient, variables);
     },
-    onError: (error) => {
+    onError: (error, variables) => {
       console.error(error);
-      // On error, invalidate all thread queries to refetch fresh data
-      queryClient.invalidateQueries({ queryKey: ["threads"] });
-    },
-    onSettled: () => {
-      // Always invalidate to ensure consistency with server
-      queryClient.invalidateQueries({ queryKey: ["threads"] });
+      queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.detail(variables.threadId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.shell(variables.threadId),
+      });
+      queryClient.invalidateQueries({ queryKey: threadQueryKeys.list(null) });
     },
   });
 }
@@ -115,6 +134,11 @@ export function useArchiveMutation() {
       // When archiving, mark as read (server does this too)
       isUnread: archive ? false : thread.isUnread,
     }),
+    updateShell: (thread, { archive }) => ({
+      ...thread,
+      archived: archive,
+      isUnread: archive ? false : thread.isUnread,
+    }),
   });
 }
 
@@ -123,6 +147,16 @@ export function useReadThreadMutation() {
   return useThreadMutation({
     mutationFn: readThread,
     updateThread: (thread) => ({ ...thread, isUnread: false }),
+    updateShell: (thread) => ({ ...thread, isUnread: false }),
+    onMutateExtra: (queryClient, { threadId, threadChatIdOrNull }) => {
+      if (!threadChatIdOrNull) {
+        return;
+      }
+      queryClient.setQueryData<ThreadPageChat>(
+        threadQueryKeys.chat(threadId, threadChatIdOrNull),
+        (old) => (old ? { ...old, isUnread: false } : old),
+      );
+    },
   });
 }
 
@@ -131,6 +165,13 @@ export function useUnreadThreadMutation() {
   return useThreadMutation({
     mutationFn: unreadThread,
     updateThread: (thread) => ({ ...thread, isUnread: true }),
+    updateShell: (thread) => ({ ...thread, isUnread: true }),
+    onMutateExtra: (queryClient, { threadId }) => {
+      queryClient.setQueriesData<ThreadPageChat>(
+        { queryKey: ["threads", "chat", threadId] },
+        (old) => (old ? { ...old, isUnread: true } : old),
+      );
+    },
   });
 }
 
@@ -144,6 +185,9 @@ export function useDeleteThreadMutation() {
       await queryClient.cancelQueries({ queryKey: ["threads"] });
       // Remove thread from detail query
       queryClient.removeQueries({ queryKey: threadQueryKeys.detail(threadId) });
+      queryClient.removeQueries({ queryKey: threadQueryKeys.shell(threadId) });
+      queryClient.removeQueries({ queryKey: ["threads", "chat", threadId] });
+      queryClient.removeQueries({ queryKey: threadQueryKeys.diff(threadId) });
       // Update thread lists
       queryClient.setQueriesData<InfiniteData<ThreadInfo[]>>(
         { queryKey: threadQueryKeys.list(null) },
@@ -158,13 +202,14 @@ export function useDeleteThreadMutation() {
         },
       );
     },
-    onError: () => {
-      // On error, invalidate all thread queries to refetch fresh data
-      queryClient.invalidateQueries({ queryKey: ["threads"] });
-    },
-    onSettled: () => {
-      // Always invalidate to ensure consistency with server
-      queryClient.invalidateQueries({ queryKey: ["threads"] });
+    onError: (_, threadId) => {
+      queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.detail(threadId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.shell(threadId),
+      });
+      queryClient.invalidateQueries({ queryKey: threadQueryKeys.list(null) });
     },
   });
 }
@@ -173,6 +218,7 @@ export function useUpdateThreadVisibilityMutation() {
   return useThreadMutation({
     mutationFn: updateThreadVisibilityAction,
     updateThread: (thread, { visibility }) => ({ ...thread, visibility }),
+    updateShell: (thread, { visibility }) => ({ ...thread, visibility }),
   });
 }
 
@@ -180,6 +226,7 @@ export function useUpdateThreadNameMutation() {
   return useThreadMutation({
     mutationFn: updateThreadName,
     updateThread: (thread, { name }) => ({ ...thread, name }),
+    updateShell: (thread, { name }) => ({ ...thread, name }),
   });
 }
 
@@ -187,6 +234,7 @@ export function useUpdateDraftThreadMutation() {
   return useThreadMutation({
     mutationFn: updateDraftThread,
     updateThread: (thread, { updates }) => ({ ...thread, ...updates }),
+    updateShell: (thread, { updates }) => ({ ...thread, ...updates }),
   });
 }
 

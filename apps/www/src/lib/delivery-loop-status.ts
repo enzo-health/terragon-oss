@@ -6,6 +6,10 @@ import type {
   SdlcReviewThreadGateStatus,
   SdlcVideoCaptureStatus,
 } from "@terragon/shared/db/types";
+import type {
+  DeliveryLoopBlockedState,
+  DeliveryLoopSnapshot,
+} from "@terragon/shared/model/delivery-loop";
 export type SdlcLoopStatusCheckKey =
   | "ci"
   | "review_threads"
@@ -25,6 +29,19 @@ export type SdlcLoopStatusCheck = {
   label: string;
   status: SdlcLoopStatusCheckStatus;
   detail: string;
+};
+
+export type DeliveryLoopTopProgressPhaseKey =
+  | "planning"
+  | "implementing"
+  | "reviewing"
+  | "ci"
+  | "ui_testing";
+
+export type DeliveryLoopTopProgressPhase = {
+  key: DeliveryLoopTopProgressPhaseKey;
+  label: string;
+  status: SdlcLoopStatusCheckStatus;
 };
 
 type SdlcLoopStatusCiRun = {
@@ -49,6 +66,17 @@ export type SdlcLoopStatusStateSummary = {
   stateLabel: string;
   explanation: string;
   progressPercent: number;
+};
+
+const TOP_PROGRESS_PHASE_LABELS: Record<
+  DeliveryLoopTopProgressPhaseKey,
+  string
+> = {
+  planning: "Planning",
+  implementing: "Implementing",
+  reviewing: "Reviewing",
+  ci: "CI",
+  ui_testing: "UI Testing",
 };
 
 const SDLC_STATE_SUMMARY = {
@@ -116,15 +144,119 @@ const SDLC_STATE_SUMMARY = {
   },
 } satisfies Record<SdlcLoopState, SdlcLoopStatusStateSummary>;
 
-export function getSdlcLoopStateSummary(
-  state: SdlcLoopState,
+function getBlockedStateSummary(
+  blocked: DeliveryLoopBlockedState,
 ): SdlcLoopStatusStateSummary {
-  return SDLC_STATE_SUMMARY[state];
+  switch (blocked.from) {
+    case "planning":
+      return {
+        stateLabel: "Blocked in Planning",
+        explanation:
+          "Planning is blocked and waiting for human intervention before implementation can start.",
+        progressPercent: 10,
+      };
+    case "implementing":
+      return {
+        stateLabel: "Blocked in Implementing",
+        explanation:
+          "Implementation is blocked and waiting for human intervention before coding can continue.",
+        progressPercent: 25,
+      };
+    case "review_gate":
+      return {
+        stateLabel: "Blocked in Review Gate",
+        explanation:
+          "A review gate is blocked and needs intervention before the loop can continue.",
+        progressPercent: 45,
+      };
+    case "ci_gate":
+      return {
+        stateLabel: "Blocked in CI Gate",
+        explanation:
+          "CI is blocked and needs intervention before the loop can continue.",
+        progressPercent: 55,
+      };
+    case "ui_gate":
+      return {
+        stateLabel: "Blocked in UI Gate",
+        explanation:
+          "UI validation is blocked and needs intervention before the loop can continue.",
+        progressPercent: 65,
+      };
+    case "awaiting_pr_link":
+      return {
+        stateLabel: "Blocked Awaiting PR",
+        explanation:
+          "The loop is blocked while waiting for PR linkage or human intervention.",
+        progressPercent: 75,
+      };
+    case "babysitting":
+      return {
+        stateLabel: "Blocked in Babysitting",
+        explanation:
+          "The loop is blocked while monitoring PR feedback and CI outcomes.",
+        progressPercent: 85,
+      };
+  }
+}
+
+export function getDeliveryLoopBlockedAttentionTitle(
+  blocked: DeliveryLoopBlockedState,
+): string {
+  switch (blocked.from) {
+    case "planning":
+      return "Planning is blocked and needs human feedback";
+    case "implementing":
+      return "Implementation is blocked and needs human feedback";
+    case "review_gate":
+      return "Review gate is blocked and needs human feedback";
+    case "ci_gate":
+      return "CI gate is blocked and needs human feedback";
+    case "ui_gate":
+      return "UI gate is blocked and needs human feedback";
+    case "awaiting_pr_link":
+      return "Awaiting PR linkage or human intervention";
+    case "babysitting":
+      return "Babysitting is blocked and needs human feedback";
+  }
+}
+
+export function getDeliveryLoopSnapshotStateSummary(
+  snapshot: DeliveryLoopSnapshot,
+): SdlcLoopStatusStateSummary {
+  switch (snapshot.kind) {
+    case "blocked":
+      return getBlockedStateSummary(snapshot);
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+    case "awaiting_pr_link":
+    case "babysitting":
+    case "done":
+    case "stopped":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+      return SDLC_STATE_SUMMARY[snapshot.kind];
+  }
+}
+
+function getEffectiveLoopStateForChecks(
+  snapshot: DeliveryLoopSnapshot,
+):
+  | Exclude<DeliveryLoopSnapshot["kind"], "blocked">
+  | DeliveryLoopBlockedState["from"] {
+  if (snapshot.kind === "blocked") {
+    return snapshot.from;
+  }
+  return snapshot.kind;
 }
 
 function inferCiStatusFromLoopState(
-  loopState: SdlcLoopState,
+  snapshot: DeliveryLoopSnapshot,
 ): SdlcLoopStatusCheckStatus {
+  const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
     case "implementing":
@@ -132,8 +264,6 @@ function inferCiStatusFromLoopState(
       return "not_started";
     case "ci_gate":
       return "pending";
-    case "blocked":
-      return "blocked";
     case "babysitting":
     case "awaiting_pr_link":
     case "done":
@@ -148,8 +278,9 @@ function inferCiStatusFromLoopState(
 }
 
 function inferReviewThreadsStatusFromLoopState(
-  loopState: SdlcLoopState,
+  snapshot: DeliveryLoopSnapshot,
 ): SdlcLoopStatusCheckStatus {
+  const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
     case "implementing":
@@ -159,8 +290,6 @@ function inferReviewThreadsStatusFromLoopState(
       return "not_started";
     case "babysitting":
       return "pending";
-    case "blocked":
-      return "blocked";
     case "awaiting_pr_link":
     case "done":
     case "terminated_pr_merged":
@@ -174,16 +303,15 @@ function inferReviewThreadsStatusFromLoopState(
 }
 
 function inferDeepReviewStatusFromLoopState(
-  loopState: SdlcLoopState,
+  snapshot: DeliveryLoopSnapshot,
 ): SdlcLoopStatusCheckStatus {
+  const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
     case "implementing":
       return "not_started";
     case "review_gate":
       return "pending";
-    case "blocked":
-      return "blocked";
     case "ci_gate":
     case "ui_gate":
     case "awaiting_pr_link":
@@ -200,16 +328,15 @@ function inferDeepReviewStatusFromLoopState(
 }
 
 function inferCarmackStatusFromLoopState(
-  loopState: SdlcLoopState,
+  snapshot: DeliveryLoopSnapshot,
 ): SdlcLoopStatusCheckStatus {
+  const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
     case "implementing":
       return "not_started";
     case "review_gate":
       return "pending";
-    case "blocked":
-      return "blocked";
     case "ci_gate":
     case "ui_gate":
     case "awaiting_pr_link":
@@ -225,8 +352,160 @@ function inferCarmackStatusFromLoopState(
   }
 }
 
+function aggregateTopProgressStatuses(
+  statuses: readonly SdlcLoopStatusCheckStatus[],
+): SdlcLoopStatusCheckStatus {
+  if (statuses.length === 0) {
+    return "not_started";
+  }
+  if (statuses.some((status) => status === "blocked")) {
+    return "blocked";
+  }
+  if (statuses.some((status) => status === "pending")) {
+    return "pending";
+  }
+  const hasNotStarted = statuses.some((status) => status === "not_started");
+  const hasPassedLike = statuses.some(
+    (status) => status === "passed" || status === "degraded",
+  );
+  if (hasNotStarted && hasPassedLike) {
+    return "pending";
+  }
+  if (hasNotStarted) {
+    return "not_started";
+  }
+  if (statuses.some((status) => status === "degraded")) {
+    return "degraded";
+  }
+  return "passed";
+}
+
+function getCheckStatusOrDefault(
+  checks: readonly SdlcLoopStatusCheck[],
+  key: SdlcLoopStatusCheckKey,
+): SdlcLoopStatusCheckStatus {
+  return checks.find((check) => check.key === key)?.status ?? "not_started";
+}
+
+export function buildDeliveryLoopTopProgressPhases({
+  loopSnapshot,
+  checks,
+}: {
+  loopSnapshot: DeliveryLoopSnapshot;
+  checks: readonly SdlcLoopStatusCheck[];
+}): DeliveryLoopTopProgressPhase[] {
+  const effectiveState = getEffectiveLoopStateForChecks(loopSnapshot);
+  const reviewStatuses = [
+    getCheckStatusOrDefault(checks, "review_threads"),
+    getCheckStatusOrDefault(checks, "deep_review"),
+    getCheckStatusOrDefault(checks, "architecture_carmack"),
+  ];
+  const reviewStatus = aggregateTopProgressStatuses(reviewStatuses);
+  const ciStatus = getCheckStatusOrDefault(checks, "ci");
+  const uiStatus = getCheckStatusOrDefault(checks, "video");
+
+  const planningStatus: SdlcLoopStatusCheckStatus =
+    effectiveState === "planning" ? "pending" : "passed";
+
+  const implementingStatus: SdlcLoopStatusCheckStatus =
+    effectiveState === "planning"
+      ? "not_started"
+      : effectiveState === "implementing"
+        ? "pending"
+        : effectiveState === "stopped" ||
+            effectiveState === "terminated_pr_closed"
+          ? "degraded"
+          : "passed";
+
+  const normalizedReviewStatus: SdlcLoopStatusCheckStatus =
+    effectiveState === "planning" || effectiveState === "implementing"
+      ? "not_started"
+      : effectiveState === "stopped" ||
+          effectiveState === "terminated_pr_closed"
+        ? "degraded"
+        : effectiveState === "review_gate" && reviewStatus === "not_started"
+          ? "pending"
+          : effectiveState === "ci_gate" ||
+              effectiveState === "ui_gate" ||
+              effectiveState === "awaiting_pr_link" ||
+              effectiveState === "babysitting" ||
+              effectiveState === "done" ||
+              effectiveState === "terminated_pr_merged"
+            ? reviewStatus === "not_started"
+              ? "pending"
+              : reviewStatus
+            : reviewStatus;
+
+  const normalizedCiStatus: SdlcLoopStatusCheckStatus =
+    effectiveState === "planning" ||
+    effectiveState === "implementing" ||
+    effectiveState === "review_gate"
+      ? "not_started"
+      : effectiveState === "stopped" ||
+          effectiveState === "terminated_pr_closed"
+        ? "degraded"
+        : effectiveState === "ci_gate" && ciStatus === "not_started"
+          ? "pending"
+          : effectiveState === "babysitting" ||
+              effectiveState === "awaiting_pr_link" ||
+              effectiveState === "done" ||
+              effectiveState === "terminated_pr_merged"
+            ? ciStatus === "not_started"
+              ? "pending"
+              : ciStatus
+            : ciStatus;
+
+  const normalizedUiStatus: SdlcLoopStatusCheckStatus =
+    effectiveState === "planning" ||
+    effectiveState === "implementing" ||
+    effectiveState === "review_gate" ||
+    effectiveState === "ci_gate"
+      ? "not_started"
+      : effectiveState === "stopped" ||
+          effectiveState === "terminated_pr_closed"
+        ? "degraded"
+        : effectiveState === "ui_gate" && uiStatus === "not_started"
+          ? "pending"
+          : effectiveState === "awaiting_pr_link" ||
+              effectiveState === "babysitting" ||
+              effectiveState === "done" ||
+              effectiveState === "terminated_pr_merged"
+            ? uiStatus === "not_started"
+              ? "pending"
+              : uiStatus
+            : uiStatus;
+
+  return [
+    {
+      key: "planning",
+      label: TOP_PROGRESS_PHASE_LABELS.planning,
+      status: planningStatus,
+    },
+    {
+      key: "implementing",
+      label: TOP_PROGRESS_PHASE_LABELS.implementing,
+      status: implementingStatus,
+    },
+    {
+      key: "reviewing",
+      label: TOP_PROGRESS_PHASE_LABELS.reviewing,
+      status: normalizedReviewStatus,
+    },
+    {
+      key: "ci",
+      label: TOP_PROGRESS_PHASE_LABELS.ci,
+      status: normalizedCiStatus,
+    },
+    {
+      key: "ui_testing",
+      label: TOP_PROGRESS_PHASE_LABELS.ui_testing,
+      status: normalizedUiStatus,
+    },
+  ];
+}
+
 export function buildSdlcLoopStatusChecks({
-  loopState,
+  loopSnapshot,
   currentHeadSha,
   ciRun,
   reviewThreadRun,
@@ -237,7 +516,7 @@ export function buildSdlcLoopStatusChecks({
   videoCaptureStatus,
   videoFailureMessage,
 }: {
-  loopState: SdlcLoopState;
+  loopSnapshot: DeliveryLoopSnapshot;
   currentHeadSha: string | null;
   ciRun: SdlcLoopStatusCiRun | null;
   reviewThreadRun: SdlcLoopStatusReviewThreadRun | null;
@@ -248,12 +527,12 @@ export function buildSdlcLoopStatusChecks({
   videoCaptureStatus: SdlcVideoCaptureStatus;
   videoFailureMessage: string | null;
 }): SdlcLoopStatusCheck[] {
-  const ciFallbackStatus = inferCiStatusFromLoopState(loopState);
+  const ciFallbackStatus = inferCiStatusFromLoopState(loopSnapshot);
   const reviewThreadsFallbackStatus =
-    inferReviewThreadsStatusFromLoopState(loopState);
+    inferReviewThreadsStatusFromLoopState(loopSnapshot);
   const deepReviewFallbackStatus =
-    inferDeepReviewStatusFromLoopState(loopState);
-  const carmackFallbackStatus = inferCarmackStatusFromLoopState(loopState);
+    inferDeepReviewStatusFromLoopState(loopSnapshot);
+  const carmackFallbackStatus = inferCarmackStatusFromLoopState(loopSnapshot);
 
   const ciCheck: SdlcLoopStatusCheck = !currentHeadSha
     ? {
@@ -442,17 +721,3 @@ export function buildSdlcLoopStatusChecks({
     videoCheck,
   ];
 }
-
-// Delivery Loop aliases for exported symbols
-/** @deprecated Use DeliveryLoopStatusCheckKey */
-export type DeliveryLoopStatusCheckKey = SdlcLoopStatusCheckKey;
-/** @deprecated Use DeliveryLoopStatusCheckStatus */
-export type DeliveryLoopStatusCheckStatus = SdlcLoopStatusCheckStatus;
-/** @deprecated Use DeliveryLoopStatusCheck */
-export type DeliveryLoopStatusCheck = SdlcLoopStatusCheck;
-/** @deprecated Use DeliveryLoopStatusStateSummary */
-export type DeliveryLoopStatusStateSummary = SdlcLoopStatusStateSummary;
-/** @deprecated Use getDeliveryLoopStateSummary */
-export const getDeliveryLoopStateSummary = getSdlcLoopStateSummary;
-/** @deprecated Use buildDeliveryLoopStatusChecks */
-export const buildDeliveryLoopStatusChecks = buildSdlcLoopStatusChecks;

@@ -1,3 +1,4 @@
+import { useMemo, useRef } from "react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { DBMessage, UIMessage, UIUserMessage } from "@terragon/shared";
 import type {
@@ -8,6 +9,22 @@ import type {
   UIGitDiffPart,
   ThreadStatus,
 } from "@terragon/shared";
+
+type UIMessageRange = {
+  startDbIndex: number;
+  endDbIndex: number;
+};
+
+type UIMessagesBuildResult = {
+  messages: UIMessage[];
+  ranges: UIMessageRange[];
+};
+
+type IncrementalUIMessagesCache = UIMessagesBuildResult & {
+  agent: AIAgent;
+  cacheKey: string;
+  dbMessages: DBMessage[];
+};
 
 /**
  * Converts a collection of DBMessages to UIMessages.
@@ -27,9 +44,157 @@ export function toUIMessages({
   agent: AIAgent;
   threadStatus?: ThreadStatus | null;
 }): UIMessage[] {
+  return buildUIMessagesWithRanges({
+    dbMessages,
+    agent,
+    threadStatus,
+  }).messages;
+}
+
+export function useIncrementalUIMessages({
+  dbMessages,
+  agent,
+  threadStatus,
+  cacheKey,
+}: {
+  dbMessages: DBMessage[];
+  agent: AIAgent;
+  threadStatus?: ThreadStatus | null;
+  cacheKey: string;
+}) {
+  const cacheRef = useRef<IncrementalUIMessagesCache | null>(null);
+
+  return useMemo(() => {
+    const previous = cacheRef.current;
+    const nextState = buildIncrementalUIMessages({
+      previous,
+      dbMessages,
+      agent,
+      threadStatus,
+      cacheKey,
+    });
+    cacheRef.current = nextState;
+    return nextState.messages;
+  }, [agent, cacheKey, dbMessages, threadStatus]);
+}
+
+function buildIncrementalUIMessages({
+  previous,
+  dbMessages,
+  agent,
+  threadStatus,
+  cacheKey,
+}: {
+  previous: IncrementalUIMessagesCache | null;
+  dbMessages: DBMessage[];
+  agent: AIAgent;
+  threadStatus?: ThreadStatus | null;
+  cacheKey: string;
+}): IncrementalUIMessagesCache {
+  if (
+    previous === null ||
+    previous.agent !== agent ||
+    previous.cacheKey !== cacheKey ||
+    !canReuseMessagePrefix(previous.dbMessages, dbMessages)
+  ) {
+    return {
+      ...buildUIMessagesWithRanges({
+        dbMessages,
+        agent,
+        threadStatus,
+      }),
+      agent,
+      cacheKey,
+      dbMessages,
+    };
+  }
+
+  const rebuildStartDbIndex = getMutableTailStartDbIndex(dbMessages);
+  if (rebuildStartDbIndex <= 0) {
+    return {
+      ...buildUIMessagesWithRanges({
+        dbMessages,
+        agent,
+        threadStatus,
+      }),
+      agent,
+      cacheKey,
+      dbMessages,
+    };
+  }
+
+  const stablePrefixCount = previous.ranges.findIndex(
+    (range) => range.endDbIndex >= rebuildStartDbIndex,
+  );
+  const preservedCount =
+    stablePrefixCount === -1 ? previous.messages.length : stablePrefixCount;
+  const preservedMessages = previous.messages.slice(0, preservedCount);
+  const preservedRanges = previous.ranges.slice(0, preservedCount);
+  const rebuiltTail = buildUIMessagesWithRanges({
+    dbMessages: dbMessages.slice(rebuildStartDbIndex),
+    agent,
+    threadStatus,
+    dbStartIndex: rebuildStartDbIndex,
+  });
+
+  return {
+    messages: [...preservedMessages, ...rebuiltTail.messages],
+    ranges: [...preservedRanges, ...rebuiltTail.ranges],
+    agent,
+    cacheKey,
+    dbMessages,
+  };
+}
+
+function canReuseMessagePrefix(previous: DBMessage[], next: DBMessage[]) {
+  if (next.length < previous.length) {
+    return false;
+  }
+  for (let index = 0; index < previous.length; index++) {
+    if (previous[index] !== next[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isTurnBoundaryMessage(message: DBMessage) {
+  return (
+    message.type === "user" ||
+    message.type === "system" ||
+    message.type === "git-diff" ||
+    message.type === "stop" ||
+    (message.type === "meta" && message.subtype === "result-success")
+  );
+}
+
+function getMutableTailStartDbIndex(dbMessages: DBMessage[]) {
+  for (let index = dbMessages.length - 1; index >= 0; index--) {
+    const message = dbMessages[index];
+    if (message && isTurnBoundaryMessage(message)) {
+      return index;
+    }
+  }
+  return 0;
+}
+
+function buildUIMessagesWithRanges({
+  dbMessages,
+  agent,
+  threadStatus,
+  dbStartIndex = 0,
+}: {
+  dbMessages: DBMessage[];
+  agent: AIAgent;
+  threadStatus?: ThreadStatus | null;
+  dbStartIndex?: number;
+}): UIMessagesBuildResult {
   const uiMessages: UIMessage[] = [];
+  const ranges: UIMessageRange[] = [];
   let currentAgentMessage: UIAgentMessage | null = null;
   let currentUserMessage: UIUserMessage | null = null;
+  let currentAgentMessageStartDbIndex: number | null = null;
+  let currentUserMessageStartDbIndex: number | null = null;
 
   // Map to store tool parts by their ID for efficient lookup
   const toolPartsById: Record<string, UIToolPart<string, any>> = {};
@@ -49,6 +214,7 @@ export function toUIMessages({
     if (currentAgentMessage) {
       return currentAgentMessage;
     }
+    currentAgentMessageStartDbIndex = -1;
     currentAgentMessage = {
       role: "agent",
       agent,
@@ -61,6 +227,7 @@ export function toUIMessages({
     if (currentUserMessage) {
       return currentUserMessage;
     }
+    currentUserMessageStartDbIndex = -1;
     currentUserMessage = {
       role: "user",
       parts: [],
@@ -68,17 +235,27 @@ export function toUIMessages({
     return currentUserMessage;
   }
 
-  function clearCurrentUserMessage() {
+  function clearCurrentUserMessage(endDbIndex: number) {
     if (currentUserMessage) {
       uiMessages.push(currentUserMessage);
+      ranges.push({
+        startDbIndex: currentUserMessageStartDbIndex ?? endDbIndex,
+        endDbIndex,
+      });
       currentUserMessage = null;
+      currentUserMessageStartDbIndex = null;
     }
   }
 
-  function clearCurrentAgentMessage() {
+  function clearCurrentAgentMessage(endDbIndex: number) {
     if (currentAgentMessage) {
       uiMessages.push(currentAgentMessage);
+      ranges.push({
+        startDbIndex: currentAgentMessageStartDbIndex ?? endDbIndex,
+        endDbIndex,
+      });
       currentAgentMessage = null;
+      currentAgentMessageStartDbIndex = null;
     }
   }
 
@@ -103,7 +280,8 @@ export function toUIMessages({
     }
   }
 
-  for (const dbMessage of dbMessages) {
+  for (const [relativeIndex, dbMessage] of dbMessages.entries()) {
+    const dbIndex = dbStartIndex + relativeIndex;
     if (dbMessage.type === "meta" && dbMessage.subtype === "result-success") {
       // Attach run stats to the preceding agent message before flushing
       if (currentAgentMessage && dbMessage.duration_ms > 0) {
@@ -113,31 +291,35 @@ export function toUIMessages({
           num_turns: dbMessage.num_turns,
         };
       }
-      clearCurrentAgentMessage();
-      clearCurrentUserMessage();
+      clearCurrentAgentMessage(dbIndex);
+      clearCurrentUserMessage(dbIndex);
       continue;
     }
     // Type guard for user messages
     if (dbMessage.type === "user") {
       // Mark any pending tools as completed before processing user message
       markPendingToolsAsCompleted();
-      clearCurrentAgentMessage();
+      clearCurrentAgentMessage(dbIndex - 1);
       const userMessage = getOrCreateUserMessage();
+      if (currentUserMessageStartDbIndex === -1) {
+        currentUserMessageStartDbIndex = dbIndex;
+      }
       for (const part of dbMessage.parts) {
         pushPart(userMessage.parts, part);
       }
       userMessage.timestamp = dbMessage.timestamp;
       userMessage.model = dbMessage.model;
     } else if (dbMessage.type === "system") {
-      clearCurrentAgentMessage();
-      clearCurrentUserMessage();
+      clearCurrentAgentMessage(dbIndex - 1);
+      clearCurrentUserMessage(dbIndex - 1);
       uiMessages.push({
         role: "system",
         message_type: dbMessage.message_type,
         parts: dbMessage.parts,
       });
+      ranges.push({ startDbIndex: dbIndex, endDbIndex: dbIndex });
     } else if (dbMessage.type === "agent") {
-      clearCurrentUserMessage();
+      clearCurrentUserMessage(dbIndex - 1);
       // Handle agent messages with parent_tool_use_id (nested inside a tool)
       if (dbMessage.parent_tool_use_id) {
         const found = toolPartsById[dbMessage.parent_tool_use_id];
@@ -149,6 +331,9 @@ export function toUIMessages({
         }
       } else {
         currentAgentMessage = getOrCreateAgentMessage();
+        if (currentAgentMessageStartDbIndex === -1) {
+          currentAgentMessageStartDbIndex = dbIndex;
+        }
         for (const part of dbMessage.parts) {
           // Merge consecutive text parts into one (e.g. ACP streams word-by-word)
           if (part.type === "text") {
@@ -172,7 +357,7 @@ export function toUIMessages({
         }
       }
     } else if (dbMessage.type === "tool-call") {
-      clearCurrentUserMessage();
+      clearCurrentUserMessage(dbIndex - 1);
       const newToolPart: UIToolPart<string, any> = {
         type: "tool",
         id: dbMessage.id,
@@ -190,6 +375,9 @@ export function toUIMessages({
         }
       } else {
         currentAgentMessage = getOrCreateAgentMessage();
+        if (currentAgentMessageStartDbIndex === -1) {
+          currentAgentMessageStartDbIndex = dbIndex;
+        }
         pushToolPart(currentAgentMessage.parts, newToolPart);
       }
       toolPartsById[dbMessage.id] = newToolPart;
@@ -203,8 +391,8 @@ export function toUIMessages({
     } else if (dbMessage.type === "git-diff") {
       // Mark any pending tools as completed before processing git diff
       markPendingToolsAsCompleted();
-      clearCurrentAgentMessage();
-      clearCurrentUserMessage();
+      clearCurrentAgentMessage(dbIndex - 1);
+      clearCurrentUserMessage(dbIndex - 1);
 
       // Add git-diff as a standalone agent message
       const gitDiffPart: UIGitDiffPart = {
@@ -219,21 +407,23 @@ export function toUIMessages({
         message_type: "git-diff",
         parts: [gitDiffPart],
       });
+      ranges.push({ startDbIndex: dbIndex, endDbIndex: dbIndex });
     } else if (dbMessage.type === "stop") {
       // Mark any pending tools as completed before processing stop
       markPendingToolsAsCompleted();
-      clearCurrentAgentMessage();
-      clearCurrentUserMessage();
+      clearCurrentAgentMessage(dbIndex - 1);
+      clearCurrentUserMessage(dbIndex - 1);
       uiMessages.push({
         role: "system",
         message_type: "stop",
         parts: [{ type: "stop" }],
       });
+      ranges.push({ startDbIndex: dbIndex, endDbIndex: dbIndex });
     } else if (dbMessage.type === "error") {
       // Mark any pending tools as completed when agent encounters an error
       markPendingToolsAsCompleted();
-      clearCurrentAgentMessage();
-      clearCurrentUserMessage();
+      clearCurrentAgentMessage(dbIndex - 1);
+      clearCurrentUserMessage(dbIndex - 1);
       // Handle error messages (they are not shown in UI messages based on tests)
     } else if (
       dbMessage.type === "meta" &&
@@ -244,15 +434,19 @@ export function toUIMessages({
       // Meta messages are ignored in UI
     }
   }
-  clearCurrentUserMessage();
-  clearCurrentAgentMessage();
+  const lastDbIndex = dbStartIndex + dbMessages.length - 1;
+  clearCurrentUserMessage(lastDbIndex);
+  clearCurrentAgentMessage(lastDbIndex);
 
   // If thread is not actively working, mark any remaining pending tools as completed
   if (threadStatus && !isThreadWorking(threadStatus)) {
     markPendingToolsAsCompleted();
   }
 
-  return uiMessages;
+  return {
+    messages: uiMessages,
+    ranges,
+  };
 }
 
 /**

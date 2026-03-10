@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type {
-  SdlcLoopStatusCheck,
-  SdlcLoopStatusCheckStatus,
-} from "@/lib/delivery-loop-status";
+import type { SdlcLoopStatusCheckStatus } from "@/lib/delivery-loop-status";
 import { cn } from "@/lib/utils";
 import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
@@ -31,7 +28,6 @@ import {
   StepperTitle,
   StepperTrigger,
 } from "@/components/reui/stepper";
-import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
   AlertTriangleIcon,
   CheckIcon,
@@ -46,30 +42,6 @@ type SdlcPhaseKey =
   | "reviewing"
   | "ci"
   | "ui_testing";
-
-type SdlcPhase = {
-  key: SdlcPhaseKey;
-  label: string;
-  status: SdlcLoopStatusCheckStatus;
-};
-
-type SdlcCheckStatusMap = Partial<
-  Record<SdlcLoopStatusCheck["key"], SdlcLoopStatusCheckStatus>
->;
-
-const SDLC_PHASE_LABELS: Record<SdlcPhaseKey, string> = {
-  planning: "Planning",
-  implementing: "Implementing",
-  reviewing: "Reviewing",
-  ci: "CI",
-  ui_testing: "UI Testing",
-};
-
-const REVIEW_CHECK_KEYS: readonly SdlcLoopStatusCheck["key"][] = [
-  "review_threads",
-  "deep_review",
-  "architecture_carmack",
-];
 
 function getCheckStatusLabel(status: SdlcLoopStatusCheckStatus): string {
   switch (status) {
@@ -101,276 +73,9 @@ function getStatusBadgeClass(status: SdlcLoopStatusCheckStatus): string {
   }
 }
 
-function aggregateCheckStatuses(
-  statuses: readonly SdlcLoopStatusCheckStatus[],
-): SdlcLoopStatusCheckStatus {
-  if (statuses.length === 0) {
-    return "not_started";
-  }
-  if (statuses.some((status) => status === "blocked")) {
-    return "blocked";
-  }
-  if (statuses.some((status) => status === "pending")) {
-    return "pending";
-  }
-  const hasNotStarted = statuses.some((status) => status === "not_started");
-  const hasPassedLike = statuses.some(
-    (status) => status === "passed" || status === "degraded",
-  );
-  if (hasNotStarted && hasPassedLike) {
-    return "pending";
-  }
-  if (hasNotStarted) {
-    return "not_started";
-  }
-  if (statuses.some((status) => status === "degraded")) {
-    return "degraded";
-  }
-  if (statuses.every((status) => status === "passed")) {
-    return "passed";
-  }
-  return "pending";
-}
-
-function getCheckStatusOrDefault({
-  checkStatuses,
-  key,
-  isLoading,
-}: {
-  checkStatuses: SdlcCheckStatusMap;
-  key: SdlcLoopStatusCheck["key"];
-  isLoading: boolean;
-}): SdlcLoopStatusCheckStatus {
-  const status = checkStatuses[key];
-  if (status) {
-    return status;
-  }
-  return isLoading ? "pending" : "not_started";
-}
-
-function buildCheckStatusMap(
-  checks: readonly SdlcLoopStatusCheck[],
-): SdlcCheckStatusMap {
-  const result: SdlcCheckStatusMap = {};
-  for (const check of checks) {
-    result[check.key] = check.status;
-  }
-  return result;
-}
-
-function getPlanningStatus({
-  state,
-  isLoading,
-}: {
-  state: SdlcLoopState | undefined;
-  isLoading: boolean;
-}): SdlcLoopStatusCheckStatus {
-  if (!state) {
-    return isLoading ? "pending" : "not_started";
-  }
-  if (state === "planning") {
-    return "pending";
-  }
-  return "passed";
-}
-
-function getImplementingStatus({
-  state,
-  isLoading,
-}: {
-  state: SdlcLoopState | undefined;
-  isLoading: boolean;
-}): SdlcLoopStatusCheckStatus {
-  if (!state) {
-    return isLoading ? "pending" : "not_started";
-  }
-
-  switch (state) {
-    case "planning":
-      return "not_started";
-    case "implementing":
-      return "pending";
-    case "terminated_pr_closed":
-    case "stopped":
-      return "degraded";
-    default:
-      return "passed";
-  }
-}
-
-function getReviewingStatus({
-  state,
-  checkStatuses,
-  isLoading,
-}: {
-  state: SdlcLoopState | undefined;
-  checkStatuses: SdlcCheckStatusMap;
-  isLoading: boolean;
-}): SdlcLoopStatusCheckStatus {
-  if (!state) {
-    return isLoading ? "pending" : "not_started";
-  }
-
-  if (state === "planning" || state === "implementing") {
-    return "not_started";
-  }
-
-  if (state === "terminated_pr_closed" || state === "stopped") {
-    return "degraded";
-  }
-
-  if (state === "blocked") {
-    return "blocked";
-  }
-
-  if (
-    state === "review_gate" ||
-    state === "ci_gate" ||
-    state === "ui_gate" ||
-    state === "awaiting_pr_link" ||
-    state === "babysitting" ||
-    state === "done" ||
-    state === "terminated_pr_merged"
-  ) {
-    return "passed";
-  }
-
-  const aggregateStatus = aggregateCheckStatuses(
-    REVIEW_CHECK_KEYS.map((key) =>
-      getCheckStatusOrDefault({
-        checkStatuses,
-        key,
-        isLoading,
-      }),
-    ),
-  );
-
-  const reviewAggregatePendingStates: SdlcLoopState[] = [
-    "review_gate",
-    "ci_gate",
-    "ui_gate",
-    "babysitting",
-  ];
-
-  if (
-    aggregateStatus === "not_started" &&
-    reviewAggregatePendingStates.includes(state)
-  ) {
-    return "pending";
-  }
-
-  return aggregateStatus;
-}
-
-function getCiStatus({
-  state,
-  checkStatuses,
-  isLoading,
-}: {
-  state: SdlcLoopState | undefined;
-  checkStatuses: SdlcCheckStatusMap;
-  isLoading: boolean;
-}): SdlcLoopStatusCheckStatus {
-  if (!state) {
-    return isLoading ? "pending" : "not_started";
-  }
-
-  if (
-    state === "planning" ||
-    state === "implementing" ||
-    state === "review_gate"
-  ) {
-    return "not_started";
-  }
-
-  if (state === "terminated_pr_closed" || state === "stopped") {
-    return "degraded";
-  }
-
-  if (state === "blocked") {
-    return "blocked";
-  }
-
-  const ciStatus = getCheckStatusOrDefault({
-    checkStatuses,
-    key: "ci",
-    isLoading,
-  });
-
-  if (
-    ciStatus === "not_started" &&
-    (state === "ci_gate" || state === "babysitting")
-  ) {
-    return "pending";
-  }
-
-  return ciStatus;
-}
-
-function getUiTestingStatus({
-  state,
-  checkStatuses,
-  isLoading,
-}: {
-  state: SdlcLoopState | undefined;
-  checkStatuses: SdlcCheckStatusMap;
-  isLoading: boolean;
-}): SdlcLoopStatusCheckStatus {
-  if (!state) {
-    return isLoading ? "pending" : "not_started";
-  }
-
-  if (
-    state === "planning" ||
-    state === "implementing" ||
-    state === "review_gate" ||
-    state === "ci_gate"
-  ) {
-    return "not_started";
-  }
-
-  if (state === "ui_gate") {
-    return "pending";
-  }
-
-  if (state === "babysitting") {
-    return "passed";
-  }
-
-  if (state === "terminated_pr_closed" || state === "stopped") {
-    return "degraded";
-  }
-
-  const videoStatus = getCheckStatusOrDefault({
-    checkStatuses,
-    key: "video",
-    isLoading,
-  });
-
-  if (state === "done" || state === "terminated_pr_merged") {
-    if (videoStatus === "blocked" || videoStatus === "degraded") {
-      return "degraded";
-    }
-    if (videoStatus === "pending") {
-      return "pending";
-    }
-    return "passed";
-  }
-
-  if (state === "blocked") {
-    if (videoStatus === "blocked") {
-      return "degraded";
-    }
-    if (videoStatus === "degraded" || videoStatus === "passed") {
-      return videoStatus;
-    }
-    return "pending";
-  }
-
-  return videoStatus;
-}
-
-function getCurrentStep(phases: readonly SdlcPhase[]): number {
+function getCurrentStep(
+  phases: ReadonlyArray<{ status: SdlcLoopStatusCheckStatus }>,
+): number {
   const blockedIndex = phases.findIndex((phase) => phase.status === "blocked");
   if (blockedIndex >= 0) {
     return blockedIndex + 1;
@@ -380,46 +85,6 @@ function getCurrentStep(phases: readonly SdlcPhase[]): number {
     (phase) => phase.status !== "passed" && phase.status !== "degraded",
   );
   return firstIncompleteIndex === -1 ? phases.length : firstIncompleteIndex + 1;
-}
-
-function buildSdlcPhases({
-  state,
-  checks,
-  isLoading,
-}: {
-  state: SdlcLoopState | undefined;
-  checks: readonly SdlcLoopStatusCheck[];
-  isLoading: boolean;
-}): SdlcPhase[] {
-  const checkStatuses = buildCheckStatusMap(checks);
-
-  return [
-    {
-      key: "planning",
-      label: SDLC_PHASE_LABELS.planning,
-      status: getPlanningStatus({ state, isLoading }),
-    },
-    {
-      key: "implementing",
-      label: SDLC_PHASE_LABELS.implementing,
-      status: getImplementingStatus({ state, isLoading }),
-    },
-    {
-      key: "reviewing",
-      label: SDLC_PHASE_LABELS.reviewing,
-      status: getReviewingStatus({ state, checkStatuses, isLoading }),
-    },
-    {
-      key: "ci",
-      label: SDLC_PHASE_LABELS.ci,
-      status: getCiStatus({ state, checkStatuses, isLoading }),
-    },
-    {
-      key: "ui_testing",
-      label: SDLC_PHASE_LABELS.ui_testing,
-      status: getUiTestingStatus({ state, checkStatuses, isLoading }),
-    },
-  ];
 }
 
 type SdlcPlannedTask = {
@@ -512,11 +177,13 @@ function SdlcPlanTaskList({
 function SdlcInterventionControls({
   threadId,
   threadChatId,
-  loopState,
+  canResume,
+  canBypassOnce,
 }: {
   threadId: string;
   threadChatId: string | null;
-  loopState: SdlcLoopState;
+  canResume: boolean;
+  canBypassOnce: boolean;
 }) {
   const resumeMutation = useServerActionMutation({
     mutationFn: requestDeliveryLoopResumeFromBlocked,
@@ -538,7 +205,7 @@ function SdlcInterventionControls({
         size="sm"
         variant="outline"
         className="h-7 text-xs"
-        disabled={resumeMutation.isPending || loopState !== "blocked"}
+        disabled={resumeMutation.isPending || !canResume}
         onClick={handleResume}
       >
         {resumeMutation.isPending ? "Resuming…" : "Resume"}
@@ -547,7 +214,7 @@ function SdlcInterventionControls({
         size="sm"
         variant="secondary"
         className="h-7 text-xs"
-        disabled={bypassMutation.isPending}
+        disabled={bypassMutation.isPending || !canBypassOnce}
         onClick={handleBypass}
       >
         {bypassMutation.isPending ? "Bypassing…" : "Bypass Once"}
@@ -576,18 +243,49 @@ export function DeliveryLoopTopProgressStepper({
     return null;
   }
 
-  const phases = buildSdlcPhases({
-    state: data?.state,
-    checks: data?.checks ?? [],
-    isLoading,
-  });
+  const phases =
+    data?.phases ??
+    (isLoading
+      ? ([
+          {
+            key: "planning",
+            label: "Planning",
+            status: "pending",
+          },
+          {
+            key: "implementing",
+            label: "Implementing",
+            status: "not_started",
+          },
+          {
+            key: "reviewing",
+            label: "Reviewing",
+            status: "not_started",
+          },
+          {
+            key: "ci",
+            label: "CI",
+            status: "not_started",
+          },
+          {
+            key: "ui_testing",
+            label: "UI Testing",
+            status: "not_started",
+          },
+        ] satisfies ReadonlyArray<{
+          key: SdlcPhaseKey;
+          label: string;
+          status: SdlcLoopStatusCheckStatus;
+        }>)
+      : []);
   const currentStep = getCurrentStep(phases);
   const progressPercent = data?.progressPercent ?? 0;
   const stateLabel = data?.stateLabel ?? "Waiting to Start";
   const needsAttention = data?.needsAttention.isBlocked ?? false;
   const blockerCount = data?.needsAttention.blockerCount ?? 0;
   const showInterventionControls =
-    data?.state === "blocked" || data?.state === "implementing";
+    (data?.actions.canResume ?? false) ||
+    (data?.actions.canBypassOnce ?? false);
   const planCardModel =
     data && sdlcPlanReviewCard
       ? buildArtifactFallbackPlanSpecViewModel({
@@ -639,7 +337,8 @@ export function DeliveryLoopTopProgressStepper({
           <SdlcInterventionControls
             threadId={threadId}
             threadChatId={threadChatId}
-            loopState={data.state}
+            canResume={data.actions.canResume}
+            canBypassOnce={data.actions.canBypassOnce}
           />
         ) : null}
 
@@ -744,12 +443,7 @@ export function DeliveryLoopTopProgressStepper({
                         <SdlcPlanTaskList
                           tasks={data.artifacts.plannedTasks}
                           taskSummary={data.artifacts.plannedTaskSummary}
-                          showApprove={
-                            data.state === "planning" &&
-                            data.planApprovalPolicy === "human_required" &&
-                            data.artifacts.planningArtifact?.status !==
-                              "accepted"
-                          }
+                          showApprove={data.actions.canApprovePlan}
                           threadId={threadId}
                           threadChatId={threadChatId}
                         />
@@ -773,6 +467,3 @@ export function DeliveryLoopTopProgressStepper({
     </div>
   );
 }
-
-/** @deprecated Use DeliveryLoopTopProgressStepper */
-export const SdlcTopProgressStepper = DeliveryLoopTopProgressStepper;

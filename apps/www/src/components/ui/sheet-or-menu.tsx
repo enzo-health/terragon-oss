@@ -71,6 +71,23 @@ export type SheetOrMenuProps = {
   onOpenChange?: (open: boolean) => void;
 };
 
+function getMenuItemKey(item: SheetOrMenuItem, index: number): string {
+  switch (item.type) {
+    case "link":
+      return `link:${item.href}:${item.label}:${index}`;
+    case "button":
+      return `button:${item.label}:${index}`;
+    case "checkbox":
+      return `checkbox:${item.label}:${index}`;
+    case "label":
+      return `label:${item.label}:${index}`;
+    case "separator":
+      return `separator:${index}`;
+    default:
+      return assertNever(item);
+  }
+}
+
 export function SheetOrMenu({
   forceDropdownMenu,
   collapseAsDrawer,
@@ -202,12 +219,13 @@ function MenuContents({
       items.some((item) => item.type === "checkbox") || undefined;
     return (
       <>
-        {items.map((item) => {
+        {items.map((item, index) => {
+          const itemKey = getMenuItemKey(item, index);
           switch (item.type) {
             case "checkbox":
               return (
                 <DropdownMenuCheckboxItem
-                  key={item.label}
+                  key={itemKey}
                   checked={item.checked}
                   onCheckedChange={(checked) => {
                     item.onCheckedChange(checked);
@@ -220,11 +238,11 @@ function MenuContents({
                 </DropdownMenuCheckboxItem>
               );
             case "separator":
-              return <DropdownMenuSeparator key={item.type} />;
+              return <DropdownMenuSeparator key={itemKey} />;
             case "label":
               return (
                 <DropdownMenuLabel
-                  key={item.type}
+                  key={itemKey}
                   className="text-xs text-muted-foreground/50 uppercase py-0.5"
                 >
                   {item.label}
@@ -234,7 +252,7 @@ function MenuContents({
               return (
                 <DropdownMenuItem
                   inset={insetOrUndef}
-                  key={item.label}
+                  key={itemKey}
                   disabled={item.isDisabled}
                   variant={item.destructive ? "destructive" : undefined}
                   className={item.className}
@@ -252,7 +270,7 @@ function MenuContents({
               );
             case "link":
               return (
-                <DropdownMenuItem key={item.label} asChild>
+                <DropdownMenuItem key={itemKey} asChild>
                   <Link href={item.href} target={item.target}>
                     {item.icon && <item.icon className="h-4 w-4 mr-2" />}
                     {item.label}
@@ -270,11 +288,12 @@ function MenuContents({
   return (
     <div className="flex flex-col gap-2 py-2">
       {items.map((item, index) => {
+        const itemKey = getMenuItemKey(item, index);
         switch (item.type) {
           case "button": {
             return (
               <Button
-                key={item.label}
+                key={itemKey}
                 disabled={item.isDisabled}
                 onClick={() => {
                   item.onSelect();
@@ -298,7 +317,7 @@ function MenuContents({
           case "checkbox": {
             return (
               <Button
-                key={item.label}
+                key={itemKey}
                 disabled={item.isDisabled}
                 onClick={() => {
                   item.onCheckedChange(!item.checked);
@@ -319,7 +338,7 @@ function MenuContents({
           }
           case "link":
             return (
-              <Button key={item.label} variant="ghost" asChild>
+              <Button key={itemKey} variant="ghost" asChild>
                 <Link
                   href={item.href}
                   target={item.target}
@@ -332,12 +351,12 @@ function MenuContents({
             );
           case "separator":
             return (
-              <DropdownMenuSeparator key={index} className="bg-border/50" />
+              <DropdownMenuSeparator key={itemKey} className="bg-border/50" />
             );
           case "label":
             return (
               <DropdownMenuLabel
-                key={item.label}
+                key={itemKey}
                 className="text-xs text-muted-foreground/50 uppercase py-0.5"
               >
                 {item.label}

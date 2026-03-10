@@ -7,6 +7,9 @@
 import stripAnsi from "strip-ansi";
 import childProcess from "child_process";
 
+const devDefaultAppUrl = "http://localhost:3000";
+const devDefaultInternalSharedSecret = "123456";
+
 function cleanLine(line: string) {
   line = stripAnsi(line);
   line = line.trim();
@@ -16,6 +19,13 @@ function cleanLine(line: string) {
 
 function main() {
   const child = childProcess.spawn("pnpm", ["partykit", "dev"], {
+    env: {
+      ...process.env,
+      NODE_ENV: process.env.NODE_ENV ?? "development",
+      INTERNAL_SHARED_SECRET:
+        process.env.INTERNAL_SHARED_SECRET ?? devDefaultInternalSharedSecret,
+      BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? devDefaultAppUrl,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
 

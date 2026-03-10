@@ -5,6 +5,7 @@ import {
   sortByAgents,
   getAgentModelGroups,
   parseModelOrNull,
+  shouldUseCredits,
 } from "./utils";
 import { AIModel, AIAgent } from "./types";
 import { AGENT_VERSION } from "./versions";
@@ -151,5 +152,50 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "" })).toBe(null);
       expect(parseModelOrNull({ modelName: "gpt-4" })).toBe(null);
     });
+  });
+});
+
+describe("shouldUseCredits", () => {
+  const withBoth = { hasOpenAI: true, hasClaude: true };
+  const withNeither = { hasOpenAI: false, hasClaude: false };
+
+  it("returns false for codex when user has OpenAI credentials", () => {
+    expect(
+      shouldUseCredits("codex", { hasOpenAI: true, hasClaude: false }),
+    ).toBe(false);
+  });
+
+  it("returns true for codex when user lacks OpenAI credentials", () => {
+    expect(
+      shouldUseCredits("codex", { hasOpenAI: false, hasClaude: true }),
+    ).toBe(true);
+  });
+
+  it("returns false for claudeCode when user has Claude credentials", () => {
+    expect(
+      shouldUseCredits("claudeCode", { hasOpenAI: false, hasClaude: true }),
+    ).toBe(false);
+  });
+
+  it("returns true for claudeCode when user lacks Claude credentials", () => {
+    expect(
+      shouldUseCredits("claudeCode", { hasOpenAI: true, hasClaude: false }),
+    ).toBe(true);
+  });
+
+  it("returns true for agents without connected credentials support", () => {
+    // gemini and opencode don't support connected credentials
+    expect(shouldUseCredits("gemini", withBoth)).toBe(true);
+    expect(shouldUseCredits("opencode", withBoth)).toBe(true);
+  });
+
+  it("returns false for amp with any credentials (supports connected credentials)", () => {
+    expect(shouldUseCredits("amp", withBoth)).toBe(false);
+    expect(shouldUseCredits("amp", withNeither)).toBe(false);
+  });
+
+  it("returns true when user has no credentials at all", () => {
+    expect(shouldUseCredits("codex", withNeither)).toBe(true);
+    expect(shouldUseCredits("claudeCode", withNeither)).toBe(true);
   });
 });

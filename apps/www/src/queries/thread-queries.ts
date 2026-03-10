@@ -1,7 +1,15 @@
 import { getThreadAction } from "@/server-actions/get-thread";
 import { getThreadsAction } from "@/server-actions/get-threads";
+import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
+import { getThreadPageChatAction } from "@/server-actions/get-thread-page-chat";
+import { getThreadPageDiffAction } from "@/server-actions/get-thread-page-diff";
 import { getServerActionQueryOptions } from "./server-action-helpers";
-import { ThreadInfo } from "@terragon/shared/db/types";
+import {
+  ThreadInfo,
+  ThreadPageChat,
+  ThreadPageDiff,
+  ThreadPageShell,
+} from "@terragon/shared/db/types";
 import {
   QueryKey,
   UseInfiniteQueryOptions,
@@ -54,6 +62,10 @@ export const threadQueryKeys = {
     return key;
   },
   detail: (id: string) => ["threads", "detail", id] as const,
+  shell: (id: string) => ["threads", "shell", id] as const,
+  chat: (threadId: string, threadChatId: string) =>
+    ["threads", "chat", threadId, threadChatId] as const,
+  diff: (threadId: string) => ["threads", "diff", threadId] as const,
 };
 
 export function threadQueryOptions(threadId: string) {
@@ -61,6 +73,39 @@ export function threadQueryOptions(threadId: string) {
     queryKey: threadQueryKeys.detail(threadId),
     queryFn: async () => {
       return getThreadAction(threadId);
+    },
+  });
+}
+
+export function threadShellQueryOptions(threadId: string) {
+  return getServerActionQueryOptions<ThreadPageShell>({
+    queryKey: threadQueryKeys.shell(threadId),
+    queryFn: async () => {
+      return getThreadPageShellAction(threadId);
+    },
+  });
+}
+
+export function threadChatQueryOptions({
+  threadId,
+  threadChatId,
+}: {
+  threadId: string;
+  threadChatId: string;
+}) {
+  return getServerActionQueryOptions<ThreadPageChat>({
+    queryKey: threadQueryKeys.chat(threadId, threadChatId),
+    queryFn: async () => {
+      return getThreadPageChatAction({ threadId, threadChatId });
+    },
+  });
+}
+
+export function threadDiffQueryOptions(threadId: string) {
+  return getServerActionQueryOptions<ThreadPageDiff>({
+    queryKey: threadQueryKeys.diff(threadId),
+    queryFn: async () => {
+      return getThreadPageDiffAction(threadId);
     },
   });
 }

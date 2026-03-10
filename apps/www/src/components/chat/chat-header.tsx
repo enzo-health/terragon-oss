@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { memo, useState, useRef, useEffect } from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
+import { AIAgent } from "@terragon/agent/types";
+import { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
 import { PRStatusPill } from "../pr-status-pill";
-import { ThreadInfoFull } from "@terragon/shared";
 import { toast } from "sonner";
 import { Pill } from "@/components/shared/pill";
 import { ChatHeaderButtons } from "./chat-header-buttons";
@@ -21,11 +22,23 @@ import { ThreadAgentIcon } from "../thread-agent-icon";
 
 export const ChatHeader = memo(function ChatHeader({
   thread,
+  threadAgent,
+  redoDialogData,
   isReadOnly,
   onHeaderClick,
   onTerminalClick,
 }: {
   thread: ThreadInfoFull;
+  threadAgent: AIAgent;
+  redoDialogData?: {
+    threadId: string;
+    repoFullName: string;
+    repoBaseBranchName: string;
+    disableGitCheckpointing: boolean;
+    skipSetup: boolean;
+    permissionMode: "allowAll" | "plan";
+    initialUserMessage: DBUserMessage;
+  };
   isReadOnly: boolean;
   onHeaderClick?: () => void;
   onTerminalClick?: () => void;
@@ -230,6 +243,8 @@ export const ChatHeader = memo(function ChatHeader({
         </div>
         <ChatHeaderButtons
           thread={thread}
+          threadAgent={threadAgent}
+          redoDialogData={redoDialogData}
           onRenameClick={() => setIsEditing(true)}
           isReadOnly={isReadOnly}
           onTerminalClick={onTerminalClick}

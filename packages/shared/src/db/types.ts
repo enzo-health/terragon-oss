@@ -336,6 +336,44 @@ export type ThreadInfoFull = Omit<ThreadInfo, "threadChats"> & {
   childThreads: ChildThreadInfo[];
 };
 
+export type ThreadPageChatSummary = Pick<
+  ThreadChatInfoFull,
+  | "id"
+  | "threadId"
+  | "agent"
+  | "agentVersion"
+  | "status"
+  | "errorMessage"
+  | "errorMessageInfo"
+  | "scheduleAt"
+  | "reattemptQueueAt"
+  | "contextLength"
+  | "permissionMode"
+  | "isUnread"
+  | "updatedAt"
+>;
+
+export type ThreadPageShell = Omit<
+  ThreadInfoFull,
+  "gitDiff" | "threadChats"
+> & {
+  hasGitDiff: boolean;
+  primaryThreadChatId: string;
+  primaryThreadChat: ThreadPageChatSummary;
+};
+
+export type ThreadPageChat = ThreadChatInfoFull & {
+  messageCount: number;
+  chatSequence: number | null;
+};
+
+export type ThreadPageDiff = Pick<
+  ThreadInfoFull,
+  "gitDiff" | "gitDiffStats"
+> & {
+  hasGitDiff: boolean;
+};
+
 export type AllowedSignup = typeof schema.allowedSignups.$inferSelect;
 export type AllowedSignupWithUserId = AllowedSignup & {
   userIdOrNull: string | null;
