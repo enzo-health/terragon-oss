@@ -298,28 +298,37 @@ export function parseBroadcastChannel(
   if (type === "sandbox") {
     try {
       const parsed = base64ToJson(id);
+      const parsedRecord =
+        typeof parsed === "object" && parsed !== null
+          ? (parsed as Record<string, unknown>)
+          : null;
       if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        !("userId" in parsed) ||
-        !("threadId" in parsed) ||
-        !("sandboxId" in parsed)
+        parsedRecord === null ||
+        !("userId" in parsedRecord) ||
+        !("threadId" in parsedRecord) ||
+        !("sandboxId" in parsedRecord)
       ) {
         return null;
       }
       const userId =
-        typeof parsed.userId === "string" ? parsed.userId : undefined;
+        typeof parsedRecord.userId === "string"
+          ? parsedRecord.userId
+          : undefined;
       const threadId =
-        typeof parsed.threadId === "string" ? parsed.threadId : undefined;
+        typeof parsedRecord.threadId === "string"
+          ? parsedRecord.threadId
+          : undefined;
       const sandboxId =
-        typeof parsed.sandboxId === "string" ? parsed.sandboxId : undefined;
+        typeof parsedRecord.sandboxId === "string"
+          ? parsedRecord.sandboxId
+          : undefined;
       const sandboxProvider =
-        "sandboxProvider" in parsed &&
-        (parsed.sandboxProvider === "e2b" ||
-          parsed.sandboxProvider === "docker" ||
-          parsed.sandboxProvider === "mock" ||
-          parsed.sandboxProvider === "daytona")
-          ? parsed.sandboxProvider
+        "sandboxProvider" in parsedRecord &&
+        (parsedRecord.sandboxProvider === "e2b" ||
+          parsedRecord.sandboxProvider === "docker" ||
+          parsedRecord.sandboxProvider === "mock" ||
+          parsedRecord.sandboxProvider === "daytona")
+          ? parsedRecord.sandboxProvider
           : undefined;
       if (!userId || !threadId || !sandboxId) {
         return null;

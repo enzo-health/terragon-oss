@@ -145,7 +145,9 @@ function applyShellFields(
     ...(fields.sandboxProvider != null
       ? { sandboxProvider: fields.sandboxProvider }
       : {}),
-    ...(fields.sandboxSize != null ? { sandboxSize: fields.sandboxSize } : {}),
+    ...(fields.sandboxSize !== undefined
+      ? { sandboxSize: fields.sandboxSize }
+      : {}),
     ...(fields.hasGitDiff !== undefined
       ? { hasGitDiff: fields.hasGitDiff }
       : {}),
