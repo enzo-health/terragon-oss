@@ -85,6 +85,13 @@
       "when": 1773089950966,
       "tag": "0011_freezing_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1773105024990,
+      "tag": "0012_flashy_the_phantom",
+      "breakpoints": true
     }
   ]
 }

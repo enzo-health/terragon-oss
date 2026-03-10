@@ -1,0 +1,1 @@
+ALTER TABLE "sdlc_loop" ADD COLUMN "blocked_from_state" text;
