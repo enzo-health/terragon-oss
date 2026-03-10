@@ -31,6 +31,9 @@ interface MessagePartProps {
   isAgentWorking?: boolean;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
+  /** When multiple text parts contain `<proposed_plan>` with identical content,
+   *  this ordinal (0-based) disambiguates which plan descriptor to open. */
+  planOccurrenceIndex?: number;
 }
 
 export const MessagePart = memo(function MessagePart({
@@ -40,6 +43,7 @@ export const MessagePart = memo(function MessagePart({
   isAgentWorking = false,
   artifactDescriptors = [],
   onOpenArtifact,
+  planOccurrenceIndex = 0,
 }: MessagePartProps) {
   const { thread, threadChat } = useThread();
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
@@ -63,22 +67,22 @@ export const MessagePart = memo(function MessagePart({
       ? () => onOpenArtifact(artifactDescriptor.id)
       : undefined;
 
-  // Find the plan artifact descriptor matching this specific text part's plan content
+  // Find the plan artifact descriptor matching this specific text part's plan content.
+  // When multiple parts have identical plan text, planOccurrenceIndex disambiguates.
   const planArtifactDescriptor = useMemo(() => {
     if (part.type !== "text") return null;
     const planText = extractProposedPlanText(part.text);
     if (!planText) return null;
-    return (
-      artifactDescriptors.find(
-        (d) =>
-          d.kind === "plan" &&
-          d.origin.type === "tool-part" &&
-          d.origin.toolCallName === "proposed_plan" &&
-          "planText" in d.part &&
-          d.part.planText === planText,
-      ) ?? null
+    const matching = artifactDescriptors.filter(
+      (d) =>
+        d.kind === "plan" &&
+        d.origin.type === "tool-part" &&
+        d.origin.toolCallName === "proposed_plan" &&
+        "planText" in d.part &&
+        d.part.planText === planText,
     );
-  }, [part, artifactDescriptors]);
+    return matching[planOccurrenceIndex] ?? matching[0] ?? null;
+  }, [part, artifactDescriptors, planOccurrenceIndex]);
 
   const handleOpenPlanArtifact = useMemo(() => {
     if (!planArtifactDescriptor || !onOpenArtifact) return undefined;

@@ -1,14 +1,16 @@
 "use client";
 
-import React, { memo, useState } from "react";
+import React, { memo, useMemo, useState } from "react";
 import {
   UIAgentMessage,
   UIMessage,
+  UIPart,
   UISystemMessage,
   UIUserMessage,
   UIGitDiffPart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import { AIAgent } from "@terragon/agent/types";
 import { MessagePart } from "./message-part";
 import { cn } from "@/lib/utils";
@@ -237,6 +239,10 @@ export const ChatMessage = memo(function ChatMessage({
     isAgentWorking,
   });
   const lastGroupIndex = groups.length - 1;
+  const planOccurrences = useMemo(
+    () => buildPlanOccurrenceMap(message.parts),
+    [message.parts],
+  );
   return (
     <div
       style={{ overflowAnchor: "none" }}
@@ -261,6 +267,7 @@ export const ChatMessage = memo(function ChatMessage({
                 isAgentWorking={isAgentWorking}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
+                planOccurrences={planOccurrences}
               />
             );
           }
@@ -286,6 +293,7 @@ export const ChatMessage = memo(function ChatMessage({
                     isAgentWorking={isAgentWorking}
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={onOpenArtifact}
+                    planOccurrenceIndex={planOccurrences.get(part)}
                   />
                 );
               })}
@@ -490,6 +498,7 @@ function CollapsibleAgentActivityGroup({
   isAgentWorking = false,
   artifactDescriptors,
   onOpenArtifact,
+  planOccurrences,
 }: {
   group: PartGroup;
   agent: AIAgent | null;
@@ -497,6 +506,7 @@ function CollapsibleAgentActivityGroup({
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
+  planOccurrences: Map<UIPart, number>;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const numParts = group.parts.length;
@@ -527,6 +537,7 @@ function CollapsibleAgentActivityGroup({
                 isAgentWorking={isAgentWorking}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
+                planOccurrenceIndex={planOccurrences.get(part)}
               />
             );
           })}
@@ -534,4 +545,23 @@ function CollapsibleAgentActivityGroup({
       )}
     </div>
   );
+}
+
+/**
+ * Builds a map of part object → plan occurrence index for parts that contain
+ * identical `<proposed_plan>` text. Keyed by reference so that group-level
+ * lookups work regardless of which subset of parts is being iterated.
+ */
+function buildPlanOccurrenceMap(parts: UIPart[]): Map<UIPart, number> {
+  const counts = new Map<string, number>();
+  const result = new Map<UIPart, number>();
+  for (const part of parts) {
+    if (part.type !== "text") continue;
+    const planText = extractProposedPlanText(part.text);
+    if (!planText) continue;
+    const count = counts.get(planText) ?? 0;
+    result.set(part, count);
+    counts.set(planText, count + 1);
+  }
+  return result;
 }

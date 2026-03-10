@@ -133,8 +133,9 @@ export function ExitPlanModeTool({
                 className="size-7 bg-muted/80 hover:bg-muted"
                 onClick={handleOpenPanel}
                 title="Open in side panel"
+                aria-label="Open plan in side panel"
               >
-                <ExternalLink className="size-3" />
+                <ExternalLink className="size-3" aria-hidden />
               </Button>
             )}
             <Button

@@ -29,8 +29,9 @@ export function DeliveryLoopPlanReviewCard({
               onClick={onOpenInArtifactWorkspace}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
               title="Open in side panel"
+              aria-label="Open plan in side panel"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
+              <ExternalLink className="w-3.5 h-3.5" aria-hidden />
             </button>
           )}
         </div>
