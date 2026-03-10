@@ -868,9 +868,9 @@ function PlanArtifactRenderer({
   }, [descriptor]);
 
   const { handleApprove, isPending, shouldShowApprove } = usePlanApproval({
-    threadId: threadId ?? "",
-    threadChatId: threadChatId ?? "",
-    isReadOnly: isReadOnly || !threadId || !threadChatId,
+    threadId,
+    threadChatId,
+    isReadOnly,
     promptBoxRef,
     toolPartId,
     messages,

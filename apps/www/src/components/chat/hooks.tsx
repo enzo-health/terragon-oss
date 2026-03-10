@@ -156,8 +156,8 @@ export function usePlanApproval({
   toolPartId,
   messages,
 }: {
-  threadId: string;
-  threadChatId: string;
+  threadId: string | undefined;
+  threadChatId: string | undefined;
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   toolPartId?: string;
@@ -171,8 +171,10 @@ export function usePlanApproval({
     threadChatId,
   });
 
+  const canApprove = !isReadOnly && !!threadId && !!threadChatId;
+
   const shouldShowApprove = useMemo(() => {
-    if (isReadOnly || !toolPartId) return false;
+    if (!canApprove || !toolPartId) return false;
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg?.type === "user") break;
@@ -181,15 +183,19 @@ export function usePlanApproval({
       }
     }
     return false;
-  }, [isReadOnly, toolPartId, messages]);
+  }, [canApprove, toolPartId, messages]);
 
   const handleApprove = useCallback(async () => {
-    if (isReadOnly) return;
-    promptBoxRef?.current?.setPermissionMode("allowAll");
-    updateThreadChat({ permissionMode: "allowAll" });
-    await mutateAsync({ threadId, threadChatId });
+    if (!canApprove) return;
+    try {
+      await mutateAsync({ threadId, threadChatId });
+      promptBoxRef?.current?.setPermissionMode("allowAll");
+      updateThreadChat({ permissionMode: "allowAll" });
+    } catch {
+      // toast.error handled by useServerActionMutation's onError
+    }
   }, [
-    isReadOnly,
+    canApprove,
     threadId,
     threadChatId,
     promptBoxRef,

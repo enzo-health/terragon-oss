@@ -394,8 +394,12 @@ function ChatUI({
 
   // Auto-open panel when new plan artifacts appear
   const seenPlanIdsRef = useRef<Set<string>>(new Set());
+  // Seed with existing plan IDs on thread switch so pre-existing plans aren't treated as new
   useEffect(() => {
-    seenPlanIdsRef.current = new Set();
+    seenPlanIdsRef.current = new Set(
+      artifactDescriptors.filter((d) => d.kind === "plan").map((d) => d.id),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset on thread switch
   }, [threadId]);
   useEffect(() => {
     if (!shouldAutoOpenSecondaryPanel) return;
