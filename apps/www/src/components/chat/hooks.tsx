@@ -187,12 +187,15 @@ export function usePlanApproval({
 
   const handleApprove = useCallback(async () => {
     if (!canApprove) return;
+    // Optimistic: update UI immediately for responsiveness
+    promptBoxRef?.current?.setPermissionMode("allowAll");
+    updateThreadChat({ permissionMode: "allowAll" });
     try {
       await mutateAsync({ threadId, threadChatId });
-      promptBoxRef?.current?.setPermissionMode("allowAll");
-      updateThreadChat({ permissionMode: "allowAll" });
     } catch {
-      // toast.error handled by useServerActionMutation's onError
+      // Rollback optimistic updates on failure
+      promptBoxRef?.current?.setPermissionMode("plan");
+      updateThreadChat({ permissionMode: "plan" });
     }
   }, [
     canApprove,

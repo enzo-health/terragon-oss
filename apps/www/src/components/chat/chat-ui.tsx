@@ -394,19 +394,21 @@ function ChatUI({
 
   // Auto-open panel when new plan artifacts appear
   const seenPlanIdsRef = useRef<Set<string>>(new Set());
-  // Seed with existing plan IDs on thread switch so pre-existing plans aren't treated as new
+  const prevThreadIdRef = useRef(threadId);
   useEffect(() => {
-    seenPlanIdsRef.current = new Set(
-      artifactDescriptors.filter((d) => d.kind === "plan").map((d) => d.id),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset on thread switch
-  }, [threadId]);
-  useEffect(() => {
-    if (!shouldAutoOpenSecondaryPanel) return;
-
     const planDescriptors = artifactDescriptors.filter(
       (d) => d.kind === "plan",
     );
+
+    // On thread switch, seed with all current plan IDs so existing plans aren't treated as new
+    if (prevThreadIdRef.current !== threadId) {
+      prevThreadIdRef.current = threadId;
+      seenPlanIdsRef.current = new Set(planDescriptors.map((d) => d.id));
+      return;
+    }
+
+    if (!shouldAutoOpenSecondaryPanel) return;
+
     const newPlan = planDescriptors.findLast(
       (d) => !seenPlanIdsRef.current.has(d.id),
     );
@@ -418,7 +420,12 @@ function ChatUI({
     if (newPlan) {
       handleOpenArtifact(newPlan.id);
     }
-  }, [artifactDescriptors, shouldAutoOpenSecondaryPanel, handleOpenArtifact]);
+  }, [
+    artifactDescriptors,
+    shouldAutoOpenSecondaryPanel,
+    handleOpenArtifact,
+    threadId,
+  ]);
 
   const isAgentCurrentlyWorking = threadChat
     ? isAgentWorking(threadChat.status)

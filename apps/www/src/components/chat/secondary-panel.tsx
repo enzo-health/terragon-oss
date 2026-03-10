@@ -859,13 +859,10 @@ function PlanArtifactRenderer({
     return planPart.planText;
   }, [descriptor, messages]);
 
-  // For ExitPlanMode plans, extract the tool part ID for approve logic
-  const toolPartId = useMemo(() => {
-    if (descriptor.origin.type === "plan-tool") {
-      return (descriptor.part as ExitPlanModeToolPart).id;
-    }
-    return undefined;
-  }, [descriptor]);
+  const toolPartId =
+    descriptor.origin.type === "plan-tool"
+      ? (descriptor.part as ExitPlanModeToolPart).id
+      : undefined;
 
   const { handleApprove, isPending, shouldShowApprove } = usePlanApproval({
     threadId,
