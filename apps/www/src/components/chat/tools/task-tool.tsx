@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { AllToolParts } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import {
   GenericToolPart,
   GenericToolPartContent,
@@ -26,9 +27,17 @@ function countToolParts(parts: AllToolParts["parts"]) {
 export function TaskTool({
   toolPart,
   ToolPartComponent,
+  artifactDescriptors,
+  onOpenArtifact,
 }: {
   toolPart: Extract<AllToolParts, { name: "Task" }>;
-  ToolPartComponent: React.ComponentType<{ toolPart: AllToolParts }>;
+  ToolPartComponent: React.ComponentType<{
+    toolPart: AllToolParts;
+    artifactDescriptors?: ArtifactDescriptor[];
+    onOpenArtifact?: (artifactId: string) => void;
+  }>;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }) {
   // Display the subagent_type if available, otherwise default to "Task"
   // If subagent_type is "general-purpose", also show "Task"
@@ -60,6 +69,8 @@ export function TaskTool({
       <TaskToolContent
         toolPart={toolPart}
         ToolPartComponent={ToolPartComponent}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
       />
     </GenericToolPart>
   );
@@ -84,9 +95,17 @@ function getTaskToolResultOrNull(
 function TaskToolContent({
   toolPart,
   ToolPartComponent,
+  artifactDescriptors,
+  onOpenArtifact,
 }: {
   toolPart: Extract<AllToolParts, { name: "Task" }>;
-  ToolPartComponent: React.ComponentType<{ toolPart: AllToolParts }>;
+  ToolPartComponent: React.ComponentType<{
+    toolPart: AllToolParts;
+    artifactDescriptors?: ArtifactDescriptor[];
+    onOpenArtifact?: (artifactId: string) => void;
+  }>;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -159,7 +178,11 @@ function TaskToolContent({
                 key={index}
                 index={index + indexOffset}
               >
-                <ToolPartComponent toolPart={part} />
+                <ToolPartComponent
+                  toolPart={part}
+                  artifactDescriptors={artifactDescriptors}
+                  onOpenArtifact={onOpenArtifact}
+                />
               </GenericToolPartContentRow>
             );
           }

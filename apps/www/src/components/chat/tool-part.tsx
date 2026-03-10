@@ -40,13 +40,6 @@ const ToolPart = memo(function ToolPart({
   onOpenArtifact?: (artifactId: string) => void;
 }) {
   toolPart = normalizeToolCall(toolPart.agent, toolPart);
-  const NestedToolPart = ({ toolPart }: { toolPart: AllToolParts }) => (
-    <ToolPart
-      toolPart={toolPart}
-      artifactDescriptors={artifactDescriptors}
-      onOpenArtifact={onOpenArtifact}
-    />
-  );
 
   const renderedTool = (() => {
     switch (toolPart.name) {
@@ -134,7 +127,9 @@ const ToolPart = memo(function ToolPart({
         return (
           <TaskTool
             toolPart={toolPart as Extract<AllToolParts, { name: "Task" }>}
-            ToolPartComponent={NestedToolPart}
+            ToolPartComponent={ToolPart}
+            artifactDescriptors={artifactDescriptors}
+            onOpenArtifact={onOpenArtifact}
           />
         );
       case "WebFetch":
