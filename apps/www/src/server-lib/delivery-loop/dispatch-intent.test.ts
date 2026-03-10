@@ -398,4 +398,65 @@ describe("self-dispatch replay", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  it("does not replay when active intent no longer matches replay destination", async () => {
+    mockRedis.hgetall
+      .mockResolvedValueOnce({
+        kind: "ready",
+        sourceEventId: "event-1",
+        sourceSeq: "3",
+        sourceRunId: "run-1",
+        dispatchIntentId: "di_loop-1_run-next",
+        destinationRunId: "run-next",
+        payloadJson: JSON.stringify({
+          token: "token-1",
+          prompt: "Please address this feedback.",
+          runId: "run-next",
+          tokenNonce: "nonce-next",
+          model: "gpt-5.3-codex",
+          agent: "codex",
+          agentVersion: 2,
+          sessionId: null,
+          featureFlags: {},
+          permissionMode: "allowAll",
+          transportMode: "codex-app-server",
+          protocolVersion: 1,
+          threadId: "thread-1",
+          threadChatId: "tc-1",
+        }),
+        createdAt: "2026-03-09T12:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
+        id: "di_loop-1_run-other",
+        loopId: "loop-1",
+        threadId: "thread-1",
+        threadChatId: "tc-1",
+        targetPhase: "implementing",
+        selectedAgent: "codex",
+        executionClass: "implementation_runtime",
+        dispatchMechanism: "self_dispatch",
+        runId: "run-other",
+        status: "prepared",
+        retryCount: "0",
+        maxRetries: "3",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        updatedAt: "2026-03-09T12:00:00.000Z",
+        lastError: "",
+        lastFailureCategory: "",
+        selfDispatchReplayKind: "none",
+        selfDispatchReplaySourceEventId: "",
+        selfDispatchReplaySourceSeq: "",
+        selfDispatchReplaySourceRunId: "",
+        selfDispatchReplayPayloadJson: "",
+      });
+
+    await expect(
+      getReplayableSelfDispatch({
+        threadChatId: "tc-1",
+        sourceEventId: "event-1",
+        sourceSeq: 3,
+        sourceRunId: "run-1",
+      }),
+    ).resolves.toBeNull();
+  });
 });

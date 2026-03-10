@@ -120,6 +120,10 @@ describe("approvePlan", () => {
     });
     expect(planArtifacts).toHaveLength(1);
     expect(planArtifacts[0]?.status).toBe("accepted");
+    const exitPlanPayload = planArtifacts[0]?.payload as
+      | { source?: string }
+      | undefined;
+    expect(exitPlanPayload?.source).toBe("exit_plan_mode");
 
     const planTasks = await db.query.sdlcPlanTask.findMany({
       where: and(
@@ -206,6 +210,10 @@ describe("approvePlan", () => {
     });
     expect(artifact?.status).toBe("approved");
     expect(artifact?.approvedByUserId).toBe(user.id);
+    const writeToolPayload = artifact?.payload as
+      | { source?: string }
+      | undefined;
+    expect(writeToolPayload?.source).toBe("write_tool");
   });
 
   it("approves and promotes an existing generated planning artifact for human_required policy", async () => {
@@ -297,6 +305,146 @@ describe("approvePlan", () => {
     expect(planningArtifacts).toHaveLength(1);
     expect(planningArtifacts[0]?.id).toBe(existingArtifact.id);
     expect(planningArtifacts[0]?.status).toBe("approved");
+  });
+
+  it("promotes an existing approved artifact instead of stale generated candidate", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      planApprovalPolicy: "human_required",
+    });
+    expect(loop).toBeDefined();
+
+    const staleGeneratedPayload = {
+      planText: "Stale generated plan",
+      source: "exit_plan_mode" as const,
+      tasks: [
+        {
+          stableTaskId: "task-stale",
+          title: "Stale task",
+          acceptance: ["Old"],
+        },
+      ],
+    };
+    const newestApprovedPayload = {
+      planText: "Newest approved plan",
+      source: "exit_plan_mode" as const,
+      tasks: [
+        {
+          stableTaskId: "task-new",
+          title: "Newest task",
+          acceptance: ["Current"],
+        },
+      ],
+    };
+    const staleCreatedAt = new Date("2026-03-09T12:00:30.000Z");
+    const approvedCreatedAt = new Date("2026-03-09T12:00:10.000Z");
+
+    const [staleGeneratedArtifact] = await db
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId: loop!.id,
+        phase: "planning",
+        artifactType: "plan_spec",
+        headSha: null,
+        loopVersion: 2,
+        status: "generated",
+        generatedBy: "agent",
+        payload: staleGeneratedPayload,
+        createdAt: staleCreatedAt,
+        updatedAt: staleCreatedAt,
+      })
+      .returning();
+
+    const [approvedArtifact] = await db
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId: loop!.id,
+        phase: "planning",
+        artifactType: "plan_spec",
+        headSha: null,
+        loopVersion: 3,
+        status: "approved",
+        approvedByUserId: user.id,
+        approvedAt: approvedCreatedAt,
+        generatedBy: "agent",
+        payload: newestApprovedPayload,
+        createdAt: approvedCreatedAt,
+        updatedAt: approvedCreatedAt,
+      })
+      .returning();
+
+    expect(staleGeneratedArtifact).toBeDefined();
+    expect(approvedArtifact).toBeDefined();
+    if (!staleGeneratedArtifact || !approvedArtifact) {
+      throw new Error("Expected artifacts to be inserted");
+    }
+
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: staleGeneratedArtifact.id,
+      tasks: staleGeneratedPayload.tasks,
+    });
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: approvedArtifact.id,
+      tasks: newestApprovedPayload.tasks,
+    });
+
+    await updateThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      updates: {
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "exit-plan-approved",
+            name: "ExitPlanMode",
+            parent_tool_use_id: null,
+            parameters: {
+              plan: JSON.stringify(newestApprovedPayload),
+            },
+          },
+        ],
+      },
+    });
+
+    await approvePlan({ threadId, threadChatId });
+
+    const activeLoop = await getActiveSdlcLoopForThread({
+      db,
+      userId: user.id,
+      threadId,
+    });
+    expect(activeLoop?.state).toBe("implementing");
+    expect(activeLoop?.activePlanArtifactId).toBe(approvedArtifact.id);
+
+    const [refreshedStale, refreshedApproved] = await Promise.all([
+      db.query.sdlcPhaseArtifact.findFirst({
+        where: eq(schema.sdlcPhaseArtifact.id, staleGeneratedArtifact.id),
+      }),
+      db.query.sdlcPhaseArtifact.findFirst({
+        where: eq(schema.sdlcPhaseArtifact.id, approvedArtifact.id),
+      }),
+    ]);
+    expect(refreshedStale?.status).toBe("generated");
+    expect(refreshedApproved?.status).toBe("approved");
   });
 
   it("rejects approval when no plan artifact exists in thread chat", async () => {

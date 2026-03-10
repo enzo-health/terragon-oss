@@ -702,6 +702,9 @@ export type DeliveryLoopTransitionResult = {
 
 export function mapSdlcTransitionEventToDeliveryLoopTransition(
   event: SdlcLoopTransitionEvent,
+  options?: {
+    hasPrLink?: boolean;
+  },
 ): DeliveryLoopTransitionEvent | null {
   switch (event) {
     case "plan_completed":
@@ -723,8 +726,11 @@ export function mapSdlcTransitionEventToDeliveryLoopTransition(
     case "review_blocked":
       return "review_gate_blocked";
     case "ui_smoke_passed":
-    case "video_capture_succeeded":
       return "ui_gate_passed_with_pr";
+    case "video_capture_succeeded":
+      return options?.hasPrLink === false
+        ? "ui_gate_passed_without_pr"
+        : "ui_gate_passed_with_pr";
     case "ui_smoke_failed":
     case "video_capture_failed":
       return "ui_gate_blocked";
@@ -830,10 +836,8 @@ export function resolveDeliveryLoopNextState({
       }
       if (event === "mark_done") return "done";
       return null;
-
-    default:
-      return null;
   }
+  return assertNever(currentState);
 }
 
 function getResumableStateFromSnapshot(
@@ -3396,7 +3400,10 @@ export async function persistSdlcVideoCaptureOutcome({
     ? "video_capture_succeeded"
     : "video_capture_failed";
   const canonicalTransitionEvent =
-    mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent);
+    mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent, {
+      hasPrLink:
+        typeof loop.prNumber === "number" && Number.isFinite(loop.prNumber),
+    });
   const reducedTransition =
     DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState) &&
     canonicalTransitionEvent
@@ -3860,7 +3867,10 @@ function mapSdlcTransitionEventToCanonicalWriteTransition(params: {
         : "review_gate_blocked";
     case "deep_review_gate_passed":
     case "carmack_review_gate_passed":
-      return "noop";
+      return params.currentState === "review_gate" ||
+        params.currentState === "babysitting"
+        ? "noop"
+        : null;
     case "implementation_progress":
       if (params.currentState === "blocked") {
         return "blocked_resume";
@@ -3870,7 +3880,7 @@ function mapSdlcTransitionEventToCanonicalWriteTransition(params: {
       }
       return null;
     case "video_capture_started":
-      return "noop";
+      return params.currentState === "ui_gate" ? "noop" : null;
   }
   return assertNever(params.event);
 }

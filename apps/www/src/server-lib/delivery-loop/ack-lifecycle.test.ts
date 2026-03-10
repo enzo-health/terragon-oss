@@ -77,6 +77,31 @@ describe("handleAckReceived", () => {
     expect(mockResetRetryCounter).toHaveBeenCalledWith("tc-1");
   });
 
+  it("acknowledges realtime intent when status is still prepared", async () => {
+    mockGetActiveDispatchIntent.mockResolvedValue({
+      id: "di_loop-1_run-1",
+      runId: "run-1",
+      status: "prepared",
+    });
+    mockUpdateDispatchIntent.mockResolvedValue(undefined);
+    mockMarkDispatchIntentAcknowledged.mockResolvedValue(false);
+    mockResetRetryCounter.mockResolvedValue(undefined);
+
+    await handleAckReceived({
+      db: fakeDb,
+      runId: "run-1",
+      loopId: "loop-1",
+      threadChatId: "tc-1",
+    });
+
+    expect(mockUpdateDispatchIntent).toHaveBeenCalledWith(
+      "di_loop-1_run-1",
+      "tc-1",
+      { status: "acknowledged" },
+    );
+    expect(mockResetRetryCounter).toHaveBeenCalledWith("tc-1");
+  });
+
   it("does not rewrite realtime state when intent is already terminal", async () => {
     mockGetActiveDispatchIntent.mockResolvedValue({
       id: "di_loop-1_run-1",

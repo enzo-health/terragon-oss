@@ -275,6 +275,14 @@ describe("delivery loop state model", () => {
     expect(
       mapSdlcTransitionEventToDeliveryLoopTransition("implementation_progress"),
     ).toBeNull();
+    expect(
+      mapSdlcTransitionEventToDeliveryLoopTransition(
+        "video_capture_succeeded",
+        {
+          hasPrLink: false,
+        },
+      ),
+    ).toBe("ui_gate_passed_without_pr");
   });
 
   it("resolves effective phase from blocked and non-blocked snapshots", () => {
@@ -2014,6 +2022,58 @@ describe("sdlc loop model", () => {
     expect(reloadedLoop?.state).toBe("planning");
   });
 
+  it("treats out-of-phase noop-style events as stale no-ops", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+    expect(loop).toBeDefined();
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "planning",
+        loopVersion: 7,
+        currentHeadSha: "sha-planning",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outOfPhaseEvents = [
+      "deep_review_gate_passed",
+      "carmack_review_gate_passed",
+      "video_capture_started",
+    ] as const;
+
+    for (const transitionEvent of outOfPhaseEvents) {
+      const outcome = await transitionSdlcLoopState({
+        db,
+        loopId: loop!.id,
+        transitionEvent,
+        headSha: "sha-out-of-phase",
+        loopVersion: 8,
+      });
+      expect(outcome).toBe("stale_noop");
+    }
+
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("planning");
+    expect(reloadedLoop?.loopVersion).toBe(7);
+    expect(reloadedLoop?.currentHeadSha).toBe("sha-planning");
+  });
+
   it("escalates to human feedback when retry cap is exceeded", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({
@@ -3050,6 +3110,49 @@ describe("sdlc loop model", () => {
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
     expect(reloaded?.state).toBe("done");
+  });
+
+  it("routes video capture success without PR link to awaiting_pr_link", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "ui_gate",
+        loopVersion: 3,
+        currentHeadSha: "sha-video-no-pr",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    await persistSdlcVideoCaptureOutcome({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-video-no-pr",
+      loopVersion: 4,
+      artifactR2Key: "videos/loop-no-pr.mp4",
+      artifactMimeType: "video/mp4",
+      artifactBytes: 2048,
+    });
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("awaiting_pr_link");
+    expect(reloaded?.videoCaptureStatus).toBe("captured");
   });
 
   it("does not resurrect terminal PR-closed loops from video capture outcomes", async () => {

@@ -13,6 +13,7 @@ async function loadSubject(options: {
   didUpdateStatus?: boolean;
   slashCommand?: { name: string } | null;
   startAgentMessageError?: Error | null;
+  scheduleFollowUpRetryError?: Error | null;
 }) {
   const getThreadChat = vi.fn();
   getThreadChat.mockResolvedValueOnce(options.initialThreadChat);
@@ -29,7 +30,11 @@ async function loadSubject(options: {
     options.startAgentMessageError === null
       ? vi.fn().mockResolvedValue(undefined)
       : vi.fn().mockRejectedValue(options.startAgentMessageError);
-  const scheduleFollowUpRetryJob = vi.fn().mockResolvedValue(undefined);
+  const scheduleFollowUpRetryJob =
+    options.scheduleFollowUpRetryError === undefined ||
+    options.scheduleFollowUpRetryError === null
+      ? vi.fn().mockResolvedValue(undefined)
+      : vi.fn().mockRejectedValue(options.scheduleFollowUpRetryError);
   const getSlashCommandOrNull = vi
     .fn()
     .mockReturnValue(options.slashCommand ?? null);
@@ -193,5 +198,35 @@ describe("maybeProcessFollowUpQueue", () => {
         runAt: expect.any(Date),
       }),
     );
+  });
+
+  it("returns explicit outcome when durable retry persistence fails", async () => {
+    const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
+      await loadSubject({
+        initialThreadChat: {
+          id: "chat-1",
+          status: "complete",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [TEST_USER_MESSAGE],
+          messages: [],
+        },
+        startAgentMessageError: new Error("boom"),
+        scheduleFollowUpRetryError: new Error("redis unavailable"),
+      });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      reason: "dispatch_retry_persistence_failed",
+      retryCount: 1,
+      maxRetries: 3,
+    });
+    expect(scheduleFollowUpRetryJob).toHaveBeenCalledTimes(1);
   });
 });

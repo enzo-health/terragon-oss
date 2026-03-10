@@ -84,6 +84,7 @@ export type FollowUpQueueProcessingResult = {
     | "dispatch_started_slash"
     | "dispatch_started_batch"
     | "dispatch_retry_scheduled"
+    | "dispatch_retry_persistence_failed"
     | "dispatch_retry_exhausted";
   retryCount?: number;
   maxRetries?: number;
@@ -129,6 +130,7 @@ async function handleFollowUpFailure({
   retriesUsed: number;
   exhausted: boolean;
   retryAt: Date | null;
+  retryPersisted: boolean;
 }> {
   const formattedError = formatFollowUpError(error);
   console.error("handleFollowUpFailure invoked", {
@@ -141,13 +143,13 @@ async function handleFollowUpFailure({
     (m): m is DBSystemMessage =>
       m.type === "system" && m.message_type === "follow-up-retry-failed",
   ).length;
+  const retriesUsed = existingRetries + 1;
+  const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
+  const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
+  const retryAt = exhausted ? null : new Date(Date.now() + retryDelayMs);
+  let retryPersisted = exhausted;
 
   try {
-    const retriesUsed = existingRetries + 1;
-    const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
-    const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
-    const retryAt = exhausted ? null : new Date(Date.now() + retryDelayMs);
-
     if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
       await updateThreadChatWithTransition({
         userId,
@@ -187,6 +189,7 @@ async function handleFollowUpFailure({
         deferCount: 0,
         runAt: retryAt,
       });
+      retryPersisted = true;
       await updateThreadChatWithTransition({
         userId,
         threadId,
@@ -214,6 +217,7 @@ async function handleFollowUpFailure({
       retriesUsed,
       exhausted,
       retryAt,
+      retryPersisted,
     };
   } catch (updateError) {
     console.error("Failed to record follow-up retry failure", {
@@ -222,14 +226,10 @@ async function handleFollowUpFailure({
       updateError,
     });
     return {
-      retriesUsed: existingRetries + 1,
-      exhausted: existingRetries >= MAX_FOLLOW_UP_RETRIES - 1,
-      retryAt:
-        existingRetries >= MAX_FOLLOW_UP_RETRIES - 1
-          ? null
-          : new Date(
-              Date.now() + FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries,
-            ),
+      retriesUsed,
+      exhausted,
+      retryAt,
+      retryPersisted,
     };
   }
 }
@@ -394,11 +394,16 @@ export async function maybeProcessFollowUpQueue({
         queuedMessagesForRetry: queuedMessagesSnapshot,
         error,
       });
+      let failureReason: FollowUpQueueProcessingResult["reason"] =
+        "dispatch_retry_persistence_failed";
+      if (failure.exhausted) {
+        failureReason = "dispatch_retry_exhausted";
+      } else if (failure.retryPersisted) {
+        failureReason = "dispatch_retry_scheduled";
+      }
       return {
         processed: false,
-        reason: failure.exhausted
-          ? "dispatch_retry_exhausted"
-          : "dispatch_retry_scheduled",
+        reason: failureReason,
         retryCount: failure.retriesUsed,
         maxRetries: MAX_FOLLOW_UP_RETRIES,
       };
@@ -447,11 +452,16 @@ export async function maybeProcessFollowUpQueue({
       queuedMessagesForRetry: queuedMessagesSnapshot,
       error,
     });
+    let failureReason: FollowUpQueueProcessingResult["reason"] =
+      "dispatch_retry_persistence_failed";
+    if (failure.exhausted) {
+      failureReason = "dispatch_retry_exhausted";
+    } else if (failure.retryPersisted) {
+      failureReason = "dispatch_retry_scheduled";
+    }
     return {
       processed: false,
-      reason: failure.exhausted
-        ? "dispatch_retry_exhausted"
-        : "dispatch_retry_scheduled",
+      reason: failureReason,
       retryCount: failure.retriesUsed,
       maxRetries: MAX_FOLLOW_UP_RETRIES,
     };

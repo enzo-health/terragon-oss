@@ -14,6 +14,7 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
+  markDispatchIntentDispatched,
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
   type DeliveryLoopFailureCategory,
@@ -1356,6 +1357,23 @@ export async function POST(request: Request) {
                   destinationRunId: newRunId,
                   payload: preparedSelfDispatchPayload,
                 });
+                await updateDispatchIntent(dispatchIntent.id, threadChatId, {
+                  status: "dispatched",
+                });
+                try {
+                  await markDispatchIntentDispatched(db, newRunId);
+                } catch (dispatchTransitionError) {
+                  console.warn(
+                    "[delivery-loop] failed to mark durable dispatch intent as dispatched",
+                    {
+                      loopId,
+                      threadId,
+                      threadChatId,
+                      runId: newRunId,
+                      error: dispatchTransitionError,
+                    },
+                  );
+                }
                 // Only arm the timeout once the replay record exists and the
                 // self-dispatch payload is actually recoverable on retries.
                 startAckTimeout({
@@ -1614,6 +1632,29 @@ export async function POST(request: Request) {
             { status: 409 },
           );
         }
+        try {
+          await persistDaemonTerminalDispatchStatus({
+            loopId: enrolledLoop.id,
+            threadChatId,
+            runId: envelopeV2.runId,
+            daemonRunStatus: daemonRunStatusFromMessages,
+            daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+            daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+          });
+        } catch (error) {
+          console.warn(
+            "[delivery-loop] failed to persist terminal dispatch intent status on dedupe",
+            {
+              loopId: enrolledLoop.id,
+              threadId,
+              threadChatId,
+              runId: envelopeV2.runId,
+              daemonRunStatus: daemonRunStatusFromMessages,
+              reason: claimResult.reason,
+              error,
+            },
+          );
+        }
         if (claimResult.reason === "duplicate_event") {
           try {
             const guardrailRuntime = buildCoordinatorGuardrailRuntime(
@@ -1640,22 +1681,6 @@ export async function POST(request: Request) {
               leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
               guardrailRuntime,
             });
-            const duplicateThreadChat = await getThreadChat({
-              db,
-              userId,
-              threadId,
-              threadChatId,
-            });
-            if ((duplicateThreadChat?.queuedMessages?.length ?? 0) > 0) {
-              waitUntil(
-                maybeProcessFollowUpQueue({
-                  threadId,
-                  threadChatId,
-                  userId,
-                  runId: runContext?.runId ?? envelopeV2.runId,
-                }),
-              );
-            }
           } catch (error) {
             console.error(
               "[sdlc-loop] duplicate daemon event dedupe tick failed",

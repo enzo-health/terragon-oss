@@ -17,6 +17,7 @@ type PlanningLoopContext = {
 };
 
 type PromotePlanMode = "checkpoint" | "approve";
+type PlanSpecSource = "exit_plan_mode" | "write_tool" | "agent_text" | "system";
 
 export type PromotePlanToImplementingResult =
   | {
@@ -38,6 +39,120 @@ export type PromotePlanToImplementingResult =
 
 function nextLoopVersion(loopVersion: number): number {
   return Number.isFinite(loopVersion) ? Math.max(loopVersion, 0) + 1 : 1;
+}
+
+function getPlanSourceFromParsedPlan(
+  parsedPlan: ParsedPlanSpec & { source?: unknown },
+): PlanSpecSource {
+  if (
+    parsedPlan.source === "exit_plan_mode" ||
+    parsedPlan.source === "write_tool" ||
+    parsedPlan.source === "agent_text" ||
+    parsedPlan.source === "system"
+  ) {
+    return parsedPlan.source;
+  }
+  return "system";
+}
+
+function normalizePlanTaskForComparison(task: {
+  stableTaskId: string;
+  title: string;
+  description: string | null;
+  acceptance: string[];
+}) {
+  return {
+    stableTaskId: task.stableTaskId.trim(),
+    title: task.title.trim(),
+    description:
+      typeof task.description === "string" && task.description.trim().length > 0
+        ? task.description.trim()
+        : null,
+    acceptance: task.acceptance
+      .map((criterion) => criterion.trim())
+      .filter((criterion) => criterion.length > 0),
+  };
+}
+
+function buildPlanComparisonKey(parsedPlan: ParsedPlanSpec): string {
+  return JSON.stringify({
+    planText: parsedPlan.planText.trim(),
+    tasks: parsedPlan.tasks.map(normalizePlanTaskForComparison),
+  });
+}
+
+function toComparablePlanTask(
+  task: unknown,
+): ParsedPlanSpec["tasks"][number] | null {
+  if (!task || typeof task !== "object") {
+    return null;
+  }
+  const typedTask = task as {
+    stableTaskId?: unknown;
+    title?: unknown;
+    description?: unknown;
+    acceptance?: unknown;
+  };
+  if (
+    typeof typedTask.stableTaskId !== "string" ||
+    typedTask.stableTaskId.trim().length === 0 ||
+    typeof typedTask.title !== "string" ||
+    typedTask.title.trim().length === 0
+  ) {
+    return null;
+  }
+
+  const acceptance = Array.isArray(typedTask.acceptance)
+    ? typedTask.acceptance
+        .filter(
+          (criterion): criterion is string =>
+            typeof criterion === "string" && criterion.trim().length > 0,
+        )
+        .map((criterion) => criterion.trim())
+    : [];
+
+  return {
+    stableTaskId: typedTask.stableTaskId.trim(),
+    title: typedTask.title.trim(),
+    description:
+      typeof typedTask.description === "string" &&
+      typedTask.description.trim().length > 0
+        ? typedTask.description.trim()
+        : null,
+    acceptance,
+  };
+}
+
+function buildPlanComparisonKeyFromArtifactPayload(
+  payload: unknown,
+): string | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const typedPayload = payload as {
+    planText?: unknown;
+    tasks?: unknown;
+  };
+  if (
+    typeof typedPayload.planText !== "string" ||
+    !Array.isArray(typedPayload.tasks)
+  ) {
+    return null;
+  }
+
+  const normalizedTasks: ParsedPlanSpec["tasks"] = [];
+  for (const task of typedPayload.tasks) {
+    const normalizedTask = toComparablePlanTask(task);
+    if (!normalizedTask) {
+      return null;
+    }
+    normalizedTasks.push(normalizedTask);
+  }
+
+  return buildPlanComparisonKey({
+    planText: typedPayload.planText,
+    tasks: normalizedTasks,
+  });
 }
 
 async function transitionPlanningArtifactToImplementing(params: {
@@ -75,7 +190,7 @@ async function createPlanningArtifactFromParsedPlan(params: {
   db: DB;
   loopId: string;
   loopVersion: number;
-  parsedPlan: ParsedPlanSpec;
+  parsedPlan: ParsedPlanSpec & { source?: PlanSpecSource };
   status: "generated" | "accepted";
 }) {
   const planArtifact = await createPlanArtifactForLoop({
@@ -87,7 +202,7 @@ async function createPlanningArtifactFromParsedPlan(params: {
     payload: {
       planText: params.parsedPlan.planText,
       tasks: params.parsedPlan.tasks,
-      source: "system",
+      source: getPlanSourceFromParsedPlan(params.parsedPlan),
     },
   });
 
@@ -101,11 +216,11 @@ async function createPlanningArtifactFromParsedPlan(params: {
   return planArtifact;
 }
 
-async function getLatestPromotablePlanningArtifact(params: {
+async function getPromotablePlanningArtifacts(params: {
   db: DB;
   loopId: string;
 }) {
-  return await params.db.query.sdlcPhaseArtifact.findFirst({
+  return await params.db.query.sdlcPhaseArtifact.findMany({
     where: and(
       eq(schema.sdlcPhaseArtifact.loopId, params.loopId),
       eq(schema.sdlcPhaseArtifact.phase, "planning"),
@@ -117,16 +232,59 @@ async function getLatestPromotablePlanningArtifact(params: {
       ]),
     ),
     orderBy: [
+      desc(schema.sdlcPhaseArtifact.loopVersion),
+      desc(schema.sdlcPhaseArtifact.updatedAt),
       desc(schema.sdlcPhaseArtifact.createdAt),
       desc(schema.sdlcPhaseArtifact.id),
     ],
   });
 }
 
+type PromotablePlanningArtifact = Awaited<
+  ReturnType<typeof getPromotablePlanningArtifacts>
+>[number];
+
+function selectPromotablePlanningArtifact(params: {
+  artifacts: PromotablePlanningArtifact[];
+  parsedPlan: ParsedPlanSpec;
+}): PromotablePlanningArtifact | null {
+  if (params.artifacts.length === 0) {
+    return null;
+  }
+
+  const parsedPlanKey = buildPlanComparisonKey(params.parsedPlan);
+  const matchingArtifacts = params.artifacts.filter((artifact) => {
+    const artifactPlanKey = buildPlanComparisonKeyFromArtifactPayload(
+      artifact.payload,
+    );
+    return artifactPlanKey !== null && artifactPlanKey === parsedPlanKey;
+  });
+
+  const matchingApprovedArtifact = matchingArtifacts.find(
+    (artifact) => artifact.status === "approved",
+  );
+  if (matchingApprovedArtifact) {
+    return matchingApprovedArtifact;
+  }
+
+  const latestApprovedArtifact = params.artifacts.find(
+    (artifact) => artifact.status === "approved",
+  );
+  if (latestApprovedArtifact) {
+    return latestApprovedArtifact;
+  }
+
+  if (matchingArtifacts.length > 0) {
+    return matchingArtifacts[0] ?? null;
+  }
+
+  return params.artifacts[0] ?? null;
+}
+
 export async function promotePlanToImplementing(params: {
   db: DB;
   loop: PlanningLoopContext;
-  parsedPlan: ParsedPlanSpec;
+  parsedPlan: ParsedPlanSpec & { source?: PlanSpecSource };
   mode: PromotePlanMode;
   approvedByUserId?: string;
 }): Promise<PromotePlanToImplementingResult> {
@@ -161,9 +319,13 @@ export async function promotePlanToImplementing(params: {
   }
 
   if (params.loop.planApprovalPolicy === "human_required") {
-    let artifact = await getLatestPromotablePlanningArtifact({
+    const promotableArtifacts = await getPromotablePlanningArtifacts({
       db: params.db,
       loopId: params.loop.id,
+    });
+    let artifact = selectPromotablePlanningArtifact({
+      artifacts: promotableArtifacts,
+      parsedPlan: params.parsedPlan,
     });
 
     if (!artifact) {
@@ -196,13 +358,29 @@ export async function promotePlanToImplementing(params: {
         approvedByUserId: params.approvedByUserId,
       });
       if (!approvedArtifact) {
-        throw new Error("Failed to approve plan artifact before promotion");
+        const refreshedPromotableArtifacts =
+          await getPromotablePlanningArtifacts({
+            db: params.db,
+            loopId: params.loop.id,
+          });
+        const fallbackApprovedArtifact = refreshedPromotableArtifacts.find(
+          (candidate) => candidate.status === "approved",
+        );
+        if (!fallbackApprovedArtifact) {
+          throw new Error("Failed to approve plan artifact before promotion");
+        }
+        artifactId = fallbackApprovedArtifact.id;
+        loopVersion =
+          typeof fallbackApprovedArtifact.loopVersion === "number"
+            ? fallbackApprovedArtifact.loopVersion
+            : loopVersion;
+      } else {
+        artifactId = approvedArtifact.id;
+        loopVersion =
+          typeof approvedArtifact.loopVersion === "number"
+            ? approvedArtifact.loopVersion
+            : loopVersion;
       }
-      artifactId = approvedArtifact.id;
-      loopVersion =
-        typeof approvedArtifact.loopVersion === "number"
-          ? approvedArtifact.loopVersion
-          : loopVersion;
     }
 
     return await transitionPlanningArtifactToImplementing({

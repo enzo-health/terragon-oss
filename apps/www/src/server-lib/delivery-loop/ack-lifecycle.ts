@@ -51,7 +51,8 @@ export async function handleAckReceived({
   const shouldUpdateRealtimeIntent =
     activeIntent?.id === intentId &&
     activeIntent.runId === runId &&
-    activeIntent.status === "dispatched";
+    (activeIntent.status === "dispatched" ||
+      activeIntent.status === "prepared");
   if (shouldUpdateRealtimeIntent) {
     await updateDispatchIntent(intentId, threadChatId, {
       status: "acknowledged",

@@ -6,6 +6,40 @@ const RETRY_JOB_CLAIM_PREFIX = "dlrj:claim:";
 const RETRY_JOB_TTL_SECONDS = 24 * 60 * 60;
 const RETRY_JOB_CLAIM_TTL_SECONDS = 60;
 const DEFER_RETRY_DELAY_MS = 30_000;
+const CONDITIONAL_DELETE_RETRY_JOB_SCRIPT = `
+local jobKey = KEYS[1]
+local scheduledKey = KEYS[2]
+local claimKey = KEYS[3]
+local expectedRunAt = ARGV[1]
+local expectedDispatchAttempt = ARGV[2]
+local expectedDeferCount = ARGV[3]
+local jobId = ARGV[4]
+
+local currentRunAt = redis.call("HGET", jobKey, "runAt")
+local currentDispatchAttempt = redis.call("HGET", jobKey, "dispatchAttempt")
+local currentDeferCount = redis.call("HGET", jobKey, "deferCount")
+
+if expectedRunAt ~= "" then
+  if currentRunAt and (
+    currentRunAt ~= expectedRunAt or
+    currentDispatchAttempt ~= expectedDispatchAttempt or
+    currentDeferCount ~= expectedDeferCount
+  ) then
+    redis.call("DEL", claimKey)
+    return 0
+  end
+else
+  if currentRunAt then
+    redis.call("DEL", claimKey)
+    return 0
+  end
+end
+
+redis.call("DEL", jobKey)
+redis.call("ZREM", scheduledKey, jobId)
+redis.call("DEL", claimKey)
+return 1
+`;
 
 export type DeliveryLoopRetryJob = {
   id: string;
@@ -150,12 +184,31 @@ export async function getRetryJob(
   return deserializeRetryJob(raw);
 }
 
-async function deleteRetryJob(jobId: string): Promise<void> {
-  await Promise.all([
-    redis.del(retryJobKey(jobId)),
-    redis.zrem(RETRY_JOB_SCHEDULED_KEY, jobId),
-    redis.del(retryJobClaimKey(jobId)),
-  ]);
+type RetryJobDeleteOutcome = "deleted" | "preserved_newer";
+
+async function deleteRetryJobIfSnapshotMatches(params: {
+  jobId: string;
+  expectedJob: DeliveryLoopRetryJob | null;
+}): Promise<RetryJobDeleteOutcome> {
+  const scriptResult = await redis.eval(
+    CONDITIONAL_DELETE_RETRY_JOB_SCRIPT,
+    [
+      retryJobKey(params.jobId),
+      RETRY_JOB_SCHEDULED_KEY,
+      retryJobClaimKey(params.jobId),
+    ],
+    [
+      params.expectedJob?.runAt.toISOString() ?? "",
+      params.expectedJob ? String(params.expectedJob.dispatchAttempt) : "",
+      params.expectedJob ? String(params.expectedJob.deferCount) : "",
+      params.jobId,
+    ],
+  );
+
+  if (scriptResult === 1 || scriptResult === "1") {
+    return "deleted";
+  }
+  return "preserved_newer";
 }
 
 async function rescheduleRetryJob({
@@ -221,8 +274,15 @@ export async function drainDueDeliveryLoopRetryJobs({
     claimed += 1;
     const job = await getRetryJob(jobId);
     if (!job) {
-      await deleteRetryJob(jobId);
-      skipped += 1;
+      const deleteOutcome = await deleteRetryJobIfSnapshotMatches({
+        jobId,
+        expectedJob: null,
+      });
+      if (deleteOutcome === "deleted") {
+        skipped += 1;
+      } else {
+        rescheduled += 1;
+      }
       continue;
     }
 
@@ -233,7 +293,11 @@ export async function drainDueDeliveryLoopRetryJobs({
     });
 
     let effectiveResult = result;
-    if (!effectiveResult.processed && effectiveResult.reason === "stale_cas") {
+    if (
+      !effectiveResult.processed &&
+      (effectiveResult.reason === "stale_cas" ||
+        effectiveResult.reason === "invalid_event")
+    ) {
       effectiveResult = await runFollowUpQueue({
         userId: job.userId,
         threadId: job.threadId,
@@ -245,8 +309,15 @@ export async function drainDueDeliveryLoopRetryJobs({
       effectiveResult.processed ||
       effectiveResult.reason === "no_queued_messages"
     ) {
-      await deleteRetryJob(job.id);
-      completed += 1;
+      const deleteOutcome = await deleteRetryJobIfSnapshotMatches({
+        jobId: job.id,
+        expectedJob: job,
+      });
+      if (deleteOutcome === "deleted") {
+        completed += 1;
+      } else {
+        rescheduled += 1;
+      }
       continue;
     }
 
@@ -260,7 +331,9 @@ export async function drainDueDeliveryLoopRetryJobs({
       effectiveResult.reason === "scheduled_not_runnable" ||
       effectiveResult.reason === "stale_cas_busy" ||
       effectiveResult.reason === "agent_rate_limited" ||
-      effectiveResult.reason === "stale_cas"
+      effectiveResult.reason === "stale_cas" ||
+      effectiveResult.reason === "invalid_event" ||
+      effectiveResult.reason === "dispatch_retry_persistence_failed"
     ) {
       await rescheduleRetryJob({
         job,
@@ -270,8 +343,15 @@ export async function drainDueDeliveryLoopRetryJobs({
       continue;
     }
 
-    await deleteRetryJob(job.id);
-    completed += 1;
+    const deleteOutcome = await deleteRetryJobIfSnapshotMatches({
+      jobId: job.id,
+      expectedJob: job,
+    });
+    if (deleteOutcome === "deleted") {
+      completed += 1;
+    } else {
+      rescheduled += 1;
+    }
   }
 
   return {

@@ -92,6 +92,13 @@
       "when": 1773105024990,
       "tag": "0012_flashy_the_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1773200000000,
+      "tag": "0013_signal_inbox_claim_columns",
+      "breakpoints": true
     }
   ]
 }

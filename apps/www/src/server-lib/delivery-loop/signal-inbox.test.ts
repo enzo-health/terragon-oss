@@ -946,7 +946,25 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
     });
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();
-    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
+    const updatePayloads = dbMocks.markProcessedSet.mock.calls.map(
+      ([payload]) =>
+        payload as {
+          claimToken?: string | null;
+          claimedAt?: Date | null;
+          processedAt?: Date;
+        },
+    );
+    expect(
+      updatePayloads.some((payload) => payload.processedAt instanceof Date),
+    ).toBe(false);
+    expect(
+      updatePayloads.some(
+        (payload) =>
+          payload.claimToken === null &&
+          payload.claimedAt === null &&
+          payload.processedAt === undefined,
+      ),
+    ).toBe(true);
   });
 
   it("durably drains queued signal inbox work for due loops", async () => {

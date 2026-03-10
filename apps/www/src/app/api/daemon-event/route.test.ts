@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import {
+  getActiveSdlcLoopForThread,
+  markDispatchIntentCompleted,
+  markDispatchIntentDispatched,
+  markDispatchIntentFailed,
+} from "@terragon/shared/model/delivery-loop";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
@@ -16,6 +21,7 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+import { getThreadChat } from "@terragon/shared/model/threads";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -98,6 +104,13 @@ const dispatchIntentMocks = vi.hoisted(() => ({
   updateDispatchIntent: vi.fn(),
 }));
 
+const deliveryLoopModelMocks = vi.hoisted(() => ({
+  getActiveSdlcLoopForThread: vi.fn(),
+  markDispatchIntentDispatched: vi.fn(),
+  markDispatchIntentCompleted: vi.fn(),
+  markDispatchIntentFailed: vi.fn(),
+}));
+
 vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
 }));
@@ -111,7 +124,12 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
-  getActiveSdlcLoopForThread: vi.fn(),
+  getActiveSdlcLoopForThread: deliveryLoopModelMocks.getActiveSdlcLoopForThread,
+  markDispatchIntentDispatched:
+    deliveryLoopModelMocks.markDispatchIntentDispatched,
+  markDispatchIntentCompleted:
+    deliveryLoopModelMocks.markDispatchIntentCompleted,
+  markDispatchIntentFailed: deliveryLoopModelMocks.markDispatchIntentFailed,
   SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
@@ -264,6 +282,9 @@ describe("daemon-event route", () => {
     } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentDispatched).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentCompleted).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentFailed).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
     vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
       executed: false,
@@ -1215,6 +1236,21 @@ describe("daemon-event route", () => {
     expect(data.acknowledgedSeq).toBe(2);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
+    expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
+      "di_loop-1_run-1",
+      "chat-1",
+      {
+        status: "completed",
+        lastError: null,
+        lastFailureCategory: null,
+      },
+    );
+    expect(markDispatchIntentCompleted).toHaveBeenCalledWith(
+      expect.anything(),
+      "run-1",
+    );
+    expect(getThreadChat).not.toHaveBeenCalled();
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
     expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
     expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
@@ -1385,6 +1421,19 @@ describe("daemon-event route", () => {
     expect(data.reason).toBe("out_of_order_or_duplicate_seq");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
+    expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
+      "di_loop-1_run-1",
+      "chat-1",
+      {
+        status: "completed",
+        lastError: null,
+        lastFailureCategory: null,
+      },
+    );
+    expect(markDispatchIntentCompleted).toHaveBeenCalledWith(
+      expect.anything(),
+      "run-1",
+    );
     expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
     expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });

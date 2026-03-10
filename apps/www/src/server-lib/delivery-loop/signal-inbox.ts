@@ -42,7 +42,6 @@ const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
-const DURABLE_SIGNAL_INBOX_MAX_ITERATIONS = 15;
 const SDLC_SIGNAL_INBOX_CLAIM_STALE_MS = 60_000;
 const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
   "daemon_terminal",
@@ -1021,6 +1020,28 @@ async function claimNextUnprocessedSignal({
   };
 }
 
+async function refreshSignalClaim(params: {
+  db: DB;
+  signalId: string;
+  claimToken: string;
+  now: Date;
+}): Promise<boolean> {
+  const [refreshedClaim] = await params.db
+    .update(schema.sdlcLoopSignalInbox)
+    .set({
+      claimedAt: params.now,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
+        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+      ),
+    )
+    .returning({ id: schema.sdlcLoopSignalInbox.id });
+  return Boolean(refreshedClaim);
+}
+
 async function releaseSignalClaim(params: {
   db: DB;
   signalId: string;
@@ -1111,14 +1132,35 @@ async function routeFeedbackSignalToEnrolledThread({
       candidate: message,
     })
   ) {
-    await queueFollowUpInternal({
-      userId: loopUserId,
-      threadId: loopThreadId,
-      threadChatId: threadChat.id,
-      messages: [message],
-      appendOrReplace: "append",
-      source: "github",
-    });
+    try {
+      await queueFollowUpInternal({
+        userId: loopUserId,
+        threadId: loopThreadId,
+        threadChatId: threadChat.id,
+        messages: [message],
+        appendOrReplace: "append",
+        source: "github",
+      });
+    } catch (error) {
+      const refreshedThread = await getThread({
+        db,
+        userId: loopUserId,
+        threadId: loopThreadId,
+      });
+      const refreshedThreadChat = refreshedThread
+        ? getPrimaryThreadChat(refreshedThread)
+        : null;
+      const alreadyQueued =
+        refreshedThreadChat !== null &&
+        hasEquivalentRoutedFollowUp({
+          queuedMessages: refreshedThreadChat.queuedMessages,
+          messages: refreshedThreadChat.messages,
+          candidate: message,
+        });
+      if (!alreadyQueued) {
+        throw error;
+      }
+    }
   }
 
   return {
@@ -1192,10 +1234,10 @@ function buildDurableSignalInboxGuardrailRuntime() {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: DURABLE_SIGNAL_INBOX_MAX_ITERATIONS,
+    maxIterations: null,
     manualIntentAllowed: true,
-    // iterationCount intentionally omitted — resolveSignalInboxGuardrailInputs
-    // will use the loop's actual loopVersion as the iteration count.
+    // iterationCount intentionally omitted — durable drain should not cap on
+    // persisted loopVersion, and maxIterations is left unbounded here.
   } satisfies SdlcSignalInboxGuardrailRuntimeInput;
 }
 
@@ -1217,6 +1259,9 @@ export async function drainDueSdlcSignalInboxActions({
   const boundedMaxLoops = Math.max(0, Math.trunc(maxLoops));
   const boundedMaxSignalsTotal = Math.max(0, Math.trunc(maxSignalsTotal));
   const boundedMaxSignalsPerLoop = Math.max(0, Math.trunc(maxSignalsPerLoop));
+  const staleClaimCutoff = new Date(
+    now.getTime() - SDLC_SIGNAL_INBOX_CLAIM_STALE_MS,
+  );
 
   if (
     boundedMaxLoops === 0 ||
@@ -1245,6 +1290,10 @@ export async function drainDueSdlcSignalInboxActions({
       and(
         notInArray(schema.sdlcLoop.state, terminalSdlcLoopStateList),
         isNull(schema.sdlcLoopSignalInbox.processedAt),
+        or(
+          isNull(schema.sdlcLoopSignalInbox.claimToken),
+          lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
+        ),
         or(
           ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
           and(
@@ -1403,6 +1452,16 @@ export async function runBestEffortSdlcSignalInboxTick({
           causeType: signal.causeType,
           error,
         });
+      }
+
+      const claimRefreshed = await refreshSignalClaim({
+        db,
+        signalId: signal.id,
+        claimToken: signal.claimToken,
+        now: new Date(),
+      });
+      if (!claimRefreshed) {
+        return { processed: false, reason: "signal_claim_lost" };
       }
 
       let runtimeAction: RuntimeActionOutcome = "none";
