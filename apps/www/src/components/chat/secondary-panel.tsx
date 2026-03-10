@@ -92,7 +92,43 @@ export function findArtifactDescriptorForPart({
   artifacts: Pick<ArtifactDescriptor, "id" | "part">[];
   part: ArtifactWorkspaceComparablePart;
 }) {
-  return artifacts.find((artifact) => artifact.part === part) ?? null;
+  // Fast path: reference equality (same object instance).
+  const refMatch = artifacts.find((artifact) => artifact.part === part);
+  if (refMatch) return refMatch;
+
+  // Fallback: match by key content fields. Normalization (e.g. normalizeToolCall)
+  // may shallow-clone parts, breaking reference equality.
+  return (
+    artifacts.find((artifact) => partsContentEqual(artifact.part, part)) ?? null
+  );
+}
+
+/** Lightweight structural comparison using the identifying field(s) per part type. */
+function partsContentEqual(
+  a: ArtifactWorkspaceComparablePart,
+  b: ArtifactWorkspaceComparablePart,
+): boolean {
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case "image":
+      return a.image_url === (b as UIImagePart).image_url;
+    case "pdf":
+      return a.pdf_url === (b as UIPdfPart).pdf_url;
+    case "text-file":
+      return a.file_url === (b as UITextFilePart).file_url;
+    case "rich-text":
+      return a.nodes === (b as UIRichTextPart).nodes;
+    case "plan":
+      return (
+        "planText" in a &&
+        "planText" in b &&
+        a.planText === (b as UIPlanPart).planText
+      );
+    case "git-diff":
+      return a.diff === (b as UIGitDiffPart).diff;
+    default:
+      return false;
+  }
 }
 
 export function getArtifactWorkspaceViewState(
@@ -561,7 +597,24 @@ function TextFileArtifactRenderer({
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`);
         }
-        const content = await response.text();
+        // Cap preview at 512 KB to avoid memory spikes on large generated files.
+        const MAX_PREVIEW_BYTES = 512 * 1024;
+        const knownSize = Number(response.headers.get("content-length") || "0");
+        let content: string;
+        if (knownSize > MAX_PREVIEW_BYTES) {
+          // Skip loading entirely — prompt user to open raw.
+          content =
+            "[File too large for inline preview. Use \u201COpen raw\u201D to view.]";
+        } else {
+          const raw = await response.text();
+          if (raw.length > MAX_PREVIEW_BYTES) {
+            content =
+              raw.slice(0, MAX_PREVIEW_BYTES) +
+              "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---";
+          } else {
+            content = raw;
+          }
+        }
         setState({ status: "ready", content });
       } catch (error) {
         if (controller.signal.aborted) {

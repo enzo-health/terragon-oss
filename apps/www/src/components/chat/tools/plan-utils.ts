@@ -141,8 +141,9 @@ export function resolvePlanText({
   exitPlanModeToolId: string;
 }): string {
   let raw = "";
-  if (planParam) {
-    raw = planParam;
+  const trimmedPlan = planParam?.trim();
+  if (trimmedPlan) {
+    raw = trimmedPlan;
   } else {
     raw =
       findPlanFromWriteToolCall({

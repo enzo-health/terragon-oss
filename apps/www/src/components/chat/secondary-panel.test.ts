@@ -106,12 +106,13 @@ describe("secondary-panel artifact shell helpers", () => {
         part: originalPart,
       }),
     ).toBe(descriptor);
+    // Content-equal clone should also match (handles normalizeToolCall cloning)
     expect(
       findArtifactDescriptorForPart({
         artifacts: [descriptor],
         part: { ...originalPart },
       }),
-    ).toBeNull();
+    ).toBe(descriptor);
   });
 
   it("creates a plan artifact summary with correct labels for ExitPlanMode origin", () => {
