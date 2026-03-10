@@ -25,10 +25,10 @@ function countToolParts(parts: AllToolParts["parts"]) {
 
 export function TaskTool({
   toolPart,
-  ToolPartComponent,
+  renderToolPart,
 }: {
   toolPart: Extract<AllToolParts, { name: "Task" }>;
-  ToolPartComponent: React.ComponentType<{ toolPart: AllToolParts }>;
+  renderToolPart: (toolPart: AllToolParts) => React.ReactNode;
 }) {
   // Display the subagent_type if available, otherwise default to "Task"
   // If subagent_type is "general-purpose", also show "Task"
@@ -57,10 +57,7 @@ export function TaskTool({
       toolColor={toolColor}
       toolArgSuffix={toolCountSuffix}
     >
-      <TaskToolContent
-        toolPart={toolPart}
-        ToolPartComponent={ToolPartComponent}
-      />
+      <TaskToolContent toolPart={toolPart} renderToolPart={renderToolPart} />
     </GenericToolPart>
   );
 }
@@ -83,10 +80,10 @@ function getTaskToolResultOrNull(
 
 function TaskToolContent({
   toolPart,
-  ToolPartComponent,
+  renderToolPart,
 }: {
   toolPart: Extract<AllToolParts, { name: "Task" }>;
-  ToolPartComponent: React.ComponentType<{ toolPart: AllToolParts }>;
+  renderToolPart: (toolPart: AllToolParts) => React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -159,7 +156,7 @@ function TaskToolContent({
                 key={index}
                 index={index + indexOffset}
               >
-                <ToolPartComponent toolPart={part} />
+                {renderToolPart(part)}
               </GenericToolPartContentRow>
             );
           }

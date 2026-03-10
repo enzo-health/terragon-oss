@@ -6,7 +6,7 @@ import { secondaryPaneClosedAtom } from "@/atoms/user-cookies";
 import { atom, useAtom } from "jotai";
 import { usePlatform } from "@/hooks/use-platform";
 import { threadQueryKeys } from "@/queries/thread-queries";
-import { ThreadChatInfoFull, ThreadInfoFull } from "@terragon/shared/db/types";
+import { ThreadPageChat } from "@terragon/shared/db/types";
 import { useQueryClient } from "@tanstack/react-query";
 
 export function useMarkChatAsRead({
@@ -112,20 +112,30 @@ export function useOptimisticUpdateThreadChat({
   threadChatId: string | undefined;
 }) {
   const queryClient = useQueryClient();
+
+  type ThreadChatOptimisticUpdates =
+    | Partial<ThreadPageChat>
+    | ((currentChat: ThreadPageChat) => Partial<ThreadPageChat>);
+
   return useCallback(
-    (updates: Partial<ThreadChatInfoFull>) => {
+    (updatesOrUpdater: ThreadChatOptimisticUpdates) => {
       if (!threadId || !threadChatId) {
         return;
       }
-      queryClient.setQueryData<ThreadInfoFull>(
-        threadQueryKeys.detail(threadId),
+      queryClient.setQueryData<ThreadPageChat>(
+        threadQueryKeys.chat(threadId, threadChatId),
         (oldData) => {
           if (!oldData) return oldData;
+          const updates =
+            typeof updatesOrUpdater === "function"
+              ? updatesOrUpdater(oldData)
+              : updatesOrUpdater;
+          const nextMessages = updates.messages ?? oldData.messages ?? [];
           return {
             ...oldData,
-            threadChats: oldData.threadChats.map((tc) =>
-              tc.id === threadChatId ? { ...tc, ...updates } : tc,
-            ),
+            ...updates,
+            messages: nextMessages,
+            messageCount: nextMessages.length,
           };
         },
       );

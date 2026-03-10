@@ -3,22 +3,25 @@ import { AllToolParts } from "@terragon/shared";
 import { GenericToolPart } from "./generic-ui";
 import { Button } from "../../ui/button";
 import { Check, X } from "lucide-react";
-import { useThread } from "../thread-context";
 import { respondToPermission } from "@/server-actions/respond-to-permission";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 export function PermissionRequestTool({
   toolPart,
+  threadId,
+  threadChatId,
+  isReadOnly,
 }: {
   toolPart: Extract<AllToolParts, { name: "PermissionRequest" }>;
+  threadId: string;
+  threadChatId: string;
+  isReadOnly: boolean;
 }) {
-  const { threadChat, isReadOnly } = useThread();
-
   const shouldShowButtons = useMemo(() => {
-    if (isReadOnly || !threadChat) return false;
+    if (isReadOnly) return false;
     // Only show buttons if this tool call is still pending (no result yet)
     return toolPart.status === "pending";
-  }, [isReadOnly, threadChat, toolPart.status]);
+  }, [isReadOnly, toolPart.status]);
 
   const respondMutation = useServerActionMutation({
     mutationFn: respondToPermission,
@@ -26,15 +29,14 @@ export function PermissionRequestTool({
 
   const handleRespond = useCallback(
     async (optionId: string) => {
-      if (!threadChat) return;
       await respondMutation.mutateAsync({
-        threadId: threadChat.threadId,
-        threadChatId: threadChat.id,
+        threadId,
+        threadChatId,
         promptId: toolPart.id,
         optionId,
       });
     },
-    [threadChat, respondMutation, toolPart.id],
+    [threadChatId, threadId, respondMutation, toolPart.id],
   );
 
   const isCompleted =

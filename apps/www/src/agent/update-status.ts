@@ -19,6 +19,7 @@ export async function updateThreadChatWithTransition({
   rateLimitResetTime,
   updates,
   chatUpdates,
+  requireStatusTransitionForChatUpdates = false,
 }: {
   threadId: string;
   userId: string;
@@ -31,6 +32,7 @@ export async function updateThreadChatWithTransition({
     ThreadChatInsert,
     "threadChatId" | "status" | "reattemptQueueAt"
   >;
+  requireStatusTransitionForChatUpdates?: boolean;
 }): Promise<{
   didUpdateStatus: boolean;
   updatedStatus: ThreadStatus | undefined;
@@ -82,7 +84,10 @@ export async function updateThreadChatWithTransition({
       updates,
     });
   }
-  if (chatUpdates) {
+  if (
+    chatUpdates &&
+    (!requireStatusTransitionForChatUpdates || didUpdateStatus)
+  ) {
     await updateThreadChat({
       db,
       userId,

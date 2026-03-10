@@ -807,24 +807,51 @@ function useContentAndAttachedFiles({
   const [storedContentState, setStoredContentState] = useState<
     JSONContent | string
   >(initialContent ?? storedContentLocalStorage);
-  const setStoredContent = useCallback(
-    ({ htmlStr, isEmpty }: { htmlStr: string; isEmpty: boolean }) => {
-      setStoredContentState(htmlStr);
-      if (!disableLocalStorage) {
-        if (isEmpty) {
-          deleteStoredContentLocalStorage();
-        } else {
-          setStoredContentLocalStorage(htmlStr);
-        }
+  const [pendingStoredContent, setPendingStoredContent] = useState<{
+    htmlStr: string;
+    isEmpty: boolean;
+  } | null>(null);
+  const flushStoredContent = useCallback(
+    (nextValue: { htmlStr: string; isEmpty: boolean } | null) => {
+      if (!nextValue || disableLocalStorage) {
+        return;
+      }
+      if (nextValue.isEmpty) {
+        deleteStoredContentLocalStorage();
+      } else {
+        setStoredContentLocalStorage(nextValue.htmlStr);
       }
     },
     [
-      disableLocalStorage,
-      setStoredContentState,
-      setStoredContentLocalStorage,
       deleteStoredContentLocalStorage,
+      disableLocalStorage,
+      setStoredContentLocalStorage,
     ],
   );
+  const setStoredContent = useCallback(
+    ({ htmlStr, isEmpty }: { htmlStr: string; isEmpty: boolean }) => {
+      setStoredContentState(htmlStr);
+      setPendingStoredContent({ htmlStr, isEmpty });
+    },
+    [setStoredContentState],
+  );
+  useEffect(() => {
+    if (!pendingStoredContent || disableLocalStorage) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      flushStoredContent(pendingStoredContent);
+      setPendingStoredContent(null);
+    }, 500);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [disableLocalStorage, flushStoredContent, pendingStoredContent]);
+  useEffect(() => {
+    return () => {
+      flushStoredContent(pendingStoredContent);
+    };
+  }, [flushStoredContent, pendingStoredContent]);
   const [
     attachedFilesLocalStorage,
     setAttachedFilesLocalStorage,
@@ -841,21 +868,39 @@ function useContentAndAttachedFiles({
       return attachedFilesLocalStorage;
     },
   );
+  const persistAttachedFiles = useCallback(
+    (files: Attachment[]) => {
+      if (disableLocalStorage) {
+        return;
+      }
+      if (files.length) {
+        setAttachedFilesLocalStorage(files);
+      } else {
+        deleteAttachedFilesLocalStorage();
+      }
+    },
+    [
+      deleteAttachedFilesLocalStorage,
+      disableLocalStorage,
+      setAttachedFilesLocalStorage,
+    ],
+  );
   useEffect(() => {
     if (disableLocalStorage) {
       return;
     }
-    if (attachedFilesState.length) {
-      setAttachedFilesLocalStorage(attachedFilesState);
-    } else {
-      deleteAttachedFilesLocalStorage();
-    }
-  }, [
-    disableLocalStorage,
-    attachedFilesState,
-    setAttachedFilesLocalStorage,
-    deleteAttachedFilesLocalStorage,
-  ]);
+    const timeout = window.setTimeout(() => {
+      persistAttachedFiles(attachedFilesState);
+    }, 500);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [persistAttachedFiles, disableLocalStorage, attachedFilesState]);
+  useEffect(() => {
+    return () => {
+      persistAttachedFiles(attachedFilesState);
+    };
+  }, [attachedFilesState, persistAttachedFiles]);
   return {
     storedContent: storedContentState,
     setStoredContent,

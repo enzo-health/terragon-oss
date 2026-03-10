@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
-import { AllToolParts } from "@terragon/shared";
+import { AllToolParts, DBMessage } from "@terragon/shared";
 import { ReadTool } from "./tools/read-tool";
 import { WriteTool } from "./tools/write-tool";
 import { EditTool } from "./tools/edit-tool";
@@ -17,13 +17,35 @@ import { ExitPlanModeTool } from "./tools/exit-plan-mode-tool";
 import { PermissionRequestTool } from "./tools/permission-request-tool";
 import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
+import { PromptBoxRef } from "./thread-context";
+import { ChildThreadInfo } from "@terragon/shared/db/types";
+
+export type ToolPartProps = {
+  toolPart: AllToolParts;
+  threadId: string;
+  threadChatId: string;
+  messages: DBMessage[];
+  isReadOnly: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  childThreads: ChildThreadInfo[];
+  githubRepoFullName: string;
+  repoBaseBranchName: string;
+  branchName: string | null;
+};
 
 const ToolPart = memo(function ToolPart({
-  toolPart,
-}: {
-  toolPart: AllToolParts;
-}) {
-  toolPart = normalizeToolCall(toolPart.agent, toolPart);
+  toolPart: rawToolPart,
+  threadId,
+  threadChatId,
+  messages,
+  isReadOnly,
+  promptBoxRef,
+  childThreads,
+  githubRepoFullName,
+  repoBaseBranchName,
+  branchName,
+}: ToolPartProps) {
+  const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
   switch (toolPart.name) {
     case "Read":
       return (
@@ -103,7 +125,20 @@ const ToolPart = memo(function ToolPart({
       return (
         <TaskTool
           toolPart={toolPart as Extract<AllToolParts, { name: "Task" }>}
-          ToolPartComponent={ToolPart}
+          renderToolPart={(childToolPart) => (
+            <ToolPart
+              toolPart={childToolPart}
+              threadId={threadId}
+              threadChatId={threadChatId}
+              messages={messages}
+              isReadOnly={isReadOnly}
+              promptBoxRef={promptBoxRef}
+              childThreads={childThreads}
+              githubRepoFullName={githubRepoFullName}
+              repoBaseBranchName={repoBaseBranchName}
+              branchName={branchName}
+            />
+          )}
         />
       );
     case "WebFetch":
@@ -128,12 +163,21 @@ const ToolPart = memo(function ToolPart({
               { name: "SuggestFollowupTask" }
             >
           }
+          threadId={threadId}
+          childThreads={childThreads}
+          githubRepoFullName={githubRepoFullName}
+          repoBaseBranchName={repoBaseBranchName}
         />
       );
     case "ExitPlanMode":
       return (
         <ExitPlanModeTool
           toolPart={toolPart as Extract<AllToolParts, { name: "ExitPlanMode" }>}
+          threadId={threadId}
+          threadChatId={threadChatId}
+          messages={messages}
+          isReadOnly={isReadOnly}
+          promptBoxRef={promptBoxRef}
         />
       );
     case "PermissionRequest":
@@ -142,6 +186,9 @@ const ToolPart = memo(function ToolPart({
           toolPart={
             toolPart as Extract<AllToolParts, { name: "PermissionRequest" }>
           }
+          threadId={threadId}
+          threadChatId={threadChatId}
+          isReadOnly={isReadOnly}
         />
       );
     case "FileChange":
@@ -168,6 +215,40 @@ const ToolPart = memo(function ToolPart({
     default:
       return <DefaultTool toolPart={toolPart} />;
   }
-});
+}, areToolPartPropsEqual);
+
+function areToolPartPropsEqual(
+  prevProps: ToolPartProps,
+  nextProps: ToolPartProps,
+) {
+  if (prevProps.toolPart !== nextProps.toolPart) {
+    return false;
+  }
+  if (
+    prevProps.threadId !== nextProps.threadId ||
+    prevProps.threadChatId !== nextProps.threadChatId ||
+    prevProps.isReadOnly !== nextProps.isReadOnly ||
+    prevProps.promptBoxRef !== nextProps.promptBoxRef ||
+    prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
+    prevProps.repoBaseBranchName !== nextProps.repoBaseBranchName ||
+    prevProps.branchName !== nextProps.branchName
+  ) {
+    return false;
+  }
+
+  const normalizedToolPart = normalizeToolCall(
+    prevProps.toolPart.agent,
+    prevProps.toolPart,
+  );
+  switch (normalizedToolPart.name) {
+    case "SuggestFollowupTask":
+    case "mcp__terry__SuggestFollowupTask":
+      return prevProps.childThreads === nextProps.childThreads;
+    case "ExitPlanMode":
+      return prevProps.messages === nextProps.messages;
+    default:
+      return true;
+  }
+}
 
 export { ToolPart };

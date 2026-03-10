@@ -33,7 +33,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
-import { useThread } from "./chat/thread-context";
+import type { DBUserMessage } from "@terragon/shared";
 
 export function ThreadMenuDropdown({
   thread,
@@ -46,6 +46,7 @@ export function ThreadMenuDropdown({
   showReadUnreadActions = false,
   showShareAction = false,
   isReadOnly = false,
+  redoDialogData,
   // Event handlers
   onRenameClick,
   onMenuOpenChange,
@@ -61,6 +62,15 @@ export function ThreadMenuDropdown({
   showReadUnreadActions?: boolean;
   showShareAction?: boolean;
   isReadOnly?: boolean;
+  redoDialogData?: {
+    threadId: string;
+    repoFullName: string;
+    repoBaseBranchName: string;
+    disableGitCheckpointing: boolean;
+    skipSetup: boolean;
+    permissionMode: "allowAll" | "plan";
+    initialUserMessage: DBUserMessage;
+  };
   // Event handlers
   onRenameClick?: () => void;
   onMenuOpenChange?: (open: boolean) => void;
@@ -77,7 +87,6 @@ export function ThreadMenuDropdown({
   const unreadMutation = useUnreadThreadMutation();
   const userFlags = useAtomValue(userFlagsAtom);
   const user = useAtomValue(userAtom);
-  const { threadChat } = useThread();
   const isDraft = !!thread.draftMessage;
   const showShareItem = showShareAction && isSmallScreen && !isDraft;
   const openPullRequestMutation = useServerActionMutation({
@@ -190,7 +199,7 @@ export function ThreadMenuDropdown({
     }
 
     // Retry
-    if (showRedoTaskAction && threadChat && !isDraft) {
+    if (showRedoTaskAction && redoDialogData && !isDraft) {
       items.push({
         type: "button" as const,
         label: "Retry",
@@ -284,7 +293,7 @@ export function ThreadMenuDropdown({
     thread,
     showPullRequestActions,
     showRedoTaskAction,
-    threadChat,
+    redoDialogData,
     showReadUnreadActions,
     showRenameAction,
     isSmallScreen,
@@ -323,10 +332,15 @@ export function ThreadMenuDropdown({
           }
         }}
       />
-      {showRedoTaskAction && threadChat && (
+      {showRedoTaskAction && redoDialogData && (
         <RedoTaskDialog
-          thread={thread}
-          threadChat={threadChat}
+          threadId={redoDialogData.threadId}
+          repoFullName={redoDialogData.repoFullName}
+          repoBaseBranchName={redoDialogData.repoBaseBranchName}
+          disableGitCheckpointing={redoDialogData.disableGitCheckpointing}
+          skipSetup={redoDialogData.skipSetup}
+          permissionMode={redoDialogData.permissionMode}
+          initialUserMessage={redoDialogData.initialUserMessage}
           open={showRedoTaskDialog}
           onOpenChange={setShowRedoTaskDialog}
         />

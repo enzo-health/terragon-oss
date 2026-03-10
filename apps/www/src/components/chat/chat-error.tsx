@@ -71,7 +71,7 @@ function ChatErrorContents({
   return (
     <div className="flex flex-col gap-2 font-mono">
       <p className="text-xs font-medium flex items-center gap-1">{header}</p>
-      <p className="text-xs text-muted-foreground">{body}</p>
+      <div className="text-xs text-muted-foreground">{body}</div>
     </div>
   );
 }
@@ -92,7 +92,7 @@ function ChatErrorContentsWithPre({
     <div className="flex flex-col gap-2 font-mono">
       <p className="text-xs font-medium flex items-center gap-1">{header}</p>
       {errorStr && (
-        <p className="text-xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           {renderAnsi ? (
             <pre
               className="whitespace-pre-wrap break-words overflow-hidden"
@@ -105,7 +105,7 @@ function ChatErrorContentsWithPre({
               {errorStr}
             </pre>
           )}
-        </p>
+        </div>
       )}
     </div>
   );
