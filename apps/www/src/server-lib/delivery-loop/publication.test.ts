@@ -20,16 +20,23 @@ vi.mock("@terragon/env/next-public", () => ({
   publicAppUrl: vi.fn(() => "https://terragon.example"),
 }));
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
-  acquireSdlcLoopLease: vi.fn(),
-  claimNextSdlcOutboxActionForExecution: vi.fn(),
-  completeSdlcOutboxActionExecution: vi.fn(),
-  evaluateSdlcLoopGuardrails: vi.fn(),
-  persistSdlcCanonicalStatusCommentReference: vi.fn(),
-  clearSdlcCanonicalStatusCommentReference: vi.fn(),
-  persistSdlcCanonicalCheckRunReference: vi.fn(),
-  releaseSdlcLoopLease: vi.fn(),
-}));
+vi.mock("@terragon/shared/model/delivery-loop", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@terragon/shared/model/delivery-loop")
+    >();
+  return {
+    ...actual,
+    acquireSdlcLoopLease: vi.fn(),
+    claimNextSdlcOutboxActionForExecution: vi.fn(),
+    completeSdlcOutboxActionExecution: vi.fn(),
+    evaluateSdlcLoopGuardrails: vi.fn(),
+    persistSdlcCanonicalStatusCommentReference: vi.fn(),
+    clearSdlcCanonicalStatusCommentReference: vi.fn(),
+    persistSdlcCanonicalCheckRunReference: vi.fn(),
+    releaseSdlcLoopLease: vi.fn(),
+  };
+});
 
 const makeDb = (loop: Record<string, unknown>) =>
   ({

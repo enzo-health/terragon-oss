@@ -4,8 +4,8 @@ import { bearerTokenAtom, userAtom } from "@/atoms/user";
 import {
   type BroadcastClientMessage,
   type BroadcastMessage,
-  type BroadcastMessageThreadData,
   BroadcastSandboxMessage,
+  type BroadcastThreadPatch,
   type BroadcastUserMessage,
   getBroadcastChannelStr,
 } from "@terragon/types/broadcast";
@@ -141,7 +141,14 @@ function useRealtimeBase({
 
   useEffect(() => {
     if (!socket) return;
-    if (!trackReadyState) {
+    socket.addEventListener("message", onMessageWrapper);
+    return () => {
+      socket.removeEventListener("message", onMessageWrapper);
+    };
+  }, [socket, onMessageWrapper]);
+
+  useEffect(() => {
+    if (!socket || !trackReadyState) {
       return;
     }
     const onReadyStateChange = () => {
@@ -158,14 +165,12 @@ function useRealtimeBase({
     socket.addEventListener("open", onReadyStateChange);
     socket.addEventListener("close", onReadyStateChange);
     window.addEventListener("online", handleOnline);
-    socket.addEventListener("message", onMessageWrapper);
     return () => {
       socket.removeEventListener("open", onReadyStateChange);
       socket.removeEventListener("close", onReadyStateChange);
       window.removeEventListener("online", handleOnline);
-      socket.removeEventListener("message", onMessageWrapper);
     };
-  }, [socket, onMessageWrapper, trackReadyState]);
+  }, [socket, trackReadyState]);
 
   const sendMessage = useCallback(
     (message: BroadcastClientMessage) => {
@@ -184,9 +189,11 @@ function useRealtimeBase({
 export function useRealtimeUser({
   matches,
   onMessage,
+  debounceMs = 1000,
 }: {
   matches: (message: BroadcastUserMessage) => boolean;
   onMessage: (message: BroadcastUserMessage) => void;
+  debounceMs?: number;
 }) {
   const user = useAtomValue(userAtom);
   useRealtimeBase({
@@ -195,7 +202,7 @@ export function useRealtimeUser({
       type: "user",
       id: user?.id ?? "unknown",
     }),
-    debounceMs: 1000,
+    debounceMs,
     matches: (message) => {
       return message.type == "user" && matches(message);
     },
@@ -208,27 +215,36 @@ export function useRealtimeUser({
   });
 }
 
-export function useRealtimeThread(threadId: string, onChange: () => void) {
+export function getThreadPatches(
+  message: BroadcastUserMessage,
+): BroadcastThreadPatch[] {
+  return message.data.threadPatches ?? [];
+}
+
+export function useRealtimeThread(
+  threadId: string,
+  onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
+) {
   useRealtimeUser({
+    debounceMs: 0,
     matches: useCallback(
-      (args) => {
-        if (args.data.threadId === threadId) {
-          return true;
-        }
-        if (args.dataByThreadId?.[threadId]) {
-          return true;
-        }
-        return false;
-      },
+      (message) =>
+        getThreadPatches(message).some((patch) => patch.threadId === threadId),
       [threadId],
     ),
-    onMessage: onChange,
+    onMessage: (message) => {
+      const patches = getThreadPatches(message).filter(
+        (patch) => patch.threadId === threadId,
+      );
+      if (patches.length > 0) {
+        onThreadPatches(patches);
+      }
+    },
   });
 }
 
 export type BroadcastThreadMatchThread = (
-  threadId: string,
-  data: BroadcastMessageThreadData,
+  patch: BroadcastThreadPatch,
 ) => boolean;
 
 export function useRealtimeThreadMatch({
@@ -236,25 +252,23 @@ export function useRealtimeThreadMatch({
   onThreadChange,
 }: {
   matchThread: BroadcastThreadMatchThread;
-  onThreadChange: () => void;
+  onThreadChange: (patches: BroadcastThreadPatch[]) => void;
 }) {
   useRealtimeUser({
+    debounceMs: 0,
     matches: useCallback(
-      (args) => {
-        if (args.data.threadId && matchThread(args.data.threadId, args.data)) {
-          return true;
-        }
-        const dataByThreadId = args.dataByThreadId ?? {};
-        for (const [threadId, data] of Object.entries(dataByThreadId)) {
-          if (matchThread(threadId, data)) {
-            return true;
-          }
-        }
-        return false;
-      },
+      (message) =>
+        getThreadPatches(message).some((patch) => matchThread(patch)),
       [matchThread],
     ),
-    onMessage: onThreadChange,
+    onMessage: (message) => {
+      const patches = getThreadPatches(message).filter((patch) =>
+        matchThread(patch),
+      );
+      if (patches.length > 0) {
+        onThreadChange(patches);
+      }
+    },
   });
 }
 

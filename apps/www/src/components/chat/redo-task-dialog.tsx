@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,11 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useRouter } from "next/navigation";
-import type {
-  DBUserMessage,
-  ThreadChatInfoFull,
-  ThreadInfo,
-} from "@terragon/shared";
+import type { DBUserMessage } from "@terragon/shared";
 import { GenericPromptBox } from "../promptbox/generic-promptbox";
 import { redoThread } from "@/server-actions/redo-thread";
 import { RepoBranchSelector } from "../repo-branch-selector";
@@ -24,55 +20,57 @@ import {
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 export function RedoTaskDialog({
-  thread,
-  threadChat,
+  threadId,
+  repoFullName,
+  repoBaseBranchName,
+  disableGitCheckpointing,
+  skipSetup,
+  permissionMode,
+  initialUserMessage,
   open,
   onOpenChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  thread: ThreadInfo;
-  threadChat: ThreadChatInfoFull;
+  threadId: string;
+  repoFullName: string;
+  repoBaseBranchName: string;
+  disableGitCheckpointing: boolean;
+  skipSetup: boolean;
+  permissionMode: "allowAll" | "plan";
+  initialUserMessage: DBUserMessage;
 }) {
-  const permissionMode = threadChat.permissionMode ?? "allowAll";
-  const messages = useMemo(
-    () => threadChat.messages ?? [],
-    [threadChat.messages],
-  );
   const router = useRouter();
-  const [repoFullName, setRepoFullName] = useState<string>(
-    thread.githubRepoFullName,
-  );
-  const [branchName, setBranchName] = useState<string>(
-    thread.repoBaseBranchName,
-  );
+  const [selectedRepoFullName, setSelectedRepoFullName] =
+    useState<string>(repoFullName);
+  const [branchName, setBranchName] = useState<string>(repoBaseBranchName);
   const {
     createNewBranch,
     setCreateNewBranch,
-    disableGitCheckpointing,
-    skipSetup,
-    setDisableGitCheckpointing,
-    setSkipSetup,
+    disableGitCheckpointing: disableGitCheckpointingValue,
+    skipSetup: skipSetupValue,
+    setDisableGitCheckpointing: setDisableGitCheckpointingValue,
+    setSkipSetup: setSkipSetupValue,
     skipArchiving,
     setSkipArchiving,
   } = usePromptBoxToolBeltOptions({
     branchName,
     shouldUseCookieValues: false,
-    initialDisableGitCheckpointing: !!thread.disableGitCheckpointing,
-    initialSkipSetup: !!thread.skipSetup,
+    initialDisableGitCheckpointing: disableGitCheckpointing,
+    initialSkipSetup: skipSetup,
     initialCreateNewBranch: true,
   });
 
   const redoThreadMutation = useServerActionMutation({
     mutationFn: async ({ userMessage }: { userMessage: DBUserMessage }) => {
       return await redoThread({
-        threadId: thread.id,
+        threadId,
         userMessage,
-        repoFullName,
+        repoFullName: selectedRepoFullName,
         branchName,
-        disableGitCheckpointing,
+        disableGitCheckpointing: disableGitCheckpointingValue,
         skipArchiving,
-        skipSetup,
+        skipSetup: skipSetupValue,
       });
     },
     onSuccess: () => {
@@ -80,36 +78,6 @@ export function RedoTaskDialog({
       router.push("/dashboard");
     },
   });
-
-  const userMessageToRetry = useMemo(() => {
-    // Get the model from the last user message
-    let messageModel: DBUserMessage["model"] = null;
-    const msg: DBUserMessage = {
-      type: "user",
-      model: messageModel,
-      parts: [],
-    };
-    for (const message of messages || []) {
-      if (message.type === "user") {
-        // Get the model from the first user message we encounter
-        if (!messageModel && message.model) {
-          messageModel = message.model;
-          msg.model = messageModel;
-        }
-        msg.parts.push(...message.parts);
-        continue;
-      }
-      if (
-        message.type === "stop" ||
-        message.type === "error" ||
-        message.type === "meta"
-      ) {
-        continue;
-      }
-      break;
-    }
-    return msg;
-  }, [messages]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px] flex flex-col">
@@ -125,10 +93,10 @@ export function RedoTaskDialog({
             className="min-h-[200px] max-h-[80dvh]"
             placeholder="Edit your initial message..."
             message={{
-              ...userMessageToRetry,
+              ...initialUserMessage,
               permissionMode,
             }}
-            repoFullName={repoFullName}
+            repoFullName={selectedRepoFullName}
             branchName={branchName}
             onSubmit={redoThreadMutation.mutateAsync}
             hideSubmitButton={false}
@@ -138,11 +106,11 @@ export function RedoTaskDialog({
           />
           <div className="flex items-center justify-between">
             <RepoBranchSelector
-              selectedRepoFullName={repoFullName}
+              selectedRepoFullName={selectedRepoFullName}
               selectedBranch={branchName}
               onChange={(repoFullName, branchName) => {
                 if (repoFullName) {
-                  setRepoFullName(repoFullName);
+                  setSelectedRepoFullName(repoFullName);
                 }
                 if (branchName) {
                   setBranchName(branchName);
@@ -154,17 +122,17 @@ export function RedoTaskDialog({
               skipArchiveValue={skipArchiving}
               onSkipArchiveChange={setSkipArchiving}
               showSkipSetup={true}
-              skipSetupValue={skipSetup}
-              onSkipSetupChange={setSkipSetup}
-              skipSetupDisabled={!repoFullName}
+              skipSetupValue={skipSetupValue}
+              onSkipSetupChange={setSkipSetupValue}
+              skipSetupDisabled={!selectedRepoFullName}
               showCheckpoint={true}
-              checkpointValue={disableGitCheckpointing}
-              onCheckpointChange={setDisableGitCheckpointing}
-              checkpointDisabled={!repoFullName}
+              checkpointValue={disableGitCheckpointingValue}
+              onCheckpointChange={setDisableGitCheckpointingValue}
+              checkpointDisabled={!selectedRepoFullName}
               showCreateNewBranchOption={true}
               createNewBranchValue={createNewBranch}
               onCreateNewBranchChange={setCreateNewBranch}
-              createNewBranchDisabled={!repoFullName}
+              createNewBranchDisabled={!selectedRepoFullName}
             />
           </div>
         </div>

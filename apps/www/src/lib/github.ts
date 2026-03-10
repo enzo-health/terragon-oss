@@ -19,7 +19,6 @@ import { and, eq } from "drizzle-orm";
 import { decryptTokenWithBackwardsCompatibility } from "@terragon/utils/encryption";
 import { getPostHogServer } from "./posthog-server";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
-import { BroadcastMessageThreadData } from "@terragon/types/broadcast";
 import { updateThread } from "@terragon/shared/model/threads";
 import {
   getGitHubAccountIdForUser,
@@ -222,15 +221,16 @@ export async function updateGitHubPR({
   }
   await Promise.all(
     Object.entries(threadIdsByUserId).map(async ([userId, threadIds]) => {
-      const dataByThreadId: Record<string, BroadcastMessageThreadData> = {};
-      for (const threadId of threadIds) {
-        dataByThreadId[threadId] = {};
-      }
       await publishBroadcastUserMessage({
         type: "user",
         id: userId,
-        data: {},
-        dataByThreadId,
+        data: {
+          threadPatches: threadIds.map((threadId) => ({
+            threadId,
+            op: "refetch",
+            refetch: ["shell", "list"],
+          })),
+        },
       });
     }),
   );

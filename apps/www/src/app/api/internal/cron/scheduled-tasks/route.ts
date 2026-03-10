@@ -69,10 +69,22 @@ export async function GET(request: NextRequest) {
       sdlcPublicationDrain,
     );
 
+    const { drainDueDeliveryLoopRetryJobs } = await import(
+      "@/server-lib/delivery-loop/retry-jobs"
+    );
+    const deliveryLoopRetryDrain = await drainDueDeliveryLoopRetryJobs({
+      leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
+    });
+    console.log(
+      "Delivery Loop retry job durable drain completed",
+      deliveryLoopRetryDrain,
+    );
+
     return Response.json({
       success: true,
       sdlcSignalInboxDrain,
       sdlcPublicationDrain,
+      deliveryLoopRetryDrain,
     });
   } catch (error) {
     console.error("Error in scheduled tasks cron task:", error);

@@ -91,6 +91,3 @@ export function DeliveryLoopPlanReviewCard({
     </section>
   );
 }
-
-/** @deprecated Use DeliveryLoopPlanReviewCard */
-export const SdlcPlanReviewCard = DeliveryLoopPlanReviewCard;

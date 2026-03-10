@@ -11,12 +11,15 @@ import React, {
 import {
   DBMessage,
   DBUserMessage,
-  ThreadChatInfoFull,
   ThreadErrorMessage,
-  ThreadInfoFull,
+  ThreadStatus,
+  GithubPRStatus,
+  GithubCheckStatus,
+  ThreadChatInfoFull,
 } from "@terragon/shared";
+import { AIAgent } from "@terragon/agent/types";
 import { useRealtimeThread } from "@/hooks/useRealtime";
-import { toUIMessages } from "./toUIMessages";
+import { useIncrementalUIMessages } from "./toUIMessages";
 import {
   ChatMessages,
   WorkingMessage,
@@ -30,11 +33,14 @@ import { retryThread } from "@/server-actions/retry-thread";
 import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
 import { stopThread } from "@/server-actions/stop-thread";
 import { ChatError } from "./chat-error";
-import { ThreadProvider } from "./thread-context";
 import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { threadQueryOptions } from "@/queries/thread-queries";
-import dynamic from "next/dynamic";
+import {
+  threadChatQueryOptions,
+  threadDiffQueryOptions,
+  threadQueryKeys,
+  threadShellQueryOptions,
+} from "@/queries/thread-queries";
 import { isAgentWorking } from "@/agent/thread-status";
 import {
   useMarkChatAsRead,
@@ -52,16 +58,63 @@ import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { HandleSubmit } from "../promptbox/use-promptbox";
-import { TerminalPanel } from "./terminal-panel";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
 import { ensureAgent } from "@terragon/agent/utils";
-import { SecondaryPanel } from "./secondary-panel";
 import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { usePlatform } from "@/hooks/use-platform";
-import { DeliveryLoopTopProgressStepper } from "@/components/patterns/p-stepper-7";
+import dynamic from "next/dynamic";
+import { ThreadInfoFull } from "@terragon/shared";
+import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
+
+const TerminalPanel = dynamic(
+  () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
+  { ssr: false },
+);
+
+const SecondaryPanel = dynamic(
+  () => import("./secondary-panel").then((mod) => mod.SecondaryPanel),
+  { ssr: false },
+);
+
+const DeliveryLoopTopProgressStepper = dynamic(
+  () =>
+    import("@/components/patterns/p-stepper-7").then(
+      (mod) => mod.DeliveryLoopTopProgressStepper,
+    ),
+  { ssr: false },
+);
+
+function getInitialUserMessage(messages: DBMessage[]) {
+  let messageModel: DBUserMessage["model"] = null;
+  const initialUserMessage: DBUserMessage = {
+    type: "user",
+    model: null,
+    parts: [],
+  };
+
+  for (const message of messages) {
+    if (message.type === "user") {
+      if (!messageModel && message.model) {
+        messageModel = message.model;
+        initialUserMessage.model = message.model;
+      }
+      initialUserMessage.parts.push(...message.parts);
+      continue;
+    }
+    if (
+      message.type === "stop" ||
+      message.type === "error" ||
+      message.type === "meta"
+    ) {
+      continue;
+    }
+    break;
+  }
+
+  return initialUserMessage;
+}
 
 function ChatUI({
   threadId,
@@ -71,70 +124,250 @@ function ChatUI({
   isReadOnly: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { messagesEndRef, isAtBottom, forceScrollToBottom } =
-    useScrollToBottom();
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const { messagesEndRef, isAtBottom, forceScrollToBottom } = useScrollToBottom(
+    {
+      observedRef: transcriptRef,
+    },
+  );
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const platform = usePlatform();
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  const { shouldAutoOpenSecondaryPanel, setIsSecondaryPanelOpen } =
-    useSecondaryPanel();
+  const {
+    shouldAutoOpenSecondaryPanel,
+    isSecondaryPanelOpen,
+    setIsSecondaryPanelOpen,
+  } = useSecondaryPanel();
 
   const promptBoxRef = useRef<{
     focus: () => void;
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  // Use React Query to fetch thread data.
-  const {
-    data: thread,
-    refetch,
-    isLoading,
-  } = useQuery({
-    ...threadQueryOptions(threadId),
+  const { data: shell, isLoading: isShellLoading } = useQuery({
+    ...threadShellQueryOptions(threadId),
+  });
+  const threadChatId = shell?.primaryThreadChatId;
+  const { data: threadChat, isLoading: isThreadChatLoading } = useQuery({
+    ...(threadChatId
+      ? threadChatQueryOptions({ threadId, threadChatId })
+      : threadChatQueryOptions({
+          threadId,
+          threadChatId: "missing-thread-chat-id",
+        })),
+    enabled: threadChatId !== undefined,
+  });
+  const shouldLoadDiff = Boolean(
+    shell?.hasGitDiff &&
+      (isSecondaryPanelOpen ||
+        (shouldAutoOpenSecondaryPanel && platform === "desktop")),
+  );
+  const shouldRenderSecondaryPanel =
+    isSecondaryPanelOpen ||
+    (platform === "desktop" &&
+      shouldAutoOpenSecondaryPanel &&
+      Boolean(shell?.hasGitDiff));
+  const { data: threadDiff } = useQuery({
+    ...threadDiffQueryOptions(threadId),
+    enabled: shouldLoadDiff,
   });
 
-  const threadChat = thread ? getPrimaryThreadChat(thread) : null;
-  const threadChatId = threadChat?.id;
+  const dbMessages = useMemo(
+    () => (threadChat?.messages as DBMessage[]) ?? [],
+    [threadChat?.messages],
+  );
+  const queuedMessages = useMemo(
+    () =>
+      threadChat?.queuedMessages?.length
+        ? (threadChat.queuedMessages as DBUserMessage[])
+        : null,
+    [threadChat?.queuedMessages],
+  );
+
+  const threadPreviewChat = useMemo<ThreadChatInfoFull | null>(() => {
+    if (!shell) {
+      return null;
+    }
+    return {
+      id: shell.primaryThreadChat.id,
+      userId: shell.userId,
+      threadId: shell.id,
+      title: null,
+      createdAt: shell.createdAt,
+      updatedAt: shell.primaryThreadChat.updatedAt,
+      agent: shell.primaryThreadChat.agent,
+      agentVersion: shell.primaryThreadChat.agentVersion,
+      status: shell.primaryThreadChat.status,
+      messages: [],
+      queuedMessages: null,
+      sessionId: null,
+      errorMessage: shell.primaryThreadChat.errorMessage,
+      errorMessageInfo: shell.primaryThreadChat.errorMessageInfo,
+      scheduleAt: shell.primaryThreadChat.scheduleAt,
+      reattemptQueueAt: shell.primaryThreadChat.reattemptQueueAt,
+      contextLength: shell.primaryThreadChat.contextLength,
+      permissionMode: shell.primaryThreadChat.permissionMode,
+      codexPreviousResponseId: null,
+      isUnread: shell.primaryThreadChat.isUnread,
+    };
+  }, [shell]);
+
+  const thread = useMemo<ThreadInfoFull | null>(() => {
+    if (!shell || !threadPreviewChat) {
+      return null;
+    }
+    const {
+      hasGitDiff: _hasGitDiff,
+      primaryThreadChatId: _primaryThreadChatId,
+      primaryThreadChat: _primaryThreadChat,
+      ...threadShell
+    } = shell;
+    return {
+      ...threadShell,
+      gitDiff: threadDiff?.gitDiff ?? null,
+      threadChats: [threadPreviewChat],
+      childThreads: shell.childThreads,
+      parentThreadName: shell.parentThreadName,
+    };
+  }, [shell, threadDiff, threadPreviewChat]);
+
   const isSdlcLoopOptedIn =
-    thread?.sourceType === "www" &&
-    thread.sourceMetadata?.type === "www" &&
-    thread.sourceMetadata.sdlcLoopOptIn;
+    shell?.sourceType === "www" &&
+    shell.sourceMetadata?.type === "www" &&
+    shell.sourceMetadata.sdlcLoopOptIn;
   const shouldShowSdlcLoopStatus =
-    Boolean(isSdlcLoopOptedIn) || Boolean(thread?.githubPRNumber);
+    Boolean(isSdlcLoopOptedIn) || Boolean(shell?.githubPRNumber);
 
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
   // This will set the cookie if the panel is opened automatically
   useEffect(() => {
-    if (thread?.gitDiff && shouldAutoOpenSecondaryPanel) {
+    if (shell?.hasGitDiff && shouldAutoOpenSecondaryPanel) {
       setIsSecondaryPanelOpen(true);
       return;
     }
-  }, [thread?.gitDiff, shouldAutoOpenSecondaryPanel, setIsSecondaryPanelOpen]);
+  }, [
+    shell?.hasGitDiff,
+    shouldAutoOpenSecondaryPanel,
+    setIsSecondaryPanelOpen,
+  ]);
   useThreadDocumentTitleAndFavicon({
-    name: thread?.name ?? "",
-    isThreadUnread: !!thread?.isUnread,
+    name: shell?.name ?? "",
+    isThreadUnread: !!shell?.isUnread,
     isReadOnly,
   });
   useMarkChatAsRead({
     threadId,
     threadChatId,
-    threadIsUnread: !!thread?.isUnread,
+    threadIsUnread: !!shell?.isUnread,
     isReadOnly,
   });
-  useRealtimeThread(threadId, refetch);
-
-  const messages = useMemo(() => {
-    const dbMessages = (threadChat?.messages as DBMessage[]) ?? [];
-    const agent = ensureAgent(threadChat?.agent);
-    return toUIMessages({
-      dbMessages,
-      agent,
-      threadStatus: threadChat?.status,
+  useRealtimeThread(threadId, (patches) => {
+    patches.forEach((patch) => {
+      applyThreadPatchToQueryClient({ queryClient, patch });
     });
-  }, [threadChat]);
+  });
+
+  const chatAgent = ensureAgent(threadChat?.agent);
+  const hasCheckpoint = useMemo(
+    () => dbMessages.some((message) => message.type === "git-diff"),
+    [dbMessages],
+  );
+  const latestGitDiffTimestamp = useMemo(() => {
+    for (let index = dbMessages.length - 1; index >= 0; index--) {
+      const message = dbMessages[index];
+      if (message?.type === "git-diff") {
+        return message.timestamp ?? null;
+      }
+    }
+    return null;
+  }, [dbMessages]);
+  const lastUsedModel = useMemo(
+    () => getLastUserMessageModel(dbMessages),
+    [dbMessages],
+  );
+  const initialUserMessage = useMemo(
+    () => getInitialUserMessage(dbMessages),
+    [dbMessages],
+  );
+  const redoDialogData = useMemo(
+    () => ({
+      threadId,
+      repoFullName: thread?.githubRepoFullName ?? "",
+      repoBaseBranchName: thread?.repoBaseBranchName ?? "main",
+      disableGitCheckpointing: thread?.disableGitCheckpointing ?? false,
+      skipSetup: thread?.skipSetup ?? false,
+      permissionMode: threadChat?.permissionMode ?? "allowAll",
+      initialUserMessage,
+    }),
+    [
+      initialUserMessage,
+      thread?.disableGitCheckpointing,
+      thread?.githubRepoFullName,
+      thread?.repoBaseBranchName,
+      thread?.skipSetup,
+      threadChat?.permissionMode,
+      threadId,
+    ],
+  );
+  const forkDialogData = useMemo(
+    () => ({
+      threadId,
+      threadChatId: threadChat?.id ?? "",
+      repoFullName: thread?.githubRepoFullName ?? "",
+      repoBaseBranchName: thread?.repoBaseBranchName ?? "main",
+      branchName: thread?.branchName ?? null,
+      gitDiffStats: thread?.gitDiffStats ?? null,
+      disableGitCheckpointing: thread?.disableGitCheckpointing ?? false,
+      skipSetup: thread?.skipSetup ?? false,
+      agent: chatAgent,
+      lastSelectedModel: lastUsedModel,
+    }),
+    [
+      chatAgent,
+      lastUsedModel,
+      thread?.branchName,
+      thread?.disableGitCheckpointing,
+      thread?.gitDiffStats,
+      thread?.githubRepoFullName,
+      thread?.repoBaseBranchName,
+      thread?.skipSetup,
+      threadChat?.id,
+      threadId,
+    ],
+  );
+  const toolProps = useMemo(
+    () => ({
+      threadId,
+      threadChatId: threadChat?.id ?? "",
+      messages: dbMessages,
+      isReadOnly,
+      promptBoxRef,
+      childThreads: shell?.childThreads ?? [],
+      githubRepoFullName: thread?.githubRepoFullName ?? "",
+      repoBaseBranchName: thread?.repoBaseBranchName ?? "main",
+      branchName: thread?.branchName ?? null,
+    }),
+    [
+      dbMessages,
+      isReadOnly,
+      promptBoxRef,
+      shell?.childThreads,
+      thread?.branchName,
+      thread?.githubRepoFullName,
+      thread?.repoBaseBranchName,
+      threadChat?.id,
+      threadId,
+    ],
+  );
+  const messages = useIncrementalUIMessages({
+    dbMessages,
+    agent: chatAgent,
+    threadStatus: threadChat?.status,
+    cacheKey: threadChatId ?? threadId,
+  });
   const artifactDescriptors = useMemo(
     () =>
       getArtifactDescriptors({
@@ -234,7 +467,14 @@ function ChatUI({
       setError(null);
     },
     onSuccess: () => {
-      refetch();
+      if (threadChatId) {
+        void queryClient.invalidateQueries({
+          queryKey: threadQueryKeys.chat(threadId, threadChatId),
+        });
+      }
+      void queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.shell(threadId),
+      });
     },
     onError: (error) => {
       setError(unwrapError(error));
@@ -248,43 +488,68 @@ function ChatUI({
     await retryMutation.mutateAsync();
   };
 
-  if (isLoading || !thread || !threadChat) {
+  const refetchActiveChat = useCallback(() => {
+    if (!threadChatId) {
+      return Promise.resolve();
+    }
+    return queryClient.invalidateQueries({
+      queryKey: threadQueryKeys.chat(threadId, threadChatId),
+    });
+  }, [queryClient, threadChatId, threadId]);
+
+  if (
+    isShellLoading ||
+    isThreadChatLoading ||
+    !thread ||
+    !threadChat ||
+    !shell
+  ) {
     return (
       <div className="flex flex-col h-[100dvh] w-full items-center justify-center">
         <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
-  const chatAgent = ensureAgent(threadChat?.agent);
   return (
-    <ThreadProvider
-      thread={thread}
-      threadChat={threadChat}
-      promptBoxRef={promptBoxRef}
-      isReadOnly={isReadOnly}
-    >
+    <>
       <div className="flex flex-col h-[100dvh] w-full">
         <ChatHeader
           thread={thread}
+          threadAgent={chatAgent}
+          redoDialogData={redoDialogData}
           isReadOnly={isReadOnly}
           onHeaderClick={platform === "mobile" ? scrollToTop : undefined}
           onTerminalClick={() => setShowTerminal(true)}
         />
-        <DeliveryLoopTopProgressStepper
-          threadId={threadId}
-          threadChatId={threadChatId ?? null}
-          enabled={shouldShowSdlcLoopStatus}
-        />
+        {shouldShowSdlcLoopStatus ? (
+          <DeliveryLoopTopProgressStepper
+            threadId={threadId}
+            threadChatId={threadChatId ?? null}
+            enabled={true}
+          />
+        ) : null}
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-hidden">
             <ScrollArea
               ref={scrollAreaRef}
               className="w-full h-full overflow-auto"
             >
-              <div className="flex flex-col flex-1 gap-2 w-full max-w-[800px] mx-auto px-4 mt-2 mb-4">
+              <div
+                ref={transcriptRef}
+                className="flex flex-col flex-1 gap-2 w-full max-w-[800px] mx-auto px-4 mt-2 mb-4"
+              >
                 <ChatMessages
                   messages={messages}
                   isAgentWorking={isAgentCurrentlyWorking}
+                  thread={thread}
+                  latestGitDiffTimestamp={latestGitDiffTimestamp}
+                  githubRepoFullName={thread.githubRepoFullName}
+                  branchName={thread.branchName}
+                  baseBranchName={thread.repoBaseBranchName}
+                  hasCheckpoint={hasCheckpoint}
+                  toolProps={toolProps}
+                  redoDialogData={redoDialogData}
+                  forkDialogData={forkDialogData}
                   artifactDescriptors={artifactDescriptors}
                   onOpenArtifact={handleOpenArtifact}
                 />
@@ -326,10 +591,23 @@ function ChatUI({
               />
               {!isReadOnly && (
                 <ChatPromptBox
-                  thread={thread}
-                  threadChat={threadChat}
+                  threadId={thread.id}
+                  threadChatId={threadChat.id}
+                  threadStatus={threadChat.status}
+                  queuedMessages={queuedMessages}
+                  permissionMode={threadChat.permissionMode ?? "allowAll"}
+                  prStatus={thread.prStatus}
+                  prChecksStatus={thread.prChecksStatus}
+                  githubPRNumber={thread.githubPRNumber}
+                  sandboxId={thread.codesandboxId}
+                  repoFullName={thread.githubRepoFullName}
+                  branchName={thread.branchName ?? thread.repoBaseBranchName}
+                  agent={chatAgent}
+                  agentVersion={threadChat.agentVersion}
+                  lastUsedModel={lastUsedModel}
+                  contextLength={threadChat.contextLength ?? null}
                   setError={setError}
-                  refetch={refetch}
+                  refetch={refetchActiveChat}
                   forceScrollToBottom={forceScrollToBottom}
                   isAtBottom={isAtBottom}
                   promptBoxRef={promptBoxRef}
@@ -337,13 +615,16 @@ function ChatUI({
               )}
             </ScrollArea>
           </div>
-          <SecondaryPanel
-            thread={thread}
-            artifactDescriptors={artifactDescriptors}
-            activeArtifactId={activeArtifactId}
-            onActiveArtifactChange={setActiveArtifactId}
-            containerRef={chatContainerRef}
-          />
+          {shouldRenderSecondaryPanel ? (
+            <SecondaryPanel
+              thread={thread}
+              artifactDescriptors={artifactDescriptors}
+              activeArtifactId={activeArtifactId}
+              onActiveArtifactChange={setActiveArtifactId}
+              containerRef={chatContainerRef}
+              messages={dbMessages}
+            />
+          ) : null}
         </div>
       </div>
       {showTerminal && thread.codesandboxId && (
@@ -354,182 +635,216 @@ function ChatUI({
           onClose={() => setShowTerminal(false)}
         />
       )}
-    </ThreadProvider>
+    </>
   );
 }
 
-function ChatPromptBox({
-  thread,
-  threadChat,
-  setError,
-  refetch,
-  isAtBottom,
-  forceScrollToBottom,
-  promptBoxRef,
-}: {
-  thread: ThreadInfoFull;
-  threadChat: ThreadChatInfoFull;
-  setError: (error: ThreadErrorMessage | null) => void;
-  isAtBottom: boolean;
-  forceScrollToBottom: () => void;
-  refetch: () => void;
-  promptBoxRef: React.RefObject<{
-    focus: () => void;
-    setPermissionMode: (mode: "allowAll" | "plan") => void;
-  } | null>;
-}) {
-  const threadId = thread.id;
-  const threadChatId = threadChat.id;
-  const chatAgent = ensureAgent(threadChat.agent);
-  const showContextUsageChip = useFeatureFlag("contextUsageChip");
-  // Don't immediately show the scroll button - wait for the page to scroll to the bottom first.
-  const [showScrollButton, setShowScrollButton] = useState(false);
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      setShowScrollButton(true);
-    }, 1000);
-    return () => clearTimeout(timeout);
-  }, []);
-
-  const lastUsedModel = useMemo(() => {
-    const dbMessages = (threadChat.messages as DBMessage[]) ?? [];
-    return getLastUserMessageModel(dbMessages);
-  }, [threadChat.messages]);
-
-  const updateThreadChat = useOptimisticUpdateThreadChat({
+const ChatPromptBox = memo(
+  function ChatPromptBox({
     threadId,
     threadChatId,
-  });
+    threadStatus,
+    queuedMessages,
+    permissionMode,
+    prStatus,
+    prChecksStatus,
+    githubPRNumber,
+    sandboxId,
+    repoFullName,
+    branchName,
+    agent,
+    agentVersion,
+    lastUsedModel,
+    contextLength,
+    setError,
+    refetch,
+    isAtBottom,
+    forceScrollToBottom,
+    promptBoxRef,
+  }: {
+    threadId: string;
+    threadChatId: string;
+    threadStatus: ThreadStatus | null;
+    queuedMessages: DBUserMessage[] | null;
+    permissionMode: "allowAll" | "plan";
+    prStatus: GithubPRStatus | null;
+    prChecksStatus: GithubCheckStatus | null;
+    githubPRNumber: number | null;
+    sandboxId: string | null;
+    repoFullName: string;
+    branchName: string;
+    agent: AIAgent;
+    agentVersion: number;
+    lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
+    contextLength: number | null;
+    setError: (error: ThreadErrorMessage | null) => void;
+    isAtBottom: boolean;
+    forceScrollToBottom: () => void;
+    refetch: () => Promise<unknown>;
+    promptBoxRef: React.RefObject<{
+      focus: () => void;
+      setPermissionMode: (mode: "allowAll" | "plan") => void;
+    } | null>;
+  }) {
+    const chatAgent = ensureAgent(agent);
+    const showContextUsageChip = useFeatureFlag("contextUsageChip");
+    // Don't immediately show the scroll button - wait for the page to scroll to the bottom first.
+    const [showScrollButton, setShowScrollButton] = useState(false);
+    useEffect(() => {
+      const timeout = setTimeout(() => {
+        setShowScrollButton(true);
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }, []);
 
-  const handleSubmit = useCallback<HandleSubmit>(
-    async ({ userMessage }) => {
-      const plainText = convertToPlainText({ message: userMessage });
-      if (plainText.length === 0) {
-        return;
-      }
-      forceScrollToBottom();
-      setError(null);
-      // Optimistically add the message to the thread
-      const optimisticStatus =
-        plainText.trim() === "/clear" ? "complete" : "booting";
-      updateThreadChat({
-        messages: [...(threadChat.messages ?? []), userMessage],
-        errorMessage: null,
-        errorMessageInfo: null,
-        status: optimisticStatus,
-      });
-      const followUpResult = await followUp({
-        threadId,
-        threadChatId,
-        message: userMessage,
-      });
-      if (!followUpResult.success) {
-        setError(followUpResult.errorMessage);
-        // Revert optimistic update on error
-        refetch();
-        return;
-      }
-    },
-    [
+    const updateThreadChat = useOptimisticUpdateThreadChat({
       threadId,
       threadChatId,
-      threadChat,
-      updateThreadChat,
-      refetch,
-      setError,
-      forceScrollToBottom,
-    ],
-  );
+    });
 
-  const handleStop = useCallback(async () => {
-    await stopThread({ threadId, threadChatId });
-    refetch();
-  }, [threadId, threadChatId, refetch]);
-
-  const updateQueuedMessages = useCallback(
-    async (messages: DBUserMessage[]) => {
-      updateThreadChat({ queuedMessages: messages });
-      const queueFollowUpResult = await queueFollowUp({
+    const handleSubmit = useCallback<HandleSubmit>(
+      async ({ userMessage }) => {
+        const plainText = convertToPlainText({ message: userMessage });
+        if (plainText.length === 0) {
+          return;
+        }
+        forceScrollToBottom();
+        setError(null);
+        // Optimistically add the message to the thread
+        const optimisticStatus =
+          plainText.trim() === "/clear" ? "complete" : "booting";
+        updateThreadChat((currentChat) => ({
+          messages: [...(currentChat.messages ?? []), userMessage],
+          errorMessage: null,
+          errorMessageInfo: null,
+          status: optimisticStatus,
+        }));
+        const followUpResult = await followUp({
+          threadId,
+          threadChatId,
+          message: userMessage,
+        });
+        if (!followUpResult.success) {
+          setError(followUpResult.errorMessage);
+          // Revert optimistic update on error
+          refetch();
+          return;
+        }
+      },
+      [
         threadId,
         threadChatId,
-        messages,
-      });
-      if (!queueFollowUpResult.success) {
-        setError(queueFollowUpResult.errorMessage);
-        refetch();
-        return;
-      }
-    },
-    [threadId, threadChatId, updateThreadChat, refetch, setError],
-  );
+        updateThreadChat,
+        refetch,
+        setError,
+        forceScrollToBottom,
+      ],
+    );
 
-  const handleQueueMessage = useCallback(
-    async ({ userMessage }: { userMessage: DBUserMessage }) => {
-      const plainText = convertToPlainText({ message: userMessage });
-      if (plainText.length === 0) {
-        return;
-      }
-      updateQueuedMessages([...(threadChat.queuedMessages ?? []), userMessage]);
-    },
-    [threadChat, updateQueuedMessages],
-  );
+    const handleStop = useCallback(async () => {
+      await stopThread({ threadId, threadChatId });
+      await refetch();
+    }, [threadId, threadChatId, refetch]);
 
-  return (
-    <div className="sticky bottom-0 z-10 bg-background chat-prompt-box px-6 max-w-[800px] w-full mx-auto">
-      <div className="flex h-0 items-center justify-center">
-        <button
-          onClick={forceScrollToBottom}
-          className={cn(
-            "z-20 -mt-20 flex size-8 items-center justify-center rounded-full bg-background/80 border border-foreground/20 backdrop-blur-md shadow-md transition-all duration-200 hover:bg-background/90 hover:border-foreground/30",
-            showScrollButton && !isAtBottom
-              ? "opacity-100 translate-y-0"
-              : "opacity-0 translate-y-2 pointer-events-none",
-          )}
-          aria-label="Scroll to bottom"
-        >
-          <ArrowDown className="size-5" />
-        </button>
-      </div>
-      {showContextUsageChip ? (
-        <ContextChip
-          contextLength={threadChat?.contextLength ?? null}
-          showAlways={chatAgent === "claudeCode"}
-        />
-      ) : (
-        <ContextWarning contextLength={threadChat?.contextLength ?? null} />
-      )}
-      <ThreadPromptBox
-        ref={promptBoxRef}
-        threadId={thread.id}
-        threadChatId={threadChat.id}
-        status={threadChat.status}
-        prStatus={thread.prStatus}
-        prChecksStatus={thread.prChecksStatus}
-        githubPRNumber={thread.githubPRNumber}
-        sandboxId={thread.codesandboxId}
-        repoFullName={thread.githubRepoFullName}
-        branchName={thread.branchName ?? thread.repoBaseBranchName}
-        agent={chatAgent}
-        agentVersion={threadChat.agentVersion}
-        lastUsedModel={lastUsedModel}
-        permissionMode={threadChat.permissionMode ?? "allowAll"}
-        handleStop={handleStop}
-        handleSubmit={handleSubmit}
-        queuedMessages={
-          threadChat.queuedMessages?.length
-            ? (threadChat.queuedMessages as DBUserMessage[])
-            : null
+    const updateQueuedMessages = useCallback(
+      async (messages: DBUserMessage[]) => {
+        updateThreadChat({ queuedMessages: messages });
+        const queueFollowUpResult = await queueFollowUp({
+          threadId,
+          threadChatId,
+          messages,
+        });
+        if (!queueFollowUpResult.success) {
+          setError(queueFollowUpResult.errorMessage);
+          refetch();
+          return;
         }
-        handleQueueMessage={handleQueueMessage}
-        onUpdateQueuedMessage={updateQueuedMessages}
-      />
-    </div>
-  );
-}
+      },
+      [threadId, threadChatId, updateThreadChat, refetch, setError],
+    );
+
+    const handleQueueMessage = useCallback(
+      async ({ userMessage }: { userMessage: DBUserMessage }) => {
+        const plainText = convertToPlainText({ message: userMessage });
+        if (plainText.length === 0) {
+          return;
+        }
+        updateQueuedMessages([...(queuedMessages ?? []), userMessage]);
+      },
+      [queuedMessages, updateQueuedMessages],
+    );
+
+    return (
+      <div className="sticky bottom-0 z-10 bg-background chat-prompt-box px-6 max-w-[800px] w-full mx-auto">
+        <div className="flex h-0 items-center justify-center">
+          <button
+            onClick={forceScrollToBottom}
+            className={cn(
+              "z-20 -mt-20 flex size-8 items-center justify-center rounded-full bg-background/80 border border-foreground/20 backdrop-blur-md shadow-md transition-all duration-200 hover:bg-background/90 hover:border-foreground/30",
+              showScrollButton && !isAtBottom
+                ? "opacity-100 translate-y-0"
+                : "opacity-0 translate-y-2 pointer-events-none",
+            )}
+            aria-label="Scroll to bottom"
+          >
+            <ArrowDown className="size-5" />
+          </button>
+        </div>
+        {showContextUsageChip ? (
+          <ContextChip
+            contextLength={contextLength}
+            showAlways={chatAgent === "claudeCode"}
+          />
+        ) : (
+          <ContextWarning contextLength={contextLength} />
+        )}
+        <ThreadPromptBox
+          ref={promptBoxRef}
+          threadId={threadId}
+          threadChatId={threadChatId}
+          status={threadStatus}
+          prStatus={prStatus}
+          prChecksStatus={prChecksStatus}
+          githubPRNumber={githubPRNumber}
+          sandboxId={sandboxId}
+          repoFullName={repoFullName}
+          branchName={branchName}
+          agent={chatAgent}
+          agentVersion={agentVersion}
+          lastUsedModel={lastUsedModel}
+          permissionMode={permissionMode}
+          handleStop={handleStop}
+          handleSubmit={handleSubmit}
+          queuedMessages={queuedMessages}
+          handleQueueMessage={handleQueueMessage}
+          onUpdateQueuedMessage={updateQueuedMessages}
+        />
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.threadId === next.threadId &&
+    prev.threadChatId === next.threadChatId &&
+    prev.threadStatus === next.threadStatus &&
+    prev.queuedMessages === next.queuedMessages &&
+    prev.permissionMode === next.permissionMode &&
+    prev.prStatus === next.prStatus &&
+    prev.prChecksStatus === next.prChecksStatus &&
+    prev.githubPRNumber === next.githubPRNumber &&
+    prev.sandboxId === next.sandboxId &&
+    prev.repoFullName === next.repoFullName &&
+    prev.branchName === next.branchName &&
+    prev.agent === next.agent &&
+    prev.agentVersion === next.agentVersion &&
+    prev.lastUsedModel === next.lastUsedModel &&
+    prev.contextLength === next.contextLength &&
+    prev.isAtBottom === next.isAtBottom &&
+    prev.forceScrollToBottom === next.forceScrollToBottom &&
+    prev.refetch === next.refetch &&
+    prev.setError === next.setError &&
+    prev.promptBoxRef === next.promptBoxRef,
+);
 
 const ChatUIMemo = memo(ChatUI);
 
-// Dynamic export with SSR disabled to prevent UI from scrolling when an update comes in
-export default dynamic(() => Promise.resolve(ChatUIMemo), {
-  ssr: false,
-});
+export default ChatUIMemo;

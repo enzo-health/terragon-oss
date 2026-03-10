@@ -30,11 +30,10 @@ import {
   type ParsedDiffFile,
 } from "@/lib/git-diff";
 import { Button } from "@/components/ui/button";
-import type { DBUserMessage } from "@terragon/shared";
+import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
 import { ImageDiffView } from "@/components/chat/image-diff-view";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { useThread } from "./thread-context";
 import { followUp } from "@/server-actions/follow-up";
 import { useOptimisticUpdateThreadChat } from "./hooks";
 import { convertToPlainText } from "@/lib/db-message-helpers";
@@ -55,6 +54,8 @@ interface GitDiffViewProps {
   mode?: "split" | "unified";
   enableComments?: boolean;
   diffPart?: UIGitDiffPart;
+  threadChatId?: string;
+  threadMessages?: DBMessage[];
 }
 
 interface FileTreeNode {
@@ -149,6 +150,8 @@ interface FileDiffWrapperProps {
   theme: string | undefined;
   thread: ThreadInfoFull;
   enableComments: boolean;
+  threadChatId?: string;
+  threadMessages?: DBMessage[];
   forceUnified?: boolean;
 }
 
@@ -165,6 +168,8 @@ interface CommentWidgetProps {
   onClose: () => void;
   fileName: string;
   thread: ThreadInfoFull;
+  threadChatId?: string;
+  threadMessages?: DBMessage[];
   isAddition: boolean;
 }
 
@@ -174,10 +179,10 @@ function CommentWidget({
   onClose,
   fileName,
   thread,
+  threadChatId,
+  threadMessages,
   isAddition,
 }: CommentWidgetProps) {
-  const { threadChat } = useThread();
-  const threadChatId = threadChat?.id;
   const updateThreadChat = useOptimisticUpdateThreadChat({
     threadId: thread.id,
     threadChatId,
@@ -192,7 +197,7 @@ function CommentWidget({
   }: {
     userMessage: DBUserMessage;
   }) => {
-    if (!threadChatId || !threadChat) return;
+    if (!threadChatId || !threadMessages) return;
     const plainText = convertToPlainText({ message: userMessage });
     if (plainText.length === 0) return;
 
@@ -205,7 +210,7 @@ function CommentWidget({
 
     // Optimistic update
     updateThreadChat({
-      messages: [...(threadChat.messages ?? []), contextualMessage],
+      messages: [...threadMessages, contextualMessage],
       errorMessage: null,
       errorMessageInfo: null,
       status: "booting",
@@ -295,6 +300,8 @@ function FileDiffWrapper({
   theme,
   thread,
   enableComments,
+  threadChatId,
+  threadMessages,
   forceUnified = false,
   isImageDiffViewEnabled = false,
 }: FileDiffWrapperProps & { isImageDiffViewEnabled?: boolean }) {
@@ -459,6 +466,8 @@ function FileDiffWrapper({
                   onClose={closeActiveAnnotation}
                   fileName={parsedFile.fileName}
                   thread={thread}
+                  threadChatId={threadChatId}
+                  threadMessages={threadMessages}
                   isAddition={annotation.metadata?.isAddition ?? false}
                 />
               )}
@@ -702,6 +711,8 @@ export function GitDiffView({
   thread,
   enableComments = false,
   diffPart,
+  threadChatId,
+  threadMessages,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const fileTreeId = useId();
@@ -973,6 +984,8 @@ export function GitDiffView({
                   theme={resolvedTheme}
                   thread={thread}
                   enableComments={enableComments}
+                  threadChatId={threadChatId}
+                  threadMessages={threadMessages}
                   isImageDiffViewEnabled={isImageDiffViewEnabled}
                 />
               </div>

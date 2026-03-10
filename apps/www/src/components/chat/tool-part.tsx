@@ -2,6 +2,7 @@ import React, { memo } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
 import {
   AllToolParts,
+  DBMessage,
   type UIImagePart,
   type UIPdfPart,
   type UIRichTextPart,
@@ -29,17 +30,39 @@ import { TextFilePart } from "./text-file-part";
 import { PdfPart } from "./pdf-part";
 import { ImagePart } from "./image-part";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
+import { PromptBoxRef } from "./thread-context";
+import { ChildThreadInfo } from "@terragon/shared/db/types";
 
-const ToolPart = memo(function ToolPart({
-  toolPart,
-  artifactDescriptors = [],
-  onOpenArtifact,
-}: {
+export type ToolPartProps = {
   toolPart: AllToolParts;
+  threadId: string;
+  threadChatId: string;
+  messages: DBMessage[];
+  isReadOnly: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  childThreads: ChildThreadInfo[];
+  githubRepoFullName: string;
+  repoBaseBranchName: string;
+  branchName: string | null;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
-}) {
-  toolPart = normalizeToolCall(toolPart.agent, toolPart);
+};
+
+const ToolPart = memo(function ToolPart({
+  toolPart: rawToolPart,
+  threadId,
+  threadChatId,
+  messages,
+  isReadOnly,
+  promptBoxRef,
+  childThreads,
+  githubRepoFullName,
+  repoBaseBranchName,
+  branchName,
+  artifactDescriptors = [],
+  onOpenArtifact,
+}: ToolPartProps) {
+  const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
 
   const renderedTool = (() => {
     switch (toolPart.name) {
@@ -127,9 +150,22 @@ const ToolPart = memo(function ToolPart({
         return (
           <TaskTool
             toolPart={toolPart as Extract<AllToolParts, { name: "Task" }>}
-            ToolPartComponent={ToolPart}
-            artifactDescriptors={artifactDescriptors}
-            onOpenArtifact={onOpenArtifact}
+            renderToolPart={(childToolPart) => (
+              <ToolPart
+                toolPart={childToolPart}
+                threadId={threadId}
+                threadChatId={threadChatId}
+                messages={messages}
+                isReadOnly={isReadOnly}
+                promptBoxRef={promptBoxRef}
+                childThreads={childThreads}
+                githubRepoFullName={githubRepoFullName}
+                repoBaseBranchName={repoBaseBranchName}
+                branchName={branchName}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
+              />
+            )}
           />
         );
       case "WebFetch":
@@ -154,6 +190,10 @@ const ToolPart = memo(function ToolPart({
                 { name: "SuggestFollowupTask" }
               >
             }
+            threadId={threadId}
+            childThreads={childThreads}
+            githubRepoFullName={githubRepoFullName}
+            repoBaseBranchName={repoBaseBranchName}
           />
         );
       case "ExitPlanMode":
@@ -162,6 +202,11 @@ const ToolPart = memo(function ToolPart({
             toolPart={
               toolPart as Extract<AllToolParts, { name: "ExitPlanMode" }>
             }
+            threadId={threadId}
+            threadChatId={threadChatId}
+            messages={messages}
+            isReadOnly={isReadOnly}
+            promptBoxRef={promptBoxRef}
             artifactDescriptors={artifactDescriptors}
             onOpenArtifact={onOpenArtifact}
           />
@@ -172,6 +217,9 @@ const ToolPart = memo(function ToolPart({
             toolPart={
               toolPart as Extract<AllToolParts, { name: "PermissionRequest" }>
             }
+            threadId={threadId}
+            threadChatId={threadChatId}
+            isReadOnly={isReadOnly}
           />
         );
       case "FileChange":
@@ -269,6 +317,42 @@ const ToolPart = memo(function ToolPart({
       </div>
     </div>
   );
-});
+}, areToolPartPropsEqual);
+
+function areToolPartPropsEqual(
+  prevProps: ToolPartProps,
+  nextProps: ToolPartProps,
+) {
+  if (prevProps.toolPart !== nextProps.toolPart) {
+    return false;
+  }
+  if (
+    prevProps.threadId !== nextProps.threadId ||
+    prevProps.threadChatId !== nextProps.threadChatId ||
+    prevProps.isReadOnly !== nextProps.isReadOnly ||
+    prevProps.promptBoxRef !== nextProps.promptBoxRef ||
+    prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
+    prevProps.repoBaseBranchName !== nextProps.repoBaseBranchName ||
+    prevProps.branchName !== nextProps.branchName ||
+    prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact
+  ) {
+    return false;
+  }
+
+  const normalizedToolPart = normalizeToolCall(
+    prevProps.toolPart.agent,
+    prevProps.toolPart,
+  );
+  switch (normalizedToolPart.name) {
+    case "SuggestFollowupTask":
+    case "mcp__terry__SuggestFollowupTask":
+      return prevProps.childThreads === nextProps.childThreads;
+    case "ExitPlanMode":
+      return prevProps.messages === nextProps.messages;
+    default:
+      return true;
+  }
+}
 
 export { ToolPart };

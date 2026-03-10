@@ -1,7 +1,13 @@
 "use client";
 
 import { toast } from "sonner";
-import { ThreadInfo, ThreadInfoFull, ThreadVisibility } from "@terragon/shared";
+import {
+  DBUserMessage,
+  ThreadInfo,
+  ThreadInfoFull,
+  ThreadVisibility,
+} from "@terragon/shared";
+import { AIAgent } from "@terragon/agent/types";
 import { useCallback, useState, useEffect, memo } from "react";
 import {
   Terminal,
@@ -19,6 +25,7 @@ import {
 } from "lucide-react";
 import { PanelRight, PanelBottom } from "@/components/icons/panels";
 import { openPullRequest } from "@/server-actions/pull-request";
+import { getThreadPageDiffAction } from "@/server-actions/get-thread-page-diff";
 import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Checkbox } from "../ui/checkbox";
@@ -32,17 +39,28 @@ import { useAtomValue } from "jotai";
 import { userSettingsAtom } from "@/atoms/user";
 import posthog from "posthog-js";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
-import { useThread } from "./thread-context";
 import { useSecondaryPanel } from "./hooks";
 import { ARTIFACT_WORKSPACE_PANEL_ID } from "./secondary-panel";
 
 export const ChatHeaderButtons = memo(function ChatHeaderButtons({
   thread,
+  threadAgent,
+  redoDialogData,
   onRenameClick,
   isReadOnly = false,
   onTerminalClick,
 }: {
   thread: ThreadInfoFull;
+  threadAgent: AIAgent;
+  redoDialogData?: {
+    threadId: string;
+    repoFullName: string;
+    repoBaseBranchName: string;
+    disableGitCheckpointing: boolean;
+    skipSetup: boolean;
+    permissionMode: "allowAll" | "plan";
+    initialUserMessage: DBUserMessage;
+  };
   onRenameClick: () => void;
   isReadOnly?: boolean;
   onTerminalClick?: () => void;
@@ -61,6 +79,7 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
         {(!isReadOnly || isSmallScreen) && (
           <ThreadMenuDropdown
             thread={thread}
+            redoDialogData={redoDialogData}
             trigger={
               <Button variant="ghost" size="icon" aria-label="More options">
                 <MoreHorizontal className="size-4" />
@@ -99,7 +118,9 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
             />
           )}
         </Button>
-        {!isReadOnly && !isSmallScreen && <CodeButton thread={thread} />}
+        {!isReadOnly && !isSmallScreen && (
+          <CodeButton thread={thread} agent={threadAgent} />
+        )}
         {/* Hide ShareButton on mobile */}
         {!isSmallScreen && (
           <ShareButton thread={thread} isReadOnly={isReadOnly} />
@@ -117,13 +138,18 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
   );
 });
 
-function CodeButton({ thread }: { thread: ThreadInfoFull }) {
-  const { threadChat } = useThread();
+function CodeButton({
+  thread,
+  agent,
+}: {
+  thread: ThreadInfoFull;
+  agent: AIAgent;
+}) {
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [openClaude, setOpenClaude] = useState(false);
   // Check if this is a claude code agent
-  const isClaudeCodeAgent = threadChat?.agent === "claudeCode";
+  const isClaudeCodeAgent = agent === "claudeCode";
 
   // Load the preference from localStorage on mount
   useEffect(() => {
@@ -195,7 +221,7 @@ function CodeButton({ thread }: { thread: ThreadInfoFull }) {
                 copyToClipboard(pullCommand, "Copied pull command", "terry");
                 posthog.capture("terry_pull_command_copied", {
                   threadId: thread.id,
-                  agent: threadChat?.agent,
+                  agent,
                   withResume: isClaudeCodeAgent && openClaude,
                   hasDiff: !!thread.gitDiff,
                 });
@@ -242,17 +268,24 @@ function CodeButton({ thread }: { thread: ThreadInfoFull }) {
               variant="ghost"
               size="sm"
               className="w-full justify-start"
-              onClick={() => {
-                if (!thread.gitDiff) {
+              onClick={async () => {
+                let gitDiff = thread.gitDiff;
+                if (!gitDiff) {
+                  const diffResult = await getThreadPageDiffAction(thread.id);
+                  gitDiff = diffResult.success
+                    ? (diffResult.data?.gitDiff ?? null)
+                    : null;
+                }
+                if (!gitDiff) {
                   toast.error("No changes to copy");
                   return;
                 }
-                const patchCommand = `git apply - <<'PATCH'\n${thread.gitDiff}\nPATCH`;
+                const patchCommand = `git apply - <<'PATCH'\n${gitDiff}\nPATCH`;
                 copyToClipboard(patchCommand, "Copied patch command", "patch");
                 posthog.capture("git_patch_copied", {
                   threadId: thread.id,
-                  agent: threadChat?.agent,
-                  hasDiff: !!thread.gitDiff,
+                  agent,
+                  hasDiff: !!gitDiff,
                 });
               }}
             >

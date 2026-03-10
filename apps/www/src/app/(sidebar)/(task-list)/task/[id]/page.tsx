@@ -8,9 +8,12 @@ import {
   QueryClient,
   dehydrate,
 } from "@tanstack/react-query";
-import { threadQueryOptions } from "@/queries/thread-queries";
-import { ThreadInfoFull } from "@terragon/shared";
-import { getThreadAction } from "@/server-actions/get-thread";
+import {
+  threadChatQueryOptions,
+  threadShellQueryOptions,
+} from "@/queries/thread-queries";
+import { ThreadPageShell } from "@terragon/shared";
+import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
 import { unwrapResult } from "@/lib/server-actions";
 
 export async function generateMetadata({
@@ -23,10 +26,7 @@ export async function generateMetadata({
     return { title: "Task | Terragon" };
   }
   const { id } = await params;
-  const thread = unwrapResult(await getThreadAction(id));
-  if (!thread) {
-    return { title: "Task | Terragon" };
-  }
+  const thread = unwrapResult(await getThreadPageShellAction(id));
   return {
     title: getThreadDocumentTitle(thread),
   };
@@ -42,13 +42,20 @@ export default async function TaskPage({
   const userId = await getUserIdOrRedirect();
   const [{ id }, { readonly }] = await Promise.all([params, searchParams]);
   const queryClient = new QueryClient();
-  await queryClient.prefetchQuery(threadQueryOptions(id));
-  const thread = queryClient.getQueryData<ThreadInfoFull>(
-    threadQueryOptions(id).queryKey,
+  const shellOptions = threadShellQueryOptions(id);
+  await queryClient.prefetchQuery(shellOptions);
+  const thread = queryClient.getQueryData<ThreadPageShell>(
+    shellOptions.queryKey,
   );
   if (!thread) {
     return notFound();
   }
+  await queryClient.prefetchQuery(
+    threadChatQueryOptions({
+      threadId: id,
+      threadChatId: thread.primaryThreadChatId,
+    }),
+  );
   if (thread.draftMessage) {
     return redirect(`/dashboard`);
   }

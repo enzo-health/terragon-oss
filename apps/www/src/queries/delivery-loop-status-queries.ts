@@ -7,9 +7,6 @@ export const deliveryLoopStatusQueryKeys = {
     ["delivery-loop-status", "detail", threadId] as const,
 };
 
-/** @deprecated Use deliveryLoopStatusQueryKeys */
-export const sdlcLoopStatusQueryKeys = deliveryLoopStatusQueryKeys;
-
 export function deliveryLoopStatusQueryOptions(threadId: string) {
   return getServerActionQueryOptions({
     queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
@@ -20,9 +17,6 @@ export function deliveryLoopStatusQueryOptions(threadId: string) {
     refetchInterval: (query) => (query.state.data ? 30_000 : 120_000),
   });
 }
-
-/** @deprecated Use deliveryLoopStatusQueryOptions */
-export const sdlcLoopStatusQueryOptions = deliveryLoopStatusQueryOptions;
 
 export function useDeliveryLoopStatusQuery({
   threadId,
@@ -36,6 +30,3 @@ export function useDeliveryLoopStatusQuery({
     enabled,
   });
 }
-
-/** @deprecated Use useDeliveryLoopStatusQuery */
-export const useSdlcLoopStatusQuery = useDeliveryLoopStatusQuery;

@@ -1,6 +1,7 @@
 import { memo, useState, useMemo } from "react";
 import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { ThreadInfoFull } from "@terragon/shared";
 import {
   ChevronDown,
   ChevronRight,
@@ -10,7 +11,6 @@ import {
   FileDiff,
 } from "lucide-react";
 import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
-import { useThread } from "./thread-context";
 import { useTheme } from "next-themes";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
@@ -22,14 +22,17 @@ interface GitDiffPartProps {
   gitDiffPart: UIGitDiffPart;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
+  thread?: ThreadInfoFull | null;
+  isLatest?: boolean;
 }
 
 export const GitDiffPart = memo(function GitDiffPart({
   gitDiffPart,
   artifactDescriptors = [],
   onOpenArtifact,
+  thread = null,
+  isLatest = false,
 }: GitDiffPartProps) {
-  const { thread, threadChat } = useThread();
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
   const { resolvedTheme } = useTheme();
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
@@ -45,20 +48,6 @@ export const GitDiffPart = memo(function GitDiffPart({
       }),
     [artifactDescriptors, gitDiffPart],
   );
-
-  const isLatest = useMemo(() => {
-    if (!threadChat?.messages) {
-      return false;
-    }
-    const gitDiffMessages = threadChat.messages.filter(
-      (msg) => msg.type === "git-diff",
-    );
-    if (gitDiffMessages.length === 0) {
-      return false;
-    }
-    const lastGitDiffMessage = gitDiffMessages[gitDiffMessages.length - 1]!;
-    return lastGitDiffMessage.timestamp === gitDiffPart.timestamp;
-  }, [threadChat?.messages, gitDiffPart.timestamp]);
 
   const diffInstances = useMemo(() => {
     if (!gitDiffPart.diff || gitDiffPart.diff === "too-large") return [];

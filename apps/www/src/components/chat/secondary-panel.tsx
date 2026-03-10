@@ -9,6 +9,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import {
+  DBMessage,
   ThreadInfoFull,
   type UIGitDiffPart,
   type UIImagePart,
@@ -30,7 +31,6 @@ import { GitDiffView } from "./git-diff-view";
 import { RichTextPart } from "./rich-text-part";
 import { TextPart } from "./text-part";
 import { resolvePlanText } from "./tools/plan-utils";
-import { useThread } from "./thread-context";
 import { usePlatform } from "@/hooks/use-platform";
 import { useSecondaryPanel } from "./hooks";
 import { Button } from "@/components/ui/button";
@@ -240,12 +240,14 @@ export function SecondaryPanel({
   activeArtifactId,
   onActiveArtifactChange,
   containerRef,
+  messages = [],
 }: {
   thread: ThreadInfoFull;
   artifactDescriptors: ArtifactDescriptor[];
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   containerRef: React.RefObject<HTMLElement | null>;
+  messages?: DBMessage[];
 }) {
   const platform = usePlatform();
   const {
@@ -275,6 +277,7 @@ export function SecondaryPanel({
               return (
                 <PlanArtifactRenderer
                   descriptor={descriptor as PlanArtifactDescriptor}
+                  messages={messages}
                 />
               );
             default:
@@ -282,7 +285,7 @@ export function SecondaryPanel({
           }
         },
       })),
-    [artifactDescriptors, thread],
+    [artifactDescriptors, thread, messages],
   );
 
   const { width, setWidth, isResizing, handleMouseDown } = useResizablePanel({
@@ -757,18 +760,18 @@ function MediaArtifactRenderer({
 
 function PlanArtifactRenderer({
   descriptor,
+  messages = [],
 }: {
   descriptor: PlanArtifactDescriptor;
+  messages?: DBMessage[];
 }) {
-  const { threadChat } = useThread();
-
   const planText = useMemo(() => {
     // ExitPlanMode tool part — resolve plan text from parameters or Write fallback
     if (descriptor.origin.type === "plan-tool") {
       const toolPart = descriptor.part as ExitPlanModeToolPart;
       return resolvePlanText({
         planParam: toolPart.parameters?.plan,
-        messages: threadChat?.messages ?? null,
+        messages,
         exitPlanModeToolId: toolPart.id,
       });
     }
@@ -776,7 +779,7 @@ function PlanArtifactRenderer({
     // Delivery-loop plan — plan text is stored directly in the UIPlanPart
     const planPart = descriptor.part as UIPlanPart;
     return planPart.planText;
-  }, [descriptor, threadChat?.messages]);
+  }, [descriptor, messages]);
 
   return (
     <div className="h-full overflow-auto p-4">

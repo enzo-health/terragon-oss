@@ -16,7 +16,12 @@ import {
   SDLC_CAUSE_IDENTITY_VERSION,
   type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
-import { createDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
+import {
+  createDispatchIntent,
+  getReplayableSelfDispatch,
+  storeSelfDispatchReplay,
+  updateDispatchIntent,
+} from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   handleAckReceived,
   startAckTimeout,
@@ -44,7 +49,9 @@ import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   normalizedModelForDaemon,
   getDefaultModelForAgent,
+  shouldUseCredits,
 } from "@terragon/agent/utils";
+import { getUserCredentials } from "@/server-lib/user-credentials";
 import { randomUUID } from "node:crypto";
 
 type DaemonEventEnvelopeV2 = {
@@ -82,6 +89,13 @@ const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 
+/**
+ * Circuit breaker: maximum number of consecutive auto-dispatched follow-up
+ * runs (daemon_terminal with daemonRunStatus=completed) before we stop
+ * auto-dispatching to prevent infinite loops.
+ */
+const MAX_CONSECUTIVE_AUTO_DISPATCHES = 10;
+
 type DaemonTerminalErrorCategory =
   | "provider_not_configured"
   | "acp_sse_not_found"
@@ -97,6 +111,86 @@ type DaemonProcessingEventClaimResult =
       claimed: false;
       reason: "claim_in_progress" | "duplicate_event";
     };
+
+type TerminalAckBase = {
+  status?: number;
+  deduplicated?: true;
+  reason?: string;
+  loopId?: string;
+  runId?: string;
+  acknowledgedEventId: string | null;
+  acknowledgedSeq: number | null;
+};
+
+type TerminalAckState =
+  | (TerminalAckBase & { kind: "ack_only" })
+  | (TerminalAckBase & {
+      kind: "self_dispatch";
+      selfDispatch: SdlcSelfDispatchPayload;
+    });
+
+function buildTerminalAckState(
+  base: TerminalAckBase,
+  selfDispatch: SdlcSelfDispatchPayload | null,
+): TerminalAckState {
+  return selfDispatch
+    ? { ...base, kind: "self_dispatch", selfDispatch }
+    : { ...base, kind: "ack_only" };
+}
+
+function jsonTerminalAckResponse(state: TerminalAckState): Response {
+  return Response.json(
+    {
+      success: true,
+      ...(state.deduplicated ? { deduplicated: true } : {}),
+      ...(state.reason ? { reason: state.reason } : {}),
+      ...(state.loopId ? { loopId: state.loopId } : {}),
+      ...(state.runId ? { runId: state.runId } : {}),
+      acknowledgedEventId: state.acknowledgedEventId,
+      acknowledgedSeq: state.acknowledgedSeq,
+      ...(state.kind === "self_dispatch"
+        ? { selfDispatch: state.selfDispatch }
+        : {}),
+    },
+    { status: state.status ?? 200 },
+  );
+}
+
+/**
+ * Count trailing consecutive daemon_terminal signals with
+ * daemonRunStatus=completed for this loop. Any non-completed signal
+ * (failed, stopped, or non-daemon_terminal cause) resets the streak,
+ * so user-initiated actions or failures unblock the breaker.
+ */
+async function countConsecutiveCompletedAutoDispatches({
+  loopId,
+}: {
+  loopId: string;
+}): Promise<number> {
+  // Single query: count completed daemon_terminal signals that appear after
+  // the most recent non-completed one (i.e. trailing consecutive completed).
+  const result = await db.execute(sql`
+    SELECT count(*) AS count
+    FROM ${schema.sdlcLoopSignalInbox}
+    WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
+      AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
+      AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
+      AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
+      AND ${schema.sdlcLoopSignalInbox.processedAt} > COALESCE(
+        (SELECT ${schema.sdlcLoopSignalInbox.processedAt}
+         FROM ${schema.sdlcLoopSignalInbox}
+         WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
+           AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
+           AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
+           AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' != 'completed'
+         ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
+         LIMIT 1),
+        '1970-01-01'::timestamp
+      )
+  `);
+  const rows = result as unknown as Array<{ count: string | number }>;
+  return Number(rows[0]?.count ?? 0);
+}
 
 function getDaemonProcessingEventClaimKey({
   loopId,
@@ -206,7 +300,7 @@ function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: null,
+    maxIterations: 15,
     manualIntentAllowed: true,
     iterationCount,
   };
@@ -316,7 +410,7 @@ function deriveDaemonTerminalErrorInfo(
   };
 }
 
-function getSdlcDaemonRecoveryKey({
+function getDeliveryLoopDaemonRecoveryKey({
   loopId,
   loopVersion,
 }: {
@@ -829,16 +923,27 @@ export async function POST(request: Request) {
       runContext.status === "failed" ||
       runContext.status === "stopped"
     ) {
-      return Response.json(
-        {
-          success: true,
-          deduplicated: true,
-          reason: "run_terminal_ignored",
-          runId: runContext.runId,
-          acknowledgedEventId: envelopeV2?.eventId ?? null,
-          acknowledgedSeq: envelopeV2?.seq ?? null,
-        },
-        { status: 202 },
+      const replayedSelfDispatch =
+        envelopeV2 && threadChatId !== LEGACY_THREAD_CHAT_ID
+          ? await getReplayableSelfDispatch({
+              threadChatId,
+              sourceEventId: envelopeV2.eventId,
+              sourceSeq: envelopeV2.seq,
+              sourceRunId: runContext.runId,
+            })
+          : null;
+      return jsonTerminalAckResponse(
+        buildTerminalAckState(
+          {
+            status: 202,
+            deduplicated: true,
+            reason: "run_terminal_ignored",
+            runId: runContext.runId,
+            acknowledgedEventId: envelopeV2?.eventId ?? null,
+            acknowledgedSeq: envelopeV2?.seq ?? null,
+          },
+          replayedSelfDispatch,
+        ),
       );
     }
   }
@@ -945,12 +1050,14 @@ export async function POST(request: Request) {
     tickResult,
     loopId,
     loopVersion,
+    sourceRunId,
     eventId,
     seq,
   }: {
     tickResult: Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>;
     loopId: string;
     loopVersion: number;
+    sourceRunId: string;
     eventId: string;
     seq: number;
   }) => {
@@ -962,6 +1069,27 @@ export async function POST(request: Request) {
       return;
     }
 
+    // Circuit breaker: prevent infinite consecutive auto-dispatch loops.
+    const completedCount = await countConsecutiveCompletedAutoDispatches({
+      loopId,
+    });
+    if (completedCount >= MAX_CONSECUTIVE_AUTO_DISPATCHES) {
+      console.warn(
+        "[sdlc-loop] circuit breaker: too many consecutive auto-dispatches, skipping follow-up",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          loopId,
+          completedCount,
+          threshold: MAX_CONSECUTIVE_AUTO_DISPATCHES,
+          eventId,
+          seq,
+        },
+      );
+      return;
+    }
+
     // Check if daemon supports self-dispatch.
     const daemonSupportsSelfDispatch = daemonCapabilities.has(
       DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
@@ -969,6 +1097,7 @@ export async function POST(request: Request) {
 
     if (daemonSupportsSelfDispatch) {
       const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
+      let preparedDispatch: { intentId: string; runId: string } | null = null;
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -1072,7 +1201,7 @@ export async function POST(request: Request) {
                   : shouldUseAcpTransport
                     ? ("acp" as const)
                     : ("legacy" as const);
-                const protocolVersion = transportMode === "acp" ? 2 : 1;
+                const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
 
                 // Create run context
                 await upsertAgentRunContext({
@@ -1118,7 +1247,7 @@ export async function POST(request: Request) {
                 });
 
                 // Persist dispatch intent before sending payload to daemon
-                await createDispatchIntent({
+                const dispatchIntent = await createDispatchIntent({
                   loopId,
                   threadId,
                   threadChatId,
@@ -1129,19 +1258,15 @@ export async function POST(request: Request) {
                   runId: newRunId,
                   maxRetries: 3,
                 });
-
-                // Start ack timeout — if no daemon event arrives within
-                // the timeout window, the intent will be classified as
-                // dispatch_ack_timeout and retried. The cron sweep in
-                // ack-timeout.ts provides a durable fallback.
-                startAckTimeout({
-                  db,
+                preparedDispatch = {
+                  intentId: dispatchIntent.id,
                   runId: newRunId,
-                  loopId,
-                  threadChatId,
-                });
+                };
 
-                selfDispatchPayload = {
+                const userCredentials = await getUserCredentials({ userId });
+                const useCredits = shouldUseCredits(agent, userCredentials);
+
+                const preparedSelfDispatchPayload = {
                   token,
                   prompt,
                   runId: newRunId,
@@ -1156,7 +1281,26 @@ export async function POST(request: Request) {
                   protocolVersion,
                   threadId,
                   threadChatId,
+                  useCredits: useCredits || undefined,
                 };
+                await storeSelfDispatchReplay({
+                  threadChatId,
+                  sourceEventId: eventId,
+                  sourceSeq: seq,
+                  sourceRunId,
+                  dispatchIntentId: dispatchIntent.id,
+                  destinationRunId: newRunId,
+                  payload: preparedSelfDispatchPayload,
+                });
+                // Only arm the timeout once the replay record exists and the
+                // self-dispatch payload is actually recoverable on retries.
+                startAckTimeout({
+                  db,
+                  runId: newRunId,
+                  loopId,
+                  threadChatId,
+                });
+                selfDispatchPayload = preparedSelfDispatchPayload;
 
                 console.log("[sdlc-loop] self-dispatch payload prepared", {
                   userId,
@@ -1173,6 +1317,40 @@ export async function POST(request: Request) {
           }
         }
       } catch (error) {
+        if (preparedDispatch) {
+          try {
+            await Promise.all([
+              updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
+                status: "failed",
+                lastError:
+                  error instanceof Error
+                    ? error.message
+                    : "self-dispatch preparation failed",
+                lastFailureCategory: "config_error",
+              }),
+              updateAgentRunContext({
+                db,
+                runId: preparedDispatch.runId,
+                userId,
+                updates: {
+                  status: "failed",
+                },
+              }),
+            ]);
+          } catch (cleanupError) {
+            console.error(
+              "[sdlc-loop] failed to clean up abandoned self-dispatch run",
+              {
+                userId,
+                threadId,
+                threadChatId,
+                loopId,
+                runId: preparedDispatch.runId,
+                cleanupError,
+              },
+            );
+          }
+        }
         console.error(
           "[sdlc-loop] self-dispatch preparation failed, falling back to queue",
           {
@@ -1263,7 +1441,10 @@ export async function POST(request: Request) {
       return;
     }
 
-    const recoveryKey = getSdlcDaemonRecoveryKey({ loopId, loopVersion });
+    const recoveryKey = getDeliveryLoopDaemonRecoveryKey({
+      loopId,
+      loopVersion,
+    });
     const didScheduleRecovery = await redis.set(recoveryKey, "1", {
       nx: true,
       ex: SDLC_DAEMON_RECOVERY_TTL_SECONDS,
@@ -1385,6 +1566,7 @@ export async function POST(request: Request) {
               tickResult: signalTickResult,
               loopId: enrolledLoop.id,
               loopVersion: enrolledLoop.loopVersion,
+              sourceRunId: envelopeV2.runId,
               eventId: envelopeV2.eventId,
               seq: envelopeV2.seq,
             });
@@ -1429,16 +1611,24 @@ export async function POST(request: Request) {
             );
           }
         }
-        return Response.json(
-          {
-            success: true,
-            deduplicated: true,
-            reason: claimResult.reason,
-            loopId: enrolledLoop.id,
-            acknowledgedEventId: envelopeV2.eventId,
-            acknowledgedSeq: envelopeV2.seq,
-          },
-          { status: 202 },
+        const replayedSelfDispatch = await getReplayableSelfDispatch({
+          threadChatId,
+          sourceEventId: envelopeV2.eventId,
+          sourceSeq: envelopeV2.seq,
+          sourceRunId: envelopeV2.runId,
+        });
+        return jsonTerminalAckResponse(
+          buildTerminalAckState(
+            {
+              status: 202,
+              deduplicated: true,
+              reason: claimResult.reason,
+              loopId: enrolledLoop.id,
+              acknowledgedEventId: envelopeV2.eventId,
+              acknowledgedSeq: envelopeV2.seq,
+            },
+            replayedSelfDispatch,
+          ),
         );
       }
       claimedSignalInboxId = claimResult.signalInboxId;
@@ -1680,6 +1870,7 @@ export async function POST(request: Request) {
         tickResult: signalTickResult,
         loopId: enrolledLoop.id,
         loopVersion: enrolledLoop.loopVersion,
+        sourceRunId: envelopeV2.runId,
         eventId: envelopeV2.eventId,
         seq: envelopeV2.seq,
       });
@@ -1719,10 +1910,13 @@ export async function POST(request: Request) {
     }
   }
 
-  return Response.json({
-    success: true,
-    acknowledgedEventId: envelopeV2?.eventId ?? null,
-    acknowledgedSeq: envelopeV2?.seq ?? null,
-    ...(selfDispatchPayload ? { selfDispatch: selfDispatchPayload } : {}),
-  });
+  return jsonTerminalAckResponse(
+    buildTerminalAckState(
+      {
+        acknowledgedEventId: envelopeV2?.eventId ?? null,
+        acknowledgedSeq: envelopeV2?.seq ?? null,
+      },
+      selfDispatchPayload,
+    ),
+  );
 }

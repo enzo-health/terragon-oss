@@ -1,11 +1,20 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { UIMessage, UIPart, ThreadStatus } from "@terragon/shared";
+import {
+  DBMessage,
+  DBUserMessage,
+  GitDiffStats,
+  ThreadInfoFull,
+  ThreadStatus,
+  UIMessage,
+  UIPart,
+} from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent, AIModel } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
 import { LeafLoading } from "./leaf-loading";
+import { PromptBoxRef } from "./thread-context";
 import Link from "next/link";
 import {
   runScheduledThread,
@@ -17,14 +26,80 @@ import { useServerActionMutation } from "@/queries/server-action-helpers";
 export const ChatMessages = memo(function ChatMessages({
   messages,
   isAgentWorking,
+  thread,
+  latestGitDiffTimestamp,
+  githubRepoFullName,
+  branchName,
+  baseBranchName,
+  hasCheckpoint,
+  toolProps,
+  redoDialogData,
+  forkDialogData,
   artifactDescriptors = [],
   onOpenArtifact = () => {},
 }: {
   messages: UIMessage[];
   isAgentWorking: boolean;
+  thread?: ThreadInfoFull | null;
+  latestGitDiffTimestamp?: string | null;
+  githubRepoFullName?: string;
+  branchName?: string | null;
+  baseBranchName?: string;
+  hasCheckpoint?: boolean;
+  toolProps?: {
+    threadId: string;
+    threadChatId: string;
+    messages: DBMessage[];
+    isReadOnly: boolean;
+    promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+    childThreads: { id: string; parentToolId: string | null }[];
+    githubRepoFullName: string;
+    repoBaseBranchName: string;
+    branchName: string | null;
+  };
+  redoDialogData?: {
+    threadId: string;
+    repoFullName: string;
+    repoBaseBranchName: string;
+    disableGitCheckpointing: boolean;
+    skipSetup: boolean;
+    permissionMode: "allowAll" | "plan";
+    initialUserMessage: DBUserMessage;
+  };
+  forkDialogData?: {
+    threadId: string;
+    threadChatId: string;
+    repoFullName: string;
+    repoBaseBranchName: string;
+    branchName: string | null;
+    gitDiffStats: GitDiffStats | null;
+    disableGitCheckpointing: boolean;
+    skipSetup: boolean;
+    agent: AIAgent;
+    lastSelectedModel: AIModel | null;
+  };
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 }) {
+  const messagePartProps = useMemo(
+    () => ({
+      githubRepoFullName: githubRepoFullName ?? "",
+      branchName: branchName ?? null,
+      baseBranchName: baseBranchName ?? "main",
+      hasCheckpoint: hasCheckpoint ?? false,
+      toolProps: toolProps ?? {
+        threadId: "",
+        threadChatId: "",
+        messages: [],
+        isReadOnly: false,
+        childThreads: [],
+        githubRepoFullName: "",
+        repoBaseBranchName: "main",
+        branchName: null,
+      },
+    }),
+    [githubRepoFullName, branchName, baseBranchName, hasCheckpoint, toolProps],
+  );
   // Find the latest agent message
   let latestAgentMessageIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -34,7 +109,7 @@ export const ChatMessages = memo(function ChatMessages({
     }
   }
 
-  // Thread-global plan occurrence map: keyed by UIPart reference → its
+  // Thread-global plan occurrence map: keyed by UIPart reference -> its
   // thread-global occurrence index for that plan text. This mirrors the
   // `planTextOccurrences` counter in `getArtifactDescriptors` so the render
   // side can match descriptors by occurrence index.
@@ -50,15 +125,26 @@ export const ChatMessages = memo(function ChatMessages({
         const isFirstUserMessage = index === 0 && message.role === "user";
         const isLatestAgentMessage =
           message.role === "agent" && index === latestAgentMessageIndex;
+        const rowIsAgentWorking =
+          isAgentWorking && isLatestMessage && message.role === "agent";
         return (
           <ChatMessageWithToolbar
             key={index}
             message={message}
             messageIndex={index}
-            isAgentWorking={isAgentWorking}
+            isAgentWorking={rowIsAgentWorking}
             isLatestMessage={isLatestMessage}
             isFirstUserMessage={isFirstUserMessage}
             isLatestAgentMessage={isLatestAgentMessage}
+            messagePartProps={messagePartProps}
+            thread={message.role === "system" ? thread : null}
+            latestGitDiffTimestamp={
+              message.role === "system"
+                ? (latestGitDiffTimestamp ?? null)
+                : null
+            }
+            redoDialogData={isFirstUserMessage ? redoDialogData : undefined}
+            forkDialogData={isLatestAgentMessage ? forkDialogData : undefined}
             artifactDescriptors={artifactDescriptors}
             onOpenArtifact={onOpenArtifact}
             planOccurrences={planOccurrences}
@@ -332,7 +418,7 @@ function buildThreadPlanOccurrenceMap(
   }
 
   for (const message of messages) {
-    // Only count agent text parts — mirrors getArtifactDescriptors which only
+    // Only count agent text parts -- mirrors getArtifactDescriptors which only
     // creates plan descriptors for agent messages.
     if (message.role !== "agent") continue;
     walkParts(message.parts);

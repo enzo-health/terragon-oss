@@ -2,17 +2,21 @@
 
 import React, { memo, useMemo, useState } from "react";
 import {
+  AllToolParts,
+  DBUserMessage,
+  GitDiffStats,
   UIAgentMessage,
   UIMessage,
   UIPart,
   UISystemMessage,
+  ThreadInfoFull,
   UIUserMessage,
   UIGitDiffPart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
-import { AIAgent } from "@terragon/agent/types";
-import { MessagePart } from "./message-part";
+import { AIAgent, AIModel } from "@terragon/agent/types";
+import { MessagePart, MessagePartProps } from "./message-part";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { MessageToolbar } from "./chat-message-toolbar";
@@ -27,6 +31,112 @@ type PartGroup = {
   type: UIUserOrAgentPart["type"] | "collapsible-agent-activity";
   parts: UIUserOrAgentPart[];
 };
+
+type MessagePartRenderProps = Pick<
+  MessagePartProps,
+  | "githubRepoFullName"
+  | "branchName"
+  | "baseBranchName"
+  | "hasCheckpoint"
+  | "toolProps"
+>;
+
+type RedoDialogData = {
+  threadId: string;
+  repoFullName: string;
+  repoBaseBranchName: string;
+  disableGitCheckpointing: boolean;
+  skipSetup: boolean;
+  permissionMode: "allowAll" | "plan";
+  initialUserMessage: DBUserMessage;
+};
+
+type ForkDialogData = {
+  threadId: string;
+  threadChatId: string;
+  repoFullName: string;
+  repoBaseBranchName: string;
+  branchName: string | null;
+  gitDiffStats: GitDiffStats | null;
+  disableGitCheckpointing: boolean;
+  skipSetup: boolean;
+  agent: AIAgent;
+  lastSelectedModel: AIModel | null;
+};
+
+type ChatMessageProps = {
+  message: UIMessage;
+  className?: string;
+  isLatestMessage?: boolean;
+  isAgentWorking?: boolean;
+  messagePartProps?: MessagePartRenderProps;
+  thread?: ThreadInfoFull | null;
+  latestGitDiffTimestamp?: string | null;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
+  /** Thread-global plan occurrence map (from ChatMessages). */
+  planOccurrences?: Map<UIPart, number>;
+};
+
+type ChatMessageWithToolbarProps = {
+  message: UIMessage;
+  messageIndex: number;
+  className?: string;
+  isFirstUserMessage: boolean;
+  isLatestMessage: boolean;
+  isAgentWorking: boolean;
+  isLatestAgentMessage: boolean;
+  messagePartProps?: MessagePartRenderProps;
+  thread?: ThreadInfoFull | null;
+  latestGitDiffTimestamp?: string | null;
+  redoDialogData?: RedoDialogData;
+  forkDialogData?: ForkDialogData;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
+  planOccurrences?: Map<UIPart, number>;
+};
+
+const DEFAULT_MESSAGE_PART_PROPS: MessagePartRenderProps = {
+  githubRepoFullName: "",
+  branchName: null,
+  baseBranchName: "main",
+  hasCheckpoint: false,
+  toolProps: {
+    threadId: "",
+    threadChatId: "",
+    messages: [],
+    isReadOnly: false,
+    childThreads: [],
+    githubRepoFullName: "",
+    repoBaseBranchName: "main",
+    branchName: null,
+  },
+};
+
+function toolPartContainsName(part: AllToolParts, toolName: string): boolean {
+  if (part.name === toolName) {
+    return true;
+  }
+  if (part.name !== "Task") {
+    return false;
+  }
+  return part.parts.some(
+    (childPart) =>
+      childPart.type === "tool" && toolPartContainsName(childPart, toolName),
+  );
+}
+
+function messageContainsToolName(
+  message: UIMessage,
+  toolName: string,
+): boolean {
+  if (message.role !== "agent") {
+    return false;
+  }
+  return message.parts.some(
+    (part) => part.type === "tool" && toolPartContainsName(part, toolName),
+  );
+}
 
 // Never collapse these tool names
 const nonCollapsibleToolNames = new Set<string>([
@@ -130,11 +240,13 @@ function groupParts({
 
 function ImageGroup({
   group,
+  messagePartProps,
   isLatestMessage = false,
   artifactDescriptors,
   onOpenArtifact,
 }: {
   group: PartGroup;
+  messagePartProps: MessagePartRenderProps;
   isLatestMessage?: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
@@ -159,6 +271,7 @@ function ImageGroup({
               part={part}
               onClick={() => setExpandedIndex(partIndex)}
               isLatest={isLatestMessage && partIndex === numParts - 1}
+              {...messagePartProps}
               artifactDescriptors={artifactDescriptors}
               onOpenArtifact={onOpenArtifact}
             />
@@ -214,23 +327,19 @@ export const ChatMessage = memo(function ChatMessage({
   className,
   isLatestMessage = false,
   isAgentWorking = false,
+  messagePartProps = DEFAULT_MESSAGE_PART_PROPS,
+  thread = null,
+  latestGitDiffTimestamp = null,
   artifactDescriptors = [],
   onOpenArtifact = () => {},
   planOccurrences: planOccurrencesProp,
-}: {
-  message: UIMessage;
-  className?: string;
-  isLatestMessage?: boolean;
-  isAgentWorking?: boolean;
-  artifactDescriptors?: ArtifactDescriptor[];
-  onOpenArtifact?: (artifactId: string) => void;
-  /** Thread-global plan occurrence map (from ChatMessages). */
-  planOccurrences?: Map<UIPart, number>;
-}) {
+}: ChatMessageProps) {
   if (message.role === "system") {
     return (
       <SystemMessage
         message={message}
+        thread={thread}
+        latestGitDiffTimestamp={latestGitDiffTimestamp}
         artifactDescriptors={artifactDescriptors}
         onOpenArtifact={onOpenArtifact}
       />
@@ -270,6 +379,7 @@ export const ChatMessage = memo(function ChatMessage({
                 group={group}
                 isLatestMessage={isLatestMessage}
                 isAgentWorking={isAgentWorking}
+                messagePartProps={messagePartProps}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
                 planOccurrences={planOccurrences}
@@ -281,6 +391,7 @@ export const ChatMessage = memo(function ChatMessage({
               <ImageGroup
                 key={groupIndex}
                 group={group}
+                messagePartProps={messagePartProps}
                 isLatestMessage={isLatestMessage}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
@@ -296,6 +407,7 @@ export const ChatMessage = memo(function ChatMessage({
                     part={part}
                     isLatest={isLatestMessage && groupIndex === lastGroupIndex}
                     isAgentWorking={isAgentWorking}
+                    {...messagePartProps}
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={onOpenArtifact}
                     planOccurrenceIndex={planOccurrences.get(part)}
@@ -321,21 +433,15 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   isFirstUserMessage = false,
   isAgentWorking = false,
   isLatestAgentMessage = false,
+  messagePartProps = DEFAULT_MESSAGE_PART_PROPS,
+  thread = null,
+  latestGitDiffTimestamp = null,
+  redoDialogData,
+  forkDialogData,
   artifactDescriptors = [],
   onOpenArtifact = () => {},
   planOccurrences,
-}: {
-  message: UIMessage;
-  messageIndex: number;
-  className?: string;
-  isFirstUserMessage: boolean;
-  isLatestMessage: boolean;
-  isAgentWorking: boolean;
-  isLatestAgentMessage: boolean;
-  artifactDescriptors?: ArtifactDescriptor[];
-  onOpenArtifact?: (artifactId: string) => void;
-  planOccurrences?: Map<UIPart, number>;
-}) {
+}: ChatMessageWithToolbarProps) {
   return (
     <div
       className="flex flex-col gap-1 group [scroll-margin-top:6rem]"
@@ -346,6 +452,9 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         className={className}
         isLatestMessage={isLatestMessage}
         isAgentWorking={isAgentWorking}
+        messagePartProps={messagePartProps}
+        thread={thread}
+        latestGitDiffTimestamp={latestGitDiffTimestamp}
         artifactDescriptors={artifactDescriptors}
         onOpenArtifact={onOpenArtifact}
         planOccurrences={planOccurrences}
@@ -356,17 +465,97 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         isFirstUserMessage={isFirstUserMessage}
         isLatestAgentMessage={isLatestAgentMessage}
         isAgentWorking={isAgentWorking}
+        redoDialogData={redoDialogData}
+        forkDialogData={forkDialogData}
       />
     </div>
   );
-});
+}, areChatMessageWithToolbarPropsEqual);
+
+function areChatMessageWithToolbarPropsEqual(
+  prevProps: ChatMessageWithToolbarProps,
+  nextProps: ChatMessageWithToolbarProps,
+) {
+  const prevMessagePartProps =
+    prevProps.messagePartProps ?? DEFAULT_MESSAGE_PART_PROPS;
+  const nextMessagePartProps =
+    nextProps.messagePartProps ?? DEFAULT_MESSAGE_PART_PROPS;
+  if (
+    prevProps.message !== nextProps.message ||
+    prevProps.messageIndex !== nextProps.messageIndex ||
+    prevProps.className !== nextProps.className ||
+    prevProps.isFirstUserMessage !== nextProps.isFirstUserMessage ||
+    prevProps.isLatestMessage !== nextProps.isLatestMessage ||
+    prevProps.isAgentWorking !== nextProps.isAgentWorking ||
+    prevProps.isLatestAgentMessage !== nextProps.isLatestAgentMessage
+  ) {
+    return false;
+  }
+  if (
+    prevProps.message.role === "system" &&
+    (prevProps.thread !== nextProps.thread ||
+      prevProps.latestGitDiffTimestamp !== nextProps.latestGitDiffTimestamp)
+  ) {
+    return false;
+  }
+
+  if (
+    prevMessagePartProps.githubRepoFullName !==
+      nextMessagePartProps.githubRepoFullName ||
+    prevMessagePartProps.branchName !== nextMessagePartProps.branchName ||
+    prevMessagePartProps.baseBranchName !==
+      nextMessagePartProps.baseBranchName ||
+    prevMessagePartProps.hasCheckpoint !== nextMessagePartProps.hasCheckpoint
+  ) {
+    return false;
+  }
+
+  const prevToolProps = prevMessagePartProps.toolProps;
+  const nextToolProps = nextMessagePartProps.toolProps;
+  if (
+    prevToolProps.threadId !== nextToolProps.threadId ||
+    prevToolProps.threadChatId !== nextToolProps.threadChatId ||
+    prevToolProps.isReadOnly !== nextToolProps.isReadOnly ||
+    prevToolProps.promptBoxRef !== nextToolProps.promptBoxRef ||
+    prevToolProps.childThreads !== nextToolProps.childThreads ||
+    prevToolProps.githubRepoFullName !== nextToolProps.githubRepoFullName ||
+    prevToolProps.repoBaseBranchName !== nextToolProps.repoBaseBranchName ||
+    prevToolProps.branchName !== nextToolProps.branchName
+  ) {
+    return false;
+  }
+
+  if (
+    messageContainsToolName(prevProps.message, "ExitPlanMode") &&
+    prevToolProps.messages !== nextToolProps.messages
+  ) {
+    return false;
+  }
+
+  if (
+    prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.planOccurrences !== nextProps.planOccurrences
+  ) {
+    return false;
+  }
+
+  return (
+    prevProps.redoDialogData === nextProps.redoDialogData &&
+    prevProps.forkDialogData === nextProps.forkDialogData
+  );
+}
 
 function SystemMessage({
   message,
+  thread,
+  latestGitDiffTimestamp,
   artifactDescriptors,
   onOpenArtifact,
 }: {
   message: UISystemMessage;
+  thread: ThreadInfoFull | null;
+  latestGitDiffTimestamp: string | null;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
 }) {
@@ -431,10 +620,16 @@ function SystemMessage({
     return <div className="p-2">Execution interrupted by user.</div>;
   }
   if (message.message_type === "git-diff") {
+    if (!thread) {
+      return null;
+    }
+    const gitDiffPart = message.parts[0] as UIGitDiffPart;
     return (
       <div className="p-2">
         <GitDiffPart
-          gitDiffPart={message.parts[0] as UIGitDiffPart}
+          gitDiffPart={gitDiffPart}
+          thread={thread}
+          isLatest={latestGitDiffTimestamp === gitDiffPart.timestamp}
           artifactDescriptors={artifactDescriptors}
           onOpenArtifact={onOpenArtifact}
         />
@@ -504,6 +699,7 @@ function CollapsibleAgentActivityGroup({
   agent,
   isLatestMessage = false,
   isAgentWorking = false,
+  messagePartProps,
   artifactDescriptors,
   onOpenArtifact,
   planOccurrences,
@@ -512,6 +708,7 @@ function CollapsibleAgentActivityGroup({
   agent: AIAgent | null;
   isLatestMessage: boolean;
   isAgentWorking: boolean;
+  messagePartProps: MessagePartRenderProps;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
   planOccurrences: Map<UIPart, number>;
@@ -543,6 +740,7 @@ function CollapsibleAgentActivityGroup({
                 part={part}
                 isLatest={isLatestMessage && partIndex === numParts - 1}
                 isAgentWorking={isAgentWorking}
+                {...messagePartProps}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
                 planOccurrenceIndex={planOccurrences.get(part)}
@@ -556,7 +754,7 @@ function CollapsibleAgentActivityGroup({
 }
 
 /**
- * Builds a map of part object → plan occurrence index for parts that contain
+ * Builds a map of part object -> plan occurrence index for parts that contain
  * identical `<proposed_plan>` text. Keyed by reference so that group-level
  * lookups work regardless of which subset of parts is being iterated.
  */

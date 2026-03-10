@@ -6,6 +6,7 @@ import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
 import type {
   DBMessage,
   DBSystemMessage,
@@ -37,7 +38,20 @@ async function checkNoopBusy({
     );
     return { processed: false, reason: "status_transition_noop_busy" };
   }
-  return null;
+  if (latestThreadChat?.status === "scheduled") {
+    console.warn(
+      "Skipping follow-up dispatch after noop status transition; chat remains scheduled",
+      { threadId, threadChatId, status: latestThreadChat.status },
+    );
+    return { processed: false, reason: "scheduled_not_runnable" };
+  }
+  if (latestThreadChat) {
+    console.warn(
+      "Skipping follow-up dispatch after noop status transition; state changed",
+      { threadId, threadChatId, status: latestThreadChat.status },
+    );
+  }
+  return { processed: false, reason: "status_transition_noop" };
 }
 
 const MAX_FOLLOW_UP_RETRIES = 3;
@@ -63,6 +77,8 @@ export type FollowUpQueueProcessingResult = {
     | "thread_chat_not_found"
     | "agent_rate_limited"
     | "no_queued_messages"
+    | "scheduled_not_runnable"
+    | "status_transition_noop"
     | "status_transition_noop_busy"
     | "dispatch_started_slash"
     | "dispatch_started_batch"
@@ -108,7 +124,11 @@ async function handleFollowUpFailure({
   messages: DBMessage[] | null;
   queuedMessagesForRetry: DBUserMessage[];
   error: unknown;
-}): Promise<{ retriesUsed: number; exhausted: boolean }> {
+}): Promise<{
+  retriesUsed: number;
+  exhausted: boolean;
+  retryAt: Date | null;
+}> {
   const formattedError = formatFollowUpError(error);
   console.error("handleFollowUpFailure invoked", {
     threadId,
@@ -125,6 +145,7 @@ async function handleFollowUpFailure({
     const retriesUsed = existingRetries + 1;
     const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
     const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
+    const retryAt = exhausted ? null : new Date(Date.now() + retryDelayMs);
 
     if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
       await updateThreadChatWithTransition({
@@ -152,6 +173,18 @@ async function handleFollowUpFailure({
         },
       });
     } else {
+      if (!retryAt) {
+        throw new Error(
+          "Retry scheduling requires a retryAt timestamp when retries are not exhausted",
+        );
+      }
+      await scheduleFollowUpRetryJob({
+        userId,
+        threadId,
+        threadChatId,
+        attempt: retriesUsed,
+        runAt: retryAt,
+      });
       await updateThreadChatWithTransition({
         userId,
         threadId,
@@ -178,6 +211,7 @@ async function handleFollowUpFailure({
     return {
       retriesUsed,
       exhausted,
+      retryAt,
     };
   } catch (updateError) {
     console.error("Failed to record follow-up retry failure", {
@@ -188,6 +222,12 @@ async function handleFollowUpFailure({
     return {
       retriesUsed: existingRetries + 1,
       exhausted: existingRetries >= MAX_FOLLOW_UP_RETRIES - 1,
+      retryAt:
+        existingRetries >= MAX_FOLLOW_UP_RETRIES - 1
+          ? null
+          : new Date(
+              Date.now() + FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries,
+            ),
     };
   }
 }
@@ -271,6 +311,13 @@ export async function maybeProcessFollowUpQueue({
     );
     return { processed: false, reason: "agent_rate_limited" };
   }
+  if (threadChat.status === "scheduled") {
+    console.log("Skipping follow-up queue processing: chat is scheduled", {
+      threadId,
+      threadChatId,
+    });
+    return { processed: false, reason: "scheduled_not_runnable" };
+  }
   if (!threadChat.queuedMessages || threadChat.queuedMessages.length === 0) {
     return { processed: false, reason: "no_queued_messages" };
   }
@@ -296,14 +343,15 @@ export async function maybeProcessFollowUpQueue({
       chatUpdates: {
         replaceQueuedMessages: restQueuedMessages,
       },
+      requireStatusTransitionForChatUpdates: true,
     });
     if (!didUpdateStatus) {
-      const busyResult = await checkNoopBusy({
+      const noopResult = await checkNoopBusy({
         threadId,
         threadChatId,
         userId,
       });
-      if (busyResult) return busyResult;
+      if (noopResult) return noopResult;
     }
     const messageWithModel = {
       ...firstQueuedMessage,
@@ -363,10 +411,11 @@ export async function maybeProcessFollowUpQueue({
     chatUpdates: {
       appendAndResetQueuedMessages: true,
     },
+    requireStatusTransitionForChatUpdates: true,
   });
   if (!didUpdateStatus) {
-    const busyResult = await checkNoopBusy({ threadId, threadChatId, userId });
-    if (busyResult) return busyResult;
+    const noopResult = await checkNoopBusy({ threadId, threadChatId, userId });
+    if (noopResult) return noopResult;
   }
   console.log("Processing follow-up", {
     threadId,

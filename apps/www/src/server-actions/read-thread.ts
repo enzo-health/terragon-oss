@@ -6,7 +6,7 @@ import {
 } from "@terragon/shared/model/thread-read-status";
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
-import { getThread } from "@terragon/shared/model/threads";
+import { getThreadMinimal } from "@terragon/shared/model/threads";
 
 export const readThread = userOnlyAction(
   async function readThread(
@@ -20,7 +20,7 @@ export const readThread = userOnlyAction(
     },
   ) {
     console.log("readThread", { threadId, threadChatIdOrNull });
-    const thread = await getThread({
+    const thread = await getThreadMinimal({
       db,
       userId,
       threadId,

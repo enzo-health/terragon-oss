@@ -6,7 +6,6 @@ import {
   UIPdfPart,
   UITextFilePart,
   UIRichTextPart,
-  DBMessage,
 } from "@terragon/shared";
 import {
   type ArtifactDescriptor,
@@ -16,15 +15,14 @@ import { TextPart } from "./text-part";
 import { ImagePart } from "./image-part";
 import { PdfPart } from "./pdf-part";
 import { TextFilePart } from "./text-file-part";
-import { ToolPart } from "./tool-part";
+import { ToolPart, ToolPartProps } from "./tool-part";
 import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
-import { useThread } from "./thread-context";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import { useSecondaryPanel } from "./hooks";
 
-interface MessagePartProps {
+export interface MessagePartProps {
   part: UIPart;
   onClick?: () => void;
   isLatest?: boolean;
@@ -34,6 +32,11 @@ interface MessagePartProps {
   /** When multiple text parts contain `<proposed_plan>` with identical content,
    *  this ordinal (0-based) disambiguates which plan descriptor to open. */
   planOccurrenceIndex?: number;
+  githubRepoFullName: string;
+  branchName: string | null;
+  baseBranchName: string;
+  hasCheckpoint: boolean;
+  toolProps: Omit<ToolPartProps, "toolPart">;
 }
 
 export const MessagePart = memo(function MessagePart({
@@ -44,19 +47,14 @@ export const MessagePart = memo(function MessagePart({
   artifactDescriptors = [],
   onOpenArtifact,
   planOccurrenceIndex = 0,
+  githubRepoFullName,
+  branchName,
+  baseBranchName,
+  hasCheckpoint,
+  toolProps,
 }: MessagePartProps) {
-  const { thread, threadChat } = useThread();
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
-  const githubRepoFullName = thread?.githubRepoFullName;
-  const branchName = thread?.branchName || undefined;
-  const baseBranchName = thread?.repoBaseBranchName || undefined;
 
-  // Check if thread has any git-diff messages (indicating a checkpoint has been made)
-  const hasCheckpoint = useMemo(() => {
-    if (!threadChat?.messages) return false;
-    const messages = threadChat.messages as DBMessage[];
-    return messages.some((msg) => msg.type === "git-diff");
-  }, [threadChat?.messages]);
   const artifactDescriptor = useMemo(
     () =>
       findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
@@ -112,7 +110,7 @@ export const MessagePart = memo(function MessagePart({
         <TextPart
           text={part.text}
           githubRepoFullName={githubRepoFullName}
-          branchName={branchName}
+          branchName={branchName ?? undefined}
           baseBranchName={baseBranchName}
           hasCheckpoint={hasCheckpoint}
           onOpenInArtifactWorkspace={handleOpenPlanArtifact}
@@ -133,6 +131,7 @@ export const MessagePart = memo(function MessagePart({
       return (
         <ToolPart
           toolPart={toolPart}
+          {...toolProps}
           artifactDescriptors={artifactDescriptors}
           onOpenArtifact={onOpenArtifact}
         />
@@ -184,4 +183,51 @@ export const MessagePart = memo(function MessagePart({
     default:
       assertNever(part);
   }
-});
+}, areMessagePartPropsEqual);
+
+function areMessagePartPropsEqual(
+  prevProps: MessagePartProps,
+  nextProps: MessagePartProps,
+) {
+  if (
+    prevProps.part !== nextProps.part ||
+    prevProps.onClick !== nextProps.onClick ||
+    prevProps.isLatest !== nextProps.isLatest ||
+    prevProps.isAgentWorking !== nextProps.isAgentWorking ||
+    prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
+    prevProps.branchName !== nextProps.branchName ||
+    prevProps.baseBranchName !== nextProps.baseBranchName ||
+    prevProps.hasCheckpoint !== nextProps.hasCheckpoint ||
+    prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.planOccurrenceIndex !== nextProps.planOccurrenceIndex
+  ) {
+    return false;
+  }
+
+  const prevToolPart = prevProps.part.type === "tool" ? prevProps.part : null;
+  const nextToolPart = nextProps.part.type === "tool" ? nextProps.part : null;
+  if (!prevToolPart || !nextToolPart) {
+    return true;
+  }
+
+  if (
+    prevProps.toolProps.threadId !== nextProps.toolProps.threadId ||
+    prevProps.toolProps.threadChatId !== nextProps.toolProps.threadChatId ||
+    prevProps.toolProps.isReadOnly !== nextProps.toolProps.isReadOnly ||
+    prevProps.toolProps.promptBoxRef !== nextProps.toolProps.promptBoxRef ||
+    prevProps.toolProps.childThreads !== nextProps.toolProps.childThreads ||
+    prevProps.toolProps.githubRepoFullName !==
+      nextProps.toolProps.githubRepoFullName ||
+    prevProps.toolProps.repoBaseBranchName !==
+      nextProps.toolProps.repoBaseBranchName ||
+    prevProps.toolProps.branchName !== nextProps.toolProps.branchName
+  ) {
+    return false;
+  }
+
+  const toolName = prevToolPart.name;
+  return toolName === "ExitPlanMode"
+    ? prevProps.toolProps.messages === nextProps.toolProps.messages
+    : true;
+}

@@ -79,14 +79,153 @@ export type { SdlcLoopState };
 
 export type DeliveryLoopSelectedAgent = "codex" | "claudeCode";
 
+export type DeliveryLoopDispatchablePhase =
+  | "implementing"
+  | "review_gate"
+  | "ci_gate"
+  | "ui_gate";
+
+export type DeliveryLoopResumableState =
+  | "planning"
+  | "implementing"
+  | "review_gate"
+  | "ci_gate"
+  | "ui_gate"
+  | "awaiting_pr_link"
+  | "babysitting";
+
 export type DeliveryLoopDispatchStatus =
   | "prepared"
-  | "runtime_preparing"
-  | "retrying"
   | "dispatched"
   | "acknowledged"
   | "failed"
   | "completed";
+
+export type DeliveryLoopBlockedReasonCategory =
+  | "human_required"
+  | "runtime_failure"
+  | "gate_failure"
+  | "config_error"
+  | "external_dependency"
+  | "unknown";
+
+export type DeliveryLoopImplementationExecution = {
+  kind: "implementation";
+  selectedAgent: DeliveryLoopSelectedAgent | null;
+  dispatchStatus: DeliveryLoopDispatchStatus | null;
+  dispatchAttemptCount: number;
+  activeRunId: string | null;
+  lastFailureCategory: string | null;
+};
+
+export type DeliveryLoopGateExecution = {
+  gateRunId: string | null;
+  lastFailureCategory: string | null;
+};
+
+export type DeliveryLoopBlockedState = {
+  kind: "blocked";
+  from: DeliveryLoopResumableState;
+  reason: DeliveryLoopBlockedReasonCategory;
+  selectedAgent: DeliveryLoopSelectedAgent | null;
+  dispatchStatus: DeliveryLoopDispatchStatus | null;
+  dispatchAttemptCount: number;
+  activeRunId: string | null;
+  activeGateRunId: string | null;
+  lastFailureCategory: string | null;
+};
+
+export type DeliveryLoopSnapshot =
+  | {
+      kind: "planning";
+      selectedAgent: DeliveryLoopSelectedAgent | null;
+      nextPhaseTarget: DeliveryLoopDispatchablePhase | null;
+      dispatchStatus: DeliveryLoopDispatchStatus | null;
+      dispatchAttemptCount: number;
+      activeRunId: string | null;
+      lastFailureCategory: string | null;
+    }
+  | {
+      kind: "implementing";
+      execution: DeliveryLoopImplementationExecution;
+    }
+  | {
+      kind: "review_gate";
+      gate: DeliveryLoopGateExecution;
+    }
+  | {
+      kind: "ci_gate";
+      gate: DeliveryLoopGateExecution;
+    }
+  | {
+      kind: "ui_gate";
+      gate: DeliveryLoopGateExecution;
+    }
+  | {
+      kind: "awaiting_pr_link";
+      selectedAgent: DeliveryLoopSelectedAgent | null;
+      lastFailureCategory: string | null;
+    }
+  | {
+      kind: "babysitting";
+      selectedAgent: DeliveryLoopSelectedAgent | null;
+      lastFailureCategory: string | null;
+    }
+  | DeliveryLoopBlockedState
+  | {
+      kind: "done";
+    }
+  | {
+      kind: "stopped";
+    }
+  | {
+      kind: "terminated_pr_closed";
+    }
+  | {
+      kind: "terminated_pr_merged";
+    };
+
+type DeliveryLoopPlanningSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "planning" }
+>;
+type DeliveryLoopImplementingSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "implementing" }
+>;
+type DeliveryLoopReviewGateSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "review_gate" }
+>;
+type DeliveryLoopCiGateSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "ci_gate" }
+>;
+type DeliveryLoopUiGateSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "ui_gate" }
+>;
+type DeliveryLoopAwaitingPrLinkSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "awaiting_pr_link" }
+>;
+type DeliveryLoopBabysittingSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "babysitting" }
+>;
+type DeliveryLoopDoneSnapshot = Extract<DeliveryLoopSnapshot, { kind: "done" }>;
+type DeliveryLoopStoppedSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "stopped" }
+>;
+type DeliveryLoopPrClosedSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "terminated_pr_closed" }
+>;
+type DeliveryLoopPrMergedSnapshot = Extract<
+  DeliveryLoopSnapshot,
+  { kind: "terminated_pr_merged" }
+>;
 
 /**
  * Companion fields for Delivery Loop v2 state tracking.
@@ -96,11 +235,11 @@ export type DeliveryLoopDispatchStatus =
  */
 export type DeliveryLoopCompanionFields = {
   selectedAgent: DeliveryLoopSelectedAgent | null;
-  nextPhaseTarget: DeliveryLoopState | null;
+  nextPhaseTarget: DeliveryLoopDispatchablePhase | null;
   dispatchStatus: DeliveryLoopDispatchStatus | null;
   dispatchAttemptCount: number;
   blockedReasonCategory: string | null;
-  blockedFromState: DeliveryLoopState | null;
+  blockedFromState: DeliveryLoopResumableState | null;
   activeRunId: string | null;
   activeGateRunId: string | null;
   lastFailureCategory: string | null;
@@ -117,6 +256,363 @@ export const deliveryLoopCompanionFieldDefaults: DeliveryLoopCompanionFields = {
   activeGateRunId: null,
   lastFailureCategory: null,
 };
+
+function normalizeDeliveryLoopCompanionFields(
+  companionFields?: Partial<DeliveryLoopCompanionFields> | null,
+): DeliveryLoopCompanionFields {
+  return {
+    ...deliveryLoopCompanionFieldDefaults,
+    ...(companionFields ?? {}),
+  };
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled Delivery Loop variant: ${String(value)}`);
+}
+
+export function normalizeBlockedReasonCategory(
+  value: string | null | undefined,
+): DeliveryLoopBlockedReasonCategory {
+  switch (value) {
+    case "human_required":
+    case "runtime_failure":
+    case "gate_failure":
+    case "config_error":
+    case "external_dependency":
+      return value;
+    default:
+      return "unknown";
+  }
+}
+
+export function resolveBlockedResumeTarget(
+  blockedFromState: DeliveryLoopResumableState | null | undefined,
+): DeliveryLoopResumableState {
+  return blockedFromState ?? "implementing";
+}
+
+export function coerceDeliveryLoopResumableState(
+  value: string | null | undefined,
+): DeliveryLoopResumableState | null {
+  if (!value) {
+    return null;
+  }
+
+  const mappedState = legacyStateMapping[value];
+  switch (mappedState) {
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+    case "awaiting_pr_link":
+    case "babysitting":
+      return mappedState;
+    default:
+      return null;
+  }
+}
+
+export function createPlanningSnapshot(
+  fields?: Partial<Omit<DeliveryLoopPlanningSnapshot, "kind">> | null,
+): DeliveryLoopPlanningSnapshot {
+  return {
+    kind: "planning",
+    selectedAgent: fields?.selectedAgent ?? null,
+    nextPhaseTarget: fields?.nextPhaseTarget ?? null,
+    dispatchStatus: fields?.dispatchStatus ?? null,
+    dispatchAttemptCount: fields?.dispatchAttemptCount ?? 0,
+    activeRunId: fields?.activeRunId ?? null,
+    lastFailureCategory: fields?.lastFailureCategory ?? null,
+  };
+}
+
+export function createImplementingSnapshot(
+  execution?: Partial<Omit<DeliveryLoopImplementationExecution, "kind">> | null,
+): DeliveryLoopImplementingSnapshot {
+  return {
+    kind: "implementing",
+    execution: {
+      kind: "implementation",
+      selectedAgent: execution?.selectedAgent ?? null,
+      dispatchStatus: execution?.dispatchStatus ?? null,
+      dispatchAttemptCount: execution?.dispatchAttemptCount ?? 0,
+      activeRunId: execution?.activeRunId ?? null,
+      lastFailureCategory: execution?.lastFailureCategory ?? null,
+    },
+  };
+}
+
+export function createReviewGateSnapshot(
+  gate?: Partial<DeliveryLoopGateExecution> | null,
+): DeliveryLoopReviewGateSnapshot {
+  return {
+    kind: "review_gate",
+    gate: {
+      gateRunId: gate?.gateRunId ?? null,
+      lastFailureCategory: gate?.lastFailureCategory ?? null,
+    },
+  };
+}
+
+export function createCiGateSnapshot(
+  gate?: Partial<DeliveryLoopGateExecution> | null,
+): DeliveryLoopCiGateSnapshot {
+  return {
+    kind: "ci_gate",
+    gate: {
+      gateRunId: gate?.gateRunId ?? null,
+      lastFailureCategory: gate?.lastFailureCategory ?? null,
+    },
+  };
+}
+
+export function createUiGateSnapshot(
+  gate?: Partial<DeliveryLoopGateExecution> | null,
+): DeliveryLoopUiGateSnapshot {
+  return {
+    kind: "ui_gate",
+    gate: {
+      gateRunId: gate?.gateRunId ?? null,
+      lastFailureCategory: gate?.lastFailureCategory ?? null,
+    },
+  };
+}
+
+export function createAwaitingPrLinkSnapshot(
+  fields?: Partial<Omit<DeliveryLoopAwaitingPrLinkSnapshot, "kind">> | null,
+): DeliveryLoopAwaitingPrLinkSnapshot {
+  return {
+    kind: "awaiting_pr_link",
+    selectedAgent: fields?.selectedAgent ?? null,
+    lastFailureCategory: fields?.lastFailureCategory ?? null,
+  };
+}
+
+export function createBabysittingSnapshot(
+  fields?: Partial<Omit<DeliveryLoopBabysittingSnapshot, "kind">> | null,
+): DeliveryLoopBabysittingSnapshot {
+  return {
+    kind: "babysitting",
+    selectedAgent: fields?.selectedAgent ?? null,
+    lastFailureCategory: fields?.lastFailureCategory ?? null,
+  };
+}
+
+export function createBlockedSnapshot(
+  fields?: Partial<
+    Omit<DeliveryLoopBlockedState, "kind" | "from" | "reason">
+  > & {
+    from?: DeliveryLoopResumableState | null;
+    reason?: string | null;
+  },
+): DeliveryLoopBlockedState {
+  return {
+    kind: "blocked",
+    from: resolveBlockedResumeTarget(fields?.from),
+    reason: normalizeBlockedReasonCategory(fields?.reason),
+    selectedAgent: fields?.selectedAgent ?? null,
+    dispatchStatus: fields?.dispatchStatus ?? null,
+    dispatchAttemptCount: fields?.dispatchAttemptCount ?? 0,
+    activeRunId: fields?.activeRunId ?? null,
+    activeGateRunId: fields?.activeGateRunId ?? null,
+    lastFailureCategory: fields?.lastFailureCategory ?? null,
+  };
+}
+
+export function createDoneSnapshot(): DeliveryLoopDoneSnapshot {
+  return { kind: "done" };
+}
+
+export function createStoppedSnapshot(): DeliveryLoopStoppedSnapshot {
+  return { kind: "stopped" };
+}
+
+export function createTerminatedPrClosedSnapshot(): DeliveryLoopPrClosedSnapshot {
+  return { kind: "terminated_pr_closed" };
+}
+
+export function createTerminatedPrMergedSnapshot(): DeliveryLoopPrMergedSnapshot {
+  return { kind: "terminated_pr_merged" };
+}
+
+export function buildDeliveryLoopSnapshot(params: {
+  state: DeliveryLoopState;
+  companionFields?: Partial<DeliveryLoopCompanionFields> | null;
+}): DeliveryLoopSnapshot;
+export function buildDeliveryLoopSnapshot(params: {
+  state: DeliveryLoopState;
+  companionFields?: Partial<DeliveryLoopCompanionFields> | null;
+}): DeliveryLoopSnapshot {
+  const companionFields = normalizeDeliveryLoopCompanionFields(
+    params.companionFields,
+  );
+
+  switch (params.state) {
+    case "planning":
+      return createPlanningSnapshot({
+        selectedAgent: companionFields.selectedAgent,
+        nextPhaseTarget: companionFields.nextPhaseTarget,
+        dispatchStatus: companionFields.dispatchStatus,
+        dispatchAttemptCount: companionFields.dispatchAttemptCount,
+        activeRunId: companionFields.activeRunId,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "implementing":
+      return createImplementingSnapshot({
+        selectedAgent: companionFields.selectedAgent,
+        dispatchStatus: companionFields.dispatchStatus,
+        dispatchAttemptCount: companionFields.dispatchAttemptCount,
+        activeRunId: companionFields.activeRunId,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "review_gate":
+      return createReviewGateSnapshot({
+        gateRunId: companionFields.activeGateRunId,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "ci_gate":
+      return createCiGateSnapshot({
+        gateRunId: companionFields.activeGateRunId,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "ui_gate":
+      return createUiGateSnapshot({
+        gateRunId: companionFields.activeGateRunId,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "awaiting_pr_link":
+      return createAwaitingPrLinkSnapshot({
+        selectedAgent: companionFields.selectedAgent,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "babysitting":
+      return createBabysittingSnapshot({
+        selectedAgent: companionFields.selectedAgent,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "blocked":
+      return createBlockedSnapshot({
+        from: companionFields.blockedFromState,
+        reason: companionFields.blockedReasonCategory,
+        selectedAgent: companionFields.selectedAgent,
+        dispatchStatus: companionFields.dispatchStatus,
+        dispatchAttemptCount: companionFields.dispatchAttemptCount,
+        activeRunId: companionFields.activeRunId,
+        activeGateRunId: companionFields.activeGateRunId,
+        lastFailureCategory: companionFields.lastFailureCategory,
+      });
+    case "done":
+      return createDoneSnapshot();
+    case "stopped":
+      return createStoppedSnapshot();
+    case "terminated_pr_closed":
+      return createTerminatedPrClosedSnapshot();
+    case "terminated_pr_merged":
+      return createTerminatedPrMergedSnapshot();
+  }
+  return assertNever(params.state);
+}
+
+export function buildDeliveryLoopCompanionFields(
+  snapshot: DeliveryLoopSnapshot,
+): DeliveryLoopCompanionFields {
+  switch (snapshot.kind) {
+    case "planning":
+      return {
+        ...deliveryLoopCompanionFieldDefaults,
+        selectedAgent: snapshot.selectedAgent,
+        nextPhaseTarget: snapshot.nextPhaseTarget,
+        dispatchStatus: snapshot.dispatchStatus,
+        dispatchAttemptCount: snapshot.dispatchAttemptCount,
+        activeRunId: snapshot.activeRunId,
+        lastFailureCategory: snapshot.lastFailureCategory,
+      };
+    case "implementing":
+      return {
+        ...deliveryLoopCompanionFieldDefaults,
+        selectedAgent: snapshot.execution.selectedAgent,
+        dispatchStatus: snapshot.execution.dispatchStatus,
+        dispatchAttemptCount: snapshot.execution.dispatchAttemptCount,
+        activeRunId: snapshot.execution.activeRunId,
+        lastFailureCategory: snapshot.execution.lastFailureCategory,
+      };
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+      return {
+        ...deliveryLoopCompanionFieldDefaults,
+        activeGateRunId: snapshot.gate.gateRunId,
+        lastFailureCategory: snapshot.gate.lastFailureCategory,
+      };
+    case "awaiting_pr_link":
+    case "babysitting":
+      return {
+        ...deliveryLoopCompanionFieldDefaults,
+        selectedAgent: snapshot.selectedAgent,
+        lastFailureCategory: snapshot.lastFailureCategory,
+      };
+    case "blocked":
+      return {
+        ...deliveryLoopCompanionFieldDefaults,
+        selectedAgent: snapshot.selectedAgent,
+        dispatchStatus: snapshot.dispatchStatus,
+        dispatchAttemptCount: snapshot.dispatchAttemptCount,
+        blockedReasonCategory: snapshot.reason,
+        blockedFromState: snapshot.from,
+        activeRunId: snapshot.activeRunId,
+        activeGateRunId: snapshot.activeGateRunId,
+        lastFailureCategory: snapshot.lastFailureCategory,
+      };
+    case "done":
+    case "stopped":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+      return {
+        ...deliveryLoopCompanionFieldDefaults,
+      };
+  }
+  return assertNever(snapshot);
+}
+
+export function buildPersistedDeliveryLoopSnapshot(params: {
+  state: DeliveryLoopState;
+  blockedFromState?: string | null;
+}): DeliveryLoopSnapshot {
+  return buildDeliveryLoopSnapshot({
+    state: params.state,
+    companionFields: {
+      blockedFromState:
+        coerceDeliveryLoopResumableState(params.blockedFromState) ??
+        "implementing",
+    },
+  });
+}
+
+export function getEffectiveDeliveryLoopPhase(
+  snapshot: DeliveryLoopSnapshot,
+):
+  | Exclude<DeliveryLoopSnapshot["kind"], "blocked">
+  | DeliveryLoopBlockedState["from"] {
+  if (snapshot.kind === "blocked") {
+    return snapshot.from;
+  }
+  return snapshot.kind;
+}
+
+export function reducePersistedDeliveryLoopState(params: {
+  state: DeliveryLoopState;
+  event: DeliveryLoopTransitionEvent;
+  blockedFromState?: DeliveryLoopResumableState | null;
+}): DeliveryLoopTransitionResult | null {
+  return reduceDeliveryLoopSnapshot({
+    snapshot: buildPersistedDeliveryLoopSnapshot({
+      state: params.state,
+      blockedFromState: params.blockedFromState,
+    }),
+    event: params.event,
+  });
+}
 
 /** All canonical (non-legacy) DeliveryLoopState values. */
 export const DELIVERY_LOOP_CANONICAL_STATES: readonly DeliveryLoopState[] = [
@@ -198,6 +694,58 @@ export type DeliveryLoopTransitionEvent =
   | "pr_merged"
   | "mark_done";
 
+export type DeliveryLoopTransitionResult = {
+  state: DeliveryLoopState;
+  snapshot: DeliveryLoopSnapshot;
+  companionFields: DeliveryLoopCompanionFields;
+};
+
+export function mapSdlcTransitionEventToDeliveryLoopTransition(
+  event: SdlcLoopTransitionEvent,
+): DeliveryLoopTransitionEvent | null {
+  switch (event) {
+    case "plan_completed":
+    case "plan_gate_blocked":
+    case "implementation_completed":
+    case "implementation_gate_blocked":
+    case "ci_gate_passed":
+    case "ci_gate_blocked":
+    case "pr_linked":
+    case "babysit_passed":
+    case "babysit_blocked":
+    case "manual_stop":
+    case "pr_closed_unmerged":
+    case "pr_merged":
+    case "mark_done":
+      return event;
+    case "review_passed":
+      return "review_gate_passed";
+    case "review_blocked":
+      return "review_gate_blocked";
+    case "ui_smoke_passed":
+      return "ui_gate_passed_with_pr";
+    case "ui_smoke_failed":
+      return "ui_gate_blocked";
+    case "blocked_resume_requested":
+    case "blocked_bypass_once_requested":
+      return "blocked_resume";
+    case "human_feedback_requested":
+      return "exhausted_retryable_failure";
+    case "implementation_progress":
+    case "review_threads_gate_passed":
+    case "review_threads_gate_blocked":
+    case "deep_review_gate_passed":
+    case "deep_review_gate_blocked":
+    case "carmack_review_gate_passed":
+    case "carmack_review_gate_blocked":
+    case "video_capture_started":
+    case "video_capture_succeeded":
+    case "video_capture_failed":
+      return null;
+  }
+  return assertNever(event);
+}
+
 /**
  * Resolves the next canonical DeliveryLoopState given a current state and
  * transition event. Returns null if the transition is invalid.
@@ -205,9 +753,11 @@ export type DeliveryLoopTransitionEvent =
 export function resolveDeliveryLoopNextState({
   currentState,
   event,
+  blockedFromState,
 }: {
   currentState: DeliveryLoopState;
   event: DeliveryLoopTransitionEvent;
+  blockedFromState?: DeliveryLoopResumableState | null;
 }): DeliveryLoopState | null {
   // Terminal states accept no transitions.
   if (
@@ -275,13 +825,84 @@ export function resolveDeliveryLoopNextState({
       return null;
 
     case "blocked":
-      if (event === "blocked_resume") return "implementing";
+      if (event === "blocked_resume") {
+        return resolveBlockedResumeTarget(blockedFromState);
+      }
       if (event === "mark_done") return "done";
       return null;
 
     default:
       return null;
   }
+}
+
+function getResumableStateFromSnapshot(
+  snapshot: DeliveryLoopSnapshot,
+): DeliveryLoopResumableState | null {
+  switch (snapshot.kind) {
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+    case "awaiting_pr_link":
+    case "babysitting":
+      return snapshot.kind;
+    case "blocked":
+      return snapshot.from;
+    case "done":
+    case "stopped":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+      return null;
+  }
+  return assertNever(snapshot);
+}
+
+export function reduceDeliveryLoopSnapshot(params: {
+  snapshot: DeliveryLoopSnapshot;
+  event: DeliveryLoopTransitionEvent;
+}): DeliveryLoopTransitionResult | null {
+  const nextState = resolveDeliveryLoopNextState({
+    currentState: params.snapshot.kind,
+    event: params.event,
+    blockedFromState:
+      params.snapshot.kind === "blocked" ? params.snapshot.from : null,
+  });
+
+  if (!nextState) {
+    return null;
+  }
+
+  const baseCompanionFields = buildDeliveryLoopCompanionFields(params.snapshot);
+  const nextSnapshot =
+    nextState === "blocked"
+      ? createBlockedSnapshot({
+          from: getResumableStateFromSnapshot(params.snapshot),
+          reason:
+            params.event === "exhausted_retryable_failure"
+              ? "runtime_failure"
+              : "human_required",
+          selectedAgent: baseCompanionFields.selectedAgent,
+          dispatchStatus: baseCompanionFields.dispatchStatus,
+          dispatchAttemptCount: baseCompanionFields.dispatchAttemptCount,
+          activeRunId: baseCompanionFields.activeRunId,
+          activeGateRunId: baseCompanionFields.activeGateRunId,
+          lastFailureCategory: baseCompanionFields.lastFailureCategory,
+        })
+      : buildDeliveryLoopSnapshot({
+          state: nextState,
+          companionFields: {
+            ...baseCompanionFields,
+            nextPhaseTarget: null,
+          },
+        });
+
+  return {
+    state: nextState,
+    snapshot: nextSnapshot,
+    companionFields: buildDeliveryLoopCompanionFields(nextSnapshot),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,8 +917,10 @@ const activeSdlcLoopStates = [
   "babysitting",
   "blocked",
 ] as const satisfies readonly SdlcLoopState[];
-const activeSdlcLoopStateList: SdlcLoopState[] = [...activeSdlcLoopStates];
-const activeSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
+export const activeSdlcLoopStateList: SdlcLoopState[] = [
+  ...activeSdlcLoopStates,
+];
+export const activeSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
   activeSdlcLoopStateList,
 );
 
@@ -307,8 +930,10 @@ const terminalSdlcLoopStates = [
   "done",
   "stopped",
 ] as const satisfies readonly SdlcLoopState[];
-const terminalSdlcLoopStateList: SdlcLoopState[] = [...terminalSdlcLoopStates];
-const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
+export const terminalSdlcLoopStateList: SdlcLoopState[] = [
+  ...terminalSdlcLoopStates,
+];
+export const terminalSdlcLoopStateSet: ReadonlySet<SdlcLoopState> = new Set(
   terminalSdlcLoopStateList,
 );
 
@@ -388,7 +1013,7 @@ export type DeliveryLoopDispatchIntent = {
   loopId: string;
   threadId: string;
   threadChatId: string;
-  targetPhase: DeliveryLoopState;
+  targetPhase: DeliveryLoopDispatchablePhase;
   selectedAgent: DeliveryLoopSelectedAgent;
   executionClass: DeliveryLoopExecutionClass;
   dispatchMechanism: DeliveryLoopDispatchMechanism;
@@ -1871,6 +2496,7 @@ export async function transitionSdlcLoopStateWithArtifact({
   headSha,
   loopVersion,
   expectedPhase,
+  blockedFromState,
   now = new Date(),
 }: {
   db: DB;
@@ -1880,6 +2506,7 @@ export async function transitionSdlcLoopStateWithArtifact({
   headSha?: string | null;
   loopVersion?: number;
   expectedPhase: SdlcPhase;
+  blockedFromState?: DeliveryLoopResumableState | null;
   now?: Date;
 }): Promise<SdlcTransitionWithArtifactOutcome> {
   return await db.transaction(async (tx) => {
@@ -1946,6 +2573,7 @@ export async function transitionSdlcLoopStateWithArtifact({
       transitionEvent,
       headSha,
       loopVersion,
+      blockedFromState,
       now,
     });
   });
@@ -3145,6 +3773,7 @@ async function persistGuardedGateLoopState({
   transitionEvent,
   headSha,
   loopVersion,
+  blockedFromState,
   now = new Date(),
 }: {
   tx: Pick<DB, "query" | "update">;
@@ -3152,6 +3781,7 @@ async function persistGuardedGateLoopState({
   transitionEvent: SdlcLoopTransitionEvent;
   headSha?: string | null;
   loopVersion?: number;
+  blockedFromState?: DeliveryLoopResumableState | null;
   now?: Date;
 }): Promise<SdlcGateLoopUpdateOutcome> {
   const loop = await tx.query.sdlcLoop.findFirst({
@@ -3162,6 +3792,7 @@ async function persistGuardedGateLoopState({
       currentHeadSha: true,
       fixAttemptCount: true,
       maxFixAttempts: true,
+      blockedFromState: true,
       phaseEnteredAt: true,
     },
   });
@@ -3186,10 +3817,26 @@ async function persistGuardedGateLoopState({
   ) {
     return "stale_noop";
   }
+  const persistedBlockedFromState = coerceDeliveryLoopResumableState(
+    loop.blockedFromState,
+  );
+  let reducedTransition: DeliveryLoopTransitionResult | null = null;
   let nextState = resolveSdlcLoopNextState({
     currentState: loop.state,
     event: transitionEvent,
   });
+  if (DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState)) {
+    const canonicalEvent =
+      mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent);
+    if (canonicalEvent) {
+      reducedTransition = reducePersistedDeliveryLoopState({
+        state: loop.state as DeliveryLoopState,
+        blockedFromState: blockedFromState ?? persistedBlockedFromState,
+        event: canonicalEvent,
+      });
+      nextState = reducedTransition?.state ?? nextState;
+    }
+  }
 
   if (!nextState) {
     return "stale_noop";
@@ -3228,11 +3875,24 @@ async function persistGuardedGateLoopState({
     currentHeadSha?: string | null;
     loopVersion?: number;
     fixAttemptCount?: number;
+    blockedFromState?: SdlcLoopState | null;
     phaseEnteredAt?: Date | null;
   } = {
     state: nextState!,
     updatedAt: now,
   };
+  const nextBlockedFromState =
+    nextState === "blocked"
+      ? reducedTransition?.snapshot.kind === "blocked"
+        ? reducedTransition.snapshot.from
+        : (blockedFromState ??
+          persistedBlockedFromState ??
+          coerceDeliveryLoopResumableState(loop.state) ??
+          "implementing")
+      : null;
+  if (nextBlockedFromState !== (loop.blockedFromState ?? null)) {
+    nextValues.blockedFromState = nextBlockedFromState;
+  }
   if (shouldIncrementFixAttempt) {
     nextValues.fixAttemptCount = incrementedFixAttemptCount;
   }
@@ -3299,6 +3959,7 @@ export async function transitionSdlcLoopState({
   transitionEvent,
   headSha,
   loopVersion,
+  blockedFromState,
   now = new Date(),
 }: {
   db: DB;
@@ -3306,6 +3967,7 @@ export async function transitionSdlcLoopState({
   transitionEvent: SdlcLoopTransitionEvent;
   headSha?: string | null;
   loopVersion?: number;
+  blockedFromState?: DeliveryLoopResumableState | null;
   now?: Date;
 }): Promise<SdlcGateLoopUpdateOutcome> {
   return await db.transaction(async (tx) => {
@@ -3315,6 +3977,7 @@ export async function transitionSdlcLoopState({
       transitionEvent,
       headSha,
       loopVersion,
+      blockedFromState,
       now,
     });
   });
@@ -3442,6 +4105,7 @@ export async function persistSdlcCiGateEvaluation({
       headSha,
       loopVersion,
       transitionEvent: gatePassed ? "ci_gate_passed" : "ci_gate_blocked",
+      blockedFromState: gatePassed ? null : "ci_gate",
       now,
     });
 
@@ -3549,6 +4213,7 @@ export async function persistSdlcReviewThreadGateEvaluation({
       transitionEvent: gatePassed
         ? "review_threads_gate_passed"
         : "review_threads_gate_blocked",
+      blockedFromState: gatePassed ? null : "ci_gate",
       now,
     });
 
@@ -3745,6 +4410,7 @@ export async function persistDeepReviewGateResult({
             headSha,
             loopVersion,
             transitionEvent: "deep_review_gate_blocked",
+            blockedFromState: "review_gate",
             now: new Date(),
           })
         : "stale_noop";
@@ -3880,6 +4546,7 @@ export async function persistDeepReviewGateResult({
             status === "blocked"
               ? "deep_review_gate_blocked"
               : "deep_review_gate_passed",
+          blockedFromState: status === "blocked" ? "review_gate" : null,
           now: new Date(),
         })
       : "stale_noop";
@@ -4193,6 +4860,7 @@ export async function persistCarmackReviewGateResult({
             headSha,
             loopVersion,
             transitionEvent: "carmack_review_gate_blocked",
+            blockedFromState: "review_gate",
             now: new Date(),
           })
         : "stale_noop";
@@ -4329,6 +4997,7 @@ export async function persistCarmackReviewGateResult({
             status === "blocked"
               ? "carmack_review_gate_blocked"
               : "carmack_review_gate_passed",
+          blockedFromState: status === "blocked" ? "review_gate" : null,
           now: new Date(),
         })
       : "stale_noop";
@@ -4493,12 +5162,48 @@ export type CreateDispatchIntentInput = {
   threadId: string;
   threadChatId: string;
   runId: string;
-  targetPhase: SdlcLoopState;
-  selectedAgent: string;
+  targetPhase: DeliveryLoopDispatchablePhase;
+  selectedAgent: DeliveryLoopSelectedAgent;
   executionClass: DispatchIntentExecutionClass;
   dispatchMechanism: DispatchIntentDispatchMechanism;
   retryCount?: number;
 };
+
+export function toDispatchIntentStatus(
+  status: DeliveryLoopDispatchStatus,
+): DispatchIntentStatus {
+  switch (status) {
+    case "prepared":
+      return "pending";
+    case "dispatched":
+      return "dispatched";
+    case "acknowledged":
+      return "acknowledged";
+    case "failed":
+      return "failed";
+    case "completed":
+      return "completed";
+  }
+  return assertNever(status);
+}
+
+export function fromDispatchIntentStatus(
+  status: DispatchIntentStatus,
+): DeliveryLoopDispatchStatus {
+  switch (status) {
+    case "pending":
+      return "prepared";
+    case "dispatched":
+      return "dispatched";
+    case "acknowledged":
+      return "acknowledged";
+    case "failed":
+      return "failed";
+    case "completed":
+      return "completed";
+  }
+  return assertNever(status);
+}
 
 /**
  * Persist a new dispatch intent before any dispatch work begins.
@@ -4519,7 +5224,7 @@ export async function createDispatchIntent(
       selectedAgent: input.selectedAgent,
       executionClass: input.executionClass,
       dispatchMechanism: input.dispatchMechanism,
-      status: "pending",
+      status: toDispatchIntentStatus("prepared"),
       retryCount: input.retryCount ?? 0,
     })
     .returning({ id: schema.deliveryLoopDispatchIntent.id });
@@ -4536,7 +5241,7 @@ export async function markDispatchIntentDispatched(
   await db
     .update(schema.deliveryLoopDispatchIntent)
     .set({
-      status: "dispatched" as DispatchIntentStatus,
+      status: toDispatchIntentStatus("dispatched"),
       dispatchedAt: new Date(),
     })
     .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
@@ -4557,7 +5262,7 @@ export async function markDispatchIntentAcknowledged(
   const rows = await db
     .update(schema.deliveryLoopDispatchIntent)
     .set({
-      status: "acknowledged" as DispatchIntentStatus,
+      status: toDispatchIntentStatus("acknowledged"),
       acknowledgedAt: new Date(),
     })
     .where(
@@ -4565,7 +5270,7 @@ export async function markDispatchIntentAcknowledged(
         eq(schema.deliveryLoopDispatchIntent.runId, runId),
         eq(
           schema.deliveryLoopDispatchIntent.status,
-          "dispatched" as DispatchIntentStatus,
+          toDispatchIntentStatus("dispatched"),
         ),
       ),
     )
@@ -4583,7 +5288,7 @@ export async function markDispatchIntentCompleted(
   await db
     .update(schema.deliveryLoopDispatchIntent)
     .set({
-      status: "completed" as DispatchIntentStatus,
+      status: toDispatchIntentStatus("completed"),
       completedAt: new Date(),
     })
     .where(eq(schema.deliveryLoopDispatchIntent.runId, runId));
@@ -4601,7 +5306,7 @@ export async function markDispatchIntentFailed(
   await db
     .update(schema.deliveryLoopDispatchIntent)
     .set({
-      status: "failed" as DispatchIntentStatus,
+      status: toDispatchIntentStatus("failed"),
       failedAt: new Date(),
       failureCategory,
       failureMessage,

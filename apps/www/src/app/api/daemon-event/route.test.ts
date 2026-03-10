@@ -77,7 +77,9 @@ const dbMocks = vi.hoisted(() => {
     signalInboxFindFirst,
     transaction,
     db: {
+      execute,
       transaction,
+      select,
       delete: deleteFrom,
       update,
       query: {
@@ -88,6 +90,13 @@ const dbMocks = vi.hoisted(() => {
     },
   };
 });
+
+const dispatchIntentMocks = vi.hoisted(() => ({
+  createDispatchIntent: vi.fn(),
+  storeSelfDispatchReplay: vi.fn(),
+  getReplayableSelfDispatch: vi.fn(),
+  updateDispatchIntent: vi.fn(),
+}));
 
 vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
@@ -120,6 +129,13 @@ vi.mock("@/server-lib/process-follow-up-queue", () => ({
 
 vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn(),
+}));
+
+vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
+  createDispatchIntent: dispatchIntentMocks.createDispatchIntent,
+  storeSelfDispatchReplay: dispatchIntentMocks.storeSelfDispatchReplay,
+  getReplayableSelfDispatch: dispatchIntentMocks.getReplayableSelfDispatch,
+  updateDispatchIntent: dispatchIntentMocks.updateDispatchIntent,
 }));
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
@@ -190,6 +206,23 @@ function createSuccessResultMessage(sessionId = "session-1") {
   };
 }
 
+const MOCK_SELF_DISPATCH_REPLAY_PAYLOAD = {
+  token: "token-1",
+  prompt: "Please address this feedback.",
+  runId: "run-next",
+  tokenNonce: "nonce-next",
+  model: "gpt-5.3-codex",
+  agent: "codex",
+  agentVersion: 2,
+  sessionId: null,
+  featureFlags: {},
+  permissionMode: "allowAll",
+  transportMode: "codex-app-server",
+  protocolVersion: 1,
+  threadId: "thread-1",
+  threadChatId: "chat-1",
+};
+
 describe("daemon-event route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -228,7 +261,7 @@ describe("daemon-event route", () => {
       daemonTokenKeyId: "api-key-1",
       createdAt: new Date(),
       updatedAt: new Date(),
-    } as any);
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
@@ -245,6 +278,13 @@ describe("daemon-event route", () => {
       reason: "no_queued_messages",
     });
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
+    dispatchIntentMocks.createDispatchIntent.mockResolvedValue({
+      id: "di_loop-1_run-next",
+      status: "prepared",
+    });
+    dispatchIntentMocks.storeSelfDispatchReplay.mockResolvedValue(undefined);
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(null);
+    dispatchIntentMocks.updateDispatchIntent.mockResolvedValue(undefined);
     dbMocks.execute.mockResolvedValue([]);
     dbMocks.selectWhere.mockResolvedValue([]);
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
@@ -510,6 +550,53 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
+  it("replays self-dispatch on run_terminal_ignored responses", async () => {
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
+      MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
+    );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "legacy",
+      protocolVersion: 1,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-terminal",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(data.reason).toBe("run_terminal_ignored");
+    expect(data.selfDispatch).toEqual(
+      expect.objectContaining({
+        runId: "run-next",
+        prompt: "Please address this feedback.",
+      }),
+    );
+  });
+
   it("re-enqueues daemon-terminal feedback when runtime follow-up is expected but queue is empty", async () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
       id: "loop-1",
@@ -577,6 +664,129 @@ describe("daemon-event route", () => {
     expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(2);
     expect(data.acknowledgedEventId).toBe("event-follow-up");
     expect(data.acknowledgedSeq).toBe(0);
+  });
+
+  it("replays self-dispatch on duplicate terminal acknowledgements", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      loopVersion: 7,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    dbMocks.insertReturning.mockResolvedValue([]);
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
+      MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
+    );
+    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
+      processed: false,
+      reason: "no_unprocessed_signal",
+    } as Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-dup-terminal",
+        runId: "run-1",
+        seq: 3,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(data.deduplicated).toBe(true);
+    expect(data.reason).toBe("duplicate_event");
+    expect(data.selfDispatch).toEqual(
+      expect.objectContaining({
+        runId: "run-next",
+      }),
+    );
+  });
+
+  it("replays self-dispatch on out-of-order terminal acknowledgements", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      loopVersion: 7,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    dbMocks.selectWhere
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ maxSeq: 3 }]);
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
+      MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
+    );
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-out-of-order",
+        runId: "run-1",
+        seq: 2,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(data.deduplicated).toBe(true);
+    expect(data.reason).toBe("out_of_order_or_duplicate_seq");
+    expect(data.selfDispatch).toEqual(
+      expect.objectContaining({
+        runId: "run-next",
+      }),
+    );
+  });
+
+  it("blocks auto-dispatch when consecutive completed runs exceed threshold", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      loopVersion: 7,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
+      processed: true,
+      signalId: "signal-1",
+      causeType: "daemon_terminal",
+      runtimeAction: "feedback_follow_up_queued",
+      outboxId: null,
+      feedbackQueuedMessage: {
+        type: "user",
+        model: null,
+        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+        parts: [{ type: "text", text: "Please address this feedback." }],
+      },
+      runtimeRouting: {
+        routed: true,
+        followUpQueued: true,
+        reason: "follow_up_queued",
+        error: null,
+      },
+    });
+    // Circuit breaker uses db.execute() — return count >= MAX_CONSECUTIVE_AUTO_DISPATCHES (10)
+    dbMocks.execute.mockResolvedValue([{ count: 10 }]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-circuit-breaker",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // Circuit breaker should prevent follow-up processing
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
 
   it("persists codexPreviousResponseId for successful codex app-server completions", async () => {
@@ -860,7 +1070,7 @@ describe("daemon-event route", () => {
       guardrailRuntime: {
         killSwitchEnabled: false,
         cooldownUntil: null,
-        maxIterations: null,
+        maxIterations: 15,
         manualIntentAllowed: true,
         iterationCount: 11,
       },
@@ -872,7 +1082,7 @@ describe("daemon-event route", () => {
       guardrailRuntime: {
         killSwitchEnabled: false,
         cooldownUntil: null,
-        maxIterations: null,
+        maxIterations: 15,
         manualIntentAllowed: true,
         iterationCount: 11,
       },

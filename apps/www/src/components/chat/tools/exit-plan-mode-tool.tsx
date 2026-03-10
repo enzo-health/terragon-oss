@@ -6,7 +6,8 @@ import { resolvePlanText } from "./plan-utils";
 import { TextPart } from "../text-part";
 import { Button } from "../../ui/button";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { useThread } from "../thread-context";
+import type { DBMessage } from "@terragon/shared";
+import { PromptBoxRef } from "../thread-context";
 import { toast } from "sonner";
 import { approvePlan } from "@/server-actions/approve-plan";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
@@ -15,24 +16,33 @@ import { findArtifactDescriptorForPart } from "../secondary-panel";
 
 export function ExitPlanModeTool({
   toolPart,
+  threadId,
+  threadChatId,
+  messages,
+  isReadOnly,
+  promptBoxRef,
   artifactDescriptors = [],
   onOpenArtifact,
 }: {
   toolPart: Extract<AllToolParts, { name: "ExitPlanMode" }>;
+  threadId: string;
+  threadChatId: string;
+  messages: DBMessage[];
+  isReadOnly: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 }) {
-  const { threadChat, isReadOnly, promptBoxRef } = useThread();
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
 
   const plan = useMemo(
     () =>
       resolvePlanText({
         planParam: toolPart.parameters.plan,
-        messages: threadChat?.messages ?? null,
+        messages,
         exitPlanModeToolId: toolPart.id,
       }),
-    [toolPart.parameters.plan, toolPart.id, threadChat?.messages],
+    [toolPart.parameters.plan, toolPart.id, messages],
   );
 
   const artifactDescriptor = useMemo(
@@ -45,16 +55,15 @@ export function ExitPlanModeTool({
   );
   const [copied, setCopied] = useState(false);
   const updateThreadChat = useOptimisticUpdateThreadChat({
-    threadId: threadChat?.threadId,
-    threadChatId: threadChat?.id,
+    threadId,
+    threadChatId,
   });
   // Only show buttons if this is the active ExitPlanMode tool
   const shouldShowButtons = useMemo(() => {
-    if (isReadOnly || !threadChat) {
+    if (isReadOnly) {
       return false;
     }
     // Calculate which ExitPlanMode tool should show buttons
-    const messages = threadChat.messages!;
     let lastExitPlanModeId: string | null = null;
     // Iterate backwards through messages
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -70,26 +79,27 @@ export function ExitPlanModeTool({
       }
     }
     return lastExitPlanModeId === toolPart.id;
-  }, [isReadOnly, threadChat, toolPart.id]);
+  }, [isReadOnly, messages, toolPart.id]);
 
   const handleApproveMutation = useServerActionMutation({
     mutationFn: approvePlan,
   });
 
   const handleApprove = useCallback(async () => {
-    if (isReadOnly || !threadChat) {
+    if (isReadOnly) {
       return;
     }
     // Switch promptbox to execute mode (allowAll)
     promptBoxRef?.current?.setPermissionMode("allowAll");
     updateThreadChat({ permissionMode: "allowAll" });
     await handleApproveMutation.mutateAsync({
-      threadId: threadChat.threadId,
-      threadChatId: threadChat.id,
+      threadId,
+      threadChatId,
     });
   }, [
     isReadOnly,
-    threadChat,
+    threadId,
+    threadChatId,
     promptBoxRef,
     handleApproveMutation,
     updateThreadChat,

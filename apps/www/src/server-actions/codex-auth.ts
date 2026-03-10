@@ -3,68 +3,95 @@
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
-import { refreshAccessToken } from "@/lib/openai-oauth";
 import { insertAgentProviderCredentials } from "@terragon/shared/model/agent-provider-credentials";
 import { UserFacingError } from "@/lib/server-actions";
 import { getPostHogServer } from "@/lib/posthog-server";
+
+type OpenAIAuthJson = {
+  tokens?: {
+    id_token?: string;
+    access_token?: string;
+    refresh_token?: string;
+    account_id?: string;
+  };
+};
+
+function parseOpenAiIdToken(idToken: string): {
+  exp?: number;
+  email?: string;
+  chatgptAccountId?: string;
+} {
+  try {
+    const parts = idToken.split(".");
+    if (parts.length !== 3) {
+      return {};
+    }
+    const payload = JSON.parse(
+      Buffer.from(parts[1]!, "base64url").toString("utf-8"),
+    ) as {
+      exp?: number;
+      email?: string;
+      "https://api.openai.com/auth.chatgpt_account_id"?: string;
+    };
+    return {
+      exp: payload.exp,
+      email: payload.email,
+      chatgptAccountId:
+        payload["https://api.openai.com/auth.chatgpt_account_id"],
+    };
+  } catch (error) {
+    console.warn("Failed to parse OpenAI id_token", error);
+    return {};
+  }
+}
 
 export const saveCodexAuthJson = userOnlyAction(
   async function saveCodexAuthJson(
     userId: string,
     { authJson }: { authJson: string },
   ) {
-    const parsed = JSON.parse(authJson || "{}");
-    // Skip the OPENAI_API_KEY - we only handle OAuth tokens
-    const tokens = parsed.tokens || {};
-    let id_token: string | undefined = tokens.id_token;
-    let access_token: string | undefined = tokens.access_token;
-    let refresh_token: string | undefined = tokens.refresh_token;
-    const account_id: string | undefined = tokens.account_id;
+    const parsed = JSON.parse(authJson || "{}") as OpenAIAuthJson;
+    const tokens = parsed.tokens;
+    const idToken = tokens?.id_token;
+    const accessToken = tokens?.access_token;
+    const refreshToken = tokens?.refresh_token;
+    const accountId = tokens?.account_id;
 
-    // Try to refresh tokens to ensure we have a fresh access token and expiry
-    let expires_in: number | undefined;
-    try {
-      const refreshed = await refreshAccessToken(refresh_token ?? "");
-      access_token = refreshed.access_token;
-      id_token = refreshed.id_token ?? id_token;
-      refresh_token = refreshed.refresh_token ?? refresh_token;
-      expires_in = refreshed.expires_in;
-    } catch (err) {
-      console.warn("OpenAI token refresh failed, using provided tokens", err);
+    if (!accessToken) {
       throw new UserFacingError(
-        "Invalid OpenAI credentials, please run 'codex login' to refresh your credentials",
+        "Invalid OpenAI credentials, please paste a fresh auth.json from 'codex login'",
       );
     }
+    const idTokenPayload = idToken ? parseOpenAiIdToken(idToken) : {};
+    const expiresAt = idTokenPayload.exp
+      ? new Date(idTokenPayload.exp * 1000)
+      : null;
 
-    // Save OAuth tokens if present
-    if (access_token) {
-      getPostHogServer().capture({
-        distinctId: userId,
-        event: "codex_oauth_tokens_saved",
-        properties: {},
-      });
-      await insertAgentProviderCredentials({
-        db,
-        userId,
-        credentialData: {
-          type: "oauth",
-          agent: "codex",
-          isActive: true,
-          accessToken: access_token,
-          refreshToken: refresh_token,
-          idToken: id_token,
-          expiresAt: expires_in
-            ? new Date(Date.now() + expires_in * 1000)
-            : null,
-          lastRefreshedAt: new Date(),
-          metadata: {
-            type: "openai",
-            accountId: account_id,
-          },
+    getPostHogServer().capture({
+      distinctId: userId,
+      event: "codex_oauth_tokens_saved",
+      properties: {},
+    });
+    await insertAgentProviderCredentials({
+      db,
+      userId,
+      credentialData: {
+        type: "oauth",
+        agent: "codex",
+        isActive: true,
+        accessToken,
+        refreshToken,
+        idToken,
+        expiresAt,
+        lastRefreshedAt: new Date(),
+        metadata: {
+          type: "openai",
+          accountId: accountId ?? idTokenPayload.chatgptAccountId,
+          email: idTokenPayload.email,
         },
-        encryptionKey: env.ENCRYPTION_MASTER_KEY,
-      });
-    }
+      },
+      encryptionKey: env.ENCRYPTION_MASTER_KEY,
+    });
   },
   { defaultErrorMessage: "Failed to save Codex auth.json" },
 );

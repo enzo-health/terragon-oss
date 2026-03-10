@@ -1,6 +1,82 @@
 import * as z from "zod/v4";
 import type { SandboxProvider } from "./sandbox";
 
+const BroadcastThreadStatusSchema = z.enum([
+  "queued-blocked",
+  "error",
+  "stopped",
+  "working-stopped",
+  "draft",
+  "scheduled",
+  "queued",
+  "queued-tasks-concurrency",
+  "queued-sandbox-creation-rate-limit",
+  "queued-agent-rate-limit",
+  "booting",
+  "working",
+  "stopping",
+  "working-error",
+  "working-done",
+  "checkpointing",
+  "complete",
+]);
+
+const BroadcastSandboxStatusSchema = z.enum([
+  "unknown",
+  "provisioning",
+  "booting",
+  "running",
+  "paused",
+  "killed",
+]);
+
+const BroadcastBootingSubstatusSchema = z.enum([
+  "provisioning",
+  "provisioning-done",
+  "cloning-repo",
+  "installing-agent",
+  "installing-sandbox-scripts",
+  "running-setup-script",
+  "booting-done",
+]);
+
+const BroadcastGithubPRStatusSchema = z.enum([
+  "draft",
+  "open",
+  "closed",
+  "merged",
+]);
+
+const BroadcastGithubCheckStatusSchema = z.enum([
+  "none",
+  "pending",
+  "success",
+  "failure",
+  "unknown",
+]);
+
+const BroadcastThreadSourceSchema = z.enum([
+  "www",
+  "www-redo",
+  "www-fork",
+  "www-multi-agent",
+  "www-suggested-followup-task",
+  "webhook",
+  "automation",
+  "slack-mention",
+  "github-mention",
+  "linear-mention",
+  "cli",
+]);
+
+const BroadcastAIAgentSchema = z.enum([
+  "claudeCode",
+  "gemini",
+  "amp",
+  "codex",
+  "opencode",
+]);
+
 export type BroadcastChannelUser = {
   type: "user";
   id: string;
@@ -16,26 +92,104 @@ export type BroadcastChannelSandbox = {
 
 export type BroadcastChannel = BroadcastChannelUser | BroadcastChannelSandbox;
 
-const BroadcastMessageThreadDataSchema = z.object({
-  isThreadUnread: z.boolean().optional(),
-  isThreadCreated: z.boolean().optional(),
-  isThreadDeleted: z.boolean().optional(),
-  isThreadArchived: z.boolean().optional(),
-  threadAutomationId: z.string().optional(),
-  threadName: z.string().optional(),
-  threadStatusUpdated: z.string().optional(),
-  hasErrorMessage: z.boolean().optional(),
-  messagesUpdated: z.boolean().optional(),
+const BroadcastGitDiffStatsSchema = z.object({
+  files: z.number(),
+  additions: z.number(),
+  deletions: z.number(),
 });
 
-export type BroadcastMessageThreadData = z.infer<
-  typeof BroadcastMessageThreadDataSchema
+const BroadcastChildThreadInfoSchema = z.object({
+  id: z.string(),
+  parentToolId: z.string().nullable(),
+});
+
+const BroadcastThreadShellRealtimeFieldsSchema = z.object({
+  userId: z.string().optional(),
+  name: z.string().nullable().optional(),
+  automationId: z.string().nullable().optional(),
+  archived: z.boolean().optional(),
+  visibility: z.enum(["private", "link", "repo"]).nullable().optional(),
+  isUnread: z.boolean().optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+  branchName: z.string().nullable().optional(),
+  repoBaseBranchName: z.string().optional(),
+  githubRepoFullName: z.string().optional(),
+  githubPRNumber: z.number().nullable().optional(),
+  githubIssueNumber: z.number().nullable().optional(),
+  prStatus: BroadcastGithubPRStatusSchema.nullable().optional(),
+  prChecksStatus: BroadcastGithubCheckStatusSchema.nullable().optional(),
+  sandboxStatus: BroadcastSandboxStatusSchema.nullable().optional(),
+  bootingSubstatus: BroadcastBootingSubstatusSchema.nullable().optional(),
+  codesandboxId: z.string().nullable().optional(),
+  sandboxProvider: z
+    .enum(["e2b", "docker", "mock", "daytona"])
+    .nullable()
+    .optional(),
+  sandboxSize: z.enum(["small", "large"]).nullable().optional(),
+  hasGitDiff: z.boolean().optional(),
+  gitDiffStats: BroadcastGitDiffStatsSchema.nullable().optional(),
+  parentThreadId: z.string().nullable().optional(),
+  parentThreadName: z.string().nullable().optional(),
+  parentToolId: z.string().nullable().optional(),
+  authorName: z.string().nullable().optional(),
+  authorImage: z.string().nullable().optional(),
+  draftMessage: z.unknown().nullable().optional(),
+  skipSetup: z.boolean().nullable().optional(),
+  disableGitCheckpointing: z.boolean().nullable().optional(),
+  sourceType: BroadcastThreadSourceSchema.optional(),
+  sourceMetadata: z.unknown().optional(),
+  version: z.number().optional(),
+  primaryThreadChatId: z.string().optional(),
+  childThreads: z.array(BroadcastChildThreadInfoSchema).optional(),
+});
+
+export type BroadcastThreadShellRealtimeFields = z.infer<
+  typeof BroadcastThreadShellRealtimeFieldsSchema
 >;
 
-const BroadcastMessageDataSchema = BroadcastMessageThreadDataSchema.extend({
-  automationId: z.string().optional(),
-  threadId: z.string().optional(),
+const BroadcastActiveChatRealtimeFieldsSchema = z.object({
+  agent: BroadcastAIAgentSchema.optional(),
+  agentVersion: z.number().optional(),
+  status: BroadcastThreadStatusSchema.nullable().optional(),
+  errorMessage: z.string().nullable().optional(),
+  errorMessageInfo: z.string().nullable().optional(),
+  scheduleAt: z.string().nullable().optional(),
+  reattemptQueueAt: z.string().nullable().optional(),
+  contextLength: z.number().nullable().optional(),
+  permissionMode: z.enum(["allowAll", "plan"]).optional(),
+  isUnread: z.boolean().optional(),
+  queuedMessages: z.array(z.unknown()).nullable().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type BroadcastActiveChatRealtimeFields = z.infer<
+  typeof BroadcastActiveChatRealtimeFieldsSchema
+>;
+
+const BroadcastThreadPatchSchema = z.object({
+  threadId: z.string(),
   threadChatId: z.string().optional(),
+  op: z.enum(["upsert", "delete", "refetch"]),
+  chatSequence: z.number().int().nonnegative().optional(),
+  shell: BroadcastThreadShellRealtimeFieldsSchema.optional(),
+  chat: BroadcastActiveChatRealtimeFieldsSchema.optional(),
+  appendMessages: z.array(z.unknown()).optional(),
+  expectedMessageCount: z.number().int().nonnegative().optional(),
+  diffChanged: z.boolean().optional(),
+  notifyUnread: z
+    .object({
+      threadName: z.string().optional(),
+    })
+    .optional(),
+  refetch: z.array(z.enum(["shell", "chat", "diff", "list"])).optional(),
+});
+
+export type BroadcastThreadPatch = z.infer<typeof BroadcastThreadPatchSchema>;
+
+const BroadcastMessageDataSchema = z.object({
+  automationId: z.string().optional(),
+  threadPatches: z.array(BroadcastThreadPatchSchema).optional(),
   environmentId: z.string().optional(),
   userSettings: z.boolean().optional(),
   userFlags: z.boolean().optional(),
@@ -51,9 +205,6 @@ const BroadcastUserMessageSchema = z.object({
   type: z.literal("user"),
   id: z.string(),
   data: BroadcastMessageDataSchema,
-  dataByThreadId: z
-    .record(z.string(), BroadcastMessageThreadDataSchema)
-    .optional(),
 });
 
 export type BroadcastUserMessage = z.infer<typeof BroadcastUserMessageSchema>;
@@ -146,7 +297,39 @@ export function parseBroadcastChannel(
   }
   if (type === "sandbox") {
     try {
-      const { userId, threadId, sandboxId, sandboxProvider } = base64ToJson(id);
+      const parsed = base64ToJson(id);
+      const parsedRecord =
+        typeof parsed === "object" && parsed !== null
+          ? (parsed as Record<string, unknown>)
+          : null;
+      if (
+        parsedRecord === null ||
+        !("userId" in parsedRecord) ||
+        !("threadId" in parsedRecord) ||
+        !("sandboxId" in parsedRecord)
+      ) {
+        return null;
+      }
+      const userId =
+        typeof parsedRecord.userId === "string"
+          ? parsedRecord.userId
+          : undefined;
+      const threadId =
+        typeof parsedRecord.threadId === "string"
+          ? parsedRecord.threadId
+          : undefined;
+      const sandboxId =
+        typeof parsedRecord.sandboxId === "string"
+          ? parsedRecord.sandboxId
+          : undefined;
+      const sandboxProvider =
+        "sandboxProvider" in parsedRecord &&
+        (parsedRecord.sandboxProvider === "e2b" ||
+          parsedRecord.sandboxProvider === "docker" ||
+          parsedRecord.sandboxProvider === "mock" ||
+          parsedRecord.sandboxProvider === "daytona")
+          ? parsedRecord.sandboxProvider
+          : undefined;
       if (!userId || !threadId || !sandboxId) {
         return null;
       }
@@ -168,7 +351,7 @@ export function parseBroadcastChannel(
   return null;
 }
 
-function jsonToBase64(obj: any) {
+function jsonToBase64(obj: unknown) {
   const jsonStr = JSON.stringify(obj);
   if (typeof btoa === "function") {
     return btoa(jsonStr);
@@ -176,7 +359,7 @@ function jsonToBase64(obj: any) {
   return Buffer.from(jsonStr).toString("base64");
 }
 
-function base64ToJson(str: string) {
+function base64ToJson(str: string): unknown {
   try {
     const jsonStr =
       typeof atob === "function"
