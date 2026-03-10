@@ -312,7 +312,9 @@ function buildThreadPlanOccurrenceMap(
   const counts = new Map<string, number>();
   const result = new Map<UIPart, number>();
   for (const message of messages) {
-    if (message.role === "system") continue;
+    // Only count agent text parts — mirrors getArtifactDescriptors which only
+    // creates plan descriptors for agent messages.
+    if (message.role !== "agent") continue;
     for (const part of message.parts) {
       if (part.type !== "text") continue;
       const planText = extractProposedPlanText((part as { text: string }).text);

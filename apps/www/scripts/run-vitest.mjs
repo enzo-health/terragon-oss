@@ -18,10 +18,23 @@ const vitestArgs =
   forwardedArgs[0] === "--" ? forwardedArgs.slice(1) : forwardedArgs;
 // Preserve plain `pnpm test` Vitest behavior, but keep positional file filters in
 // one-shot mode for PR verification commands like `pnpm test -- path/to/file.test.ts`.
-const shouldForceRun =
+// Also handles flags before the filter: `pnpm test -- --coverage src/foo.test.ts`.
+const hasSubcommand =
+  vitestArgs.length > 0 && vitestSubcommands.has(vitestArgs[0]);
+const firstArgIsFilter =
   vitestArgs.length > 0 &&
   !vitestArgs[0]?.startsWith("-") &&
   !vitestSubcommands.has(vitestArgs[0]);
+// Also detect file paths that appear after leading flags (e.g. `--coverage src/foo.test.ts`)
+const hasLatePositionalFilter =
+  !hasSubcommand &&
+  !firstArgIsFilter &&
+  vitestArgs.some(
+    (arg) =>
+      !arg.startsWith("-") &&
+      (arg.includes("/") || /\.(?:test|spec)\b/.test(arg)),
+  );
+const shouldForceRun = firstArgIsFilter || hasLatePositionalFilter;
 
 const result = spawnSync(
   process.execPath,
