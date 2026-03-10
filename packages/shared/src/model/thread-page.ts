@@ -2,7 +2,7 @@ import {
   BroadcastActiveChatRealtimeFields,
   BroadcastThreadShellRealtimeFields,
 } from "@terragon/types/broadcast";
-import { and, asc, desc, eq, getTableColumns, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DB } from "../db";
 import * as schema from "../db/schema";
@@ -222,6 +222,110 @@ function toThreadPageChatSummaryWithCreatedAt(
   };
 }
 
+function getThreadPageShellSelect() {
+  return {
+    id: schema.thread.id,
+    userId: schema.thread.userId,
+    name: schema.thread.name,
+    githubRepoFullName: schema.thread.githubRepoFullName,
+    repoBaseBranchName: schema.thread.repoBaseBranchName,
+    branchName: schema.thread.branchName,
+    githubPRNumber: schema.thread.githubPRNumber,
+    githubIssueNumber: schema.thread.githubIssueNumber,
+    codesandboxId: schema.thread.codesandboxId,
+    sandboxProvider: schema.thread.sandboxProvider,
+    sandboxSize: schema.thread.sandboxSize,
+    sandboxStatus: schema.thread.sandboxStatus,
+    bootingSubstatus: schema.thread.bootingSubstatus,
+    gitDiffStats: schema.thread.gitDiffStats,
+    archived: schema.thread.archived,
+    createdAt: schema.thread.createdAt,
+    updatedAt: schema.thread.updatedAt,
+    automationId: schema.thread.automationId,
+    parentThreadId: schema.thread.parentThreadId,
+    parentToolId: schema.thread.parentToolId,
+    draftMessage: schema.thread.draftMessage,
+    disableGitCheckpointing: schema.thread.disableGitCheckpointing,
+    skipSetup: schema.thread.skipSetup,
+    sourceType: schema.thread.sourceType,
+    sourceMetadata: schema.thread.sourceMetadata,
+    version: schema.thread.version,
+    agent: schema.thread.agent,
+    agentVersion: schema.thread.agentVersion,
+    status: schema.thread.status,
+    errorMessage: schema.thread.errorMessage,
+    errorMessageInfo: schema.thread.errorMessageInfo,
+    scheduleAt: schema.thread.scheduleAt,
+    reattemptQueueAt: schema.thread.reattemptQueueAt,
+    contextLength: schema.thread.contextLength,
+    permissionMode: schema.thread.permissionMode,
+  };
+}
+
+function getThreadPageShellThreadChatSummarySelect() {
+  return {
+    id: schema.threadChat.id,
+    threadId: schema.threadChat.threadId,
+    createdAt: schema.threadChat.createdAt,
+    updatedAt: schema.threadChat.updatedAt,
+    agent: schema.threadChat.agent,
+    agentVersion: schema.threadChat.agentVersion,
+    status: schema.threadChat.status,
+    errorMessage: schema.threadChat.errorMessage,
+    errorMessageInfo: schema.threadChat.errorMessageInfo,
+    scheduleAt: schema.threadChat.scheduleAt,
+    reattemptQueueAt: schema.threadChat.reattemptQueueAt,
+    contextLength: schema.threadChat.contextLength,
+    permissionMode: schema.threadChat.permissionMode,
+  };
+}
+
+function getThreadPageLegacyChatSelect() {
+  return {
+    id: schema.thread.id,
+    userId: schema.thread.userId,
+    name: schema.thread.name,
+    createdAt: schema.thread.createdAt,
+    updatedAt: schema.thread.updatedAt,
+    agent: schema.thread.agent,
+    agentVersion: schema.thread.agentVersion,
+    status: schema.thread.status,
+    messages: schema.thread.messages,
+    queuedMessages: schema.thread.queuedMessages,
+    sessionId: schema.thread.sessionId,
+    errorMessage: schema.thread.errorMessage,
+    errorMessageInfo: schema.thread.errorMessageInfo,
+    scheduleAt: schema.thread.scheduleAt,
+    reattemptQueueAt: schema.thread.reattemptQueueAt,
+    contextLength: schema.thread.contextLength,
+    permissionMode: schema.thread.permissionMode,
+  };
+}
+
+function getThreadPageFullChatSelect() {
+  return {
+    id: schema.threadChat.id,
+    userId: schema.threadChat.userId,
+    threadId: schema.threadChat.threadId,
+    title: schema.threadChat.title,
+    createdAt: schema.threadChat.createdAt,
+    updatedAt: schema.threadChat.updatedAt,
+    agent: schema.threadChat.agent,
+    agentVersion: schema.threadChat.agentVersion,
+    status: schema.threadChat.status,
+    messages: schema.threadChat.messages,
+    queuedMessages: schema.threadChat.queuedMessages,
+    sessionId: schema.threadChat.sessionId,
+    errorMessage: schema.threadChat.errorMessage,
+    errorMessageInfo: schema.threadChat.errorMessageInfo,
+    scheduleAt: schema.threadChat.scheduleAt,
+    reattemptQueueAt: schema.threadChat.reattemptQueueAt,
+    contextLength: schema.threadChat.contextLength,
+    permissionMode: schema.threadChat.permissionMode,
+    codexPreviousResponseId: schema.threadChat.codexPreviousResponseId,
+  };
+}
+
 export function toBroadcastThreadShellRealtimeFields(
   shell: ThreadPageShell,
 ): BroadcastThreadShellRealtimeFields {
@@ -312,7 +416,7 @@ export async function getThreadPageShellWithPermissions({
   const [threads, childThreads, threadChats] = await Promise.all([
     db
       .select({
-        ...getTableColumns(schema.thread),
+        ...getThreadPageShellSelect(),
         authorName: schema.user.name,
         authorImage: schema.user.image,
         prStatus: schema.githubPR.status,
@@ -354,7 +458,7 @@ export async function getThreadPageShellWithPermissions({
     }),
     db
       .select({
-        ...getTableColumns(schema.threadChat),
+        ...getThreadPageShellThreadChatSummarySelect(),
         isUnread: sql<boolean>`NOT COALESCE(${schema.threadChatReadStatus.isRead}, true)`,
       })
       .from(schema.threadChat)
@@ -455,7 +559,7 @@ export async function getThreadPageChatWithPermissions({
   if (threadChatId === LEGACY_THREAD_CHAT_ID) {
     const threadResult = await db
       .select({
-        ...getTableColumns(schema.thread),
+        ...getThreadPageLegacyChatSelect(),
         isUnread: sql<boolean>`NOT COALESCE(${schema.threadReadStatus.isRead}, true)`,
       })
       .from(schema.thread)
@@ -507,7 +611,7 @@ export async function getThreadPageChatWithPermissions({
 
   const threadChatResult = await db
     .select({
-      ...getTableColumns(schema.threadChat),
+      ...getThreadPageFullChatSelect(),
       isUnread: sql<boolean>`NOT COALESCE(${schema.threadChatReadStatus.isRead}, true)`,
     })
     .from(schema.threadChat)
