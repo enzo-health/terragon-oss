@@ -1598,6 +1598,8 @@ export const sdlcLoopSignalInbox = pgTable(
     receivedAt: timestamp("received_at", { mode: "date" })
       .notNull()
       .defaultNow(),
+    claimToken: text("claim_token"),
+    claimedAt: timestamp("claimed_at", { mode: "date" }),
     committedAt: timestamp("committed_at", { mode: "date" }),
     processedAt: timestamp("processed_at", { mode: "date" }),
   },

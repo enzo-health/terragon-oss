@@ -14,11 +14,12 @@ const mockUpdateDispatchIntent = vi.hoisted(() => vi.fn());
 const mockBuildDispatchIntentId = vi.hoisted(() =>
   vi.fn((loopId: string, runId: string) => `di_${loopId}_${runId}`),
 );
+const mockGetActiveDispatchIntent = vi.hoisted(() => vi.fn());
 
 vi.mock("./dispatch-intent", () => ({
   updateDispatchIntent: mockUpdateDispatchIntent,
   buildDispatchIntentId: mockBuildDispatchIntentId,
-  getActiveDispatchIntent: vi.fn(),
+  getActiveDispatchIntent: mockGetActiveDispatchIntent,
 }));
 
 const mockResetRetryCounter = vi.hoisted(() => vi.fn());
@@ -48,8 +49,13 @@ afterEach(() => {
 
 describe("handleAckReceived", () => {
   it("updates Redis intent, DB intent, and resets retry counter in parallel", async () => {
+    mockGetActiveDispatchIntent.mockResolvedValue({
+      id: "di_loop-1_run-1",
+      runId: "run-1",
+      status: "dispatched",
+    });
     mockUpdateDispatchIntent.mockResolvedValue(undefined);
-    mockMarkDispatchIntentAcknowledged.mockResolvedValue(undefined);
+    mockMarkDispatchIntentAcknowledged.mockResolvedValue(true);
     mockResetRetryCounter.mockResolvedValue(undefined);
 
     await handleAckReceived({
@@ -69,6 +75,25 @@ describe("handleAckReceived", () => {
       "run-1",
     );
     expect(mockResetRetryCounter).toHaveBeenCalledWith("tc-1");
+  });
+
+  it("does not rewrite realtime state when intent is already terminal", async () => {
+    mockGetActiveDispatchIntent.mockResolvedValue({
+      id: "di_loop-1_run-1",
+      runId: "run-1",
+      status: "completed",
+    });
+    mockMarkDispatchIntentAcknowledged.mockResolvedValue(false);
+
+    await handleAckReceived({
+      db: fakeDb,
+      runId: "run-1",
+      loopId: "loop-1",
+      threadChatId: "tc-1",
+    });
+
+    expect(mockUpdateDispatchIntent).not.toHaveBeenCalled();
+    expect(mockResetRetryCounter).not.toHaveBeenCalled();
   });
 });
 

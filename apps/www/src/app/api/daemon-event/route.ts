@@ -14,9 +14,13 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
+  markDispatchIntentCompleted,
+  markDispatchIntentFailed,
+  type DeliveryLoopFailureCategory,
   type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
 import {
+  buildDispatchIntentId,
   createDispatchIntent,
   getReplayableSelfDispatch,
   storeSelfDispatchReplay,
@@ -102,6 +106,23 @@ type DaemonTerminalErrorCategory =
   | "daemon_custom_error"
   | "daemon_result_error"
   | "unknown";
+
+function mapDaemonTerminalCategoryToFailureCategory(
+  category: DaemonTerminalErrorCategory,
+): DeliveryLoopFailureCategory {
+  switch (category) {
+    case "provider_not_configured":
+      return "config_error";
+    case "acp_sse_not_found":
+      return "daemon_unreachable";
+    case "daemon_custom_error":
+    case "daemon_result_error":
+      return "claude_runtime_exit";
+    case "unknown":
+      return "unknown";
+  }
+  return "unknown";
+}
 
 type DaemonProcessingEventClaimResult =
   | {
@@ -210,6 +231,44 @@ function getDaemonProcessingEventCommittedKey({
   eventId: string;
 }): string {
   return `sdlc:daemon-processing-event:committed:${loopId}:${eventId}`;
+}
+
+async function persistDaemonTerminalDispatchStatus(params: {
+  loopId: string;
+  threadChatId: string;
+  runId: string;
+  daemonRunStatus: "completed" | "failed" | "stopped";
+  daemonErrorMessage: string | null;
+  daemonErrorCategory: DaemonTerminalErrorCategory;
+}): Promise<void> {
+  const intentId = buildDispatchIntentId(params.loopId, params.runId);
+  if (params.daemonRunStatus === "completed") {
+    await Promise.all([
+      updateDispatchIntent(intentId, params.threadChatId, {
+        status: "completed",
+        lastError: null,
+        lastFailureCategory: null,
+      }),
+      markDispatchIntentCompleted(db, params.runId),
+    ]);
+    return;
+  }
+
+  const failureMessage =
+    params.daemonErrorMessage ??
+    `daemon terminal status: ${params.daemonRunStatus}`;
+  const failureCategory = mapDaemonTerminalCategoryToFailureCategory(
+    params.daemonErrorCategory,
+  );
+
+  await Promise.all([
+    updateDispatchIntent(intentId, params.threadChatId, {
+      status: "failed",
+      lastError: failureMessage,
+      lastFailureCategory: failureCategory,
+    }),
+    markDispatchIntentFailed(db, params.runId, failureCategory, failureMessage),
+  ]);
 }
 
 async function claimEnrolledLoopProcessingEvent({
@@ -974,10 +1033,15 @@ export async function POST(request: Request) {
     threadId,
   });
 
-  // Acknowledge dispatch intent on first event for this run.
-  // Updates both Redis (real-time) and DB (durable) intent records,
-  // and resets the retry counter since the dispatch succeeded.
-  if (enrolledLoop && envelopeV2 && envelopeV2.seq === 1) {
+  // Acknowledge dispatch intent once the run context is still in a
+  // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
+  // status-based (idempotent), not seq-based.
+  if (
+    enrolledLoop &&
+    envelopeV2 &&
+    runContext &&
+    (runContext.status === "pending" || runContext.status === "dispatched")
+  ) {
     try {
       await handleAckReceived({
         db,
@@ -1436,7 +1500,7 @@ export async function POST(request: Request) {
 
     if (
       followUpResult.processed ||
-      followUpResult.reason !== "status_transition_noop_busy"
+      followUpResult.reason !== "stale_cas_busy"
     ) {
       return;
     }
@@ -1849,6 +1913,35 @@ export async function POST(request: Request) {
           signalInboxId: claimedSignalInboxId,
           eventId: envelopeV2.eventId,
           seq: envelopeV2.seq,
+        },
+      );
+    }
+  }
+
+  if (
+    enrolledLoop &&
+    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    try {
+      await persistDaemonTerminalDispatchStatus({
+        loopId: enrolledLoop.id,
+        threadChatId,
+        runId: envelopeV2.runId,
+        daemonRunStatus: daemonRunStatusFromMessages,
+        daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+        daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+      });
+    } catch (error) {
+      console.warn(
+        "[delivery-loop] failed to persist terminal dispatch intent status",
+        {
+          loopId: enrolledLoop.id,
+          threadId,
+          threadChatId,
+          runId: envelopeV2.runId,
+          daemonRunStatus: daemonRunStatusFromMessages,
+          error,
         },
       );
     }

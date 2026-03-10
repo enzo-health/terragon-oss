@@ -36,14 +36,14 @@ async function checkNoopBusy({
       "Skipping follow-up dispatch after noop status transition; chat is already active",
       { threadId, threadChatId, status: latestThreadChat.status },
     );
-    return { processed: false, reason: "status_transition_noop_busy" };
+    return { processed: false, reason: "stale_cas_busy" };
   }
   if (latestThreadChat?.status === "scheduled") {
     console.warn(
       "Skipping follow-up dispatch after noop status transition; chat remains scheduled",
       { threadId, threadChatId, status: latestThreadChat.status },
     );
-    return { processed: false, reason: "scheduled_not_runnable" };
+    return { processed: false, reason: "invalid_event" };
   }
   if (latestThreadChat) {
     console.warn(
@@ -51,7 +51,7 @@ async function checkNoopBusy({
       { threadId, threadChatId, status: latestThreadChat.status },
     );
   }
-  return { processed: false, reason: "status_transition_noop" };
+  return { processed: false, reason: "stale_cas" };
 }
 
 const MAX_FOLLOW_UP_RETRIES = 3;
@@ -78,8 +78,9 @@ export type FollowUpQueueProcessingResult = {
     | "agent_rate_limited"
     | "no_queued_messages"
     | "scheduled_not_runnable"
-    | "status_transition_noop"
-    | "status_transition_noop_busy"
+    | "stale_cas"
+    | "stale_cas_busy"
+    | "invalid_event"
     | "dispatch_started_slash"
     | "dispatch_started_batch"
     | "dispatch_retry_scheduled"
@@ -182,7 +183,8 @@ async function handleFollowUpFailure({
         userId,
         threadId,
         threadChatId,
-        attempt: retriesUsed,
+        dispatchAttempt: retriesUsed,
+        deferCount: 0,
         runAt: retryAt,
       });
       await updateThreadChatWithTransition({

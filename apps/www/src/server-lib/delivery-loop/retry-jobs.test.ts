@@ -21,7 +21,8 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 2,
+      dispatchAttempt: 2,
+      deferCount: 1,
       runAt,
     });
 
@@ -31,7 +32,8 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 2,
+      dispatchAttempt: 2,
+      deferCount: 1,
       runAt,
     });
     await expect(getRetryJob(job.id)).resolves.toEqual(job);
@@ -42,7 +44,7 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 1,
+      dispatchAttempt: 1,
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
@@ -69,7 +71,7 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 1,
+      dispatchAttempt: 1,
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
@@ -78,7 +80,7 @@ describe("delivery loop retry jobs", () => {
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => ({
         processed: false,
-        reason: "status_transition_noop_busy",
+        reason: "stale_cas_busy",
       }),
     });
 
@@ -90,7 +92,8 @@ describe("delivery loop retry jobs", () => {
     });
 
     const job = await getRetryJob("follow-up:chat-1");
-    expect(job?.attempt).toBe(2);
+    expect(job?.dispatchAttempt).toBe(1);
+    expect(job?.deferCount).toBe(1);
     expect(job?.runAt.getTime()).toBeGreaterThan(
       new Date("2026-03-09T12:00:05.000Z").getTime(),
     );

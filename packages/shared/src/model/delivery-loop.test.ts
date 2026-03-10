@@ -977,6 +977,86 @@ describe("sdlc loop model", () => {
     expect(reloadedLoop?.state).toBe("implementing");
   });
 
+  it("does not advance artifact pointers when transition outcome is not updated", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      currentHeadSha: "sha-impl-1",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "implementing",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const baselineArtifact = await createImplementationArtifactForHead({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-impl-1",
+      loopVersion: 11,
+      payload: {
+        headSha: "sha-impl-1",
+        summary: "Baseline implementation snapshot",
+        changedFiles: ["baseline.ts"],
+        completedTaskIds: [],
+      },
+      status: "accepted",
+      generatedBy: "system",
+    });
+
+    const implementationArtifact = await createImplementationArtifactForHead({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-impl-1",
+      loopVersion: 12,
+      payload: {
+        headSha: "sha-impl-1",
+        summary: "Implementation snapshot",
+        changedFiles: ["file.ts"],
+        completedTaskIds: [],
+      },
+      status: "accepted",
+      generatedBy: "system",
+    });
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        activeImplementationArtifactId: baselineArtifact.id,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const transitionResult = await transitionSdlcLoopStateWithArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: implementationArtifact.id,
+      expectedPhase: "implementing",
+      transitionEvent: "implementation_completed",
+      headSha: "sha-impl-1",
+      loopVersion: 5,
+    });
+
+    expect(transitionResult).toBe("artifact_gate_failed");
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.activeImplementationArtifactId).toBe(
+      baselineArtifact.id,
+    );
+    expect(reloadedLoop?.state).toBe("implementing");
+  });
+
   it("verifies plan task completion before implementing->reviewing transition", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({

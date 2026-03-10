@@ -22,7 +22,6 @@ import {
 import { SdlcLoopState } from "@terragon/shared/db/types";
 import {
   createImplementationArtifactForHead,
-  createPlanArtifactForLoop,
   createPrLinkArtifact,
   createReviewBundleArtifactForHead,
   createUiSmokeArtifactForHead,
@@ -31,7 +30,6 @@ import {
   markPlanTasksCompletedByAgent,
   persistCarmackReviewGateResult,
   persistDeepReviewGateResult,
-  replacePlanTasksForArtifact,
   transitionSdlcLoopStateWithArtifact,
   transitionSdlcLoopState,
   verifyPlanTaskCompletionForHead,
@@ -59,6 +57,7 @@ import { generateCommitMessage } from "./generate-commit-message";
 import { runStructuredCodexGateInSandbox } from "./delivery-loop/sandbox-codex-gate";
 import { runQualityCheckGateInSandbox } from "./delivery-loop/quality-check-gate";
 import { sendSystemMessage } from "./send-system-message";
+import { promotePlanToImplementing } from "./delivery-loop/promote-plan";
 
 const SDLC_UI_SMOKE_PROMPT_VERSION = 1;
 const SDLC_REVIEW_GATE_MODEL = "gpt-5.3-codex-medium";
@@ -915,35 +914,18 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
     const parsedPlan = planParseResult.plan;
 
-    const nextLoopVersion =
-      typeof activeLoop.loopVersion === "number" &&
-      Number.isFinite(activeLoop.loopVersion)
-        ? Math.max(activeLoop.loopVersion, 0) + 1
-        : 1;
-    const planArtifactStatus =
-      activeLoop.planApprovalPolicy === "human_required"
-        ? "generated"
-        : "accepted";
-    const planArtifact = await createPlanArtifactForLoop({
+    const promotionResult = await promotePlanToImplementing({
       db,
-      loopId: activeLoop.id,
-      loopVersion: nextLoopVersion,
-      status: planArtifactStatus,
-      generatedBy: "agent",
-      payload: {
-        planText: parsedPlan.planText,
-        tasks: parsedPlan.tasks,
-        source: parsedPlan.source,
+      loop: {
+        id: activeLoop.id,
+        loopVersion: activeLoop.loopVersion,
+        planApprovalPolicy: activeLoop.planApprovalPolicy,
       },
-    });
-    await replacePlanTasksForArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: planArtifact.id,
-      tasks: parsedPlan.tasks,
+      parsedPlan,
+      mode: "checkpoint",
     });
 
-    if (activeLoop.planApprovalPolicy === "human_required") {
+    if (promotionResult.outcome === "awaiting_human_approval") {
       await queueSdlcFollowUpMessage({
         userId,
         threadId,
@@ -958,15 +940,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       return true;
     }
 
-    const transitioned = await transitionSdlcLoopStateWithArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: planArtifact.id,
-      expectedPhase: "planning",
-      transitionEvent: "plan_completed",
-      loopVersion: nextLoopVersion,
-    });
-    if (transitioned === "updated") {
+    if (promotionResult.outcome === "promoted") {
       await queueSdlcFollowUpMessage({
         userId,
         threadId,

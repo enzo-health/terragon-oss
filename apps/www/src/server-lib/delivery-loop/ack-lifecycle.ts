@@ -4,7 +4,11 @@ import {
   markDispatchIntentFailed,
   getDispatchIntentByRunId,
 } from "@terragon/shared/model/delivery-loop";
-import { updateDispatchIntent, buildDispatchIntentId } from "./dispatch-intent";
+import {
+  updateDispatchIntent,
+  buildDispatchIntentId,
+  getActiveDispatchIntent,
+} from "./dispatch-intent";
 import { evaluateRetryDecision, resetRetryCounter } from "./retry-policy";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +23,8 @@ export const DEFAULT_ACK_TIMEOUT_MS = 30_000; // 30 seconds
 // ---------------------------------------------------------------------------
 
 /**
- * Called when the first daemon event for a given runId arrives (seq === 1).
+ * Called when the first daemon event for a given runId arrives (v2 seq starts
+ * at 0, so this must be status-based and idempotent rather than seq-based).
  *
  * 1. Updates the Redis dispatch intent to "acknowledged" (real-time tracking).
  * 2. Updates the DB dispatch intent to "acknowledged" (durable record).
@@ -38,13 +43,24 @@ export async function handleAckReceived({
   threadChatId: string;
 }): Promise<void> {
   const intentId = buildDispatchIntentId(loopId, runId);
-  await Promise.all([
-    updateDispatchIntent(intentId, threadChatId, {
-      status: "acknowledged",
-    }),
+  const [activeIntent, dbTransitioned] = await Promise.all([
+    getActiveDispatchIntent(threadChatId),
     markDispatchIntentAcknowledged(db, runId),
-    resetRetryCounter(threadChatId),
   ]);
+
+  const shouldUpdateRealtimeIntent =
+    activeIntent?.id === intentId &&
+    activeIntent.runId === runId &&
+    activeIntent.status === "dispatched";
+  if (shouldUpdateRealtimeIntent) {
+    await updateDispatchIntent(intentId, threadChatId, {
+      status: "acknowledged",
+    });
+  }
+
+  if (dbTransitioned || shouldUpdateRealtimeIntent) {
+    await resetRetryCounter(threadChatId);
+  }
 }
 
 // ---------------------------------------------------------------------------

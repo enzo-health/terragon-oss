@@ -371,6 +371,10 @@ export async function updateDispatchIntent(
   >,
 ): Promise<void> {
   const key = redisKey(threadChatId);
+  const existingId = await redis.hget<string>(key, "id");
+  if (!existingId || existingId !== id) {
+    return;
+  }
   const patch: Record<string, string> = {
     updatedAt: new Date().toISOString(),
   };
@@ -440,15 +444,6 @@ export async function getReplayableSelfDispatch(params: {
     raw as Record<string, string | undefined>,
   );
   if (replayRecord.kind !== "ready") {
-    return null;
-  }
-  const activeIntent = await getActiveDispatchIntent(params.threadChatId);
-  if (
-    !activeIntent ||
-    activeIntent.id !== replayRecord.dispatchIntentId ||
-    activeIntent.runId !== replayRecord.destinationRunId ||
-    TERMINAL_DISPATCH_STATUSES.has(activeIntent.status)
-  ) {
     return null;
   }
   return replayRecord.payload;

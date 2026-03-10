@@ -29,11 +29,13 @@ import {
   eq,
   isNotNull,
   isNull,
+  lte,
   ne,
   notInArray,
   or,
   sql,
 } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 
 const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
@@ -41,6 +43,7 @@ const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
 const DURABLE_SIGNAL_INBOX_MAX_ITERATIONS = 15;
+const SDLC_SIGNAL_INBOX_CLAIM_STALE_MS = 60_000;
 const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
   "daemon_terminal",
   "check_run.completed",
@@ -66,11 +69,23 @@ type PendingSignal = {
   canonicalCauseId: string;
   payload: Record<string, unknown> | null;
   receivedAt: Date;
+  claimToken: string;
 };
 
 type PersistedLoopPhaseContext = {
   snapshot: DeliveryLoopSnapshot;
   effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>;
+};
+
+type SignalPolicy = {
+  isFeedbackSignal: boolean;
+  allowRoutingWithoutPrLink: boolean;
+  suppressPlanningRuntimeRouting: boolean;
+};
+
+type SignalGateEvaluationOutcome = {
+  shouldQueueRuntimeFollowUp: boolean;
+  gateEvaluated: boolean;
 };
 
 export type SdlcSignalInboxGuardrailRuntimeInput = {
@@ -220,6 +235,46 @@ function buildPersistedLoopPhaseContext(params: {
   return {
     snapshot,
     effectivePhase: getEffectiveDeliveryLoopPhase(snapshot),
+  };
+}
+
+function classifySignalPolicy(causeType: SdlcLoopCauseType): SignalPolicy {
+  const isFeedbackSignal = feedbackSignalCauseTypes.has(causeType);
+  return {
+    isFeedbackSignal,
+    allowRoutingWithoutPrLink: causeType === "daemon_terminal",
+    suppressPlanningRuntimeRouting: isFeedbackSignal,
+  };
+}
+
+async function evaluateAndPersistGate(params: {
+  db: DB;
+  loop: {
+    id: string;
+    loopVersion: number;
+    currentHeadSha: string | null;
+    state: SdlcLoopState;
+    blockedFromState: SdlcLoopState | null;
+  };
+  signal: PendingSignal;
+  policy: SignalPolicy;
+  now: Date;
+}): Promise<SignalGateEvaluationOutcome> {
+  if (!params.policy.isFeedbackSignal) {
+    return {
+      shouldQueueRuntimeFollowUp: false,
+      gateEvaluated: false,
+    };
+  }
+  const shouldQueueRuntimeFollowUp = await persistGateEvaluationForSignal({
+    db: params.db,
+    loop: params.loop,
+    signal: params.signal,
+    now: params.now,
+  });
+  return {
+    shouldQueueRuntimeFollowUp,
+    gateEvaluated: true,
   };
 }
 
@@ -893,42 +948,121 @@ function hasEquivalentRoutedFollowUp({
     : false;
 }
 
-async function getNextUnprocessedSignal({
+async function claimNextUnprocessedSignal({
   db,
   loopId,
+  claimToken,
+  now,
 }: {
   db: DB;
   loopId: string;
+  claimToken: string;
+  now: Date;
 }): Promise<PendingSignal | null> {
-  const signal = await db.query.sdlcLoopSignalInbox.findFirst({
-    where: and(
-      eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-      isNull(schema.sdlcLoopSignalInbox.processedAt),
-      or(
-        ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        and(
-          eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-          isNotNull(schema.sdlcLoopSignalInbox.committedAt),
-        ),
+  const staleClaimCutoff = new Date(
+    now.getTime() - SDLC_SIGNAL_INBOX_CLAIM_STALE_MS,
+  );
+  const claimableWhere = and(
+    eq(schema.sdlcLoopSignalInbox.loopId, loopId),
+    isNull(schema.sdlcLoopSignalInbox.processedAt),
+    or(
+      isNull(schema.sdlcLoopSignalInbox.claimToken),
+      lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
+    ),
+    or(
+      ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
+      and(
+        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
+        isNotNull(schema.sdlcLoopSignalInbox.committedAt),
       ),
     ),
+  );
+
+  const signal = await db.query.sdlcLoopSignalInbox.findFirst({
+    where: claimableWhere,
     orderBy: [
       sql`case when ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal' then 0 else 1 end`,
       schema.sdlcLoopSignalInbox.receivedAt,
     ],
   });
-
   if (!signal) {
     return null;
   }
 
+  const [claimedSignal] = await db
+    .update(schema.sdlcLoopSignalInbox)
+    .set({
+      claimToken,
+      claimedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.id, signal.id),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        or(
+          isNull(schema.sdlcLoopSignalInbox.claimToken),
+          lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
+        ),
+      ),
+    )
+    .returning({ id: schema.sdlcLoopSignalInbox.id });
+
+  if (!claimedSignal) {
+    return null;
+  }
+
   return {
-    id: signal.id,
+    id: claimedSignal.id,
     causeType: signal.causeType,
     canonicalCauseId: signal.canonicalCauseId,
     payload: signal.payload ?? null,
     receivedAt: signal.receivedAt,
+    claimToken,
   };
+}
+
+async function releaseSignalClaim(params: {
+  db: DB;
+  signalId: string;
+  claimToken: string;
+}): Promise<void> {
+  await params.db
+    .update(schema.sdlcLoopSignalInbox)
+    .set({
+      claimToken: null,
+      claimedAt: null,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
+        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+      ),
+    );
+}
+
+async function completeSignalClaim(params: {
+  db: DB;
+  signalId: string;
+  claimToken: string;
+  now: Date;
+}): Promise<boolean> {
+  const [markedProcessed] = await params.db
+    .update(schema.sdlcLoopSignalInbox)
+    .set({
+      processedAt: params.now,
+      claimToken: null,
+      claimedAt: null,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
+        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+      ),
+    )
+    .returning({ id: schema.sdlcLoopSignalInbox.id });
+  return Boolean(markedProcessed);
 }
 
 async function routeFeedbackSignalToEnrolledThread({
@@ -1231,258 +1365,283 @@ export async function runBestEffortSdlcSignalInboxTick({
       };
     }
 
-    const signal = await getNextUnprocessedSignal({ db, loopId });
+    const signalClaimToken = `sdlc-signal-inbox:${leaseOwnerToken}:${randomUUID()}`;
+    const signal = await claimNextUnprocessedSignal({
+      db,
+      loopId,
+      claimToken: signalClaimToken,
+      now,
+    });
     if (!signal) {
       return { processed: false, reason: "no_unprocessed_signal" };
     }
-
-    let shouldQueueRuntimeFollowUp = feedbackSignalCauseTypes.has(
-      signal.causeType,
-    );
+    let shouldReleaseClaim = true;
     try {
-      shouldQueueRuntimeFollowUp = await persistGateEvaluationForSignal({
-        db,
-        loop: {
-          id: loop.id,
-          loopVersion: loop.loopVersion,
-          currentHeadSha: loop.currentHeadSha,
-          state: loop.state,
-          blockedFromState: loop.blockedFromState,
-        },
-        signal,
-        now,
-      });
-    } catch (error) {
-      console.error("[sdlc-loop] enrolled-loop gate evaluation failed", {
-        loopId,
-        signalId: signal.id,
-        causeType: signal.causeType,
-        error,
-      });
-    }
-
-    let runtimeAction: RuntimeActionOutcome = "none";
-    let feedbackQueuedMessage: DBUserMessage | null = null;
-    const loopPhaseContext = buildPersistedLoopPhaseContext({
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
-    });
-    const runtimeRouting: {
-      routed: boolean;
-      followUpQueued: boolean;
-      reason: RuntimeRoutingReason;
-      error: string | null;
-    } = {
-      routed: false,
-      followUpQueued: false,
-      reason: "non_feedback_signal",
-      error: null,
-    };
-    const shouldSuppressFeedbackRuntimeAction =
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      loopPhaseContext.effectivePhase === "planning";
-    const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
-
-    if (
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp &&
-      !shouldSuppressFeedbackRuntimeAction &&
-      (typeof loop.prNumber === "number" || canRouteWithoutPrNumber)
-    ) {
+      const signalPolicy = classifySignalPolicy(signal.causeType);
+      let gateEvaluationOutcome: SignalGateEvaluationOutcome = {
+        shouldQueueRuntimeFollowUp: signalPolicy.isFeedbackSignal,
+        gateEvaluated: false,
+      };
       try {
-        // Increment loopVersion BEFORE enqueuing the follow-up so the
-        // guardrail iterationCount advances even if the enqueue fails.
-        await db
-          .update(schema.sdlcLoop)
-          .set({
-            loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
-            updatedAt: now,
-          })
-          .where(eq(schema.sdlcLoop.id, loopId));
-
-        const routeResult = await routeFeedbackSignalToEnrolledThread({
+        gateEvaluationOutcome = await evaluateAndPersistGate({
           db,
-          loopId,
-          loopUserId: loop.userId,
-          loopThreadId: loop.threadId,
-          repoFullName: loop.repoFullName,
-          prNumber: loop.prNumber ?? null,
-          loopSnapshot: loopPhaseContext.snapshot,
+          loop: {
+            id: loop.id,
+            loopVersion: loop.loopVersion,
+            currentHeadSha: loop.currentHeadSha,
+            state: loop.state,
+            blockedFromState: loop.blockedFromState,
+          },
           signal,
+          policy: signalPolicy,
+          now,
         });
-        runtimeAction = "feedback_follow_up_queued";
-        feedbackQueuedMessage = routeResult.queuedMessage;
-        runtimeRouting.routed = true;
-        runtimeRouting.followUpQueued = true;
-        runtimeRouting.reason = "follow_up_queued";
       } catch (error) {
-        console.error("[sdlc-loop] feedback runtime action failed", {
+        console.error("[sdlc-loop] enrolled-loop gate evaluation failed", {
           loopId,
           signalId: signal.id,
           causeType: signal.causeType,
           error,
         });
-        return {
-          processed: false,
-          reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
-          ...(includeRuntimeRouting
-            ? {
-                runtimeRouting: {
-                  ...runtimeRouting,
-                  reason: "follow_up_enqueue_failed",
-                  error: stringifyError(error),
-                },
-              }
-            : {}),
-        };
       }
-    } else if (
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp &&
-      shouldSuppressFeedbackRuntimeAction
-    ) {
-      runtimeRouting.reason = "suppressed_for_loop_state";
-      console.log(
-        "[sdlc-loop] suppressing feedback runtime action outside PR babysitting phase",
-        {
-          loopId,
-          signalId: signal.id,
-          causeType: signal.causeType,
-          loopState: loopPhaseContext.effectivePhase,
-        },
-      );
-    } else if (
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp
-    ) {
-      runtimeRouting.reason = "missing_pr_link";
-      console.warn(
-        "[sdlc-loop] skipping feedback runtime action due to missing PR link",
-        {
-          loopId,
-          signalId: signal.id,
-          causeType: signal.causeType,
-        },
-      );
-    } else if (feedbackSignalCauseTypes.has(signal.causeType)) {
-      runtimeRouting.reason = "gate_eval_no_follow_up";
-    }
 
-    const refreshedLoop = await db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.id, loopId),
-      columns: {
-        state: true,
-        currentHeadSha: true,
-        blockedFromState: true,
-      },
-    });
+      let runtimeAction: RuntimeActionOutcome = "none";
+      let feedbackQueuedMessage: DBUserMessage | null = null;
+      const refreshedLoopForRouting = await db.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.id, loopId),
+        columns: {
+          state: true,
+          currentHeadSha: true,
+          blockedFromState: true,
+          prNumber: true,
+        },
+      });
+      const loopPhaseContext = buildPersistedLoopPhaseContext({
+        state: refreshedLoopForRouting?.state ?? loop.state,
+        blockedFromState:
+          refreshedLoopForRouting?.blockedFromState ?? loop.blockedFromState,
+      });
+      const effectivePrNumber =
+        typeof refreshedLoopForRouting?.prNumber === "number" &&
+        Number.isFinite(refreshedLoopForRouting.prNumber)
+          ? refreshedLoopForRouting.prNumber
+          : loop.prNumber;
+      const runtimeRouting: {
+        routed: boolean;
+        followUpQueued: boolean;
+        reason: RuntimeRoutingReason;
+        error: string | null;
+      } = {
+        routed: false,
+        followUpQueued: false,
+        reason: "non_feedback_signal",
+        error: null,
+      };
+      const shouldSuppressFeedbackRuntimeAction =
+        signalPolicy.suppressPlanningRuntimeRouting &&
+        loopPhaseContext.effectivePhase === "planning";
+      const canRouteWithoutPrNumber = signalPolicy.allowRoutingWithoutPrLink;
 
-    const refreshedLoopPhaseContext = refreshedLoop
-      ? buildPersistedLoopPhaseContext({
-          state: refreshedLoop.state,
-          blockedFromState: refreshedLoop.blockedFromState,
-        })
-      : null;
-    if (
-      refreshedLoopPhaseContext &&
-      refreshedLoopPhaseContext.effectivePhase === "babysitting" &&
-      feedbackSignalCauseTypes.has(signal.causeType)
-    ) {
-      const babysitHeadSha =
-        getPayloadText(signal.payload, "headSha") ??
-        refreshedLoop?.currentHeadSha;
-      if (babysitHeadSha) {
-        const babysitEvaluation = await evaluateBabysitCompletionForHead({
-          db,
-          loopId,
-          headSha: babysitHeadSha,
-        });
-        const loopVersionForArtifact =
-          typeof loop.loopVersion === "number" &&
-          Number.isFinite(loop.loopVersion)
-            ? Math.max(loop.loopVersion, 0) + 1
-            : 1;
-        const babysitArtifact = await createBabysitEvaluationArtifactForHead({
-          db,
-          loopId,
-          headSha: babysitHeadSha,
-          loopVersion: loopVersionForArtifact,
-          payload: {
-            headSha: babysitHeadSha,
-            requiredCiPassed: babysitEvaluation.requiredCiPassed,
-            unresolvedReviewThreads: babysitEvaluation.unresolvedReviewThreads,
-            unresolvedDeepBlockers: babysitEvaluation.unresolvedDeepBlockers,
-            unresolvedCarmackBlockers:
-              babysitEvaluation.unresolvedCarmackBlockers,
-            allRequiredGatesPassed: babysitEvaluation.allRequiredGatesPassed,
-          },
-          generatedBy: "system",
-          status: "accepted",
-        });
-        if (babysitEvaluation.allRequiredGatesPassed) {
-          await transitionSdlcLoopStateWithArtifact({
+      if (
+        signalPolicy.isFeedbackSignal &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp &&
+        !shouldSuppressFeedbackRuntimeAction &&
+        (typeof effectivePrNumber === "number" || canRouteWithoutPrNumber)
+      ) {
+        try {
+          // Increment loopVersion BEFORE enqueuing the follow-up so the
+          // guardrail iterationCount advances even if the enqueue fails.
+          await db
+            .update(schema.sdlcLoop)
+            .set({
+              loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
+              updatedAt: now,
+            })
+            .where(eq(schema.sdlcLoop.id, loopId));
+
+          const routeResult = await routeFeedbackSignalToEnrolledThread({
             db,
             loopId,
-            artifactId: babysitArtifact.id,
-            expectedPhase: "babysitting",
-            transitionEvent: "babysit_passed",
+            loopUserId: loop.userId,
+            loopThreadId: loop.threadId,
+            repoFullName: loop.repoFullName,
+            prNumber: effectivePrNumber ?? null,
+            loopSnapshot: loopPhaseContext.snapshot,
+            signal,
+          });
+          runtimeAction = "feedback_follow_up_queued";
+          feedbackQueuedMessage = routeResult.queuedMessage;
+          runtimeRouting.routed = true;
+          runtimeRouting.followUpQueued = true;
+          runtimeRouting.reason = "follow_up_queued";
+        } catch (error) {
+          console.error("[sdlc-loop] feedback runtime action failed", {
+            loopId,
+            signalId: signal.id,
+            causeType: signal.causeType,
+            error,
+          });
+          return {
+            processed: false,
+            reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
+            ...(includeRuntimeRouting
+              ? {
+                  runtimeRouting: {
+                    ...runtimeRouting,
+                    reason: "follow_up_enqueue_failed",
+                    error: stringifyError(error),
+                  },
+                }
+              : {}),
+          };
+        }
+      } else if (
+        signalPolicy.isFeedbackSignal &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp &&
+        shouldSuppressFeedbackRuntimeAction
+      ) {
+        runtimeRouting.reason = "suppressed_for_loop_state";
+        console.log(
+          "[sdlc-loop] suppressing feedback runtime action outside PR babysitting phase",
+          {
+            loopId,
+            signalId: signal.id,
+            causeType: signal.causeType,
+            loopState: loopPhaseContext.effectivePhase,
+          },
+        );
+      } else if (
+        signalPolicy.isFeedbackSignal &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp
+      ) {
+        runtimeRouting.reason = "missing_pr_link";
+        console.warn(
+          "[sdlc-loop] skipping feedback runtime action due to missing PR link",
+          {
+            loopId,
+            signalId: signal.id,
+            causeType: signal.causeType,
+          },
+        );
+      } else if (signalPolicy.isFeedbackSignal) {
+        runtimeRouting.reason = "gate_eval_no_follow_up";
+      }
+
+      const refreshedLoop = refreshedLoopForRouting;
+
+      const refreshedLoopPhaseContext = refreshedLoop
+        ? buildPersistedLoopPhaseContext({
+            state: refreshedLoop.state,
+            blockedFromState: refreshedLoop.blockedFromState,
+          })
+        : null;
+      if (
+        refreshedLoopPhaseContext &&
+        refreshedLoopPhaseContext.effectivePhase === "babysitting" &&
+        signalPolicy.isFeedbackSignal
+      ) {
+        const babysitHeadSha =
+          getPayloadText(signal.payload, "headSha") ??
+          refreshedLoop?.currentHeadSha;
+        if (babysitHeadSha) {
+          const babysitEvaluation = await evaluateBabysitCompletionForHead({
+            db,
+            loopId,
+            headSha: babysitHeadSha,
+          });
+          const loopVersionForArtifact =
+            typeof loop.loopVersion === "number" &&
+            Number.isFinite(loop.loopVersion)
+              ? Math.max(loop.loopVersion, 0) + 1
+              : 1;
+          const babysitArtifact = await createBabysitEvaluationArtifactForHead({
+            db,
+            loopId,
             headSha: babysitHeadSha,
             loopVersion: loopVersionForArtifact,
-            now,
+            payload: {
+              headSha: babysitHeadSha,
+              requiredCiPassed: babysitEvaluation.requiredCiPassed,
+              unresolvedReviewThreads:
+                babysitEvaluation.unresolvedReviewThreads,
+              unresolvedDeepBlockers: babysitEvaluation.unresolvedDeepBlockers,
+              unresolvedCarmackBlockers:
+                babysitEvaluation.unresolvedCarmackBlockers,
+              allRequiredGatesPassed: babysitEvaluation.allRequiredGatesPassed,
+            },
+            generatedBy: "system",
+            status: "accepted",
           });
+          if (babysitEvaluation.allRequiredGatesPassed) {
+            await transitionSdlcLoopStateWithArtifact({
+              db,
+              loopId,
+              artifactId: babysitArtifact.id,
+              expectedPhase: "babysitting",
+              transitionEvent: "babysit_passed",
+              headSha: babysitHeadSha,
+              loopVersion: loopVersionForArtifact,
+              now,
+            });
+          }
         }
       }
-    }
 
-    let outboxId: string | null = null;
-    if (typeof loop.prNumber === "number") {
-      const outbox = await enqueueSdlcOutboxAction({
-        db,
-        loopId,
-        transitionSeq: resolveSignalTransitionSeq({
-          loopVersion: loop.loopVersion,
-          signalReceivedAt: signal.receivedAt,
-          now,
-        }),
-        actionType: "publish_status_comment",
-        actionKey: `signal-inbox:${signal.id}:publish-status-comment`,
-        payload: {
-          repoFullName: loop.repoFullName,
-          prNumber: loop.prNumber,
-          body: buildPublicationStatusBody({
-            signal,
-            runtimeAction,
+      let outboxId: string | null = null;
+      if (typeof effectivePrNumber === "number") {
+        const outbox = await enqueueSdlcOutboxAction({
+          db,
+          loopId,
+          transitionSeq: resolveSignalTransitionSeq({
+            loopVersion: loop.loopVersion,
+            signalReceivedAt: signal.receivedAt,
+            now,
           }),
-        },
+          actionType: "publish_status_comment",
+          actionKey: `signal-inbox:${signal.id}:publish-status-comment`,
+          payload: {
+            repoFullName: loop.repoFullName,
+            prNumber: effectivePrNumber,
+            body: buildPublicationStatusBody({
+              signal,
+              runtimeAction,
+            }),
+          },
+          now,
+        });
+        outboxId = outbox.outboxId;
+      }
+
+      const markedProcessed = await completeSignalClaim({
+        db,
+        signalId: signal.id,
+        claimToken: signal.claimToken,
         now,
       });
-      outboxId = outbox.outboxId;
+
+      if (!markedProcessed) {
+        return { processed: false, reason: "signal_claim_lost" };
+      }
+      shouldReleaseClaim = false;
+
+      return {
+        processed: true,
+        signalId: signal.id,
+        causeType: signal.causeType,
+        runtimeAction,
+        outboxId,
+        feedbackQueuedMessage,
+        ...(includeRuntimeRouting ? { runtimeRouting } : {}),
+      };
+    } finally {
+      if (shouldReleaseClaim) {
+        await releaseSignalClaim({
+          db,
+          signalId: signal.id,
+          claimToken: signal.claimToken,
+        });
+      }
     }
-
-    const [markedProcessed] = await db
-      .update(schema.sdlcLoopSignalInbox)
-      .set({ processedAt: now })
-      .where(
-        and(
-          eq(schema.sdlcLoopSignalInbox.id, signal.id),
-          isNull(schema.sdlcLoopSignalInbox.processedAt),
-        ),
-      )
-      .returning({ id: schema.sdlcLoopSignalInbox.id });
-
-    if (!markedProcessed) {
-      return { processed: false, reason: "signal_claim_lost" };
-    }
-
-    return {
-      processed: true,
-      signalId: signal.id,
-      causeType: signal.causeType,
-      runtimeAction,
-      outboxId,
-      feedbackQueuedMessage,
-      ...(includeRuntimeRouting ? { runtimeRouting } : {}),
-    };
   } finally {
     const released = await releaseSdlcLoopLease({
       db,

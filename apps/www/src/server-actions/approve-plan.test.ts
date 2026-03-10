@@ -9,8 +9,10 @@ import {
 import { mockLoggedInUser } from "@/test-helpers/mock-next";
 import { updateThreadChat } from "@terragon/shared/model/threads";
 import {
+  createPlanArtifactForLoop,
   enrollSdlcLoopForThread,
   getActiveSdlcLoopForThread,
+  replacePlanTasksForArtifact,
 } from "@terragon/shared/model/delivery-loop";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import * as schema from "@terragon/shared/db/schema";
@@ -204,6 +206,97 @@ describe("approvePlan", () => {
     });
     expect(artifact?.status).toBe("approved");
     expect(artifact?.approvedByUserId).toBe(user.id);
+  });
+
+  it("approves and promotes an existing generated planning artifact for human_required policy", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      planApprovalPolicy: "human_required",
+    });
+    const existingArtifact = await createPlanArtifactForLoop({
+      db,
+      loopId: loop!.id,
+      loopVersion: Math.max(loop!.loopVersion, 0) + 1,
+      status: "generated",
+      generatedBy: "agent",
+      payload: {
+        planText: "Existing generated plan",
+        source: "system",
+        tasks: [
+          {
+            stableTaskId: "task-1",
+            title: "Task one",
+            acceptance: ["Done"],
+          },
+        ],
+      },
+    });
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: existingArtifact.id,
+      tasks: [
+        {
+          stableTaskId: "task-1",
+          title: "Task one",
+          acceptance: ["Done"],
+        },
+      ],
+    });
+
+    await updateThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      updates: {
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "exit-plan-existing",
+            name: "ExitPlanMode",
+            parent_tool_use_id: null,
+            parameters: {
+              plan: JSON.stringify({
+                planText: "Existing generated plan",
+                tasks: [
+                  {
+                    stableTaskId: "task-1",
+                    title: "Task one",
+                    acceptance: ["Done"],
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      },
+    });
+
+    await approvePlan({ threadId, threadChatId });
+
+    const planningArtifacts = await db.query.sdlcPhaseArtifact.findMany({
+      where: and(
+        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
+        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+      ),
+    });
+    expect(planningArtifacts).toHaveLength(1);
+    expect(planningArtifacts[0]?.id).toBe(existingArtifact.id);
+    expect(planningArtifacts[0]?.status).toBe("approved");
   });
 
   it("rejects approval when no plan artifact exists in thread chat", async () => {

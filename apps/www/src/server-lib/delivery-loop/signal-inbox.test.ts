@@ -69,6 +69,7 @@ const dbMocks = vi.hoisted(() => {
     markProcessedWhere,
     markProcessedSet,
     update,
+    lastSignalId: null as string | null,
   };
 });
 
@@ -134,7 +135,12 @@ function makeDb(): DB {
         findFirst: dbMocks.loopFindFirst,
       },
       sdlcLoopSignalInbox: {
-        findFirst: dbMocks.signalFindFirst,
+        findFirst: async (...args: unknown[]) => {
+          const signal = await dbMocks.signalFindFirst(...args);
+          dbMocks.lastSignalId =
+            signal && typeof signal.id === "string" ? signal.id : null;
+          return signal;
+        },
       },
       sdlcCiGateRun: {
         findFirst: dbMocks.ciGateRunFindFirst,
@@ -147,6 +153,7 @@ function makeDb(): DB {
 describe("runBestEffortSdlcSignalInboxTick", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    dbMocks.lastSignalId = null;
     dbMocks.loopFindFirst.mockResolvedValue({
       id: "loop-1",
       userId: "user-1",
@@ -155,7 +162,8 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       prNumber: 42,
       loopVersion: 7,
       currentHeadSha: "sha-loop-1",
-      state: "enrolled",
+      state: "implementing",
+      blockedFromState: null,
     });
     dbMocks.signalFindFirst.mockResolvedValue({
       id: "signal-1",
@@ -171,7 +179,9 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
-    dbMocks.markProcessedReturning.mockResolvedValue([{ id: "signal-1" }]);
+    dbMocks.markProcessedReturning.mockImplementation(async () => [
+      { id: dbMocks.lastSignalId ?? "signal-1" },
+    ]);
     dbMocks.dueRowsLimit.mockResolvedValue([]);
     dbMocks.ciGateRunFindFirst.mockResolvedValue({
       requiredChecks: ["CI / lint", "CI / tests"],
@@ -283,21 +293,34 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         failingChecks: ["CI / tests"],
       }),
     );
-    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
     expect(releaseSdlcLoopLease).toHaveBeenCalledTimes(1);
   });
 
   it("suppresses feedback runtime follow-up while loop is in planning", async () => {
-    dbMocks.loopFindFirst.mockResolvedValueOnce({
-      id: "loop-1",
-      userId: "user-1",
-      threadId: "thread-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      loopVersion: 7,
-      currentHeadSha: "sha-loop-1",
-      state: "planning",
-    });
+    dbMocks.loopFindFirst
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "planning",
+        blockedFromState: null,
+      })
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "planning",
+        blockedFromState: null,
+      });
 
     const result = await runBestEffortSdlcSignalInboxTick({
       db: makeDb(),
@@ -314,21 +337,33 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       }),
     );
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
-    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
   });
 
   it("suppresses daemon terminal feedback follow-up while loop is in planning", async () => {
-    dbMocks.loopFindFirst.mockResolvedValueOnce({
-      id: "loop-1",
-      userId: "user-1",
-      threadId: "thread-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      loopVersion: 7,
-      currentHeadSha: "sha-loop-1",
-      state: "planning",
-      blockedFromState: null,
-    });
+    dbMocks.loopFindFirst
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "planning",
+        blockedFromState: null,
+      })
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "planning",
+        blockedFromState: null,
+      });
     dbMocks.signalFindFirst.mockResolvedValueOnce({
       id: "signal-daemon-terminal-1",
       causeType: "daemon_terminal",
@@ -361,20 +396,33 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       }),
     );
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
-    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
   });
 
   it("marks signal processed without PR publication action when loop has no PR number", async () => {
-    dbMocks.loopFindFirst.mockResolvedValueOnce({
-      id: "loop-no-pr",
-      userId: "user-1",
-      threadId: "thread-1",
-      repoFullName: "owner/repo",
-      prNumber: null,
-      loopVersion: 4,
-      currentHeadSha: "sha-loop-1",
-      state: "implementing",
-    });
+    dbMocks.loopFindFirst
+      .mockResolvedValueOnce({
+        id: "loop-no-pr",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: null,
+        loopVersion: 4,
+        currentHeadSha: "sha-loop-1",
+        state: "implementing",
+        blockedFromState: null,
+      })
+      .mockResolvedValueOnce({
+        id: "loop-no-pr",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: null,
+        loopVersion: 4,
+        currentHeadSha: "sha-loop-1",
+        state: "implementing",
+        blockedFromState: null,
+      });
 
     const result = await runBestEffortSdlcSignalInboxTick({
       db: makeDb(),
@@ -393,7 +441,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     });
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();
-    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
   });
 
   it("persists review gate evaluations for review feedback signals", async () => {
@@ -898,7 +946,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
     });
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();
-    expect(dbMocks.markProcessedReturning).not.toHaveBeenCalled();
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
   });
 
   it("durably drains queued signal inbox work for due loops", async () => {

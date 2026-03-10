@@ -125,7 +125,7 @@ describe("maybeProcessFollowUpQueue", () => {
 
     expect(result).toEqual({
       processed: false,
-      reason: "status_transition_noop",
+      reason: "stale_cas",
     });
     expect(startAgentMessage).not.toHaveBeenCalled();
   });
@@ -156,7 +156,7 @@ describe("maybeProcessFollowUpQueue", () => {
 
     expect(result).toEqual({
       processed: false,
-      reason: "status_transition_noop",
+      reason: "stale_cas",
     });
     expect(startAgentMessage).not.toHaveBeenCalled();
   });
@@ -188,7 +188,8 @@ describe("maybeProcessFollowUpQueue", () => {
         userId: "user-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
-        attempt: 1,
+        dispatchAttempt: 1,
+        deferCount: 0,
         runAt: expect.any(Date),
       }),
     );

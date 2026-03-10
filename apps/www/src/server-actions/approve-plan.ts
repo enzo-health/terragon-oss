@@ -7,15 +7,12 @@ import { getThreadChat } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import {
-  approvePlanArtifactForLoop,
-  createPlanArtifactForLoop,
   getActiveSdlcLoopForThread,
   getLatestAcceptedArtifact,
-  replacePlanTasksForArtifact,
-  transitionSdlcLoopStateWithArtifact,
 } from "@terragon/shared/model/delivery-loop";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
+import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
 
 export const approvePlan = userOnlyAction(
   async function approvePlan(
@@ -70,10 +67,6 @@ export const approvePlan = userOnlyAction(
     }
     const parsedPlan = parseResult.plan;
 
-    const artifactStatus =
-      activeLoop.planApprovalPolicy === "human_required"
-        ? "generated"
-        : "accepted";
     const nextLoopVersion =
       typeof activeLoop.loopVersion === "number" &&
       Number.isFinite(activeLoop.loopVersion)
@@ -97,50 +90,18 @@ export const approvePlan = userOnlyAction(
       }
     }
 
-    const planArtifact = await createPlanArtifactForLoop({
+    const promotionResult = await promotePlanToImplementing({
       db,
-      loopId: activeLoop.id,
-      loopVersion: nextLoopVersion,
-      status: artifactStatus,
-      generatedBy: "agent",
-      payload: {
-        planText: parsedPlan.planText,
-        tasks: parsedPlan.tasks,
-        source: "system",
+      loop: {
+        id: activeLoop.id,
+        loopVersion: activeLoop.loopVersion,
+        planApprovalPolicy: activeLoop.planApprovalPolicy,
       },
+      parsedPlan,
+      mode: "approve",
+      approvedByUserId: userId,
     });
-    await replacePlanTasksForArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: planArtifact.id,
-      tasks: parsedPlan.tasks,
-    });
-
-    let approvedArtifact = planArtifact;
-    if (activeLoop.planApprovalPolicy === "human_required") {
-      const maybeApproved = await approvePlanArtifactForLoop({
-        db,
-        loopId: activeLoop.id,
-        artifactId: planArtifact.id,
-        approvedByUserId: userId,
-      });
-      if (!maybeApproved) {
-        throw new UserFacingError(
-          "Failed to approve plan artifact for this Delivery Loop",
-        );
-      }
-      approvedArtifact = maybeApproved;
-    }
-
-    const transitionOutcome = await transitionSdlcLoopStateWithArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: approvedArtifact.id,
-      expectedPhase: "planning",
-      transitionEvent: "plan_completed",
-      loopVersion: nextLoopVersion,
-    });
-    if (transitionOutcome !== "updated") {
+    if (promotionResult.outcome !== "promoted") {
       throw new UserFacingError(
         "Plan approval gate failed. Refresh and try approving again.",
       );

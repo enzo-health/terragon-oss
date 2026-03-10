@@ -100,6 +100,7 @@ describe("createDispatchIntent", () => {
 
 describe("updateDispatchIntent", () => {
   it("merges partial updates and bumps updatedAt", async () => {
+    mockRedis.hget.mockResolvedValue("di_loop-1_run-1");
     mockRedis.hset.mockResolvedValue("OK");
 
     await updateDispatchIntent("di_loop-1_run-1", "tc-1", {
@@ -115,6 +116,7 @@ describe("updateDispatchIntent", () => {
   });
 
   it("serializes null lastError as empty string", async () => {
+    mockRedis.hget.mockResolvedValue("di_loop-1_run-1");
     mockRedis.hset.mockResolvedValue("OK");
 
     await updateDispatchIntent("di_loop-1_run-1", "tc-1", {
@@ -131,6 +133,7 @@ describe("updateDispatchIntent", () => {
   });
 
   it("serializes error details", async () => {
+    mockRedis.hget.mockResolvedValue("di_loop-1_run-1");
     mockRedis.hset.mockResolvedValue("OK");
 
     await updateDispatchIntent("di_loop-1_run-1", "tc-1", {

@@ -5,6 +5,7 @@ const RETRY_JOB_SCHEDULED_KEY = "dlrj:scheduled";
 const RETRY_JOB_CLAIM_PREFIX = "dlrj:claim:";
 const RETRY_JOB_TTL_SECONDS = 24 * 60 * 60;
 const RETRY_JOB_CLAIM_TTL_SECONDS = 60;
+const DEFER_RETRY_DELAY_MS = 30_000;
 
 export type DeliveryLoopRetryJob = {
   id: string;
@@ -12,7 +13,8 @@ export type DeliveryLoopRetryJob = {
   userId: string;
   threadId: string;
   threadChatId: string;
-  attempt: number;
+  dispatchAttempt: number;
+  deferCount: number;
   runAt: Date;
 };
 
@@ -35,7 +37,8 @@ function serializeRetryJob(job: DeliveryLoopRetryJob) {
     userId: job.userId,
     threadId: job.threadId,
     threadChatId: job.threadChatId,
-    attempt: String(job.attempt),
+    dispatchAttempt: String(job.dispatchAttempt),
+    deferCount: String(job.deferCount),
     runAt: job.runAt.toISOString(),
   };
 }
@@ -62,13 +65,25 @@ function deserializeRetryJob(
     return null;
   }
 
-  const attempt =
-    typeof raw.attempt === "number"
-      ? raw.attempt
-      : typeof raw.attempt === "string"
-        ? Number.parseInt(raw.attempt, 10)
+  const dispatchAttemptRaw = raw.dispatchAttempt ?? raw.attempt;
+  const dispatchAttempt =
+    typeof dispatchAttemptRaw === "number"
+      ? dispatchAttemptRaw
+      : typeof dispatchAttemptRaw === "string"
+        ? Number.parseInt(dispatchAttemptRaw, 10)
         : Number.NaN;
-  if (!Number.isFinite(attempt)) {
+  if (!Number.isFinite(dispatchAttempt)) {
+    return null;
+  }
+
+  const deferCountRaw = raw.deferCount ?? 0;
+  const deferCount =
+    typeof deferCountRaw === "number"
+      ? deferCountRaw
+      : typeof deferCountRaw === "string"
+        ? Number.parseInt(deferCountRaw, 10)
+        : Number.NaN;
+  if (!Number.isFinite(deferCount)) {
     return null;
   }
 
@@ -78,7 +93,8 @@ function deserializeRetryJob(
     userId: raw.userId,
     threadId: raw.threadId,
     threadChatId: raw.threadChatId,
-    attempt,
+    dispatchAttempt,
+    deferCount,
     runAt,
   };
 }
@@ -87,22 +103,33 @@ export async function scheduleFollowUpRetryJob({
   userId,
   threadId,
   threadChatId,
+  dispatchAttempt,
+  deferCount = 0,
   attempt,
   runAt,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
-  attempt: number;
+  dispatchAttempt?: number;
+  deferCount?: number;
+  attempt?: number;
   runAt: Date;
 }): Promise<DeliveryLoopRetryJob> {
+  const normalizedDispatchAttempt = dispatchAttempt ?? attempt;
+  if (normalizedDispatchAttempt === undefined) {
+    throw new Error(
+      "scheduleFollowUpRetryJob requires dispatchAttempt (or legacy attempt)",
+    );
+  }
   const job: DeliveryLoopRetryJob = {
     id: buildFollowUpRetryJobId(threadChatId),
     kind: "follow_up_dispatch",
     userId,
     threadId,
     threadChatId,
-    attempt,
+    dispatchAttempt: normalizedDispatchAttempt,
+    deferCount,
     runAt,
   };
 
@@ -142,7 +169,8 @@ async function rescheduleRetryJob({
     userId: job.userId,
     threadId: job.threadId,
     threadChatId: job.threadChatId,
-    attempt: job.attempt + 1,
+    dispatchAttempt: job.dispatchAttempt,
+    deferCount: job.deferCount + 1,
     runAt,
   });
   await redis.del(retryJobClaimKey(job.id));
@@ -204,21 +232,39 @@ export async function drainDueDeliveryLoopRetryJobs({
       threadChatId: job.threadChatId,
     });
 
-    if (result.processed || result.reason === "no_queued_messages") {
+    let effectiveResult = result;
+    if (!effectiveResult.processed && effectiveResult.reason === "stale_cas") {
+      effectiveResult = await runFollowUpQueue({
+        userId: job.userId,
+        threadId: job.threadId,
+        threadChatId: job.threadChatId,
+      });
+    }
+
+    if (
+      effectiveResult.processed ||
+      effectiveResult.reason === "no_queued_messages"
+    ) {
       await deleteRetryJob(job.id);
       completed += 1;
       continue;
     }
 
+    if (effectiveResult.reason === "dispatch_retry_scheduled") {
+      await redis.del(retryJobClaimKey(job.id));
+      completed += 1;
+      continue;
+    }
+
     if (
-      result.reason === "dispatch_retry_scheduled" ||
-      result.reason === "scheduled_not_runnable" ||
-      result.reason === "status_transition_noop_busy" ||
-      result.reason === "agent_rate_limited"
+      effectiveResult.reason === "scheduled_not_runnable" ||
+      effectiveResult.reason === "stale_cas_busy" ||
+      effectiveResult.reason === "agent_rate_limited" ||
+      effectiveResult.reason === "stale_cas"
     ) {
       await rescheduleRetryJob({
         job,
-        runAt: new Date(Date.now() + 30_000),
+        runAt: new Date(Date.now() + DEFER_RETRY_DELAY_MS),
       });
       rescheduled += 1;
       continue;
