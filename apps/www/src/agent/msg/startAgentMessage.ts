@@ -316,26 +316,17 @@ export async function startAgentMessage({
         });
       }
 
-      const { didUpdateStatus: didBootStatusUpdate } =
-        await updateThreadChatWithTransition({
-          userId,
-          threadId,
-          threadChatId,
-          eventType: "system.boot",
-          chatUpdates: {
-            errorMessage: null,
-            errorMessageInfo: null,
-            appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
-          },
-          requireStatusTransitionForChatUpdates: true,
-        });
-      if (!didBootStatusUpdate) {
-        throw new ThreadError(
-          "unknown-error",
-          "Failed to transition thread to booting before start",
-          null,
-        );
-      }
+      await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId,
+        eventType: "system.boot",
+        chatUpdates: {
+          errorMessage: null,
+          errorMessageInfo: null,
+          appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
+        },
+      });
       // Get or create sandbox for the thread
       const startTime = Date.now();
       // We need to provide onStatusUpdate for both new and resumed threads
