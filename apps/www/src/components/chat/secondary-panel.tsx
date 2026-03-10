@@ -549,6 +549,7 @@ function ArtifactWorkspaceShell({
         {viewState === "ready" && activeArtifact && (
           <div className="h-full">
             <ActiveArtifactRenderer
+              key={activeArtifact.id}
               descriptor={activeArtifact.descriptor}
               thread={thread}
               messages={messages}
