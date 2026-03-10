@@ -200,7 +200,40 @@ describe("maybeProcessFollowUpQueue", () => {
     );
   });
 
-  it("returns explicit outcome when durable retry persistence fails", async () => {
+  it("recovers durable retry persistence failure through owner fallback", async () => {
+    const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
+      await loadSubject({
+        initialThreadChat: {
+          id: "chat-1",
+          status: "complete",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [TEST_USER_MESSAGE],
+          messages: [],
+        },
+        startAgentMessageError: new Error("boom"),
+      });
+
+    scheduleFollowUpRetryJob.mockRejectedValueOnce(
+      new Error("redis unavailable"),
+    );
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      reason: "dispatch_retry_scheduled",
+      retryCount: 1,
+      maxRetries: 3,
+    });
+    expect(scheduleFollowUpRetryJob).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns explicit outcome when durable retry persistence fails after fallback ownership", async () => {
     const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
       await loadSubject({
         initialThreadChat: {
@@ -227,6 +260,6 @@ describe("maybeProcessFollowUpQueue", () => {
       retryCount: 1,
       maxRetries: 3,
     });
-    expect(scheduleFollowUpRetryJob).toHaveBeenCalledTimes(1);
+    expect(scheduleFollowUpRetryJob).toHaveBeenCalledTimes(2);
   });
 });

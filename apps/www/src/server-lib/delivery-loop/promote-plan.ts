@@ -267,18 +267,43 @@ function selectPromotablePlanningArtifact(params: {
     return matchingApprovedArtifact;
   }
 
-  const latestApprovedArtifact = params.artifacts.find(
-    (artifact) => artifact.status === "approved",
-  );
-  if (latestApprovedArtifact) {
-    return latestApprovedArtifact;
-  }
-
   if (matchingArtifacts.length > 0) {
     return matchingArtifacts[0] ?? null;
   }
 
-  return params.artifacts[0] ?? null;
+  return null;
+}
+
+function selectFallbackApprovedArtifact(params: {
+  artifacts: PromotablePlanningArtifact[];
+  expectedArtifactId: string;
+  parsedPlan: ParsedPlanSpec;
+}): PromotablePlanningArtifact | null {
+  const sameArtifact = params.artifacts.find(
+    (artifact) =>
+      artifact.status === "approved" &&
+      artifact.artifactType === "plan_spec" &&
+      artifact.id === params.expectedArtifactId,
+  );
+  if (sameArtifact) {
+    return sameArtifact;
+  }
+
+  const parsedPlanKey = buildPlanComparisonKey(params.parsedPlan);
+  return (
+    params.artifacts.find((artifact) => {
+      if (
+        artifact.status !== "approved" ||
+        artifact.artifactType !== "plan_spec"
+      ) {
+        return false;
+      }
+      const artifactPlanKey = buildPlanComparisonKeyFromArtifactPayload(
+        artifact.payload,
+      );
+      return artifactPlanKey !== null && artifactPlanKey === parsedPlanKey;
+    }) ?? null
+  );
 }
 
 export async function promotePlanToImplementing(params: {
@@ -363,9 +388,11 @@ export async function promotePlanToImplementing(params: {
             db: params.db,
             loopId: params.loop.id,
           });
-        const fallbackApprovedArtifact = refreshedPromotableArtifacts.find(
-          (candidate) => candidate.status === "approved",
-        );
+        const fallbackApprovedArtifact = selectFallbackApprovedArtifact({
+          artifacts: refreshedPromotableArtifacts,
+          expectedArtifactId: artifact.id,
+          parsedPlan: params.parsedPlan,
+        });
         if (!fallbackApprovedArtifact) {
           throw new Error("Failed to approve plan artifact before promotion");
         }

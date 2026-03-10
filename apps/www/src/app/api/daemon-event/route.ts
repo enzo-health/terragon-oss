@@ -12,6 +12,7 @@ import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
+  createDispatchIntent as createDurableDispatchIntent,
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
   markDispatchIntentDispatched,
@@ -178,40 +179,75 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
   );
 }
 
+type AutoDispatchCircuitBreakerRow = {
+  daemonRunStatus: string | null;
+  autoDispatchProvenance:
+    | boolean
+    | "true"
+    | "false"
+    | "t"
+    | "f"
+    | "1"
+    | "0"
+    | 1
+    | 0
+    | null;
+};
+
+function parseAutoDispatchProvenance(
+  value: AutoDispatchCircuitBreakerRow["autoDispatchProvenance"],
+): boolean {
+  return (
+    value === true ||
+    value === "true" ||
+    value === "t" ||
+    value === 1 ||
+    value === "1"
+  );
+}
+
 /**
- * Count trailing consecutive daemon_terminal signals with
- * daemonRunStatus=completed for this loop. Any non-completed signal
- * (failed, stopped, or non-daemon_terminal cause) resets the streak,
- * so user-initiated actions or failures unblock the breaker.
+ * Count trailing consecutive daemon_terminal signals for this loop where:
+ * 1) daemonRunStatus = completed, and
+ * 2) the run has dispatch-intent provenance (auto-dispatch path).
+ *
+ * Any terminal signal that does not satisfy both conditions resets the streak.
  */
 async function countConsecutiveCompletedAutoDispatches({
   loopId,
 }: {
   loopId: string;
 }): Promise<number> {
-  // Single query: count completed daemon_terminal signals that appear after
-  // the most recent non-completed one (i.e. trailing consecutive completed).
   const result = await db.execute(sql`
-    SELECT count(*) AS count
+    SELECT
+      ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' AS "daemonRunStatus",
+      CASE
+        WHEN ${schema.deliveryLoopDispatchIntent.id} IS NULL THEN false
+        ELSE true
+      END AS "autoDispatchProvenance"
     FROM ${schema.sdlcLoopSignalInbox}
+    LEFT JOIN ${schema.deliveryLoopDispatchIntent}
+      ON ${schema.deliveryLoopDispatchIntent.loopId} = ${schema.sdlcLoopSignalInbox.loopId}
+     AND ${schema.deliveryLoopDispatchIntent.runId} = (${schema.sdlcLoopSignalInbox.payload}->>'runId')
     WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
       AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
       AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
-      AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
-      AND ${schema.sdlcLoopSignalInbox.processedAt} > COALESCE(
-        (SELECT ${schema.sdlcLoopSignalInbox.processedAt}
-         FROM ${schema.sdlcLoopSignalInbox}
-         WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
-           AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
-           AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
-           AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' != 'completed'
-         ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
-         LIMIT 1),
-        '1970-01-01'::timestamp
-      )
+    ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
+    LIMIT ${MAX_CONSECUTIVE_AUTO_DISPATCHES + 1}
   `);
-  const rows = result as unknown as Array<{ count: string | number }>;
-  return Number(rows[0]?.count ?? 0);
+  const rows = result as unknown as AutoDispatchCircuitBreakerRow[];
+  let consecutiveCount = 0;
+  for (const row of rows) {
+    if (
+      row.daemonRunStatus === "completed" &&
+      parseAutoDispatchProvenance(row.autoDispatchProvenance)
+    ) {
+      consecutiveCount += 1;
+      continue;
+    }
+    break;
+  }
+  return consecutiveCount;
 }
 
 function getDaemonProcessingEventClaimKey({
@@ -1155,6 +1191,8 @@ export async function POST(request: Request) {
       return;
     }
 
+    const followUpOwnerRunId = sourceRunId;
+
     // Check if daemon supports self-dispatch.
     const daemonSupportsSelfDispatch = daemonCapabilities.has(
       DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
@@ -1163,6 +1201,7 @@ export async function POST(request: Request) {
     if (daemonSupportsSelfDispatch) {
       const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
       let preparedDispatch: { intentId: string; runId: string } | null = null;
+      let preparedRunId: string | null = null;
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -1226,199 +1265,214 @@ export async function POST(request: Request) {
               );
             } else {
               const prompt = promptParts.join("\n\n");
-              // Transition status first WITHOUT chat updates to avoid clearing
-              // queued messages on failure (chatUpdates apply unconditionally).
+              const newRunId = randomUUID();
+              const newTokenNonce = randomUUID();
+              preparedRunId = newRunId;
+              const agent = threadChatForDispatch.agent;
+              const agentVersion = threadChatForDispatch.agentVersion;
+              const model = normalizedModelForDaemon(
+                getDefaultModelForAgent({ agent, agentVersion }),
+              );
+              const sandboxId = threadForDispatch.codesandboxId;
+
+              // SDLC follow-ups always use allowAll — same as startAgentMessage
+              // which forces allowAll when activeSdlcLoop is true.
+              const effectivePermissionMode = "allowAll" as const;
+              const supportsAcp =
+                agent === "codex" || agent === "amp" || agent === "opencode";
+              const shouldUseCodexAppServerTransport =
+                agent === "codex" && userFeatureFlags.codexAppServerTransport;
+              const shouldUseAcpTransport =
+                !shouldUseCodexAppServerTransport &&
+                userFeatureFlags.sandboxAgentAcpTransport &&
+                supportsAcp;
+              const transportMode = shouldUseCodexAppServerTransport
+                ? ("codex-app-server" as const)
+                : shouldUseAcpTransport
+                  ? ("acp" as const)
+                  : ("legacy" as const);
+              const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
+
+              // Create run context
+              await upsertAgentRunContext({
+                db,
+                runId: newRunId,
+                userId,
+                threadId,
+                threadChatId,
+                sandboxId,
+                transportMode,
+                protocolVersion,
+                agent,
+                permissionMode: effectivePermissionMode,
+                requestedSessionId: null,
+                resolvedSessionId: null,
+                status: "pending",
+                tokenNonce: newTokenNonce,
+                daemonTokenKeyId: null,
+              });
+
+              // Create API key
+              const { token } = await createDaemonRunCredentials({
+                userId,
+                threadId,
+                threadChatId,
+                sandboxId,
+                runId: newRunId,
+                tokenNonce: newTokenNonce,
+                agent,
+                transportMode,
+                protocolVersion,
+              });
+
+              await updateThreadChat({
+                db,
+                userId,
+                threadId,
+                threadChatId,
+                updates: {
+                  errorMessage: null,
+                  errorMessageInfo: null,
+                },
+              });
+
+              // Persist realtime and durable dispatch intents before payload handoff.
+              const dispatchIntent = await createDispatchIntent({
+                loopId,
+                threadId,
+                threadChatId,
+                targetPhase: "implementing",
+                selectedAgent: agent as DeliveryLoopSelectedAgent,
+                executionClass: "implementation_runtime",
+                dispatchMechanism: "self_dispatch",
+                runId: newRunId,
+                maxRetries: 3,
+              });
+              preparedDispatch = {
+                intentId: dispatchIntent.id,
+                runId: newRunId,
+              };
+              await createDurableDispatchIntent(db, {
+                loopId,
+                threadId,
+                threadChatId,
+                runId: newRunId,
+                targetPhase: "implementing",
+                selectedAgent: agent as DeliveryLoopSelectedAgent,
+                executionClass: "implementation_runtime",
+                dispatchMechanism: "self_dispatch",
+              });
+
+              const userCredentials = await getUserCredentials({ userId });
+              const useCredits = shouldUseCredits(agent, userCredentials);
+
+              const preparedSelfDispatchPayload = {
+                token,
+                prompt,
+                runId: newRunId,
+                tokenNonce: newTokenNonce,
+                model,
+                agent,
+                agentVersion,
+                sessionId: null,
+                featureFlags: userFeatureFlags,
+                permissionMode: effectivePermissionMode,
+                transportMode,
+                protocolVersion,
+                threadId,
+                threadChatId,
+                useCredits: useCredits || undefined,
+              };
+              await storeSelfDispatchReplay({
+                threadChatId,
+                sourceEventId: eventId,
+                sourceSeq: seq,
+                sourceRunId,
+                dispatchIntentId: dispatchIntent.id,
+                destinationRunId: newRunId,
+                payload: preparedSelfDispatchPayload,
+              });
+              await updateDispatchIntent(dispatchIntent.id, threadChatId, {
+                status: "dispatched",
+              });
+              await markDispatchIntentDispatched(db, newRunId);
+
+              // Transition status only once the dispatch payload is fully prepared.
               const { didUpdateStatus } = await updateThreadChatWithTransition({
                 userId,
                 threadId,
                 threadChatId,
                 eventType: "user.message",
               });
-
               if (!didUpdateStatus) {
                 console.warn(
                   "[sdlc-loop] self-dispatch: status transition failed, falling back",
-                  { userId, threadId, threadChatId, loopId },
+                  { userId, threadId, threadChatId, loopId, runId: newRunId },
                 );
-              } else {
-                const newRunId = randomUUID();
-                const newTokenNonce = randomUUID();
-                const agent = threadChatForDispatch.agent;
-                const agentVersion = threadChatForDispatch.agentVersion;
-                const model = normalizedModelForDaemon(
-                  getDefaultModelForAgent({ agent, agentVersion }),
-                );
-                const sandboxId = threadForDispatch.codesandboxId;
-
-                // SDLC follow-ups always use allowAll — same as startAgentMessage
-                // which forces allowAll when activeSdlcLoop is true.
-                const effectivePermissionMode = "allowAll" as const;
-                const supportsAcp =
-                  agent === "codex" || agent === "amp" || agent === "opencode";
-                const shouldUseCodexAppServerTransport =
-                  agent === "codex" && userFeatureFlags.codexAppServerTransport;
-                const shouldUseAcpTransport =
-                  !shouldUseCodexAppServerTransport &&
-                  userFeatureFlags.sandboxAgentAcpTransport &&
-                  supportsAcp;
-                const transportMode = shouldUseCodexAppServerTransport
-                  ? ("codex-app-server" as const)
-                  : shouldUseAcpTransport
-                    ? ("acp" as const)
-                    : ("legacy" as const);
-                const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
-
-                // Create run context
-                await upsertAgentRunContext({
-                  db,
-                  runId: newRunId,
-                  userId,
-                  threadId,
-                  threadChatId,
-                  sandboxId,
-                  transportMode,
-                  protocolVersion,
-                  agent,
-                  permissionMode: effectivePermissionMode,
-                  requestedSessionId: null,
-                  resolvedSessionId: null,
-                  status: "pending",
-                  tokenNonce: newTokenNonce,
-                  daemonTokenKeyId: null,
-                });
-
-                // Create API key
-                const { token } = await createDaemonRunCredentials({
-                  userId,
-                  threadId,
-                  threadChatId,
-                  sandboxId,
-                  runId: newRunId,
-                  tokenNonce: newTokenNonce,
-                  agent,
-                  transportMode,
-                  protocolVersion,
-                });
-
-                await updateThreadChat({
-                  db,
-                  userId,
-                  threadId,
-                  threadChatId,
-                  updates: {
-                    errorMessage: null,
-                    errorMessageInfo: null,
-                  },
-                });
-
-                // Persist dispatch intent before sending payload to daemon
-                const dispatchIntent = await createDispatchIntent({
-                  loopId,
-                  threadId,
-                  threadChatId,
-                  targetPhase: "implementing",
-                  selectedAgent: agent as DeliveryLoopSelectedAgent,
-                  executionClass: "implementation_runtime",
-                  dispatchMechanism: "self_dispatch",
-                  runId: newRunId,
-                  maxRetries: 3,
-                });
-                preparedDispatch = {
-                  intentId: dispatchIntent.id,
-                  runId: newRunId,
-                };
-
-                const userCredentials = await getUserCredentials({ userId });
-                const useCredits = shouldUseCredits(agent, userCredentials);
-
-                const preparedSelfDispatchPayload = {
-                  token,
-                  prompt,
-                  runId: newRunId,
-                  tokenNonce: newTokenNonce,
-                  model,
-                  agent,
-                  agentVersion,
-                  sessionId: null,
-                  featureFlags: userFeatureFlags,
-                  permissionMode: effectivePermissionMode,
-                  transportMode,
-                  protocolVersion,
-                  threadId,
-                  threadChatId,
-                  useCredits: useCredits || undefined,
-                };
-                await storeSelfDispatchReplay({
-                  threadChatId,
-                  sourceEventId: eventId,
-                  sourceSeq: seq,
-                  sourceRunId,
-                  dispatchIntentId: dispatchIntent.id,
-                  destinationRunId: newRunId,
-                  payload: preparedSelfDispatchPayload,
-                });
-                await updateDispatchIntent(dispatchIntent.id, threadChatId, {
-                  status: "dispatched",
-                });
-                try {
-                  await markDispatchIntentDispatched(db, newRunId);
-                } catch (dispatchTransitionError) {
-                  console.warn(
-                    "[delivery-loop] failed to mark durable dispatch intent as dispatched",
-                    {
-                      loopId,
-                      threadId,
-                      threadChatId,
-                      runId: newRunId,
-                      error: dispatchTransitionError,
-                    },
-                  );
-                }
-                // Only arm the timeout once the replay record exists and the
-                // self-dispatch payload is actually recoverable on retries.
-                startAckTimeout({
-                  db,
-                  runId: newRunId,
-                  loopId,
-                  threadChatId,
-                });
-                selfDispatchPayload = preparedSelfDispatchPayload;
-
-                console.log("[sdlc-loop] self-dispatch payload prepared", {
-                  userId,
-                  threadId,
-                  threadChatId,
-                  loopId,
-                  runId: newRunId,
-                  eventId,
-                  seq,
-                });
-                return; // Skip maybeProcessFollowUpQueue
+                throw new Error("self-dispatch status transition failed");
               }
+
+              // Only arm the timeout once the replay record exists and the
+              // self-dispatch payload is actually recoverable on retries.
+              startAckTimeout({
+                db,
+                runId: newRunId,
+                loopId,
+                threadChatId,
+              });
+              selfDispatchPayload = preparedSelfDispatchPayload;
+
+              console.log("[sdlc-loop] self-dispatch payload prepared", {
+                userId,
+                threadId,
+                threadChatId,
+                loopId,
+                runId: newRunId,
+                eventId,
+                seq,
+              });
+              return; // Skip maybeProcessFollowUpQueue
             }
           }
         }
       } catch (error) {
-        if (preparedDispatch) {
+        const failureMessage =
+          error instanceof Error
+            ? error.message
+            : "self-dispatch preparation failed";
+        if (preparedDispatch || preparedRunId) {
           try {
-            await Promise.all([
-              updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
-                status: "failed",
-                lastError:
-                  error instanceof Error
-                    ? error.message
-                    : "self-dispatch preparation failed",
-                lastFailureCategory: "config_error",
-              }),
-              updateAgentRunContext({
-                db,
-                runId: preparedDispatch.runId,
-                userId,
-                updates: {
+            const cleanupOperations: Array<Promise<unknown>> = [];
+            if (preparedDispatch) {
+              cleanupOperations.push(
+                updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
                   status: "failed",
-                },
-              }),
-            ]);
+                  lastError: failureMessage,
+                  lastFailureCategory: "config_error",
+                }),
+              );
+              cleanupOperations.push(
+                markDispatchIntentFailed(
+                  db,
+                  preparedDispatch.runId,
+                  "config_error",
+                  failureMessage,
+                ),
+              );
+            }
+            if (preparedRunId) {
+              cleanupOperations.push(
+                updateAgentRunContext({
+                  db,
+                  runId: preparedRunId,
+                  userId,
+                  updates: {
+                    status: "failed",
+                  },
+                }),
+              );
+            }
+            await Promise.all(cleanupOperations);
           } catch (cleanupError) {
             console.error(
               "[sdlc-loop] failed to clean up abandoned self-dispatch run",
@@ -1427,7 +1481,7 @@ export async function POST(request: Request) {
                 threadId,
                 threadChatId,
                 loopId,
-                runId: preparedDispatch.runId,
+                runId: preparedRunId ?? preparedDispatch?.runId ?? null,
                 cleanupError,
               },
             );
@@ -1453,7 +1507,7 @@ export async function POST(request: Request) {
       threadId,
       threadChatId,
       userId,
-      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      runId: followUpOwnerRunId,
     });
     console.log(
       "[sdlc-loop] daemon terminal follow-up queue processing completed",
@@ -1462,7 +1516,7 @@ export async function POST(request: Request) {
         threadId,
         threadChatId,
         loopId,
-        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+        runId: followUpOwnerRunId,
         eventId,
         seq,
         runtimeRouting: tickResult.runtimeRouting ?? null,
@@ -1482,7 +1536,7 @@ export async function POST(request: Request) {
           threadId,
           threadChatId,
           loopId,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          runId: followUpOwnerRunId,
           eventId,
           seq,
         },
@@ -1499,7 +1553,7 @@ export async function POST(request: Request) {
         threadId,
         threadChatId,
         userId,
-        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+        runId: followUpOwnerRunId,
       });
       console.log(
         "[sdlc-loop] daemon terminal follow-up queue recovery completed",
@@ -1508,7 +1562,7 @@ export async function POST(request: Request) {
           threadId,
           threadChatId,
           loopId,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          runId: followUpOwnerRunId,
           eventId,
           seq,
           followUpResult,
@@ -1542,7 +1596,7 @@ export async function POST(request: Request) {
           threadId,
           threadChatId,
           userId,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          runId: followUpOwnerRunId,
         });
         console.log("[sdlc-loop] daemon follow-up recovery retry completed", {
           userId,
@@ -1550,7 +1604,7 @@ export async function POST(request: Request) {
           threadChatId,
           loopId,
           loopVersion,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+          runId: followUpOwnerRunId,
           eventId,
           seq,
           retryResult,
@@ -1683,6 +1737,10 @@ export async function POST(request: Request) {
             });
           } catch (error) {
             console.error(
+              "[sdlc-loop] duplicate daemon event dedupe tick failed — FULL ERROR:",
+              error,
+            );
+            console.error(
               "[sdlc-loop] duplicate daemon event dedupe tick failed",
               {
                 userId,
@@ -1771,6 +1829,10 @@ export async function POST(request: Request) {
       runId: runContext?.runId ?? envelopeV2?.runId ?? null,
     });
   } catch (error) {
+    console.error(
+      "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
+      error,
+    );
     if (runContext) {
       await updateAgentRunContext({
         db,

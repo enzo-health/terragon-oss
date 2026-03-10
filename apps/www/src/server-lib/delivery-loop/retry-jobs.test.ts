@@ -132,6 +132,48 @@ describe("delivery loop retry jobs", () => {
     );
   });
 
+  it("does not let a stale worker overwrite a newer retry schedule during reschedule", async () => {
+    await scheduleFollowUpRetryJob({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      dispatchAttempt: 1,
+      deferCount: 0,
+      runAt: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const newerRunAt = new Date("2026-03-09T12:06:00.000Z");
+    const result = await drainDueDeliveryLoopRetryJobs({
+      now: new Date("2026-03-09T12:00:05.000Z"),
+      leaseOwnerTokenPrefix: "test",
+      processFollowUpQueue: async () => {
+        await scheduleFollowUpRetryJob({
+          userId: "user-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          dispatchAttempt: 7,
+          deferCount: 4,
+          runAt: newerRunAt,
+        });
+        return {
+          processed: false,
+          reason: "stale_cas_busy",
+        };
+      },
+    });
+
+    expect(result).toEqual({
+      claimed: 1,
+      completed: 0,
+      rescheduled: 1,
+      skipped: 0,
+    });
+    const job = await getRetryJob("follow-up:chat-1");
+    expect(job?.dispatchAttempt).toBe(7);
+    expect(job?.deferCount).toBe(4);
+    expect(job?.runAt.toISOString()).toBe(newerRunAt.toISOString());
+  });
+
   it("does not delete a newer schedule written during drain for the same chat", async () => {
     await scheduleFollowUpRetryJob({
       userId: "user-1",

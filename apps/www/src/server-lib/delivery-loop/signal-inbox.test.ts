@@ -297,6 +297,68 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(releaseSdlcLoopLease).toHaveBeenCalledTimes(1);
   });
 
+  it("reports deduped feedback routing as not queued", async () => {
+    let attemptedMessage:
+      | Parameters<typeof queueFollowUpInternal>[0]["messages"][number]
+      | null = null;
+
+    vi.mocked(getPrimaryThreadChat).mockImplementation(
+      (thread) =>
+        thread.threadChats[0] as ReturnType<typeof getPrimaryThreadChat>,
+    );
+    vi.mocked(getThread)
+      .mockResolvedValueOnce({
+        id: "thread-1",
+        threadChats: [
+          {
+            id: "chat-1",
+            messages: [],
+            queuedMessages: [],
+          },
+        ],
+      } as NonNullable<Awaited<ReturnType<typeof getThread>>>)
+      .mockImplementationOnce(
+        async () =>
+          ({
+            id: "thread-1",
+            threadChats: [
+              {
+                id: "chat-1",
+                messages: [],
+                queuedMessages: attemptedMessage ? [attemptedMessage] : [],
+              },
+            ],
+          }) as NonNullable<Awaited<ReturnType<typeof getThread>>>,
+      );
+    vi.mocked(queueFollowUpInternal).mockImplementationOnce(async (input) => {
+      attemptedMessage = input.messages[0] ?? null;
+      throw new Error("follow-up already queued");
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "route-feedback:delivery-deduped",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+      includeRuntimeRouting: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-1",
+        runtimeAction: "none",
+        feedbackQueuedMessage: null,
+        runtimeRouting: expect.objectContaining({
+          followUpQueued: false,
+          reason: "follow_up_deduped",
+        }),
+      }),
+    );
+    expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
+  });
+
   it("suppresses feedback runtime follow-up while loop is in planning", async () => {
     dbMocks.loopFindFirst
       .mockResolvedValueOnce({
@@ -338,6 +400,66 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     );
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(dbMocks.markProcessedReturning).toHaveBeenCalled();
+  });
+
+  it("routes daemon terminal failures while loop is in planning", async () => {
+    dbMocks.loopFindFirst
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "planning",
+        blockedFromState: null,
+      })
+      .mockResolvedValueOnce({
+        id: "loop-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        prNumber: 42,
+        loopVersion: 7,
+        currentHeadSha: "sha-loop-1",
+        state: "planning",
+        blockedFromState: null,
+      });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-daemon-terminal-failure-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "delivery-1:101",
+      payload: {
+        eventType: "daemon_terminal",
+        daemonRunStatus: "failed",
+        daemonErrorCategory: "provider_error",
+        daemonErrorMessage: "transport timeout",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "route-feedback:planning-daemon-terminal-failure",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+      includeRuntimeRouting: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-daemon-terminal-failure-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "feedback_follow_up_queued",
+        runtimeRouting: expect.objectContaining({
+          reason: "follow_up_queued",
+          followUpQueued: true,
+        }),
+      }),
+    );
+    expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
   });
 
   it("suppresses daemon terminal feedback follow-up while loop is in planning", async () => {

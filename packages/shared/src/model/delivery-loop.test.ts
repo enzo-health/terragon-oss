@@ -276,6 +276,16 @@ describe("delivery loop state model", () => {
       mapSdlcTransitionEventToDeliveryLoopTransition("implementation_progress"),
     ).toBeNull();
     expect(
+      mapSdlcTransitionEventToDeliveryLoopTransition("ui_smoke_passed", {
+        hasPrLink: false,
+      }),
+    ).toBe("ui_gate_passed_without_pr");
+    expect(
+      mapSdlcTransitionEventToDeliveryLoopTransition("ui_smoke_passed", {
+        hasPrLink: true,
+      }),
+    ).toBe("ui_gate_passed_with_pr");
+    expect(
       mapSdlcTransitionEventToDeliveryLoopTransition(
         "video_capture_succeeded",
         {
@@ -2222,6 +2232,82 @@ describe("sdlc loop model", () => {
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
     expect(reloaded?.state).toBe("review_gate");
+    expect(reloaded?.fixAttemptCount).toBe(0);
+  });
+
+  it("resets fix attempts when UI smoke passes without a PR link", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "ui_gate",
+        fixAttemptCount: 3,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "ui_smoke_passed",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("awaiting_pr_link");
+    expect(reloaded?.fixAttemptCount).toBe(0);
+  });
+
+  it("resets fix attempts when promoting awaiting_pr_link to babysitting", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "awaiting_pr_link",
+        fixAttemptCount: 2,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "pr_linked",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("babysitting");
     expect(reloaded?.fixAttemptCount).toBe(0);
   });
 

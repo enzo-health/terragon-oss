@@ -1619,6 +1619,14 @@ export const sdlcLoopSignalInbox = pgTable(
         table.causeIdentityVersion,
       )
       .where(sql`${table.signalHeadShaOrNull} is null`),
+    index("sdlc_loop_signal_inbox_claimable_unclaimed_index")
+      .on(table.loopId, table.receivedAt)
+      .where(sql`${table.processedAt} is null and ${table.claimToken} is null`),
+    index("sdlc_loop_signal_inbox_claimable_stale_index")
+      .on(table.loopId, table.claimedAt, table.receivedAt)
+      .where(
+        sql`${table.processedAt} is null and ${table.claimToken} is not null`,
+      ),
     index("sdlc_loop_signal_inbox_loop_received_index").on(
       table.loopId,
       table.receivedAt,

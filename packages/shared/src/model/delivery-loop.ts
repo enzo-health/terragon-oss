@@ -726,7 +726,6 @@ export function mapSdlcTransitionEventToDeliveryLoopTransition(
     case "review_blocked":
       return "review_gate_blocked";
     case "ui_smoke_passed":
-      return "ui_gate_passed_with_pr";
     case "video_capture_succeeded":
       return options?.hasPrLink === false
         ? "ui_gate_passed_without_pr"
@@ -3795,7 +3794,13 @@ function shouldResetFixAttemptCountOnTransition({
   if (previousState === "ci_gate" && nextState === "ui_gate") {
     return true;
   }
+  if (previousState === "ui_gate" && nextState === "awaiting_pr_link") {
+    return true;
+  }
   if (previousState === "ui_gate" && nextState === "babysitting") {
+    return true;
+  }
+  if (previousState === "awaiting_pr_link" && nextState === "babysitting") {
     return true;
   }
   return false;

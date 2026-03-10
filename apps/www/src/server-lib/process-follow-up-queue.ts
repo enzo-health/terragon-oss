@@ -90,6 +90,78 @@ export type FollowUpQueueProcessingResult = {
   maxRetries?: number;
 };
 
+type RetryPersistenceOwner =
+  | "follow-up"
+  | "startAgentMessage"
+  | "process-follow-up-queue";
+
+function retryDelayMsForAttempt(dispatchAttempt: number): number {
+  return (
+    FOLLOW_UP_RETRY_BASE_DELAY_MS *
+    2 ** Math.max(0, Math.trunc(dispatchAttempt) - 1)
+  );
+}
+
+export async function ensureDispatchRetryPersistenceOwnership({
+  owner,
+  userId,
+  threadId,
+  threadChatId,
+  result,
+}: {
+  owner: RetryPersistenceOwner;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  result: FollowUpQueueProcessingResult;
+}): Promise<FollowUpQueueProcessingResult> {
+  if (result.reason !== "dispatch_retry_persistence_failed") {
+    return result;
+  }
+
+  const retryCount = Math.max(1, result.retryCount ?? 1);
+  const maxRetries = result.maxRetries ?? MAX_FOLLOW_UP_RETRIES;
+  const runAt = new Date(Date.now() + retryDelayMsForAttempt(retryCount));
+
+  try {
+    await scheduleFollowUpRetryJob({
+      userId,
+      threadId,
+      threadChatId,
+      dispatchAttempt: retryCount,
+      deferCount: 0,
+      runAt,
+    });
+    console.warn("Recovered follow-up retry persistence via owner fallback", {
+      owner,
+      threadId,
+      threadChatId,
+      retryCount,
+      runAt: runAt.toISOString(),
+    });
+    return {
+      processed: false,
+      reason: "dispatch_retry_scheduled",
+      retryCount,
+      maxRetries,
+    };
+  } catch (fallbackError) {
+    console.error("Follow-up retry persistence fallback failed", {
+      owner,
+      threadId,
+      threadChatId,
+      retryCount,
+      fallbackError,
+    });
+    return {
+      processed: false,
+      reason: "dispatch_retry_persistence_failed",
+      retryCount,
+      maxRetries,
+    };
+  }
+}
+
 /**
  * Shared retry handler for follow-up processing failures.
  * Counts existing retry markers, clears queue on max retries, or appends a retry marker.
@@ -401,12 +473,18 @@ export async function maybeProcessFollowUpQueue({
       } else if (failure.retryPersisted) {
         failureReason = "dispatch_retry_scheduled";
       }
-      return {
-        processed: false,
-        reason: failureReason,
-        retryCount: failure.retriesUsed,
-        maxRetries: MAX_FOLLOW_UP_RETRIES,
-      };
+      return ensureDispatchRetryPersistenceOwnership({
+        owner: "process-follow-up-queue",
+        userId,
+        threadId,
+        threadChatId,
+        result: {
+          processed: false,
+          reason: failureReason,
+          retryCount: failure.retriesUsed,
+          maxRetries: MAX_FOLLOW_UP_RETRIES,
+        },
+      });
     }
   }
 
@@ -459,11 +537,17 @@ export async function maybeProcessFollowUpQueue({
     } else if (failure.retryPersisted) {
       failureReason = "dispatch_retry_scheduled";
     }
-    return {
-      processed: false,
-      reason: failureReason,
-      retryCount: failure.retriesUsed,
-      maxRetries: MAX_FOLLOW_UP_RETRIES,
-    };
+    return ensureDispatchRetryPersistenceOwnership({
+      owner: "process-follow-up-queue",
+      userId,
+      threadId,
+      threadChatId,
+      result: {
+        processed: false,
+        reason: failureReason,
+        retryCount: failure.retriesUsed,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      },
+    });
   }
 }

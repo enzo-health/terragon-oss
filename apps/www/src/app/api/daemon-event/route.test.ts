@@ -3,6 +3,7 @@ import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
+  createDispatchIntent as createDurableDispatchIntent,
   getActiveSdlcLoopForThread,
   markDispatchIntentCompleted,
   markDispatchIntentDispatched,
@@ -98,6 +99,9 @@ const dbMocks = vi.hoisted(() => {
 });
 
 const dispatchIntentMocks = vi.hoisted(() => ({
+  buildDispatchIntentId: vi.fn(
+    (loopId: string, runId: string) => `di_${loopId}_${runId}`,
+  ),
   createDispatchIntent: vi.fn(),
   storeSelfDispatchReplay: vi.fn(),
   getReplayableSelfDispatch: vi.fn(),
@@ -105,6 +109,7 @@ const dispatchIntentMocks = vi.hoisted(() => ({
 }));
 
 const deliveryLoopModelMocks = vi.hoisted(() => ({
+  createDispatchIntent: vi.fn(),
   getActiveSdlcLoopForThread: vi.fn(),
   markDispatchIntentDispatched: vi.fn(),
   markDispatchIntentCompleted: vi.fn(),
@@ -124,6 +129,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
+  createDispatchIntent: deliveryLoopModelMocks.createDispatchIntent,
   getActiveSdlcLoopForThread: deliveryLoopModelMocks.getActiveSdlcLoopForThread,
   markDispatchIntentDispatched:
     deliveryLoopModelMocks.markDispatchIntentDispatched,
@@ -150,6 +156,7 @@ vi.mock("@/server-lib/follow-up", () => ({
 }));
 
 vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
+  buildDispatchIntentId: dispatchIntentMocks.buildDispatchIntentId,
   createDispatchIntent: dispatchIntentMocks.createDispatchIntent,
   storeSelfDispatchReplay: dispatchIntentMocks.storeSelfDispatchReplay,
   getReplayableSelfDispatch: dispatchIntentMocks.getReplayableSelfDispatch,
@@ -282,6 +289,9 @@ describe("daemon-event route", () => {
     } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+    vi.mocked(createDurableDispatchIntent).mockResolvedValue(
+      "durable-dispatch-intent-1",
+    );
     vi.mocked(markDispatchIntentDispatched).mockResolvedValue(undefined);
     vi.mocked(markDispatchIntentCompleted).mockResolvedValue(undefined);
     vi.mocked(markDispatchIntentFailed).mockResolvedValue(undefined);
@@ -788,8 +798,13 @@ describe("daemon-event route", () => {
         error: null,
       },
     });
-    // Circuit breaker uses db.execute() — return count >= MAX_CONSECUTIVE_AUTO_DISPATCHES (10)
-    dbMocks.execute.mockResolvedValue([{ count: 10 }]);
+    // First execute call is advisory lock for claim; second call is the breaker query.
+    dbMocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce(
+      Array.from({ length: 10 }, () => ({
+        daemonRunStatus: "completed",
+        autoDispatchProvenance: true,
+      })),
+    );
 
     const response = await POST(
       createDaemonRequest({
@@ -808,6 +823,60 @@ describe("daemon-event route", () => {
     // Circuit breaker should prevent follow-up processing
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("does not trip circuit breaker for completed runs without auto-dispatch provenance", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      loopVersion: 7,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
+      processed: true,
+      signalId: "signal-1",
+      causeType: "daemon_terminal",
+      runtimeAction: "feedback_follow_up_queued",
+      outboxId: null,
+      feedbackQueuedMessage: {
+        type: "user",
+        model: null,
+        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+        parts: [{ type: "text", text: "Please address this feedback." }],
+      },
+      runtimeRouting: {
+        routed: true,
+        followUpQueued: true,
+        reason: "follow_up_queued",
+        error: null,
+      },
+    });
+    vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
+      processed: true,
+      reason: "dispatch_started_batch",
+    } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
+    dbMocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        daemonRunStatus: "completed",
+        autoDispatchProvenance: false,
+      },
+    ]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-non-auto-provenance",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(1);
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
   });
 
   it("persists codexPreviousResponseId for successful codex app-server completions", async () => {

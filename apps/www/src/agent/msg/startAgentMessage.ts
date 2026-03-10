@@ -45,7 +45,10 @@ import {
 import { handleSlashCommand } from "@/agent/slash-command-handler";
 import { tryAutoCompactThread } from "@/server-lib/compact";
 import { waitUntil } from "@vercel/functions";
-import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import {
+  ensureDispatchRetryPersistenceOwnership,
+  maybeProcessFollowUpQueue,
+} from "@/server-lib/process-follow-up-queue";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import {
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
@@ -184,7 +187,18 @@ export async function startAgentMessage({
         threadId,
         threadChatId,
       });
-      waitUntil(maybeProcessFollowUpQueue({ threadId, userId, threadChatId }));
+      waitUntil(
+        maybeProcessFollowUpQueue({ threadId, userId, threadChatId }).then(
+          (result) =>
+            ensureDispatchRetryPersistenceOwnership({
+              owner: "startAgentMessage",
+              userId,
+              threadId,
+              threadChatId,
+              result,
+            }),
+        ),
+      );
       return;
     }
   }

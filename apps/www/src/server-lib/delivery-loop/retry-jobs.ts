@@ -6,6 +6,46 @@ const RETRY_JOB_CLAIM_PREFIX = "dlrj:claim:";
 const RETRY_JOB_TTL_SECONDS = 24 * 60 * 60;
 const RETRY_JOB_CLAIM_TTL_SECONDS = 60;
 const DEFER_RETRY_DELAY_MS = 30_000;
+const CONDITIONAL_RESCHEDULE_RETRY_JOB_SCRIPT = `
+local jobKey = KEYS[1]
+local scheduledKey = KEYS[2]
+local claimKey = KEYS[3]
+local expectedRunAt = ARGV[1]
+local expectedDispatchAttempt = ARGV[2]
+local expectedDeferCount = ARGV[3]
+local nextRunAt = ARGV[4]
+local nextDispatchAttempt = ARGV[5]
+local nextDeferCount = ARGV[6]
+local ttlSeconds = tonumber(ARGV[7])
+local nextRunAtMs = tonumber(ARGV[8])
+local jobId = ARGV[9]
+
+local currentRunAt = redis.call("HGET", jobKey, "runAt")
+local currentDispatchAttempt = redis.call("HGET", jobKey, "dispatchAttempt")
+local currentDeferCount = redis.call("HGET", jobKey, "deferCount")
+
+if not currentRunAt then
+  redis.call("DEL", claimKey)
+  return 0
+end
+
+if (
+  currentRunAt ~= expectedRunAt or
+  currentDispatchAttempt ~= expectedDispatchAttempt or
+  currentDeferCount ~= expectedDeferCount
+) then
+  redis.call("DEL", claimKey)
+  return 0
+end
+
+redis.call("HSET", jobKey, "runAt", nextRunAt)
+redis.call("HSET", jobKey, "dispatchAttempt", nextDispatchAttempt)
+redis.call("HSET", jobKey, "deferCount", nextDeferCount)
+redis.call("EXPIRE", jobKey, ttlSeconds)
+redis.call("ZADD", scheduledKey, nextRunAtMs, jobId)
+redis.call("DEL", claimKey)
+return 1
+`;
 const CONDITIONAL_DELETE_RETRY_JOB_SCRIPT = `
 local jobKey = KEYS[1]
 local scheduledKey = KEYS[2]
@@ -211,22 +251,35 @@ async function deleteRetryJobIfSnapshotMatches(params: {
   return "preserved_newer";
 }
 
+type RetryJobRescheduleOutcome = "rescheduled" | "preserved_newer";
+
 async function rescheduleRetryJob({
   job,
   runAt,
 }: {
   job: DeliveryLoopRetryJob;
   runAt: Date;
-}): Promise<void> {
-  await scheduleFollowUpRetryJob({
-    userId: job.userId,
-    threadId: job.threadId,
-    threadChatId: job.threadChatId,
-    dispatchAttempt: job.dispatchAttempt,
-    deferCount: job.deferCount + 1,
-    runAt,
-  });
-  await redis.del(retryJobClaimKey(job.id));
+}): Promise<RetryJobRescheduleOutcome> {
+  const nextDeferCount = job.deferCount + 1;
+  const scriptResult = await redis.eval(
+    CONDITIONAL_RESCHEDULE_RETRY_JOB_SCRIPT,
+    [retryJobKey(job.id), RETRY_JOB_SCHEDULED_KEY, retryJobClaimKey(job.id)],
+    [
+      job.runAt.toISOString(),
+      String(job.dispatchAttempt),
+      String(job.deferCount),
+      runAt.toISOString(),
+      String(job.dispatchAttempt),
+      String(nextDeferCount),
+      String(RETRY_JOB_TTL_SECONDS),
+      String(runAt.getTime()),
+      job.id,
+    ],
+  );
+  if (scriptResult === 1 || scriptResult === "1") {
+    return "rescheduled";
+  }
+  return "preserved_newer";
 }
 
 export async function drainDueDeliveryLoopRetryJobs({

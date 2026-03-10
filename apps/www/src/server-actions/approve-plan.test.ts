@@ -18,6 +18,22 @@ import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
+const approvePlanArtifactForLoopMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@terragon/shared/model/delivery-loop", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@terragon/shared/model/delivery-loop")
+    >();
+  approvePlanArtifactForLoopMock.mockImplementation(
+    actual.approvePlanArtifactForLoop,
+  );
+  return {
+    ...actual,
+    approvePlanArtifactForLoop: approvePlanArtifactForLoopMock,
+  };
+});
+
 vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn(),
 }));
@@ -445,6 +461,246 @@ describe("approvePlan", () => {
     ]);
     expect(refreshedStale?.status).toBe("generated");
     expect(refreshedApproved?.status).toBe("approved");
+  });
+
+  it("does not promote an unrelated approved artifact when parsed plan mismatches", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      planApprovalPolicy: "human_required",
+    });
+    expect(loop).toBeDefined();
+
+    const staleApprovedPayload = {
+      planText: "Previously approved plan",
+      source: "exit_plan_mode" as const,
+      tasks: [
+        {
+          stableTaskId: "task-stale",
+          title: "Stale task",
+          acceptance: ["Old"],
+        },
+      ],
+    };
+    const parsedPlanPayload = {
+      planText: "New plan from current approval context",
+      source: "exit_plan_mode" as const,
+      tasks: [
+        {
+          stableTaskId: "task-new",
+          title: "New task",
+          acceptance: ["Current"],
+        },
+      ],
+    };
+
+    const [staleApprovedArtifact] = await db
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId: loop!.id,
+        phase: "planning",
+        artifactType: "plan_spec",
+        headSha: null,
+        loopVersion: 2,
+        status: "approved",
+        approvedByUserId: user.id,
+        approvedAt: new Date("2026-03-09T13:00:00.000Z"),
+        generatedBy: "agent",
+        payload: staleApprovedPayload,
+        createdAt: new Date("2026-03-09T13:00:00.000Z"),
+        updatedAt: new Date("2026-03-09T13:00:00.000Z"),
+      })
+      .returning();
+    expect(staleApprovedArtifact).toBeDefined();
+    if (!staleApprovedArtifact) {
+      throw new Error("Expected stale approved artifact to be inserted");
+    }
+
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: staleApprovedArtifact.id,
+      tasks: staleApprovedPayload.tasks,
+    });
+
+    await updateThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      updates: {
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "exit-plan-mismatch",
+            name: "ExitPlanMode",
+            parent_tool_use_id: null,
+            parameters: {
+              plan: JSON.stringify(parsedPlanPayload),
+            },
+          },
+        ],
+      },
+    });
+
+    await approvePlan({ threadId, threadChatId });
+
+    const activeLoop = await getActiveSdlcLoopForThread({
+      db,
+      userId: user.id,
+      threadId,
+    });
+    expect(activeLoop?.state).toBe("implementing");
+    expect(activeLoop?.activePlanArtifactId).toBeTruthy();
+    expect(activeLoop?.activePlanArtifactId).not.toBe(staleApprovedArtifact.id);
+
+    const activeArtifact = await db.query.sdlcPhaseArtifact.findFirst({
+      where: eq(schema.sdlcPhaseArtifact.id, activeLoop!.activePlanArtifactId!),
+    });
+    expect(activeArtifact?.status).toBe("approved");
+    expect(
+      (activeArtifact?.payload as { planText?: string } | undefined)?.planText,
+    ).toBe(parsedPlanPayload.planText);
+
+    const refreshedStaleArtifact = await db.query.sdlcPhaseArtifact.findFirst({
+      where: eq(schema.sdlcPhaseArtifact.id, staleApprovedArtifact.id),
+    });
+    expect(refreshedStaleArtifact?.status).toBe("approved");
+  });
+
+  it("does not fallback to unrelated approved artifact when approval CAS is lost", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      planApprovalPolicy: "human_required",
+    });
+    expect(loop).toBeDefined();
+
+    const matchingGeneratedPayload = {
+      planText: "Plan that should be approved",
+      source: "exit_plan_mode" as const,
+      tasks: [
+        {
+          stableTaskId: "task-match",
+          title: "Matching task",
+          acceptance: ["Current"],
+        },
+      ],
+    };
+    const unrelatedApprovedPayload = {
+      planText: "Unrelated approved plan",
+      source: "exit_plan_mode" as const,
+      tasks: [
+        {
+          stableTaskId: "task-unrelated",
+          title: "Unrelated task",
+          acceptance: ["Other"],
+        },
+      ],
+    };
+
+    const generatedArtifact = await createPlanArtifactForLoop({
+      db,
+      loopId: loop!.id,
+      loopVersion: Math.max(loop!.loopVersion, 0) + 1,
+      status: "generated",
+      generatedBy: "agent",
+      payload: matchingGeneratedPayload,
+    });
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: generatedArtifact.id,
+      tasks: matchingGeneratedPayload.tasks,
+    });
+
+    const [unrelatedApprovedArtifact] = await db
+      .insert(schema.sdlcPhaseArtifact)
+      .values({
+        loopId: loop!.id,
+        phase: "planning",
+        artifactType: "plan_spec",
+        headSha: null,
+        loopVersion: generatedArtifact.loopVersion + 1,
+        status: "approved",
+        approvedByUserId: user.id,
+        approvedAt: new Date("2026-03-09T14:00:00.000Z"),
+        generatedBy: "agent",
+        payload: unrelatedApprovedPayload,
+        createdAt: new Date("2026-03-09T14:00:00.000Z"),
+        updatedAt: new Date("2026-03-09T14:00:00.000Z"),
+      })
+      .returning();
+    expect(unrelatedApprovedArtifact).toBeDefined();
+    if (!unrelatedApprovedArtifact) {
+      throw new Error("Expected unrelated approved artifact to be inserted");
+    }
+    await replacePlanTasksForArtifact({
+      db,
+      loopId: loop!.id,
+      artifactId: unrelatedApprovedArtifact.id,
+      tasks: unrelatedApprovedPayload.tasks,
+    });
+
+    await updateThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      updates: {
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "exit-plan-cas-fallback",
+            name: "ExitPlanMode",
+            parent_tool_use_id: null,
+            parameters: {
+              plan: JSON.stringify(matchingGeneratedPayload),
+            },
+          },
+        ],
+      },
+    });
+
+    approvePlanArtifactForLoopMock.mockResolvedValueOnce(undefined);
+
+    await expect(approvePlan({ threadId, threadChatId })).rejects.toThrow(
+      "Failed to approve plan",
+    );
+
+    const activeLoop = await getActiveSdlcLoopForThread({
+      db,
+      userId: user.id,
+      threadId,
+    });
+    expect(activeLoop?.state).toBe("planning");
+    expect(activeLoop?.activePlanArtifactId).not.toBe(
+      unrelatedApprovedArtifact.id,
+    );
   });
 
   it("rejects approval when no plan artifact exists in thread chat", async () => {

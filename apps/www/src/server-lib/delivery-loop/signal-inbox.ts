@@ -43,6 +43,14 @@ const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
 const SDLC_SIGNAL_INBOX_CLAIM_STALE_MS = 60_000;
+const SDLC_SIGNAL_INBOX_CLAIM_HEARTBEAT_INTERVAL_MS = Math.max(
+  5_000,
+  Math.trunc(SDLC_SIGNAL_INBOX_CLAIM_STALE_MS / 3),
+);
+const SDLC_SIGNAL_INBOX_LEASE_HEARTBEAT_INTERVAL_MS = Math.max(
+  5_000,
+  Math.trunc(SDLC_SIGNAL_INBOX_LEASE_TTL_MS / 3),
+);
 const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
   "daemon_terminal",
   "check_run.completed",
@@ -56,6 +64,7 @@ const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
 type RuntimeActionOutcome = "none" | "feedback_follow_up_queued";
 type RuntimeRoutingReason =
   | "follow_up_queued"
+  | "follow_up_deduped"
   | "non_feedback_signal"
   | "gate_eval_no_follow_up"
   | "suppressed_for_loop_state"
@@ -244,6 +253,34 @@ function classifySignalPolicy(causeType: SdlcLoopCauseType): SignalPolicy {
     allowRoutingWithoutPrLink: causeType === "daemon_terminal",
     suppressPlanningRuntimeRouting: isFeedbackSignal,
   };
+}
+
+function isDaemonTerminalFailurePath(
+  payload: Record<string, unknown> | null,
+): boolean {
+  const daemonRunStatus = getPayloadText(payload, "daemonRunStatus");
+  if (!daemonRunStatus) {
+    return true;
+  }
+  const normalizedStatus = daemonRunStatus.toLowerCase();
+  return normalizedStatus !== "completed" && normalizedStatus !== "stopped";
+}
+
+function shouldSuppressFeedbackRuntimeRouting(params: {
+  policy: SignalPolicy;
+  signal: PendingSignal;
+  effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>;
+}): boolean {
+  if (!params.policy.suppressPlanningRuntimeRouting) {
+    return false;
+  }
+  if (params.effectivePhase !== "planning") {
+    return false;
+  }
+  if (params.signal.causeType !== "daemon_terminal") {
+    return true;
+  }
+  return !isDaemonTerminalFailurePath(params.signal.payload);
 }
 
 async function evaluateAndPersistGate(params: {
@@ -1086,6 +1123,69 @@ async function completeSignalClaim(params: {
   return Boolean(markedProcessed);
 }
 
+type SignalClaimLeaseHeartbeatStatus = "ok" | "claim_lost" | "lease_lost";
+
+function mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+  status: Exclude<SignalClaimLeaseHeartbeatStatus, "ok">,
+): SdlcSignalInboxTickNoopReason {
+  return status === "claim_lost" ? "signal_claim_lost" : "lease_held";
+}
+
+function createSignalClaimLeaseHeartbeat(params: {
+  db: DB;
+  loopId: string;
+  leaseOwner: string;
+  signalId: string;
+  claimToken: string;
+}) {
+  let lastLeaseRefreshAtMs = Date.now();
+  let lastClaimRefreshAtMs = lastLeaseRefreshAtMs;
+
+  return {
+    async refreshIfDue(): Promise<SignalClaimLeaseHeartbeatStatus> {
+      const nowMs = Date.now();
+      let heartbeatNow: Date | null = null;
+
+      if (
+        nowMs - lastLeaseRefreshAtMs >=
+        SDLC_SIGNAL_INBOX_LEASE_HEARTBEAT_INTERVAL_MS
+      ) {
+        heartbeatNow = new Date(nowMs);
+        const refreshedLease = await acquireSdlcLoopLease({
+          db: params.db,
+          loopId: params.loopId,
+          leaseOwner: params.leaseOwner,
+          leaseTtlMs: SDLC_SIGNAL_INBOX_LEASE_TTL_MS,
+          now: heartbeatNow,
+        });
+        if (!refreshedLease.acquired) {
+          return "lease_lost";
+        }
+        lastLeaseRefreshAtMs = nowMs;
+      }
+
+      if (
+        nowMs - lastClaimRefreshAtMs >=
+        SDLC_SIGNAL_INBOX_CLAIM_HEARTBEAT_INTERVAL_MS
+      ) {
+        const claimRefreshNow = heartbeatNow ?? new Date(nowMs);
+        const claimRefreshed = await refreshSignalClaim({
+          db: params.db,
+          signalId: params.signalId,
+          claimToken: params.claimToken,
+          now: claimRefreshNow,
+        });
+        if (!claimRefreshed) {
+          return "claim_lost";
+        }
+        lastClaimRefreshAtMs = nowMs;
+      }
+
+      return "ok";
+    },
+  };
+}
+
 async function routeFeedbackSignalToEnrolledThread({
   db,
   loopId,
@@ -1095,6 +1195,7 @@ async function routeFeedbackSignalToEnrolledThread({
   prNumber,
   loopSnapshot,
   signal,
+  beforeEnqueue,
 }: {
   db: DB;
   loopId: string;
@@ -1104,6 +1205,7 @@ async function routeFeedbackSignalToEnrolledThread({
   prNumber: number | null;
   loopSnapshot: DeliveryLoopSnapshot;
   signal: PendingSignal;
+  beforeEnqueue?: () => Promise<void>;
 }) {
   const thread = await getThread({
     db,
@@ -1125,48 +1227,68 @@ async function routeFeedbackSignalToEnrolledThread({
     payload: signal.payload,
   });
 
+  const routingTarget = {
+    loopId,
+    threadId: loopThreadId,
+    threadChatId: threadChat.id,
+  };
+
   if (
-    !hasEquivalentRoutedFollowUp({
+    hasEquivalentRoutedFollowUp({
       queuedMessages: threadChat.queuedMessages,
       messages: threadChat.messages,
       candidate: message,
     })
   ) {
-    try {
-      await queueFollowUpInternal({
-        userId: loopUserId,
-        threadId: loopThreadId,
-        threadChatId: threadChat.id,
-        messages: [message],
-        appendOrReplace: "append",
-        source: "github",
+    return {
+      ...routingTarget,
+      didEnqueue: false,
+      queuedMessage: null,
+    };
+  }
+
+  if (beforeEnqueue) {
+    await beforeEnqueue();
+  }
+
+  try {
+    await queueFollowUpInternal({
+      userId: loopUserId,
+      threadId: loopThreadId,
+      threadChatId: threadChat.id,
+      messages: [message],
+      appendOrReplace: "append",
+      source: "github",
+    });
+  } catch (error) {
+    const refreshedThread = await getThread({
+      db,
+      userId: loopUserId,
+      threadId: loopThreadId,
+    });
+    const refreshedThreadChat = refreshedThread
+      ? getPrimaryThreadChat(refreshedThread)
+      : null;
+    const alreadyQueued =
+      refreshedThreadChat !== null &&
+      hasEquivalentRoutedFollowUp({
+        queuedMessages: refreshedThreadChat.queuedMessages,
+        messages: refreshedThreadChat.messages,
+        candidate: message,
       });
-    } catch (error) {
-      const refreshedThread = await getThread({
-        db,
-        userId: loopUserId,
-        threadId: loopThreadId,
-      });
-      const refreshedThreadChat = refreshedThread
-        ? getPrimaryThreadChat(refreshedThread)
-        : null;
-      const alreadyQueued =
-        refreshedThreadChat !== null &&
-        hasEquivalentRoutedFollowUp({
-          queuedMessages: refreshedThreadChat.queuedMessages,
-          messages: refreshedThreadChat.messages,
-          candidate: message,
-        });
-      if (!alreadyQueued) {
-        throw error;
-      }
+    if (!alreadyQueued) {
+      throw error;
     }
+    return {
+      ...routingTarget,
+      didEnqueue: false,
+      queuedMessage: null,
+    };
   }
 
   return {
-    loopId,
-    threadId: loopThreadId,
-    threadChatId: threadChat.id,
+    ...routingTarget,
+    didEnqueue: true,
     queuedMessage: message,
   };
 }
@@ -1424,6 +1546,13 @@ export async function runBestEffortSdlcSignalInboxTick({
     if (!signal) {
       return { processed: false, reason: "no_unprocessed_signal" };
     }
+    const signalClaimLeaseHeartbeat = createSignalClaimLeaseHeartbeat({
+      db,
+      loopId,
+      leaseOwner,
+      signalId: signal.id,
+      claimToken: signal.claimToken,
+    });
     let shouldReleaseClaim = true;
     try {
       const signalPolicy = classifySignalPolicy(signal.causeType);
@@ -1454,14 +1583,13 @@ export async function runBestEffortSdlcSignalInboxTick({
         });
       }
 
-      const claimRefreshed = await refreshSignalClaim({
-        db,
-        signalId: signal.id,
-        claimToken: signal.claimToken,
-        now: new Date(),
-      });
-      if (!claimRefreshed) {
-        return { processed: false, reason: "signal_claim_lost" };
+      const postGateHeartbeat = await signalClaimLeaseHeartbeat.refreshIfDue();
+      if (postGateHeartbeat !== "ok") {
+        return {
+          processed: false,
+          reason:
+            mapSignalClaimLeaseHeartbeatStatusToNoopReason(postGateHeartbeat),
+        };
       }
 
       let runtimeAction: RuntimeActionOutcome = "none";
@@ -1497,8 +1625,11 @@ export async function runBestEffortSdlcSignalInboxTick({
         error: null,
       };
       const shouldSuppressFeedbackRuntimeAction =
-        signalPolicy.suppressPlanningRuntimeRouting &&
-        loopPhaseContext.effectivePhase === "planning";
+        shouldSuppressFeedbackRuntimeRouting({
+          policy: signalPolicy,
+          signal,
+          effectivePhase: loopPhaseContext.effectivePhase,
+        });
       const canRouteWithoutPrNumber = signalPolicy.allowRoutingWithoutPrLink;
 
       if (
@@ -1507,17 +1638,19 @@ export async function runBestEffortSdlcSignalInboxTick({
         !shouldSuppressFeedbackRuntimeAction &&
         (typeof effectivePrNumber === "number" || canRouteWithoutPrNumber)
       ) {
-        try {
-          // Increment loopVersion BEFORE enqueuing the follow-up so the
-          // guardrail iterationCount advances even if the enqueue fails.
-          await db
-            .update(schema.sdlcLoop)
-            .set({
-              loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
-              updatedAt: now,
-            })
-            .where(eq(schema.sdlcLoop.id, loopId));
+        const preRoutingHeartbeat =
+          await signalClaimLeaseHeartbeat.refreshIfDue();
+        if (preRoutingHeartbeat !== "ok") {
+          return {
+            processed: false,
+            reason:
+              mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+                preRoutingHeartbeat,
+              ),
+          };
+        }
 
+        try {
           const routeResult = await routeFeedbackSignalToEnrolledThread({
             db,
             loopId,
@@ -1527,12 +1660,27 @@ export async function runBestEffortSdlcSignalInboxTick({
             prNumber: effectivePrNumber ?? null,
             loopSnapshot: loopPhaseContext.snapshot,
             signal,
+            beforeEnqueue: async () => {
+              // Increment loopVersion immediately before enqueue so guardrail
+              // iterationCount advances even if enqueue fails.
+              await db
+                .update(schema.sdlcLoop)
+                .set({
+                  loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
+                  updatedAt: now,
+                })
+                .where(eq(schema.sdlcLoop.id, loopId));
+            },
           });
-          runtimeAction = "feedback_follow_up_queued";
-          feedbackQueuedMessage = routeResult.queuedMessage;
           runtimeRouting.routed = true;
-          runtimeRouting.followUpQueued = true;
-          runtimeRouting.reason = "follow_up_queued";
+          if (routeResult.didEnqueue) {
+            runtimeAction = "feedback_follow_up_queued";
+            feedbackQueuedMessage = routeResult.queuedMessage;
+            runtimeRouting.followUpQueued = true;
+            runtimeRouting.reason = "follow_up_queued";
+          } else {
+            runtimeRouting.reason = "follow_up_deduped";
+          }
         } catch (error) {
           console.error("[sdlc-loop] feedback runtime action failed", {
             loopId,
@@ -1599,6 +1747,18 @@ export async function runBestEffortSdlcSignalInboxTick({
         refreshedLoopPhaseContext.effectivePhase === "babysitting" &&
         signalPolicy.isFeedbackSignal
       ) {
+        const preBabysitHeartbeat =
+          await signalClaimLeaseHeartbeat.refreshIfDue();
+        if (preBabysitHeartbeat !== "ok") {
+          return {
+            processed: false,
+            reason:
+              mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+                preBabysitHeartbeat,
+              ),
+          };
+        }
+
         const babysitHeadSha =
           getPayloadText(signal.payload, "headSha") ??
           refreshedLoop?.currentHeadSha;
@@ -1646,6 +1806,15 @@ export async function runBestEffortSdlcSignalInboxTick({
         }
       }
 
+      const preOutboxHeartbeat = await signalClaimLeaseHeartbeat.refreshIfDue();
+      if (preOutboxHeartbeat !== "ok") {
+        return {
+          processed: false,
+          reason:
+            mapSignalClaimLeaseHeartbeatStatusToNoopReason(preOutboxHeartbeat),
+        };
+      }
+
       let outboxId: string | null = null;
       if (typeof effectivePrNumber === "number") {
         const outbox = await enqueueSdlcOutboxAction({
@@ -1669,6 +1838,18 @@ export async function runBestEffortSdlcSignalInboxTick({
           now,
         });
         outboxId = outbox.outboxId;
+      }
+
+      const preCompleteHeartbeat =
+        await signalClaimLeaseHeartbeat.refreshIfDue();
+      if (preCompleteHeartbeat !== "ok") {
+        return {
+          processed: false,
+          reason:
+            mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+              preCompleteHeartbeat,
+            ),
+        };
       }
 
       const markedProcessed = await completeSignalClaim({
