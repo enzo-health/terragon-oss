@@ -206,6 +206,23 @@ function createSuccessResultMessage(sessionId = "session-1") {
   };
 }
 
+const MOCK_SELF_DISPATCH_REPLAY_PAYLOAD = {
+  token: "token-1",
+  prompt: "Please address this feedback.",
+  runId: "run-next",
+  tokenNonce: "nonce-next",
+  model: "gpt-5.3-codex",
+  agent: "codex",
+  agentVersion: 2,
+  sessionId: null,
+  featureFlags: {},
+  permissionMode: "allowAll",
+  transportMode: "codex-app-server",
+  protocolVersion: 1,
+  threadId: "thread-1",
+  threadChatId: "chat-1",
+};
+
 describe("daemon-event route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -244,7 +261,7 @@ describe("daemon-event route", () => {
       daemonTokenKeyId: "api-key-1",
       createdAt: new Date(),
       updatedAt: new Date(),
-    } as any);
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
@@ -534,22 +551,9 @@ describe("daemon-event route", () => {
   });
 
   it("replays self-dispatch on run_terminal_ignored responses", async () => {
-    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue({
-      token: "token-1",
-      prompt: "Please address this feedback.",
-      runId: "run-next",
-      tokenNonce: "nonce-next",
-      model: "gpt-5.3-codex",
-      agent: "codex",
-      agentVersion: 2,
-      sessionId: null,
-      featureFlags: {},
-      permissionMode: "allowAll",
-      transportMode: "codex-app-server",
-      protocolVersion: 1,
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-    });
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
+      MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
+    );
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
       runId: "run-1",
       userId: "user-1",
@@ -669,22 +673,9 @@ describe("daemon-event route", () => {
       loopVersion: 7,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.insertReturning.mockResolvedValue([]);
-    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue({
-      token: "token-1",
-      prompt: "Please address this feedback.",
-      runId: "run-next",
-      tokenNonce: "nonce-next",
-      model: "gpt-5.3-codex",
-      agent: "codex",
-      agentVersion: 2,
-      sessionId: null,
-      featureFlags: {},
-      permissionMode: "allowAll",
-      transportMode: "codex-app-server",
-      protocolVersion: 1,
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-    });
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
+      MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
+    );
     vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
       processed: false,
       reason: "no_unprocessed_signal",
@@ -723,22 +714,9 @@ describe("daemon-event route", () => {
     dbMocks.selectWhere
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ maxSeq: 3 }]);
-    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue({
-      token: "token-1",
-      prompt: "Please address this feedback.",
-      runId: "run-next",
-      tokenNonce: "nonce-next",
-      model: "gpt-5.3-codex",
-      agent: "codex",
-      agentVersion: 2,
-      sessionId: null,
-      featureFlags: {},
-      permissionMode: "allowAll",
-      transportMode: "codex-app-server",
-      protocolVersion: 1,
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-    });
+    dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
+      MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
+    );
 
     const response = await POST(
       createDaemonRequest({

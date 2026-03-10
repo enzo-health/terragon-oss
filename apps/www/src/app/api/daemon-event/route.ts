@@ -410,7 +410,7 @@ function deriveDaemonTerminalErrorInfo(
   };
 }
 
-function getSdlcDaemonRecoveryKey({
+function getDeliveryLoopDaemonRecoveryKey({
   loopId,
   loopVersion,
 }: {
@@ -1096,12 +1096,8 @@ export async function POST(request: Request) {
     );
 
     if (daemonSupportsSelfDispatch) {
-      const [userFeatureFlags, userCredentials] = await Promise.all([
-        getFeatureFlagsForUser({ db, userId }),
-        getUserCredentials({ userId }),
-      ]);
-      let preparedDispatchIntentId: string | null = null;
-      let preparedRunId: string | null = null;
+      const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
+      let preparedDispatch: { intentId: string; runId: string } | null = null;
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -1262,9 +1258,12 @@ export async function POST(request: Request) {
                   runId: newRunId,
                   maxRetries: 3,
                 });
-                preparedDispatchIntentId = dispatchIntent.id;
-                preparedRunId = newRunId;
+                preparedDispatch = {
+                  intentId: dispatchIntent.id,
+                  runId: newRunId,
+                };
 
+                const userCredentials = await getUserCredentials({ userId });
                 const useCredits = shouldUseCredits(agent, userCredentials);
 
                 const preparedSelfDispatchPayload = {
@@ -1318,24 +1317,26 @@ export async function POST(request: Request) {
           }
         }
       } catch (error) {
-        if (preparedDispatchIntentId && preparedRunId) {
+        if (preparedDispatch) {
           try {
-            await updateDispatchIntent(preparedDispatchIntentId, threadChatId, {
-              status: "failed",
-              lastError:
-                error instanceof Error
-                  ? error.message
-                  : "self-dispatch preparation failed",
-              lastFailureCategory: "config_error",
-            });
-            await updateAgentRunContext({
-              db,
-              runId: preparedRunId,
-              userId,
-              updates: {
+            await Promise.all([
+              updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
                 status: "failed",
-              },
-            });
+                lastError:
+                  error instanceof Error
+                    ? error.message
+                    : "self-dispatch preparation failed",
+                lastFailureCategory: "config_error",
+              }),
+              updateAgentRunContext({
+                db,
+                runId: preparedDispatch.runId,
+                userId,
+                updates: {
+                  status: "failed",
+                },
+              }),
+            ]);
           } catch (cleanupError) {
             console.error(
               "[sdlc-loop] failed to clean up abandoned self-dispatch run",
@@ -1344,7 +1345,7 @@ export async function POST(request: Request) {
                 threadId,
                 threadChatId,
                 loopId,
-                runId: preparedRunId,
+                runId: preparedDispatch.runId,
                 cleanupError,
               },
             );
@@ -1440,7 +1441,10 @@ export async function POST(request: Request) {
       return;
     }
 
-    const recoveryKey = getSdlcDaemonRecoveryKey({ loopId, loopVersion });
+    const recoveryKey = getDeliveryLoopDaemonRecoveryKey({
+      loopId,
+      loopVersion,
+    });
     const didScheduleRecovery = await redis.set(recoveryKey, "1", {
       nx: true,
       ex: SDLC_DAEMON_RECOVERY_TTL_SECONDS,
