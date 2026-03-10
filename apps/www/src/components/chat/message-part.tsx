@@ -20,7 +20,6 @@ import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
-import { useSecondaryPanel } from "./hooks";
 
 export interface MessagePartProps {
   part: UIPart;
@@ -53,8 +52,6 @@ export const MessagePart = memo(function MessagePart({
   hasCheckpoint,
   toolProps,
 }: MessagePartProps) {
-  const { setIsSecondaryPanelOpen } = useSecondaryPanel();
-
   const artifactDescriptor = useMemo(
     () =>
       findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
@@ -100,9 +97,8 @@ export const MessagePart = memo(function MessagePart({
     if (!planArtifactDescriptor || !onOpenArtifact) return undefined;
     return () => {
       onOpenArtifact(planArtifactDescriptor.id);
-      setIsSecondaryPanelOpen(true);
     };
-  }, [planArtifactDescriptor, onOpenArtifact, setIsSecondaryPanelOpen]);
+  }, [planArtifactDescriptor, onOpenArtifact]);
 
   switch (part.type) {
     case "text": {

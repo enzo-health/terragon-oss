@@ -23,7 +23,7 @@ import {
   Image,
 } from "lucide-react";
 import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import {
   parseMultiFileDiff,
   type FileChangeType,
@@ -37,17 +37,6 @@ import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { followUp } from "@/server-actions/follow-up";
 import { useOptimisticUpdateThreadChat } from "./hooks";
 import { convertToPlainText } from "@/lib/db-message-helpers";
-
-/**
- * Formats file size in bytes to human-readable format
- */
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
 
 interface GitDiffViewProps {
   thread: ThreadInfoFull;
@@ -334,17 +323,10 @@ function FileDiffWrapper({
     ];
   }, [activeAnnotation, enableComments]);
 
-  const getLineTheme = useMemo(() => {
-    if (theme === "light") return "pierre-light";
-    if (theme === "dark") return "pierre-dark";
-    return "pierre-dark";
-  }, [theme]);
+  const getLineTheme = theme === "light" ? "pierre-light" : "pierre-dark";
 
-  const themeType = useMemo(() => {
-    if (theme === "light") return "light";
-    if (theme === "dark") return "dark";
-    return "system";
-  }, [theme]);
+  const themeType: "light" | "dark" | "system" =
+    theme === "light" ? "light" : theme === "dark" ? "dark" : "system";
 
   const closeActiveAnnotation = () => setActiveAnnotation(null);
 
@@ -413,20 +395,20 @@ function FileDiffWrapper({
               {parsedFile.changeType === "added" ? (
                 <span className="text-green-600 dark:text-green-400">
                   {parsedFile.newFileSize !== undefined
-                    ? `+${formatFileSize(parsedFile.newFileSize)}`
+                    ? `+${formatBytes(parsedFile.newFileSize)}`
                     : "New image"}
                 </span>
               ) : parsedFile.changeType === "deleted" ? (
                 <span className="text-red-600 dark:text-red-400">
                   {parsedFile.oldFileSize !== undefined
-                    ? `-${formatFileSize(parsedFile.oldFileSize)}`
+                    ? `-${formatBytes(parsedFile.oldFileSize)}`
                     : "Deleted image"}
                 </span>
               ) : (
                 <span className="text-muted-foreground">
                   {parsedFile.oldFileSize !== undefined &&
                   parsedFile.newFileSize !== undefined
-                    ? `${formatFileSize(parsedFile.oldFileSize)} → ${formatFileSize(parsedFile.newFileSize)}`
+                    ? `${formatBytes(parsedFile.oldFileSize)} → ${formatBytes(parsedFile.newFileSize)}`
                     : "Image"}
                 </span>
               )}

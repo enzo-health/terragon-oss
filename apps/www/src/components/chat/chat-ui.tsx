@@ -244,14 +244,15 @@ function ChatUI({
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
   // This will set the cookie if the panel is opened automatically
   useEffect(() => {
+    if (isSecondaryPanelOpen) return;
     if (shell?.hasGitDiff && shouldAutoOpenSecondaryPanel) {
       setIsSecondaryPanelOpen(true);
-      return;
     }
   }, [
     shell?.hasGitDiff,
     shouldAutoOpenSecondaryPanel,
     setIsSecondaryPanelOpen,
+    isSecondaryPanelOpen,
   ]);
   useThreadDocumentTitleAndFavicon({
     name: shell?.name ?? "",

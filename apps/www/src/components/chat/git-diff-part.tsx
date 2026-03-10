@@ -60,10 +60,7 @@ export const GitDiffPart = memo(function GitDiffPart({
     }
   }, [gitDiffPart.diff]);
 
-  // Expand by default if there are less than 5 files (unless secondary panel is enabled)
-  const shouldExpandFiles = false;
-
-  const [isExpanded, setIsExpanded] = useState(shouldExpandFiles);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Record<number, boolean>>(
     () => {
       // Expand by default if there's 1 file with ≤30 total changes
@@ -95,8 +92,9 @@ export const GitDiffPart = memo(function GitDiffPart({
     e.stopPropagation();
     if (artifactDescriptor && onOpenArtifact) {
       onOpenArtifact(artifactDescriptor.id);
+    } else {
+      setIsSecondaryPanelOpen(true);
     }
-    setIsSecondaryPanelOpen(true);
   };
 
   const toggleFile = (idx: number) => {

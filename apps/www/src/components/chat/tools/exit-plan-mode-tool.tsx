@@ -1,4 +1,10 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { GenericToolPart } from "./generic-ui";
@@ -34,6 +40,8 @@ export function ExitPlanModeTool({
   onOpenArtifact?: (artifactId: string) => void;
 }) {
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   const plan = useMemo(
     () =>
@@ -113,7 +121,7 @@ export function ExitPlanModeTool({
       await navigator.clipboard.writeText(plan);
       toast.success("Plan copied");
       setCopied(true);
-      setTimeout(() => {
+      copyTimerRef.current = setTimeout(() => {
         setCopied(false);
       }, 2000);
     } catch (error) {
@@ -124,8 +132,9 @@ export function ExitPlanModeTool({
   const handleOpenPanel = () => {
     if (artifactDescriptor && onOpenArtifact) {
       onOpenArtifact(artifactDescriptor.id);
+    } else {
+      setIsSecondaryPanelOpen(true);
     }
-    setIsSecondaryPanelOpen(true);
   };
 
   // Show a placeholder if the plan is empty

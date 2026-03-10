@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Drawer,
@@ -43,6 +43,8 @@ const SECONDARY_PANEL_RESIZE_STEP = 32;
 const SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH = 1024;
 
 export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
+const PREVIEW_TRUNCATED_SUFFIX =
+  "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---";
 
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 
@@ -59,7 +61,6 @@ export interface ArtifactWorkspaceItemSummary {
 
 interface ArtifactWorkspaceItem extends ArtifactWorkspaceItemSummary {
   descriptor: ArtifactDescriptor;
-  render: () => React.ReactNode;
 }
 
 type ArtifactWorkspaceComparablePart = UIPart | UIGitDiffPart;
@@ -263,34 +264,11 @@ export function SecondaryPanel({
       artifactDescriptors.map((descriptor) => ({
         ...getArtifactWorkspaceItemSummary(descriptor),
         descriptor,
-        render: () => {
-          switch (descriptor.kind) {
-            case "git-diff":
-              return <GitDiffView thread={thread} diffPart={descriptor.part} />;
-            case "document":
-              return (
-                <DocumentArtifactRenderer richTextPart={descriptor.part} />
-              );
-            case "file":
-              return (
-                <TextFileArtifactRenderer textFilePart={descriptor.part} />
-              );
-            case "media":
-              return <MediaArtifactRenderer mediaPart={descriptor.part} />;
-            case "plan":
-              return (
-                <PlanArtifactRenderer
-                  descriptor={descriptor as PlanArtifactDescriptor}
-                  messages={messages}
-                />
-              );
-            default:
-              return null;
-          }
-        },
       })),
-    [artifactDescriptors, thread, messages],
+    [artifactDescriptors],
   );
+
+  const handleClose = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   const { width, setWidth, isResizing, handleMouseDown } = useResizablePanel({
     minWidth: SECONDARY_PANEL_MIN_WIDTH,
@@ -354,7 +332,9 @@ export function SecondaryPanel({
             artifacts={artifacts}
             activeArtifactId={activeArtifactId}
             onActiveArtifactChange={onActiveArtifactChange}
-            onClose={() => onOpenChange(false)}
+            onClose={handleClose}
+            thread={thread}
+            messages={messages}
           />
         </DrawerContent>
       </Drawer>
@@ -391,7 +371,9 @@ export function SecondaryPanel({
           artifacts={artifacts}
           activeArtifactId={activeArtifactId}
           onActiveArtifactChange={onActiveArtifactChange}
-          onClose={() => onOpenChange(false)}
+          onClose={handleClose}
+          thread={thread}
+          messages={messages}
         />
       </div>
     </>
@@ -403,11 +385,15 @@ function SecondaryPanelContent({
   activeArtifactId,
   onActiveArtifactChange,
   onClose,
+  thread,
+  messages,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   onClose: () => void;
+  thread: ThreadInfoFull;
+  messages: DBMessage[];
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -415,6 +401,8 @@ function SecondaryPanelContent({
       activeArtifactId={activeArtifactId}
       onActiveArtifactChange={onActiveArtifactChange}
       onClose={onClose}
+      thread={thread}
+      messages={messages}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -429,12 +417,16 @@ function ArtifactWorkspaceShell({
   activeArtifactId,
   onActiveArtifactChange,
   onClose,
+  thread,
+  messages,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   onClose?: () => void;
+  thread: ThreadInfoFull;
+  messages: DBMessage[];
   emptyState: {
     title: string;
     description: string;
@@ -555,7 +547,13 @@ function ArtifactWorkspaceShell({
         )}
 
         {viewState === "ready" && activeArtifact && (
-          <div className="h-full">{activeArtifact.render()}</div>
+          <div className="h-full">
+            <ActiveArtifactRenderer
+              descriptor={activeArtifact.descriptor}
+              thread={thread}
+              messages={messages}
+            />
+          </div>
         )}
       </div>
     </div>
@@ -568,6 +566,36 @@ function ArtifactWorkspaceChip({ children }: { children: React.ReactNode }) {
       {children}
     </span>
   );
+}
+
+function ActiveArtifactRenderer({
+  descriptor,
+  thread,
+  messages,
+}: {
+  descriptor: ArtifactDescriptor;
+  thread: ThreadInfoFull;
+  messages: DBMessage[];
+}) {
+  switch (descriptor.kind) {
+    case "git-diff":
+      return <GitDiffView thread={thread} diffPart={descriptor.part} />;
+    case "document":
+      return <DocumentArtifactRenderer richTextPart={descriptor.part} />;
+    case "file":
+      return <TextFileArtifactRenderer textFilePart={descriptor.part} />;
+    case "media":
+      return <MediaArtifactRenderer mediaPart={descriptor.part} />;
+    case "plan":
+      return (
+        <PlanArtifactRenderer
+          descriptor={descriptor as PlanArtifactDescriptor}
+          messages={messages}
+        />
+      );
+    default:
+      return null;
+  }
 }
 
 function DocumentArtifactRenderer({
@@ -594,8 +622,7 @@ async function readCappedText(
     // Fallback when ReadableStream is unavailable (e.g. mocked fetch in tests).
     const raw = await response.text();
     return raw.length > maxBytes
-      ? raw.slice(0, maxBytes) +
-          "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---"
+      ? raw.slice(0, maxBytes) + PREVIEW_TRUNCATED_SUFFIX
       : raw;
   }
 
@@ -617,10 +644,7 @@ async function readCappedText(
         }),
       );
       await reader.cancel();
-      return (
-        chunks.join("") +
-        "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---"
-      );
+      return chunks.join("") + PREVIEW_TRUNCATED_SUFFIX;
     }
     chunks.push(decoder.decode(value, { stream: true }));
   }
