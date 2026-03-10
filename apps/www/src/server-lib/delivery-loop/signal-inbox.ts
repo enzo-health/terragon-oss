@@ -687,12 +687,13 @@ async function persistGateEvaluationForSignal({
   );
 }
 
-function resolveDaemonTerminalPhaseText(snapshot: DeliveryLoopSnapshot): {
+function resolveDaemonTerminalPhaseText(
+  effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>,
+): {
   phaseLabel: string;
   followUpInstruction: string;
 } {
-  const loopState = getEffectiveDeliveryLoopPhase(snapshot);
-  switch (loopState) {
+  switch (effectivePhase) {
     case "planning":
       return {
         phaseLabel: "the planning phase",
@@ -752,13 +753,14 @@ function buildFeedbackFollowUpMessage({
 }): DBUserMessage {
   const eventType = getPayloadText(payload, "eventType") ?? signalCauseType;
   const sections: string[] = [];
+  const effectiveLoopPhase = getEffectiveDeliveryLoopPhase(loopSnapshot);
 
   if (signalCauseType === "daemon_terminal") {
     const daemonRunStatus = getPayloadText(payload, "daemonRunStatus");
     const daemonErrorCategory = getPayloadText(payload, "daemonErrorCategory");
     const daemonErrorMessage = getPayloadText(payload, "daemonErrorMessage");
     const { phaseLabel, followUpInstruction } =
-      resolveDaemonTerminalPhaseText(loopSnapshot);
+      resolveDaemonTerminalPhaseText(effectiveLoopPhase);
     const repoRef =
       loopPrNumber === null
         ? loopRepoFullName
@@ -838,12 +840,6 @@ function buildFeedbackFollowUpMessage({
     timestamp: new Date().toISOString(),
     parts: [{ type: "text", text: sections.join("\n\n") }],
   };
-}
-
-function shouldSuppressFeedbackForPhase(
-  effectiveLoopPhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>,
-): boolean {
-  return effectiveLoopPhase === "planning";
 }
 
 function areEquivalentUserMessages(
@@ -1284,8 +1280,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     };
     const shouldSuppressFeedbackRuntimeAction =
       feedbackSignalCauseTypes.has(signal.causeType) &&
-      signal.causeType !== "daemon_terminal" &&
-      shouldSuppressFeedbackForPhase(loopPhaseContext.effectivePhase);
+      loopPhaseContext.effectivePhase === "planning";
     const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
 
     if (

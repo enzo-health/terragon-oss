@@ -5,10 +5,38 @@ import {
 } from "@terragon/dev-env/test-global-setup";
 import path from "path";
 import { execSync } from "child_process";
+import fs from "fs/promises";
+import os from "os";
 
 let setupResult: SetupResult;
+let releaseTestSetupLock: (() => Promise<void>) | null = null;
+
+async function acquireTestSetupLock(): Promise<() => Promise<void>> {
+  const lockPath = path.join(os.tmpdir(), "terragon-shared-test-setup.lock");
+
+  while (true) {
+    try {
+      const handle = await fs.open(lockPath, "wx");
+      await handle.writeFile(String(process.pid));
+      return async () => {
+        await handle.close();
+        await fs.unlink(lockPath).catch(() => undefined);
+      };
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "EEXIST"
+      ) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
 
 export async function setup() {
+  releaseTestSetupLock = await acquireTestSetupLock();
   const start = Date.now();
   console.log("Starting test containers...");
   setupResult = await setupTestContainers();
@@ -40,5 +68,12 @@ export async function setup() {
 }
 
 export async function teardown() {
-  await teardownTestContainers();
+  try {
+    await teardownTestContainers();
+  } finally {
+    if (releaseTestSetupLock) {
+      await releaseTestSetupLock();
+      releaseTestSetupLock = null;
+    }
+  }
 }

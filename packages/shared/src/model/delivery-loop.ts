@@ -723,8 +723,10 @@ export function mapSdlcTransitionEventToDeliveryLoopTransition(
     case "review_blocked":
       return "review_gate_blocked";
     case "ui_smoke_passed":
+    case "video_capture_succeeded":
       return "ui_gate_passed_with_pr";
     case "ui_smoke_failed":
+    case "video_capture_failed":
       return "ui_gate_blocked";
     case "blocked_resume_requested":
     case "blocked_bypass_once_requested":
@@ -739,8 +741,6 @@ export function mapSdlcTransitionEventToDeliveryLoopTransition(
     case "carmack_review_gate_passed":
     case "carmack_review_gate_blocked":
     case "video_capture_started":
-    case "video_capture_succeeded":
-    case "video_capture_failed":
       return null;
   }
   return assertNever(event);
@@ -3387,10 +3387,28 @@ export async function persistSdlcVideoCaptureOutcome({
     return loop;
   }
 
-  const nextState = resolveSdlcReadyStateAfterVideoCapture({
-    currentState: loop.state,
-    artifactR2Key,
-  });
+  const transitionEvent: SdlcLoopTransitionEvent = artifactR2Key
+    ? "video_capture_succeeded"
+    : "video_capture_failed";
+  const canonicalTransitionEvent =
+    mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent);
+  const reducedTransition =
+    DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState) &&
+    canonicalTransitionEvent
+      ? reducePersistedDeliveryLoopState({
+          state: loop.state as DeliveryLoopState,
+          blockedFromState: coerceDeliveryLoopResumableState(
+            loop.blockedFromState,
+          ),
+          event: canonicalTransitionEvent,
+        })
+      : null;
+  const nextState =
+    reducedTransition?.state ??
+    resolveSdlcReadyStateAfterVideoCapture({
+      currentState: loop.state,
+      artifactR2Key,
+    });
   if (!nextState) {
     return loop;
   }
@@ -3412,6 +3430,10 @@ export async function persistSdlcVideoCaptureOutcome({
       currentHeadSha: headSha,
       loopVersion: normalizedLoopVersion,
       state: nextState,
+      blockedFromState:
+        reducedTransition?.snapshot.kind === "blocked"
+          ? reducedTransition.snapshot.from
+          : null,
       videoCaptureStatus: artifactR2Key ? "captured" : "failed",
       latestVideoArtifactR2Key: artifactR2Key,
       latestVideoArtifactMimeType: artifactR2Key
@@ -3847,10 +3869,20 @@ async function persistGuardedGateLoopState({
   const incrementedFixAttemptCount = shouldIncrementFixAttempt
     ? loop.fixAttemptCount + 1
     : loop.fixAttemptCount;
-  if (
+  const exhaustedRetryBudget =
     shouldIncrementFixAttempt &&
-    incrementedFixAttemptCount > Math.max(loop.maxFixAttempts, 0)
+    incrementedFixAttemptCount > Math.max(loop.maxFixAttempts, 0);
+  if (
+    exhaustedRetryBudget &&
+    DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState)
   ) {
+    reducedTransition = reducePersistedDeliveryLoopState({
+      state: loop.state as DeliveryLoopState,
+      blockedFromState: blockedFromState ?? persistedBlockedFromState,
+      event: "exhausted_retryable_failure",
+    });
+    nextState = reducedTransition?.state ?? "blocked";
+  } else if (exhaustedRetryBudget) {
     nextState = "blocked";
   }
 
