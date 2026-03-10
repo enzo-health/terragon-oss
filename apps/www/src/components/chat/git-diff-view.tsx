@@ -671,6 +671,33 @@ function FileTreeItem({
   );
 }
 
+function computeDefaultExpanded(
+  diffInstances: ParsedDiffFile[],
+): Record<number, boolean> {
+  return diffInstances.reduce(
+    (acc, file, idx) => {
+      const totalChanges = (file.additions ?? 0) + (file.deletions ?? 0);
+      acc[idx] = diffInstances.length === 1 || totalChanges < 200;
+      return acc;
+    },
+    {} as Record<number, boolean>,
+  );
+}
+
+function collectAllFolders(fileTree: FileTreeNode[]): Set<string> {
+  const folders = new Set<string>();
+  const walk = (nodes: FileTreeNode[]) => {
+    for (const node of nodes) {
+      if (node.type === "folder") {
+        folders.add(node.path);
+        if (node.children) walk(node.children);
+      }
+    }
+  };
+  walk(fileTree);
+  return folders;
+}
+
 export function GitDiffView({
   thread,
   enableComments = false,
@@ -725,7 +752,10 @@ export function GitDiffView({
   // Force unified mode on small screens
   const effectiveViewMode = isSmallScreen ? "unified" : viewMode;
   const activeDiff = diffPart?.diff ?? thread.gitDiff;
-  const activeDiffStats = diffPart?.diffStats ?? thread.gitDiffStats;
+  // When rendering a specific diffPart (e.g. checkpoint), use only its stats —
+  // don't fall back to thread.gitDiffStats which reflects the live working tree.
+  // headerStats will fall back to computedDiffStats if activeDiffStats is undefined.
+  const activeDiffStats = diffPart ? diffPart.diffStats : thread.gitDiffStats;
 
   const diffInstances = useMemo(() => {
     if (!activeDiff || activeDiff === "too-large") return [];
@@ -740,36 +770,27 @@ export function GitDiffView({
 
   const fileTree = useMemo(() => buildFileTree(diffInstances), [diffInstances]);
 
-  const [expanded, setExpanded] = useState<Record<number, boolean>>(() => {
-    return diffInstances.reduce(
-      (acc, file, idx) => {
-        const totalChanges = (file.additions ?? 0) + (file.deletions ?? 0);
-        const shouldExpandDiff =
-          diffInstances.length === 1 || totalChanges < 200;
-        acc[idx] = shouldExpandDiff;
-        return acc;
-      },
-      {} as Record<number, boolean>,
-    );
-  });
+  const [expanded, setExpanded] = useState<Record<number, boolean>>(() =>
+    computeDefaultExpanded(diffInstances),
+  );
 
   const [selectedFile, setSelectedFile] = useState<number | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
-    // Expand all folders by default
-    const folders = new Set<string>();
-    const collectFolders = (nodes: FileTreeNode[], parentPath = "") => {
-      nodes.forEach((node) => {
-        if (node.type === "folder") {
-          folders.add(node.path);
-          if (node.children) {
-            collectFolders(node.children, node.path);
-          }
-        }
-      });
-    };
-    collectFolders(fileTree);
-    return folders;
-  });
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() =>
+    collectAllFolders(fileTree),
+  );
+
+  // Reinitialise UI state when the diff content changes (e.g. switching
+  // between diff artifacts in the secondary panel). useState initialisers
+  // only run on mount, so subsequent diffInstances/fileTree changes would
+  // otherwise leave stale expansion/selection state.
+  useEffect(() => {
+    setExpanded(computeDefaultExpanded(diffInstances));
+    setSelectedFile(null);
+  }, [diffInstances]);
+
+  useEffect(() => {
+    setExpandedFolders(collectAllFolders(fileTree));
+  }, [fileTree]);
 
   const toggle = (idx: number) => {
     setExpanded((prev) => ({ ...prev, [idx]: !prev[idx] }));
