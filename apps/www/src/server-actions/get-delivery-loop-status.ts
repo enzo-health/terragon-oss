@@ -3,8 +3,11 @@
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
+  buildDeliveryLoopTopProgressPhases,
   buildSdlcLoopStatusChecks,
-  getSdlcLoopStateSummary,
+  type DeliveryLoopTopProgressPhase,
+  getDeliveryLoopBlockedAttentionTitle,
+  getDeliveryLoopSnapshotStateSummary,
   type SdlcLoopStatusCheck,
   type SdlcLoopStatusCheckKey,
 } from "@/lib/delivery-loop-status";
@@ -13,6 +16,8 @@ import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
+  activeSdlcLoopStateSet,
+  buildPersistedDeliveryLoopSnapshot,
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
 } from "@terragon/shared/model/delivery-loop";
@@ -41,6 +46,12 @@ type SdlcLoopStatus = {
   stateLabel: string;
   explanation: string;
   progressPercent: number;
+  actions: {
+    canResume: boolean;
+    canBypassOnce: boolean;
+    canApprovePlan: boolean;
+  };
+  phases: DeliveryLoopTopProgressPhase[];
   checks: SdlcLoopStatusCheck[];
   needsAttention: {
     isBlocked: boolean;
@@ -75,13 +86,31 @@ type SdlcLoopStatus = {
   updatedAtIso: string;
 };
 
-const sdlcLoopStatusSchema = z.object({
+const deliveryLoopStatusSchema = z.object({
   loopId: z.string().min(1),
   state: z.string().min(1),
   planApprovalPolicy: z.enum(["auto", "human_required"]),
   stateLabel: z.string().min(1),
   explanation: z.string().min(1),
   progressPercent: z.number().int().min(0).max(100),
+  actions: z.object({
+    canResume: z.boolean(),
+    canBypassOnce: z.boolean(),
+    canApprovePlan: z.boolean(),
+  }),
+  phases: z.array(
+    z.object({
+      key: z.enum([
+        "planning",
+        "implementing",
+        "reviewing",
+        "ci",
+        "ui_testing",
+      ]),
+      label: z.string().min(1),
+      status: z.string().min(1),
+    }),
+  ),
   checks: z.array(
     z.object({
       key: z.string().min(1),
@@ -153,7 +182,7 @@ const sdlcLoopStatusSchema = z.object({
 });
 
 type NeedsAttentionInput = {
-  loopState: (typeof schema.sdlcLoop.$inferSelect)["state"];
+  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
   ciRun: SdlcCiGateRun | null;
   reviewThreadRun: SdlcReviewThreadGateRun | null;
   unresolvedDeepFindingTitles: string[];
@@ -162,19 +191,36 @@ type NeedsAttentionInput = {
   videoFailureMessage: string | null;
 };
 
-const activeLoopStatesForStatus: ReadonlySet<SdlcLoopState> = new Set([
-  "planning",
-  "implementing",
-  "review_gate",
-  "ci_gate",
-  "ui_gate",
-  "awaiting_pr_link",
-  "babysitting",
-  "blocked",
-]);
+function buildDeliveryLoopActions({
+  loopState,
+  loopSnapshot,
+  planApprovalPolicy,
+  planningArtifactStatus,
+}: {
+  loopState: SdlcLoopState;
+  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
+  planApprovalPolicy: "auto" | "human_required";
+  planningArtifactStatus:
+    | "generated"
+    | "approved"
+    | "accepted"
+    | "rejected"
+    | "superseded"
+    | null;
+}) {
+  return {
+    canResume: loopSnapshot.kind === "blocked",
+    canBypassOnce:
+      loopSnapshot.kind === "blocked" || loopSnapshot.kind === "implementing",
+    canApprovePlan:
+      loopState === "planning" &&
+      planApprovalPolicy === "human_required" &&
+      planningArtifactStatus !== "accepted",
+  };
+}
 
 function buildNeedsAttention({
-  loopState,
+  loopSnapshot,
   ciRun,
   reviewThreadRun,
   unresolvedDeepFindingTitles,
@@ -224,19 +270,19 @@ function buildNeedsAttention({
           },
         ]
       : []),
-    ...(loopState === "blocked"
+    ...(loopSnapshot.kind === "blocked"
       ? [
           {
-            title: "Awaiting human feedback",
+            title: getDeliveryLoopBlockedAttentionTitle(loopSnapshot),
             source: "human_feedback" as const,
           },
         ]
       : []),
   ];
 
-  if (blockers.length === 0 && loopState === "blocked") {
+  if (blockers.length === 0 && loopSnapshot.kind === "blocked") {
     blockers.push({
-      title: "Awaiting human feedback",
+      title: getDeliveryLoopBlockedAttentionTitle(loopSnapshot),
       source: "human_feedback",
     });
   }
@@ -281,7 +327,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
     });
     const loop =
       threadLoops.find((candidate) =>
-        activeLoopStatesForStatus.has(candidate.state),
+        activeSdlcLoopStateSet.has(candidate.state),
       ) ??
       threadLoops[0] ??
       null;
@@ -463,8 +509,13 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
         })
       : [];
 
+    const loopSnapshot = buildPersistedDeliveryLoopSnapshot({
+      state: loop.state,
+      blockedFromState: loop.blockedFromState,
+    });
+
     const checks = buildSdlcLoopStatusChecks({
-      loopState: loop.state,
+      loopSnapshot,
       currentHeadSha,
       ciRun,
       reviewThreadRun,
@@ -475,9 +526,13 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       videoCaptureStatus: loop.videoCaptureStatus,
       videoFailureMessage: loop.latestVideoFailureMessage ?? null,
     });
+    const phases = buildDeliveryLoopTopProgressPhases({
+      loopSnapshot,
+      checks,
+    });
 
     const needsAttention = buildNeedsAttention({
-      loopState: loop.state,
+      loopSnapshot,
       ciRun,
       reviewThreadRun,
       unresolvedDeepFindingTitles: unresolvedDeepFindings.map((finding) =>
@@ -494,7 +549,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       loop.prNumber === null
         ? null
         : `https://github.com/${loop.repoFullName}/pull/${loop.prNumber}`;
-    const stateSummary = getSdlcLoopStateSummary(loop.state);
+    const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
     const explanation =
       loop.state === "stopped" && loop.stopReason
         ? `${stateSummary.explanation} Reason: ${loop.stopReason}.`
@@ -507,6 +562,13 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       stateLabel: stateSummary.stateLabel,
       explanation,
       progressPercent: stateSummary.progressPercent,
+      actions: buildDeliveryLoopActions({
+        loopState: loop.state,
+        loopSnapshot,
+        planApprovalPolicy: loop.planApprovalPolicy,
+        planningArtifactStatus: planningArtifact?.status ?? null,
+      }),
+      phases,
       checks,
       needsAttention,
       links: {
@@ -563,10 +625,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       updatedAtIso: loop.updatedAt.toISOString(),
     };
 
-    return sdlcLoopStatusSchema.parse(response) as SdlcLoopStatus;
+    return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },
 );
-
-/** @deprecated Use getDeliveryLoopStatusAction */
-export const getSdlcLoopStatusAction = getDeliveryLoopStatusAction;

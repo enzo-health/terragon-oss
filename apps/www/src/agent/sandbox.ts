@@ -668,7 +668,7 @@ export async function getSandboxProvider({
 
   switch (userSetting) {
     case "default":
-      return "daytona";
+      return process.env.NODE_ENV === "development" ? "docker" : "daytona";
     case "e2b":
       return "e2b";
     case "daytona":

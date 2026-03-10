@@ -9,11 +9,12 @@ import {
   persistSdlcCanonicalCheckRunReference,
   persistSdlcCanonicalStatusCommentReference,
   releaseSdlcLoopLease,
+  terminalSdlcLoopStateList,
+  terminalSdlcLoopStateSet,
   type ClaimedSdlcOutboxAction,
   type SdlcOutboxErrorClass,
 } from "@terragon/shared/model/delivery-loop";
 import type { DB } from "@terragon/shared/db";
-import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
   and,
   eq,
@@ -61,13 +62,6 @@ const SDLC_PUBLICATION_LEASE_TTL_MS = 30_000;
 const SDLC_PUBLICATION_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_PUBLICATION_DURABLE_DRAIN_MAX_ACTIONS_TOTAL = 50;
 const SDLC_PUBLICATION_DURABLE_DRAIN_MAX_ACTIONS_PER_LOOP = 5;
-const terminalSdlcLoopStates: ReadonlySet<SdlcLoopState> = new Set([
-  "terminated_pr_closed",
-  "terminated_pr_merged",
-  "done",
-  "stopped",
-]);
-
 export type SdlcPublicationGuardrailRuntimeInput = {
   killSwitchEnabled?: boolean;
   cooldownUntil?: Date | null;
@@ -690,7 +684,7 @@ export async function drainDueSdlcPublicationOutboxActions({
     )
     .where(
       and(
-        notInArray(schema.sdlcLoop.state, [...terminalSdlcLoopStates]),
+        notInArray(schema.sdlcLoop.state, terminalSdlcLoopStateList),
         eq(schema.sdlcLoopOutbox.status, "pending"),
         inArray(schema.sdlcLoopOutbox.actionType, [
           "publish_status_comment",
@@ -777,7 +771,7 @@ export async function runBestEffortSdlcPublicationCoordinator({
   if (!loop) {
     return { executed: false as const, reason: "loop_not_found" as const };
   }
-  if (terminalSdlcLoopStates.has(loop.state)) {
+  if (terminalSdlcLoopStateSet.has(loop.state)) {
     return { executed: false as const, reason: "terminal_state" as const };
   }
 
@@ -799,7 +793,7 @@ export async function runBestEffortSdlcPublicationCoordinator({
   });
   const guardrailDecision = evaluateSdlcLoopGuardrails({
     killSwitchEnabled: guardrailInputs.killSwitchEnabled,
-    isTerminalState: terminalSdlcLoopStates.has(loop.state),
+    isTerminalState: terminalSdlcLoopStateSet.has(loop.state),
     hasValidLease: true,
     cooldownUntil: guardrailInputs.cooldownUntil,
     iterationCount: guardrailInputs.iterationCount,

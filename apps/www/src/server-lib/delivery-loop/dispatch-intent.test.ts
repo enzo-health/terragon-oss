@@ -17,6 +17,8 @@ import {
   updateDispatchIntent,
   getActiveDispatchIntent,
   completeDispatchIntent,
+  getReplayableSelfDispatch,
+  storeSelfDispatchReplay,
 } from "./dispatch-intent";
 
 beforeEach(() => {
@@ -53,6 +55,7 @@ describe("createDispatchIntent", () => {
     expect(intent.retryCount).toBe(0);
     expect(intent.lastError).toBeNull();
     expect(intent.lastFailureCategory).toBeNull();
+    expect(intent.selfDispatchReplay).toEqual({ kind: "none" });
 
     expect(mockRedis.hset).toHaveBeenCalledWith(
       "dl:dispatch:tc-1",
@@ -64,6 +67,7 @@ describe("createDispatchIntent", () => {
         selectedAgent: "claudeCode",
         executionClass: "implementation_runtime",
         dispatchMechanism: "self_dispatch",
+        selfDispatchReplayKind: "none",
       }),
     );
     expect(mockRedis.expire).toHaveBeenCalledWith("dl:dispatch:tc-1", 3600);
@@ -174,6 +178,7 @@ describe("getActiveDispatchIntent", () => {
     expect(intent!.createdAt).toEqual(new Date("2026-03-09T12:00:00.000Z"));
     expect(intent!.lastError).toBeNull();
     expect(intent!.lastFailureCategory).toBeNull();
+    expect(intent!.selfDispatchReplay).toEqual({ kind: "none" });
   });
 
   it("returns null when key does not exist", async () => {
@@ -203,5 +208,191 @@ describe("completeDispatchIntent", () => {
       updatedAt: "2026-03-09T12:00:00.000Z",
     });
     expect(mockRedis.expire).toHaveBeenCalledWith("dl:dispatch:tc-1", 300);
+  });
+});
+
+describe("self-dispatch replay", () => {
+  it("persists replayable self-dispatch payloads", async () => {
+    mockRedis.hset.mockResolvedValue("OK");
+    mockRedis.expire.mockResolvedValue(1);
+
+    await storeSelfDispatchReplay({
+      threadChatId: "tc-1",
+      sourceEventId: "event-1",
+      sourceSeq: 3,
+      sourceRunId: "run-1",
+      dispatchIntentId: "di_loop-1_run-next",
+      destinationRunId: "run-next",
+      payload: {
+        token: "token-1",
+        prompt: "Please address this feedback.",
+        runId: "run-next",
+        tokenNonce: "nonce-next",
+        model: "gpt-5.3-codex",
+        agent: "codex",
+        agentVersion: 2,
+        sessionId: null,
+        featureFlags: {},
+        permissionMode: "allowAll",
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        threadId: "thread-1",
+        threadChatId: "tc-1",
+      },
+    });
+
+    expect(mockRedis.hset).toHaveBeenCalledWith(
+      "dl:self-dispatch-replay:tc-1:run-1:event-1:3",
+      {
+        kind: "ready",
+        sourceEventId: "event-1",
+        sourceSeq: "3",
+        sourceRunId: "run-1",
+        dispatchIntentId: "di_loop-1_run-next",
+        destinationRunId: "run-next",
+        payloadJson: expect.any(String),
+        createdAt: "2026-03-09T12:00:00.000Z",
+      },
+    );
+    expect(mockRedis.expire).toHaveBeenCalledWith(
+      "dl:self-dispatch-replay:tc-1:run-1:event-1:3",
+      86400,
+    );
+  });
+
+  it("returns replayable payloads only for matching terminal provenance", async () => {
+    mockRedis.hgetall
+      .mockResolvedValueOnce({
+        kind: "ready",
+        sourceEventId: "event-1",
+        sourceSeq: "3",
+        sourceRunId: "run-1",
+        dispatchIntentId: "di_loop-1_run-next",
+        destinationRunId: "run-next",
+        payloadJson: JSON.stringify({
+          token: "token-1",
+          prompt: "Please address this feedback.",
+          runId: "run-next",
+          tokenNonce: "nonce-next",
+          model: "gpt-5.3-codex",
+          agent: "codex",
+          agentVersion: 2,
+          sessionId: null,
+          featureFlags: {},
+          permissionMode: "allowAll",
+          transportMode: "codex-app-server",
+          protocolVersion: 1,
+          threadId: "thread-1",
+          threadChatId: "tc-1",
+        }),
+        createdAt: "2026-03-09T12:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
+        id: "di_loop-1_run-next",
+        loopId: "loop-1",
+        threadId: "thread-1",
+        threadChatId: "tc-1",
+        targetPhase: "implementing",
+        selectedAgent: "codex",
+        executionClass: "implementation_runtime",
+        dispatchMechanism: "self_dispatch",
+        runId: "run-next",
+        status: "prepared",
+        retryCount: "0",
+        maxRetries: "3",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        updatedAt: "2026-03-09T12:00:00.000Z",
+        lastError: "",
+        lastFailureCategory: "",
+        selfDispatchReplayKind: "none",
+        selfDispatchReplaySourceEventId: "",
+        selfDispatchReplaySourceSeq: "",
+        selfDispatchReplaySourceRunId: "",
+        selfDispatchReplayPayloadJson: "",
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      getReplayableSelfDispatch({
+        threadChatId: "tc-1",
+        sourceEventId: "event-1",
+        sourceSeq: 3,
+        sourceRunId: "run-1",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        runId: "run-next",
+      }),
+    );
+
+    await expect(
+      getReplayableSelfDispatch({
+        threadChatId: "tc-1",
+        sourceEventId: "event-2",
+        sourceSeq: 3,
+        sourceRunId: "run-1",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("does not replay when the destination intent is already terminal", async () => {
+    mockRedis.hgetall
+      .mockResolvedValueOnce({
+        kind: "ready",
+        sourceEventId: "event-1",
+        sourceSeq: "3",
+        sourceRunId: "run-1",
+        dispatchIntentId: "di_loop-1_run-next",
+        destinationRunId: "run-next",
+        payloadJson: JSON.stringify({
+          token: "token-1",
+          prompt: "Please address this feedback.",
+          runId: "run-next",
+          tokenNonce: "nonce-next",
+          model: "gpt-5.3-codex",
+          agent: "codex",
+          agentVersion: 2,
+          sessionId: null,
+          featureFlags: {},
+          permissionMode: "allowAll",
+          transportMode: "codex-app-server",
+          protocolVersion: 1,
+          threadId: "thread-1",
+          threadChatId: "tc-1",
+        }),
+        createdAt: "2026-03-09T12:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
+        id: "di_loop-1_run-next",
+        loopId: "loop-1",
+        threadId: "thread-1",
+        threadChatId: "tc-1",
+        targetPhase: "implementing",
+        selectedAgent: "codex",
+        executionClass: "implementation_runtime",
+        dispatchMechanism: "self_dispatch",
+        runId: "run-next",
+        status: "completed",
+        retryCount: "0",
+        maxRetries: "3",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        updatedAt: "2026-03-09T12:00:00.000Z",
+        lastError: "",
+        lastFailureCategory: "",
+        selfDispatchReplayKind: "none",
+        selfDispatchReplaySourceEventId: "",
+        selfDispatchReplaySourceSeq: "",
+        selfDispatchReplaySourceRunId: "",
+        selfDispatchReplayPayloadJson: "",
+      });
+
+    await expect(
+      getReplayableSelfDispatch({
+        threadChatId: "tc-1",
+        sourceEventId: "event-1",
+        sourceSeq: 3,
+        sourceRunId: "run-1",
+      }),
+    ).resolves.toBeNull();
   });
 });

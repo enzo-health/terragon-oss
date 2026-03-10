@@ -14,7 +14,7 @@ import {
   List,
 } from "lucide-react";
 import { useRealtimeThreadMatch } from "@/hooks/useRealtime";
-import { BroadcastUserMessage } from "@terragon/types/broadcast";
+import { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { ThreadListItem } from "./item";
 import { isToday, isYesterday, isThisWeek } from "date-fns";
 import { tz } from "@date-fns/tz";
@@ -37,6 +37,8 @@ import { selectedModelAtom } from "@/atoms/user-flags";
 import { cn } from "@/lib/utils";
 import { ThreadListGroupBy } from "@/lib/cookies";
 import { sortThreadsUpdatedAt } from "@/lib/thread-sorting";
+import { useQueryClient } from "@tanstack/react-query";
+import { applyThreadPatchToListQueries } from "@/queries/thread-patch-cache";
 
 export const ThreadListHeader = memo(function ThreadListHeader({
   className,
@@ -281,11 +283,11 @@ function useThreadList({
   groupBy: ThreadListGroupBy;
 }) {
   const [timeZone] = useAtom(timeZoneAtom);
+  const queryClient = useQueryClient();
   const {
     data,
     isLoading,
     isError,
-    refetch,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -409,34 +411,43 @@ function useThreadList({
   const showArchived = viewFilter === "archived";
   const automationId = queryFilters.automationId;
   const matchThread = useCallback(
-    (threadId: string, data: BroadcastUserMessage["data"]) => {
-      if (threadIds.has(threadId)) {
-        // If messages were updated but the status didn't change, we don't need to refetch.
-        if (data.messagesUpdated && !data.threadStatusUpdated) {
-          return false;
-        }
-        return true;
-      }
-      if (automationId && data.threadAutomationId !== automationId) {
+    (patch: BroadcastThreadPatch) => {
+      const hasListVisibleChatChange =
+        patch.chat?.status !== undefined ||
+        patch.chat?.errorMessage !== undefined ||
+        patch.chat?.agent !== undefined;
+      if (
+        !patch.shell &&
+        !hasListVisibleChatChange &&
+        !(patch.refetch ?? []).includes("list")
+      ) {
         return false;
       }
-      if (typeof data.isThreadArchived === "boolean") {
-        if (showArchived === data.isThreadArchived) {
-          return true;
-        }
-      }
-      if (data.isThreadCreated) {
+      if (threadIds.has(patch.threadId)) {
         return true;
       }
-      return false;
+      if (patch.op === "delete") {
+        return true;
+      }
+      if ((patch.refetch ?? []).includes("list")) {
+        return true;
+      }
+      if (automationId && patch.shell?.automationId !== automationId) {
+        return false;
+      }
+      if (patch.shell?.archived !== undefined) {
+        return showArchived === patch.shell.archived;
+      }
+      return patch.op === "upsert";
     },
     [threadIds, showArchived, automationId],
   );
   useRealtimeThreadMatch({
     matchThread,
-    onThreadChange: () => {
-      console.log("refetching...");
-      refetch();
+    onThreadChange: (patches) => {
+      patches.forEach((patch) => {
+        applyThreadPatchToListQueries({ queryClient, patch });
+      });
     },
   });
   return {

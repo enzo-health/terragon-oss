@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   type RefObject,
   useState,
@@ -24,7 +25,22 @@ function getScrollParentOrNull(
   return null;
 }
 
-export function useScrollToBottom(): {
+function isNavigationEntryWithType(
+  value: PerformanceEntry | undefined,
+): value is PerformanceEntry & { type: string } {
+  return (
+    value !== undefined &&
+    typeof value === "object" &&
+    "type" in value &&
+    typeof value.type === "string"
+  );
+}
+
+export function useScrollToBottom({
+  observedRef,
+}: {
+  observedRef?: RefObject<HTMLElement | null>;
+} = {}): {
   messagesEndRef: RefObject<HTMLDivElement | null>;
   isAtBottom: boolean;
   forceScrollToBottom: () => void;
@@ -32,73 +48,146 @@ export function useScrollToBottom(): {
   const isAtBottom = useRef(false);
   const [isAtBottomState, setIsAtBottomState] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+  const hasInitialScrollRef = useRef(false);
+
+  const updateContainer = useCallback(() => {
+    const nextContainer = getScrollParentOrNull(endRef.current);
+    setContainer((currentContainer) =>
+      currentContainer === nextContainer ? currentContainer : nextContainer,
+    );
+  }, []);
+
+  const updateIsAtBottom = useCallback((nextContainer: HTMLElement) => {
+    const atBottom =
+      nextContainer.scrollTop + nextContainer.clientHeight >=
+      nextContainer.scrollHeight - 10;
+    isAtBottom.current = atBottom;
+    setIsAtBottomState(atBottom);
+    return atBottom;
+  }, []);
+
+  const scrollContainerToBottom = useCallback((nextContainer: HTMLElement) => {
+    nextContainer.scrollTop = nextContainer.scrollHeight;
+  }, []);
+
+  useLayoutEffect(() => {
+    updateContainer();
+  }, [updateContainer]);
+
+  const shouldPreserveInitialPosition = useCallback(
+    (nextContainer: HTMLElement) => {
+      if (typeof window === "undefined") {
+        return false;
+      }
+
+      if (window.location.hash.length > 0 || nextContainer.scrollTop > 0) {
+        return true;
+      }
+
+      const [navigationEntry] =
+        window.performance.getEntriesByType("navigation");
+      return (
+        isNavigationEntryWithType(navigationEntry) &&
+        navigationEntry.type === "back_forward"
+      );
+    },
+    [],
+  );
+
   useEffect(() => {
-    const container = getScrollParentOrNull(endRef.current);
-    if (container) {
-      const checkIsAtBottom = () => {
-        const atBottom =
-          container.scrollTop + container.clientHeight >=
-          container.scrollHeight - 10;
-        isAtBottom.current = atBottom;
-        setIsAtBottomState(atBottom);
-        return atBottom;
-      };
-
-      // Check initial state
-      checkIsAtBottom();
-
-      const onScroll = () => {
-        checkIsAtBottom();
-      };
-      container?.addEventListener("scroll", onScroll);
-      return () => {
-        container?.removeEventListener("scroll", onScroll);
-      };
+    if (!container) {
+      return;
     }
-  }, []);
 
-  const forceScrollToBottom = useCallback(() => {
-    const container = getScrollParentOrNull(endRef.current);
+    updateIsAtBottom(container);
 
-    if (isIOSSafari() && container) {
-      // iOS Safari has issues with scrollIntoView, use direct scrollTop instead
-      // Add a small delay to ensure DOM updates are complete
-      requestAnimationFrame(() => {
-        container.scrollTop = container.scrollHeight;
-      });
-    } else if (endRef.current) {
-      // For other browsers, use scrollIntoView but with instant behavior on iOS
-      endRef.current.scrollIntoView({
-        behavior: isIOSSafari() ? "instant" : "smooth",
-        block: "start",
-      });
-    }
-  }, []);
+    const onScroll = () => {
+      updateIsAtBottom(container);
+    };
+
+    container.addEventListener("scroll", onScroll);
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+    };
+  }, [container, updateIsAtBottom]);
+
+  const forceScrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      const nextContainer = getScrollParentOrNull(endRef.current);
+
+      if (!nextContainer) {
+        return;
+      }
+
+      if (behavior !== "smooth" || isIOSSafari()) {
+        requestAnimationFrame(() => {
+          scrollContainerToBottom(nextContainer);
+          updateIsAtBottom(nextContainer);
+        });
+        return;
+      }
+
+      if (endRef.current) {
+        endRef.current.scrollIntoView({
+          behavior,
+          block: "start",
+        });
+      }
+    },
+    [scrollContainerToBottom, updateIsAtBottom],
+  );
 
   const maybeScrollToBottom = useCallback(() => {
     if (isAtBottom.current) {
-      forceScrollToBottom();
+      forceScrollToBottom("auto");
     }
   }, [forceScrollToBottom]);
 
-  // Scroll to bottom on mount with iOS Safari delay
-  useEffect(() => {
-    forceScrollToBottom();
-  }, [forceScrollToBottom]);
+  useLayoutEffect(() => {
+    if (!container || hasInitialScrollRef.current) {
+      return;
+    }
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+
+    // Wait briefly so hash navigation and browser restoration can set the
+    // viewport before we decide whether to pin the thread to the bottom.
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (!shouldPreserveInitialPosition(container)) {
+          scrollContainerToBottom(container);
+        }
+        updateIsAtBottom(container);
+        hasInitialScrollRef.current = true;
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+    };
+  }, [
+    container,
+    scrollContainerToBottom,
+    shouldPreserveInitialPosition,
+    updateIsAtBottom,
+  ]);
 
   useEffect(() => {
-    const container = getScrollParentOrNull(endRef.current);
-    if (container) {
+    const observedNode = observedRef?.current ?? container;
+    if (container && observedNode) {
       const observer = new MutationObserver(() => {
         maybeScrollToBottom();
       });
-      observer.observe(container, {
+      observer.observe(observedNode, {
         childList: true,
         subtree: true,
       });
       return () => observer.disconnect();
     }
-  }, [maybeScrollToBottom]);
+  }, [container, maybeScrollToBottom, observedRef]);
   return {
     messagesEndRef: endRef,
     isAtBottom: isAtBottomState,

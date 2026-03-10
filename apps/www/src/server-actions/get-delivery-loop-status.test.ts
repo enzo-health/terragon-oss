@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
+import {
+  buildDeliveryLoopTopProgressPhases,
+  buildSdlcLoopStatusChecks,
+  getDeliveryLoopSnapshotStateSummary,
+} from "@/lib/delivery-loop-status";
 import { unwrapResult } from "@/lib/server-actions";
 import { getDeliveryLoopStatusAction } from "./get-delivery-loop-status";
 import {
@@ -24,6 +29,103 @@ async function getDeliveryLoopStatus(threadId: string) {
 describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+  });
+
+  it("surfaces blocked summary from the canonical snapshot model", () => {
+    const summary = getDeliveryLoopSnapshotStateSummary({
+      kind: "blocked",
+      from: "review_gate",
+      reason: "gate_failure",
+      selectedAgent: "codex",
+      dispatchStatus: "failed",
+      dispatchAttemptCount: 1,
+      activeRunId: "run_123",
+      activeGateRunId: "gate_123",
+      lastFailureCategory: "gate_failed",
+    });
+
+    expect(summary).toEqual({
+      stateLabel: "Blocked in Review Gate",
+      explanation:
+        "A review gate is blocked and needs intervention before the loop can continue.",
+      progressPercent: 45,
+    });
+  });
+
+  it("derives fallback gate statuses from blocked origin instead of generic blocked state", () => {
+    const checks = buildSdlcLoopStatusChecks({
+      loopSnapshot: {
+        kind: "blocked",
+        from: "review_gate",
+        reason: "gate_failure",
+        selectedAgent: "codex",
+        dispatchStatus: "failed",
+        dispatchAttemptCount: 1,
+        activeRunId: "run_123",
+        activeGateRunId: "gate_123",
+        lastFailureCategory: "gate_failed",
+      },
+      currentHeadSha: "sha-1",
+      ciRun: null,
+      reviewThreadRun: null,
+      deepReviewRun: null,
+      carmackReviewRun: null,
+      unresolvedDeepFindingCount: 0,
+      unresolvedCarmackFindingCount: 0,
+      videoCaptureStatus: "not_started",
+      videoFailureMessage: null,
+    });
+
+    expect(checks).toEqual([
+      expect.objectContaining({ key: "ci", status: "not_started" }),
+      expect.objectContaining({ key: "review_threads", status: "not_started" }),
+      expect.objectContaining({ key: "deep_review", status: "pending" }),
+      expect.objectContaining({
+        key: "architecture_carmack",
+        status: "pending",
+      }),
+      expect.objectContaining({ key: "video", status: "pending" }),
+    ]);
+  });
+
+  it("builds top progress phases from the canonical snapshot instead of raw blocked state", () => {
+    const loopSnapshot = {
+      kind: "blocked",
+      from: "review_gate",
+      reason: "gate_failure",
+      selectedAgent: "codex",
+      dispatchStatus: "failed",
+      dispatchAttemptCount: 1,
+      activeRunId: "run_123",
+      activeGateRunId: "gate_123",
+      lastFailureCategory: "gate_failed",
+    } as const;
+
+    const checks = buildSdlcLoopStatusChecks({
+      loopSnapshot,
+      currentHeadSha: "sha-1",
+      ciRun: null,
+      reviewThreadRun: null,
+      deepReviewRun: null,
+      carmackReviewRun: null,
+      unresolvedDeepFindingCount: 0,
+      unresolvedCarmackFindingCount: 0,
+      videoCaptureStatus: "not_started",
+      videoFailureMessage: null,
+    });
+
+    expect(
+      buildDeliveryLoopTopProgressPhases({
+        loopSnapshot,
+        checks,
+      }),
+    ).toEqual([
+      expect.objectContaining({ key: "planning", status: "passed" }),
+      expect.objectContaining({ key: "implementing", status: "passed" }),
+      expect.objectContaining({ key: "reviewing", status: "pending" }),
+      expect.objectContaining({ key: "ci", status: "not_started" }),
+      expect.objectContaining({ key: "ui_testing", status: "not_started" }),
+    ]);
   });
 
   it("returns artifact readiness and planned task summary", async () => {
@@ -138,6 +240,45 @@ describe("getDeliveryLoopStatusAction", () => {
       done: 1,
       remaining: 1,
     });
+  });
+
+  it("uses persisted blocked origin to describe blocked implementation attention", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+      currentHeadSha: "sha-blocked-1",
+    });
+
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "blocked",
+        blockedFromState: "implementing",
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const status = await getDeliveryLoopStatus(threadId);
+
+    expect(status?.state).toBe("blocked");
+    expect(status?.stateLabel).toBe("Blocked in Implementing");
+    expect(status?.needsAttention.topBlockers).toContainEqual(
+      expect.objectContaining({
+        title: "Implementation is blocked and needs human feedback",
+        source: "human_feedback",
+      }),
+    );
   });
 
   it("returns null when no loop exists for the thread", async () => {

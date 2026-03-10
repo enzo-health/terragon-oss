@@ -401,15 +401,16 @@ export async function getValidAccessTokenForCredential({
     return null;
   }
   if (credentialsDecrypted.expiresAt) {
-    // Add a 24h buffer before the actual expiration
-    // codex tokens last for 10 days, claude tokens last for 8 hours lol
+    // Refresh a bit before the actual expiration.
+    // Codex OAuth tokens live much longer than Claude's, but a 10-day buffer
+    // effectively forces Codex refresh on every use.
+    const expiresAtMs = new Date(credentialsDecrypted.expiresAt).getTime();
     const bufferMs =
       credentialsDecrypted.agent === "codex"
-        ? 10 * 24 * 60 * 60 * 1000
+        ? 24 * 60 * 60 * 1000
         : 1 * 60 * 60 * 1000;
-    const isExpired =
-      new Date(credentialsDecrypted.expiresAt).getTime() - bufferMs <
-      Date.now();
+    const isExpired = expiresAtMs - bufferMs < Date.now();
+    const isActuallyExpired = expiresAtMs < Date.now();
     if (
       (forceRefresh || isExpired) &&
       credentialsDecrypted.refreshToken &&
@@ -419,9 +420,25 @@ export async function getValidAccessTokenForCredential({
         credentialId,
         agent: credentialsDecrypted.agent,
       });
-      const refreshed = await refreshTokenCallback({
-        refreshToken: credentialsDecrypted.refreshToken,
-      });
+      let refreshed: Awaited<ReturnType<typeof refreshTokenCallback>>;
+      try {
+        refreshed = await refreshTokenCallback({
+          refreshToken: credentialsDecrypted.refreshToken,
+        });
+      } catch (error) {
+        if (!forceRefresh && !isActuallyExpired) {
+          console.warn(
+            "[getValidAccessTokenForCredential] Refresh failed before actual expiry, using existing token",
+            {
+              credentialId,
+              agent: credentialsDecrypted.agent,
+            },
+            error,
+          );
+          return credentialsDecrypted.accessToken;
+        }
+        throw error;
+      }
       const update: Partial<AgentProviderCredentials> = {
         lastRefreshedAt: new Date(),
       };

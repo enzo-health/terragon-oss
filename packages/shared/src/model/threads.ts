@@ -35,11 +35,17 @@ import {
   ThreadChatInsertRaw,
   LinearMentionThreadInsert,
 } from "../db/types";
-import { BroadcastMessageThreadData } from "@terragon/types/broadcast";
+import { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { sanitizeForJson } from "../utils/sanitize-json";
 import { toUTC, validateTimezone } from "../utils/timezone";
 import { getUser } from "./user";
 import { AIAgent } from "@terragon/agent/types";
+import {
+  getThreadPageChatWithPermissions,
+  getThreadPageShellWithPermissions,
+  toBroadcastActiveChatRealtimeFields,
+  toBroadcastThreadShellRealtimeFields,
+} from "./thread-page";
 
 type GetThreadsArgs = {
   db: DB;
@@ -812,19 +818,45 @@ export async function createThread({
     const threadChatId = threadChatInsertResult.id;
     return { threadId, threadChatId };
   });
-  const dataByThreadId: Record<string, BroadcastMessageThreadData> = {};
-  dataByThreadId[threadId] = {
-    isThreadCreated: true,
-    threadAutomationId: threadValues.automationId ?? undefined,
-  };
+  const [threadShell, threadChat] = await Promise.all([
+    getThreadPageShellWithPermissions({
+      db,
+      threadId,
+      userId,
+    }),
+    getThreadPageChatWithPermissions({
+      db,
+      threadId,
+      threadChatId,
+      userId,
+    }),
+  ]);
+  const threadPatches: BroadcastThreadPatch[] =
+    threadShell === undefined
+      ? []
+      : [
+          {
+            threadId,
+            threadChatId,
+            op: "upsert" as const,
+            shell: toBroadcastThreadShellRealtimeFields(threadShell),
+            chat:
+              threadChat === undefined
+                ? undefined
+                : toBroadcastActiveChatRealtimeFields(threadChat),
+          },
+        ];
   if (threadValues.parentThreadId) {
-    dataByThreadId[threadValues.parentThreadId] = {};
+    threadPatches.push({
+      threadId: threadValues.parentThreadId,
+      op: "refetch",
+      refetch: ["shell"],
+    });
   }
   await publishBroadcastUserMessage({
     type: "user",
     id: userId,
-    data: { threadId, threadChatId },
-    dataByThreadId,
+    data: { threadPatches },
   });
   return { threadId, threadChatId };
 }
@@ -869,6 +901,12 @@ export async function updateThreadChat({
   threadChatId: string;
   updates: Omit<ThreadChatInsert, "threadChatId" | "status">;
 }) {
+  let updatedAtIsoString: string | undefined;
+  let chatSequence: number | undefined;
+  let chatForPatch: BroadcastThreadPatch["chat"] | undefined;
+  let appendMessagesForPatch: unknown[] | undefined;
+  let expectedMessageCount: number | undefined;
+  let shouldRefetchChat = false;
   await db.transaction(async (tx) => {
     const {
       appendMessages,
@@ -877,15 +915,18 @@ export async function updateThreadChat({
       appendAndResetQueuedMessages,
       ...updatesWithoutAppends
     } = updates ?? {};
+    const sanitizedAppendMessages =
+      appendMessages && appendMessages.length > 0
+        ? sanitizeForJson(appendMessages)
+        : undefined;
     if (threadChatId === LEGACY_THREAD_CHAT_ID) {
       const updateObject: Partial<ThreadInsertRaw> = {
         ...updatesWithoutAppends,
       };
-      if (appendMessages && appendMessages.length > 0) {
+      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
         // Sanitize messages to remove null bytes and other invalid JSON characters
-        const sanitizedMessages = sanitizeForJson(appendMessages);
         // @ts-expect-error
-        updateObject.messages = sql`COALESCE(${schema.thread.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedMessages)}::jsonb`;
+        updateObject.messages = sql`COALESCE(${schema.thread.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
       }
       if (appendAndResetQueuedMessages) {
         updateObject.queuedMessages = [];
@@ -913,18 +954,69 @@ export async function updateThreadChat({
           and(eq(schema.thread.id, threadId), eq(schema.thread.userId, userId)),
         )
         .returning();
-      if (result.length === 0) {
+      const updatedThread = result[0];
+      if (!updatedThread) {
         throw new Error("Failed to update thread chat (legacy)");
+      }
+      updatedAtIsoString = updatedThread.updatedAt.toISOString();
+      chatSequence = updatedThread.updatedAt.getTime();
+      chatForPatch = {
+        updatedAt: updatedAtIsoString,
+        ...(updatesWithoutAppends.agent !== undefined
+          ? { agent: updatedThread.agent }
+          : {}),
+        ...(updatesWithoutAppends.agentVersion !== undefined
+          ? { agentVersion: updatedThread.agentVersion }
+          : {}),
+        ...(updatesWithoutAppends.errorMessage !== undefined
+          ? { errorMessage: updatedThread.errorMessage }
+          : {}),
+        ...(updatesWithoutAppends.errorMessageInfo !== undefined
+          ? { errorMessageInfo: updatedThread.errorMessageInfo }
+          : {}),
+        ...(updatesWithoutAppends.scheduleAt !== undefined
+          ? {
+              scheduleAt: updatedThread.scheduleAt
+                ? updatedThread.scheduleAt.toISOString()
+                : null,
+            }
+          : {}),
+        ...(updatesWithoutAppends.reattemptQueueAt !== undefined
+          ? {
+              reattemptQueueAt: updatedThread.reattemptQueueAt
+                ? updatedThread.reattemptQueueAt.toISOString()
+                : null,
+            }
+          : {}),
+        ...(updatesWithoutAppends.contextLength !== undefined
+          ? { contextLength: updatedThread.contextLength }
+          : {}),
+        ...(updatesWithoutAppends.permissionMode !== undefined
+          ? { permissionMode: updatedThread.permissionMode ?? "allowAll" }
+          : {}),
+        ...(appendAndResetQueuedMessages ||
+        replaceQueuedMessages !== undefined ||
+        (appendQueuedMessages?.length ?? 0) > 0
+          ? { queuedMessages: updatedThread.queuedMessages ?? [] }
+          : {}),
+      };
+      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
+        appendMessagesForPatch = sanitizedAppendMessages;
+        expectedMessageCount =
+          (updatedThread.messages?.length ?? sanitizedAppendMessages.length) -
+          sanitizedAppendMessages.length;
+      }
+      if (appendAndResetQueuedMessages) {
+        shouldRefetchChat = true;
       }
     } else {
       const updateObject: Partial<ThreadChatInsertRaw> = {
         ...updatesWithoutAppends,
       };
-      if (appendMessages && appendMessages.length > 0) {
+      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
         // Sanitize messages to remove null bytes and other invalid JSON characters
-        const sanitizedMessages = sanitizeForJson(appendMessages);
         // @ts-expect-error
-        updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedMessages)}::jsonb`;
+        updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
       }
       if (appendAndResetQueuedMessages) {
         updateObject.queuedMessages = [];
@@ -956,8 +1048,60 @@ export async function updateThreadChat({
           ),
         )
         .returning();
-      if (result.length === 0) {
+      const updatedThreadChat = result[0];
+      if (!updatedThreadChat) {
         throw new Error("Failed to update thread chat");
+      }
+      updatedAtIsoString = updatedThreadChat.updatedAt.toISOString();
+      chatSequence = updatedThreadChat.updatedAt.getTime();
+      chatForPatch = {
+        updatedAt: updatedAtIsoString,
+        ...(updatesWithoutAppends.agent !== undefined
+          ? { agent: updatedThreadChat.agent }
+          : {}),
+        ...(updatesWithoutAppends.agentVersion !== undefined
+          ? { agentVersion: updatedThreadChat.agentVersion }
+          : {}),
+        ...(updatesWithoutAppends.errorMessage !== undefined
+          ? { errorMessage: updatedThreadChat.errorMessage }
+          : {}),
+        ...(updatesWithoutAppends.errorMessageInfo !== undefined
+          ? { errorMessageInfo: updatedThreadChat.errorMessageInfo }
+          : {}),
+        ...(updatesWithoutAppends.scheduleAt !== undefined
+          ? {
+              scheduleAt: updatedThreadChat.scheduleAt
+                ? updatedThreadChat.scheduleAt.toISOString()
+                : null,
+            }
+          : {}),
+        ...(updatesWithoutAppends.reattemptQueueAt !== undefined
+          ? {
+              reattemptQueueAt: updatedThreadChat.reattemptQueueAt
+                ? updatedThreadChat.reattemptQueueAt.toISOString()
+                : null,
+            }
+          : {}),
+        ...(updatesWithoutAppends.contextLength !== undefined
+          ? { contextLength: updatedThreadChat.contextLength }
+          : {}),
+        ...(updatesWithoutAppends.permissionMode !== undefined
+          ? { permissionMode: updatedThreadChat.permissionMode ?? "allowAll" }
+          : {}),
+        ...(appendAndResetQueuedMessages ||
+        replaceQueuedMessages !== undefined ||
+        (appendQueuedMessages?.length ?? 0) > 0
+          ? { queuedMessages: updatedThreadChat.queuedMessages ?? [] }
+          : {}),
+      };
+      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
+        appendMessagesForPatch = sanitizedAppendMessages;
+        expectedMessageCount =
+          (updatedThreadChat.messages?.length ??
+            sanitizedAppendMessages.length) - sanitizedAppendMessages.length;
+      }
+      if (appendAndResetQueuedMessages) {
+        shouldRefetchChat = true;
       }
     }
   });
@@ -965,11 +1109,18 @@ export async function updateThreadChat({
     type: "user",
     id: userId,
     data: {
-      threadId,
-      threadChatId,
-      messagesUpdated: "appendMessages" in updates ? true : undefined,
-      hasErrorMessage:
-        "errorMessage" in updates ? !!updates.errorMessage : undefined,
+      threadPatches: [
+        {
+          threadId,
+          threadChatId,
+          op: shouldRefetchChat ? "refetch" : "upsert",
+          chatSequence,
+          chat: chatForPatch,
+          appendMessages: appendMessagesForPatch,
+          expectedMessageCount,
+          refetch: shouldRefetchChat ? ["chat"] : undefined,
+        },
+      ],
     },
   });
   return null;
@@ -1002,15 +1153,38 @@ export async function updateThread({
     .returning();
   if (result.length !== 0) {
     const updatedThread = result[0]!;
+    const updatedShell = await getThreadPageShellWithPermissions({
+      db,
+      threadId: updatedThread.id,
+      userId: updatedThread.userId,
+    });
     // Publish standard thread update message
     await publishBroadcastUserMessage({
       type: "user",
       id: updatedThread.userId,
       data: {
-        threadId: updatedThread.id,
-        threadAutomationId: updatedThread.automationId ?? undefined,
-        isThreadArchived: "archived" in updates ? updates.archived : undefined,
-        threadName: updatedThread.name ?? undefined,
+        threadPatches: [
+          {
+            threadId: updatedThread.id,
+            threadChatId: updatedShell?.primaryThreadChatId,
+            op: "upsert",
+            shell:
+              updatedShell === undefined
+                ? {
+                    name: updatedThread.name,
+                    automationId: updatedThread.automationId,
+                    archived: updatedThread.archived,
+                    updatedAt: updatedThread.updatedAt.toISOString(),
+                  }
+                : toBroadcastThreadShellRealtimeFields(updatedShell),
+            chat:
+              updatedShell === undefined
+                ? undefined
+                : toBroadcastActiveChatRealtimeFields(
+                    updatedShell.primaryThreadChat,
+                  ),
+          },
+        ],
       },
     });
     return;
@@ -1086,6 +1260,7 @@ export async function updateThreadChatStatusAtomic({
     otherUpdates.reattemptQueueAt = reattemptQueueAt;
   }
   let didUpdateStatus = false;
+  let updatedAtIsoString: string | undefined;
   if (threadChatId === LEGACY_THREAD_CHAT_ID) {
     // Use a update set where pattern to ensure that we're the ones who updated the thread status
     // from the current status to the new status.
@@ -1102,6 +1277,7 @@ export async function updateThreadChatStatusAtomic({
       .returning();
     if (updateResult.length > 0) {
       didUpdateStatus = true;
+      updatedAtIsoString = updateResult[0]!.updatedAt.toISOString();
     }
   } else {
     const updateResult = await db
@@ -1118,6 +1294,7 @@ export async function updateThreadChatStatusAtomic({
       .returning();
     if (updateResult.length > 0) {
       didUpdateStatus = true;
+      updatedAtIsoString = updateResult[0]!.updatedAt.toISOString();
     }
   }
 
@@ -1126,8 +1303,22 @@ export async function updateThreadChatStatusAtomic({
       type: "user",
       id: userId,
       data: {
-        threadId,
-        threadStatusUpdated: toStatus,
+        threadPatches: [
+          {
+            threadId,
+            threadChatId,
+            op: "upsert",
+            chatSequence: updatedAtIsoString
+              ? new Date(updatedAtIsoString).getTime()
+              : undefined,
+            chat: {
+              status: toStatus,
+              reattemptQueueAt:
+                otherUpdates.reattemptQueueAt?.toISOString() ?? null,
+              updatedAt: updatedAtIsoString,
+            },
+          },
+        ],
       },
     });
   }
@@ -1162,8 +1353,12 @@ export async function deleteThreadById({
     type: "user",
     id: userId,
     data: {
-      threadId: threadId,
-      isThreadDeleted: true,
+      threadPatches: [
+        {
+          threadId,
+          op: "delete",
+        },
+      ],
     },
   });
 

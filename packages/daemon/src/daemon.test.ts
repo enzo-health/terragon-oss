@@ -3118,5 +3118,28 @@ describe("daemon", () => {
 
       expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
     });
+
+    it("launches a replayed self-dispatch run only once per runId", async () => {
+      const runCommandSpy = vi
+        .spyOn(daemon as any, "runCommand")
+        .mockResolvedValue(undefined);
+
+      (daemon as any).startSelfDispatchRun({
+        payload: selfDispatchPayload,
+        originalThreadChatId: selfDispatchPayload.threadChatId,
+      });
+      (daemon as any).startSelfDispatchRun({
+        payload: selfDispatchPayload,
+        originalThreadChatId: selfDispatchPayload.threadChatId,
+      });
+
+      expect(runCommandSpy).toHaveBeenCalledTimes(1);
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: selfDispatchPayload.runId,
+          prompt: selfDispatchPayload.prompt,
+        }),
+      );
+    });
   });
 });

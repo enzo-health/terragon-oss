@@ -86,8 +86,15 @@ export async function markThreadAsRead({
       type: "user",
       id: userId,
       data: {
-        threadId,
-        isThreadUnread: false,
+        threadPatches: [
+          {
+            threadId,
+            op: "upsert",
+            shell: {
+              isUnread: false,
+            },
+          },
+        ],
       },
     });
   }
@@ -118,9 +125,19 @@ export async function markThreadChatAsRead({
       type: "user",
       id: userId,
       data: {
-        threadId,
-        threadChatId,
-        isThreadUnread: false,
+        threadPatches: [
+          {
+            threadId,
+            threadChatId,
+            op: "upsert",
+            shell: {
+              isUnread: false,
+            },
+            chat: {
+              isUnread: false,
+            },
+          },
+        ],
       },
     });
   }
@@ -158,10 +175,25 @@ export async function markThreadChatAsUnread({
       type: "user",
       id: userId,
       data: {
-        threadId,
-        threadChatId: threadChatIdOrNull ?? undefined,
-        isThreadUnread: true,
-        threadName: thread?.name ?? undefined,
+        threadPatches: [
+          {
+            threadId,
+            threadChatId: threadChatIdOrNull ?? undefined,
+            op: "upsert",
+            shell: {
+              isUnread: true,
+            },
+            chat:
+              threadChatIdOrNull === null
+                ? undefined
+                : {
+                    isUnread: true,
+                  },
+            notifyUnread: {
+              threadName: thread?.name ?? undefined,
+            },
+          },
+        ],
       },
     });
   }

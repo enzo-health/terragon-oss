@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from "react";
-import { useRealtimeUser } from "./useRealtime";
+import { getThreadPatches, useRealtimeUser } from "./useRealtime";
 import { useRouter } from "next/navigation";
 import { useAtom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
@@ -109,66 +109,33 @@ export function useNotifications() {
       if (!isSupported) {
         return false;
       }
-      // Match when a thread is marked as unread
-      if (message.data.isThreadUnread === true) {
-        return true;
-      }
-      // Also check dataByThreadId for batch updates
-      if (message.dataByThreadId) {
-        for (const data of Object.values(message.dataByThreadId)) {
-          if (data.isThreadUnread === true) {
-            return true;
-          }
-        }
-      }
-      return false;
+      return getThreadPatches(message).some((patch) => patch.notifyUnread);
     },
     onMessage: (message) => {
       if (!isSupported || !enabled || permission !== "granted") return;
 
-      // Handle single thread update
-      if (message.data.threadId && message.data.isThreadUnread === true) {
-        const threadId = message.data.threadId;
-        const threadName = message.data.threadName;
+      for (const patch of getThreadPatches(message)) {
+        if (!patch.notifyUnread) {
+          continue;
+        }
 
-        // Show notification if tab is not active, even if we're on the thread
+        const threadId = patch.threadId;
         const currentPath = window.location.pathname;
         const isOnThread = currentPath === `/task/${threadId}`;
         const isTabActive = !document.hidden;
 
-        // Only skip notification if we're on the thread AND the tab is active
-        if (isOnThread && isTabActive) return;
+        if (isOnThread && isTabActive) {
+          continue;
+        }
 
         showNotification("A Task is Finished Working", {
-          body: threadName || "A thread has been marked as unread",
+          body:
+            patch.notifyUnread.threadName ||
+            "A thread has been marked as unread",
           tag: `thread-${threadId}`,
           requireInteraction: false,
           threadId,
         });
-      }
-
-      // Handle batch updates
-      if (message.dataByThreadId) {
-        for (const [threadId, data] of Object.entries(message.dataByThreadId)) {
-          if (data.isThreadUnread === true) {
-            // Show notification if tab is not active, even if we're on the thread
-            const currentPath = window.location.pathname;
-            const isOnThread = currentPath === `/task/${threadId}`;
-            const isTabActive = !document.hidden;
-
-            // Only skip notification if we're on the thread AND the tab is active
-            if (isOnThread && isTabActive) return;
-
-            const threadName = data.threadName;
-
-            showNotification("A Task is Finished Working", {
-              body: threadName || "A thread has been marked as unread",
-              tag: `thread-${threadId}`,
-              requireInteraction: false,
-              threadId,
-            });
-          }
-        }
       }
     },
   });

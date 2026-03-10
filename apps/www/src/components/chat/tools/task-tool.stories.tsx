@@ -6,6 +6,22 @@ export default {
   title: "Chat/TaskTool",
 } satisfies StoryDefault;
 
+const renderToolPart = (
+  toolPart: Parameters<typeof ToolPart>[0]["toolPart"],
+) => (
+  <ToolPart
+    toolPart={toolPart}
+    threadId="thread-1"
+    threadChatId="chat-1"
+    messages={[]}
+    isReadOnly={false}
+    childThreads={[]}
+    githubRepoFullName="terragonlabs/terragon"
+    repoBaseBranchName="main"
+    branchName="feature/task-tool"
+  />
+);
+
 export const Simple: Story = () => {
   const toolPart = {
     type: "tool" as const,
@@ -32,7 +48,7 @@ export const Simple: Story = () => {
     ],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const Pending: Story = () => {
@@ -70,7 +86,7 @@ export const Pending: Story = () => {
       },
     ],
   };
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const Failed: Story = () => {
@@ -103,7 +119,7 @@ export const Failed: Story = () => {
     ],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const WithSubagentType: Story = () => {
@@ -124,7 +140,7 @@ export const WithSubagentType: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const WithGeneralPurposeSubagent: Story = () => {
@@ -144,7 +160,7 @@ export const WithGeneralPurposeSubagent: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 // Agent Color Stories
@@ -166,7 +182,7 @@ export const BugHunterRed: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const CodeReviewerPurple: Story = () => {
@@ -186,7 +202,7 @@ export const CodeReviewerPurple: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const TestRunnerGreen: Story = () => {
@@ -206,7 +222,7 @@ export const TestRunnerGreen: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const YeetResponderOrange: Story = () => {
@@ -226,7 +242,7 @@ export const YeetResponderOrange: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const AgentBlue: Story = () => {
@@ -246,7 +262,7 @@ export const AgentBlue: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const AgentYellow: Story = () => {
@@ -266,7 +282,7 @@ export const AgentYellow: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const AgentPink: Story = () => {
@@ -286,7 +302,7 @@ export const AgentPink: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
 
 export const AgentCyan: Story = () => {
@@ -307,5 +323,5 @@ export const AgentCyan: Story = () => {
     parts: [],
   };
 
-  return <TaskTool toolPart={toolPart} ToolPartComponent={ToolPart} />;
+  return <TaskTool toolPart={toolPart} renderToolPart={renderToolPart} />;
 };
