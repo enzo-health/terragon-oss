@@ -317,6 +317,53 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
   });
 
+  it("suppresses daemon terminal feedback follow-up while loop is in planning", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "planning",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-daemon-terminal-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "delivery-1:100",
+      payload: {
+        eventType: "daemon_terminal",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "route-feedback:planning-daemon-terminal-suppressed",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+      includeRuntimeRouting: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-daemon-terminal-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "none",
+        runtimeRouting: expect.objectContaining({
+          reason: "suppressed_for_loop_state",
+          followUpQueued: false,
+        }),
+      }),
+    );
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(dbMocks.markProcessedReturning).toHaveBeenCalledTimes(1);
+  });
+
   it("marks signal processed without PR publication action when loop has no PR number", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-no-pr",
@@ -389,6 +436,17 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
   });
 
   it("routes daemon_terminal signals as runtime follow-ups during implementing work", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+      blockedFromState: null,
+    });
     dbMocks.signalFindFirst.mockResolvedValueOnce({
       id: "signal-daemon-terminal-1",
       causeType: "daemon_terminal",

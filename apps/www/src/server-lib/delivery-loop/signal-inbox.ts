@@ -1280,7 +1280,6 @@ export async function runBestEffortSdlcSignalInboxTick({
     };
     const shouldSuppressFeedbackRuntimeAction =
       feedbackSignalCauseTypes.has(signal.causeType) &&
-      signal.causeType !== "daemon_terminal" &&
       loopPhaseContext.effectivePhase === "planning";
     const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
 
