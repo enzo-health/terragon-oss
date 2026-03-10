@@ -1,24 +1,22 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { GenericToolPart } from "./generic-ui";
 import { resolvePlanText } from "./plan-utils";
-import { TextPart } from "../text-part";
 import { Button } from "../../ui/button";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import type { DBMessage } from "@terragon/shared";
 import { PromptBoxRef } from "../thread-context";
 import { toast } from "sonner";
-import { approvePlan } from "@/server-actions/approve-plan";
-import { useServerActionMutation } from "@/queries/server-action-helpers";
-import { useOptimisticUpdateThreadChat, useSecondaryPanel } from "../hooks";
+import { usePlanApproval, useSecondaryPanel } from "../hooks";
 import { findArtifactDescriptorForPart } from "../secondary-panel";
+
+function truncatePlanPreview(text: string, maxChars = 150): string {
+  if (text.length <= maxChars) return text;
+  const cutoff = text.indexOf("\n\n", maxChars);
+  const end = cutoff !== -1 ? cutoff : maxChars;
+  return text.slice(0, end) + "…";
+}
 
 export function ExitPlanModeTool({
   toolPart,
@@ -62,56 +60,15 @@ export function ExitPlanModeTool({
     [artifactDescriptors, toolPart],
   );
   const [copied, setCopied] = useState(false);
-  const updateThreadChat = useOptimisticUpdateThreadChat({
+
+  const { handleApprove, isPending, shouldShowApprove } = usePlanApproval({
     threadId,
     threadChatId,
-  });
-  // Only show buttons if this is the active ExitPlanMode tool
-  const shouldShowButtons = useMemo(() => {
-    if (isReadOnly) {
-      return false;
-    }
-    // Calculate which ExitPlanMode tool should show buttons
-    let lastExitPlanModeId: string | null = null;
-    // Iterate backwards through messages
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (!message) continue;
-      // If we hit a user message, stop looking
-      if (message.type === "user") {
-        break;
-      }
-      if (message.type === "tool-call" && message.name === "ExitPlanMode") {
-        lastExitPlanModeId = message.id;
-        break;
-      }
-    }
-    return lastExitPlanModeId === toolPart.id;
-  }, [isReadOnly, messages, toolPart.id]);
-
-  const handleApproveMutation = useServerActionMutation({
-    mutationFn: approvePlan,
-  });
-
-  const handleApprove = useCallback(async () => {
-    if (isReadOnly) {
-      return;
-    }
-    // Switch promptbox to execute mode (allowAll)
-    promptBoxRef?.current?.setPermissionMode("allowAll");
-    updateThreadChat({ permissionMode: "allowAll" });
-    await handleApproveMutation.mutateAsync({
-      threadId,
-      threadChatId,
-    });
-  }, [
     isReadOnly,
-    threadId,
-    threadChatId,
     promptBoxRef,
-    handleApproveMutation,
-    updateThreadChat,
-  ]);
+    toolPartId: toolPart.id,
+    messages,
+  });
 
   const handleCopy = async () => {
     if (copied) {
@@ -137,8 +94,10 @@ export function ExitPlanModeTool({
     }
   };
 
-  // Show a placeholder if the plan is empty
-  const displayPlan = plan || "(No plan content available)";
+  const preview = useMemo(
+    () => (plan ? truncatePlanPreview(plan) : null),
+    [plan],
+  );
 
   return (
     <GenericToolPart toolName="Plan" toolArg="" toolStatus="completed">
@@ -174,21 +133,23 @@ export function ExitPlanModeTool({
         )}
         <div className="p-3 bg-muted/50 rounded-md space-y-3">
           <div className="max-w-none font-sans pr-10">
-            {plan ? (
-              <TextPart text={plan} />
+            {preview ? (
+              <p className="text-sm text-foreground whitespace-pre-wrap">
+                {preview}
+              </p>
             ) : (
               <span className="text-muted-foreground italic">
-                {displayPlan}
+                (No plan content available)
               </span>
             )}
           </div>
-          {shouldShowButtons && (
+          {shouldShowApprove && (
             <div className="flex gap-2 pt-2">
               <Button
                 size="sm"
                 onClick={handleApprove}
                 className="flex items-center gap-2 font-sans"
-                disabled={handleApproveMutation.isPending}
+                disabled={isPending}
               >
                 <Check className="h-4 w-4" />
                 Approve

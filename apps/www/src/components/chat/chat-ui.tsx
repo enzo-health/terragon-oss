@@ -392,6 +392,30 @@ function ChatUI({
     [setIsSecondaryPanelOpen],
   );
 
+  // Auto-open panel when new plan artifacts appear
+  const seenPlanIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    seenPlanIdsRef.current = new Set();
+  }, [threadId]);
+  useEffect(() => {
+    if (!shouldAutoOpenSecondaryPanel) return;
+
+    const planDescriptors = artifactDescriptors.filter(
+      (d) => d.kind === "plan",
+    );
+    const newPlan = planDescriptors.findLast(
+      (d) => !seenPlanIdsRef.current.has(d.id),
+    );
+
+    for (const d of planDescriptors) {
+      seenPlanIdsRef.current.add(d.id);
+    }
+
+    if (newPlan) {
+      handleOpenArtifact(newPlan.id);
+    }
+  }, [artifactDescriptors, shouldAutoOpenSecondaryPanel, handleOpenArtifact]);
+
   const isAgentCurrentlyWorking = threadChat
     ? isAgentWorking(threadChat.status)
     : false;
@@ -624,6 +648,9 @@ function ChatUI({
               onActiveArtifactChange={setActiveArtifactId}
               containerRef={chatContainerRef}
               messages={dbMessages}
+              threadChatId={threadChat.id}
+              isReadOnly={isReadOnly}
+              promptBoxRef={promptBoxRef}
             />
           ) : null}
         </div>

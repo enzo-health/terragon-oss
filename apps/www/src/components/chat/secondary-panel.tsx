@@ -32,9 +32,12 @@ import { RichTextPart } from "./rich-text-part";
 import { TextPart } from "./text-part";
 import { resolvePlanText } from "./tools/plan-utils";
 import { usePlatform } from "@/hooks/use-platform";
-import { useSecondaryPanel } from "./hooks";
+import { usePlanApproval, useSecondaryPanel } from "./hooks";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, FileDiff, X } from "lucide-react";
+import { Check, ExternalLink, FileDiff, X } from "lucide-react";
+import type { PromptBoxRef } from "./thread-context";
+import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
@@ -246,6 +249,9 @@ export function SecondaryPanel({
   onActiveArtifactChange,
   containerRef,
   messages = [],
+  threadChatId,
+  isReadOnly = false,
+  promptBoxRef,
 }: {
   thread: ThreadInfoFull;
   artifactDescriptors: ArtifactDescriptor[];
@@ -253,6 +259,9 @@ export function SecondaryPanel({
   onActiveArtifactChange: (artifactId: string | null) => void;
   containerRef: React.RefObject<HTMLElement | null>;
   messages?: DBMessage[];
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
 }) {
   const platform = usePlatform();
   const {
@@ -335,6 +344,9 @@ export function SecondaryPanel({
             onClose={handleClose}
             thread={thread}
             messages={messages}
+            threadChatId={threadChatId}
+            isReadOnly={isReadOnly}
+            promptBoxRef={promptBoxRef}
           />
         </DrawerContent>
       </Drawer>
@@ -374,6 +386,9 @@ export function SecondaryPanel({
           onClose={handleClose}
           thread={thread}
           messages={messages}
+          threadChatId={threadChatId}
+          isReadOnly={isReadOnly}
+          promptBoxRef={promptBoxRef}
         />
       </div>
     </>
@@ -387,6 +402,9 @@ function SecondaryPanelContent({
   onClose,
   thread,
   messages,
+  threadChatId,
+  isReadOnly,
+  promptBoxRef,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -394,6 +412,9 @@ function SecondaryPanelContent({
   onClose: () => void;
   thread: ThreadInfoFull;
   messages: DBMessage[];
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -403,6 +424,9 @@ function SecondaryPanelContent({
       onClose={onClose}
       thread={thread}
       messages={messages}
+      threadChatId={threadChatId}
+      isReadOnly={isReadOnly}
+      promptBoxRef={promptBoxRef}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -419,6 +443,9 @@ function ArtifactWorkspaceShell({
   onClose,
   thread,
   messages,
+  threadChatId,
+  isReadOnly,
+  promptBoxRef,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -427,6 +454,9 @@ function ArtifactWorkspaceShell({
   onClose?: () => void;
   thread: ThreadInfoFull;
   messages: DBMessage[];
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   emptyState: {
     title: string;
     description: string;
@@ -553,6 +583,9 @@ function ArtifactWorkspaceShell({
               descriptor={activeArtifact.descriptor}
               thread={thread}
               messages={messages}
+              threadChatId={threadChatId}
+              isReadOnly={isReadOnly}
+              promptBoxRef={promptBoxRef}
             />
           </div>
         )}
@@ -573,10 +606,16 @@ function ActiveArtifactRenderer({
   descriptor,
   thread,
   messages,
+  threadChatId,
+  isReadOnly,
+  promptBoxRef,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
   messages: DBMessage[];
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
@@ -592,6 +631,10 @@ function ActiveArtifactRenderer({
         <PlanArtifactRenderer
           descriptor={descriptor as PlanArtifactDescriptor}
           messages={messages}
+          threadId={thread.id}
+          threadChatId={threadChatId}
+          isReadOnly={isReadOnly}
+          promptBoxRef={promptBoxRef}
         />
       );
     default:
@@ -790,12 +833,19 @@ function MediaArtifactRenderer({
 function PlanArtifactRenderer({
   descriptor,
   messages = [],
+  threadId,
+  threadChatId,
+  isReadOnly = false,
+  promptBoxRef,
 }: {
   descriptor: PlanArtifactDescriptor;
   messages?: DBMessage[];
+  threadId?: string;
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
 }) {
   const planText = useMemo(() => {
-    // ExitPlanMode tool part — resolve plan text from parameters or Write fallback
     if (descriptor.origin.type === "plan-tool") {
       const toolPart = descriptor.part as ExitPlanModeToolPart;
       return resolvePlanText({
@@ -805,23 +855,62 @@ function PlanArtifactRenderer({
       });
     }
 
-    // Delivery-loop plan — plan text is stored directly in the UIPlanPart
     const planPart = descriptor.part as UIPlanPart;
     return planPart.planText;
   }, [descriptor, messages]);
 
+  // For ExitPlanMode plans, extract the tool part ID for approve logic
+  const toolPartId = useMemo(() => {
+    if (descriptor.origin.type === "plan-tool") {
+      return (descriptor.part as ExitPlanModeToolPart).id;
+    }
+    return undefined;
+  }, [descriptor]);
+
+  const { handleApprove, isPending, shouldShowApprove } = usePlanApproval({
+    threadId: threadId ?? "",
+    threadChatId: threadChatId ?? "",
+    isReadOnly: isReadOnly || !threadId || !threadChatId,
+    promptBoxRef,
+    toolPartId,
+    messages,
+  });
+
+  // For delivery loop plans, try to parse as structured plan
+  const deliveryLoopPlan = useMemo(() => {
+    if (descriptor.origin.type !== "tool-part" || !planText) return null;
+    return parsePlanSpecViewModelFromText(planText);
+  }, [descriptor.origin.type, planText]);
+
   return (
     <div className="h-full overflow-auto p-4">
       <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="max-w-none font-sans prose prose-sm">
-          {planText ? (
-            <TextPart text={planText} />
-          ) : (
-            <p className="text-muted-foreground italic">
-              (No plan content available)
-            </p>
-          )}
-        </div>
+        {deliveryLoopPlan ? (
+          <DeliveryLoopPlanReviewCard plan={deliveryLoopPlan} />
+        ) : (
+          <div className="max-w-none font-sans prose prose-sm">
+            {planText ? (
+              <TextPart text={planText} />
+            ) : (
+              <p className="text-muted-foreground italic">
+                (No plan content available)
+              </p>
+            )}
+          </div>
+        )}
+        {shouldShowApprove && (
+          <div className="flex gap-2 pt-4 border-t mt-4">
+            <Button
+              size="sm"
+              onClick={handleApprove}
+              className="flex items-center gap-2 font-sans"
+              disabled={isPending}
+            >
+              <Check className="h-4 w-4" />
+              Approve
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
