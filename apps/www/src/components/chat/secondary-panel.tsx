@@ -98,9 +98,12 @@ export function findArtifactDescriptorForPart({
 
   // Fallback: match by key content fields. Normalization (e.g. normalizeToolCall)
   // may shallow-clone parts, breaking reference equality.
-  return (
-    artifacts.find((artifact) => partsContentEqual(artifact.part, part)) ?? null
+  // Only return a match when exactly one artifact has the same content key,
+  // to avoid resolving the wrong artifact when duplicates share a URL/content.
+  const contentMatches = artifacts.filter((artifact) =>
+    partsContentEqual(artifact.part, part),
   );
+  return contentMatches.length === 1 ? contentMatches[0]! : null;
 }
 
 /** Lightweight structural comparison using the identifying field(s) per part type. */
@@ -574,6 +577,51 @@ function DocumentArtifactRenderer({
   );
 }
 
+/** Read at most `maxBytes` from a fetch response body using a stream reader. */
+async function readCappedText(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    // Fallback when ReadableStream is unavailable (e.g. mocked fetch in tests).
+    const raw = await response.text();
+    return raw.length > maxBytes
+      ? raw.slice(0, maxBytes) +
+          "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---"
+      : raw;
+  }
+
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let totalBytes = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      // Decode only the bytes within the cap.
+      const excess = totalBytes - maxBytes;
+      chunks.push(
+        decoder.decode(value.slice(0, value.byteLength - excess), {
+          stream: false,
+        }),
+      );
+      await reader.cancel();
+      return (
+        chunks.join("") +
+        "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---"
+      );
+    }
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+  // Flush any remaining bytes from the decoder.
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
+
 function TextFileArtifactRenderer({
   textFilePart,
 }: {
@@ -598,23 +646,9 @@ function TextFileArtifactRenderer({
           throw new Error(`Request failed with status ${response.status}`);
         }
         // Cap preview at 512 KB to avoid memory spikes on large generated files.
+        // Read via stream to enforce the cap even when content-length is absent.
         const MAX_PREVIEW_BYTES = 512 * 1024;
-        const knownSize = Number(response.headers.get("content-length") || "0");
-        let content: string;
-        if (knownSize > MAX_PREVIEW_BYTES) {
-          // Skip loading entirely — prompt user to open raw.
-          content =
-            "[File too large for inline preview. Use \u201COpen raw\u201D to view.]";
-        } else {
-          const raw = await response.text();
-          if (raw.length > MAX_PREVIEW_BYTES) {
-            content =
-              raw.slice(0, MAX_PREVIEW_BYTES) +
-              "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---";
-          } else {
-            content = raw;
-          }
-        }
+        const content = await readCappedText(response, MAX_PREVIEW_BYTES);
         setState({ status: "ready", content });
       } catch (error) {
         if (controller.signal.aborted) {
