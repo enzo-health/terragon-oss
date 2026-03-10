@@ -180,9 +180,11 @@ async function countConsecutiveCompletedAutoDispatches({
         (SELECT ${schema.sdlcLoopSignalInbox.processedAt}
          FROM ${schema.sdlcLoopSignalInbox}
          WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
-           AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
            AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
-           AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' != 'completed'
+           AND NOT (
+             ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
+             AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
+           )
          ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
          LIMIT 1),
         '1970-01-01'::timestamp
