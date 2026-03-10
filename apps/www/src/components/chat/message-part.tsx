@@ -68,20 +68,34 @@ export const MessagePart = memo(function MessagePart({
       : undefined;
 
   // Find the plan artifact descriptor matching this specific text part's plan content.
-  // When multiple parts have identical plan text, planOccurrenceIndex disambiguates.
+  // When multiple parts have identical plan text across messages,
+  // planOccurrenceIndex + artifactOrdinal disambiguate.
   const planArtifactDescriptor = useMemo(() => {
     if (part.type !== "text") return null;
     const planText = extractProposedPlanText(part.text);
     if (!planText) return null;
-    const matching = artifactDescriptors.filter(
+    // First try exact match by occurrence index (stored as artifactOrdinal)
+    const exactMatch = artifactDescriptors.find(
       (d) =>
         d.kind === "plan" &&
         d.origin.type === "tool-part" &&
         d.origin.toolCallName === "proposed_plan" &&
+        d.origin.artifactOrdinal === planOccurrenceIndex &&
         "planText" in d.part &&
         d.part.planText === planText,
     );
-    return matching[planOccurrenceIndex] ?? matching[0] ?? null;
+    if (exactMatch) return exactMatch;
+    // Fallback: first descriptor with matching plan text
+    return (
+      artifactDescriptors.find(
+        (d) =>
+          d.kind === "plan" &&
+          d.origin.type === "tool-part" &&
+          d.origin.toolCallName === "proposed_plan" &&
+          "planText" in d.part &&
+          d.part.planText === planText,
+      ) ?? null
+    );
   }, [part, artifactDescriptors, planOccurrenceIndex]);
 
   const handleOpenPlanArtifact = useMemo(() => {

@@ -170,6 +170,11 @@ export function getArtifactDescriptors({
     });
   }
 
+  // Thread-global counter: how many times each plan text has been seen so far.
+  // Enables cross-message disambiguation when identical plans appear in
+  // multiple messages.
+  const planTextOccurrences = new Map<string, number>();
+
   for (const message of messages) {
     if (message.role === "system") {
       if (message.message_type !== "git-diff") {
@@ -214,6 +219,7 @@ export function getArtifactDescriptors({
           ? normalizeTimestamp(message.timestamp)
           : undefined,
       toolPath: [],
+      planTextOccurrences,
     });
   }
 
@@ -227,6 +233,7 @@ function collectArtifactDescriptorsFromParts({
   messageRole,
   messageTimestamp,
   toolPath,
+  planTextOccurrences,
 }: {
   descriptors: ArtifactDescriptor[];
   duplicateCounts: Map<string, number>;
@@ -234,18 +241,20 @@ function collectArtifactDescriptorsFromParts({
   messageRole: "user" | "agent";
   messageTimestamp?: string;
   toolPath: ToolCallOrigin[];
+  /** Thread-global counter for plan text deduplication across messages. */
+  planTextOccurrences?: Map<string, number>;
 }) {
   let toolArtifactOrdinal = 0;
 
   for (const part of parts) {
-    // Detect delivery-loop plans in agent text parts
-    if (
-      part.type === "text" &&
-      messageRole === "agent" &&
-      PROPOSED_PLAN_RE.test(part.text)
-    ) {
+    // Detect complete delivery-loop plans in agent text parts.
+    // Only create an artifact once the closing </proposed_plan> tag is present
+    // so the fingerprint (and therefore the artifact ID) is stable.
+    if (part.type === "text" && messageRole === "agent") {
       const planText = extractProposedPlanText(part.text);
       if (planText) {
+        const occurrenceIndex = planTextOccurrences?.get(planText) ?? 0;
+        planTextOccurrences?.set(planText, occurrenceIndex + 1);
         const planPart: UIPlanPart = {
           type: "plan",
           planText,
@@ -266,13 +275,16 @@ function collectArtifactDescriptorsFromParts({
             toolCallId: `plan-text-${fingerprint}`,
             toolCallName: "proposed_plan",
             toolCallPath: [],
-            artifactOrdinal: 0,
+            artifactOrdinal: occurrenceIndex,
             partType: "plan",
             fingerprint,
           },
         });
+        // Plan was extracted; skip further artifact processing for this part
+        continue;
       }
-      continue;
+      // Opening tag present but no closing tag yet (streaming) — fall through
+      // to normal processing so the text part isn't silently dropped.
     }
 
     if (part.type === "tool") {
@@ -304,6 +316,7 @@ function collectArtifactDescriptorsFromParts({
         messageRole,
         messageTimestamp,
         toolPath: [...toolPath, { id: part.id, name: part.name }],
+        planTextOccurrences,
       });
       continue;
     }
@@ -599,8 +612,6 @@ function summarizeRichText(part: UIRichTextPart): string | undefined {
 
   return text.length <= 80 ? text : `${text.slice(0, 77)}...`;
 }
-
-const PROPOSED_PLAN_RE = /<proposed_plan>/i;
 
 export function extractProposedPlanText(text: string): string | null {
   const match = text.match(/<proposed_plan>\s*([\s\S]*?)\s*<\/proposed_plan>/i);

@@ -1,6 +1,7 @@
-import { memo, useEffect, useState } from "react";
-import { UIMessage, ThreadStatus } from "@terragon/shared";
+import { memo, useEffect, useMemo, useState } from "react";
+import { UIMessage, UIPart, ThreadStatus } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import { AIAgent } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
@@ -33,6 +34,15 @@ export const ChatMessages = memo(function ChatMessages({
     }
   }
 
+  // Thread-global plan occurrence map: keyed by UIPart reference → its
+  // thread-global occurrence index for that plan text. This mirrors the
+  // `planTextOccurrences` counter in `getArtifactDescriptors` so the render
+  // side can match descriptors by occurrence index.
+  const planOccurrences = useMemo(
+    () => buildThreadPlanOccurrenceMap(messages),
+    [messages],
+  );
+
   return (
     <>
       {messages.map((message: UIMessage, index: number) => {
@@ -51,6 +61,7 @@ export const ChatMessages = memo(function ChatMessages({
             isLatestAgentMessage={isLatestAgentMessage}
             artifactDescriptors={artifactDescriptors}
             onOpenArtifact={onOpenArtifact}
+            planOccurrences={planOccurrences}
           />
         );
       })}
@@ -288,4 +299,28 @@ export function MessageScheduled({
       />
     </div>
   );
+}
+
+/**
+ * Builds a thread-global plan occurrence map across all messages.
+ * Mirrors the `planTextOccurrences` counter in `getArtifactDescriptors`
+ * so that the render side can match descriptors by occurrence index.
+ */
+function buildThreadPlanOccurrenceMap(
+  messages: UIMessage[],
+): Map<UIPart, number> {
+  const counts = new Map<string, number>();
+  const result = new Map<UIPart, number>();
+  for (const message of messages) {
+    if (message.role === "system") continue;
+    for (const part of message.parts) {
+      if (part.type !== "text") continue;
+      const planText = extractProposedPlanText((part as { text: string }).text);
+      if (!planText) continue;
+      const count = counts.get(planText) ?? 0;
+      result.set(part, count);
+      counts.set(planText, count + 1);
+    }
+  }
+  return result;
 }

@@ -216,6 +216,7 @@ export const ChatMessage = memo(function ChatMessage({
   isAgentWorking = false,
   artifactDescriptors = [],
   onOpenArtifact = () => {},
+  planOccurrences: planOccurrencesProp,
 }: {
   message: UIMessage;
   className?: string;
@@ -223,6 +224,8 @@ export const ChatMessage = memo(function ChatMessage({
   isAgentWorking?: boolean;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
+  /** Thread-global plan occurrence map (from ChatMessages). */
+  planOccurrences?: Map<UIPart, number>;
 }) {
   if (message.role === "system") {
     return (
@@ -239,10 +242,12 @@ export const ChatMessage = memo(function ChatMessage({
     isAgentWorking,
   });
   const lastGroupIndex = groups.length - 1;
-  const planOccurrences = useMemo(
+  // Prefer thread-global occurrences from parent; fall back to per-message.
+  const perMessagePlanOccurrences = useMemo(
     () => buildPlanOccurrenceMap(message.parts),
     [message.parts],
   );
+  const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
   return (
     <div
       style={{ overflowAnchor: "none" }}
@@ -318,6 +323,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   isLatestAgentMessage = false,
   artifactDescriptors = [],
   onOpenArtifact = () => {},
+  planOccurrences,
 }: {
   message: UIMessage;
   messageIndex: number;
@@ -328,6 +334,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   isLatestAgentMessage: boolean;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
+  planOccurrences?: Map<UIPart, number>;
 }) {
   return (
     <div
@@ -341,6 +348,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         isAgentWorking={isAgentWorking}
         artifactDescriptors={artifactDescriptors}
         onOpenArtifact={onOpenArtifact}
+        planOccurrences={planOccurrences}
       />
       <MessageToolbar
         message={message}
