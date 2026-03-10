@@ -305,24 +305,37 @@ export function MessageScheduled({
  * Builds a thread-global plan occurrence map across all messages.
  * Mirrors the `planTextOccurrences` counter in `getArtifactDescriptors`
  * so that the render side can match descriptors by occurrence index.
+ * Recurses into nested tool parts to match the descriptor traversal.
  */
 function buildThreadPlanOccurrenceMap(
   messages: UIMessage[],
 ): Map<UIPart, number> {
   const counts = new Map<string, number>();
   const result = new Map<UIPart, number>();
+
+  function walkParts(parts: UIPart[]) {
+    for (const part of parts) {
+      if (part.type === "text") {
+        const planText = extractProposedPlanText(
+          (part as { text: string }).text,
+        );
+        if (planText) {
+          const count = counts.get(planText) ?? 0;
+          result.set(part, count);
+          counts.set(planText, count + 1);
+        }
+      } else if (part.type === "tool" && "parts" in part) {
+        // Recurse into nested tool output (e.g. Task/subagent)
+        walkParts((part as { parts: UIPart[] }).parts);
+      }
+    }
+  }
+
   for (const message of messages) {
     // Only count agent text parts — mirrors getArtifactDescriptors which only
     // creates plan descriptors for agent messages.
     if (message.role !== "agent") continue;
-    for (const part of message.parts) {
-      if (part.type !== "text") continue;
-      const planText = extractProposedPlanText((part as { text: string }).text);
-      if (!planText) continue;
-      const count = counts.get(planText) ?? 0;
-      result.set(part, count);
-      counts.set(planText, count + 1);
-    }
+    walkParts(message.parts);
   }
   return result;
 }
