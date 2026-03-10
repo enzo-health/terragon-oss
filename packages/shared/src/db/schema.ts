@@ -1417,6 +1417,7 @@ export const sdlcLoop = pgTable(
     latestVideoFailureCode: text("latest_video_failure_code"),
     latestVideoFailureMessage: text("latest_video_failure_message"),
     latestVideoFailedAt: timestamp("latest_video_failed_at", { mode: "date" }),
+    blockedFromState: text("blocked_from_state").$type<SdlcLoopState>(),
     phaseEnteredAt: timestamp("phase_entered_at", { mode: "date" }),
     enrolledAt: timestamp("enrolled_at", { mode: "date" })
       .notNull()

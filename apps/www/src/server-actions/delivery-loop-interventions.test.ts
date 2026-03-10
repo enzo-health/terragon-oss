@@ -33,7 +33,7 @@ describe("delivery-loop-interventions", () => {
     vi.clearAllMocks();
   });
 
-  it("resumes blocked loops into implementing", async () => {
+  it("resumes blocked loops into their persisted resume phase", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -51,7 +51,7 @@ describe("delivery-loop-interventions", () => {
 
     await db
       .update(schema.sdlcLoop)
-      .set({ state: "blocked" })
+      .set({ state: "blocked", blockedFromState: "review_gate" })
       .where(eq(schema.sdlcLoop.id, loop!.id));
 
     await resumeFromBlocked({ threadId, threadChatId: null });
@@ -59,7 +59,8 @@ describe("delivery-loop-interventions", () => {
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
-    expect(reloadedLoop?.state).toBe("implementing");
+    expect(reloadedLoop?.state).toBe("review_gate");
+    expect(reloadedLoop?.blockedFromState).toBeNull();
 
     const intervention = await db.query.sdlcPhaseArtifact.findFirst({
       where: and(
@@ -70,6 +71,7 @@ describe("delivery-loop-interventions", () => {
       orderBy: [schema.sdlcPhaseArtifact.createdAt],
     });
     expect(intervention?.status).toBe("accepted");
+    expect(intervention?.phase).toBe("review_gate");
   });
 
   it("creates a generated one-time quality bypass marker", async () => {

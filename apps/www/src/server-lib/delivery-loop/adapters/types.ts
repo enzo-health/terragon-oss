@@ -1,9 +1,9 @@
 import type { DB } from "@terragon/shared/db";
 import type {
+  DeliveryLoopDispatchablePhase,
   DeliveryLoopDispatchStatus,
   DeliveryLoopFailureCategory,
   DeliveryLoopSelectedAgent,
-  DeliveryLoopState,
 } from "@terragon/shared/model/delivery-loop";
 
 /**
@@ -60,7 +60,7 @@ export type DeliveryLoopDispatchInput = {
   loopId: string;
   prompt: string;
   model: string;
-  targetPhase: DeliveryLoopState;
+  targetPhase: DeliveryLoopDispatchablePhase;
   dispatchMechanism: "self_dispatch" | "queue_fallback";
 };
 

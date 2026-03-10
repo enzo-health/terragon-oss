@@ -6,22 +6,46 @@ import { UserFacingError } from "@/lib/server-actions";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { DBUserMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import {
+  buildPersistedDeliveryLoopSnapshot,
+  coerceDeliveryLoopResumableState,
+  getActiveSdlcLoopForThread,
+  resolveBlockedResumeTarget,
+} from "@terragon/shared/model/delivery-loop";
 import { type DB } from "@terragon/shared/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 
-async function transitionBlockedLoopToImplementing({
+async function transitionBlockedLoopToResumeTarget({
   tx,
   loopId,
 }: {
-  tx: Pick<DB, "update">;
+  tx: Pick<DB, "query" | "update">;
   loopId: string;
-}): Promise<void> {
+}): Promise<ReturnType<typeof resolveBlockedResumeTarget>> {
+  const blockedLoop = await tx.query.sdlcLoop.findFirst({
+    where: and(
+      eq(schema.sdlcLoop.id, loopId),
+      eq(schema.sdlcLoop.state, "blocked"),
+    ),
+    columns: {
+      blockedFromState: true,
+    },
+  });
+  if (!blockedLoop) {
+    throw new UserFacingError(
+      "Failed to transition Delivery Loop from blocked to its resume phase",
+    );
+  }
+
+  const resumeTarget = resolveBlockedResumeTarget(
+    coerceDeliveryLoopResumableState(blockedLoop.blockedFromState),
+  );
   const now = new Date();
   const [updated] = await tx
     .update(schema.sdlcLoop)
     .set({
-      state: "implementing",
+      state: resumeTarget,
+      blockedFromState: null,
       fixAttemptCount: 0,
       phaseEnteredAt: now,
       updatedAt: now,
@@ -32,9 +56,34 @@ async function transitionBlockedLoopToImplementing({
     .returning({ id: schema.sdlcLoop.id });
   if (!updated) {
     throw new UserFacingError(
-      "Failed to transition Delivery Loop from blocked to implementing",
+      "Failed to transition Delivery Loop from blocked to its resume phase",
     );
   }
+  return resumeTarget;
+}
+
+function buildResumeFollowUpMessage(
+  resumeTarget: ReturnType<typeof resolveBlockedResumeTarget>,
+): DBUserMessage {
+  const textByPhase: Record<
+    ReturnType<typeof resolveBlockedResumeTarget>,
+    string
+  > = {
+    planning: "Resume planning and continue with the Delivery Loop.",
+    implementing: "Resume implementation and continue with the Delivery Loop.",
+    review_gate: "Resume the review gate and continue with the Delivery Loop.",
+    ci_gate: "Resume the CI gate and continue with the Delivery Loop.",
+    ui_gate: "Resume UI testing and continue with the Delivery Loop.",
+    awaiting_pr_link: "Resume PR linking and continue with the Delivery Loop.",
+    babysitting: "Resume PR babysitting and continue with the Delivery Loop.",
+  };
+
+  return {
+    type: "user",
+    model: null,
+    permissionMode: "allowAll",
+    parts: [{ type: "text", text: textByPhase[resumeTarget] }],
+  };
 }
 
 function buildBypassFollowUpMessage(): DBUserMessage {
@@ -49,6 +98,17 @@ function buildBypassFollowUpMessage(): DBUserMessage {
       },
     ],
   };
+}
+
+function canBypassDeliveryLoopOnce(params: {
+  state: typeof schema.sdlcLoop.$inferSelect.state;
+  blockedFromState?: string | null;
+}): boolean {
+  const snapshot = buildPersistedDeliveryLoopSnapshot({
+    state: params.state,
+    blockedFromState: params.blockedFromState,
+  });
+  return snapshot.kind === "blocked" || snapshot.kind === "implementing";
 }
 
 export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
@@ -75,15 +135,15 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       );
     }
 
-    await db.transaction(async (tx) => {
-      await transitionBlockedLoopToImplementing({
+    const resumeTarget = await db.transaction(async (tx) => {
+      const resumeTarget = await transitionBlockedLoopToResumeTarget({
         tx,
         loopId: activeLoop.id,
       });
 
       await tx.insert(schema.sdlcPhaseArtifact).values({
         loopId: activeLoop.id,
-        phase: "implementing",
+        phase: resumeTarget,
         artifactType: "human_intervention",
         loopVersion: activeLoop.loopVersion,
         status: "accepted",
@@ -95,6 +155,8 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
           requestedAt: new Date().toISOString(),
         },
       });
+
+      return resumeTarget;
     });
 
     if (threadChatId) {
@@ -105,19 +167,7 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
           threadChatId,
           source: "www",
           appendOrReplace: "append",
-          messages: [
-            {
-              type: "user",
-              model: null,
-              permissionMode: "allowAll",
-              parts: [
-                {
-                  type: "text",
-                  text: "Resume implementation and continue with the Delivery Loop.",
-                },
-              ],
-            },
-          ],
+          messages: [buildResumeFollowUpMessage(resumeTarget)],
         });
       } catch (error) {
         console.warn(
@@ -152,9 +202,12 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
         "No active Delivery Loop found for this thread",
       );
     }
-    const stateAllowsBypass =
-      activeLoop.state === "blocked" || activeLoop.state === "implementing";
-    if (!stateAllowsBypass) {
+    if (
+      !canBypassDeliveryLoopOnce({
+        state: activeLoop.state,
+        blockedFromState: activeLoop.blockedFromState,
+      })
+    ) {
       throw new UserFacingError(
         "Delivery Loop bypass is only available while implementing or blocked",
       );
@@ -170,6 +223,7 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
         columns: {
           id: true,
           state: true,
+          blockedFromState: true,
           loopVersion: true,
           currentHeadSha: true,
         },
@@ -179,15 +233,18 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
           "No active Delivery Loop found for this thread",
         );
       }
-      const stateAllowsBypassInTx =
-        lockedLoop.state === "blocked" || lockedLoop.state === "implementing";
-      if (!stateAllowsBypassInTx) {
+      if (
+        !canBypassDeliveryLoopOnce({
+          state: lockedLoop.state,
+          blockedFromState: lockedLoop.blockedFromState,
+        })
+      ) {
         throw new UserFacingError(
           "Delivery Loop bypass is only available while implementing or blocked",
         );
       }
       if (lockedLoop.state === "blocked") {
-        await transitionBlockedLoopToImplementing({
+        await transitionBlockedLoopToResumeTarget({
           tx,
           loopId: lockedLoop.id,
         });
@@ -271,10 +328,3 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
   },
   { defaultErrorMessage: "Failed to bypass delivery loop gate" },
 );
-
-/** @deprecated Use requestDeliveryLoopResumeFromBlocked */
-export const requestSdlcResumeFromBlocked =
-  requestDeliveryLoopResumeFromBlocked;
-/** @deprecated Use requestDeliveryLoopBypassCurrentGateOnce */
-export const requestSdlcBypassCurrentGateOnce =
-  requestDeliveryLoopBypassCurrentGateOnce;

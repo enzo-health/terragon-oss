@@ -39,7 +39,7 @@ import {
   modelToAgent,
   getDefaultModelForAgent,
   normalizedModelForDaemon,
-  isConnectedCredentialsSupported,
+  shouldUseCredits as shouldUseCreditsUtil,
   modelRequiresChatGptOAuth,
 } from "@terragon/agent/utils";
 import { handleSlashCommand } from "@/agent/slash-command-handler";
@@ -585,10 +585,10 @@ export async function startAgentMessage({
             throw new ThreadError("no-user-message", "", null);
           }
 
-          const shouldUseCredits =
-            (agentForModel === "codex" && !userCredentials.hasOpenAI) ||
-            (agentForModel === "claudeCode" && !userCredentials.hasClaude) ||
-            !isConnectedCredentialsSupported(agentForModel);
+          const shouldUseCredits = shouldUseCreditsUtil(
+            agentForModel,
+            userCredentials,
+          );
 
           const runId = randomUUID();
           const tokenNonce = randomUUID();

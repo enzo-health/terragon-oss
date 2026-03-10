@@ -6,6 +6,8 @@ import { and, eq } from "drizzle-orm";
 import { createTestThread, createTestUser } from "./test-helpers";
 import {
   acquireSdlcLoopLease,
+  buildDeliveryLoopCompanionFields,
+  buildDeliveryLoopSnapshot,
   buildSdlcCanonicalCause,
   canRunCarmackReviewForHeadSha,
   claimGithubWebhookDelivery,
@@ -43,7 +45,28 @@ import {
   releaseSdlcLoopLease,
   linkSdlcLoopToGithubPRForThread,
   markPlanTasksCompletedByAgent,
+  mapSdlcTransitionEventToDeliveryLoopTransition,
+  normalizeBlockedReasonCategory,
+  createAwaitingPrLinkSnapshot,
+  createBabysittingSnapshot,
+  createBlockedSnapshot,
+  buildPersistedDeliveryLoopSnapshot,
+  createCiGateSnapshot,
+  createDoneSnapshot,
+  createImplementingSnapshot,
+  createPlanningSnapshot,
+  createReviewGateSnapshot,
+  createStoppedSnapshot,
+  createTerminatedPrClosedSnapshot,
+  createTerminatedPrMergedSnapshot,
+  createUiGateSnapshot,
+  deliveryLoopCompanionFieldDefaults,
+  getEffectiveDeliveryLoopPhase,
+  reduceDeliveryLoopSnapshot,
+  reducePersistedDeliveryLoopState,
   resolveCarmackReviewFinding,
+  resolveDeliveryLoopNextState,
+  resolveBlockedResumeTarget,
   getUnresolvedBlockingDeepReviewFindings,
   resolveDeepReviewFinding,
   shouldQueueFollowUpForCarmackReview,
@@ -55,6 +78,307 @@ import {
 } from "./delivery-loop";
 
 const db = createDb(env.DATABASE_URL!);
+
+describe("delivery loop state model", () => {
+  it("builds canonical discriminated snapshots through explicit helpers", () => {
+    expect(
+      createPlanningSnapshot({
+        selectedAgent: "codex",
+        nextPhaseTarget: "implementing",
+      }),
+    ).toEqual({
+      kind: "planning",
+      selectedAgent: "codex",
+      nextPhaseTarget: "implementing",
+      dispatchStatus: null,
+      dispatchAttemptCount: 0,
+      activeRunId: null,
+      lastFailureCategory: null,
+    });
+
+    expect(
+      createImplementingSnapshot({
+        selectedAgent: "claudeCode",
+        dispatchStatus: "acknowledged",
+        dispatchAttemptCount: 2,
+        activeRunId: "run_123",
+      }),
+    ).toEqual({
+      kind: "implementing",
+      execution: {
+        kind: "implementation",
+        selectedAgent: "claudeCode",
+        dispatchStatus: "acknowledged",
+        dispatchAttemptCount: 2,
+        activeRunId: "run_123",
+        lastFailureCategory: null,
+      },
+    });
+
+    expect(createReviewGateSnapshot({ gateRunId: "gate_review" })).toEqual({
+      kind: "review_gate",
+      gate: {
+        gateRunId: "gate_review",
+        lastFailureCategory: null,
+      },
+    });
+    expect(createCiGateSnapshot({ gateRunId: "gate_ci" })).toEqual({
+      kind: "ci_gate",
+      gate: {
+        gateRunId: "gate_ci",
+        lastFailureCategory: null,
+      },
+    });
+    expect(createUiGateSnapshot({ gateRunId: "gate_ui" })).toEqual({
+      kind: "ui_gate",
+      gate: {
+        gateRunId: "gate_ui",
+        lastFailureCategory: null,
+      },
+    });
+    expect(createAwaitingPrLinkSnapshot({ selectedAgent: "codex" })).toEqual({
+      kind: "awaiting_pr_link",
+      selectedAgent: "codex",
+      lastFailureCategory: null,
+    });
+    expect(createBabysittingSnapshot({ selectedAgent: "claudeCode" })).toEqual({
+      kind: "babysitting",
+      selectedAgent: "claudeCode",
+      lastFailureCategory: null,
+    });
+    expect(createDoneSnapshot()).toEqual({ kind: "done" });
+    expect(createStoppedSnapshot()).toEqual({ kind: "stopped" });
+    expect(createTerminatedPrClosedSnapshot()).toEqual({
+      kind: "terminated_pr_closed",
+    });
+    expect(createTerminatedPrMergedSnapshot()).toEqual({
+      kind: "terminated_pr_merged",
+    });
+  });
+
+  it("builds a blocked snapshot with normalized reason and resumable origin", () => {
+    const snapshot = createBlockedSnapshot({
+      selectedAgent: "codex",
+      from: "review_gate",
+      reason: "gate_failure",
+      dispatchStatus: "failed",
+      dispatchAttemptCount: 2,
+      activeRunId: "run_123",
+      activeGateRunId: "gate_123",
+      lastFailureCategory: "gate_failed",
+    });
+
+    expect(snapshot).toEqual({
+      kind: "blocked",
+      from: "review_gate",
+      reason: "gate_failure",
+      selectedAgent: "codex",
+      dispatchStatus: "failed",
+      dispatchAttemptCount: 2,
+      activeRunId: "run_123",
+      activeGateRunId: "gate_123",
+      lastFailureCategory: "gate_failed",
+    });
+  });
+
+  it("falls back blocked snapshots to implementing with unknown reason", () => {
+    const snapshot = createBlockedSnapshot({
+      reason: "mystery_failure",
+    });
+
+    expect(snapshot).toEqual({
+      kind: "blocked",
+      from: "implementing",
+      reason: "unknown",
+      selectedAgent: null,
+      dispatchStatus: null,
+      dispatchAttemptCount: 0,
+      activeRunId: null,
+      activeGateRunId: null,
+      lastFailureCategory: null,
+    });
+  });
+
+  it("resumes blocked state back to its origin instead of always implementing", () => {
+    expect(
+      resolveDeliveryLoopNextState({
+        currentState: "blocked",
+        event: "blocked_resume",
+        blockedFromState: "planning",
+      }),
+    ).toBe("planning");
+
+    expect(
+      resolveDeliveryLoopNextState({
+        currentState: "blocked",
+        event: "blocked_resume",
+        blockedFromState: "awaiting_pr_link",
+      }),
+    ).toBe("awaiting_pr_link");
+  });
+
+  it("builds persisted blocked snapshots through one shared fallback helper", () => {
+    expect(
+      buildPersistedDeliveryLoopSnapshot({
+        state: "blocked",
+      }),
+    ).toEqual({
+      kind: "blocked",
+      from: "implementing",
+      reason: "unknown",
+      selectedAgent: null,
+      dispatchStatus: null,
+      dispatchAttemptCount: 0,
+      activeRunId: null,
+      activeGateRunId: null,
+      lastFailureCategory: null,
+    });
+  });
+
+  it("preserves persisted blocked origin when rebuilding canonical snapshots", () => {
+    expect(
+      buildPersistedDeliveryLoopSnapshot({
+        state: "blocked",
+        blockedFromState: "review_gate",
+      }),
+    ).toEqual({
+      kind: "blocked",
+      from: "review_gate",
+      reason: "unknown",
+      selectedAgent: null,
+      dispatchStatus: null,
+      dispatchAttemptCount: 0,
+      activeRunId: null,
+      activeGateRunId: null,
+      lastFailureCategory: null,
+    });
+  });
+
+  it("exposes strict blocked helper normalization", () => {
+    expect(resolveBlockedResumeTarget("babysitting")).toBe("babysitting");
+    expect(resolveBlockedResumeTarget(null)).toBe("implementing");
+    expect(normalizeBlockedReasonCategory("runtime_failure")).toBe(
+      "runtime_failure",
+    );
+    expect(normalizeBlockedReasonCategory("bad_value")).toBe("unknown");
+  });
+
+  it("maps canonical-compatible legacy transition events into reducer events", () => {
+    expect(
+      mapSdlcTransitionEventToDeliveryLoopTransition("review_passed"),
+    ).toBe("review_gate_passed");
+    expect(
+      mapSdlcTransitionEventToDeliveryLoopTransition(
+        "blocked_resume_requested",
+      ),
+    ).toBe("blocked_resume");
+    expect(
+      mapSdlcTransitionEventToDeliveryLoopTransition("implementation_progress"),
+    ).toBeNull();
+  });
+
+  it("resolves effective phase from blocked and non-blocked snapshots", () => {
+    expect(getEffectiveDeliveryLoopPhase(createCiGateSnapshot())).toBe(
+      "ci_gate",
+    );
+    expect(
+      getEffectiveDeliveryLoopPhase(
+        createBlockedSnapshot({
+          from: "review_gate",
+        }),
+      ),
+    ).toBe("review_gate");
+  });
+
+  it("reduces persisted loop state through the shared persisted snapshot bridge", () => {
+    const reduced = reducePersistedDeliveryLoopState({
+      state: "blocked",
+      blockedFromState: "review_gate",
+      event: "blocked_resume",
+    });
+
+    expect(reduced).toEqual({
+      state: "review_gate",
+      snapshot: {
+        kind: "review_gate",
+        gate: {
+          gateRunId: null,
+          lastFailureCategory: null,
+        },
+      },
+      companionFields: {
+        ...deliveryLoopCompanionFieldDefaults,
+        activeGateRunId: null,
+        lastFailureCategory: null,
+      },
+    });
+  });
+
+  it("round-trips snapshot metadata back into companion fields", () => {
+    const snapshot = buildDeliveryLoopSnapshot({
+      state: "implementing",
+      companionFields: {
+        selectedAgent: "claudeCode",
+        dispatchStatus: "acknowledged",
+        dispatchAttemptCount: 3,
+        activeRunId: "run_impl_123",
+        lastFailureCategory: "dispatch_ack_timeout",
+      },
+    });
+
+    expect(buildDeliveryLoopCompanionFields(snapshot)).toEqual({
+      selectedAgent: "claudeCode",
+      nextPhaseTarget: null,
+      dispatchStatus: "acknowledged",
+      dispatchAttemptCount: 3,
+      blockedReasonCategory: null,
+      blockedFromState: null,
+      activeRunId: "run_impl_123",
+      activeGateRunId: null,
+      lastFailureCategory: "dispatch_ack_timeout",
+    });
+    expect(snapshot.kind).toBe("implementing");
+  });
+
+  it("reduces retry exhaustion into a blocked snapshot with preserved origin", () => {
+    const result = reduceDeliveryLoopSnapshot({
+      snapshot: buildDeliveryLoopSnapshot({
+        state: "ci_gate",
+        companionFields: {
+          activeGateRunId: "gate_ci_123",
+          lastFailureCategory: "daemon_unreachable",
+        },
+      }),
+      event: "exhausted_retryable_failure",
+    });
+
+    expect(result).toEqual({
+      state: "blocked",
+      snapshot: {
+        kind: "blocked",
+        from: "ci_gate",
+        reason: "runtime_failure",
+        selectedAgent: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: null,
+        activeGateRunId: "gate_ci_123",
+        lastFailureCategory: "daemon_unreachable",
+      },
+      companionFields: {
+        selectedAgent: null,
+        nextPhaseTarget: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        blockedReasonCategory: "runtime_failure",
+        blockedFromState: "ci_gate",
+        activeRunId: null,
+        activeGateRunId: "gate_ci_123",
+        lastFailureCategory: "daemon_unreachable",
+      },
+    });
+  });
+});
 
 describe("sdlc loop model", () => {
   beforeEach(async () => {
@@ -1150,6 +1474,48 @@ describe("sdlc loop model", () => {
     expect(reloadedLoop?.state).toBe("implementing");
   });
 
+  it("persists ci_gate as blocked origin when CI retries exhaust into blocked", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-ci-blocked",
+    });
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "ci_gate", maxFixAttempts: 0, fixAttemptCount: 0 })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const result = await persistSdlcCiGateEvaluation({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-ci-blocked",
+      loopVersion: 2,
+      triggerEventType: "check_run.completed",
+      capabilityState: "supported",
+      rulesetChecks: ["tests"],
+      failingChecks: ["tests"],
+    });
+
+    expect(result.status).toBe("blocked");
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("blocked");
+    expect(reloadedLoop?.blockedFromState).toBe("ci_gate");
+  });
+
   it("persists review-thread gate evaluation and blocks when unresolved threads remain", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({
@@ -1204,6 +1570,58 @@ describe("sdlc loop model", () => {
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
     expect(reloadedLoop?.state).toBe("implementing");
+  });
+
+  it("persists review_gate as blocked origin when deep review retries exhaust into blocked", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+        githubPRNumber: 42,
+      },
+    });
+    const loop = await enrollSdlcLoopForGithubPR({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      threadId,
+      currentHeadSha: "sha-deep-blocked",
+    });
+    await db
+      .update(schema.sdlcLoop)
+      .set({ state: "review_gate", maxFixAttempts: 0, fixAttemptCount: 0 })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    const result = await persistDeepReviewGateResult({
+      db,
+      loopId: loop!.id,
+      headSha: "sha-deep-blocked",
+      loopVersion: 2,
+      model: "gpt-5",
+      rawOutput: {
+        findings: [
+          {
+            stableFindingId: "deep-1",
+            title: "Blocking issue",
+            severity: "high",
+            category: "correctness",
+            detail: "Needs a fix",
+            suggestedFix: "Fix it",
+            isBlocking: true,
+          },
+        ],
+      },
+    });
+
+    expect(result.status).toBe("invalid_output");
+    const reloadedLoop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloadedLoop?.state).toBe("blocked");
+    expect(reloadedLoop?.blockedFromState).toBe("review_gate");
   });
 
   it("does not resurrect terminal loops from gate persistence replays", async () => {

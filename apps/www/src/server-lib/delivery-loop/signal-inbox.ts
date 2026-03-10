@@ -6,14 +6,19 @@ import type {
   SdlcLoopState,
 } from "@terragon/shared/db/types";
 import {
+  terminalSdlcLoopStateList,
+  terminalSdlcLoopStateSet,
   acquireSdlcLoopLease,
+  buildPersistedDeliveryLoopSnapshot,
   createBabysitEvaluationArtifactForHead,
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
+  getEffectiveDeliveryLoopPhase,
   persistSdlcCiGateEvaluation,
   persistSdlcReviewThreadGateEvaluation,
   releaseSdlcLoopLease,
   transitionSdlcLoopStateWithArtifact,
+  type DeliveryLoopSnapshot,
   type SdlcGuardrailReasonCode,
 } from "@terragon/shared/model/delivery-loop";
 import { getThread } from "@terragon/shared/model/threads";
@@ -35,21 +40,13 @@ const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
-const terminalSdlcLoopStates: ReadonlySet<SdlcLoopState> = new Set([
-  "terminated_pr_closed",
-  "terminated_pr_merged",
-  "done",
-  "stopped",
-]);
+const DURABLE_SIGNAL_INBOX_MAX_ITERATIONS = 15;
 const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
   "daemon_terminal",
   "check_run.completed",
   "check_suite.completed",
   "pull_request_review",
   "pull_request_review_comment",
-]);
-const nonBabysitFeedbackSuppressedStates: ReadonlySet<SdlcLoopState> = new Set([
-  "planning",
 ]);
 const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
 const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
@@ -69,6 +66,11 @@ type PendingSignal = {
   canonicalCauseId: string;
   payload: Record<string, unknown> | null;
   receivedAt: Date;
+};
+
+type PersistedLoopPhaseContext = {
+  snapshot: DeliveryLoopSnapshot;
+  effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>;
 };
 
 export type SdlcSignalInboxGuardrailRuntimeInput = {
@@ -205,6 +207,20 @@ function stringifyError(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function buildPersistedLoopPhaseContext(params: {
+  state: SdlcLoopState;
+  blockedFromState?: SdlcLoopState | null;
+}): PersistedLoopPhaseContext {
+  const snapshot = buildPersistedDeliveryLoopSnapshot({
+    state: params.state,
+    blockedFromState: params.blockedFromState,
+  });
+  return {
+    snapshot,
+    effectivePhase: getEffectiveDeliveryLoopPhase(snapshot),
+  };
 }
 
 function buildSafeExternalFeedbackSection({
@@ -408,10 +424,18 @@ async function persistGateEvaluationForSignal({
     loopVersion: number;
     currentHeadSha: string | null;
     state: SdlcLoopState;
+    blockedFromState: SdlcLoopState | null;
   };
   signal: PendingSignal;
   now: Date;
 }): Promise<boolean> {
+  const { effectivePhase: effectiveLoopPhase } = buildPersistedLoopPhaseContext(
+    {
+      state: loop.state,
+      blockedFromState: loop.blockedFromState,
+    },
+  );
+
   if (signal.causeType === "daemon_terminal") {
     const daemonRunStatus = getPayloadText(signal.payload, "daemonRunStatus");
     if (daemonRunStatus === "stopped") {
@@ -570,7 +594,9 @@ async function persistGateEvaluationForSignal({
         },
         now,
       });
-      return evaluation.shouldQueueFollowUp || loop.state !== "babysitting";
+      return (
+        evaluation.shouldQueueFollowUp || effectiveLoopPhase !== "babysitting"
+      );
     }
 
     const requiredCheck = buildCiRequiredCheckFromSignalPayload(signal.payload);
@@ -602,7 +628,9 @@ async function persistGateEvaluationForSignal({
       },
       now,
     });
-    return evaluation.shouldQueueFollowUp || loop.state !== "babysitting";
+    return (
+      evaluation.shouldQueueFollowUp || effectiveLoopPhase !== "babysitting"
+    );
   }
 
   const unresolvedThreadCount = deriveReviewUnresolvedThreadCount({
@@ -655,18 +683,70 @@ async function persistGateEvaluationForSignal({
   });
   return (
     evaluation.shouldQueueFollowUp ||
-    (unresolvedThreadCount > 0 && loop.state !== "babysitting")
+    (unresolvedThreadCount > 0 && effectiveLoopPhase !== "babysitting")
   );
+}
+
+function resolveDaemonTerminalPhaseText(snapshot: DeliveryLoopSnapshot): {
+  phaseLabel: string;
+  followUpInstruction: string;
+} {
+  const loopState = getEffectiveDeliveryLoopPhase(snapshot);
+  switch (loopState) {
+    case "planning":
+      return {
+        phaseLabel: "the planning phase",
+        followUpInstruction:
+          "Please continue developing the implementation plan.",
+      };
+    case "review_gate":
+      return {
+        phaseLabel: "the review gate",
+        followUpInstruction:
+          "Please review the feedback and address any outstanding review comments.",
+      };
+    case "ci_gate":
+      return {
+        phaseLabel: "the CI gate",
+        followUpInstruction:
+          "Please check the CI results and fix any failures.",
+      };
+    case "ui_gate":
+      return {
+        phaseLabel: "the UI gate",
+        followUpInstruction:
+          "Please review the UI changes and address any issues.",
+      };
+    case "awaiting_pr_link":
+      return {
+        phaseLabel: "while awaiting PR link",
+        followUpInstruction: "Please create a pull request for the changes.",
+      };
+    case "babysitting":
+      return {
+        phaseLabel: "while babysitting",
+        followUpInstruction: "Please check if any further action is needed.",
+      };
+    case "implementing":
+    default:
+      return {
+        phaseLabel: "the implementing phase",
+        followUpInstruction:
+          "Please verify the changes, run relevant checks, and continue with the next step.",
+      };
+  }
 }
 
 function buildFeedbackFollowUpMessage({
   loopRepoFullName,
   loopPrNumber,
+  loopSnapshot,
   signalCauseType,
   payload,
 }: {
   loopRepoFullName: string;
   loopPrNumber: number | null;
+  loopSnapshot: DeliveryLoopSnapshot;
   signalCauseType: SdlcLoopCauseType;
   payload: Record<string, unknown> | null;
 }): DBUserMessage {
@@ -677,30 +757,38 @@ function buildFeedbackFollowUpMessage({
     const daemonRunStatus = getPayloadText(payload, "daemonRunStatus");
     const daemonErrorCategory = getPayloadText(payload, "daemonErrorCategory");
     const daemonErrorMessage = getPayloadText(payload, "daemonErrorMessage");
-    const runId = getPayloadText(payload, "runId");
-    sections.push(
+    const { phaseLabel, followUpInstruction } =
+      resolveDaemonTerminalPhaseText(loopSnapshot);
+    const repoRef =
       loopPrNumber === null
-        ? `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for ${loopRepoFullName}.`
-        : `The agent run${runId ? ` (${runId})` : ""} ended in the implementing phase for PR #${loopPrNumber} in ${loopRepoFullName}.`,
-    );
-    if (daemonRunStatus) {
-      sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
-    }
-    if (daemonErrorCategory) {
-      sections.push(`Detected failure category: ${daemonErrorCategory}.`);
-    }
-    if (daemonErrorMessage) {
-      const safeSection = buildSafeExternalFeedbackSection({
-        heading: "Daemon terminal error details",
-        text: daemonErrorMessage,
-      });
-      if (safeSection) {
-        sections.push(safeSection);
+        ? loopRepoFullName
+        : `PR #${loopPrNumber} in ${loopRepoFullName}`;
+
+    if (daemonRunStatus === "completed") {
+      sections.push(
+        `The agent run completed in ${phaseLabel} for ${repoRef}. ${followUpInstruction}`,
+      );
+    } else {
+      sections.push(`The agent run ended in ${phaseLabel} for ${repoRef}.`);
+      if (daemonRunStatus) {
+        sections.push(`Daemon terminal status: ${daemonRunStatus}.`);
       }
+      if (daemonErrorCategory && daemonErrorCategory !== "unknown") {
+        sections.push(`Detected failure category: ${daemonErrorCategory}.`);
+      }
+      if (daemonErrorMessage) {
+        const safeSection = buildSafeExternalFeedbackSection({
+          heading: "Daemon terminal error details",
+          text: daemonErrorMessage,
+        });
+        if (safeSection) {
+          sections.push(safeSection);
+        }
+      }
+      sections.push(
+        "If this failure is external (provider/config/transport), document the blocker and retry once dependencies are healthy. If code-related, apply a fix and continue.",
+      );
     }
-    sections.push(
-      "If this failure is external (provider/config/transport), document the blocker and retry once dependencies are healthy. If code-related, apply a fix and continue.",
-    );
   } else {
     sections.push(
       `The "${eventType}" event was triggered for PR #${loopPrNumber} in ${loopRepoFullName}.`,
@@ -750,6 +838,12 @@ function buildFeedbackFollowUpMessage({
     timestamp: new Date().toISOString(),
     parts: [{ type: "text", text: sections.join("\n\n") }],
   };
+}
+
+function shouldSuppressFeedbackForPhase(
+  effectiveLoopPhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>,
+): boolean {
+  return effectiveLoopPhase === "planning";
 }
 
 function areEquivalentUserMessages(
@@ -848,6 +942,7 @@ async function routeFeedbackSignalToEnrolledThread({
   loopThreadId,
   repoFullName,
   prNumber,
+  loopSnapshot,
   signal,
 }: {
   db: DB;
@@ -856,6 +951,7 @@ async function routeFeedbackSignalToEnrolledThread({
   loopThreadId: string;
   repoFullName: string;
   prNumber: number | null;
+  loopSnapshot: DeliveryLoopSnapshot;
   signal: PendingSignal;
 }) {
   const thread = await getThread({
@@ -873,6 +969,7 @@ async function routeFeedbackSignalToEnrolledThread({
   const message = buildFeedbackFollowUpMessage({
     loopRepoFullName: repoFullName,
     loopPrNumber: prNumber,
+    loopSnapshot,
     signalCauseType: signal.causeType,
     payload: signal.payload,
   });
@@ -965,9 +1062,10 @@ function buildDurableSignalInboxGuardrailRuntime() {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: null,
+    maxIterations: DURABLE_SIGNAL_INBOX_MAX_ITERATIONS,
     manualIntentAllowed: true,
-    iterationCount: 0,
+    // iterationCount intentionally omitted — resolveSignalInboxGuardrailInputs
+    // will use the loop's actual loopVersion as the iteration count.
   } satisfies SdlcSignalInboxGuardrailRuntimeInput;
 }
 
@@ -1015,7 +1113,7 @@ export async function drainDueSdlcSignalInboxActions({
     )
     .where(
       and(
-        notInArray(schema.sdlcLoop.state, [...terminalSdlcLoopStates]),
+        notInArray(schema.sdlcLoop.state, terminalSdlcLoopStateList),
         isNull(schema.sdlcLoopSignalInbox.processedAt),
         or(
           ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
@@ -1099,7 +1197,7 @@ export async function runBestEffortSdlcSignalInboxTick({
   if (!loop) {
     return { processed: false, reason: "loop_not_found" };
   }
-  if (terminalSdlcLoopStates.has(loop.state)) {
+  if (terminalSdlcLoopStateSet.has(loop.state)) {
     return { processed: false, reason: "terminal_state" };
   }
 
@@ -1122,7 +1220,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     });
     const guardrailDecision = evaluateSdlcLoopGuardrails({
       killSwitchEnabled: guardrailInputs.killSwitchEnabled,
-      isTerminalState: terminalSdlcLoopStates.has(loop.state),
+      isTerminalState: terminalSdlcLoopStateSet.has(loop.state),
       hasValidLease: true,
       cooldownUntil: guardrailInputs.cooldownUntil,
       iterationCount: guardrailInputs.iterationCount,
@@ -1153,6 +1251,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopVersion: loop.loopVersion,
           currentHeadSha: loop.currentHeadSha,
           state: loop.state,
+          blockedFromState: loop.blockedFromState,
         },
         signal,
         now,
@@ -1168,6 +1267,10 @@ export async function runBestEffortSdlcSignalInboxTick({
 
     let runtimeAction: RuntimeActionOutcome = "none";
     let feedbackQueuedMessage: DBUserMessage | null = null;
+    const loopPhaseContext = buildPersistedLoopPhaseContext({
+      state: loop.state,
+      blockedFromState: loop.blockedFromState,
+    });
     const runtimeRouting: {
       routed: boolean;
       followUpQueued: boolean;
@@ -1182,7 +1285,7 @@ export async function runBestEffortSdlcSignalInboxTick({
     const shouldSuppressFeedbackRuntimeAction =
       feedbackSignalCauseTypes.has(signal.causeType) &&
       signal.causeType !== "daemon_terminal" &&
-      nonBabysitFeedbackSuppressedStates.has(loop.state);
+      shouldSuppressFeedbackForPhase(loopPhaseContext.effectivePhase);
     const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
 
     if (
@@ -1192,6 +1295,16 @@ export async function runBestEffortSdlcSignalInboxTick({
       (typeof loop.prNumber === "number" || canRouteWithoutPrNumber)
     ) {
       try {
+        // Increment loopVersion BEFORE enqueuing the follow-up so the
+        // guardrail iterationCount advances even if the enqueue fails.
+        await db
+          .update(schema.sdlcLoop)
+          .set({
+            loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
+            updatedAt: now,
+          })
+          .where(eq(schema.sdlcLoop.id, loopId));
+
         const routeResult = await routeFeedbackSignalToEnrolledThread({
           db,
           loopId,
@@ -1199,6 +1312,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopThreadId: loop.threadId,
           repoFullName: loop.repoFullName,
           prNumber: loop.prNumber ?? null,
+          loopSnapshot: loopPhaseContext.snapshot,
           signal,
         });
         runtimeAction = "feedback_follow_up_queued";
@@ -1239,7 +1353,7 @@ export async function runBestEffortSdlcSignalInboxTick({
           loopId,
           signalId: signal.id,
           causeType: signal.causeType,
-          loopState: loop.state,
+          loopState: loopPhaseContext.effectivePhase,
         },
       );
     } else if (
@@ -1264,16 +1378,24 @@ export async function runBestEffortSdlcSignalInboxTick({
       columns: {
         state: true,
         currentHeadSha: true,
+        blockedFromState: true,
       },
     });
 
+    const refreshedLoopPhaseContext = refreshedLoop
+      ? buildPersistedLoopPhaseContext({
+          state: refreshedLoop.state,
+          blockedFromState: refreshedLoop.blockedFromState,
+        })
+      : null;
     if (
-      refreshedLoop?.state === "babysitting" &&
+      refreshedLoopPhaseContext &&
+      refreshedLoopPhaseContext.effectivePhase === "babysitting" &&
       feedbackSignalCauseTypes.has(signal.causeType)
     ) {
       const babysitHeadSha =
         getPayloadText(signal.payload, "headSha") ??
-        refreshedLoop.currentHeadSha;
+        refreshedLoop?.currentHeadSha;
       if (babysitHeadSha) {
         const babysitEvaluation = await evaluateBabysitCompletionForHead({
           db,

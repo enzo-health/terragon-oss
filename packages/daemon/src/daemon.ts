@@ -307,6 +307,7 @@ export class TerragonDaemon {
   private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
   private daemonEventRunStates: Map<string, DaemonEventRunState> = new Map();
   private appServerCrashTimestamps: number[] = [];
+  private launchedSelfDispatchRunIds: Set<string> = new Set();
 
   private messageHandleDelay: number = 0;
   private messageFlushDelay: number = 0;
@@ -695,6 +696,80 @@ export class TerragonDaemon {
       acpSessionId: input.acpSessionId ?? null,
       cleanupRequested: false,
       pendingEnvelope: null,
+    });
+  }
+
+  private startSelfDispatchRun(params: {
+    payload: SdlcSelfDispatchPayload;
+    originalThreadChatId: string;
+  }): void {
+    const { payload, originalThreadChatId } = params;
+    if (this.launchedSelfDispatchRunIds.has(payload.runId)) {
+      this.runtime.logger.info(
+        "Delivery Loop self-dispatch: skipping duplicate follow-up run",
+        {
+          threadId: payload.threadId,
+          threadChatId: payload.threadChatId,
+          runId: payload.runId,
+        },
+      );
+      return;
+    }
+    if (this.activeProcesses.has(originalThreadChatId)) {
+      this.runtime.logger.warn(
+        "Delivery Loop self-dispatch skipped: active process exists",
+        { threadChatId: originalThreadChatId },
+      );
+      return;
+    }
+    this.launchedSelfDispatchRunIds.add(payload.runId);
+    const syntheticInput: DaemonMessageClaude = {
+      type: "claude",
+      token: payload.token,
+      prompt: payload.prompt,
+      model: payload.model,
+      agent: payload.agent,
+      agentVersion: payload.agentVersion,
+      sessionId: payload.sessionId,
+      featureFlags: payload.featureFlags,
+      permissionMode: payload.permissionMode,
+      transportMode: payload.transportMode,
+      protocolVersion: payload.protocolVersion,
+      threadId: payload.threadId,
+      threadChatId: payload.threadChatId,
+      runId: payload.runId,
+      useCredits: payload.useCredits,
+    };
+    this.runtime.logger.info(
+      "Delivery Loop self-dispatch: starting follow-up run",
+      {
+        threadId: payload.threadId,
+        threadChatId: payload.threadChatId,
+        runId: payload.runId,
+      },
+    );
+    this.runCommand(syntheticInput).catch(async (error) => {
+      this.runtime.logger.error("Delivery Loop self-dispatch failed", {
+        error: formatError(error),
+        runId: payload.runId,
+        threadChatId: payload.threadChatId,
+      });
+      this.addMessageToBuffer({
+        agent: payload.agent,
+        message: {
+          type: "custom-error",
+          session_id: null,
+          duration_ms: 0,
+          error_info:
+            error instanceof Error
+              ? `Delivery Loop self-dispatch failed: ${error.message}`
+              : "Delivery Loop self-dispatch failed",
+        },
+        threadId: payload.threadId,
+        threadChatId: payload.threadChatId,
+        token: payload.token,
+      });
+      await this.flushMessageBuffer();
     });
   }
 
@@ -3515,61 +3590,7 @@ export class TerragonDaemon {
     // SDLC self-dispatch: if the server included a follow-up payload in the
     // terminal batch response, start the new run now that flush is complete.
     if (pendingSelfDispatch) {
-      const { payload, originalThreadChatId } = pendingSelfDispatch;
-      if (!this.activeProcesses.has(originalThreadChatId)) {
-        const syntheticInput: DaemonMessageClaude = {
-          type: "claude",
-          token: payload.token,
-          prompt: payload.prompt,
-          model: payload.model,
-          agent: payload.agent,
-          agentVersion: payload.agentVersion,
-          sessionId: payload.sessionId,
-          featureFlags: payload.featureFlags,
-          permissionMode: payload.permissionMode,
-          transportMode: payload.transportMode,
-          protocolVersion: payload.protocolVersion,
-          threadId: payload.threadId,
-          threadChatId: payload.threadChatId,
-          runId: payload.runId,
-        };
-        this.runtime.logger.info(
-          "Delivery Loop self-dispatch: starting follow-up run",
-          {
-            threadId: payload.threadId,
-            threadChatId: payload.threadChatId,
-            runId: payload.runId,
-          },
-        );
-        this.runCommand(syntheticInput).catch(async (error) => {
-          this.runtime.logger.error("Delivery Loop self-dispatch failed", {
-            error: formatError(error),
-            runId: payload.runId,
-            threadChatId: payload.threadChatId,
-          });
-          this.addMessageToBuffer({
-            agent: payload.agent,
-            message: {
-              type: "custom-error",
-              session_id: null,
-              duration_ms: 0,
-              error_info:
-                error instanceof Error
-                  ? `Delivery Loop self-dispatch failed: ${error.message}`
-                  : "Delivery Loop self-dispatch failed",
-            },
-            threadId: payload.threadId,
-            threadChatId: payload.threadChatId,
-            token: payload.token,
-          });
-          await this.flushMessageBuffer();
-        });
-      } else {
-        this.runtime.logger.warn(
-          "Delivery Loop self-dispatch skipped: active process exists",
-          { threadChatId: originalThreadChatId },
-        );
-      }
+      this.startSelfDispatchRun(pendingSelfDispatch);
     }
   }
 

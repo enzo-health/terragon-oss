@@ -86,9 +86,39 @@ vi.mock("@terragon/shared/utils/thread-utils", () => ({
 
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
   acquireSdlcLoopLease: vi.fn(),
+  terminalSdlcLoopStateList: [
+    "terminated_pr_closed",
+    "terminated_pr_merged",
+    "done",
+    "stopped",
+  ],
+  terminalSdlcLoopStateSet: new Set([
+    "terminated_pr_closed",
+    "terminated_pr_merged",
+    "done",
+    "stopped",
+  ]),
+  buildPersistedDeliveryLoopSnapshot: vi.fn(({ state, blockedFromState }) => ({
+    kind: state === "enrolled" ? "planning" : state,
+    ...(state === "blocked"
+      ? {
+          from: blockedFromState ?? "implementing",
+          reason: "unknown",
+          selectedAgent: null,
+          dispatchStatus: null,
+          dispatchAttemptCount: 0,
+          activeRunId: null,
+          activeGateRunId: null,
+          lastFailureCategory: null,
+        }
+      : {}),
+  })),
   createBabysitEvaluationArtifactForHead: vi.fn(),
   enqueueSdlcOutboxAction: vi.fn(),
   evaluateSdlcLoopGuardrails: vi.fn(),
+  getEffectiveDeliveryLoopPhase: vi.fn((snapshot) =>
+    snapshot.kind === "blocked" ? snapshot.from : snapshot.kind,
+  ),
   persistSdlcCiGateEvaluation: vi.fn(),
   persistSdlcReviewThreadGateEvaluation: vi.fn(),
   releaseSdlcLoopLease: vi.fn(),
@@ -193,6 +223,16 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
   });
 
   it("consumes one feedback signal, routes follow-up, enqueues publication outbox, and marks processed", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+    });
     const result = await runBestEffortSdlcSignalInboxTick({
       db: makeDb(),
       loopId: "loop-1",
@@ -389,6 +429,16 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
   });
 
   it("escapes untrusted feedback markers before queueing follow-up text", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+    });
     dbMocks.signalFindFirst.mockResolvedValueOnce({
       id: "signal-escape-1",
       causeType: "pull_request_review",
@@ -765,6 +815,16 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
   });
 
   it("returns retryable noop and leaves signal unprocessed when feedback follow-up enqueue fails", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+    });
     vi.mocked(queueFollowUpInternal).mockRejectedValueOnce(
       new Error("thread chat not found"),
     );

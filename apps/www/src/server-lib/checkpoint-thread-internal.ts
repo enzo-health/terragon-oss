@@ -584,6 +584,7 @@ async function transitionImplementationGateBlocked({
     db: dbConn,
     loopId,
     transitionEvent: "implementation_gate_blocked",
+    blockedFromState: "implementing",
   });
   if (outcome === "stale_noop" || outcome === "terminal_noop") {
     return true;
@@ -865,6 +866,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         db,
         loopId: activeLoop.id,
         transitionEvent: "plan_gate_blocked",
+        blockedFromState: "planning",
       });
       // Check if max retries exceeded → blocked_on_human_feedback
       const refreshed = await getActiveSdlcLoopForThread({
@@ -1267,6 +1269,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         db,
         loopId: reviewLoop.id,
         transitionEvent: "review_blocked",
+        blockedFromState: "review_gate",
         now: new Date(),
       });
       await queueSdlcFollowUpMessage({
@@ -1388,6 +1391,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         db,
         loopId: reviewLoop.id,
         transitionEvent: "review_blocked",
+        blockedFromState: "review_gate",
         now: new Date(),
       });
 
@@ -1499,6 +1503,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       db,
       loopId: loopAfterReview.id,
       transitionEvent: "ui_smoke_failed",
+      blockedFromState: "ui_gate",
       now: new Date(),
     });
     await queueSdlcFollowUpMessage({

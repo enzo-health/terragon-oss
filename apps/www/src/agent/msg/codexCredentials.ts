@@ -144,6 +144,16 @@ export async function getCodexCredentialsJSONOrNull({
     return { contents: JSON.stringify(authJson), error: null };
   } catch (error) {
     console.error("[getCodexCredentialsJSONOrNull] Failed:", error);
+    if (
+      error instanceof Error &&
+      error.message.includes("refresh_token_reused")
+    ) {
+      return {
+        contents: null,
+        error:
+          "OpenAI account session expired. Reconnect your ChatGPT account in settings.",
+      };
+    }
     return { contents: null, error: "Failed to get Codex credentials" };
   }
 }
