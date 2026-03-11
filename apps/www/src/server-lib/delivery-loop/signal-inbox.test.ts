@@ -1169,7 +1169,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(acquireSdlcLoopLease).toHaveBeenCalledTimes(2);
   });
 
-  it("transitions to review_gate when daemon_terminal + implementing + completed + phaseComplete + tasks complete", async () => {
+  it("transitions to review_gate when daemon_terminal + implementing + completed + all tasks complete", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1192,16 +1192,6 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
-    vi.mocked(getThread).mockResolvedValue({
-      id: "thread-1",
-      threadChats: [
-        {
-          id: "chat-1",
-          messages: [{ role: "assistant", content: '{"phaseComplete": true}' }],
-        },
-      ],
-    } as unknown as NonNullable<Awaited<ReturnType<typeof getThread>>>);
-    vi.mocked(detectPhaseCompleteSignal).mockReturnValueOnce(true);
     vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
       id: "plan-artifact-1",
     } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
@@ -1237,7 +1227,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
   });
 
-  it("queues follow-up when daemon_terminal + implementing + completed + phaseComplete + tasks incomplete", async () => {
+  it("queues follow-up when daemon_terminal + implementing + completed + tasks incomplete", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1260,7 +1250,6 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
-    vi.mocked(detectPhaseCompleteSignal).mockReturnValueOnce(true);
     vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
       id: "plan-artifact-1",
     } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
@@ -1294,7 +1283,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(queueFollowUpInternal).toHaveBeenCalled();
   });
 
-  it("queues normal follow-up with improved prompt when daemon_terminal + implementing + completed + no phaseComplete", async () => {
+  it("falls through to normal follow-up when no plan artifact exists", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1307,45 +1296,35 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       blockedFromState: null,
     });
     dbMocks.signalFindFirst.mockResolvedValueOnce({
-      id: "signal-dt-nophase-1",
+      id: "signal-dt-noplan-1",
       causeType: "daemon_terminal",
-      canonicalCauseId: "event-no-phase",
+      canonicalCauseId: "event-no-plan",
       payload: {
         eventType: "daemon_terminal",
-        runId: "run-no-phase",
+        runId: "run-no-plan",
         daemonRunStatus: "completed",
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
-    vi.mocked(detectPhaseCompleteSignal).mockReturnValueOnce(false);
+    vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce(undefined);
 
     const result = await runBestEffortSdlcSignalInboxTick({
       db: makeDb(),
       loopId: "loop-1",
-      leaseOwnerToken: "daemon-event:no-phase:1",
+      leaseOwnerToken: "daemon-event:no-plan:1",
       now: new Date("2026-01-01T00:01:00.000Z"),
     });
 
     expect(result).toEqual(
       expect.objectContaining({
         processed: true,
-        signalId: "signal-dt-nophase-1",
+        signalId: "signal-dt-noplan-1",
         causeType: "daemon_terminal",
         runtimeAction: "feedback_follow_up_queued",
       }),
     );
-    expect(transitionSdlcLoopState).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        transitionEvent: "implementation_completed",
-      }),
-    );
+    expect(verifyPlanTaskCompletionForHead).not.toHaveBeenCalled();
     expect(queueFollowUpInternal).toHaveBeenCalled();
-    const queuedPart = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0]
-      .messages[0]?.parts[0];
-    expect(queuedPart).toBeDefined();
-    if (queuedPart && queuedPart.type === "text") {
-      expect(queuedPart.text).toContain("phaseComplete");
-    }
   });
 
   it("returns false for daemon_terminal with stopped status (unchanged)", async () => {
@@ -1422,7 +1401,6 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         causeType: "daemon_terminal",
       }),
     );
-    expect(detectPhaseCompleteSignal).not.toHaveBeenCalled();
     expect(getLatestAcceptedArtifact).not.toHaveBeenCalled();
   });
 });
