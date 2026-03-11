@@ -14,10 +14,13 @@ import {
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
   getEffectiveDeliveryLoopPhase,
+  getLatestAcceptedArtifact,
   persistSdlcCiGateEvaluation,
   persistSdlcReviewThreadGateEvaluation,
   releaseSdlcLoopLease,
+  transitionSdlcLoopState,
   transitionSdlcLoopStateWithArtifact,
+  verifyPlanTaskCompletionForHead,
   type DeliveryLoopSnapshot,
   type SdlcGuardrailReasonCode,
 } from "@terragon/shared/model/delivery-loop";
@@ -37,6 +40,7 @@ import {
 } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import { detectPhaseCompleteSignal } from "@/server-lib/checkpoint-thread-internal";
 
 const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
@@ -824,7 +828,9 @@ function resolveDaemonTerminalPhaseText(
       return {
         phaseLabel: "the implementing phase",
         followUpInstruction:
-          "Please verify the changes, run relevant checks, and continue with the next step.",
+          "If all implementation tasks are complete, emit a JSON block with " +
+          '`{ "phaseComplete": true }` as your final message. ' +
+          "Otherwise, continue implementing the remaining tasks.",
       };
   }
 }
@@ -1631,6 +1637,89 @@ export async function runBestEffortSdlcSignalInboxTick({
           effectivePhase: loopPhaseContext.effectivePhase,
         });
       const canRouteWithoutPrNumber = signalPolicy.allowRoutingWithoutPrLink;
+
+      // ── Implementing-phase completion intercept ──
+      // When a daemon_terminal fires during implementing with "completed" status,
+      // check if the agent signaled phaseComplete. If so, verify task completion
+      // and transition to review_gate (or queue a targeted follow-up for incomplete
+      // tasks) instead of blindly re-dispatching with a vague prompt.
+      if (
+        signal.causeType === "daemon_terminal" &&
+        loopPhaseContext.effectivePhase === "implementing" &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp
+      ) {
+        const daemonRunStatus = getPayloadText(
+          signal.payload,
+          "daemonRunStatus",
+        );
+        if (daemonRunStatus === "completed") {
+          const thread = await getThread({
+            db,
+            userId: loop.userId,
+            threadId: loop.threadId,
+          });
+          const threadChat = thread ? getPrimaryThreadChat(thread) : null;
+          const messages = threadChat?.messages ?? null;
+          const phaseComplete = detectPhaseCompleteSignal(messages);
+
+          if (phaseComplete) {
+            const acceptedPlanArtifact = await getLatestAcceptedArtifact({
+              db,
+              loopId,
+              phase: "planning",
+              includeApprovedForPlanning: true,
+            });
+
+            if (acceptedPlanArtifact) {
+              const verified = await verifyPlanTaskCompletionForHead({
+                db,
+                loopId,
+                artifactId: acceptedPlanArtifact.id,
+                headSha: loop.currentHeadSha ?? "",
+              });
+
+              if (verified.gatePassed) {
+                await transitionSdlcLoopState({
+                  db,
+                  loopId,
+                  transitionEvent: "implementation_completed",
+                  headSha: loop.currentHeadSha,
+                  loopVersion:
+                    typeof loop.loopVersion === "number" &&
+                    Number.isFinite(loop.loopVersion)
+                      ? loop.loopVersion + 1
+                      : 1,
+                  now,
+                });
+                gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
+                console.log(
+                  "[sdlc-loop] implementing phase complete — transitioning to review_gate",
+                  { loopId, signalId: signal.id },
+                );
+              } else {
+                // Tasks incomplete — let the normal follow-up path queue a
+                // re-dispatch so the agent can finish remaining work, but log
+                // which tasks are incomplete for observability.
+                const reasons: string[] = [];
+                if (verified.incompleteTaskIds.length > 0) {
+                  reasons.push(
+                    `Incomplete tasks: ${verified.incompleteTaskIds.join(", ")}`,
+                  );
+                }
+                if (verified.invalidEvidenceTaskIds.length > 0) {
+                  reasons.push(
+                    `Tasks with stale/missing evidence: ${verified.invalidEvidenceTaskIds.join(", ")}`,
+                  );
+                }
+                console.log(
+                  "[sdlc-loop] implementing phaseComplete signaled but tasks incomplete — re-dispatching",
+                  { loopId, signalId: signal.id, reasons },
+                );
+              }
+            }
+          }
+        }
+      }
 
       if (
         signalPolicy.isFeedbackSignal &&

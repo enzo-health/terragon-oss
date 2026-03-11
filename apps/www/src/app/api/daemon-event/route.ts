@@ -100,7 +100,7 @@ const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
  * runs (daemon_terminal with daemonRunStatus=completed) before we stop
  * auto-dispatching to prevent infinite loops.
  */
-const MAX_CONSECUTIVE_AUTO_DISPATCHES = 10;
+const MAX_CONSECUTIVE_AUTO_DISPATCHES = 7;
 
 type DaemonTerminalErrorCategory =
   | "provider_not_configured"

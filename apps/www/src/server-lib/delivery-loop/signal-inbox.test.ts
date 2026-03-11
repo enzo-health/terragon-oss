@@ -12,12 +12,15 @@ import {
   createBabysitEvaluationArtifactForHead,
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
+  getLatestAcceptedArtifact,
   persistSdlcCiGateEvaluation,
   persistSdlcReviewThreadGateEvaluation,
   releaseSdlcLoopLease,
   transitionSdlcLoopState,
   transitionSdlcLoopStateWithArtifact,
+  verifyPlanTaskCompletionForHead,
 } from "@terragon/shared/model/delivery-loop";
+import { detectPhaseCompleteSignal } from "@/server-lib/checkpoint-thread-internal";
 import type { DB } from "@terragon/shared/db";
 
 const dbMocks = vi.hoisted(() => {
@@ -85,6 +88,10 @@ vi.mock("@terragon/shared/utils/thread-utils", () => ({
   getPrimaryThreadChat: vi.fn(),
 }));
 
+vi.mock("@/server-lib/checkpoint-thread-internal", () => ({
+  detectPhaseCompleteSignal: vi.fn(),
+}));
+
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
   acquireSdlcLoopLease: vi.fn(),
   terminalSdlcLoopStateList: [
@@ -117,6 +124,8 @@ vi.mock("@terragon/shared/model/delivery-loop", () => ({
   createBabysitEvaluationArtifactForHead: vi.fn(),
   enqueueSdlcOutboxAction: vi.fn(),
   evaluateSdlcLoopGuardrails: vi.fn(),
+  getLatestAcceptedArtifact: vi.fn(),
+  verifyPlanTaskCompletionForHead: vi.fn(),
   getEffectiveDeliveryLoopPhase: vi.fn((snapshot) =>
     snapshot.kind === "blocked" ? snapshot.from : snapshot.kind,
   ),
@@ -218,6 +227,14 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       loopUpdateOutcome: "updated",
     });
     vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
+    vi.mocked(detectPhaseCompleteSignal).mockReturnValue(false);
+    vi.mocked(getLatestAcceptedArtifact).mockResolvedValue(undefined);
+    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValue({
+      gatePassed: false,
+      totalTasks: 0,
+      incompleteTaskIds: [],
+      invalidEvidenceTaskIds: [],
+    });
     vi.mocked(createBabysitEvaluationArtifactForHead).mockResolvedValue({
       id: "babysit-artifact-1",
     } as Awaited<ReturnType<typeof createBabysitEvaluationArtifactForHead>>);
@@ -1150,5 +1167,262 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       reachedSignalLimit: false,
     });
     expect(acquireSdlcLoopLease).toHaveBeenCalledTimes(2);
+  });
+
+  it("transitions to review_gate when daemon_terminal + implementing + completed + phaseComplete + tasks complete", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-complete-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-impl-done",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-impl-done",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    vi.mocked(getThread).mockResolvedValue({
+      id: "thread-1",
+      threadChats: [
+        {
+          id: "chat-1",
+          messages: [{ role: "assistant", content: '{"phaseComplete": true}' }],
+        },
+      ],
+    } as unknown as NonNullable<Awaited<ReturnType<typeof getThread>>>);
+    vi.mocked(detectPhaseCompleteSignal).mockReturnValueOnce(true);
+    vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
+      id: "plan-artifact-1",
+    } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
+    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
+      gatePassed: true,
+      totalTasks: 3,
+      incompleteTaskIds: [],
+      invalidEvidenceTaskIds: [],
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:impl-done:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-dt-complete-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "none",
+      }),
+    );
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loopId: "loop-1",
+        transitionEvent: "implementation_completed",
+        headSha: "sha-loop-1",
+      }),
+    );
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+  });
+
+  it("queues follow-up when daemon_terminal + implementing + completed + phaseComplete + tasks incomplete", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-incomplete-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-impl-partial",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-impl-partial",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    vi.mocked(detectPhaseCompleteSignal).mockReturnValueOnce(true);
+    vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
+      id: "plan-artifact-1",
+    } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
+    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
+      gatePassed: false,
+      totalTasks: 3,
+      incompleteTaskIds: ["task-2", "task-3"],
+      invalidEvidenceTaskIds: [],
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:impl-partial:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-dt-incomplete-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "feedback_follow_up_queued",
+      }),
+    );
+    expect(transitionSdlcLoopState).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        transitionEvent: "implementation_completed",
+      }),
+    );
+    expect(queueFollowUpInternal).toHaveBeenCalled();
+  });
+
+  it("queues normal follow-up with improved prompt when daemon_terminal + implementing + completed + no phaseComplete", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "implementing",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-nophase-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-no-phase",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-no-phase",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    vi.mocked(detectPhaseCompleteSignal).mockReturnValueOnce(false);
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:no-phase:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-dt-nophase-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "feedback_follow_up_queued",
+      }),
+    );
+    expect(transitionSdlcLoopState).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        transitionEvent: "implementation_completed",
+      }),
+    );
+    expect(queueFollowUpInternal).toHaveBeenCalled();
+    const queuedPart = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0]
+      .messages[0]?.parts[0];
+    expect(queuedPart).toBeDefined();
+    if (queuedPart && queuedPart.type === "text") {
+      expect(queuedPart.text).toContain("phaseComplete");
+    }
+  });
+
+  it("returns false for daemon_terminal with stopped status (unchanged)", async () => {
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-stopped-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-stopped",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-stopped",
+        daemonRunStatus: "stopped",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:stopped:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-dt-stopped-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "none",
+      }),
+    );
+    expect(transitionSdlcLoopState).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        transitionEvent: "implementation_completed",
+      }),
+    );
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept daemon_terminal during non-implementing phases", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-1",
+      state: "babysitting",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-babysit-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-babysit",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-babysit",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:babysit:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-dt-babysit-1",
+        causeType: "daemon_terminal",
+      }),
+    );
+    expect(detectPhaseCompleteSignal).not.toHaveBeenCalled();
+    expect(getLatestAcceptedArtifact).not.toHaveBeenCalled();
   });
 });

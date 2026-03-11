@@ -479,7 +479,9 @@ const PHASE_COMPLETE_ALIASES: ReadonlySet<string> = new Set([
   "is_phase_complete",
 ]);
 
-function detectPhaseCompleteSignal(messages: DBMessage[] | null): boolean {
+export function detectPhaseCompleteSignal(
+  messages: DBMessage[] | null,
+): boolean {
   const agentText = extractLatestTopLevelAgentText(messages);
   if (!agentText) return false;
 
