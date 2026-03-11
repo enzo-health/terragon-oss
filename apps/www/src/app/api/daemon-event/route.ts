@@ -160,17 +160,19 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
 
 /**
  * Count trailing consecutive daemon_terminal signals with
- * daemonRunStatus=completed for this loop. Any non-completed signal
- * (failed, stopped, or non-daemon_terminal cause) resets the streak,
- * so user-initiated actions or failures unblock the breaker.
+ * daemonRunStatus=completed for this loop, limited to auto-dispatched runs
+ * (those with a dispatch intent). Human-started runs reset the streak.
  */
 async function countConsecutiveCompletedAutoDispatches({
   loopId,
 }: {
   loopId: string;
 }): Promise<number> {
-  // Single query: count completed daemon_terminal signals that appear after
-  // the most recent non-completed one (i.e. trailing consecutive completed).
+  // Count completed daemon_terminal signals that:
+  // 1. Appear after the most recent non-matching signal (streak boundary)
+  // 2. Have a corresponding dispatch intent (auto-dispatched, not human-started)
+  // Human-started runs lack a dispatch intent, so they appear in the
+  // "non-matching" subquery and reset the streak naturally.
   const result = await db.execute(sql`
     SELECT count(*) AS count
     FROM ${schema.sdlcLoopSignalInbox}
@@ -178,6 +180,11 @@ async function countConsecutiveCompletedAutoDispatches({
       AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
       AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
       AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
+      AND EXISTS (
+        SELECT 1 FROM ${schema.deliveryLoopDispatchIntent}
+        WHERE ${schema.deliveryLoopDispatchIntent.loopId} = ${loopId}
+          AND ${schema.deliveryLoopDispatchIntent.runId} = ${schema.sdlcLoopSignalInbox.payload}->>'runId'
+      )
       AND ${schema.sdlcLoopSignalInbox.processedAt} > COALESCE(
         (SELECT ${schema.sdlcLoopSignalInbox.processedAt}
          FROM ${schema.sdlcLoopSignalInbox}
@@ -186,6 +193,11 @@ async function countConsecutiveCompletedAutoDispatches({
            AND NOT (
              ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
              AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
+             AND EXISTS (
+               SELECT 1 FROM ${schema.deliveryLoopDispatchIntent}
+               WHERE ${schema.deliveryLoopDispatchIntent.loopId} = ${loopId}
+                 AND ${schema.deliveryLoopDispatchIntent.runId} = ${schema.sdlcLoopSignalInbox.payload}->>'runId'
+             )
            )
          ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
          LIMIT 1),
