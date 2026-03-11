@@ -993,7 +993,7 @@ export async function POST(request: Request) {
   // Acknowledge dispatch intent on first event for this run.
   // Updates both Redis (real-time) and DB (durable) intent records,
   // and resets the retry counter since the dispatch succeeded.
-  if (enrolledLoop && envelopeV2 && envelopeV2.seq === 1) {
+  if (enrolledLoop && envelopeV2 && envelopeV2.seq === 0) {
     try {
       await handleAckReceived({
         db,
@@ -1281,30 +1281,33 @@ export async function POST(request: Request) {
                   },
                 });
 
-                // Persist dispatch intent in both Redis (realtime) and DB (durable).
-                const [dispatchIntent] = await Promise.all([
-                  createDispatchIntent({
-                    loopId,
-                    threadId,
+                // Persist dispatch intent in Redis first (realtime), then DB (durable).
+                // Sequential to allow cleanup of Redis if DB write fails.
+                const dispatchIntentParams = {
+                  loopId,
+                  threadId,
+                  threadChatId,
+                  targetPhase: "implementing" as const,
+                  selectedAgent: agent as DeliveryLoopSelectedAgent,
+                  executionClass: "implementation_runtime" as const,
+                  dispatchMechanism: "self_dispatch" as const,
+                  runId: newRunId,
+                };
+                const dispatchIntent = await createDispatchIntent({
+                  ...dispatchIntentParams,
+                  maxRetries: 3,
+                });
+                try {
+                  await createDurableDispatchIntent(db, dispatchIntentParams);
+                } catch (durableError) {
+                  // Clean up the Redis intent so subsequent self-dispatches
+                  // don't hit the "active intent exists" guard.
+                  await completeDispatchIntent(
+                    dispatchIntent.id,
                     threadChatId,
-                    targetPhase: "implementing",
-                    selectedAgent: agent as DeliveryLoopSelectedAgent,
-                    executionClass: "implementation_runtime",
-                    dispatchMechanism: "self_dispatch",
-                    runId: newRunId,
-                    maxRetries: 3,
-                  }),
-                  createDurableDispatchIntent(db, {
-                    loopId,
-                    threadId,
-                    threadChatId,
-                    targetPhase: "implementing",
-                    selectedAgent: agent as DeliveryLoopSelectedAgent,
-                    executionClass: "implementation_runtime",
-                    dispatchMechanism: "self_dispatch",
-                    runId: newRunId,
-                  }),
-                ]);
+                  ).catch(() => {});
+                  throw durableError;
+                }
                 preparedDispatch = {
                   intentId: dispatchIntent.id,
                   runId: newRunId,
@@ -1354,10 +1357,10 @@ export async function POST(request: Request) {
                   loopId,
                   threadChatId,
                 });
-                selfDispatchPayload = preparedSelfDispatchPayload;
-
                 // Clear the consumed queued follow-up so duplicate terminal
                 // events or later queue drains don't dispatch it again.
+                // Must succeed before arming selfDispatchPayload to prevent
+                // the response returning a dispatch payload for a failed run.
                 await updateThreadChat({
                   db,
                   userId,
@@ -1365,6 +1368,7 @@ export async function POST(request: Request) {
                   threadChatId,
                   updates: { replaceQueuedMessages: [] },
                 });
+                selfDispatchPayload = preparedSelfDispatchPayload;
 
                 console.log("[sdlc-loop] self-dispatch payload prepared", {
                   userId,
