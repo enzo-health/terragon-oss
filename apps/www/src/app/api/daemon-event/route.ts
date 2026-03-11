@@ -235,7 +235,8 @@ async function countConsecutiveCompletedAutoDispatches({
     ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
     LIMIT ${MAX_CONSECUTIVE_AUTO_DISPATCHES + 1}
   `);
-  const rows = result as unknown as AutoDispatchCircuitBreakerRow[];
+  const rows = (result as unknown as { rows: AutoDispatchCircuitBreakerRow[] })
+    .rows;
   let consecutiveCount = 0;
   for (const row of rows) {
     if (
