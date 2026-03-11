@@ -26,10 +26,12 @@ export async function generateMetadata({
     return { title: "Task | Terragon" };
   }
   const { id } = await params;
-  const thread = unwrapResult(await getThreadPageShellAction(id));
-  return {
-    title: getThreadDocumentTitle(thread),
-  };
+  try {
+    const thread = unwrapResult(await getThreadPageShellAction(id));
+    return { title: getThreadDocumentTitle(thread) };
+  } catch {
+    return { title: "Task | Terragon" };
+  }
 }
 
 export default async function TaskPage({

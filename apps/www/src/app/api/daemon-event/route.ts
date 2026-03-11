@@ -9,6 +9,7 @@ import {
   type SdlcSelfDispatchPayload,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+import type { ThreadStatus } from "@terragon/shared/db/types";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
@@ -44,6 +45,7 @@ import {
   getThreadChat,
   getThreadMinimal,
   updateThreadChat,
+  updateThreadChatStatusAtomic,
 } from "@terragon/shared/model/threads";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
@@ -1100,6 +1102,8 @@ export async function POST(request: Request) {
     if (daemonSupportsSelfDispatch) {
       const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
       let preparedDispatch: { intentId: string; runId: string } | null = null;
+      let preTransitionStatus: string | null = null;
+      let postTransitionStatus: string | null = null;
       try {
         // Use the queued message directly from the tick result to avoid
         // a race with handleThreadFinish's maybeProcessFollowUpQueue which
@@ -1163,14 +1167,20 @@ export async function POST(request: Request) {
               );
             } else {
               const prompt = promptParts.join("\n\n");
+              // Capture pre-transition status for rollback on failure.
+              preTransitionStatus = threadChatForDispatch.status;
               // Transition status first WITHOUT chat updates to avoid clearing
               // queued messages on failure (chatUpdates apply unconditionally).
-              const { didUpdateStatus } = await updateThreadChatWithTransition({
-                userId,
-                threadId,
-                threadChatId,
-                eventType: "user.message",
-              });
+              const { didUpdateStatus, updatedStatus } =
+                await updateThreadChatWithTransition({
+                  userId,
+                  threadId,
+                  threadChatId,
+                  eventType: "user.message",
+                });
+              if (didUpdateStatus && updatedStatus) {
+                postTransitionStatus = updatedStatus;
+              }
 
               if (!didUpdateStatus) {
                 console.warn(
@@ -1304,6 +1314,16 @@ export async function POST(request: Request) {
                 });
                 selfDispatchPayload = preparedSelfDispatchPayload;
 
+                // Clear the consumed queued follow-up so duplicate terminal
+                // events or later queue drains don't dispatch it again.
+                await updateThreadChat({
+                  db,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  updates: { replaceQueuedMessages: [] },
+                });
+
                 console.log("[sdlc-loop] self-dispatch payload prepared", {
                   userId,
                   threadId,
@@ -1319,6 +1339,33 @@ export async function POST(request: Request) {
           }
         }
       } catch (error) {
+        // Roll back the status transition so the fallback queue path can
+        // process correctly instead of seeing a busy/queued status with no
+        // live daemon run.
+        if (preTransitionStatus && postTransitionStatus) {
+          try {
+            await updateThreadChatStatusAtomic({
+              db,
+              userId,
+              threadId,
+              threadChatId,
+              fromStatus: postTransitionStatus as ThreadStatus,
+              toStatus: preTransitionStatus as ThreadStatus,
+            });
+          } catch (rollbackError) {
+            console.error(
+              "[sdlc-loop] failed to roll back status after self-dispatch failure",
+              {
+                userId,
+                threadId,
+                threadChatId,
+                loopId,
+                preTransitionStatus,
+                rollbackError,
+              },
+            );
+          }
+        }
         if (preparedDispatch) {
           try {
             await Promise.all([
