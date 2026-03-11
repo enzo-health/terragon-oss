@@ -316,7 +316,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
             queuedMessages: [],
           },
         ],
-      } as NonNullable<Awaited<ReturnType<typeof getThread>>>)
+      } as unknown as NonNullable<Awaited<ReturnType<typeof getThread>>>)
       .mockImplementationOnce(
         async () =>
           ({
@@ -328,7 +328,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
                 queuedMessages: attemptedMessage ? [attemptedMessage] : [],
               },
             ],
-          }) as NonNullable<Awaited<ReturnType<typeof getThread>>>,
+          }) as unknown as NonNullable<Awaited<ReturnType<typeof getThread>>>,
       );
     vi.mocked(queueFollowUpInternal).mockImplementationOnce(async (input) => {
       attemptedMessage = input.messages[0] ?? null;
@@ -1068,14 +1068,17 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
     });
     expect(enqueueSdlcOutboxAction).not.toHaveBeenCalled();
-    const updatePayloads = dbMocks.markProcessedSet.mock.calls.map(
-      ([payload]) =>
-        payload as {
-          claimToken?: string | null;
-          claimedAt?: Date | null;
-          processedAt?: Date;
-        },
-    );
+    const updatePayloads = (
+      dbMocks.markProcessedSet.mock.calls as unknown as Array<
+        [
+          {
+            claimToken?: string | null;
+            claimedAt?: Date | null;
+            processedAt?: Date;
+          },
+        ]
+      >
+    ).map(([payload]) => payload);
     expect(
       updatePayloads.some((payload) => payload.processedAt instanceof Date),
     ).toBe(false);

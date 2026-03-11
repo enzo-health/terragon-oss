@@ -1686,28 +1686,30 @@ export async function POST(request: Request) {
             { status: 409 },
           );
         }
-        try {
-          await persistDaemonTerminalDispatchStatus({
-            loopId: enrolledLoop.id,
-            threadChatId,
-            runId: envelopeV2.runId,
-            daemonRunStatus: daemonRunStatusFromMessages,
-            daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-            daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-          });
-        } catch (error) {
-          console.warn(
-            "[delivery-loop] failed to persist terminal dispatch intent status on dedupe",
-            {
+        if (daemonRunStatusFromMessages !== "processing") {
+          try {
+            await persistDaemonTerminalDispatchStatus({
               loopId: enrolledLoop.id,
-              threadId,
               threadChatId,
               runId: envelopeV2.runId,
               daemonRunStatus: daemonRunStatusFromMessages,
-              reason: claimResult.reason,
-              error,
-            },
-          );
+              daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+              daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+            });
+          } catch (error) {
+            console.warn(
+              "[delivery-loop] failed to persist terminal dispatch intent status on dedupe",
+              {
+                loopId: enrolledLoop.id,
+                threadId,
+                threadChatId,
+                runId: envelopeV2.runId,
+                daemonRunStatus: daemonRunStatusFromMessages,
+                reason: claimResult.reason,
+                error,
+              },
+            );
+          }
         }
         if (claimResult.reason === "duplicate_event") {
           try {
