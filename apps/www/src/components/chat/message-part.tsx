@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import {
   AllToolParts,
   UIPart,
@@ -7,6 +7,10 @@ import {
   UITextFilePart,
   UIRichTextPart,
 } from "@terragon/shared";
+import {
+  type ArtifactDescriptor,
+  extractProposedPlanText,
+} from "@terragon/shared/db/artifact-descriptors";
 import { TextPart } from "./text-part";
 import { ImagePart } from "./image-part";
 import { PdfPart } from "./pdf-part";
@@ -15,12 +19,18 @@ import { ToolPart, ToolPartProps } from "./tool-part";
 import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
+import { findArtifactDescriptorForPart } from "./secondary-panel";
 
 export interface MessagePartProps {
   part: UIPart;
   onClick?: () => void;
   isLatest?: boolean;
   isAgentWorking?: boolean;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
+  /** When multiple text parts contain `<proposed_plan>` with identical content,
+   *  this ordinal (0-based) disambiguates which plan descriptor to open. */
+  planOccurrenceIndex?: number;
   githubRepoFullName: string;
   branchName: string | null;
   baseBranchName: string;
@@ -33,12 +43,63 @@ export const MessagePart = memo(function MessagePart({
   onClick,
   isLatest = false,
   isAgentWorking = false,
+  artifactDescriptors = [],
+  onOpenArtifact,
+  planOccurrenceIndex = 0,
   githubRepoFullName,
   branchName,
   baseBranchName,
   hasCheckpoint,
   toolProps,
 }: MessagePartProps) {
+  const artifactDescriptor = useMemo(
+    () =>
+      findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
+    [artifactDescriptors, part],
+  );
+  const handleOpenArtifact =
+    artifactDescriptor && onOpenArtifact
+      ? () => onOpenArtifact(artifactDescriptor.id)
+      : undefined;
+
+  // Find the plan artifact descriptor matching this specific text part's plan content.
+  // When multiple parts have identical plan text across messages,
+  // planOccurrenceIndex + artifactOrdinal disambiguate.
+  const planArtifactDescriptor = useMemo(() => {
+    if (part.type !== "text") return null;
+    const planText = extractProposedPlanText(part.text);
+    if (!planText) return null;
+    // First try exact match by occurrence index (stored as artifactOrdinal)
+    const exactMatch = artifactDescriptors.find(
+      (d) =>
+        d.kind === "plan" &&
+        d.origin.type === "tool-part" &&
+        d.origin.toolCallName === "proposed_plan" &&
+        d.origin.artifactOrdinal === planOccurrenceIndex &&
+        "planText" in d.part &&
+        d.part.planText === planText,
+    );
+    if (exactMatch) return exactMatch;
+    // Fallback: first descriptor with matching plan text
+    return (
+      artifactDescriptors.find(
+        (d) =>
+          d.kind === "plan" &&
+          d.origin.type === "tool-part" &&
+          d.origin.toolCallName === "proposed_plan" &&
+          "planText" in d.part &&
+          d.part.planText === planText,
+      ) ?? null
+    );
+  }, [part, artifactDescriptors, planOccurrenceIndex]);
+
+  const handleOpenPlanArtifact = useMemo(() => {
+    if (!planArtifactDescriptor || !onOpenArtifact) return undefined;
+    return () => {
+      onOpenArtifact(planArtifactDescriptor.id);
+    };
+  }, [planArtifactDescriptor, onOpenArtifact]);
+
   switch (part.type) {
     case "text": {
       return (
@@ -48,6 +109,7 @@ export const MessagePart = memo(function MessagePart({
           branchName={branchName ?? undefined}
           baseBranchName={baseBranchName}
           hasCheckpoint={hasCheckpoint}
+          onOpenInArtifactWorkspace={handleOpenPlanArtifact}
         />
       );
     }
@@ -62,19 +124,43 @@ export const MessagePart = memo(function MessagePart({
     }
     case "tool": {
       const toolPart = part as AllToolParts;
-      return <ToolPart toolPart={toolPart} {...toolProps} />;
+      return (
+        <ToolPart
+          toolPart={toolPart}
+          {...toolProps}
+          artifactDescriptors={artifactDescriptors}
+          onOpenArtifact={onOpenArtifact}
+        />
+      );
     }
     case "image": {
       const imagePart = part as UIImagePart;
-      return <ImagePart imageUrl={imagePart.image_url} onClick={onClick} />;
+      return (
+        <ImagePart
+          imageUrl={imagePart.image_url}
+          onClick={onClick}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
+        />
+      );
     }
     case "rich-text": {
       const richTextPart = part as UIRichTextPart;
-      return <RichTextPart richTextPart={richTextPart} />;
+      return (
+        <RichTextPart
+          richTextPart={richTextPart}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
+        />
+      );
     }
     case "pdf": {
       const pdfPart = part as UIPdfPart;
-      return <PdfPart pdfUrl={pdfPart.pdf_url} filename={pdfPart.filename} />;
+      return (
+        <PdfPart
+          pdfUrl={pdfPart.pdf_url}
+          filename={pdfPart.filename}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
+        />
+      );
     }
     case "text-file": {
       const textFilePart = part as UITextFilePart;
@@ -83,9 +169,13 @@ export const MessagePart = memo(function MessagePart({
           textFileUrl={textFilePart.file_url}
           filename={textFilePart.filename}
           mimeType={textFilePart.mime_type}
+          onOpenInArtifactWorkspace={handleOpenArtifact}
         />
       );
     }
+    case "plan":
+      // Plan parts are rendered via the artifact workspace panel, not inline
+      return null;
     default:
       assertNever(part);
   }
@@ -103,7 +193,10 @@ function areMessagePartPropsEqual(
     prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
     prevProps.branchName !== nextProps.branchName ||
     prevProps.baseBranchName !== nextProps.baseBranchName ||
-    prevProps.hasCheckpoint !== nextProps.hasCheckpoint
+    prevProps.hasCheckpoint !== nextProps.hasCheckpoint ||
+    prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.planOccurrenceIndex !== nextProps.planOccurrenceIndex
   ) {
     return false;
   }

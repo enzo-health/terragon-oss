@@ -359,6 +359,8 @@ export async function createDispatchIntent(
 
 /**
  * Partially update an existing dispatch intent in Redis.
+ * Validates that the stored intent id matches to prevent stale
+ * ack/failure events from mutating a newer intent.
  */
 export async function updateDispatchIntent(
   id: string,
@@ -371,6 +373,16 @@ export async function updateDispatchIntent(
   >,
 ): Promise<void> {
   const key = redisKey(threadChatId);
+
+  // Guard: verify the stored intent matches the requested id.
+  const storedId = await redis.hget<string>(key, "id");
+  if (storedId && storedId !== id) {
+    console.warn(
+      `[dispatch-intent] updateDispatchIntent: id mismatch (requested=${id}, stored=${storedId}), skipping update`,
+    );
+    return;
+  }
+
   const patch: Record<string, string> = {
     updatedAt: new Date().toISOString(),
   };
@@ -456,13 +468,21 @@ export async function getReplayableSelfDispatch(params: {
 
 /**
  * Mark a dispatch intent as completed. Redis entry gets a short TTL (5 minutes)
- * for post-completion inspection.
+ * for post-completion inspection. Verifies the stored intent id matches the
+ * requested id to prevent accidentally completing a newer active intent.
  */
 export async function completeDispatchIntent(
   id: string,
   threadChatId: string,
 ): Promise<void> {
   const key = redisKey(threadChatId);
+  const storedId = await redis.hget<string>(key, "id");
+  if (storedId && storedId !== id) {
+    console.warn(
+      `[dispatch-intent] completeDispatchIntent: id mismatch (requested=${id}, stored=${storedId}), skipping`,
+    );
+    return;
+  }
   await redis.hset(key, {
     status: "completed",
     updatedAt: new Date().toISOString(),

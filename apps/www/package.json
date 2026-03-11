@@ -8,7 +8,7 @@
     "dev:cron": "dotenv -e .env.development.local -- vercel-cron",
     "build": "pnpm --filter @terragon/shared drizzle-kit-migrate && pnpm --filter bundled build && next build",
     "start": "next start",
-    "test": "vitest",
+    "test": "node ./scripts/run-vitest.mjs",
     "storybook": "ladle serve",
     "tsc-watch": "tsc --noEmit --watch --preserveWatchOutput",
     "tsc-check": "tsc --noEmit",

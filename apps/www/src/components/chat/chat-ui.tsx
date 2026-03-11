@@ -60,6 +60,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
 import { ensureAgent } from "@terragon/agent/utils";
+import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
 import { usePlatform } from "@/hooks/use-platform";
@@ -134,6 +135,7 @@ function ChatUI({
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const platform = usePlatform();
   const [showTerminal, setShowTerminal] = useState(false);
+  const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const {
     shouldAutoOpenSecondaryPanel,
     isSecondaryPanelOpen,
@@ -242,14 +244,15 @@ function ChatUI({
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
   // This will set the cookie if the panel is opened automatically
   useEffect(() => {
+    if (isSecondaryPanelOpen) return;
     if (shell?.hasGitDiff && shouldAutoOpenSecondaryPanel) {
       setIsSecondaryPanelOpen(true);
-      return;
     }
   }, [
     shell?.hasGitDiff,
     shouldAutoOpenSecondaryPanel,
     setIsSecondaryPanelOpen,
+    isSecondaryPanelOpen,
   ]);
   useThreadDocumentTitleAndFavicon({
     name: shell?.name ?? "",
@@ -366,6 +369,63 @@ function ChatUI({
     threadStatus: threadChat?.status,
     cacheKey: threadChatId ?? threadId,
   });
+  const artifactDescriptors = useMemo(
+    () =>
+      getArtifactDescriptors({
+        messages,
+        thread: thread
+          ? {
+              id: thread.id,
+              updatedAt: thread.updatedAt,
+              gitDiff: thread.gitDiff,
+              gitDiffStats: thread.gitDiffStats,
+            }
+          : null,
+      }),
+    [messages, thread],
+  );
+  const handleOpenArtifact = useCallback(
+    (artifactId: string) => {
+      setActiveArtifactId(artifactId);
+      setIsSecondaryPanelOpen(true);
+    },
+    [setIsSecondaryPanelOpen],
+  );
+
+  // Auto-open panel when new plan artifacts appear
+  const seenPlanIdsRef = useRef<Set<string>>(new Set());
+  const prevThreadIdRef = useRef(threadId);
+  useEffect(() => {
+    const planDescriptors = artifactDescriptors.filter(
+      (d) => d.kind === "plan",
+    );
+
+    // On thread switch, seed with all current plan IDs so existing plans aren't treated as new
+    if (prevThreadIdRef.current !== threadId) {
+      prevThreadIdRef.current = threadId;
+      seenPlanIdsRef.current = new Set(planDescriptors.map((d) => d.id));
+      return;
+    }
+
+    if (!shouldAutoOpenSecondaryPanel) return;
+
+    const newPlan = planDescriptors.findLast(
+      (d) => !seenPlanIdsRef.current.has(d.id),
+    );
+
+    for (const d of planDescriptors) {
+      seenPlanIdsRef.current.add(d.id);
+    }
+
+    if (newPlan) {
+      handleOpenArtifact(newPlan.id);
+    }
+  }, [
+    artifactDescriptors,
+    shouldAutoOpenSecondaryPanel,
+    handleOpenArtifact,
+    threadId,
+  ]);
 
   const isAgentCurrentlyWorking = threadChat
     ? isAgentWorking(threadChat.status)
@@ -526,6 +586,8 @@ function ChatUI({
                   toolProps={toolProps}
                   redoDialogData={redoDialogData}
                   forkDialogData={forkDialogData}
+                  artifactDescriptors={artifactDescriptors}
+                  onOpenArtifact={handleOpenArtifact}
                 />
                 {(error ||
                   threadChat.errorMessage ||
@@ -590,7 +652,17 @@ function ChatUI({
             </ScrollArea>
           </div>
           {shouldRenderSecondaryPanel ? (
-            <SecondaryPanel thread={thread} containerRef={chatContainerRef} />
+            <SecondaryPanel
+              thread={thread}
+              artifactDescriptors={artifactDescriptors}
+              activeArtifactId={activeArtifactId}
+              onActiveArtifactChange={setActiveArtifactId}
+              containerRef={chatContainerRef}
+              messages={dbMessages}
+              threadChatId={threadChat.id}
+              isReadOnly={isReadOnly}
+              promptBoxRef={promptBoxRef}
+            />
           ) : null}
         </div>
       </div>

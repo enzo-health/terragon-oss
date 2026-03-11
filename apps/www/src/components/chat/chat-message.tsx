@@ -1,17 +1,20 @@
 "use client";
 
-import React, { memo, useState } from "react";
+import React, { memo, useMemo, useState } from "react";
 import {
   AllToolParts,
   DBUserMessage,
   GitDiffStats,
   UIAgentMessage,
   UIMessage,
+  UIPart,
   UISystemMessage,
   ThreadInfoFull,
   UIUserMessage,
   UIGitDiffPart,
 } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { MessagePart, MessagePartProps } from "./message-part";
 import { cn } from "@/lib/utils";
@@ -69,6 +72,10 @@ type ChatMessageProps = {
   messagePartProps?: MessagePartRenderProps;
   thread?: ThreadInfoFull | null;
   latestGitDiffTimestamp?: string | null;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
+  /** Thread-global plan occurrence map (from ChatMessages). */
+  planOccurrences?: Map<UIPart, number>;
 };
 
 type ChatMessageWithToolbarProps = {
@@ -84,6 +91,9 @@ type ChatMessageWithToolbarProps = {
   latestGitDiffTimestamp?: string | null;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
+  planOccurrences?: Map<UIPart, number>;
 };
 
 const DEFAULT_MESSAGE_PART_PROPS: MessagePartRenderProps = {
@@ -232,10 +242,14 @@ function ImageGroup({
   group,
   messagePartProps,
   isLatestMessage = false,
+  artifactDescriptors,
+  onOpenArtifact,
 }: {
   group: PartGroup;
   messagePartProps: MessagePartRenderProps;
   isLatestMessage?: boolean;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
 }) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
@@ -258,6 +272,8 @@ function ImageGroup({
               onClick={() => setExpandedIndex(partIndex)}
               isLatest={isLatestMessage && partIndex === numParts - 1}
               {...messagePartProps}
+              artifactDescriptors={artifactDescriptors}
+              onOpenArtifact={onOpenArtifact}
             />
           );
         })}
@@ -314,6 +330,9 @@ export const ChatMessage = memo(function ChatMessage({
   messagePartProps = DEFAULT_MESSAGE_PART_PROPS,
   thread = null,
   latestGitDiffTimestamp = null,
+  artifactDescriptors = [],
+  onOpenArtifact = () => {},
+  planOccurrences: planOccurrencesProp,
 }: ChatMessageProps) {
   if (message.role === "system") {
     return (
@@ -321,6 +340,8 @@ export const ChatMessage = memo(function ChatMessage({
         message={message}
         thread={thread}
         latestGitDiffTimestamp={latestGitDiffTimestamp}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
       />
     );
   }
@@ -330,6 +351,12 @@ export const ChatMessage = memo(function ChatMessage({
     isAgentWorking,
   });
   const lastGroupIndex = groups.length - 1;
+  // Prefer thread-global occurrences from parent; fall back to per-message.
+  const perMessagePlanOccurrences = useMemo(
+    () => buildPlanOccurrenceMap(message.parts),
+    [message.parts],
+  );
+  const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
   return (
     <div
       style={{ overflowAnchor: "none" }}
@@ -353,6 +380,9 @@ export const ChatMessage = memo(function ChatMessage({
                 isLatestMessage={isLatestMessage}
                 isAgentWorking={isAgentWorking}
                 messagePartProps={messagePartProps}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
+                planOccurrences={planOccurrences}
               />
             );
           }
@@ -363,6 +393,8 @@ export const ChatMessage = memo(function ChatMessage({
                 group={group}
                 messagePartProps={messagePartProps}
                 isLatestMessage={isLatestMessage}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
               />
             );
           }
@@ -376,6 +408,9 @@ export const ChatMessage = memo(function ChatMessage({
                     isLatest={isLatestMessage && groupIndex === lastGroupIndex}
                     isAgentWorking={isAgentWorking}
                     {...messagePartProps}
+                    artifactDescriptors={artifactDescriptors}
+                    onOpenArtifact={onOpenArtifact}
+                    planOccurrenceIndex={planOccurrences.get(part)}
                   />
                 );
               })}
@@ -403,6 +438,9 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   latestGitDiffTimestamp = null,
   redoDialogData,
   forkDialogData,
+  artifactDescriptors = [],
+  onOpenArtifact = () => {},
+  planOccurrences,
 }: ChatMessageWithToolbarProps) {
   return (
     <div
@@ -417,6 +455,9 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         messagePartProps={messagePartProps}
         thread={thread}
         latestGitDiffTimestamp={latestGitDiffTimestamp}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
+        planOccurrences={planOccurrences}
       />
       <MessageToolbar
         message={message}
@@ -491,6 +532,14 @@ function areChatMessageWithToolbarPropsEqual(
     return false;
   }
 
+  if (
+    prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.planOccurrences !== nextProps.planOccurrences
+  ) {
+    return false;
+  }
+
   return (
     prevProps.redoDialogData === nextProps.redoDialogData &&
     prevProps.forkDialogData === nextProps.forkDialogData
@@ -501,10 +550,14 @@ function SystemMessage({
   message,
   thread,
   latestGitDiffTimestamp,
+  artifactDescriptors,
+  onOpenArtifact,
 }: {
   message: UISystemMessage;
   thread: ThreadInfoFull | null;
   latestGitDiffTimestamp: string | null;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const getLabel = () => {
@@ -577,6 +630,8 @@ function SystemMessage({
           gitDiffPart={gitDiffPart}
           thread={thread}
           isLatest={latestGitDiffTimestamp === gitDiffPart.timestamp}
+          artifactDescriptors={artifactDescriptors}
+          onOpenArtifact={onOpenArtifact}
         />
       </div>
     );
@@ -645,12 +700,18 @@ function CollapsibleAgentActivityGroup({
   isLatestMessage = false,
   isAgentWorking = false,
   messagePartProps,
+  artifactDescriptors,
+  onOpenArtifact,
+  planOccurrences,
 }: {
   group: PartGroup;
   agent: AIAgent | null;
   isLatestMessage: boolean;
   isAgentWorking: boolean;
   messagePartProps: MessagePartRenderProps;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
+  planOccurrences: Map<UIPart, number>;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const numParts = group.parts.length;
@@ -680,6 +741,9 @@ function CollapsibleAgentActivityGroup({
                 isLatest={isLatestMessage && partIndex === numParts - 1}
                 isAgentWorking={isAgentWorking}
                 {...messagePartProps}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
+                planOccurrenceIndex={planOccurrences.get(part)}
               />
             );
           })}
@@ -687,4 +751,23 @@ function CollapsibleAgentActivityGroup({
       )}
     </div>
   );
+}
+
+/**
+ * Builds a map of part object -> plan occurrence index for parts that contain
+ * identical `<proposed_plan>` text. Keyed by reference so that group-level
+ * lookups work regardless of which subset of parts is being iterated.
+ */
+function buildPlanOccurrenceMap(parts: UIPart[]): Map<UIPart, number> {
+  const counts = new Map<string, number>();
+  const result = new Map<UIPart, number>();
+  for (const part of parts) {
+    if (part.type !== "text") continue;
+    const planText = extractProposedPlanText(part.text);
+    if (!planText) continue;
+    const count = counts.get(planText) ?? 0;
+    result.set(part, count);
+    counts.set(planText, count + 1);
+  }
+  return result;
 }

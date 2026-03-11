@@ -191,41 +191,50 @@ export async function drainDueDeliveryLoopRetryJobs({
     }
 
     claimed += 1;
-    const job = await getRetryJob(jobId);
-    if (!job) {
-      await deleteRetryJob(jobId);
-      skipped += 1;
-      continue;
-    }
+    try {
+      const job = await getRetryJob(jobId);
+      if (!job) {
+        await deleteRetryJob(jobId);
+        skipped += 1;
+        continue;
+      }
 
-    const result = await runFollowUpQueue({
-      userId: job.userId,
-      threadId: job.threadId,
-      threadChatId: job.threadChatId,
-    });
+      const result = await runFollowUpQueue({
+        userId: job.userId,
+        threadId: job.threadId,
+        threadChatId: job.threadChatId,
+      });
 
-    if (result.processed || result.reason === "no_queued_messages") {
+      if (result.processed || result.reason === "no_queued_messages") {
+        await deleteRetryJob(job.id);
+        completed += 1;
+        continue;
+      }
+
+      if (
+        result.reason === "dispatch_retry_scheduled" ||
+        result.reason === "scheduled_not_runnable" ||
+        result.reason === "status_transition_noop_busy" ||
+        result.reason === "agent_rate_limited"
+      ) {
+        await rescheduleRetryJob({
+          job,
+          runAt: new Date(Date.now() + 30_000),
+        });
+        rescheduled += 1;
+        continue;
+      }
+
       await deleteRetryJob(job.id);
       completed += 1;
-      continue;
+    } catch (jobError) {
+      // Release the claim so the job can be retried on next sweep.
+      await redis.del(retryJobClaimKey(jobId)).catch(() => {});
+      console.error(
+        "[retry-jobs] per-job error, releasing claim and continuing",
+        { jobId, error: jobError },
+      );
     }
-
-    if (
-      result.reason === "dispatch_retry_scheduled" ||
-      result.reason === "scheduled_not_runnable" ||
-      result.reason === "status_transition_noop_busy" ||
-      result.reason === "agent_rate_limited"
-    ) {
-      await rescheduleRetryJob({
-        job,
-        runAt: new Date(Date.now() + 30_000),
-      });
-      rescheduled += 1;
-      continue;
-    }
-
-    await deleteRetryJob(job.id);
-    completed += 1;
   }
 
   return {

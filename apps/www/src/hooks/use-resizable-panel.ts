@@ -217,9 +217,25 @@ export function useResizablePanel({
     mode,
   ]);
 
+  // Wrap setWidth so external callers (e.g. keyboard resize) also update
+  // the stored percentage, keeping container-resize sync consistent.
+  const setWidthAndSync = useCallback(
+    (nextWidth: number | ((prev: number) => number)) => {
+      setWidth((prev) => {
+        const resolved =
+          typeof nextWidth === "function" ? nextWidth(prev) : nextWidth;
+        if (mode === "percentage") {
+          widthPercentageRef.current = resolved / getContainerWidth();
+        }
+        return resolved;
+      });
+    },
+    [mode, getContainerWidth],
+  );
+
   return {
     width,
-    setWidth,
+    setWidth: setWidthAndSync,
     isResizing,
     handleMouseDown,
   };

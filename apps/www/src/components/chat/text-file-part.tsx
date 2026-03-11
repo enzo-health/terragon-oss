@@ -1,16 +1,19 @@
-import { FileText, Download } from "lucide-react";
+import React from "react";
+import { FileText, Download, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface TextFilePartProps {
   textFileUrl: string;
   filename?: string;
   mimeType?: string;
+  onOpenInArtifactWorkspace?: () => void;
 }
 
 export function TextFilePart({
   textFileUrl,
   filename,
   mimeType,
+  onOpenInArtifactWorkspace,
 }: TextFilePartProps) {
   const displayName = filename || getDefaultFilename(mimeType);
 
@@ -32,14 +35,27 @@ export function TextFilePart({
       >
         {displayName}
       </span>
+      {onOpenInArtifactWorkspace && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 flex-shrink-0"
+          onClick={onOpenInArtifactWorkspace}
+          title="Open in artifact panel"
+          aria-label={`Open ${displayName} in artifact workspace`}
+        >
+          <ExternalLink className="size-3" aria-hidden="true" />
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="icon"
         className="size-6 flex-shrink-0"
         onClick={handleDownload}
         title="Download file"
+        aria-label={`Download ${displayName}`}
       >
-        <Download className="size-3" />
+        <Download className="size-3" aria-hidden="true" />
       </Button>
     </div>
   );
