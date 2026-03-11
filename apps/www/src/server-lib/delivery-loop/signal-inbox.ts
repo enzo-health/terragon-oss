@@ -535,6 +535,21 @@ async function persistGateEvaluationForSignal({
     if (daemonRunStatus === "stopped") {
       return false;
     }
+    // Guard: during implementing, only allow re-dispatch if we have a headSha
+    // (either from daemon payload or on the loop). Without a headSha,
+    // verification will always fail → no-progress infinite loop.
+    if (
+      daemonRunStatus === "completed" &&
+      effectiveLoopPhase === "implementing"
+    ) {
+      const payloadHeadSha = getPayloadText(
+        signal.payload,
+        "headShaAtCompletion",
+      );
+      if (!payloadHeadSha && !loop.currentHeadSha) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -827,8 +842,7 @@ function resolveDaemonTerminalPhaseText(
       return {
         phaseLabel: "the implementing phase",
         followUpInstruction:
-          "If all implementation tasks are complete, emit a JSON block with " +
-          '`{ "phaseComplete": true }` as your final message. ' +
+          "If all implementation tasks are complete, call the MarkImplementingTasksComplete tool with all completed task IDs. " +
           "Otherwise, continue implementing the remaining tasks.",
       };
   }
@@ -1660,11 +1674,18 @@ export async function runBestEffortSdlcSignalInboxTick({
           });
 
           if (acceptedPlanArtifact) {
+            const headShaAtCompletion = getPayloadText(
+              signal.payload,
+              "headShaAtCompletion",
+            );
+            const effectiveHeadSha =
+              headShaAtCompletion || loop.currentHeadSha || "";
+
             const verified = await verifyPlanTaskCompletionForHead({
               db,
               loopId,
               artifactId: acceptedPlanArtifact.id,
-              headSha: loop.currentHeadSha ?? "",
+              headSha: effectiveHeadSha,
             });
 
             if (verified.gatePassed) {
@@ -1672,7 +1693,7 @@ export async function runBestEffortSdlcSignalInboxTick({
                 db,
                 loopId,
                 transitionEvent: "implementation_completed",
-                headSha: loop.currentHeadSha,
+                headSha: effectiveHeadSha || null,
                 loopVersion:
                   typeof loop.loopVersion === "number" &&
                   Number.isFinite(loop.loopVersion)

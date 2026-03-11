@@ -2851,6 +2851,9 @@ export class TerragonDaemon {
             ...process.env,
             ...env,
             DAEMON_TOKEN: input.token,
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
           },
           onStdoutLine: (line) => {
             this.runtime.logger.debug("Agent output", { processId, line });
@@ -3622,6 +3625,25 @@ export class TerragonDaemon {
           })
         : null;
       const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+      const hasTerminalMessage = messages.some(
+        (m) =>
+          m.type === "result" ||
+          m.type === "custom-error" ||
+          m.type === "custom-stop",
+      );
+      let headShaAtCompletion: string | null = null;
+      if (hasTerminalMessage) {
+        try {
+          const sha = this.runtime
+            .execSync("git rev-parse HEAD 2>/dev/null")
+            .trim();
+          if (/^[0-9a-f]{40}$/i.test(sha)) {
+            headShaAtCompletion = sha;
+          }
+        } catch {
+          /* no git repo or git not available */
+        }
+      }
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -3635,6 +3657,7 @@ export class TerragonDaemon {
           ? { codexPreviousResponseId }
           : {}),
         ...(envelopeV2 ?? {}),
+        ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
       };
 
       const selfDispatchPayload = await this.runtime.serverPost(payload, token);

@@ -779,11 +779,8 @@ function buildDeliveryLoopPhasePromptPrefix(
       return [
         "Delivery Loop phase: implementing.",
         "Implement the approved plan with concrete code changes.",
-        "Mark completed tasks with evidence and signal completion:",
-        "",
-        "```json",
-        '{ "taskUpdates": [{ "stableTaskId": "task-id", "status": "done", "note": "..." }], "phaseComplete": true }',
-        "```",
+        "When you complete a plan task, call the MarkImplementingTasksComplete tool with the task's stableTaskId and status.",
+        "After completing all tasks, call MarkImplementingTasksComplete with all completed task IDs.",
         "",
         ...(env.SKIP_LOCAL_QUALITY_CHECKS
           ? [
@@ -791,15 +788,14 @@ function buildDeliveryLoopPhasePromptPrefix(
               "Rely on required GitHub CI checks before merge.",
             ]
           : [
-              "Before signaling phaseComplete, you MUST verify:",
+              "Before marking all tasks complete, you MUST verify:",
               "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
               "2. Linting passes (run the project's lint command if available)",
               "3. Type checking passes (run the project's typecheck command if available)",
               "4. Tests pass (run targeted tests for affected package(s)/files; avoid full monorepo test runs unless explicitly required by the task or requested by the user)",
-              "Fix any failures before setting phaseComplete: true.",
+              "Fix any failures before marking tasks complete.",
             ]),
         "",
-        "Only set phaseComplete: true when ALL planned tasks are implemented.",
         "Do not skip directly to PR babysitting in this phase.",
       ].join("\n");
     case "review_gate":

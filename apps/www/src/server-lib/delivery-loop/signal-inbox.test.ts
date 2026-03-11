@@ -1189,6 +1189,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         eventType: "daemon_terminal",
         runId: "run-impl-done",
         daemonRunStatus: "completed",
+        headShaAtCompletion: "sha-from-daemon",
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
@@ -1217,14 +1218,72 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         runtimeAction: "none",
       }),
     );
+    expect(verifyPlanTaskCompletionForHead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headSha: "sha-from-daemon",
+      }),
+    );
     expect(transitionSdlcLoopState).toHaveBeenCalledWith(
       expect.objectContaining({
         loopId: "loop-1",
         transitionEvent: "implementation_completed",
-        headSha: "sha-loop-1",
+        headSha: "sha-from-daemon",
       }),
     );
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
+  });
+
+  it("uses loop.currentHeadSha as fallback when no headShaAtCompletion in payload", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: "sha-loop-fallback",
+      state: "implementing",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-no-head-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-impl-no-head",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-no-head",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
+      id: "plan-artifact-1",
+    } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
+    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
+      gatePassed: true,
+      totalTasks: 3,
+      incompleteTaskIds: [],
+      invalidEvidenceTaskIds: [],
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:no-head:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        runtimeAction: "none",
+      }),
+    );
+    expect(verifyPlanTaskCompletionForHead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headSha: "sha-loop-fallback",
+      }),
+    );
   });
 
   it("queues follow-up when daemon_terminal + implementing + completed + tasks incomplete", async () => {
@@ -1247,6 +1306,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         eventType: "daemon_terminal",
         runId: "run-impl-partial",
         daemonRunStatus: "completed",
+        headShaAtCompletion: "sha-loop-1",
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
@@ -1303,6 +1363,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         eventType: "daemon_terminal",
         runId: "run-no-plan",
         daemonRunStatus: "completed",
+        headShaAtCompletion: "sha-loop-1",
       },
       receivedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
@@ -1358,6 +1419,48 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(transitionSdlcLoopState).not.toHaveBeenCalledWith(
       expect.objectContaining({
         transitionEvent: "implementation_completed",
+      }),
+    );
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+  });
+
+  it("does not re-dispatch when implementing + completed + no headSha anywhere (gate guard)", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: null,
+      state: "implementing",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-no-sha-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-no-sha",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-no-sha",
+        daemonRunStatus: "completed",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:no-sha:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        signalId: "signal-dt-no-sha-1",
+        causeType: "daemon_terminal",
+        runtimeAction: "none",
       }),
     );
     expect(queueFollowUpInternal).not.toHaveBeenCalled();

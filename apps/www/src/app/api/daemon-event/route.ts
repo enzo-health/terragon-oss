@@ -561,6 +561,7 @@ async function claimEnrolledLoopDaemonEvent({
   daemonRunStatus,
   daemonErrorMessage,
   daemonErrorCategory,
+  headShaAtCompletion,
 }: {
   loopId: string;
   threadId: string;
@@ -569,6 +570,7 @@ async function claimEnrolledLoopDaemonEvent({
   daemonRunStatus: "processing" | "completed" | "failed" | "stopped";
   daemonErrorMessage: string | null;
   daemonErrorCategory: DaemonTerminalErrorCategory;
+  headShaAtCompletion: string | null;
 }): Promise<DaemonEventClaimResult> {
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -703,6 +705,7 @@ async function claimEnrolledLoopDaemonEvent({
           daemonRunStatus,
           daemonErrorMessage,
           daemonErrorCategory,
+          ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
         },
       })
       .onConflictDoNothing()
@@ -1667,6 +1670,10 @@ export async function POST(request: Request) {
         daemonRunStatus: daemonRunStatusFromMessages,
         daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
         daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+        headShaAtCompletion:
+          typeof json.headShaAtCompletion === "string"
+            ? json.headShaAtCompletion
+            : null,
       });
       if (!claimResult.claimed) {
         if (claimResult.reason === "claim_in_progress") {

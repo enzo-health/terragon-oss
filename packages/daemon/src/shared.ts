@@ -241,4 +241,6 @@ export type DaemonEventAPIBody = {
   eventId?: string;
   runId?: string;
   seq?: number;
+  /** Git HEAD sha captured after the agent turn completes, before sending terminal message. */
+  headShaAtCompletion?: string | null;
 };
