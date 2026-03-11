@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { usePlanApproval, useSecondaryPanel } from "../hooks";
 import { findArtifactDescriptorForPart } from "../secondary-panel";
 
-function truncatePlanPreview(text: string, maxChars = 150): string {
+export function truncatePlanPreview(text: string, maxChars = 150): string {
   if (text.length <= maxChars) return text;
   const cutoff = text.indexOf("\n\n", maxChars);
   const end = cutoff !== -1 ? cutoff : maxChars;

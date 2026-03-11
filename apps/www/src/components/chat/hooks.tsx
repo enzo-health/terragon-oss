@@ -148,6 +148,26 @@ export function useOptimisticUpdateThreadChat({
   );
 }
 
+export function computeShouldShowApprove({
+  canApprove,
+  toolPartId,
+  messages,
+}: {
+  canApprove: boolean;
+  toolPartId?: string;
+  messages: DBMessage[];
+}): boolean {
+  if (!canApprove || !toolPartId) return false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.type === "user") break;
+    if (msg?.type === "tool-call" && msg.name === "ExitPlanMode") {
+      return msg.id === toolPartId;
+    }
+  }
+  return false;
+}
+
 export function usePlanApproval({
   threadId,
   threadChatId,
@@ -173,17 +193,10 @@ export function usePlanApproval({
 
   const canApprove = !isReadOnly && !!threadId && !!threadChatId;
 
-  const shouldShowApprove = useMemo(() => {
-    if (!canApprove || !toolPartId) return false;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg?.type === "user") break;
-      if (msg?.type === "tool-call" && msg.name === "ExitPlanMode") {
-        return msg.id === toolPartId;
-      }
-    }
-    return false;
-  }, [canApprove, toolPartId, messages]);
+  const shouldShowApprove = useMemo(
+    () => computeShouldShowApprove({ canApprove, toolPartId, messages }),
+    [canApprove, toolPartId, messages],
+  );
 
   const handleApprove = useCallback(async () => {
     if (!canApprove) return;
