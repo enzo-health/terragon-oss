@@ -577,7 +577,7 @@ describe("approvePlan", () => {
     const refreshedStaleArtifact = await db.query.sdlcPhaseArtifact.findFirst({
       where: eq(schema.sdlcPhaseArtifact.id, staleApprovedArtifact.id),
     });
-    expect(refreshedStaleArtifact?.status).toBe("approved");
+    expect(refreshedStaleArtifact?.status).toBe("superseded");
   });
 
   it("does not fallback to unrelated approved artifact when approval CAS is lost", async () => {
