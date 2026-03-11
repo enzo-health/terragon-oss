@@ -163,39 +163,43 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
 }
 
 /**
- * Count trailing consecutive daemon_terminal signals with
+ * Count trailing consecutive auto-dispatched daemon_terminal signals with
  * daemonRunStatus=completed for this loop. Any non-completed signal
  * (failed, stopped, or non-daemon_terminal cause) resets the streak,
  * so failures unblock the breaker.
  *
- * Within an SDLC loop, all runs are effectively auto-dispatched (even
- * human messages go through the follow-up queue), so counting all
- * completed daemon_terminal signals is the correct approach.
+ * Only counts runs that have a matching dispatch intent in the DB
+ * (deliveryLoopDispatchIntent), which excludes human-started runs
+ * that go through startAgentMessage directly.
  */
 async function countConsecutiveCompletedAutoDispatches({
   loopId,
 }: {
   loopId: string;
 }): Promise<number> {
-  // Single query: count completed daemon_terminal signals that appear after
-  // the most recent non-completed one (i.e. trailing consecutive completed).
+  // Count trailing completed daemon_terminal signals that were auto-dispatched
+  // (have a matching dispatch intent). Joins against deliveryLoopDispatchIntent
+  // on the signal's payload->>'runId' to filter out human-started runs.
   const result = await db.execute(sql`
     SELECT count(*) AS count
-    FROM ${schema.sdlcLoopSignalInbox}
-    WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
-      AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
-      AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
-      AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
-      AND ${schema.sdlcLoopSignalInbox.processedAt} > COALESCE(
-        (SELECT ${schema.sdlcLoopSignalInbox.processedAt}
-         FROM ${schema.sdlcLoopSignalInbox}
-         WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
-           AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
+    FROM ${schema.sdlcLoopSignalInbox} s
+    INNER JOIN ${schema.deliveryLoopDispatchIntent} di
+      ON di.run_id = s.payload->>'runId'
+      AND di.loop_id = s.loop_id
+    WHERE s.loop_id = ${loopId}
+      AND s.cause_type = 'daemon_terminal'
+      AND s.processed_at IS NOT NULL
+      AND s.payload->>'daemonRunStatus' = 'completed'
+      AND s.processed_at > COALESCE(
+        (SELECT s2.processed_at
+         FROM ${schema.sdlcLoopSignalInbox} s2
+         WHERE s2.loop_id = ${loopId}
+           AND s2.processed_at IS NOT NULL
            AND NOT (
-             ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
-             AND ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' = 'completed'
+             s2.cause_type = 'daemon_terminal'
+             AND s2.payload->>'daemonRunStatus' = 'completed'
            )
-         ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
+         ORDER BY s2.processed_at DESC
          LIMIT 1),
         '1970-01-01'::timestamp
       )
