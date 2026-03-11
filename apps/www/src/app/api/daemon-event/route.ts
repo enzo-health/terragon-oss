@@ -18,6 +18,7 @@ import {
   type DeliveryLoopSelectedAgent,
   createDispatchIntent as createDurableDispatchIntent,
   markDispatchIntentDispatched,
+  markDispatchIntentFailed as markDurableDispatchIntentFailed,
 } from "@terragon/shared/model/delivery-loop";
 import {
   buildDispatchIntentId,
@@ -180,6 +181,12 @@ async function countConsecutiveCompletedAutoDispatches({
   // Count trailing completed daemon_terminal signals that were auto-dispatched
   // (have a matching dispatch intent). Joins against deliveryLoopDispatchIntent
   // on the signal's payload->>'runId' to filter out human-started runs.
+  //
+  // The streak-reset subquery finds the most recent signal that is NOT an
+  // auto-dispatched completed run. This includes:
+  //   - Non-daemon_terminal signals (PR reviews, check runs, etc.)
+  //   - Failed/stopped daemon_terminal signals
+  //   - Human-started completed daemon_terminal signals (no dispatch intent)
   const result = await db.execute(sql`
     SELECT count(*) AS count
     FROM ${schema.sdlcLoopSignalInbox} s
@@ -193,11 +200,15 @@ async function countConsecutiveCompletedAutoDispatches({
       AND s.processed_at > COALESCE(
         (SELECT s2.processed_at
          FROM ${schema.sdlcLoopSignalInbox} s2
+         LEFT JOIN ${schema.deliveryLoopDispatchIntent} di2
+           ON di2.run_id = s2.payload->>'runId'
+           AND di2.loop_id = s2.loop_id
          WHERE s2.loop_id = ${loopId}
            AND s2.processed_at IS NOT NULL
            AND NOT (
              s2.cause_type = 'daemon_terminal'
              AND s2.payload->>'daemonRunStatus' = 'completed'
+             AND di2.id IS NOT NULL
            )
          ORDER BY s2.processed_at DESC
          LIMIT 1),
@@ -1103,6 +1114,23 @@ export async function POST(request: Request) {
           seq,
         },
       );
+      // Surface to the user so the task doesn't look finished while
+      // queued work is stranded.
+      await updateThreadChat({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+        updates: {
+          errorMessage: "unknown-error",
+          errorMessageInfo: `Auto-dispatch circuit breaker triggered after ${completedCount} consecutive runs. Send a message to continue.`,
+        },
+      }).catch((err) =>
+        console.error("[sdlc-loop] failed to surface circuit breaker to user", {
+          loopId,
+          err,
+        }),
+      );
       return;
     }
 
@@ -1349,24 +1377,24 @@ export async function POST(request: Request) {
                   }),
                   markDispatchIntentDispatched(db, newRunId),
                 ]);
-                // Only arm the timeout once the replay record exists and the
-                // self-dispatch payload is actually recoverable on retries.
-                startAckTimeout({
-                  db,
-                  runId: newRunId,
-                  loopId,
-                  threadChatId,
-                });
                 // Clear the consumed queued follow-up so duplicate terminal
                 // events or later queue drains don't dispatch it again.
-                // Must succeed before arming selfDispatchPayload to prevent
-                // the response returning a dispatch payload for a failed run.
+                // Must succeed before arming selfDispatchPayload and the
+                // ack timeout to prevent returning a dispatch payload for
+                // a run that's only partially prepared.
                 await updateThreadChat({
                   db,
                   userId,
                   threadId,
                   threadChatId,
                   updates: { replaceQueuedMessages: [] },
+                });
+                // Arm ack timeout only after all preparatory writes succeed.
+                startAckTimeout({
+                  db,
+                  runId: newRunId,
+                  loopId,
+                  threadChatId,
                 });
                 selfDispatchPayload = preparedSelfDispatchPayload;
 
@@ -1413,16 +1441,23 @@ export async function POST(request: Request) {
           }
         }
         if (preparedDispatch) {
+          const failureMsg =
+            error instanceof Error
+              ? error.message
+              : "self-dispatch preparation failed";
           try {
             await Promise.all([
               updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
                 status: "failed",
-                lastError:
-                  error instanceof Error
-                    ? error.message
-                    : "self-dispatch preparation failed",
+                lastError: failureMsg,
                 lastFailureCategory: "config_error",
               }),
+              markDurableDispatchIntentFailed(
+                db,
+                preparedDispatch.runId,
+                "config_error",
+                failureMsg,
+              ),
               updateAgentRunContext({
                 db,
                 runId: preparedDispatch.runId,
