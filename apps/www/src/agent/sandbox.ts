@@ -245,10 +245,6 @@ async function getOrCreateSandboxForThread({
   const applyAcpTransportDefaults = (
     variables: Array<{ key: string; value: string }>,
   ): Array<{ key: string; value: string }> => {
-    if (!userFeatureFlags.sandboxAgentAcpTransport) {
-      return variables;
-    }
-
     return variables.some(
       (entry) =>
         entry.key === "SANDBOX_AGENT_BASE_URL" && entry.value.trim().length > 0,

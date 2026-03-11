@@ -62,7 +62,6 @@ import {
 } from "@/server-lib/thread-context";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { randomUUID } from "node:crypto";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { redis } from "@/lib/redis";
 import { env } from "@terragon/env/apps-www";
 import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
@@ -606,10 +605,6 @@ export async function startAgentMessage({
 
           const runId = randomUUID();
           const tokenNonce = randomUUID();
-          const featureFlags = await getFeatureFlagsForUser({
-            db,
-            userId,
-          });
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
           const effectivePermissionMode = activeSdlcLoop
             ? "allowAll"
@@ -627,10 +622,6 @@ export async function startAgentMessage({
             codexPreviousResponseId,
             shouldUseCredits,
             threadChatId,
-            featureFlags: {
-              sandboxAgentAcpTransport: featureFlags.sandboxAgentAcpTransport,
-              codexAppServerTransport: featureFlags.codexAppServerTransport,
-            },
           });
           if (
             implementationDispatch.codexPreviousResponseId !==

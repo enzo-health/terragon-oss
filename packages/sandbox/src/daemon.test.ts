@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { installDaemon } from "./daemon";
+import { installDaemon, sendMessage } from "./daemon";
 import type { ISandboxSession } from "./types";
 
 // Mock the bundled imports
@@ -294,6 +294,54 @@ describe("daemon installation", () => {
         "mock-mcp-server-content",
       );
       expect(writtenFiles["/tmp/mcp-server.json"]).toBeDefined();
+    });
+  });
+
+  describe("daemon message transport", () => {
+    it("writes payload to file and sends daemon write via stdin redirection", async () => {
+      await sendMessage({
+        session: mockSession,
+        message: { type: "ping" },
+      });
+
+      expect(
+        (mockSession.writeTextFile as any).mock.calls.length,
+      ).toBeGreaterThan(0);
+      const [messageFilePath, messageJson] = (mockSession.writeTextFile as any)
+        .mock.calls[(mockSession.writeTextFile as any).mock.calls.length - 1];
+      expect(messageFilePath).toMatch(
+        /^\/tmp\/terragon-daemon-message-[0-9]+-[a-f0-9]{12}\.json$/,
+      );
+      expect(messageJson).toBe(JSON.stringify({ type: "ping" }));
+
+      expect(executedCommands).toContain(
+        `node /tmp/terragon-daemon.mjs --write < ${messageFilePath}`,
+      );
+      expect(executedCommands).toContain(`rm -f ${messageFilePath}`);
+    });
+
+    it("cleans up message file when daemon write fails", async () => {
+      (mockSession.runCommand as any).mockImplementation(
+        async (command: string) => {
+          executedCommands.push(command);
+          if (command.includes("--write <")) {
+            throw new Error("fatal daemon write failure");
+          }
+          return "";
+        },
+      );
+
+      await expect(
+        sendMessage({
+          session: mockSession,
+          message: { type: "ping" },
+        }),
+      ).rejects.toThrow("fatal daemon write failure");
+
+      const [messageFilePath] = (mockSession.writeTextFile as any).mock.calls[
+        (mockSession.writeTextFile as any).mock.calls.length - 1
+      ];
+      expect(executedCommands).toContain(`rm -f ${messageFilePath}`);
     });
   });
 });

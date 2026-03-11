@@ -1278,19 +1278,12 @@ export async function POST(request: Request) {
               // SDLC follow-ups always use allowAll — same as startAgentMessage
               // which forces allowAll when activeSdlcLoop is true.
               const effectivePermissionMode = "allowAll" as const;
-              const supportsAcp =
-                agent === "codex" || agent === "amp" || agent === "opencode";
-              const shouldUseCodexAppServerTransport =
-                agent === "codex" && userFeatureFlags.codexAppServerTransport;
-              const shouldUseAcpTransport =
-                !shouldUseCodexAppServerTransport &&
-                userFeatureFlags.sandboxAgentAcpTransport &&
-                supportsAcp;
-              const transportMode = shouldUseCodexAppServerTransport
-                ? ("codex-app-server" as const)
-                : shouldUseAcpTransport
-                  ? ("acp" as const)
-                  : ("legacy" as const);
+              const transportMode =
+                agent === "codex"
+                  ? ("codex-app-server" as const)
+                  : agent === "gemini"
+                    ? ("legacy" as const)
+                    : ("acp" as const);
               const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
 
               // Create run context

@@ -187,20 +187,28 @@ function createDaemonRequest(
   headers: Record<string, string> = {},
   options: { autoCapabilities?: boolean } = {},
 ) {
+  // Default to ACP transport to match the default beforeEach mock.
+  // Tests that need different transport (e.g. legacy, codex-app-server)
+  // should explicitly specify transportMode/protocolVersion.
+  const bodyWithDefaults: Record<string, unknown> = {
+    transportMode: "acp",
+    protocolVersion: 2,
+    ...body,
+  };
   const requestHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...headers,
   };
 
   const hasEnvelopeV2 =
-    body.payloadVersion === 2 &&
-    typeof body.eventId === "string" &&
-    body.eventId.length > 0 &&
-    typeof body.runId === "string" &&
-    body.runId.length > 0 &&
-    typeof body.seq === "number" &&
-    Number.isInteger(body.seq) &&
-    body.seq >= 0;
+    bodyWithDefaults.payloadVersion === 2 &&
+    typeof bodyWithDefaults.eventId === "string" &&
+    bodyWithDefaults.eventId.length > 0 &&
+    typeof bodyWithDefaults.runId === "string" &&
+    bodyWithDefaults.runId.length > 0 &&
+    typeof bodyWithDefaults.seq === "number" &&
+    Number.isInteger(bodyWithDefaults.seq) &&
+    bodyWithDefaults.seq >= 0;
   if (
     (options.autoCapabilities ?? true) &&
     hasEnvelopeV2 &&
@@ -213,7 +221,7 @@ function createDaemonRequest(
   return new Request("http://localhost/api/daemon-event", {
     method: "POST",
     headers: requestHeaders,
-    body: JSON.stringify(body),
+    body: JSON.stringify(bodyWithDefaults),
   });
 }
 
@@ -261,8 +269,8 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
         sandboxId: "sandbox-1",
         agent: "claudeCode",
-        transportMode: "legacy",
-        protocolVersion: 1,
+        transportMode: "acp",
+        protocolVersion: 2,
         providers: ["anthropic"],
         nonce: "nonce-1",
         issuedAt: Date.now(),
@@ -275,8 +283,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -538,8 +546,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -565,7 +573,7 @@ describe("daemon-event route", () => {
           },
         ],
         timezone: "UTC",
-        transportMode: "legacy",
+        transportMode: "acp",
         payloadVersion: 2,
         eventId: "event-terminal",
         runId: "run-1",
@@ -591,8 +599,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,

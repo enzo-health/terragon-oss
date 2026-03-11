@@ -20,8 +20,6 @@ export const DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH =
 export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
   sdlcLoopCoordinatorRouting?: boolean;
-  sandboxAgentAcpTransport?: boolean;
-  codexAppServerTransport?: boolean;
 };
 
 export const DaemonTransportModeSchema = z.enum([

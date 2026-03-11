@@ -277,29 +277,45 @@ export async function sendMessage({
   message: DaemonMessage;
 }) {
   const jsonMessage = JSON.stringify(message);
-  // base64-encode to avoid shell escaping issues with JSON special chars
-  const b64 = Buffer.from(jsonMessage).toString("base64");
-  for (let attempt = 0; attempt < DAEMON_SEND_MAX_ATTEMPTS; attempt++) {
-    try {
-      await session.runCommand(
-        `echo '${b64}' | base64 -d | node ${DAEMON_FILE_PATH} --write`,
-        { timeoutMs: DAEMON_SEND_TIMEOUT_MS, cwd: "/" },
-      );
-      console.log("Message sent to daemon", { attempt: attempt + 1 });
-      return;
-    } catch (error) {
-      const isLastAttempt = attempt === DAEMON_SEND_MAX_ATTEMPTS - 1;
-      const transient = isTransientDaemonSendError(error);
-      if (!transient || isLastAttempt) {
-        throw error;
+  const messageHash = createHash("sha256")
+    .update(jsonMessage)
+    .digest("hex")
+    .slice(0, 12);
+  const messageFilePath = `/tmp/terragon-daemon-message-${Date.now()}-${messageHash}.json`;
+
+  await session.writeTextFile(messageFilePath, jsonMessage);
+  try {
+    for (let attempt = 0; attempt < DAEMON_SEND_MAX_ATTEMPTS; attempt++) {
+      try {
+        await session.runCommand(
+          `node ${DAEMON_FILE_PATH} --write < ${messageFilePath}`,
+          { timeoutMs: DAEMON_SEND_TIMEOUT_MS, cwd: "/" },
+        );
+        console.log("Message sent to daemon", { attempt: attempt + 1 });
+        return;
+      } catch (error) {
+        const isLastAttempt = attempt === DAEMON_SEND_MAX_ATTEMPTS - 1;
+        const transient = isTransientDaemonSendError(error);
+        if (!transient || isLastAttempt) {
+          throw error;
+        }
+        const waitMs = computeRetryBackoffMs(attempt);
+        console.warn("Transient daemon send failure, retrying", {
+          attempt: attempt + 1,
+          waitMs,
+          error,
+        });
+        await sleep(waitMs);
       }
-      const waitMs = computeRetryBackoffMs(attempt);
-      console.warn("Transient daemon send failure, retrying", {
-        attempt: attempt + 1,
-        waitMs,
-        error,
+    }
+  } finally {
+    try {
+      await session.runCommand(`rm -f ${messageFilePath}`, { cwd: "/" });
+    } catch (cleanupError) {
+      console.warn("Failed to clean up daemon message temp file", {
+        messageFilePath,
+        cleanupError,
       });
-      await sleep(waitMs);
     }
   }
 }

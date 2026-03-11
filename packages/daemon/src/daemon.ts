@@ -846,11 +846,6 @@ export class TerragonDaemon {
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.startHeartbeat(input.threadChatId);
     if (input.transportMode === "acp") {
-      if (!this.getFeatureFlag("sandboxAgentAcpTransport")) {
-        throw new Error(
-          "ACP transport requested but sandboxAgentAcpTransport feature flag is disabled",
-        );
-      }
       try {
         await this.runAcpTransportCommand(input);
       } catch (error) {

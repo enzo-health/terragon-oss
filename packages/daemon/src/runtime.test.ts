@@ -345,7 +345,7 @@ describe("parseSdlcSelfDispatchPayload", () => {
       agent: "claude-code",
       agentVersion: 1,
       protocolVersion: 2,
-      transportMode: "legacy",
+      transportMode: "acp",
       permissionMode: "allowAll",
       sessionId: null as string | null,
       featureFlags: {},

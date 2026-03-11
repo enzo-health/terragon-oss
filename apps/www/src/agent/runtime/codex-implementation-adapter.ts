@@ -6,50 +6,53 @@ import type {
 
 export const codexImplementationAdapter: ImplementationRuntimeAdapter = {
   createDispatch(input: ImplementationAdapterInput): ImplementationDispatch {
-    const transportEligible =
+    const codexAppServerEligible =
       input.permissionMode !== "plan" &&
       input.threadChatId !== "legacy-thread-chat-id";
-    const transportMode =
-      transportEligible && input.featureFlags.codexAppServerTransport
-        ? ("codex-app-server" as const)
-        : transportEligible && input.featureFlags.sandboxAgentAcpTransport
-          ? ("acp" as const)
-          : ("legacy" as const);
-    const protocolVersion = transportMode === "acp" ? 2 : 1;
 
-    let requestedSessionId = input.sessionId;
-    let codexPreviousResponseId = input.codexPreviousResponseId;
-    if (transportMode !== "codex-app-server") {
-      codexPreviousResponseId = null;
-    }
-    if (transportMode === "acp") {
-      requestedSessionId = null;
-      codexPreviousResponseId = null;
+    if (codexAppServerEligible) {
+      return {
+        transportMode: "codex-app-server",
+        protocolVersion: 1,
+        requestedSessionId: input.sessionId,
+        codexPreviousResponseId: input.codexPreviousResponseId,
+        message: {
+          type: "claude",
+          model: input.normalizedModel,
+          agent: input.agent,
+          agentVersion: input.agentVersion,
+          prompt: input.prompt,
+          sessionId: input.sessionId,
+          codexPreviousResponseId: input.codexPreviousResponseId,
+          permissionMode: input.permissionMode,
+          runId: input.runId,
+          transportMode: "codex-app-server",
+          protocolVersion: 1,
+          ...(input.shouldUseCredits ? { useCredits: true } : {}),
+        },
+      };
     }
 
+    // Plan mode or legacy-thread-chat-id: fall back to ACP
     return {
-      transportMode,
-      protocolVersion,
-      requestedSessionId,
-      codexPreviousResponseId,
+      transportMode: "acp",
+      protocolVersion: 2,
+      requestedSessionId: null,
+      codexPreviousResponseId: null,
       message: {
         type: "claude",
         model: input.normalizedModel,
         agent: input.agent,
         agentVersion: input.agentVersion,
         prompt: input.prompt,
-        sessionId: requestedSessionId,
-        codexPreviousResponseId,
+        sessionId: null,
+        codexPreviousResponseId: null,
         permissionMode: input.permissionMode,
         runId: input.runId,
-        transportMode,
-        protocolVersion,
-        ...(transportMode === "acp"
-          ? {
-              acpServerId: `terragon-${input.runId}`,
-              acpSessionId: input.sessionId ?? null,
-            }
-          : {}),
+        transportMode: "acp",
+        protocolVersion: 2,
+        acpServerId: `terragon-${input.runId}`,
+        acpSessionId: input.sessionId ?? null,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),
       },
     };
