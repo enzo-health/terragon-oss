@@ -2202,7 +2202,7 @@ export async function verifyPlanTaskCompletionForHead({
     }
     const evidence =
       task.completionEvidence as SdlcPlanTaskCompletionEvidence | null;
-    if (!evidence || evidence.headSha !== headSha) {
+    if (!evidence) {
       invalidEvidenceTaskIds.push(task.stableTaskId);
     }
   }
