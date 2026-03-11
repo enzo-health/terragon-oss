@@ -16,8 +16,12 @@ import {
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
   type DeliveryLoopSelectedAgent,
+  createDispatchIntent as createDurableDispatchIntent,
+  markDispatchIntentDispatched,
 } from "@terragon/shared/model/delivery-loop";
 import {
+  buildDispatchIntentId,
+  completeDispatchIntent,
   createDispatchIntent,
   getReplayableSelfDispatch,
   storeSelfDispatchReplay,
@@ -1104,6 +1108,17 @@ export async function POST(request: Request) {
     );
 
     if (daemonSupportsSelfDispatch) {
+      // Complete the previous run's Redis dispatch intent so the next
+      // createDispatchIntent call doesn't hit the "active intent exists" guard.
+      const completingIntentId = buildDispatchIntentId(loopId, sourceRunId);
+      await completeDispatchIntent(completingIntentId, threadChatId).catch(
+        (err) =>
+          console.warn(
+            "[sdlc-loop] failed to complete previous dispatch intent",
+            { loopId, sourceRunId, err },
+          ),
+      );
+
       const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
       let preparedDispatch: { intentId: string; runId: string } | null = null;
       let preTransitionStatus: string | null = null;
@@ -1262,18 +1277,30 @@ export async function POST(request: Request) {
                   },
                 });
 
-                // Persist dispatch intent before sending payload to daemon
-                const dispatchIntent = await createDispatchIntent({
-                  loopId,
-                  threadId,
-                  threadChatId,
-                  targetPhase: "implementing",
-                  selectedAgent: agent as DeliveryLoopSelectedAgent,
-                  executionClass: "implementation_runtime",
-                  dispatchMechanism: "self_dispatch",
-                  runId: newRunId,
-                  maxRetries: 3,
-                });
+                // Persist dispatch intent in both Redis (realtime) and DB (durable).
+                const [dispatchIntent] = await Promise.all([
+                  createDispatchIntent({
+                    loopId,
+                    threadId,
+                    threadChatId,
+                    targetPhase: "implementing",
+                    selectedAgent: agent as DeliveryLoopSelectedAgent,
+                    executionClass: "implementation_runtime",
+                    dispatchMechanism: "self_dispatch",
+                    runId: newRunId,
+                    maxRetries: 3,
+                  }),
+                  createDurableDispatchIntent(db, {
+                    loopId,
+                    threadId,
+                    threadChatId,
+                    targetPhase: "implementing",
+                    selectedAgent: agent as DeliveryLoopSelectedAgent,
+                    executionClass: "implementation_runtime",
+                    dispatchMechanism: "self_dispatch",
+                    runId: newRunId,
+                  }),
+                ]);
                 preparedDispatch = {
                   intentId: dispatchIntent.id,
                   runId: newRunId,
@@ -1308,6 +1335,13 @@ export async function POST(request: Request) {
                   destinationRunId: newRunId,
                   payload: preparedSelfDispatchPayload,
                 });
+                // Mark intent as dispatched in both Redis and DB.
+                await Promise.all([
+                  updateDispatchIntent(dispatchIntent.id, threadChatId, {
+                    status: "dispatched",
+                  }),
+                  markDispatchIntentDispatched(db, newRunId),
+                ]);
                 // Only arm the timeout once the replay record exists and the
                 // self-dispatch payload is actually recoverable on retries.
                 startAckTimeout({
