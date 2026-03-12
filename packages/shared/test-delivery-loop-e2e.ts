@@ -11,6 +11,7 @@
  *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --with-planning
  *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --in-docker
  *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --full
+ *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --full --with-review
  *
  * Requires:
  *   - codex CLI on PATH (npm i -g @openai/codex)
@@ -19,10 +20,11 @@
  *   - OpenAI credentials (~/.codex/auth.json or OPENAI_API_KEY)
  */
 
-import { spawn, execSync } from "node:child_process";
+import { spawn, execSync, execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import type { DB } from "./src/db/index.ts";
@@ -49,7 +51,9 @@ const DAEMON_SRC = resolve(__dirname, "../daemon/src");
 const WITH_PLANNING = process.argv.includes("--with-planning");
 const IN_DOCKER = process.argv.includes("--in-docker");
 const FULL = process.argv.includes("--full");
+const WITH_REVIEW = process.argv.includes("--with-review");
 const MODEL = process.env.CODEX_MODEL ?? "gpt-5.3-codex";
+const REVIEW_MODEL = process.env.CODEX_REVIEW_MODEL ?? "gpt-5.3-codex";
 const TIMEOUT_MS = 180_000;
 
 const TEST_DB_URL =
@@ -109,6 +113,8 @@ async function loadSharedModules() {
     createPrLinkArtifact,
     createBabysitEvaluationArtifactForHead,
     persistSdlcCiGateEvaluation,
+    persistDeepReviewGateResult,
+    persistCarmackReviewGateResult,
     buildSdlcCanonicalCause,
   } = await import("./src/model/delivery-loop.ts");
 
@@ -134,11 +140,187 @@ async function loadSharedModules() {
     createPrLinkArtifact,
     createBabysitEvaluationArtifactForHead,
     persistSdlcCiGateEvaluation,
+    persistDeepReviewGateResult,
+    persistCarmackReviewGateResult,
     buildSdlcCanonicalCause,
     claimNextUnprocessedSignal,
     completeSignalClaim,
     evaluateBabysitCompletionForHead,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Local codex exec runner for review gates
+// ---------------------------------------------------------------------------
+
+const REVIEW_GATE_PROMPT_VERSION = 1;
+
+function buildReviewGatePrompt({
+  gateName,
+  systemPrompt,
+  repoFullName,
+  headSha,
+  taskContext,
+  gitDiff,
+}: {
+  gateName: string;
+  systemPrompt: string;
+  repoFullName: string;
+  headSha: string;
+  taskContext: string;
+  gitDiff: string;
+}): string {
+  return [
+    systemPrompt,
+    "",
+    `Repository: ${repoFullName}`,
+    `PR: not-created-yet`,
+    `Head SHA: ${headSha}`,
+    `Prompt Version: ${REVIEW_GATE_PROMPT_VERSION}`,
+    "",
+    `Task context:`,
+    taskContext,
+    "",
+    `Git diff:`,
+    `<git-diff>`,
+    gitDiff,
+    `</git-diff>`,
+    "",
+    `Return JSON with shape:`,
+    `{`,
+    `  "gatePassed": boolean,`,
+    `  "blockingFindings": [`,
+    `    {`,
+    `      "stableFindingId": string (optional),`,
+    `      "title": string,`,
+    `      "severity": "critical"|"high"|"medium"|"low",`,
+    `      "category": string,`,
+    `      "detail": string,`,
+    `      "suggestedFix": string | null,`,
+    `      "isBlocking": boolean`,
+    `    }`,
+    `  ]`,
+    `}`,
+  ].join("\n");
+}
+
+const DEEP_REVIEW_SYSTEM_PROMPT = `You are the Deep Review gate for an autonomous Delivery Loop.
+Return strict JSON only.
+Identify only actionable, code-level defects that must be fixed before progression.
+Each finding must include stable fields so retries remain deterministic.
+Set gatePassed=true only when there are zero blocking findings.`;
+
+const CARMACK_REVIEW_SYSTEM_PROMPT = `You are the Carmack Review gate for an autonomous Delivery Loop.
+Return strict JSON only.
+Focus on architectural correctness, determinism, idempotency, race safety, and edge-case handling.
+Only include findings that must be fixed before progression.
+Set gatePassed=true only when there are zero blocking findings.`;
+
+type CodexExecEvent = {
+  type?: string;
+  message?: string;
+  item?: { type?: string; text?: string };
+};
+
+function extractLatestAgentMessage(rawStdout: string): string | null {
+  const agentMessages: string[] = [];
+  for (const line of rawStdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event: CodexExecEvent | null = null;
+    try {
+      event = JSON.parse(trimmed) as CodexExecEvent;
+    } catch {
+      continue;
+    }
+    if (event.type === "error") {
+      throw new Error(event.message?.trim() || "Codex gate reported an error");
+    }
+    if (
+      (event.type === "item.completed" || event.type === "item.updated") &&
+      event.item?.type === "agent_message" &&
+      typeof event.item.text === "string" &&
+      event.item.text.trim().length > 0
+    ) {
+      agentMessages.push(event.item.text.trim());
+    }
+  }
+  return agentMessages.length > 0
+    ? agentMessages[agentMessages.length - 1]!
+    : null;
+}
+
+function extractJsonFromText(rawText: string): unknown {
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    // try fenced code blocks
+  }
+  const fenced = [...rawText.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  for (const match of fenced.reverse()) {
+    const candidate = match[1]?.trim();
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+  }
+  const first = rawText.indexOf("{");
+  const last = rawText.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try {
+      return JSON.parse(rawText.slice(first, last + 1));
+    } catch {
+      // fall through
+    }
+  }
+  throw new Error("Could not parse JSON from Codex gate output");
+}
+
+function runCodexExecLocally({
+  prompt,
+  model,
+  timeoutMs = 120_000,
+}: {
+  prompt: string;
+  model: string;
+  timeoutMs?: number;
+}): unknown {
+  const promptFile = join(tmpdir(), `dl-review-${nanoid()}.txt`);
+  try {
+    writeFileSync(promptFile, prompt, "utf-8");
+    const stdout = execFileSync(
+      "codex",
+      [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--json",
+        "--model",
+        model,
+        "-c",
+        "suppress_unstable_features_warning=true",
+        "-",
+      ],
+      {
+        input: prompt,
+        encoding: "utf-8",
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+    const agentMessage = extractLatestAgentMessage(stdout);
+    if (!agentMessage) {
+      throw new Error("No agent message in Codex exec output");
+    }
+    return extractJsonFromText(agentMessage);
+  } finally {
+    try {
+      unlinkSync(promptFile);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +768,7 @@ async function cleanup(
 async function main() {
   console.log("=== Delivery Loop E2E Test ===");
   console.log(
-    `Mode: ${FULL ? "FULL" : WITH_PLANNING ? "WITH_PLANNING" : "IMPLEMENTING"} (${IN_DOCKER ? "in-docker" : "local"})`,
+    `Mode: ${FULL ? "FULL" : WITH_PLANNING ? "WITH_PLANNING" : "IMPLEMENTING"} (${IN_DOCKER ? "in-docker" : "local"})${WITH_REVIEW ? " +review" : ""}`,
   );
   console.log();
 
@@ -974,9 +1156,6 @@ async function main() {
     // ── Full mode: exercise every stage with real signals + artifacts + gate evaluations ──
     if (FULL) {
       // ── Stage: review_gate ──
-      // Signal: daemon_terminal already moved us here. Now create artifacts + transition.
-      // In production, the review gate is evaluated by a separate review run, not a signal.
-      // We simulate this by creating the artifacts and transitioning directly.
       console.log("\n-- Stage: review_gate --");
       ver = await getLoopVersion();
 
@@ -994,22 +1173,147 @@ async function main() {
       });
       console.log(`  Created implementation artifact: ${implArtifact.id}`);
 
-      const reviewArtifact = await shared.createReviewBundleArtifactForHead({
-        db,
-        loopId,
-        headSha: HEAD_SHA,
-        loopVersion: ver,
-        payload: {
+      if (WITH_REVIEW) {
+        // Run real deep review + Carmack review via codex exec
+        const taskContext =
+          "Create hello.txt and README.md for the E2E test repo.";
+        const gitDiff = [
+          "diff --git a/hello.txt b/hello.txt",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/hello.txt",
+          "@@ -0,0 +1 @@",
+          "+Hello from E2E test",
+          "diff --git a/README.md b/README.md",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/README.md",
+          "@@ -0,0 +1 @@",
+          "+# E2E Test",
+        ].join("\n");
+
+        console.log("  Running deep review via codex exec...");
+        const deepPrompt = buildReviewGatePrompt({
+          gateName: "deep-review",
+          systemPrompt: DEEP_REVIEW_SYSTEM_PROMPT,
+          repoFullName: "terragon/e2e-test-repo",
           headSha: HEAD_SHA,
-          deepRunId: null,
-          carmackRunId: null,
-          deepBlockingFindings: 0,
-          carmackBlockingFindings: 0,
-          gatePassed: true,
-          summary: "No blocking findings",
-        },
-      });
-      console.log(`  Created review bundle artifact: ${reviewArtifact.id}`);
+          taskContext,
+          gitDiff,
+        });
+        const deepRawOutput = runCodexExecLocally({
+          prompt: deepPrompt,
+          model: REVIEW_MODEL,
+        });
+        console.log("  Deep review raw output:", JSON.stringify(deepRawOutput));
+
+        ver = await getLoopVersion();
+        const deepResult = await shared.persistDeepReviewGateResult({
+          db,
+          loopId,
+          headSha: HEAD_SHA,
+          loopVersion: ver,
+          model: REVIEW_MODEL,
+          rawOutput: deepRawOutput,
+          updateLoopState: false,
+        });
+        console.log(
+          `  Deep review: runId=${deepResult.runId}, passed=${deepResult.gatePassed}, ` +
+            `findings=${deepResult.unresolvedBlockingFindings}`,
+        );
+        assert(!deepResult.invalidOutput, "Deep review output is valid JSON");
+
+        console.log("  Running Carmack review via codex exec...");
+        const carmackPrompt = buildReviewGatePrompt({
+          gateName: "carmack-review",
+          systemPrompt: CARMACK_REVIEW_SYSTEM_PROMPT,
+          repoFullName: "terragon/e2e-test-repo",
+          headSha: HEAD_SHA,
+          taskContext,
+          gitDiff,
+        });
+        const carmackRawOutput = runCodexExecLocally({
+          prompt: carmackPrompt,
+          model: REVIEW_MODEL,
+        });
+        console.log(
+          "  Carmack review raw output:",
+          JSON.stringify(carmackRawOutput),
+        );
+
+        ver = await getLoopVersion();
+        const carmackResult = await shared.persistCarmackReviewGateResult({
+          db,
+          loopId,
+          headSha: HEAD_SHA,
+          loopVersion: ver,
+          model: REVIEW_MODEL,
+          rawOutput: carmackRawOutput,
+          updateLoopState: false,
+        });
+        console.log(
+          `  Carmack review: runId=${carmackResult.runId}, passed=${carmackResult.gatePassed}, ` +
+            `findings=${carmackResult.unresolvedBlockingFindings}`,
+        );
+        assert(
+          !carmackResult.invalidOutput,
+          "Carmack review output is valid JSON",
+        );
+
+        const allReviewsPassed =
+          deepResult.gatePassed && carmackResult.gatePassed;
+        console.log(`  Both reviews passed: ${allReviewsPassed}`);
+
+        const reviewArtifact = await shared.createReviewBundleArtifactForHead({
+          db,
+          loopId,
+          headSha: HEAD_SHA,
+          loopVersion: ver,
+          payload: {
+            headSha: HEAD_SHA,
+            deepRunId: deepResult.runId,
+            carmackRunId: carmackResult.runId,
+            deepBlockingFindings: deepResult.unresolvedBlockingFindings,
+            carmackBlockingFindings: carmackResult.unresolvedBlockingFindings,
+            gatePassed: allReviewsPassed,
+            summary: allReviewsPassed
+              ? "Both reviews passed"
+              : "Review gate blocked",
+          },
+        });
+        console.log(`  Created review bundle artifact: ${reviewArtifact.id}`);
+
+        // For the test to proceed, we need reviews to pass. If the LLM
+        // finds blocking issues on this trivial diff, we still transition
+        // and log a warning — the test validates the plumbing, not the LLM's
+        // review judgment.
+        if (!allReviewsPassed) {
+          console.log(
+            "  WARNING: Reviews found blocking issues on trivial diff — " +
+              "forcing transition for E2E plumbing test",
+          );
+        }
+      } else {
+        // Simulated review: create artifacts and transition directly
+        const reviewArtifact = await shared.createReviewBundleArtifactForHead({
+          db,
+          loopId,
+          headSha: HEAD_SHA,
+          loopVersion: ver,
+          payload: {
+            headSha: HEAD_SHA,
+            deepRunId: null,
+            carmackRunId: null,
+            deepBlockingFindings: 0,
+            carmackBlockingFindings: 0,
+            gatePassed: true,
+            summary: "No blocking findings (simulated)",
+          },
+        });
+        console.log(
+          `  Created review bundle artifact (simulated): ${reviewArtifact.id}`,
+        );
+      }
 
       ver = await getLoopVersion();
       const reviewResult = await shared.transitionSdlcLoopState({
