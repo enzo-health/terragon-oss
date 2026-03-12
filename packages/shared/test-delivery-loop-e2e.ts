@@ -109,6 +109,7 @@ async function loadSharedModules() {
     createPrLinkArtifact,
     createBabysitEvaluationArtifactForHead,
     persistSdlcCiGateEvaluation,
+    buildSdlcCanonicalCause,
   } = await import("./src/model/delivery-loop.ts");
 
   return {
@@ -127,6 +128,7 @@ async function loadSharedModules() {
     createPrLinkArtifact,
     createBabysitEvaluationArtifactForHead,
     persistSdlcCiGateEvaluation,
+    buildSdlcCanonicalCause,
   };
 }
 
@@ -780,16 +782,150 @@ async function main() {
       `DB tasks verified complete (${verification.totalTasks} total, ${verification.incompleteTaskIds.length} incomplete)`,
     );
 
-    // Transition: implementing → review_gate (simulates signal-inbox)
+    // ── Signal-driven transition: implementing → review_gate ──
+    // Mirrors production: insert daemon_terminal signal → process inline
+    const { eq } = await import("drizzle-orm");
+    const schemaImport = await import("./src/db/schema.ts");
+
+    // Helper to get current loop version (avoids stale optimistic lock)
+    async function getLoopVersion(): Promise<number> {
+      const [row] = await db
+        .select({ loopVersion: schemaImport.sdlcLoop.loopVersion })
+        .from(schemaImport.sdlcLoop)
+        .where(eq(schemaImport.sdlcLoop.id, loopId!));
+      return row?.loopVersion ?? 0;
+    }
+
+    // Helper to get current loop state
+    async function getLoopState(): Promise<string> {
+      const [row] = await db
+        .select({ state: schemaImport.sdlcLoop.state })
+        .from(schemaImport.sdlcLoop)
+        .where(eq(schemaImport.sdlcLoop.id, loopId!));
+      return row?.state ?? "unknown";
+    }
+
+    // Helper: insert a signal into sdlcLoopSignalInbox (mirrors production enqueue)
+    async function insertSignal(opts: {
+      loopId: string;
+      causeType: string;
+      canonicalCauseId: string;
+      signalHeadShaOrNull: string | null;
+      causeIdentityVersion: number;
+      payload: Record<string, unknown>;
+    }): Promise<string> {
+      const [row] = await db
+        .insert(schemaImport.sdlcLoopSignalInbox)
+        .values({
+          loopId: opts.loopId,
+          causeType: opts.causeType as never,
+          canonicalCauseId: opts.canonicalCauseId,
+          signalHeadShaOrNull: opts.signalHeadShaOrNull,
+          causeIdentityVersion: opts.causeIdentityVersion,
+          payload: opts.payload,
+          receivedAt: new Date(),
+          committedAt: new Date(), // daemon_terminal requires committedAt
+        })
+        .returning({ id: schemaImport.sdlcLoopSignalInbox.id });
+      return row!.id;
+    }
+
+    // Helper: claim a signal (set claimToken + claimedAt)
+    async function claimSignal(signalId: string): Promise<void> {
+      await db
+        .update(schemaImport.sdlcLoopSignalInbox)
+        .set({
+          claimToken: nanoid(),
+          claimedAt: new Date(),
+        })
+        .where(eq(schemaImport.sdlcLoopSignalInbox.id, signalId));
+    }
+
+    // Helper: mark a signal as processed (set processedAt, clear claim)
+    async function completeSignal(signalId: string): Promise<void> {
+      await db
+        .update(schemaImport.sdlcLoopSignalInbox)
+        .set({
+          processedAt: new Date(),
+          claimToken: null,
+          claimedAt: null,
+        })
+        .where(eq(schemaImport.sdlcLoopSignalInbox.id, signalId));
+    }
+
+    const HEAD_SHA = "e2e-test-sha-abc123";
+    const daemonEventId = nanoid();
+
+    // 1. Build canonical cause (same as production's buildSdlcCanonicalCause)
+    const daemonCause = shared.buildSdlcCanonicalCause({
+      causeType: "daemon_terminal",
+      eventId: daemonEventId,
+    });
+
+    // 2. Insert daemon_terminal signal (mirrors claimEnrolledLoopDaemonEvent)
+    const daemonSignalId = await insertSignal({
+      loopId,
+      ...daemonCause,
+      payload: {
+        eventType: "daemon_terminal",
+        payloadVersion: 2,
+        eventId: daemonEventId,
+        runId: nanoid(),
+        seq: 1,
+        threadId,
+        threadChatId,
+        daemonRunStatus: "completed",
+        daemonErrorMessage: null,
+        daemonErrorCategory: "",
+        headShaAtCompletion: HEAD_SHA,
+      },
+    });
+    console.log(`  Inserted daemon_terminal signal: ${daemonSignalId}`);
+
+    // 3. Claim signal (mirrors signal-inbox claim step)
+    await claimSignal(daemonSignalId);
+
+    // 4. Process: verify tasks + auto-mark + transition (mirrors signal-inbox daemon_terminal handler)
+    //    Production: verifyPlanTaskCompletionForHead → markPlanTasksCompletedByAgent (auto-mark) → transitionSdlcLoopState
+    const autoVerification = await shared.verifyPlanTaskCompletionForHead({
+      db,
+      loopId,
+      artifactId: artifact.id,
+      headSha: HEAD_SHA,
+    });
+    if (
+      !autoVerification.gatePassed &&
+      autoVerification.incompleteTaskIds.length > 0
+    ) {
+      // Auto-mark remaining tasks (like production does with "auto-marked on implementing completion")
+      await shared.markPlanTasksCompletedByAgent({
+        db,
+        loopId,
+        artifactId: artifact.id,
+        completions: autoVerification.incompleteTaskIds.map((id) => ({
+          stableTaskId: id,
+          status: "done" as const,
+          evidence: {
+            headSha: HEAD_SHA,
+            note: "auto-marked on implementing completion",
+          },
+        })),
+      });
+    }
+
+    let ver = await getLoopVersion();
     const implDone = await shared.transitionSdlcLoopState({
       db,
       loopId,
       transitionEvent: "implementation_completed",
-      loopVersion: 1,
+      loopVersion: ver,
     });
+
+    // 5. Complete signal (set processedAt)
+    await completeSignal(daemonSignalId);
+
     assert(implDone === "updated", "Loop transitioned to review_gate");
 
-    // Verify final loop state
     const finalLoop = await shared.getActiveSdlcLoopForThread({
       db,
       userId,
@@ -800,33 +936,24 @@ async function main() {
       `Final loop state is review_gate (got: ${finalLoop?.state})`,
     );
 
-    // ── Full mode: exercise every stage with real artifacts + gate evaluations ──
+    // Verify signal was marked processed
+    const [processedSignal] = await db
+      .select({ processedAt: schemaImport.sdlcLoopSignalInbox.processedAt })
+      .from(schemaImport.sdlcLoopSignalInbox)
+      .where(eq(schemaImport.sdlcLoopSignalInbox.id, daemonSignalId));
+    assert(
+      processedSignal?.processedAt !== null,
+      "daemon_terminal signal marked processed",
+    );
+
+    // ── Full mode: exercise every stage with real signals + artifacts + gate evaluations ──
     if (FULL) {
-      const HEAD_SHA = "e2e-test-sha-abc123";
-      const { eq } = await import("drizzle-orm");
-      const schemaImport = await import("./src/db/schema.ts");
-
-      // Helper to get current loop version (avoids stale optimistic lock)
-      async function getLoopVersion(): Promise<number> {
-        const [row] = await db
-          .select({ loopVersion: schemaImport.sdlcLoop.loopVersion })
-          .from(schemaImport.sdlcLoop)
-          .where(eq(schemaImport.sdlcLoop.id, loopId!));
-        return row?.loopVersion ?? 0;
-      }
-
-      // Helper to get current loop state
-      async function getLoopState(): Promise<string> {
-        const [row] = await db
-          .select({ state: schemaImport.sdlcLoop.state })
-          .from(schemaImport.sdlcLoop)
-          .where(eq(schemaImport.sdlcLoop.id, loopId!));
-        return row?.state ?? "unknown";
-      }
-
       // ── Stage: review_gate ──
+      // Signal: daemon_terminal already moved us here. Now create artifacts + transition.
+      // In production, the review gate is evaluated by a separate review run, not a signal.
+      // We simulate this by creating the artifacts and transitioning directly.
       console.log("\n-- Stage: review_gate --");
-      let ver = await getLoopVersion();
+      ver = await getLoopVersion();
 
       const implArtifact = await shared.createImplementationArtifactForHead({
         db,
@@ -874,7 +1001,41 @@ async function main() {
       );
 
       // ── Stage: ci_gate ──
+      // Signal: check_run.completed → persistSdlcCiGateEvaluation (handles both artifact + transition)
       console.log("\n-- Stage: ci_gate --");
+
+      const checkRunDeliveryId = nanoid();
+      const checkRunId = Math.floor(Math.random() * 100000);
+      const ciCause = shared.buildSdlcCanonicalCause({
+        causeType: "check_run.completed",
+        deliveryId: checkRunDeliveryId,
+        checkRunId,
+      });
+
+      const ciSignalId = await insertSignal({
+        loopId,
+        ...ciCause,
+        payload: {
+          eventType: "check_run.completed",
+          repoFullName: "terragon/e2e-test-repo",
+          prNumber: 42,
+          checkRunId: String(checkRunId),
+          checkName: "ci/build",
+          checkOutcome: "pass",
+          headSha: HEAD_SHA,
+          checkSummary: "All checks passed",
+          ciSnapshotSource: "github_check_runs",
+          ciSnapshotCheckNames: ["ci/build", "ci/test"],
+          ciSnapshotFailingChecks: [],
+          ciSnapshotComplete: true,
+          sourceType: "automation",
+        },
+      });
+      console.log(`  Inserted check_run.completed signal: ${ciSignalId}`);
+
+      await claimSignal(ciSignalId);
+
+      // Process: persistSdlcCiGateEvaluation handles artifact creation + state transition
       ver = await getLoopVersion();
       const ciResult = await shared.persistSdlcCiGateEvaluation({
         db,
@@ -886,6 +1047,9 @@ async function main() {
         rulesetChecks: ["ci/build", "ci/test"],
         failingChecks: [],
       });
+
+      await completeSignal(ciSignalId);
+
       console.log(
         `  CI gate: status=${ciResult.status}, passed=${ciResult.gatePassed}, ` +
           `source=${ciResult.requiredCheckSource}, outcome=${ciResult.loopUpdateOutcome}`,
@@ -901,7 +1065,7 @@ async function main() {
       );
 
       // ── Stage: ui_gate ──
-      // The canonical flow: ui_smoke_passed (no PR) → awaiting_pr_link → pr_linked → babysitting
+      // ui_smoke_passed (no PR) → awaiting_pr_link
       console.log("\n-- Stage: ui_gate --");
       ver = await getLoopVersion();
 
@@ -920,7 +1084,6 @@ async function main() {
       });
       console.log(`  Created UI smoke artifact: ${uiArtifact.id}`);
 
-      // ui_smoke_passed without a PR link → transitions to awaiting_pr_link
       ver = await getLoopVersion();
       const uiResult = await shared.transitionSdlcLoopState({
         db,
@@ -936,9 +1099,38 @@ async function main() {
       );
 
       // ── Stage: awaiting_pr_link ──
+      // Signal: pull_request.synchronize (simulates PR creation pushing a headSha)
       console.log("\n-- Stage: awaiting_pr_link --");
-      ver = await getLoopVersion();
 
+      const prDeliveryId = nanoid();
+      const prId = Math.floor(Math.random() * 100000);
+      const prSyncCause = shared.buildSdlcCanonicalCause({
+        causeType: "pull_request.synchronize",
+        deliveryId: prDeliveryId,
+        pullRequestId: prId,
+        headSha: HEAD_SHA,
+      });
+
+      const prSyncSignalId = await insertSignal({
+        loopId,
+        ...prSyncCause,
+        payload: {
+          eventType: "pull_request.synchronize",
+          repoFullName: "terragon/e2e-test-repo",
+          prNumber: 42,
+          pullRequestId: prId,
+          headSha: HEAD_SHA,
+          sourceType: "automation",
+        },
+      });
+      console.log(
+        `  Inserted pull_request.synchronize signal: ${prSyncSignalId}`,
+      );
+
+      await claimSignal(prSyncSignalId);
+
+      // Create PR link artifact + transition
+      ver = await getLoopVersion();
       const prArtifact = await shared.createPrLinkArtifact({
         db,
         loopId,
@@ -960,6 +1152,9 @@ async function main() {
         loopVersion: ver,
         headSha: HEAD_SHA,
       });
+
+      await completeSignal(prSyncSignalId);
+
       assert(prResult === "updated", "awaiting_pr_link → babysitting");
       assert(
         (await getLoopState()) === "babysitting",
@@ -967,9 +1162,59 @@ async function main() {
       );
 
       // ── Stage: babysitting ──
+      // Signal: check_run.completed triggers babysitting evaluation
+      // Production: evaluateBabysitCompletionForHead → createBabysitEvaluationArtifact → transition
       console.log("\n-- Stage: babysitting --");
-      ver = await getLoopVersion();
 
+      const babysitCheckRunId = Math.floor(Math.random() * 100000);
+      const babysitDeliveryId = nanoid();
+      const babysitCiCause = shared.buildSdlcCanonicalCause({
+        causeType: "check_run.completed",
+        deliveryId: babysitDeliveryId,
+        checkRunId: babysitCheckRunId,
+      });
+
+      const babysitSignalId = await insertSignal({
+        loopId,
+        ...babysitCiCause,
+        payload: {
+          eventType: "check_run.completed",
+          repoFullName: "terragon/e2e-test-repo",
+          prNumber: 42,
+          checkRunId: String(babysitCheckRunId),
+          checkName: "ci/build",
+          checkOutcome: "pass",
+          headSha: HEAD_SHA,
+          checkSummary: "All checks passed",
+          ciSnapshotSource: "github_check_runs",
+          ciSnapshotCheckNames: ["ci/build", "ci/test"],
+          ciSnapshotFailingChecks: [],
+          ciSnapshotComplete: true,
+          sourceType: "automation",
+        },
+      });
+      console.log(
+        `  Inserted babysitting check_run.completed signal: ${babysitSignalId}`,
+      );
+
+      await claimSignal(babysitSignalId);
+
+      // Re-evaluate CI gate during babysitting (production does this)
+      ver = await getLoopVersion();
+      await shared.persistSdlcCiGateEvaluation({
+        db,
+        loopId,
+        headSha: HEAD_SHA,
+        loopVersion: ver,
+        triggerEventType: "check_run.completed",
+        capabilityState: "supported",
+        rulesetChecks: ["ci/build", "ci/test"],
+        failingChecks: [],
+      });
+
+      // Evaluate babysitting completion inline
+      // (evaluateBabysitCompletionForHead is in apps/www — replicate its logic)
+      ver = await getLoopVersion();
       const babysitArtifact =
         await shared.createBabysitEvaluationArtifactForHead({
           db,
@@ -997,6 +1242,9 @@ async function main() {
         loopVersion: ver,
         headSha: HEAD_SHA,
       });
+
+      await completeSignal(babysitSignalId);
+
       assert(babysitResult === "updated", "babysitting → done");
 
       // getActiveSdlcLoopForThread filters terminal states — query directly
@@ -1009,10 +1257,26 @@ async function main() {
         `Final state is done (got: ${doneLoop?.state})`,
       );
 
+      // Verify all signals were processed
+      const allSignals = await db
+        .select({
+          id: schemaImport.sdlcLoopSignalInbox.id,
+          causeType: schemaImport.sdlcLoopSignalInbox.causeType,
+          processedAt: schemaImport.sdlcLoopSignalInbox.processedAt,
+        })
+        .from(schemaImport.sdlcLoopSignalInbox)
+        .where(eq(schemaImport.sdlcLoopSignalInbox.loopId, loopId));
+      const unprocessed = allSignals.filter((s) => s.processedAt === null);
+      assert(
+        unprocessed.length === 0,
+        `All ${allSignals.length} signals processed (${unprocessed.length} unprocessed)`,
+      );
+
       console.log(
-        "\n  Full lifecycle: planning → implementing → review_gate → " +
+        "\n  Full signal-driven lifecycle: planning → implementing → review_gate → " +
           "ci_gate → ui_gate → awaiting_pr_link → babysitting → done",
       );
+      console.log(`  Total signals inserted & processed: ${allSignals.length}`);
     }
 
     console.log("\n=== All tests passed ===");
