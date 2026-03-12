@@ -9,7 +9,7 @@
  * missing env vars (returns isError) and with a local HTTP stub that captures
  * the outgoing request.
  */
-import { spawn, type ChildProcess, execSync } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import readline from "node:readline";
 import { describe, test, expect, afterEach } from "vitest";

@@ -233,7 +233,7 @@ TERRAGON_THREAD_CHAT_ID = "chat-integration-1"
     );
 
     // Verify terry MCP server started successfully
-    const mcpReady = notifications.filter(
+    const _mcpReady = notifications.filter(
       (n) =>
         n.method === "codex/event/mcp_startup_update" &&
         (n.params as Record<string, unknown>)?.id === "" &&
