@@ -931,7 +931,7 @@ describe("end-to-end", () => {
       sandboxId: thread!.codesandboxId!,
       session: expect.any(Object),
       message: {
-        sessionId: threadChatUpdated!.sessionId,
+        sessionId: null,
         type: "claude",
         model: "sonnet",
         prompt:
@@ -1095,7 +1095,7 @@ describe("end-to-end", () => {
       message: {
         model: "sonnet",
         prompt: expect.stringContaining("Hello, again"),
-        sessionId: threadChatUpdated!.sessionId,
+        sessionId: null,
         type: "claude",
         permissionMode: threadChatUpdated!.permissionMode,
         agent: threadChatUpdated!.agent,
