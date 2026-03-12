@@ -1284,6 +1284,23 @@ export class TerragonDaemon {
         }
       }
 
+      // Write env vars to a well-known file so the MCP server can read them
+      // even when spawned by codex app-server (which reads ~/.codex/config.toml
+      // and doesn't pass env vars from the JSON MCP config).
+      try {
+        this.runtime.writeFileSync(
+          "/tmp/terragon-mcp-env.json",
+          JSON.stringify({
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            DAEMON_TOKEN: input.token,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+          }),
+        );
+      } catch {
+        this.runtime.logger.warn("Failed to write MCP env file for app-server");
+      }
+
       await this.applyAppServerRespawnBackoff();
       await manager.restartIfTokenChanged(input.token);
       await manager.ensureReady();
@@ -2892,6 +2909,23 @@ export class TerragonDaemon {
         } catch {
           this.runtime.logger.warn("Failed to update MCP config with env vars");
         }
+      }
+
+      // Write env vars to a well-known file so the MCP server can read them
+      // even when spawned by codex app-server (which reads ~/.codex/config.toml
+      // and doesn't pass env vars from the JSON MCP config).
+      try {
+        this.runtime.writeFileSync(
+          "/tmp/terragon-mcp-env.json",
+          JSON.stringify({
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            DAEMON_TOKEN: input.token,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+          }),
+        );
+      } catch {
+        this.runtime.logger.warn("Failed to write MCP env file");
       }
 
       const { processId, pollInterval } = this.runtime.spawnCommandLine(

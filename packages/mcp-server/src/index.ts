@@ -6,6 +6,17 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+function getMcpEnv(key: string): string | undefined {
+  if (process.env[key] !== undefined) return process.env[key] || undefined;
+  try {
+    const env = JSON.parse(readFileSync("/tmp/terragon-mcp-env.json", "utf-8"));
+    return env[key] ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const server = new Server(
   {
@@ -160,10 +171,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }>;
       };
 
-      const serverUrl = process.env.TERRAGON_SERVER_URL;
-      const daemonToken = process.env.DAEMON_TOKEN;
-      const threadId = process.env.TERRAGON_THREAD_ID;
-      const threadChatId = process.env.TERRAGON_THREAD_CHAT_ID;
+      const serverUrl = getMcpEnv("TERRAGON_SERVER_URL");
+      const daemonToken = getMcpEnv("DAEMON_TOKEN");
+      const threadId = getMcpEnv("TERRAGON_THREAD_ID");
+      const threadChatId = getMcpEnv("TERRAGON_THREAD_CHAT_ID");
 
       if (!serverUrl || !daemonToken || !threadId || !threadChatId) {
         return {
