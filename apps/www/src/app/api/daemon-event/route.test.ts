@@ -106,6 +106,7 @@ const dispatchIntentMocks = vi.hoisted(() => ({
   storeSelfDispatchReplay: vi.fn(),
   getReplayableSelfDispatch: vi.fn(),
   updateDispatchIntent: vi.fn(),
+  getActiveDispatchIntent: vi.fn().mockResolvedValue(null),
 }));
 
 const deliveryLoopModelMocks = vi.hoisted(() => ({
@@ -161,6 +162,7 @@ vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
   storeSelfDispatchReplay: dispatchIntentMocks.storeSelfDispatchReplay,
   getReplayableSelfDispatch: dispatchIntentMocks.getReplayableSelfDispatch,
   updateDispatchIntent: dispatchIntentMocks.updateDispatchIntent,
+  getActiveDispatchIntent: dispatchIntentMocks.getActiveDispatchIntent,
 }));
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
@@ -324,7 +326,7 @@ describe("daemon-event route", () => {
     dispatchIntentMocks.storeSelfDispatchReplay.mockResolvedValue(undefined);
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(null);
     dispatchIntentMocks.updateDispatchIntent.mockResolvedValue(undefined);
-    dbMocks.execute.mockResolvedValue([]);
+    dbMocks.execute.mockResolvedValue({ rows: [] });
     dbMocks.selectWhere.mockResolvedValue([]);
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
@@ -482,6 +484,7 @@ describe("daemon-event route", () => {
         ],
         timezone: "UTC",
         transportMode: "legacy",
+        protocolVersion: 1,
         payloadVersion: 2,
         eventId: "event-legacy",
         runId: "run-1",
@@ -807,12 +810,12 @@ describe("daemon-event route", () => {
       },
     });
     // First execute call is advisory lock for claim; second call is the breaker query.
-    dbMocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce(
-      Array.from({ length: 10 }, () => ({
+    dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: Array.from({ length: 10 }, () => ({
         daemonRunStatus: "completed",
         autoDispatchProvenance: true,
       })),
-    );
+    });
 
     const response = await POST(
       createDaemonRequest({
@@ -862,12 +865,14 @@ describe("daemon-event route", () => {
       processed: true,
       reason: "dispatch_started_batch",
     } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
-    dbMocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([
-      {
-        daemonRunStatus: "completed",
-        autoDispatchProvenance: false,
-      },
-    ]);
+    dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: [
+        {
+          daemonRunStatus: "completed",
+          autoDispatchProvenance: false,
+        },
+      ],
+    });
 
     const response = await POST(
       createDaemonRequest({
