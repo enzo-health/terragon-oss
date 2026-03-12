@@ -103,6 +103,12 @@ async function loadSharedModules() {
     verifyPlanTaskCompletionForHead,
     transitionSdlcLoopState,
     getActiveSdlcLoopForThread,
+    createImplementationArtifactForHead,
+    createReviewBundleArtifactForHead,
+    createUiSmokeArtifactForHead,
+    createPrLinkArtifact,
+    createBabysitEvaluationArtifactForHead,
+    persistSdlcCiGateEvaluation,
   } = await import("./src/model/delivery-loop.ts");
 
   return {
@@ -115,6 +121,12 @@ async function loadSharedModules() {
     verifyPlanTaskCompletionForHead,
     transitionSdlcLoopState,
     getActiveSdlcLoopForThread,
+    createImplementationArtifactForHead,
+    createReviewBundleArtifactForHead,
+    createUiSmokeArtifactForHead,
+    createPrLinkArtifact,
+    createBabysitEvaluationArtifactForHead,
+    persistSdlcCiGateEvaluation,
   };
 }
 
@@ -788,37 +800,218 @@ async function main() {
       `Final loop state is review_gate (got: ${finalLoop?.state})`,
     );
 
-    // ── Full mode: simulate remaining phases ──
+    // ── Full mode: exercise every stage with real artifacts + gate evaluations ──
     if (FULL) {
-      console.log("\n-- Step 5: Full Lifecycle (simulated) --");
+      const HEAD_SHA = "e2e-test-sha-abc123";
+      const { eq } = await import("drizzle-orm");
+      const schemaImport = await import("./src/db/schema.ts");
 
-      // review_gate → ci_gate
+      // Helper to get current loop version (avoids stale optimistic lock)
+      async function getLoopVersion(): Promise<number> {
+        const [row] = await db
+          .select({ loopVersion: schemaImport.sdlcLoop.loopVersion })
+          .from(schemaImport.sdlcLoop)
+          .where(eq(schemaImport.sdlcLoop.id, loopId!));
+        return row?.loopVersion ?? 0;
+      }
+
+      // Helper to get current loop state
+      async function getLoopState(): Promise<string> {
+        const [row] = await db
+          .select({ state: schemaImport.sdlcLoop.state })
+          .from(schemaImport.sdlcLoop)
+          .where(eq(schemaImport.sdlcLoop.id, loopId!));
+        return row?.state ?? "unknown";
+      }
+
+      // ── Stage: review_gate ──
+      console.log("\n-- Stage: review_gate --");
+      let ver = await getLoopVersion();
+
+      const implArtifact = await shared.createImplementationArtifactForHead({
+        db,
+        loopId,
+        headSha: HEAD_SHA,
+        loopVersion: ver,
+        payload: {
+          headSha: HEAD_SHA,
+          summary: "Created hello.txt and README.md",
+          changedFiles: ["hello.txt", "README.md"],
+          completedTaskIds: ["task-create-hello", "task-create-readme"],
+        },
+      });
+      console.log(`  Created implementation artifact: ${implArtifact.id}`);
+
+      const reviewArtifact = await shared.createReviewBundleArtifactForHead({
+        db,
+        loopId,
+        headSha: HEAD_SHA,
+        loopVersion: ver,
+        payload: {
+          headSha: HEAD_SHA,
+          deepRunId: null,
+          carmackRunId: null,
+          deepBlockingFindings: 0,
+          carmackBlockingFindings: 0,
+          gatePassed: true,
+          summary: "No blocking findings",
+        },
+      });
+      console.log(`  Created review bundle artifact: ${reviewArtifact.id}`);
+
+      ver = await getLoopVersion();
       const reviewResult = await shared.transitionSdlcLoopState({
         db,
         loopId,
         transitionEvent: "review_passed",
-        loopVersion: 2,
+        loopVersion: ver,
+        headSha: HEAD_SHA,
       });
-      assert(reviewResult === "updated", "Transition: review_gate → ci_gate");
+      assert(reviewResult === "updated", "review_gate → ci_gate");
+      assert(
+        (await getLoopState()) === "ci_gate",
+        `State is ci_gate (got: ${await getLoopState()})`,
+      );
 
-      // ci_gate → babysitting (or done)
-      const ciResult = await shared.transitionSdlcLoopState({
+      // ── Stage: ci_gate ──
+      console.log("\n-- Stage: ci_gate --");
+      ver = await getLoopVersion();
+      const ciResult = await shared.persistSdlcCiGateEvaluation({
         db,
         loopId,
-        transitionEvent: "ci_gate_passed",
-        loopVersion: 3,
+        headSha: HEAD_SHA,
+        loopVersion: ver,
+        triggerEventType: "check_run.completed",
+        capabilityState: "supported",
+        rulesetChecks: ["ci/build", "ci/test"],
+        failingChecks: [],
       });
-      assert(ciResult === "updated", "Transition: ci_gate → next phase");
-
-      const fullFinalLoop = await shared.getActiveSdlcLoopForThread({
-        db,
-        userId,
-        threadId,
-      });
-      console.log(`  Final state: ${fullFinalLoop?.state}`);
+      console.log(
+        `  CI gate: status=${ciResult.status}, passed=${ciResult.gatePassed}, ` +
+          `source=${ciResult.requiredCheckSource}, outcome=${ciResult.loopUpdateOutcome}`,
+      );
+      assert(ciResult.gatePassed, "CI gate passed");
       assert(
-        fullFinalLoop != null,
-        `Loop progressed through full lifecycle (state: ${fullFinalLoop?.state})`,
+        ciResult.loopUpdateOutcome === "updated",
+        `CI gate transitioned loop (got: ${ciResult.loopUpdateOutcome})`,
+      );
+      assert(
+        (await getLoopState()) === "ui_gate",
+        `State is ui_gate (got: ${await getLoopState()})`,
+      );
+
+      // ── Stage: ui_gate ──
+      // The canonical flow: ui_smoke_passed (no PR) → awaiting_pr_link → pr_linked → babysitting
+      console.log("\n-- Stage: ui_gate --");
+      ver = await getLoopVersion();
+
+      const uiArtifact = await shared.createUiSmokeArtifactForHead({
+        db,
+        loopId,
+        headSha: HEAD_SHA,
+        loopVersion: ver,
+        payload: {
+          headSha: HEAD_SHA,
+          gatePassed: true,
+          summary: "UI smoke test passed — no visual regressions",
+          blockingIssues: [],
+          changedFiles: ["hello.txt", "README.md"],
+        },
+      });
+      console.log(`  Created UI smoke artifact: ${uiArtifact.id}`);
+
+      // ui_smoke_passed without a PR link → transitions to awaiting_pr_link
+      ver = await getLoopVersion();
+      const uiResult = await shared.transitionSdlcLoopState({
+        db,
+        loopId,
+        transitionEvent: "ui_smoke_passed",
+        loopVersion: ver,
+        headSha: HEAD_SHA,
+      });
+      assert(uiResult === "updated", "ui_gate → awaiting_pr_link");
+      assert(
+        (await getLoopState()) === "awaiting_pr_link",
+        `State is awaiting_pr_link (got: ${await getLoopState()})`,
+      );
+
+      // ── Stage: awaiting_pr_link ──
+      console.log("\n-- Stage: awaiting_pr_link --");
+      ver = await getLoopVersion();
+
+      const prArtifact = await shared.createPrLinkArtifact({
+        db,
+        loopId,
+        loopVersion: ver,
+        payload: {
+          repoFullName: "terragon/e2e-test-repo",
+          prNumber: 42,
+          pullRequestUrl: "https://github.com/terragon/e2e-test-repo/pull/42",
+          operation: "created",
+        },
+      });
+      console.log(`  Created PR link artifact: ${prArtifact.id}`);
+
+      ver = await getLoopVersion();
+      const prResult = await shared.transitionSdlcLoopState({
+        db,
+        loopId,
+        transitionEvent: "pr_linked",
+        loopVersion: ver,
+        headSha: HEAD_SHA,
+      });
+      assert(prResult === "updated", "awaiting_pr_link → babysitting");
+      assert(
+        (await getLoopState()) === "babysitting",
+        `State is babysitting (got: ${await getLoopState()})`,
+      );
+
+      // ── Stage: babysitting ──
+      console.log("\n-- Stage: babysitting --");
+      ver = await getLoopVersion();
+
+      const babysitArtifact =
+        await shared.createBabysitEvaluationArtifactForHead({
+          db,
+          loopId,
+          headSha: HEAD_SHA,
+          loopVersion: ver,
+          payload: {
+            headSha: HEAD_SHA,
+            requiredCiPassed: true,
+            unresolvedReviewThreads: 0,
+            unresolvedDeepBlockers: 0,
+            unresolvedCarmackBlockers: 0,
+            allRequiredGatesPassed: true,
+          },
+        });
+      console.log(
+        `  Created babysit evaluation artifact: ${babysitArtifact.id}`,
+      );
+
+      ver = await getLoopVersion();
+      const babysitResult = await shared.transitionSdlcLoopState({
+        db,
+        loopId,
+        transitionEvent: "babysit_passed",
+        loopVersion: ver,
+        headSha: HEAD_SHA,
+      });
+      assert(babysitResult === "updated", "babysitting → done");
+
+      // getActiveSdlcLoopForThread filters terminal states — query directly
+      const [doneLoop] = await db
+        .select()
+        .from(schemaImport.sdlcLoop)
+        .where(eq(schemaImport.sdlcLoop.id, loopId));
+      assert(
+        doneLoop?.state === "done",
+        `Final state is done (got: ${doneLoop?.state})`,
+      );
+
+      console.log(
+        "\n  Full lifecycle: planning → implementing → review_gate → " +
+          "ci_gate → ui_gate → awaiting_pr_link → babysitting → done",
       );
     }
 
