@@ -1543,7 +1543,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
   });
 
   it("does not intercept daemon_terminal during non-implementing phases", async () => {
-    dbMocks.loopFindFirst.mockResolvedValueOnce({
+    const babysittingLoop = {
       id: "loop-1",
       userId: "user-1",
       threadId: "thread-1",
@@ -1553,7 +1553,10 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       currentHeadSha: "sha-loop-1",
       state: "babysitting",
       blockedFromState: null,
-    });
+    };
+    // Both initial and refreshed loop queries must return babysitting
+    dbMocks.loopFindFirst.mockResolvedValueOnce(babysittingLoop);
+    dbMocks.loopFindFirst.mockResolvedValueOnce(babysittingLoop);
     dbMocks.signalFindFirst.mockResolvedValueOnce({
       id: "signal-dt-babysit-1",
       causeType: "daemon_terminal",
