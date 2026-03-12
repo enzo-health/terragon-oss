@@ -1347,7 +1347,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(queueFollowUpInternal).toHaveBeenCalled();
   });
 
-  it("auto-marks tasks when MCP tool failed (all tasks have status but no evidence)", async () => {
+  it("auto-marks tasks when MCP tool failed (all tasks still incomplete)", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1374,12 +1374,12 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
       id: "plan-artifact-1",
     } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
-    // First verify: tasks done but no evidence (MCP tool failed)
+    // First verify: all tasks still incomplete (MCP tool failed to mark them)
     vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
       gatePassed: false,
       totalTasks: 2,
-      incompleteTaskIds: [],
-      invalidEvidenceTaskIds: ["task-1", "task-2"],
+      incompleteTaskIds: ["task-1", "task-2"],
+      invalidEvidenceTaskIds: [],
     });
     // After auto-marking: re-verify passes
     vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({

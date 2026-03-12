@@ -1691,25 +1691,29 @@ export async function runBestEffortSdlcSignalInboxTick({
 
             let effectiveVerified = verified;
 
-            // Fallback: if ALL tasks lack evidence (MCP tool likely failed silently)
-            // but we have a headSha proving the agent ran, auto-mark all tasks
-            // as complete and re-verify. This prevents infinite re-dispatch when
-            // the MCP server can't reach the API (e.g. old daemon without env vars).
+            // Fallback: if verification failed but we have a headSha proving
+            // the agent ran, auto-mark all unmarked tasks as complete.
+            // This prevents infinite re-dispatch when the MCP tool fails
+            // silently (e.g. old daemon without env vars for MCP server).
+            const allUnmarkedTaskIds = [
+              ...verified.incompleteTaskIds,
+              ...verified.invalidEvidenceTaskIds,
+            ];
             if (
               !verified.gatePassed &&
               effectiveHeadSha &&
-              verified.incompleteTaskIds.length === 0 &&
-              verified.invalidEvidenceTaskIds.length > 0
+              allUnmarkedTaskIds.length > 0 &&
+              allUnmarkedTaskIds.length === verified.totalTasks
             ) {
               console.log(
-                "[sdlc-loop] all tasks lack evidence — auto-marking as complete (MCP tool fallback)",
+                "[sdlc-loop] all tasks unmarked — auto-marking as complete (MCP tool fallback)",
                 { loopId, signalId: signal.id, headSha: effectiveHeadSha },
               );
               await markPlanTasksCompletedByAgent({
                 db,
                 loopId,
                 artifactId: acceptedPlanArtifact.id,
-                completions: verified.invalidEvidenceTaskIds.map((id) => ({
+                completions: allUnmarkedTaskIds.map((id) => ({
                   stableTaskId: id,
                   status: "done" as const,
                   evidence: {
