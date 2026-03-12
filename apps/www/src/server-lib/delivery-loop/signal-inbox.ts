@@ -51,6 +51,17 @@ import {
 import { randomUUID } from "node:crypto";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 
+/**
+ * Schedule a background babysit recheck: poll GitHub CI and insert a
+ * synthetic signal if checks completed. The 1-min cron drain will process it.
+ */
+async function scheduleBabysitRecheck(db: DB, loopId: string): Promise<void> {
+  const { recheckBabysitCompletion } = await import(
+    "@/server-lib/delivery-loop/babysit-recheck"
+  );
+  await recheckBabysitCompletion({ db, loopId });
+}
+
 const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
@@ -1225,6 +1236,15 @@ export async function runBestEffortSdlcSignalInboxTick({
               headSha: babysitHeadSha,
               loopVersion: loopVersionForArtifact,
               now,
+            });
+          } else {
+            // Self-scheduling: gates didn't pass, schedule a background
+            // recheck so the 1-min cron picks it up with fresh GitHub data.
+            scheduleBabysitRecheck(db, loopId).catch((err) => {
+              console.warn("[sdlc-loop] failed to schedule babysit recheck", {
+                loopId,
+                error: err,
+              });
             });
           }
         }
