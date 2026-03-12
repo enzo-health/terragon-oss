@@ -536,21 +536,10 @@ async function persistGateEvaluationForSignal({
     if (daemonRunStatus === "stopped") {
       return false;
     }
-    // Guard: during implementing, only allow re-dispatch if we have a headSha
-    // (either from daemon payload or on the loop). Without a headSha,
-    // verification will always fail → no-progress infinite loop.
-    if (
-      daemonRunStatus === "completed" &&
-      effectiveLoopPhase === "implementing"
-    ) {
-      const payloadHeadSha = getPayloadText(
-        signal.payload,
-        "headShaAtCompletion",
-      );
-      if (!payloadHeadSha && !loop.currentHeadSha) {
-        return false;
-      }
-    }
+    // During implementing, the completion intercept handles everything
+    // (auto-mark + transition or suppress re-dispatch). Gate evaluation
+    // returns true so the intercept runs, but the intercept itself
+    // decides whether to actually re-dispatch (it won't).
     return true;
   }
 
@@ -843,8 +832,7 @@ function resolveDaemonTerminalPhaseText(
       return {
         phaseLabel: "the implementing phase",
         followUpInstruction:
-          "If all implementation tasks are complete, call the MarkImplementingTasksComplete tool with all completed task IDs. " +
-          "Otherwise, continue implementing the remaining tasks.",
+          "Continue implementing the remaining tasks in the plan.",
       };
   }
 }
@@ -1653,10 +1641,10 @@ export async function runBestEffortSdlcSignalInboxTick({
       const canRouteWithoutPrNumber = signalPolicy.allowRoutingWithoutPrLink;
 
       // ── Implementing-phase completion intercept ──
-      // When a daemon_terminal fires during implementing with "completed" status,
-      // always check task completion. If all tasks pass, transition to review_gate
-      // instead of blindly re-dispatching. The agent may or may not emit
-      // phaseComplete — we check task status regardless.
+      // When a daemon_terminal fires during implementing with "completed" status
+      // and we have a headSha proving the agent produced commits, auto-mark all
+      // tasks as done and transition to review_gate. Never re-dispatch during
+      // implementing — the review_gate and ci_gate handle real verification.
       if (
         signal.causeType === "daemon_terminal" &&
         loopPhaseContext.effectivePhase === "implementing" &&
@@ -1667,107 +1655,83 @@ export async function runBestEffortSdlcSignalInboxTick({
           "daemonRunStatus",
         );
         if (daemonRunStatus === "completed") {
-          const acceptedPlanArtifact = await getLatestAcceptedArtifact({
-            db,
-            loopId,
-            phase: "planning",
-            includeApprovedForPlanning: true,
-          });
+          const headShaAtCompletion = getPayloadText(
+            signal.payload,
+            "headShaAtCompletion",
+          );
+          const effectiveHeadSha =
+            headShaAtCompletion || loop.currentHeadSha || "";
 
-          if (acceptedPlanArtifact) {
-            const headShaAtCompletion = getPayloadText(
-              signal.payload,
-              "headShaAtCompletion",
-            );
-            const effectiveHeadSha =
-              headShaAtCompletion || loop.currentHeadSha || "";
-
-            const verified = await verifyPlanTaskCompletionForHead({
+          if (effectiveHeadSha) {
+            const acceptedPlanArtifact = await getLatestAcceptedArtifact({
               db,
               loopId,
-              artifactId: acceptedPlanArtifact.id,
-              headSha: effectiveHeadSha,
+              phase: "planning",
+              includeApprovedForPlanning: true,
             });
 
-            let effectiveVerified = verified;
-
-            // Fallback: if verification failed but we have a headSha proving
-            // the agent ran, auto-mark all unmarked tasks as complete.
-            // This prevents infinite re-dispatch when the MCP tool fails
-            // silently (e.g. old daemon without env vars for MCP server).
-            const allUnmarkedTaskIds = [
-              ...verified.incompleteTaskIds,
-              ...verified.invalidEvidenceTaskIds,
-            ];
-            if (
-              !verified.gatePassed &&
-              effectiveHeadSha &&
-              allUnmarkedTaskIds.length > 0 &&
-              allUnmarkedTaskIds.length === verified.totalTasks
-            ) {
-              console.log(
-                "[sdlc-loop] all tasks unmarked — auto-marking as complete (MCP tool fallback)",
-                { loopId, signalId: signal.id, headSha: effectiveHeadSha },
-              );
-              await markPlanTasksCompletedByAgent({
-                db,
-                loopId,
-                artifactId: acceptedPlanArtifact.id,
-                completions: allUnmarkedTaskIds.map((id) => ({
-                  stableTaskId: id,
-                  status: "done" as const,
-                  evidence: {
-                    headSha: effectiveHeadSha,
-                    note: "auto-marked by signal-inbox fallback",
-                  },
-                })),
-              });
-              effectiveVerified = await verifyPlanTaskCompletionForHead({
+            if (acceptedPlanArtifact) {
+              // Auto-mark any unmarked tasks — the agent ran and produced
+              // commits, so treat all tasks as done. The MCP tool may have
+              // already marked some; this catches the rest.
+              const verified = await verifyPlanTaskCompletionForHead({
                 db,
                 loopId,
                 artifactId: acceptedPlanArtifact.id,
                 headSha: effectiveHeadSha,
               });
+
+              const unmarkedTaskIds = [
+                ...verified.incompleteTaskIds,
+                ...verified.invalidEvidenceTaskIds,
+              ];
+              if (unmarkedTaskIds.length > 0) {
+                console.log(
+                  "[sdlc-loop] auto-marking unmarked tasks as complete",
+                  { loopId, signalId: signal.id, unmarkedTaskIds },
+                );
+                await markPlanTasksCompletedByAgent({
+                  db,
+                  loopId,
+                  artifactId: acceptedPlanArtifact.id,
+                  completions: unmarkedTaskIds.map((id) => ({
+                    stableTaskId: id,
+                    status: "done" as const,
+                    evidence: {
+                      headSha: effectiveHeadSha,
+                      note: "auto-marked on implementing completion",
+                    },
+                  })),
+                });
+              }
             }
 
-            if (effectiveVerified.gatePassed) {
-              await transitionSdlcLoopState({
-                db,
-                loopId,
-                transitionEvent: "implementation_completed",
-                headSha: effectiveHeadSha || null,
-                loopVersion:
-                  typeof loop.loopVersion === "number" &&
-                  Number.isFinite(loop.loopVersion)
-                    ? loop.loopVersion + 1
-                    : 1,
-                now,
-              });
-              gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
-              console.log(
-                "[sdlc-loop] implementing phase complete — transitioning to review_gate",
-                { loopId, signalId: signal.id },
-              );
-            } else {
-              // Tasks incomplete — let the normal follow-up path queue a
-              // re-dispatch so the agent can finish remaining work, but log
-              // which tasks are incomplete for observability.
-              const reasons: string[] = [];
-              if (effectiveVerified.incompleteTaskIds.length > 0) {
-                reasons.push(
-                  `Incomplete tasks: ${effectiveVerified.incompleteTaskIds.join(", ")}`,
-                );
-              }
-              if (effectiveVerified.invalidEvidenceTaskIds.length > 0) {
-                reasons.push(
-                  `Tasks with stale/missing evidence: ${effectiveVerified.invalidEvidenceTaskIds.join(", ")}`,
-                );
-              }
-              console.log(
-                "[sdlc-loop] implementing tasks incomplete — re-dispatching",
-                { loopId, signalId: signal.id, reasons },
-              );
-            }
+            // Always transition — review_gate and ci_gate do real verification
+            await transitionSdlcLoopState({
+              db,
+              loopId,
+              transitionEvent: "implementation_completed",
+              headSha: effectiveHeadSha,
+              loopVersion:
+                typeof loop.loopVersion === "number" &&
+                Number.isFinite(loop.loopVersion)
+                  ? loop.loopVersion + 1
+                  : 1,
+              now,
+            });
+            gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
+            console.log(
+              "[sdlc-loop] implementing complete — transitioning to review_gate",
+              { loopId, signalId: signal.id, headSha: effectiveHeadSha },
+            );
+          } else {
+            // No headSha — agent completed without pushing code.
+            // Don't re-dispatch (no new info to act on), just log.
+            gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
+            console.log(
+              "[sdlc-loop] implementing: agent completed without headSha — not re-dispatching",
+              { loopId, signalId: signal.id },
+            );
           }
         }
       }

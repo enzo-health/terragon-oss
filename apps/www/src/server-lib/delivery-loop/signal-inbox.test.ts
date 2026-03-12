@@ -1290,7 +1290,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     );
   });
 
-  it("queues follow-up when daemon_terminal + implementing + completed + tasks incomplete", async () => {
+  it("auto-marks incomplete tasks and transitions when daemon_terminal + implementing + completed + headSha", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1336,18 +1336,29 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         processed: true,
         signalId: "signal-dt-incomplete-1",
         causeType: "daemon_terminal",
-        runtimeAction: "feedback_follow_up_queued",
+        runtimeAction: "none",
       }),
     );
-    expect(transitionSdlcLoopState).not.toHaveBeenCalledWith(
+    // Should auto-mark the incomplete tasks
+    expect(markPlanTasksCompletedByAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loopId: "loop-1",
+        completions: expect.arrayContaining([
+          expect.objectContaining({ stableTaskId: "task-2", status: "done" }),
+          expect.objectContaining({ stableTaskId: "task-3", status: "done" }),
+        ]),
+      }),
+    );
+    // Should always transition
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith(
       expect.objectContaining({
         transitionEvent: "implementation_completed",
       }),
     );
-    expect(queueFollowUpInternal).toHaveBeenCalled();
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
   });
 
-  it("auto-marks tasks when MCP tool failed (all tasks still incomplete)", async () => {
+  it("auto-marks all tasks when MCP tool failed (all tasks still incomplete)", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1374,18 +1385,11 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
       id: "plan-artifact-1",
     } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
-    // First verify: all tasks still incomplete (MCP tool failed to mark them)
+    // All tasks still incomplete (MCP tool failed to mark them)
     vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
       gatePassed: false,
       totalTasks: 2,
       incompleteTaskIds: ["task-1", "task-2"],
-      invalidEvidenceTaskIds: [],
-    });
-    // After auto-marking: re-verify passes
-    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
-      gatePassed: true,
-      totalTasks: 2,
-      incompleteTaskIds: [],
       invalidEvidenceTaskIds: [],
     });
 
@@ -1419,7 +1423,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     );
   });
 
-  it("falls through to normal follow-up when no plan artifact exists", async () => {
+  it("transitions even without plan artifact (headSha proves code was written)", async () => {
     dbMocks.loopFindFirst.mockResolvedValueOnce({
       id: "loop-1",
       userId: "user-1",
@@ -1457,11 +1461,17 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         processed: true,
         signalId: "signal-dt-noplan-1",
         causeType: "daemon_terminal",
-        runtimeAction: "feedback_follow_up_queued",
+        runtimeAction: "none",
       }),
     );
     expect(verifyPlanTaskCompletionForHead).not.toHaveBeenCalled();
-    expect(queueFollowUpInternal).toHaveBeenCalled();
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transitionEvent: "implementation_completed",
+        headSha: "sha-loop-1",
+      }),
+    );
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
   });
 
   it("returns false for daemon_terminal with stopped status (unchanged)", async () => {
