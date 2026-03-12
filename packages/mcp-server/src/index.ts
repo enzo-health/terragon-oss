@@ -167,6 +167,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       if (!serverUrl || !daemonToken || !threadId || !threadChatId) {
         return {
+          isError: true,
           content: [
             {
               type: "text",
@@ -217,6 +218,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `MarkImplementingTasksComplete failed: ${response.status} ${errorText}`,
           );
           return {
+            isError: true,
             content: [
               {
                 type: "text",
@@ -240,6 +242,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       } catch (error) {
         console.error("MarkImplementingTasksComplete error:", error);
         return {
+          isError: true,
           content: [
             {
               type: "text",
