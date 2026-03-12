@@ -7,10 +7,10 @@
  * writes to the real test DB, and the loop transitions correctly.
  *
  * Usage:
- *   npx tsx scripts/test-delivery-loop-e2e.ts
- *   npx tsx scripts/test-delivery-loop-e2e.ts --with-planning
- *   npx tsx scripts/test-delivery-loop-e2e.ts --in-docker
- *   npx tsx scripts/test-delivery-loop-e2e.ts --full
+ *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts
+ *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --with-planning
+ *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --in-docker
+ *   pnpm -C packages/shared exec tsx test-delivery-loop-e2e.ts --full
  *
  * Requires:
  *   - codex CLI on PATH (npm i -g @openai/codex)
@@ -21,27 +21,27 @@
 
 import { spawn, execSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChildProcess } from "node:child_process";
-import type { DB } from "@terragon/shared/db";
+import type { DB } from "./src/db/index.ts";
 import type {
   CodexAppServerManager as CodexAppServerManagerType,
   CodexAppServerSpawn,
   CodexAppServerSpawnOptions,
   CodexAppServerProcess,
   JsonRpcNotificationEnvelope,
-} from "../packages/daemon/src/codex-app-server";
+} from "../daemon/src/codex-app-server";
+import { nanoid } from "nanoid/non-secure";
 
 // ---------------------------------------------------------------------------
 // Resolve paths
 // ---------------------------------------------------------------------------
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, "..");
+const ROOT = resolve(__dirname, "../..");
 const MCP_SERVER_PATH = resolve(ROOT, "packages/mcp-server/dist/bundled.js");
-const DAEMON_SRC = resolve(ROOT, "packages/daemon/src");
+const DAEMON_SRC = resolve(__dirname, "../daemon/src");
 
 // ---------------------------------------------------------------------------
 // Flags
@@ -89,13 +89,11 @@ function assert(condition: boolean, msg: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic imports (so TS resolution works with packages/shared)
+// Dynamic imports (avoid test-helpers.ts — it transitively imports
+// @terragon/types/broadcast which breaks tsx ESM/CJS interop)
 // ---------------------------------------------------------------------------
 async function loadSharedModules() {
-  const { createDb } = await import("@terragon/shared/db");
-  const { createTestUser, createTestThread } = await import(
-    "@terragon/shared/model/test-helpers"
-  );
+  const { createDb } = await import("./src/db/index.ts");
   const {
     enrollSdlcLoopForThread,
     createPlanArtifactForLoop,
@@ -105,12 +103,10 @@ async function loadSharedModules() {
     verifyPlanTaskCompletionForHead,
     transitionSdlcLoopState,
     getActiveSdlcLoopForThread,
-  } = await import("@terragon/shared/model/delivery-loop");
+  } = await import("./src/model/delivery-loop.ts");
 
   return {
     createDb,
-    createTestUser,
-    createTestThread,
     enrollSdlcLoopForThread,
     createPlanArtifactForLoop,
     approvePlanArtifactForLoop,
@@ -120,6 +116,91 @@ async function loadSharedModules() {
     transitionSdlcLoopState,
     getActiveSdlcLoopForThread,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Inline fixture creators (replaces test-helpers.ts to avoid broadcast chain)
+// ---------------------------------------------------------------------------
+async function createTestUserInline(db: DB) {
+  const schema = await import("./src/db/schema.ts");
+  const userId = nanoid();
+  const email = `test-${userId}@terragon.com`;
+
+  const [user] = await db
+    .insert(schema.user)
+    .values({
+      id: userId,
+      email,
+      name: "E2E Test User",
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .returning();
+  if (!user) throw new Error("Failed to create test user");
+
+  // userFlags row (replaces getUserFlags call which imports broadcast-server)
+  await db.insert(schema.userFlags).values({ userId }).onConflictDoNothing();
+
+  const accountId = Math.floor(Math.random() * 10000000).toString();
+  await db.insert(schema.account).values({
+    id: accountId,
+    accountId,
+    providerId: "github",
+    userId,
+    accessToken: "123",
+    refreshToken: "123",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await db.insert(schema.subscription).values({
+    id: nanoid(),
+    plan: "core",
+    status: "active",
+    periodStart: new Date(Date.now() - 30 * 86400_000),
+    periodEnd: new Date(Date.now() + 30 * 86400_000),
+    referenceId: userId,
+  });
+
+  await db.insert(schema.session).values({
+    id: nanoid(),
+    userId,
+    expiresAt: new Date(Date.now() + 30 * 86400_000),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    token: nanoid(),
+  });
+
+  return user;
+}
+
+async function createTestThreadInline(
+  db: DB,
+  userId: string,
+  repoFullName: string,
+): Promise<{ threadId: string; threadChatId: string }> {
+  const schema = await import("./src/db/schema.ts");
+  const threadId = nanoid();
+  const threadChatId = nanoid();
+
+  await db.insert(schema.thread).values({
+    id: threadId,
+    userId,
+    name: "E2E Delivery Loop Test",
+    githubRepoFullName: repoFullName,
+    repoBaseBranchName: "main",
+    sandboxProvider: "e2b",
+  });
+
+  await db.insert(schema.threadChat).values({
+    id: threadChatId,
+    userId,
+    threadId,
+    agent: "claudeCode",
+  });
+
+  return { threadId, threadChatId };
 }
 
 // ---------------------------------------------------------------------------
@@ -276,24 +357,39 @@ async function startMarkTasksStub(opts: {
 async function runCodexTurn(opts: {
   prompt: string;
   instructions: string;
-  mcpConfigPath: string;
+  mcpServerPath: string;
+  stubPort: number;
+  threadId: string;
+  threadChatId: string;
   notifications: CapturedNotification[];
 }): Promise<{ turnCompleted: boolean; turnFailed: boolean }> {
   const { CodexAppServerManager } = await loadCodexManager();
+
+  // Inject terry MCP server config via -c flags (dotted TOML path overrides)
+  const mcpFlags = [
+    "-c",
+    `mcp_servers.terry.command="node"`,
+    "-c",
+    `mcp_servers.terry.args=["${opts.mcpServerPath}"]`,
+    "-c",
+    `mcp_servers.terry.env.TERRAGON_SERVER_URL="http://localhost:${opts.stubPort}"`,
+    "-c",
+    `mcp_servers.terry.env.DAEMON_TOKEN="e2e-test-token"`,
+    "-c",
+    `mcp_servers.terry.env.TERRAGON_THREAD_ID="${opts.threadId}"`,
+    "-c",
+    `mcp_servers.terry.env.TERRAGON_THREAD_CHAT_ID="${opts.threadChatId}"`,
+  ];
 
   const realSpawn: CodexAppServerSpawn = (
     command: string,
     args: string[],
     options: CodexAppServerSpawnOptions,
   ) => {
-    const proc: ChildProcess = spawn(
-      command,
-      [...args, "-c", `config_path="${opts.mcpConfigPath}"`],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: options.env,
-      },
-    );
+    const proc: ChildProcess = spawn(command, [...args, ...mcpFlags], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: options.env,
+    });
     return proc as unknown as CodexAppServerProcess;
   };
 
@@ -321,6 +417,9 @@ async function runCodexTurn(opts: {
     // Log interesting events
     const m = notification.method;
     const p = notification.params ?? {};
+    if (m.includes("mcp")) {
+      console.log(`  [codex] [mcp] ${m}`, JSON.stringify(p).slice(0, 200));
+    }
     if (m === "turn/completed" || m === "turn/failed") {
       console.log(`  [codex] ${m}`);
     } else if (m.startsWith("item/")) {
@@ -429,7 +528,7 @@ async function cleanup(
   ids: { loopId?: string; threadId?: string; userId?: string },
 ) {
   const { eq } = await import("drizzle-orm");
-  const schema = await import("@terragon/shared/db/schema");
+  const schema = await import("./src/db/schema.ts");
 
   // sdlcLoop cascade-deletes artifacts, tasks, signals, outbox
   if (ids.loopId) {
@@ -491,22 +590,20 @@ async function main() {
   let threadId: string | undefined;
   let userId: string | undefined;
   let stubServer: Server | undefined;
-  let tmpDir: string | undefined;
 
   try {
     // ── Step 1: DB Setup ──
     console.log("-- Step 1: DB Setup --");
 
-    const { user } = await shared.createTestUser({ db });
+    const user = await createTestUserInline(db);
     userId = user.id;
     console.log(`  Created user: ${userId}`);
 
-    const threadResult = await shared.createTestThread({
+    const threadResult = await createTestThreadInline(
       db,
       userId,
-      overrides: { githubRepoFullName: "terragon/e2e-test-repo" },
-      enableThreadChatCreation: true,
-    });
+      "terragon/e2e-test-repo",
+    );
     threadId = threadResult.threadId;
     const threadChatId = threadResult.threadChatId;
     console.log(`  Created thread: ${threadId}, chat: ${threadChatId}`);
@@ -602,24 +699,6 @@ async function main() {
     // ── Step 3: Codex + MCP ──
     console.log("-- Step 3: Codex + MCP --");
 
-    tmpDir = mkdtempSync(join(tmpdir(), "delivery-loop-e2e-"));
-    const codexConfigPath = join(tmpDir, "config.toml");
-    writeFileSync(
-      codexConfigPath,
-      `
-[mcp_servers.terry]
-command = "node"
-args = ["${MCP_SERVER_PATH}"]
-
-[mcp_servers.terry.env]
-TERRAGON_SERVER_URL = "http://localhost:${stub.port}"
-DAEMON_TOKEN = "e2e-test-token"
-TERRAGON_THREAD_ID = "${threadId}"
-TERRAGON_THREAD_CHAT_ID = "${threadChatId}"
-`,
-    );
-    console.log(`  Codex config written to ${codexConfigPath}`);
-
     const notifications: CapturedNotification[] = [];
 
     const instructions = [
@@ -642,7 +721,10 @@ TERRAGON_THREAD_CHAT_ID = "${threadChatId}"
     const { turnCompleted, turnFailed } = await runCodexTurn({
       prompt,
       instructions,
-      mcpConfigPath: codexConfigPath,
+      mcpServerPath: MCP_SERVER_PATH,
+      stubPort: stub.port,
+      threadId,
+      threadChatId,
       notifications,
     });
 
@@ -759,9 +841,6 @@ TERRAGON_THREAD_CHAT_ID = "${threadChatId}"
     }
     if (stubServer) {
       stubServer.close();
-    }
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
     }
   }
 }
