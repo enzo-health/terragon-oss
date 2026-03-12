@@ -21,7 +21,6 @@ import {
   transitionSdlcLoopStateWithArtifact,
   verifyPlanTaskCompletionForHead,
 } from "@terragon/shared/model/delivery-loop";
-import { detectPhaseCompleteSignal } from "@/server-lib/checkpoint-thread-internal";
 import type { DB } from "@terragon/shared/db";
 
 // ── Factories ──────────────────────────────────────────────────────────────────
@@ -157,10 +156,6 @@ vi.mock("@terragon/shared/utils/thread-utils", () => ({
   getPrimaryThreadChat: vi.fn(),
 }));
 
-vi.mock("@/server-lib/checkpoint-thread-internal", () => ({
-  detectPhaseCompleteSignal: vi.fn(),
-}));
-
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
   acquireSdlcLoopLease: vi.fn(),
   terminalSdlcLoopStateList: [
@@ -257,7 +252,6 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       loopUpdateOutcome: "updated",
     });
     vi.mocked(transitionSdlcLoopState).mockResolvedValue("updated");
-    vi.mocked(detectPhaseCompleteSignal).mockReturnValue(false);
     vi.mocked(getLatestAcceptedArtifact).mockResolvedValue(undefined);
     vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValue({
       gatePassed: false,
