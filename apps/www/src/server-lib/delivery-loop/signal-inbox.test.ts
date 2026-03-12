@@ -13,6 +13,7 @@ import {
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
   getLatestAcceptedArtifact,
+  markPlanTasksCompletedByAgent,
   persistSdlcCiGateEvaluation,
   persistSdlcReviewThreadGateEvaluation,
   releaseSdlcLoopLease,
@@ -125,6 +126,9 @@ vi.mock("@terragon/shared/model/delivery-loop", () => ({
   enqueueSdlcOutboxAction: vi.fn(),
   evaluateSdlcLoopGuardrails: vi.fn(),
   getLatestAcceptedArtifact: vi.fn(),
+  markPlanTasksCompletedByAgent: vi
+    .fn()
+    .mockResolvedValue({ updatedTaskCount: 0 }),
   verifyPlanTaskCompletionForHead: vi.fn(),
   getEffectiveDeliveryLoopPhase: vi.fn((snapshot) =>
     snapshot.kind === "blocked" ? snapshot.from : snapshot.kind,
@@ -1341,6 +1345,78 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       }),
     );
     expect(queueFollowUpInternal).toHaveBeenCalled();
+  });
+
+  it("auto-marks tasks when MCP tool failed (all tasks have status but no evidence)", async () => {
+    dbMocks.loopFindFirst.mockResolvedValueOnce({
+      id: "loop-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      loopVersion: 7,
+      currentHeadSha: null,
+      state: "implementing",
+      blockedFromState: null,
+    });
+    dbMocks.signalFindFirst.mockResolvedValueOnce({
+      id: "signal-dt-fallback-1",
+      causeType: "daemon_terminal",
+      canonicalCauseId: "event-fallback",
+      payload: {
+        eventType: "daemon_terminal",
+        runId: "run-fallback",
+        daemonRunStatus: "completed",
+        headShaAtCompletion: "sha-fallback-head",
+      },
+      receivedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    vi.mocked(getLatestAcceptedArtifact).mockResolvedValueOnce({
+      id: "plan-artifact-1",
+    } as Awaited<ReturnType<typeof getLatestAcceptedArtifact>>);
+    // First verify: tasks done but no evidence (MCP tool failed)
+    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
+      gatePassed: false,
+      totalTasks: 2,
+      incompleteTaskIds: [],
+      invalidEvidenceTaskIds: ["task-1", "task-2"],
+    });
+    // After auto-marking: re-verify passes
+    vi.mocked(verifyPlanTaskCompletionForHead).mockResolvedValueOnce({
+      gatePassed: true,
+      totalTasks: 2,
+      incompleteTaskIds: [],
+      invalidEvidenceTaskIds: [],
+    });
+
+    const result = await runBestEffortSdlcSignalInboxTick({
+      db: makeDb(),
+      loopId: "loop-1",
+      leaseOwnerToken: "daemon-event:fallback:1",
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        runtimeAction: "none",
+      }),
+    );
+    expect(markPlanTasksCompletedByAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loopId: "loop-1",
+        artifactId: "plan-artifact-1",
+        completions: expect.arrayContaining([
+          expect.objectContaining({ stableTaskId: "task-1", status: "done" }),
+          expect.objectContaining({ stableTaskId: "task-2", status: "done" }),
+        ]),
+      }),
+    );
+    expect(transitionSdlcLoopState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transitionEvent: "implementation_completed",
+      }),
+    );
   });
 
   it("falls through to normal follow-up when no plan artifact exists", async () => {
