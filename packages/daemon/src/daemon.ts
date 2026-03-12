@@ -1258,6 +1258,32 @@ export class TerragonDaemon {
     let processHealthInterval: NodeJS.Timeout | null = null;
 
     try {
+      // Update MCP config with current env vars so the MCP server subprocess
+      // can reach the Terragon API (env vars change per dispatch).
+      if (this.mcpConfigPath) {
+        try {
+          const raw = this.runtime.readFileSync(this.mcpConfigPath);
+          const mcpConfig = JSON.parse(raw);
+          if (mcpConfig?.mcpServers?.terry) {
+            mcpConfig.mcpServers.terry.env = {
+              ...mcpConfig.mcpServers.terry.env,
+              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+              DAEMON_TOKEN: input.token,
+              TERRAGON_THREAD_ID: input.threadId,
+              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+            };
+            this.runtime.writeFileSync(
+              this.mcpConfigPath,
+              JSON.stringify(mcpConfig, null, 2),
+            );
+          }
+        } catch {
+          this.runtime.logger.warn(
+            "Failed to update MCP config with env vars for app-server",
+          );
+        }
+      }
+
       await this.applyAppServerRespawnBackoff();
       await manager.restartIfTokenChanged(input.token);
       await manager.ensureReady();
