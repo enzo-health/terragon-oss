@@ -112,6 +112,12 @@ async function loadSharedModules() {
     buildSdlcCanonicalCause,
   } = await import("./src/model/delivery-loop.ts");
 
+  const {
+    claimNextUnprocessedSignal,
+    completeSignalClaim,
+    evaluateBabysitCompletionForHead,
+  } = await import("./src/model/signal-inbox-core.ts");
+
   return {
     createDb,
     enrollSdlcLoopForThread,
@@ -129,6 +135,9 @@ async function loadSharedModules() {
     createBabysitEvaluationArtifactForHead,
     persistSdlcCiGateEvaluation,
     buildSdlcCanonicalCause,
+    claimNextUnprocessedSignal,
+    completeSignalClaim,
+    evaluateBabysitCompletionForHead,
   };
 }
 
@@ -830,27 +839,43 @@ async function main() {
       return row!.id;
     }
 
-    // Helper: claim a signal (set claimToken + claimedAt)
-    async function claimSignal(signalId: string): Promise<void> {
-      await db
-        .update(schemaImport.sdlcLoopSignalInbox)
-        .set({
-          claimToken: nanoid(),
-          claimedAt: new Date(),
-        })
-        .where(eq(schemaImport.sdlcLoopSignalInbox.id, signalId));
+    // Claim + complete helpers using real production functions from signal-inbox-core
+    let lastClaimToken: string | null = null;
+    async function claimSignal(_signalId: string): Promise<void> {
+      if (!loopId) throw new Error("loopId not set");
+      const claimToken = nanoid();
+      const claimed = await shared.claimNextUnprocessedSignal({
+        db,
+        loopId,
+        claimToken,
+        now: new Date(),
+        staleClaimMs: 0,
+      });
+      if (!claimed) {
+        throw new Error(`Failed to claim signal (expected ${_signalId})`);
+      }
+      if (claimed.id !== _signalId) {
+        throw new Error(
+          `Claimed wrong signal: expected ${_signalId}, got ${claimed.id}`,
+        );
+      }
+      lastClaimToken = claimToken;
     }
 
-    // Helper: mark a signal as processed (set processedAt, clear claim)
     async function completeSignal(signalId: string): Promise<void> {
-      await db
-        .update(schemaImport.sdlcLoopSignalInbox)
-        .set({
-          processedAt: new Date(),
-          claimToken: null,
-          claimedAt: null,
-        })
-        .where(eq(schemaImport.sdlcLoopSignalInbox.id, signalId));
+      if (!lastClaimToken) {
+        throw new Error("No claim token — call claimSignal first");
+      }
+      const completed = await shared.completeSignalClaim({
+        db,
+        signalId,
+        claimToken: lastClaimToken,
+        now: new Date(),
+      });
+      if (!completed) {
+        throw new Error(`Failed to complete signal ${signalId}`);
+      }
+      lastClaimToken = null;
     }
 
     const HEAD_SHA = "e2e-test-sha-abc123";
@@ -1212,8 +1237,18 @@ async function main() {
         failingChecks: [],
       });
 
-      // Evaluate babysitting completion inline
-      // (evaluateBabysitCompletionForHead is in apps/www — replicate its logic)
+      // Evaluate babysitting completion using real production function
+      const babysitCompletion = await shared.evaluateBabysitCompletionForHead({
+        db,
+        loopId,
+        headSha: HEAD_SHA,
+      });
+      console.log(
+        `  Babysit evaluation: ciPassed=${babysitCompletion.requiredCiPassed}, ` +
+          `reviewThreads=${babysitCompletion.unresolvedReviewThreads}, ` +
+          `allPassed=${babysitCompletion.allRequiredGatesPassed}`,
+      );
+
       ver = await getLoopVersion();
       const babysitArtifact =
         await shared.createBabysitEvaluationArtifactForHead({
@@ -1223,11 +1258,7 @@ async function main() {
           loopVersion: ver,
           payload: {
             headSha: HEAD_SHA,
-            requiredCiPassed: true,
-            unresolvedReviewThreads: 0,
-            unresolvedDeepBlockers: 0,
-            unresolvedCarmackBlockers: 0,
-            allRequiredGatesPassed: true,
+            ...babysitCompletion,
           },
         });
       console.log(
