@@ -158,6 +158,9 @@ function makeDb(): DB {
       sdlcCiGateRun: {
         findFirst: dbMocks.ciGateRunFindFirst,
       },
+      sdlcReviewThreadGateRun: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
     },
     update: dbMocks.update,
   } as unknown as DB;
@@ -1560,7 +1563,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       repoFullName: "owner/repo",
       prNumber: 42,
       loopVersion: 7,
-      currentHeadSha: "sha-loop-1",
+      currentHeadSha: null,
       state: "babysitting",
       blockedFromState: null,
     };
