@@ -19,7 +19,6 @@ import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { fetchUnresolvedReviewThreadCount } from "@/app/api/webhooks/github/handlers";
 import { redis } from "@/lib/redis";
 import { eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 
 const BABYSIT_RECHECK_COOLDOWN_SECONDS = 120; // 2 min between rechecks per loop
 
@@ -106,23 +105,22 @@ export async function recheckBabysitCompletion({
 
   // Insert CI signal if checks completed
   if (ciSnapshot?.complete) {
-    const syntheticDeliveryId = `babysit-recheck:${randomUUID()}`;
-    const syntheticSuiteId = `babysit-recheck:${loop.currentHeadSha}:${Date.now()}`;
     const checkOutcome = ciSnapshot.failingChecks.length > 0 ? "fail" : "pass";
+    const deterministicSuiteId = `babysit-recheck:ci:${loop.id}:${loop.currentHeadSha}`;
 
     const inserted = await db
       .insert(schema.sdlcLoopSignalInbox)
       .values({
         loopId: loop.id,
         causeType: "check_suite.completed",
-        canonicalCauseId: `${syntheticDeliveryId}:${syntheticSuiteId}`,
-        signalHeadShaOrNull: null,
+        canonicalCauseId: deterministicSuiteId,
+        signalHeadShaOrNull: loop.currentHeadSha,
         causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
         payload: {
           eventType: "check_suite.completed",
           repoFullName: loop.repoFullName,
           prNumber: loop.prNumber,
-          checkSuiteId: syntheticSuiteId,
+          checkSuiteId: deterministicSuiteId,
           checkOutcome,
           headSha: loop.currentHeadSha,
           ciSnapshotSource: "babysit_recheck",
@@ -142,23 +140,22 @@ export async function recheckBabysitCompletion({
 
   // Insert review signal if we got a thread count
   if (unresolvedThreadCount !== null) {
-    const syntheticDeliveryId = `babysit-recheck-review:${randomUUID()}`;
-    const syntheticReviewId = `babysit-recheck-review:${loop.currentHeadSha}:${Date.now()}`;
+    const deterministicReviewId = `babysit-recheck:review:${loop.id}:${loop.currentHeadSha}`;
 
     const inserted = await db
       .insert(schema.sdlcLoopSignalInbox)
       .values({
         loopId: loop.id,
         causeType: "pull_request_review",
-        canonicalCauseId: `${syntheticDeliveryId}:${syntheticReviewId}:approved`,
-        signalHeadShaOrNull: null,
+        canonicalCauseId: deterministicReviewId,
+        signalHeadShaOrNull: loop.currentHeadSha,
         causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
         payload: {
           eventType: "pull_request_review.submitted",
           repoFullName: loop.repoFullName,
           prNumber: loop.prNumber,
-          reviewId: syntheticReviewId,
-          reviewState: "approved",
+          reviewId: deterministicReviewId,
+          reviewState: "synthetic_poll",
           unresolvedThreadCount,
           unresolvedThreadCountSource: "github_graphql",
           headSha: loop.currentHeadSha,
@@ -179,7 +176,8 @@ export async function recheckBabysitCompletion({
     if (!ciSnapshot) reasons.push("github_ci_poll_failed");
     else if (!ciSnapshot.complete) reasons.push("checks_still_running");
     else reasons.push("ci_signal_deduplicated");
-    if (unresolvedThreadCount === null) reasons.push("review_poll_failed");
+    if (!loop.prNumber) reasons.push("no_pr_number");
+    else if (unresolvedThreadCount === null) reasons.push("review_poll_failed");
     else reasons.push("review_signal_deduplicated");
     const result: BabysitRecheckResult = {
       action: "no_signal_needed",
