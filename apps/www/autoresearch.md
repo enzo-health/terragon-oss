@@ -36,15 +36,19 @@ Make the Terragon frontend feel **super snappy and instantaneous**. Target metri
 
 ## What's Been Tried
 
-### Round 1: Foundation (current)
+### Round 1: Foundation
 
 - [x] Added Web Vitals instrumentation (`instrumentation-client.ts`)
-- [x] Added `@next/bundle-analyzer` for bundle visibility
-- [x] Added `staleTimes` to `next.config.ts` for client-side router cache
-- [x] Added Suspense boundaries around heavy async server components
-- [x] Dynamic imports for heavy client components (chat, terminal, admin)
+- [x] Added `@next/bundle-analyzer` for bundle visibility (`pnpm -C apps/www analyze`)
+- [x] Added `staleTimes` to `next.config.ts` for client-side router cache (dynamic: 180s, static: 300s)
+- [x] Lazy-loaded `posthog-js` in root layout (~45KB off critical path)
 - [x] `@vercel/speed-insights` for production monitoring
-- [x] `prefetch` optimizations on Link components
+- [x] `optimizePackageImports` for lucide-react and radix-icons (tree-shaking)
+
+### Round 2: Audit-driven fixes
+
+- [x] Removed empty QueryClient creation/dehydration in site-header layout
+- [x] Cached `getFeatureFlagsGlobal` with `React.cache` in BannerContainer
 
 ## Ideas Backlog
 
