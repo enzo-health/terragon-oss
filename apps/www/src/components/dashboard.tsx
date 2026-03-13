@@ -7,7 +7,7 @@ import {
 import { ThreadListMain } from "./thread-list/main";
 import { newThread } from "@/server-actions/new-thread";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { InfiniteData, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -98,11 +98,10 @@ export function Dashboard({
         ],
       };
 
-      // Optimistically prepend to all matching list queries
-      const listQueryKey = threadQueryKeys.list({ archived: showArchived });
+      // Optimistically prepend to all matching list queries (sidebar + mobile)
       await queryClient.cancelQueries({ queryKey: threadQueryKeys.list(null) });
-      queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(
-        listQueryKey,
+      queryClient.setQueriesData<InfiniteData<ThreadInfo[]>>(
+        { queryKey: threadQueryKeys.list(null) },
         (old) => {
           if (!old) return old;
           const [firstPage = [], ...rest] = old.pages;
@@ -133,9 +132,9 @@ export function Dashboard({
           queryKey: threadQueryKeys.list(null),
         });
       } catch (error: any) {
-        // Roll back optimistic update
-        queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(
-          listQueryKey,
+        // Roll back optimistic update from all list queries
+        queryClient.setQueriesData<InfiniteData<ThreadInfo[]>>(
+          { queryKey: threadQueryKeys.list(null) },
           (old) => {
             if (!old) return old;
             return {
@@ -151,7 +150,7 @@ export function Dashboard({
         throw error;
       }
     },
-    [queryClient, showArchived],
+    [queryClient],
   );
 
   const handleStop = useCallback(async () => {
@@ -171,8 +170,11 @@ export function Dashboard({
 
   // Determine if there are any active tasks; used for Sawyer UI empty state
   const { data } = useInfiniteThreadList({ archived: false });
-  const showRecommendedTasks =
-    (data?.pages.flatMap((page) => page) ?? []).length < 3;
+  const showRecommendedTasks = useMemo(() => {
+    const totalThreads =
+      data?.pages.reduce((sum, page) => sum + page.length, 0) ?? 0;
+    return totalThreads < 3;
+  }, [data]);
 
   return (
     <div
@@ -195,7 +197,7 @@ export function Dashboard({
             Suggested tasks
           </h3>
           <RecommendedTasks
-            onTaskSelect={(p) => setPromptText(p)}
+            onTaskSelect={setPromptText}
             selectedModel={selectedModel}
           />
         </div>

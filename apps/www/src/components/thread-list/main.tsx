@@ -189,7 +189,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   title,
   threads,
   isCollapsed,
-  onToggle,
+  groupId,
   pathname,
   isSidebar,
   groupBy,
@@ -197,11 +197,18 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   title: string;
   threads: ThreadInfo[];
   isCollapsed: boolean;
-  onToggle: () => void;
+  groupId: string;
   pathname: string;
   isSidebar: boolean;
   groupBy: ThreadListGroupBy;
 }) {
+  const toggleCollapsedSection = useSetAtom(
+    toggleThreadListCollapsedSectionAtom,
+  );
+  const onToggle = useCallback(
+    () => toggleCollapsedSection(groupId),
+    [toggleCollapsedSection, groupId],
+  );
   const numThreads = threads.length;
   if (numThreads === 0) {
     return null;
@@ -478,9 +485,6 @@ export const ThreadListContents = memo(function ThreadListContents({
 }) {
   const pathname = usePathname();
   const collapsedSections = useAtomValue(threadListCollapsedSectionsAtom);
-  const toggleCollapsedSection = useSetAtom(
-    toggleThreadListCollapsedSectionAtom,
-  );
   const groupBy = useAtomValue(threadListGroupByAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
   const {
@@ -523,7 +527,7 @@ export const ThreadListContents = memo(function ThreadListContents({
               title={group.title}
               threads={group.threads}
               isCollapsed={!!collapsedSections[group.id]}
-              onToggle={() => toggleCollapsedSection(group.id)}
+              groupId={group.id}
               pathname={pathname}
               isSidebar={isSidebar}
               groupBy={groupBy}
@@ -590,31 +594,33 @@ export const ThreadListMain = memo(function ThreadListMain({
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const setViewFilter = useCallback(
+    (value: "active" | "archived") => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("archived");
+      if (value === "archived") {
+        params.set("archived", "true");
+      }
+      router.push(`${pathname}?${params.toString()}`);
+    },
+    [searchParams, router, pathname],
+  );
   return (
-    <>
-      <div className="flex-1 pb-4 flex flex-col">
-        <ThreadListHeader
-          className="sticky top-0 bg-background z-20 px-0 "
-          viewFilter={viewFilter}
-          setViewFilter={(value) => {
-            const params = new URLSearchParams(searchParams.toString());
-            params.delete("archived");
-            if (value === "archived") {
-              params.set("archived", "true");
-            }
-            router.push(`${pathname}?${params.toString()}`);
-          }}
-          allowGroupBy={allowGroupBy}
-        />
-        <ThreadListContents
-          viewFilter={viewFilter}
-          queryFilters={queryFilters}
-          showSuggestedTasks={showSuggestedTasks}
-          setPromptText={setPromptText}
-          allowGroupBy={allowGroupBy}
-          isSidebar={false}
-        />
-      </div>
-    </>
+    <div className="flex-1 pb-4 flex flex-col">
+      <ThreadListHeader
+        className="sticky top-0 bg-background z-20 px-0 "
+        viewFilter={viewFilter}
+        setViewFilter={setViewFilter}
+        allowGroupBy={allowGroupBy}
+      />
+      <ThreadListContents
+        viewFilter={viewFilter}
+        queryFilters={queryFilters}
+        showSuggestedTasks={showSuggestedTasks}
+        setPromptText={setPromptText}
+        allowGroupBy={allowGroupBy}
+        isSidebar={false}
+      />
+    </div>
   );
 });
