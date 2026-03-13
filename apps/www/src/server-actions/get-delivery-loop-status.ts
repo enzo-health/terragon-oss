@@ -23,6 +23,7 @@ import {
 } from "@terragon/shared/model/delivery-loop";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
+import { waitUntil } from "@vercel/functions";
 
 type SdlcCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
 type SdlcReviewThreadGateRun =
@@ -624,6 +625,50 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       },
       updatedAtIso: loop.updatedAt.toISOString(),
     };
+
+    // Fire-and-forget: if the loop is babysitting, trigger a background
+    // recheck of GitHub CI to self-heal from missed webhooks.
+    if (
+      loop.state === "babysitting" &&
+      activeSdlcLoopStateSet.has(loop.state)
+    ) {
+      waitUntil(
+        (async () => {
+          try {
+            const { recheckBabysitCompletion } = await import(
+              "@/server-lib/delivery-loop/babysit-recheck"
+            );
+            const result = await recheckBabysitCompletion({
+              db,
+              loopId: loop.id,
+            });
+            if (result.action === "signal_inserted") {
+              // Process the signal immediately
+              const { runBestEffortSdlcSignalInboxTick } = await import(
+                "@/server-lib/delivery-loop/signal-inbox"
+              );
+              await runBestEffortSdlcSignalInboxTick({
+                db,
+                loopId: loop.id,
+                leaseOwnerToken: `babysit-recheck:${loop.id}`,
+                guardrailRuntime: {
+                  killSwitchEnabled: false,
+                  cooldownUntil: null,
+                  maxIterations: null,
+                  manualIntentAllowed: true,
+                  iterationCount: Math.max(loop.loopVersion ?? 0, 0),
+                },
+              });
+            }
+          } catch (error) {
+            console.warn("[babysit-recheck] background recheck failed", {
+              loopId: loop.id,
+              error,
+            });
+          }
+        })(),
+      );
+    }
 
     return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
   },

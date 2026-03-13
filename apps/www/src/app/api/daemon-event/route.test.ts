@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import {
+  createDispatchIntent as createDurableDispatchIntent,
+  getActiveSdlcLoopForThread,
+  markDispatchIntentCompleted,
+  markDispatchIntentDispatched,
+  markDispatchIntentFailed,
+} from "@terragon/shared/model/delivery-loop";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
@@ -16,6 +22,7 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+import { getThreadChat } from "@terragon/shared/model/threads";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -92,10 +99,22 @@ const dbMocks = vi.hoisted(() => {
 });
 
 const dispatchIntentMocks = vi.hoisted(() => ({
+  buildDispatchIntentId: vi.fn(
+    (loopId: string, runId: string) => `di_${loopId}_${runId}`,
+  ),
   createDispatchIntent: vi.fn(),
   storeSelfDispatchReplay: vi.fn(),
   getReplayableSelfDispatch: vi.fn(),
   updateDispatchIntent: vi.fn(),
+  getActiveDispatchIntent: vi.fn().mockResolvedValue(null),
+}));
+
+const deliveryLoopModelMocks = vi.hoisted(() => ({
+  createDispatchIntent: vi.fn(),
+  getActiveSdlcLoopForThread: vi.fn(),
+  markDispatchIntentDispatched: vi.fn(),
+  markDispatchIntentCompleted: vi.fn(),
+  markDispatchIntentFailed: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-server", () => ({
@@ -111,7 +130,13 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@terragon/shared/model/delivery-loop", () => ({
-  getActiveSdlcLoopForThread: vi.fn(),
+  createDispatchIntent: deliveryLoopModelMocks.createDispatchIntent,
+  getActiveSdlcLoopForThread: deliveryLoopModelMocks.getActiveSdlcLoopForThread,
+  markDispatchIntentDispatched:
+    deliveryLoopModelMocks.markDispatchIntentDispatched,
+  markDispatchIntentCompleted:
+    deliveryLoopModelMocks.markDispatchIntentCompleted,
+  markDispatchIntentFailed: deliveryLoopModelMocks.markDispatchIntentFailed,
   SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
@@ -132,10 +157,12 @@ vi.mock("@/server-lib/follow-up", () => ({
 }));
 
 vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
+  buildDispatchIntentId: dispatchIntentMocks.buildDispatchIntentId,
   createDispatchIntent: dispatchIntentMocks.createDispatchIntent,
   storeSelfDispatchReplay: dispatchIntentMocks.storeSelfDispatchReplay,
   getReplayableSelfDispatch: dispatchIntentMocks.getReplayableSelfDispatch,
   updateDispatchIntent: dispatchIntentMocks.updateDispatchIntent,
+  getActiveDispatchIntent: dispatchIntentMocks.getActiveDispatchIntent,
 }));
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
@@ -162,20 +189,28 @@ function createDaemonRequest(
   headers: Record<string, string> = {},
   options: { autoCapabilities?: boolean } = {},
 ) {
+  // Default to ACP transport to match the default beforeEach mock.
+  // Tests that need different transport (e.g. legacy, codex-app-server)
+  // should explicitly specify transportMode/protocolVersion.
+  const bodyWithDefaults: Record<string, unknown> = {
+    transportMode: "acp",
+    protocolVersion: 2,
+    ...body,
+  };
   const requestHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...headers,
   };
 
   const hasEnvelopeV2 =
-    body.payloadVersion === 2 &&
-    typeof body.eventId === "string" &&
-    body.eventId.length > 0 &&
-    typeof body.runId === "string" &&
-    body.runId.length > 0 &&
-    typeof body.seq === "number" &&
-    Number.isInteger(body.seq) &&
-    body.seq >= 0;
+    bodyWithDefaults.payloadVersion === 2 &&
+    typeof bodyWithDefaults.eventId === "string" &&
+    bodyWithDefaults.eventId.length > 0 &&
+    typeof bodyWithDefaults.runId === "string" &&
+    bodyWithDefaults.runId.length > 0 &&
+    typeof bodyWithDefaults.seq === "number" &&
+    Number.isInteger(bodyWithDefaults.seq) &&
+    bodyWithDefaults.seq >= 0;
   if (
     (options.autoCapabilities ?? true) &&
     hasEnvelopeV2 &&
@@ -188,7 +223,7 @@ function createDaemonRequest(
   return new Request("http://localhost/api/daemon-event", {
     method: "POST",
     headers: requestHeaders,
-    body: JSON.stringify(body),
+    body: JSON.stringify(bodyWithDefaults),
   });
 }
 
@@ -236,8 +271,8 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
         sandboxId: "sandbox-1",
         agent: "claudeCode",
-        transportMode: "legacy",
-        protocolVersion: 1,
+        transportMode: "acp",
+        protocolVersion: 2,
         providers: ["anthropic"],
         nonce: "nonce-1",
         issuedAt: Date.now(),
@@ -250,8 +285,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -264,6 +299,12 @@ describe("daemon-event route", () => {
     } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+    vi.mocked(createDurableDispatchIntent).mockResolvedValue(
+      "durable-dispatch-intent-1",
+    );
+    vi.mocked(markDispatchIntentDispatched).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentCompleted).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentFailed).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
     vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
       executed: false,
@@ -285,7 +326,7 @@ describe("daemon-event route", () => {
     dispatchIntentMocks.storeSelfDispatchReplay.mockResolvedValue(undefined);
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(null);
     dispatchIntentMocks.updateDispatchIntent.mockResolvedValue(undefined);
-    dbMocks.execute.mockResolvedValue([]);
+    dbMocks.execute.mockResolvedValue({ rows: [] });
     dbMocks.selectWhere.mockResolvedValue([]);
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
@@ -443,6 +484,7 @@ describe("daemon-event route", () => {
         ],
         timezone: "UTC",
         transportMode: "legacy",
+        protocolVersion: 1,
         payloadVersion: 2,
         eventId: "event-legacy",
         runId: "run-1",
@@ -507,8 +549,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -534,7 +576,7 @@ describe("daemon-event route", () => {
           },
         ],
         timezone: "UTC",
-        transportMode: "legacy",
+        transportMode: "acp",
         payloadVersion: 2,
         eventId: "event-terminal",
         runId: "run-1",
@@ -560,8 +602,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -767,8 +809,13 @@ describe("daemon-event route", () => {
         error: null,
       },
     });
-    // Circuit breaker uses db.execute() — return count >= MAX_CONSECUTIVE_AUTO_DISPATCHES (10)
-    dbMocks.execute.mockResolvedValue([{ count: 10 }]);
+    // First execute call is advisory lock for claim; second call is the breaker query.
+    dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: Array.from({ length: 10 }, () => ({
+        daemonRunStatus: "completed",
+        autoDispatchProvenance: true,
+      })),
+    });
 
     const response = await POST(
       createDaemonRequest({
@@ -787,6 +834,62 @@ describe("daemon-event route", () => {
     // Circuit breaker should prevent follow-up processing
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("does not trip circuit breaker for completed runs without auto-dispatch provenance", async () => {
+    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      loopVersion: 7,
+    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
+      processed: true,
+      signalId: "signal-1",
+      causeType: "daemon_terminal",
+      runtimeAction: "feedback_follow_up_queued",
+      outboxId: null,
+      feedbackQueuedMessage: {
+        type: "user",
+        model: null,
+        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+        parts: [{ type: "text", text: "Please address this feedback." }],
+      },
+      runtimeRouting: {
+        routed: true,
+        followUpQueued: true,
+        reason: "follow_up_queued",
+        error: null,
+      },
+    });
+    vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
+      processed: true,
+      reason: "dispatch_started_batch",
+    } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
+    dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: [
+        {
+          daemonRunStatus: "completed",
+          autoDispatchProvenance: false,
+        },
+      ],
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-non-auto-provenance",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(1);
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
   });
 
   it("persists codexPreviousResponseId for successful codex app-server completions", async () => {
@@ -1215,6 +1318,21 @@ describe("daemon-event route", () => {
     expect(data.acknowledgedSeq).toBe(2);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
+    expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
+      "di_loop-1_run-1",
+      "chat-1",
+      {
+        status: "completed",
+        lastError: null,
+        lastFailureCategory: null,
+      },
+    );
+    expect(markDispatchIntentCompleted).toHaveBeenCalledWith(
+      expect.anything(),
+      "run-1",
+    );
+    expect(getThreadChat).not.toHaveBeenCalled();
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
     expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
     expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
@@ -1385,6 +1503,19 @@ describe("daemon-event route", () => {
     expect(data.reason).toBe("out_of_order_or_duplicate_seq");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
+    expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
+      "di_loop-1_run-1",
+      "chat-1",
+      {
+        status: "completed",
+        lastError: null,
+        lastFailureCategory: null,
+      },
+    );
+    expect(markDispatchIntentCompleted).toHaveBeenCalledWith(
+      expect.anything(),
+      "run-1",
+    );
     expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
     expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });

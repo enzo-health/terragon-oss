@@ -21,7 +21,8 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 2,
+      dispatchAttempt: 2,
+      deferCount: 1,
       runAt,
     });
 
@@ -31,7 +32,8 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 2,
+      dispatchAttempt: 2,
+      deferCount: 1,
       runAt,
     });
     await expect(getRetryJob(job.id)).resolves.toEqual(job);
@@ -42,7 +44,7 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 1,
+      dispatchAttempt: 1,
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
@@ -69,7 +71,7 @@ describe("delivery loop retry jobs", () => {
       userId: "user-1",
       threadId: "thread-1",
       threadChatId: "chat-1",
-      attempt: 1,
+      dispatchAttempt: 1,
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
@@ -78,7 +80,7 @@ describe("delivery loop retry jobs", () => {
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => ({
         processed: false,
-        reason: "status_transition_noop_busy",
+        reason: "stale_cas_busy",
       }),
     });
 
@@ -90,9 +92,127 @@ describe("delivery loop retry jobs", () => {
     });
 
     const job = await getRetryJob("follow-up:chat-1");
-    expect(job?.attempt).toBe(2);
+    expect(job?.dispatchAttempt).toBe(1);
+    expect(job?.deferCount).toBe(1);
     expect(job?.runAt.getTime()).toBeGreaterThan(
       new Date("2026-03-09T12:00:05.000Z").getTime(),
     );
+  });
+
+  it("reschedules transient invalid_event outcomes instead of dropping the retry job", async () => {
+    await scheduleFollowUpRetryJob({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      dispatchAttempt: 1,
+      runAt: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const result = await drainDueDeliveryLoopRetryJobs({
+      now: new Date("2026-03-09T12:00:05.000Z"),
+      leaseOwnerTokenPrefix: "test",
+      processFollowUpQueue: async () => ({
+        processed: false,
+        reason: "invalid_event",
+      }),
+    });
+
+    expect(result).toEqual({
+      claimed: 1,
+      completed: 0,
+      rescheduled: 1,
+      skipped: 0,
+    });
+
+    const job = await getRetryJob("follow-up:chat-1");
+    expect(job?.dispatchAttempt).toBe(1);
+    expect(job?.deferCount).toBe(1);
+    expect(job?.runAt.getTime()).toBeGreaterThan(
+      new Date("2026-03-09T12:00:05.000Z").getTime(),
+    );
+  });
+
+  it("does not let a stale worker overwrite a newer retry schedule during reschedule", async () => {
+    await scheduleFollowUpRetryJob({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      dispatchAttempt: 1,
+      deferCount: 0,
+      runAt: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const newerRunAt = new Date("2026-03-09T12:06:00.000Z");
+    const result = await drainDueDeliveryLoopRetryJobs({
+      now: new Date("2026-03-09T12:00:05.000Z"),
+      leaseOwnerTokenPrefix: "test",
+      processFollowUpQueue: async () => {
+        await scheduleFollowUpRetryJob({
+          userId: "user-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          dispatchAttempt: 7,
+          deferCount: 4,
+          runAt: newerRunAt,
+        });
+        return {
+          processed: false,
+          reason: "stale_cas_busy",
+        };
+      },
+    });
+
+    expect(result).toEqual({
+      claimed: 1,
+      completed: 0,
+      rescheduled: 1,
+      skipped: 0,
+    });
+    const job = await getRetryJob("follow-up:chat-1");
+    expect(job?.dispatchAttempt).toBe(7);
+    expect(job?.deferCount).toBe(4);
+    expect(job?.runAt.toISOString()).toBe(newerRunAt.toISOString());
+  });
+
+  it("does not delete a newer schedule written during drain for the same chat", async () => {
+    await scheduleFollowUpRetryJob({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      dispatchAttempt: 1,
+      runAt: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const newerRunAt = new Date("2026-03-09T12:05:00.000Z");
+    const result = await drainDueDeliveryLoopRetryJobs({
+      now: new Date("2026-03-09T12:00:05.000Z"),
+      leaseOwnerTokenPrefix: "test",
+      processFollowUpQueue: async () => {
+        await scheduleFollowUpRetryJob({
+          userId: "user-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          dispatchAttempt: 2,
+          deferCount: 0,
+          runAt: newerRunAt,
+        });
+        return {
+          processed: true,
+          reason: "dispatch_started_batch",
+        };
+      },
+    });
+
+    expect(result).toEqual({
+      claimed: 1,
+      completed: 0,
+      rescheduled: 1,
+      skipped: 0,
+    });
+    const job = await getRetryJob("follow-up:chat-1");
+    expect(job).toBeTruthy();
+    expect(job?.dispatchAttempt).toBe(2);
+    expect(job?.deferCount).toBe(0);
+    expect(job?.runAt.toISOString()).toBe(newerRunAt.toISOString());
   });
 });

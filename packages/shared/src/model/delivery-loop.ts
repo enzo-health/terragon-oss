@@ -702,6 +702,9 @@ export type DeliveryLoopTransitionResult = {
 
 export function mapSdlcTransitionEventToDeliveryLoopTransition(
   event: SdlcLoopTransitionEvent,
+  options?: {
+    hasPrLink?: boolean;
+  },
 ): DeliveryLoopTransitionEvent | null {
   switch (event) {
     case "plan_completed":
@@ -724,7 +727,9 @@ export function mapSdlcTransitionEventToDeliveryLoopTransition(
       return "review_gate_blocked";
     case "ui_smoke_passed":
     case "video_capture_succeeded":
-      return "ui_gate_passed_with_pr";
+      return options?.hasPrLink === false
+        ? "ui_gate_passed_without_pr"
+        : "ui_gate_passed_with_pr";
     case "ui_smoke_failed":
     case "video_capture_failed":
       return "ui_gate_blocked";
@@ -830,10 +835,8 @@ export function resolveDeliveryLoopNextState({
       }
       if (event === "mark_done") return "done";
       return null;
-
-    default:
-      return null;
   }
+  return assertNever(currentState);
 }
 
 function getResumableStateFromSnapshot(
@@ -2199,7 +2202,7 @@ export async function verifyPlanTaskCompletionForHead({
     }
     const evidence =
       task.completionEvidence as SdlcPlanTaskCompletionEvidence | null;
-    if (!evidence || evidence.headSha !== headSha) {
+    if (!evidence) {
       invalidEvidenceTaskIds.push(task.stableTaskId);
     }
   }
@@ -2553,6 +2556,19 @@ export async function transitionSdlcLoopStateWithArtifact({
       return "artifact_gate_failed";
     }
 
+    const transitionResult = await persistGuardedGateLoopState({
+      tx,
+      loopId,
+      transitionEvent,
+      headSha,
+      loopVersion,
+      blockedFromState,
+      now,
+    });
+    if (transitionResult !== "updated") {
+      return transitionResult;
+    }
+
     const loopPointerUpdate = buildLoopArtifactPointerUpdate({
       phase: expectedPhase,
       artifactId: artifact.id,
@@ -2567,15 +2583,7 @@ export async function transitionSdlcLoopStateWithArtifact({
         .where(eq(schema.sdlcLoop.id, loopId));
     }
 
-    return await persistGuardedGateLoopState({
-      tx,
-      loopId,
-      transitionEvent,
-      headSha,
-      loopVersion,
-      blockedFromState,
-      now,
-    });
+    return transitionResult;
   });
 }
 
@@ -3391,7 +3399,10 @@ export async function persistSdlcVideoCaptureOutcome({
     ? "video_capture_succeeded"
     : "video_capture_failed";
   const canonicalTransitionEvent =
-    mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent);
+    mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent, {
+      hasPrLink:
+        typeof loop.prNumber === "number" && Number.isFinite(loop.prNumber),
+    });
   const reducedTransition =
     DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState) &&
     canonicalTransitionEvent
@@ -3783,10 +3794,100 @@ function shouldResetFixAttemptCountOnTransition({
   if (previousState === "ci_gate" && nextState === "ui_gate") {
     return true;
   }
+  if (previousState === "ui_gate" && nextState === "awaiting_pr_link") {
+    return true;
+  }
   if (previousState === "ui_gate" && nextState === "babysitting") {
     return true;
   }
+  if (previousState === "awaiting_pr_link" && nextState === "babysitting") {
+    return true;
+  }
   return false;
+}
+
+type CanonicalWriteTransitionEvent = DeliveryLoopTransitionEvent | "noop";
+
+function mapSdlcTransitionEventToCanonicalWriteTransition(params: {
+  event: SdlcLoopTransitionEvent;
+  currentState: SdlcLoopState;
+  hasPrLink: boolean;
+}): CanonicalWriteTransitionEvent | null {
+  switch (params.event) {
+    case "plan_completed":
+      return "plan_completed";
+    case "plan_gate_blocked":
+      return "plan_gate_blocked";
+    case "implementation_completed":
+      return "implementation_completed";
+    case "implementation_gate_blocked":
+      return "implementation_gate_blocked";
+    case "review_passed":
+      return "review_gate_passed";
+    case "review_blocked":
+      return "review_gate_blocked";
+    case "ci_gate_passed":
+      return params.currentState === "babysitting" ? "noop" : "ci_gate_passed";
+    case "ci_gate_blocked":
+      return params.currentState === "babysitting"
+        ? "babysit_blocked"
+        : "ci_gate_blocked";
+    case "ui_smoke_passed":
+    case "video_capture_succeeded":
+      return params.hasPrLink
+        ? "ui_gate_passed_with_pr"
+        : "ui_gate_passed_without_pr";
+    case "ui_smoke_failed":
+    case "video_capture_failed":
+      return "ui_gate_blocked";
+    case "pr_linked":
+      return "pr_linked";
+    case "babysit_passed":
+      return "babysit_passed";
+    case "babysit_blocked":
+      return "babysit_blocked";
+    case "human_feedback_requested":
+      return "exhausted_retryable_failure";
+    case "blocked_resume_requested":
+    case "blocked_bypass_once_requested":
+      return "blocked_resume";
+    case "manual_stop":
+      return "manual_stop";
+    case "pr_closed_unmerged":
+      return "pr_closed_unmerged";
+    case "pr_merged":
+      return "pr_merged";
+    case "mark_done":
+      return "mark_done";
+    case "review_threads_gate_blocked":
+      return params.currentState === "babysitting"
+        ? "babysit_blocked"
+        : "ci_gate_blocked";
+    case "review_threads_gate_passed":
+      return params.currentState === "babysitting" ? "noop" : "ci_gate_passed";
+    case "deep_review_gate_blocked":
+    case "carmack_review_gate_blocked":
+      return params.currentState === "babysitting"
+        ? "babysit_blocked"
+        : "review_gate_blocked";
+    case "deep_review_gate_passed":
+    case "carmack_review_gate_passed":
+      return params.currentState === "review_gate" ||
+        params.currentState === "babysitting"
+        ? "noop"
+        : null;
+    case "implementation_progress":
+      if (params.currentState === "blocked") {
+        return "blocked_resume";
+      }
+      if (params.currentState === "implementing") {
+        return "noop";
+      }
+      return null;
+    case "video_capture_started":
+      return params.currentState === "ui_gate" ? "noop" : null;
+  }
+  return assertNever(params.event);
 }
 
 async function persistGuardedGateLoopState({
@@ -3816,6 +3917,7 @@ async function persistGuardedGateLoopState({
       maxFixAttempts: true,
       blockedFromState: true,
       phaseEnteredAt: true,
+      prNumber: true,
     },
   });
 
@@ -3839,26 +3941,48 @@ async function persistGuardedGateLoopState({
   ) {
     return "stale_noop";
   }
+  if (!DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState)) {
+    return "stale_noop";
+  }
+
   const persistedBlockedFromState = coerceDeliveryLoopResumableState(
     loop.blockedFromState,
   );
-  let reducedTransition: DeliveryLoopTransitionResult | null = null;
-  let nextState = resolveSdlcLoopNextState({
-    currentState: loop.state,
-    event: transitionEvent,
-  });
-  if (DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState)) {
-    const canonicalEvent =
-      mapSdlcTransitionEventToDeliveryLoopTransition(transitionEvent);
-    if (canonicalEvent) {
-      reducedTransition = reducePersistedDeliveryLoopState({
-        state: loop.state as DeliveryLoopState,
-        blockedFromState: blockedFromState ?? persistedBlockedFromState,
-        event: canonicalEvent,
-      });
-      nextState = reducedTransition?.state ?? nextState;
-    }
+  const canonicalTransitionEvent =
+    mapSdlcTransitionEventToCanonicalWriteTransition({
+      event: transitionEvent,
+      currentState: loop.state,
+      hasPrLink:
+        typeof loop.prNumber === "number" && Number.isFinite(loop.prNumber),
+    });
+  if (!canonicalTransitionEvent) {
+    return "stale_noop";
   }
+
+  let reducedTransition: DeliveryLoopTransitionResult | null =
+    canonicalTransitionEvent === "noop"
+      ? {
+          state: loop.state as DeliveryLoopState,
+          snapshot: buildPersistedDeliveryLoopSnapshot({
+            state: loop.state as DeliveryLoopState,
+            blockedFromState: blockedFromState ?? persistedBlockedFromState,
+          }),
+          companionFields: buildDeliveryLoopCompanionFields(
+            buildPersistedDeliveryLoopSnapshot({
+              state: loop.state as DeliveryLoopState,
+              blockedFromState: blockedFromState ?? persistedBlockedFromState,
+            }),
+          ),
+        }
+      : reducePersistedDeliveryLoopState({
+          state: loop.state as DeliveryLoopState,
+          blockedFromState: blockedFromState ?? persistedBlockedFromState,
+          event: canonicalTransitionEvent,
+        });
+  let nextState =
+    canonicalTransitionEvent === "noop"
+      ? (loop.state as DeliveryLoopState)
+      : (reducedTransition?.state ?? null);
 
   if (!nextState) {
     return "stale_noop";
@@ -3872,18 +3996,13 @@ async function persistGuardedGateLoopState({
   const exhaustedRetryBudget =
     shouldIncrementFixAttempt &&
     incrementedFixAttemptCount > Math.max(loop.maxFixAttempts, 0);
-  if (
-    exhaustedRetryBudget &&
-    DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState)
-  ) {
+  if (exhaustedRetryBudget) {
     reducedTransition = reducePersistedDeliveryLoopState({
       state: loop.state as DeliveryLoopState,
       blockedFromState: blockedFromState ?? persistedBlockedFromState,
       event: "exhausted_retryable_failure",
     });
     nextState = reducedTransition?.state ?? "blocked";
-  } else if (exhaustedRetryBudget) {
-    nextState = "blocked";
   }
 
   if (normalizedLoopVersion !== null) {
@@ -3910,7 +4029,7 @@ async function persistGuardedGateLoopState({
     blockedFromState?: SdlcLoopState | null;
     phaseEnteredAt?: Date | null;
   } = {
-    state: nextState!,
+    state: nextState,
     updatedAt: now,
   };
   const nextBlockedFromState =

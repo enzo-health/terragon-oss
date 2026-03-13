@@ -4,11 +4,6 @@ import { codexImplementationAdapter } from "./codex-implementation-adapter";
 
 export type ImplementationTransportMode = "legacy" | "acp" | "codex-app-server";
 
-export type ImplementationTransportFeatureFlags = {
-  sandboxAgentAcpTransport: boolean;
-  codexAppServerTransport: boolean;
-};
-
 export type ImplementationDaemonMessage = {
   type: "claude";
   model: string;
@@ -37,7 +32,6 @@ export type ImplementationAdapterInput = {
   codexPreviousResponseId: string | null;
   shouldUseCredits: boolean;
   threadChatId: string;
-  featureFlags: ImplementationTransportFeatureFlags;
 };
 
 export type ImplementationDispatch = {
@@ -54,23 +48,38 @@ export interface ImplementationRuntimeAdapter {
 
 const genericImplementationAdapter: ImplementationRuntimeAdapter = {
   createDispatch(input) {
-    const supportsAcp = input.agent === "amp" || input.agent === "opencode";
-    const transportEligible =
-      input.permissionMode !== "plan" &&
-      input.threadChatId !== "legacy-thread-chat-id";
-    const transportMode =
-      transportEligible &&
-      input.featureFlags.sandboxAgentAcpTransport &&
-      supportsAcp
-        ? ("acp" as const)
-        : ("legacy" as const);
-    const protocolVersion = transportMode === "acp" ? 2 : 1;
-    const requestedSessionId = transportMode === "acp" ? null : input.sessionId;
+    const supportsAcp = input.agent !== "gemini";
 
+    if (supportsAcp) {
+      return {
+        transportMode: "acp" as const,
+        protocolVersion: 2 as const,
+        requestedSessionId: null,
+        codexPreviousResponseId: null,
+        message: {
+          type: "claude",
+          model: input.normalizedModel,
+          agent: input.agent,
+          agentVersion: input.agentVersion,
+          prompt: input.prompt,
+          sessionId: null,
+          codexPreviousResponseId: null,
+          permissionMode: input.permissionMode,
+          runId: input.runId,
+          transportMode: "acp" as const,
+          protocolVersion: 2 as const,
+          acpServerId: `terragon-${input.runId}`,
+          acpSessionId: input.sessionId ?? null,
+          ...(input.shouldUseCredits ? { useCredits: true } : {}),
+        },
+      };
+    }
+
+    // Gemini: legacy transport (ACP not supported)
     return {
-      transportMode,
-      protocolVersion,
-      requestedSessionId,
+      transportMode: "legacy" as const,
+      protocolVersion: 1 as const,
+      requestedSessionId: input.sessionId,
       codexPreviousResponseId: null,
       message: {
         type: "claude",
@@ -78,18 +87,12 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
         agent: input.agent,
         agentVersion: input.agentVersion,
         prompt: input.prompt,
-        sessionId: requestedSessionId,
+        sessionId: input.sessionId,
         codexPreviousResponseId: null,
         permissionMode: input.permissionMode,
         runId: input.runId,
-        transportMode,
-        protocolVersion,
-        ...(transportMode === "acp"
-          ? {
-              acpServerId: `terragon-${input.runId}`,
-              acpSessionId: input.sessionId ?? null,
-            }
-          : {}),
+        transportMode: "legacy" as const,
+        protocolVersion: 1 as const,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),
       },
     };

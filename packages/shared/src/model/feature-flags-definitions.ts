@@ -135,18 +135,6 @@ export const featureFlagsDefinitions = {
     description:
       "Routes GitHub webhook feedback for enrolled PR loops to the Delivery Loop coordinator instead of direct follow-up queueing.",
   },
-  sandboxAgentAcpTransport: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Enables sandbox-agent ACP transport metadata and sandbox capability probing for daemon runs.",
-  },
-  codexAppServerTransport: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Enables codex app-server JSON-RPC transport mode for Codex agent runs.",
-  },
   sdlcPlanReviewCard: {
     defaultValue: false,
     enabledForPreview: false,

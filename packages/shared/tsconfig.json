@@ -1,3 +1,4 @@
 {
-  "extends": "@terragon/tsconfig/base.json"
+  "extends": "@terragon/tsconfig/base.json",
+  "exclude": ["node_modules", "dist", "test-delivery-loop-e2e.ts"]
 }

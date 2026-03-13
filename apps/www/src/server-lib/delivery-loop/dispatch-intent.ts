@@ -27,6 +27,8 @@ const TERMINAL_DISPATCH_STATUSES = new Set<DeliveryLoopDispatchStatus>([
   "completed",
   "failed",
 ]);
+const REPLAY_ELIGIBLE_DESTINATION_STATUSES =
+  new Set<DeliveryLoopDispatchStatus>(["prepared", "dispatched"]);
 
 /** Short TTL for completed intents — 5 minutes for post-completion inspection. */
 const COMPLETED_TTL_SECONDS = 5 * 60;
@@ -371,6 +373,10 @@ export async function updateDispatchIntent(
   >,
 ): Promise<void> {
   const key = redisKey(threadChatId);
+  const existingId = await redis.hget<string>(key, "id");
+  if (!existingId || existingId !== id) {
+    return;
+  }
   const patch: Record<string, string> = {
     updatedAt: new Date().toISOString(),
   };
@@ -442,13 +448,17 @@ export async function getReplayableSelfDispatch(params: {
   if (replayRecord.kind !== "ready") {
     return null;
   }
-  const activeIntent = await getActiveDispatchIntent(params.threadChatId);
+  const destinationIntent = await getActiveDispatchIntent(params.threadChatId);
+  if (!destinationIntent) {
+    return null;
+  }
   if (
-    !activeIntent ||
-    activeIntent.id !== replayRecord.dispatchIntentId ||
-    activeIntent.runId !== replayRecord.destinationRunId ||
-    TERMINAL_DISPATCH_STATUSES.has(activeIntent.status)
+    destinationIntent.id !== replayRecord.dispatchIntentId ||
+    destinationIntent.runId !== replayRecord.destinationRunId
   ) {
+    return null;
+  }
+  if (!REPLAY_ELIGIBLE_DESTINATION_STATUSES.has(destinationIntent.status)) {
     return null;
   }
   return replayRecord.payload;

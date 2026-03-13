@@ -20,8 +20,6 @@ export const DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH =
 export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
   sdlcLoopCoordinatorRouting?: boolean;
-  sandboxAgentAcpTransport?: boolean;
-  codexAppServerTransport?: boolean;
 };
 
 export const DaemonTransportModeSchema = z.enum([
@@ -243,4 +241,6 @@ export type DaemonEventAPIBody = {
   eventId?: string;
   runId?: string;
   seq?: number;
+  /** Git HEAD sha captured after the agent turn completes, before sending terminal message. */
+  headShaAtCompletion?: string | null;
 };

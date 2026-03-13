@@ -6,16 +6,10 @@ import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
-import {
-  approvePlanArtifactForLoop,
-  createPlanArtifactForLoop,
-  getActiveSdlcLoopForThread,
-  getLatestAcceptedArtifact,
-  replacePlanTasksForArtifact,
-  transitionSdlcLoopStateWithArtifact,
-} from "@terragon/shared/model/delivery-loop";
+import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
+import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
 
 export const approvePlan = userOnlyAction(
   async function approvePlan(
@@ -68,79 +62,23 @@ export const approvePlan = userOnlyAction(
         "Plan artifact could not be parsed. Please regenerate the plan.",
       );
     }
-    const parsedPlan = parseResult.plan;
+    const parsedPlan = {
+      ...parseResult.plan,
+      source: extracted.source,
+    };
 
-    const artifactStatus =
-      activeLoop.planApprovalPolicy === "human_required"
-        ? "generated"
-        : "accepted";
-    const nextLoopVersion =
-      typeof activeLoop.loopVersion === "number" &&
-      Number.isFinite(activeLoop.loopVersion)
-        ? Math.max(activeLoop.loopVersion, 0) + 1
-        : 1;
-    const existingArtifact = await getLatestAcceptedArtifact({
+    const promotionResult = await promotePlanToImplementing({
       db,
-      loopId: activeLoop.id,
-      phase: "planning",
-      includeApprovedForPlanning: true,
-    });
-    if (existingArtifact) {
-      const existingVersion =
-        typeof existingArtifact.loopVersion === "number"
-          ? existingArtifact.loopVersion
-          : 0;
-      if (existingVersion >= nextLoopVersion) {
-        throw new UserFacingError(
-          "Plan already approved. Refresh to see current state.",
-        );
-      }
-    }
-
-    const planArtifact = await createPlanArtifactForLoop({
-      db,
-      loopId: activeLoop.id,
-      loopVersion: nextLoopVersion,
-      status: artifactStatus,
-      generatedBy: "agent",
-      payload: {
-        planText: parsedPlan.planText,
-        tasks: parsedPlan.tasks,
-        source: "system",
+      loop: {
+        id: activeLoop.id,
+        loopVersion: activeLoop.loopVersion,
+        planApprovalPolicy: activeLoop.planApprovalPolicy,
       },
+      parsedPlan,
+      mode: "approve",
+      approvedByUserId: userId,
     });
-    await replacePlanTasksForArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: planArtifact.id,
-      tasks: parsedPlan.tasks,
-    });
-
-    let approvedArtifact = planArtifact;
-    if (activeLoop.planApprovalPolicy === "human_required") {
-      const maybeApproved = await approvePlanArtifactForLoop({
-        db,
-        loopId: activeLoop.id,
-        artifactId: planArtifact.id,
-        approvedByUserId: userId,
-      });
-      if (!maybeApproved) {
-        throw new UserFacingError(
-          "Failed to approve plan artifact for this Delivery Loop",
-        );
-      }
-      approvedArtifact = maybeApproved;
-    }
-
-    const transitionOutcome = await transitionSdlcLoopStateWithArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: approvedArtifact.id,
-      expectedPhase: "planning",
-      transitionEvent: "plan_completed",
-      loopVersion: nextLoopVersion,
-    });
-    if (transitionOutcome !== "updated") {
+    if (promotionResult.outcome !== "promoted") {
       throw new UserFacingError(
         "Plan approval gate failed. Refresh and try approving again.",
       );

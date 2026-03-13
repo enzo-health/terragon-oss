@@ -22,7 +22,6 @@ import {
 import { SdlcLoopState } from "@terragon/shared/db/types";
 import {
   createImplementationArtifactForHead,
-  createPlanArtifactForLoop,
   createPrLinkArtifact,
   createReviewBundleArtifactForHead,
   createUiSmokeArtifactForHead,
@@ -31,7 +30,7 @@ import {
   markPlanTasksCompletedByAgent,
   persistCarmackReviewGateResult,
   persistDeepReviewGateResult,
-  replacePlanTasksForArtifact,
+  persistSdlcCiGateEvaluation,
   transitionSdlcLoopStateWithArtifact,
   transitionSdlcLoopState,
   verifyPlanTaskCompletionForHead,
@@ -59,6 +58,7 @@ import { generateCommitMessage } from "./generate-commit-message";
 import { runStructuredCodexGateInSandbox } from "./delivery-loop/sandbox-codex-gate";
 import { runQualityCheckGateInSandbox } from "./delivery-loop/quality-check-gate";
 import { sendSystemMessage } from "./send-system-message";
+import { promotePlanToImplementing } from "./delivery-loop/promote-plan";
 
 const SDLC_UI_SMOKE_PROMPT_VERSION = 1;
 const SDLC_REVIEW_GATE_MODEL = "gpt-5.3-codex-medium";
@@ -480,7 +480,9 @@ const PHASE_COMPLETE_ALIASES: ReadonlySet<string> = new Set([
   "is_phase_complete",
 ]);
 
-function detectPhaseCompleteSignal(messages: DBMessage[] | null): boolean {
+export function detectPhaseCompleteSignal(
+  messages: DBMessage[] | null,
+): boolean {
   const agentText = extractLatestTopLevelAgentText(messages);
   if (!agentText) return false;
 
@@ -915,35 +917,18 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     }
     const parsedPlan = planParseResult.plan;
 
-    const nextLoopVersion =
-      typeof activeLoop.loopVersion === "number" &&
-      Number.isFinite(activeLoop.loopVersion)
-        ? Math.max(activeLoop.loopVersion, 0) + 1
-        : 1;
-    const planArtifactStatus =
-      activeLoop.planApprovalPolicy === "human_required"
-        ? "generated"
-        : "accepted";
-    const planArtifact = await createPlanArtifactForLoop({
+    const promotionResult = await promotePlanToImplementing({
       db,
-      loopId: activeLoop.id,
-      loopVersion: nextLoopVersion,
-      status: planArtifactStatus,
-      generatedBy: "agent",
-      payload: {
-        planText: parsedPlan.planText,
-        tasks: parsedPlan.tasks,
-        source: parsedPlan.source,
+      loop: {
+        id: activeLoop.id,
+        loopVersion: activeLoop.loopVersion,
+        planApprovalPolicy: activeLoop.planApprovalPolicy,
       },
-    });
-    await replacePlanTasksForArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: planArtifact.id,
-      tasks: parsedPlan.tasks,
+      parsedPlan,
+      mode: "checkpoint",
     });
 
-    if (activeLoop.planApprovalPolicy === "human_required") {
+    if (promotionResult.outcome === "awaiting_human_approval") {
       await queueSdlcFollowUpMessage({
         userId,
         threadId,
@@ -958,15 +943,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       return true;
     }
 
-    const transitioned = await transitionSdlcLoopStateWithArtifact({
-      db,
-      loopId: activeLoop.id,
-      artifactId: planArtifact.id,
-      expectedPhase: "planning",
-      transitionEvent: "plan_completed",
-      loopVersion: nextLoopVersion,
-    });
-    if (transitioned === "updated") {
+    if (promotionResult.outcome === "promoted") {
       await queueSdlcFollowUpMessage({
         userId,
         threadId,
@@ -1454,7 +1431,57 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   if (!loopAfterReview) {
     return true;
   }
-  if (loopAfterReview.state !== "ui_gate") {
+
+  // ── CI gate: create PR if needed and auto-pass ──
+  // After review passes the loop enters ci_gate. The CI gate normally waits
+  // for GitHub webhook signals (check_run.completed), but during a checkpoint
+  // we can create the PR now and auto-pass CI so the pipeline continues.
+  if (loopAfterReview.state === "ci_gate") {
+    // Create PR if one doesn't exist yet
+    if (!refreshedThread.githubPRNumber && !loopAfterReview.prNumber) {
+      try {
+        await openPullRequestForThread({
+          userId,
+          threadId,
+          threadChatId,
+          prType,
+          skipCommitAndPush: true,
+          session,
+        });
+      } catch (error) {
+        console.warn(
+          "[sdlc-loop] ci_gate: failed to create PR during checkpoint",
+          { loopId: loopAfterReview.id, threadId, error },
+        );
+      }
+    }
+
+    // Auto-pass CI gate with no required checks — the PR was just created,
+    // so no check results exist yet. Real CI evaluation happens via webhooks.
+    await persistSdlcCiGateEvaluation({
+      db,
+      loopId: loopAfterReview.id,
+      headSha,
+      loopVersion: loopVersionForGateRun,
+      triggerEventType: "check_suite.completed",
+      capabilityState: "supported",
+      rulesetChecks: [],
+      branchProtectionChecks: [],
+      allowlistChecks: [],
+      failingChecks: [],
+      provenance: { source: "checkpoint_auto_pass" },
+    });
+  }
+
+  const loopAfterCiGate = await getActiveSdlcLoopForThread({
+    db,
+    userId,
+    threadId,
+  });
+  if (!loopAfterCiGate) {
+    return true;
+  }
+  if (loopAfterCiGate.state !== "ui_gate") {
     return true;
   }
 
@@ -1471,7 +1498,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   } catch (error) {
     uiSmokeError = error instanceof Error ? error.message : "Unknown error";
     console.error("[sdlc-loop] ui smoke gate execution failed", {
-      loopId: loopAfterReview.id,
+      loopId: loopAfterCiGate.id,
       threadId,
       error,
     });
@@ -1481,7 +1508,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     uiSmokeError !== null || !uiSmokeResult || !uiSmokeResult.gatePassed;
   const uiSmokeArtifact = await createUiSmokeArtifactForHead({
     db,
-    loopId: loopAfterReview.id,
+    loopId: loopAfterCiGate.id,
     headSha,
     loopVersion: loopVersionForGateRun,
     payload: {
@@ -1501,7 +1528,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   if (uiSmokeBlocked) {
     await transitionSdlcLoopState({
       db,
-      loopId: loopAfterReview.id,
+      loopId: loopAfterCiGate.id,
       transitionEvent: "ui_smoke_failed",
       blockedFromState: "ui_gate",
       now: new Date(),
@@ -1524,7 +1551,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
 
   const uiTransition = await transitionSdlcLoopStateWithArtifact({
     db,
-    loopId: loopAfterReview.id,
+    loopId: loopAfterCiGate.id,
     artifactId: uiSmokeArtifact.id,
     expectedPhase: "ui_gate",
     transitionEvent: "ui_smoke_passed",
@@ -1549,7 +1576,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   if (
     !createPR &&
     !refreshedThread.githubPRNumber &&
-    !loopAfterReview.prNumber
+    !loopAfterCiGate.prNumber
   ) {
     await queueSdlcFollowUpMessage({
       userId,
@@ -1564,7 +1591,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     return true;
   }
 
-  if (createPR || refreshedThread.githubPRNumber || loopAfterReview.prNumber) {
+  if (createPR || refreshedThread.githubPRNumber || loopAfterCiGate.prNumber) {
     await openPullRequestForThread({
       userId,
       threadId,

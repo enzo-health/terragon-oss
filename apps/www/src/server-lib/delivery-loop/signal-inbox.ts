@@ -9,68 +9,88 @@ import {
   terminalSdlcLoopStateList,
   terminalSdlcLoopStateSet,
   acquireSdlcLoopLease,
-  buildPersistedDeliveryLoopSnapshot,
   createBabysitEvaluationArtifactForHead,
   enqueueSdlcOutboxAction,
   evaluateSdlcLoopGuardrails,
   getEffectiveDeliveryLoopPhase,
-  persistSdlcCiGateEvaluation,
-  persistSdlcReviewThreadGateEvaluation,
+  getLatestAcceptedArtifact,
   releaseSdlcLoopLease,
+  transitionSdlcLoopState,
   transitionSdlcLoopStateWithArtifact,
+  markPlanTasksCompletedByAgent,
+  verifyPlanTaskCompletionForHead,
   type DeliveryLoopSnapshot,
   type SdlcGuardrailReasonCode,
 } from "@terragon/shared/model/delivery-loop";
+import {
+  claimNextUnprocessedSignal,
+  classifySignalPolicy,
+  completeSignalClaim,
+  refreshSignalClaim,
+  releaseSignalClaim,
+  evaluateBabysitCompletionForHead,
+  persistGateEvaluationForSignal,
+  getPayloadText,
+  buildPersistedLoopPhaseContext,
+  type PendingSignal,
+  type SignalPolicy,
+} from "@terragon/shared/model/signal-inbox-core";
 import { getThread } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import {
   and,
-  desc,
   eq,
   isNotNull,
   isNull,
+  lte,
   ne,
   notInArray,
   or,
   sql,
 } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
+
+/**
+ * Schedule a background babysit recheck: poll GitHub CI and insert a
+ * synthetic signal if checks completed. The 1-min cron drain will process it.
+ */
+async function scheduleBabysitRecheck(db: DB, loopId: string): Promise<void> {
+  const { recheckBabysitCompletion } = await import(
+    "@/server-lib/delivery-loop/babysit-recheck"
+  );
+  await recheckBabysitCompletion({ db, loopId });
+}
 
 const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_PER_LOOP = 5;
-const DURABLE_SIGNAL_INBOX_MAX_ITERATIONS = 15;
-const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
-  "daemon_terminal",
-  "check_run.completed",
-  "check_suite.completed",
-  "pull_request_review",
-  "pull_request_review_comment",
-]);
+const SDLC_SIGNAL_INBOX_CLAIM_STALE_MS = 60_000;
+const SDLC_SIGNAL_INBOX_CLAIM_HEARTBEAT_INTERVAL_MS = Math.max(
+  5_000,
+  Math.trunc(SDLC_SIGNAL_INBOX_CLAIM_STALE_MS / 3),
+);
+const SDLC_SIGNAL_INBOX_LEASE_HEARTBEAT_INTERVAL_MS = Math.max(
+  5_000,
+  Math.trunc(SDLC_SIGNAL_INBOX_LEASE_TTL_MS / 3),
+);
 const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
 const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
 
 type RuntimeActionOutcome = "none" | "feedback_follow_up_queued";
 type RuntimeRoutingReason =
   | "follow_up_queued"
+  | "follow_up_deduped"
   | "non_feedback_signal"
   | "gate_eval_no_follow_up"
   | "suppressed_for_loop_state"
   | "missing_pr_link"
   | "follow_up_enqueue_failed";
 
-type PendingSignal = {
-  id: string;
-  causeType: SdlcLoopCauseType;
-  canonicalCauseId: string;
-  payload: Record<string, unknown> | null;
-  receivedAt: Date;
-};
-
-type PersistedLoopPhaseContext = {
-  snapshot: DeliveryLoopSnapshot;
-  effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>;
+type SignalGateEvaluationOutcome = {
+  shouldQueueRuntimeFollowUp: boolean;
+  gateEvaluated: boolean;
 };
 
 export type SdlcSignalInboxGuardrailRuntimeInput = {
@@ -126,59 +146,6 @@ export type SdlcDurableSignalInboxDrainResult = {
   reachedSignalLimit: boolean;
 };
 
-function getPayloadText(
-  payload: Record<string, unknown> | null,
-  key: string,
-): string | null {
-  if (!payload) {
-    return null;
-  }
-  const value = payload[key];
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function getPayloadNonNegativeInteger(
-  payload: Record<string, unknown> | null,
-  key: string,
-): number | null {
-  if (!payload) {
-    return null;
-  }
-  const value = payload[key];
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return Math.trunc(value);
-  }
-  return null;
-}
-
-function getPayloadStringArray(
-  payload: Record<string, unknown> | null,
-  key: string,
-): string[] | null {
-  if (!payload) {
-    return null;
-  }
-  const rawValue = payload[key];
-  if (!Array.isArray(rawValue)) {
-    return null;
-  }
-
-  const values = Array.from(
-    new Set(
-      rawValue
-        .filter((value): value is string => typeof value === "string")
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
-
-  return values.length > 0 ? values : null;
-}
-
 function sanitizeUntrustedFeedbackText(text: string): string {
   return text
     .replaceAll("\u0000", "")
@@ -209,17 +176,62 @@ function stringifyError(error: unknown): string {
   }
 }
 
-function buildPersistedLoopPhaseContext(params: {
-  state: SdlcLoopState;
-  blockedFromState?: SdlcLoopState | null;
-}): PersistedLoopPhaseContext {
-  const snapshot = buildPersistedDeliveryLoopSnapshot({
-    state: params.state,
-    blockedFromState: params.blockedFromState,
+function isDaemonTerminalFailurePath(
+  payload: Record<string, unknown> | null,
+): boolean {
+  const daemonRunStatus = getPayloadText(payload, "daemonRunStatus");
+  if (!daemonRunStatus) {
+    return true;
+  }
+  const normalizedStatus = daemonRunStatus.toLowerCase();
+  return normalizedStatus !== "completed" && normalizedStatus !== "stopped";
+}
+
+function shouldSuppressFeedbackRuntimeRouting(params: {
+  policy: SignalPolicy;
+  signal: PendingSignal;
+  effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>;
+}): boolean {
+  if (!params.policy.suppressPlanningRuntimeRouting) {
+    return false;
+  }
+  if (params.effectivePhase !== "planning") {
+    return false;
+  }
+  if (params.signal.causeType !== "daemon_terminal") {
+    return true;
+  }
+  return !isDaemonTerminalFailurePath(params.signal.payload);
+}
+
+async function evaluateAndPersistGate(params: {
+  db: DB;
+  loop: {
+    id: string;
+    loopVersion: number;
+    currentHeadSha: string | null;
+    state: SdlcLoopState;
+    blockedFromState: SdlcLoopState | null;
+  };
+  signal: PendingSignal;
+  policy: SignalPolicy;
+  now: Date;
+}): Promise<SignalGateEvaluationOutcome> {
+  if (!params.policy.isFeedbackSignal) {
+    return {
+      shouldQueueRuntimeFollowUp: false,
+      gateEvaluated: false,
+    };
+  }
+  const shouldQueueRuntimeFollowUp = await persistGateEvaluationForSignal({
+    db: params.db,
+    loop: params.loop,
+    signal: params.signal,
+    now: params.now,
   });
   return {
-    snapshot,
-    effectivePhase: getEffectiveDeliveryLoopPhase(snapshot),
+    shouldQueueRuntimeFollowUp,
+    gateEvaluated: true,
   };
 }
 
@@ -241,450 +253,6 @@ function buildSafeExternalFeedbackSection({
     sanitized,
     END_UNTRUSTED_GITHUB_FEEDBACK,
   ].join("\n");
-}
-
-function deriveReviewUnresolvedThreadCount({
-  signal,
-  payload,
-}: {
-  signal: PendingSignal;
-  payload: Record<string, unknown> | null;
-}): number | null {
-  const explicitCount = getPayloadNonNegativeInteger(
-    payload,
-    "unresolvedThreadCount",
-  );
-  if (explicitCount !== null) {
-    return explicitCount;
-  }
-
-  if (signal.causeType === "pull_request_review_comment") {
-    return 1;
-  }
-
-  const reviewState = getPayloadText(payload, "reviewState")?.toLowerCase();
-  if (reviewState === "approved") {
-    return 0;
-  }
-  if (reviewState === "changes_requested") {
-    return 1;
-  }
-  return null;
-}
-
-function buildCiRequiredCheckFromSignalPayload(
-  payload: Record<string, unknown> | null,
-): string | null {
-  const checkName = getPayloadText(payload, "checkName");
-  if (checkName) {
-    return checkName;
-  }
-  const checkSuiteId = getPayloadText(payload, "checkSuiteId");
-  if (checkSuiteId) {
-    return `check-suite:${checkSuiteId}`;
-  }
-  return null;
-}
-
-async function getPriorCiRequiredChecksForHead({
-  db,
-  loopId,
-  headSha,
-}: {
-  db: DB;
-  loopId: string;
-  headSha: string;
-}): Promise<string[] | null> {
-  const latestCiRun = await db.query.sdlcCiGateRun.findFirst({
-    where: and(
-      eq(schema.sdlcCiGateRun.loopId, loopId),
-      eq(schema.sdlcCiGateRun.headSha, headSha),
-    ),
-    orderBy: [
-      desc(schema.sdlcCiGateRun.updatedAt),
-      desc(schema.sdlcCiGateRun.createdAt),
-    ],
-    columns: {
-      requiredChecks: true,
-    },
-  });
-
-  const requiredChecks = Array.from(
-    new Set(
-      (latestCiRun?.requiredChecks ?? [])
-        .filter((check): check is string => typeof check === "string")
-        .map((check) => check.trim())
-        .filter((check) => check.length > 0),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
-
-  return requiredChecks.length > 0 ? requiredChecks : null;
-}
-
-async function evaluateBabysitCompletionForHead({
-  db,
-  loopId,
-  headSha,
-}: {
-  db: DB;
-  loopId: string;
-  headSha: string;
-}) {
-  const [
-    latestCiRun,
-    latestReviewRun,
-    unresolvedDeepFindings,
-    unresolvedCarmackFindings,
-  ] = await Promise.all([
-    db.query.sdlcCiGateRun.findFirst({
-      where: and(
-        eq(schema.sdlcCiGateRun.loopId, loopId),
-        eq(schema.sdlcCiGateRun.headSha, headSha),
-      ),
-      orderBy: [
-        desc(schema.sdlcCiGateRun.updatedAt),
-        desc(schema.sdlcCiGateRun.createdAt),
-      ],
-      columns: {
-        gatePassed: true,
-        status: true,
-      },
-    }),
-    db.query.sdlcReviewThreadGateRun.findFirst({
-      where: and(
-        eq(schema.sdlcReviewThreadGateRun.loopId, loopId),
-        eq(schema.sdlcReviewThreadGateRun.headSha, headSha),
-      ),
-      orderBy: [
-        desc(schema.sdlcReviewThreadGateRun.updatedAt),
-        desc(schema.sdlcReviewThreadGateRun.createdAt),
-      ],
-      columns: {
-        gatePassed: true,
-        unresolvedThreadCount: true,
-        status: true,
-      },
-    }),
-    db
-      .select({ id: schema.sdlcDeepReviewFinding.id })
-      .from(schema.sdlcDeepReviewFinding)
-      .where(
-        and(
-          eq(schema.sdlcDeepReviewFinding.loopId, loopId),
-          eq(schema.sdlcDeepReviewFinding.headSha, headSha),
-          eq(schema.sdlcDeepReviewFinding.isBlocking, true),
-          isNull(schema.sdlcDeepReviewFinding.resolvedAt),
-        ),
-      ),
-    db
-      .select({ id: schema.sdlcCarmackReviewFinding.id })
-      .from(schema.sdlcCarmackReviewFinding)
-      .where(
-        and(
-          eq(schema.sdlcCarmackReviewFinding.loopId, loopId),
-          eq(schema.sdlcCarmackReviewFinding.headSha, headSha),
-          eq(schema.sdlcCarmackReviewFinding.isBlocking, true),
-          isNull(schema.sdlcCarmackReviewFinding.resolvedAt),
-        ),
-      ),
-  ]);
-
-  const hasDeepReviewBlocker = unresolvedDeepFindings.length > 0;
-  const hasCarmackReviewBlocker = unresolvedCarmackFindings.length > 0;
-  const unresolvedReviewThreads = latestReviewRun?.unresolvedThreadCount ?? 0;
-  const requiredCiPassed = Boolean(latestCiRun?.gatePassed);
-  const unresolvedDeepBlockers = unresolvedDeepFindings.length;
-  const unresolvedCarmackBlockers = unresolvedCarmackFindings.length;
-
-  const allRequiredGatesPassed =
-    requiredCiPassed &&
-    Boolean(latestReviewRun?.gatePassed) &&
-    unresolvedReviewThreads === 0 &&
-    !hasDeepReviewBlocker &&
-    !hasCarmackReviewBlocker;
-
-  return {
-    requiredCiPassed,
-    unresolvedReviewThreads,
-    unresolvedDeepBlockers,
-    unresolvedCarmackBlockers,
-    allRequiredGatesPassed,
-  };
-}
-
-async function persistGateEvaluationForSignal({
-  db,
-  loop,
-  signal,
-  now,
-}: {
-  db: DB;
-  loop: {
-    id: string;
-    loopVersion: number;
-    currentHeadSha: string | null;
-    state: SdlcLoopState;
-    blockedFromState: SdlcLoopState | null;
-  };
-  signal: PendingSignal;
-  now: Date;
-}): Promise<boolean> {
-  const { effectivePhase: effectiveLoopPhase } = buildPersistedLoopPhaseContext(
-    {
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
-    },
-  );
-
-  if (signal.causeType === "daemon_terminal") {
-    const daemonRunStatus = getPayloadText(signal.payload, "daemonRunStatus");
-    if (daemonRunStatus === "stopped") {
-      return false;
-    }
-    return true;
-  }
-
-  if (
-    signal.causeType !== "check_run.completed" &&
-    signal.causeType !== "check_suite.completed" &&
-    signal.causeType !== "pull_request_review" &&
-    signal.causeType !== "pull_request_review_comment"
-  ) {
-    return false;
-  }
-
-  const headSha =
-    getPayloadText(signal.payload, "headSha") ?? loop.currentHeadSha;
-  if (!headSha) {
-    console.warn(
-      "[sdlc-loop] skipping gate evaluation due to missing head sha",
-      {
-        loopId: loop.id,
-        signalId: signal.id,
-        causeType: signal.causeType,
-      },
-    );
-    return false;
-  }
-
-  const loopVersion =
-    typeof loop.loopVersion === "number" && Number.isFinite(loop.loopVersion)
-      ? Math.max(loop.loopVersion, 0)
-      : 0;
-
-  if (
-    signal.causeType === "check_run.completed" ||
-    signal.causeType === "check_suite.completed"
-  ) {
-    const ciSnapshotSource = getPayloadText(signal.payload, "ciSnapshotSource");
-    const ciSnapshotComplete = signal.payload?.ciSnapshotComplete === true;
-    const ciSnapshotCheckNames = getPayloadStringArray(
-      signal.payload,
-      "ciSnapshotCheckNames",
-    );
-    const ciSnapshotFailingChecks = (
-      getPayloadStringArray(signal.payload, "ciSnapshotFailingChecks") ?? []
-    ).filter((checkName) => ciSnapshotCheckNames?.includes(checkName));
-
-    const checkOutcome = getPayloadText(signal.payload, "checkOutcome");
-    if (checkOutcome !== "pass" && checkOutcome !== "fail") {
-      console.warn(
-        "[sdlc-loop] skipping CI gate evaluation due to missing check outcome",
-        {
-          loopId: loop.id,
-          signalId: signal.id,
-          causeType: signal.causeType,
-        },
-      );
-      return false;
-    }
-
-    if (checkOutcome === "pass") {
-      if (
-        ciSnapshotSource !== "github_check_runs" ||
-        !ciSnapshotComplete ||
-        !ciSnapshotCheckNames
-      ) {
-        console.warn(
-          "[sdlc-loop] skipping CI gate optimistic pass without trusted complete snapshot",
-          {
-            loopId: loop.id,
-            signalId: signal.id,
-            causeType: signal.causeType,
-            ciSnapshotSource,
-            ciSnapshotComplete,
-            ciSnapshotCheckCount: ciSnapshotCheckNames?.length ?? null,
-          },
-        );
-        return false;
-      }
-
-      const priorRequiredChecks = await getPriorCiRequiredChecksForHead({
-        db,
-        loopId: loop.id,
-        headSha,
-      });
-      if (!priorRequiredChecks) {
-        console.warn(
-          "[sdlc-loop] skipping CI gate optimistic pass without prior required-check baseline",
-          {
-            loopId: loop.id,
-            signalId: signal.id,
-            causeType: signal.causeType,
-            headSha,
-          },
-        );
-        return false;
-      }
-      const missingRequiredChecks = priorRequiredChecks.filter(
-        (check) => !ciSnapshotCheckNames.includes(check),
-      );
-      if (missingRequiredChecks.length > 0) {
-        console.warn(
-          "[sdlc-loop] skipping CI gate optimistic pass due to incomplete required-check coverage",
-          {
-            loopId: loop.id,
-            signalId: signal.id,
-            causeType: signal.causeType,
-            headSha,
-            missingRequiredChecks,
-            ciSnapshotCheckCount: ciSnapshotCheckNames.length,
-          },
-        );
-        return false;
-      }
-
-      const evaluation = await persistSdlcCiGateEvaluation({
-        db,
-        loopId: loop.id,
-        headSha,
-        loopVersion,
-        triggerEventType: signal.causeType,
-        capabilityState: "supported",
-        allowlistChecks: priorRequiredChecks,
-        failingChecks: ciSnapshotFailingChecks,
-        provenance: {
-          source: "signal_inbox_ci_snapshot",
-          signalId: signal.id,
-          canonicalCauseId: signal.canonicalCauseId,
-        },
-        now,
-      });
-      return evaluation.shouldQueueFollowUp;
-    }
-
-    if (
-      ciSnapshotSource === "github_check_runs" &&
-      ciSnapshotComplete &&
-      ciSnapshotCheckNames
-    ) {
-      const evaluation = await persistSdlcCiGateEvaluation({
-        db,
-        loopId: loop.id,
-        headSha,
-        loopVersion,
-        triggerEventType: signal.causeType,
-        capabilityState: "supported",
-        allowlistChecks: ciSnapshotCheckNames,
-        failingChecks: ciSnapshotFailingChecks,
-        provenance: {
-          source: "signal_inbox_ci_snapshot",
-          signalId: signal.id,
-          canonicalCauseId: signal.canonicalCauseId,
-        },
-        now,
-      });
-      return (
-        evaluation.shouldQueueFollowUp || effectiveLoopPhase !== "babysitting"
-      );
-    }
-
-    const requiredCheck = buildCiRequiredCheckFromSignalPayload(signal.payload);
-    if (!requiredCheck) {
-      console.warn(
-        "[sdlc-loop] skipping CI gate evaluation due to missing check identity",
-        {
-          loopId: loop.id,
-          signalId: signal.id,
-          causeType: signal.causeType,
-        },
-      );
-      return checkOutcome === "fail";
-    }
-
-    const evaluation = await persistSdlcCiGateEvaluation({
-      db,
-      loopId: loop.id,
-      headSha,
-      loopVersion,
-      triggerEventType: signal.causeType,
-      capabilityState: "supported",
-      allowlistChecks: [requiredCheck],
-      failingChecks: [requiredCheck],
-      provenance: {
-        source: "signal_inbox",
-        signalId: signal.id,
-        canonicalCauseId: signal.canonicalCauseId,
-      },
-      now,
-    });
-    return (
-      evaluation.shouldQueueFollowUp || effectiveLoopPhase !== "babysitting"
-    );
-  }
-
-  const unresolvedThreadCount = deriveReviewUnresolvedThreadCount({
-    signal,
-    payload: signal.payload,
-  });
-  if (unresolvedThreadCount === null) {
-    console.warn(
-      "[sdlc-loop] skipping review gate evaluation due to missing unresolved thread signal",
-      {
-        loopId: loop.id,
-        signalId: signal.id,
-        causeType: signal.causeType,
-      },
-    );
-    return false;
-  }
-
-  if (unresolvedThreadCount === 0) {
-    const unresolvedThreadCountSource = getPayloadText(
-      signal.payload,
-      "unresolvedThreadCountSource",
-    );
-    if (unresolvedThreadCountSource !== "github_graphql") {
-      console.warn(
-        "[sdlc-loop] skipping review gate optimistic pass without authoritative unresolved-thread source",
-        {
-          loopId: loop.id,
-          signalId: signal.id,
-          causeType: signal.causeType,
-          unresolvedThreadCountSource,
-        },
-      );
-      return false;
-    }
-  }
-
-  const evaluation = await persistSdlcReviewThreadGateEvaluation({
-    db,
-    loopId: loop.id,
-    headSha,
-    loopVersion,
-    triggerEventType:
-      signal.causeType === "pull_request_review"
-        ? "pull_request_review.submitted"
-        : "pull_request_review_comment.created",
-    evaluationSource: "webhook",
-    unresolvedThreadCount,
-    now,
-  });
-  return (
-    evaluation.shouldQueueFollowUp ||
-    (unresolvedThreadCount > 0 && effectiveLoopPhase !== "babysitting")
-  );
 }
 
 function resolveDaemonTerminalPhaseText(
@@ -733,7 +301,7 @@ function resolveDaemonTerminalPhaseText(
       return {
         phaseLabel: "the implementing phase",
         followUpInstruction:
-          "Please verify the changes, run relevant checks, and continue with the next step.",
+          "Continue implementing the remaining tasks in the plan.",
       };
   }
 }
@@ -893,41 +461,66 @@ function hasEquivalentRoutedFollowUp({
     : false;
 }
 
-async function getNextUnprocessedSignal({
-  db,
-  loopId,
-}: {
+type SignalClaimLeaseHeartbeatStatus = "ok" | "claim_lost" | "lease_lost";
+
+function mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+  status: Exclude<SignalClaimLeaseHeartbeatStatus, "ok">,
+): SdlcSignalInboxTickNoopReason {
+  return status === "claim_lost" ? "signal_claim_lost" : "lease_held";
+}
+
+function createSignalClaimLeaseHeartbeat(params: {
   db: DB;
   loopId: string;
-}): Promise<PendingSignal | null> {
-  const signal = await db.query.sdlcLoopSignalInbox.findFirst({
-    where: and(
-      eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-      isNull(schema.sdlcLoopSignalInbox.processedAt),
-      or(
-        ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        and(
-          eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-          isNotNull(schema.sdlcLoopSignalInbox.committedAt),
-        ),
-      ),
-    ),
-    orderBy: [
-      sql`case when ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal' then 0 else 1 end`,
-      schema.sdlcLoopSignalInbox.receivedAt,
-    ],
-  });
-
-  if (!signal) {
-    return null;
-  }
+  leaseOwner: string;
+  signalId: string;
+  claimToken: string;
+}) {
+  let lastLeaseRefreshAtMs = Date.now();
+  let lastClaimRefreshAtMs = lastLeaseRefreshAtMs;
 
   return {
-    id: signal.id,
-    causeType: signal.causeType,
-    canonicalCauseId: signal.canonicalCauseId,
-    payload: signal.payload ?? null,
-    receivedAt: signal.receivedAt,
+    async refreshIfDue(): Promise<SignalClaimLeaseHeartbeatStatus> {
+      const nowMs = Date.now();
+      let heartbeatNow: Date | null = null;
+
+      if (
+        nowMs - lastLeaseRefreshAtMs >=
+        SDLC_SIGNAL_INBOX_LEASE_HEARTBEAT_INTERVAL_MS
+      ) {
+        heartbeatNow = new Date(nowMs);
+        const refreshedLease = await acquireSdlcLoopLease({
+          db: params.db,
+          loopId: params.loopId,
+          leaseOwner: params.leaseOwner,
+          leaseTtlMs: SDLC_SIGNAL_INBOX_LEASE_TTL_MS,
+          now: heartbeatNow,
+        });
+        if (!refreshedLease.acquired) {
+          return "lease_lost";
+        }
+        lastLeaseRefreshAtMs = nowMs;
+      }
+
+      if (
+        nowMs - lastClaimRefreshAtMs >=
+        SDLC_SIGNAL_INBOX_CLAIM_HEARTBEAT_INTERVAL_MS
+      ) {
+        const claimRefreshNow = heartbeatNow ?? new Date(nowMs);
+        const claimRefreshed = await refreshSignalClaim({
+          db: params.db,
+          signalId: params.signalId,
+          claimToken: params.claimToken,
+          now: claimRefreshNow,
+        });
+        if (!claimRefreshed) {
+          return "claim_lost";
+        }
+        lastClaimRefreshAtMs = nowMs;
+      }
+
+      return "ok";
+    },
   };
 }
 
@@ -940,6 +533,7 @@ async function routeFeedbackSignalToEnrolledThread({
   prNumber,
   loopSnapshot,
   signal,
+  beforeEnqueue,
 }: {
   db: DB;
   loopId: string;
@@ -949,6 +543,7 @@ async function routeFeedbackSignalToEnrolledThread({
   prNumber: number | null;
   loopSnapshot: DeliveryLoopSnapshot;
   signal: PendingSignal;
+  beforeEnqueue?: () => Promise<void>;
 }) {
   const thread = await getThread({
     db,
@@ -970,13 +565,31 @@ async function routeFeedbackSignalToEnrolledThread({
     payload: signal.payload,
   });
 
+  const routingTarget = {
+    loopId,
+    threadId: loopThreadId,
+    threadChatId: threadChat.id,
+  };
+
   if (
-    !hasEquivalentRoutedFollowUp({
+    hasEquivalentRoutedFollowUp({
       queuedMessages: threadChat.queuedMessages,
       messages: threadChat.messages,
       candidate: message,
     })
   ) {
+    return {
+      ...routingTarget,
+      didEnqueue: false,
+      queuedMessage: null,
+    };
+  }
+
+  if (beforeEnqueue) {
+    await beforeEnqueue();
+  }
+
+  try {
     await queueFollowUpInternal({
       userId: loopUserId,
       threadId: loopThreadId,
@@ -985,12 +598,35 @@ async function routeFeedbackSignalToEnrolledThread({
       appendOrReplace: "append",
       source: "github",
     });
+  } catch (error) {
+    const refreshedThread = await getThread({
+      db,
+      userId: loopUserId,
+      threadId: loopThreadId,
+    });
+    const refreshedThreadChat = refreshedThread
+      ? getPrimaryThreadChat(refreshedThread)
+      : null;
+    const alreadyQueued =
+      refreshedThreadChat !== null &&
+      hasEquivalentRoutedFollowUp({
+        queuedMessages: refreshedThreadChat.queuedMessages,
+        messages: refreshedThreadChat.messages,
+        candidate: message,
+      });
+    if (!alreadyQueued) {
+      throw error;
+    }
+    return {
+      ...routingTarget,
+      didEnqueue: false,
+      queuedMessage: null,
+    };
   }
 
   return {
-    loopId,
-    threadId: loopThreadId,
-    threadChatId: threadChat.id,
+    ...routingTarget,
+    didEnqueue: true,
     queuedMessage: message,
   };
 }
@@ -1058,10 +694,10 @@ function buildDurableSignalInboxGuardrailRuntime() {
   return {
     killSwitchEnabled: false,
     cooldownUntil: null,
-    maxIterations: DURABLE_SIGNAL_INBOX_MAX_ITERATIONS,
+    maxIterations: null,
     manualIntentAllowed: true,
-    // iterationCount intentionally omitted — resolveSignalInboxGuardrailInputs
-    // will use the loop's actual loopVersion as the iteration count.
+    // iterationCount intentionally omitted — durable drain should not cap on
+    // persisted loopVersion, and maxIterations is left unbounded here.
   } satisfies SdlcSignalInboxGuardrailRuntimeInput;
 }
 
@@ -1083,6 +719,9 @@ export async function drainDueSdlcSignalInboxActions({
   const boundedMaxLoops = Math.max(0, Math.trunc(maxLoops));
   const boundedMaxSignalsTotal = Math.max(0, Math.trunc(maxSignalsTotal));
   const boundedMaxSignalsPerLoop = Math.max(0, Math.trunc(maxSignalsPerLoop));
+  const staleClaimCutoff = new Date(
+    now.getTime() - SDLC_SIGNAL_INBOX_CLAIM_STALE_MS,
+  );
 
   if (
     boundedMaxLoops === 0 ||
@@ -1111,6 +750,10 @@ export async function drainDueSdlcSignalInboxActions({
       and(
         notInArray(schema.sdlcLoop.state, terminalSdlcLoopStateList),
         isNull(schema.sdlcLoopSignalInbox.processedAt),
+        or(
+          isNull(schema.sdlcLoopSignalInbox.claimToken),
+          lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
+        ),
         or(
           ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
           and(
@@ -1231,258 +874,458 @@ export async function runBestEffortSdlcSignalInboxTick({
       };
     }
 
-    const signal = await getNextUnprocessedSignal({ db, loopId });
+    const signalClaimToken = `sdlc-signal-inbox:${leaseOwnerToken}:${randomUUID()}`;
+    const signal = await claimNextUnprocessedSignal({
+      db,
+      loopId,
+      claimToken: signalClaimToken,
+      now,
+      staleClaimMs: SDLC_SIGNAL_INBOX_CLAIM_STALE_MS,
+    });
     if (!signal) {
       return { processed: false, reason: "no_unprocessed_signal" };
     }
-
-    let shouldQueueRuntimeFollowUp = feedbackSignalCauseTypes.has(
-      signal.causeType,
-    );
-    try {
-      shouldQueueRuntimeFollowUp = await persistGateEvaluationForSignal({
-        db,
-        loop: {
-          id: loop.id,
-          loopVersion: loop.loopVersion,
-          currentHeadSha: loop.currentHeadSha,
-          state: loop.state,
-          blockedFromState: loop.blockedFromState,
-        },
-        signal,
-        now,
-      });
-    } catch (error) {
-      console.error("[sdlc-loop] enrolled-loop gate evaluation failed", {
-        loopId,
-        signalId: signal.id,
-        causeType: signal.causeType,
-        error,
-      });
-    }
-
-    let runtimeAction: RuntimeActionOutcome = "none";
-    let feedbackQueuedMessage: DBUserMessage | null = null;
-    const loopPhaseContext = buildPersistedLoopPhaseContext({
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
+    const signalClaimLeaseHeartbeat = createSignalClaimLeaseHeartbeat({
+      db,
+      loopId,
+      leaseOwner,
+      signalId: signal.id,
+      claimToken: signal.claimToken,
     });
-    const runtimeRouting: {
-      routed: boolean;
-      followUpQueued: boolean;
-      reason: RuntimeRoutingReason;
-      error: string | null;
-    } = {
-      routed: false,
-      followUpQueued: false,
-      reason: "non_feedback_signal",
-      error: null,
-    };
-    const shouldSuppressFeedbackRuntimeAction =
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      loopPhaseContext.effectivePhase === "planning";
-    const canRouteWithoutPrNumber = signal.causeType === "daemon_terminal";
-
-    if (
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp &&
-      !shouldSuppressFeedbackRuntimeAction &&
-      (typeof loop.prNumber === "number" || canRouteWithoutPrNumber)
-    ) {
+    let shouldReleaseClaim = true;
+    try {
+      const signalPolicy = classifySignalPolicy(signal.causeType);
+      let gateEvaluationOutcome: SignalGateEvaluationOutcome = {
+        shouldQueueRuntimeFollowUp: signalPolicy.isFeedbackSignal,
+        gateEvaluated: false,
+      };
       try {
-        // Increment loopVersion BEFORE enqueuing the follow-up so the
-        // guardrail iterationCount advances even if the enqueue fails.
-        await db
-          .update(schema.sdlcLoop)
-          .set({
-            loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
-            updatedAt: now,
-          })
-          .where(eq(schema.sdlcLoop.id, loopId));
-
-        const routeResult = await routeFeedbackSignalToEnrolledThread({
+        gateEvaluationOutcome = await evaluateAndPersistGate({
           db,
-          loopId,
-          loopUserId: loop.userId,
-          loopThreadId: loop.threadId,
-          repoFullName: loop.repoFullName,
-          prNumber: loop.prNumber ?? null,
-          loopSnapshot: loopPhaseContext.snapshot,
+          loop: {
+            id: loop.id,
+            loopVersion: loop.loopVersion,
+            currentHeadSha: loop.currentHeadSha,
+            state: loop.state,
+            blockedFromState: loop.blockedFromState,
+          },
           signal,
+          policy: signalPolicy,
+          now,
         });
-        runtimeAction = "feedback_follow_up_queued";
-        feedbackQueuedMessage = routeResult.queuedMessage;
-        runtimeRouting.routed = true;
-        runtimeRouting.followUpQueued = true;
-        runtimeRouting.reason = "follow_up_queued";
       } catch (error) {
-        console.error("[sdlc-loop] feedback runtime action failed", {
+        console.error("[sdlc-loop] enrolled-loop gate evaluation failed", {
           loopId,
           signalId: signal.id,
           causeType: signal.causeType,
           error,
         });
+      }
+
+      const postGateHeartbeat = await signalClaimLeaseHeartbeat.refreshIfDue();
+      if (postGateHeartbeat !== "ok") {
         return {
           processed: false,
-          reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
-          ...(includeRuntimeRouting
-            ? {
-                runtimeRouting: {
-                  ...runtimeRouting,
-                  reason: "follow_up_enqueue_failed",
-                  error: stringifyError(error),
-                },
-              }
-            : {}),
+          reason:
+            mapSignalClaimLeaseHeartbeatStatusToNoopReason(postGateHeartbeat),
         };
       }
-    } else if (
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp &&
-      shouldSuppressFeedbackRuntimeAction
-    ) {
-      runtimeRouting.reason = "suppressed_for_loop_state";
-      console.log(
-        "[sdlc-loop] suppressing feedback runtime action outside PR babysitting phase",
-        {
-          loopId,
-          signalId: signal.id,
-          causeType: signal.causeType,
-          loopState: loopPhaseContext.effectivePhase,
-        },
-      );
-    } else if (
-      feedbackSignalCauseTypes.has(signal.causeType) &&
-      shouldQueueRuntimeFollowUp
-    ) {
-      runtimeRouting.reason = "missing_pr_link";
-      console.warn(
-        "[sdlc-loop] skipping feedback runtime action due to missing PR link",
-        {
-          loopId,
-          signalId: signal.id,
-          causeType: signal.causeType,
-        },
-      );
-    } else if (feedbackSignalCauseTypes.has(signal.causeType)) {
-      runtimeRouting.reason = "gate_eval_no_follow_up";
-    }
 
-    const refreshedLoop = await db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.id, loopId),
-      columns: {
-        state: true,
-        currentHeadSha: true,
-        blockedFromState: true,
-      },
-    });
+      let runtimeAction: RuntimeActionOutcome = "none";
+      let feedbackQueuedMessage: DBUserMessage | null = null;
+      const refreshedLoopForRouting = await db.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.id, loopId),
+        columns: {
+          state: true,
+          currentHeadSha: true,
+          blockedFromState: true,
+          prNumber: true,
+        },
+      });
+      const loopPhaseContext = buildPersistedLoopPhaseContext({
+        state: refreshedLoopForRouting?.state ?? loop.state,
+        blockedFromState:
+          refreshedLoopForRouting?.blockedFromState ?? loop.blockedFromState,
+      });
+      const effectivePrNumber =
+        typeof refreshedLoopForRouting?.prNumber === "number" &&
+        Number.isFinite(refreshedLoopForRouting.prNumber)
+          ? refreshedLoopForRouting.prNumber
+          : loop.prNumber;
+      const runtimeRouting: {
+        routed: boolean;
+        followUpQueued: boolean;
+        reason: RuntimeRoutingReason;
+        error: string | null;
+      } = {
+        routed: false,
+        followUpQueued: false,
+        reason: "non_feedback_signal",
+        error: null,
+      };
+      const shouldSuppressFeedbackRuntimeAction =
+        shouldSuppressFeedbackRuntimeRouting({
+          policy: signalPolicy,
+          signal,
+          effectivePhase: loopPhaseContext.effectivePhase,
+        });
+      const canRouteWithoutPrNumber = signalPolicy.allowRoutingWithoutPrLink;
 
-    const refreshedLoopPhaseContext = refreshedLoop
-      ? buildPersistedLoopPhaseContext({
-          state: refreshedLoop.state,
-          blockedFromState: refreshedLoop.blockedFromState,
-        })
-      : null;
-    if (
-      refreshedLoopPhaseContext &&
-      refreshedLoopPhaseContext.effectivePhase === "babysitting" &&
-      feedbackSignalCauseTypes.has(signal.causeType)
-    ) {
-      const babysitHeadSha =
-        getPayloadText(signal.payload, "headSha") ??
-        refreshedLoop?.currentHeadSha;
-      if (babysitHeadSha) {
-        const babysitEvaluation = await evaluateBabysitCompletionForHead({
-          db,
-          loopId,
-          headSha: babysitHeadSha,
-        });
-        const loopVersionForArtifact =
-          typeof loop.loopVersion === "number" &&
-          Number.isFinite(loop.loopVersion)
-            ? Math.max(loop.loopVersion, 0) + 1
-            : 1;
-        const babysitArtifact = await createBabysitEvaluationArtifactForHead({
-          db,
-          loopId,
-          headSha: babysitHeadSha,
-          loopVersion: loopVersionForArtifact,
-          payload: {
-            headSha: babysitHeadSha,
-            requiredCiPassed: babysitEvaluation.requiredCiPassed,
-            unresolvedReviewThreads: babysitEvaluation.unresolvedReviewThreads,
-            unresolvedDeepBlockers: babysitEvaluation.unresolvedDeepBlockers,
-            unresolvedCarmackBlockers:
-              babysitEvaluation.unresolvedCarmackBlockers,
-            allRequiredGatesPassed: babysitEvaluation.allRequiredGatesPassed,
-          },
-          generatedBy: "system",
-          status: "accepted",
-        });
-        if (babysitEvaluation.allRequiredGatesPassed) {
-          await transitionSdlcLoopStateWithArtifact({
-            db,
-            loopId,
-            artifactId: babysitArtifact.id,
-            expectedPhase: "babysitting",
-            transitionEvent: "babysit_passed",
-            headSha: babysitHeadSha,
-            loopVersion: loopVersionForArtifact,
-            now,
-          });
+      // ── Implementing-phase completion intercept ──
+      // When a daemon_terminal fires during implementing with "completed" status
+      // and we have a headSha proving the agent produced commits, auto-mark all
+      // tasks as done and transition to review_gate. Never re-dispatch during
+      // implementing — the review_gate and ci_gate handle real verification.
+      if (
+        signal.causeType === "daemon_terminal" &&
+        loopPhaseContext.effectivePhase === "implementing" &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp
+      ) {
+        const daemonRunStatus = getPayloadText(
+          signal.payload,
+          "daemonRunStatus",
+        );
+        if (daemonRunStatus === "completed") {
+          const headShaAtCompletion = getPayloadText(
+            signal.payload,
+            "headShaAtCompletion",
+          );
+          const effectiveHeadSha =
+            headShaAtCompletion || loop.currentHeadSha || "";
+
+          if (effectiveHeadSha) {
+            const acceptedPlanArtifact = await getLatestAcceptedArtifact({
+              db,
+              loopId,
+              phase: "planning",
+              includeApprovedForPlanning: true,
+            });
+
+            if (acceptedPlanArtifact) {
+              // Auto-mark any unmarked tasks — the agent ran and produced
+              // commits, so treat all tasks as done. The MCP tool may have
+              // already marked some; this catches the rest.
+              const verified = await verifyPlanTaskCompletionForHead({
+                db,
+                loopId,
+                artifactId: acceptedPlanArtifact.id,
+                headSha: effectiveHeadSha,
+              });
+
+              const unmarkedTaskIds = [
+                ...verified.incompleteTaskIds,
+                ...verified.invalidEvidenceTaskIds,
+              ];
+              if (unmarkedTaskIds.length > 0) {
+                console.log(
+                  "[sdlc-loop] auto-marking unmarked tasks as complete",
+                  { loopId, signalId: signal.id, unmarkedTaskIds },
+                );
+                await markPlanTasksCompletedByAgent({
+                  db,
+                  loopId,
+                  artifactId: acceptedPlanArtifact.id,
+                  completions: unmarkedTaskIds.map((id) => ({
+                    stableTaskId: id,
+                    status: "done" as const,
+                    evidence: {
+                      headSha: effectiveHeadSha,
+                      note: "auto-marked on implementing completion",
+                    },
+                  })),
+                });
+              }
+            }
+
+            // Always transition — review_gate and ci_gate do real verification
+            await transitionSdlcLoopState({
+              db,
+              loopId,
+              transitionEvent: "implementation_completed",
+              headSha: effectiveHeadSha,
+              loopVersion:
+                typeof loop.loopVersion === "number" &&
+                Number.isFinite(loop.loopVersion)
+                  ? loop.loopVersion + 1
+                  : 1,
+              now,
+            });
+            gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
+            console.log(
+              "[sdlc-loop] implementing complete — transitioning to review_gate",
+              { loopId, signalId: signal.id, headSha: effectiveHeadSha },
+            );
+          } else {
+            // No headSha — agent completed without pushing code.
+            // Don't re-dispatch (no new info to act on), just log.
+            gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
+            console.log(
+              "[sdlc-loop] implementing: agent completed without headSha — not re-dispatching",
+              { loopId, signalId: signal.id },
+            );
+          }
         }
       }
-    }
 
-    let outboxId: string | null = null;
-    if (typeof loop.prNumber === "number") {
-      const outbox = await enqueueSdlcOutboxAction({
-        db,
-        loopId,
-        transitionSeq: resolveSignalTransitionSeq({
-          loopVersion: loop.loopVersion,
-          signalReceivedAt: signal.receivedAt,
-          now,
-        }),
-        actionType: "publish_status_comment",
-        actionKey: `signal-inbox:${signal.id}:publish-status-comment`,
-        payload: {
-          repoFullName: loop.repoFullName,
-          prNumber: loop.prNumber,
-          body: buildPublicationStatusBody({
+      if (
+        signalPolicy.isFeedbackSignal &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp &&
+        !shouldSuppressFeedbackRuntimeAction &&
+        (typeof effectivePrNumber === "number" || canRouteWithoutPrNumber)
+      ) {
+        const preRoutingHeartbeat =
+          await signalClaimLeaseHeartbeat.refreshIfDue();
+        if (preRoutingHeartbeat !== "ok") {
+          return {
+            processed: false,
+            reason:
+              mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+                preRoutingHeartbeat,
+              ),
+          };
+        }
+
+        try {
+          const routeResult = await routeFeedbackSignalToEnrolledThread({
+            db,
+            loopId,
+            loopUserId: loop.userId,
+            loopThreadId: loop.threadId,
+            repoFullName: loop.repoFullName,
+            prNumber: effectivePrNumber ?? null,
+            loopSnapshot: loopPhaseContext.snapshot,
             signal,
-            runtimeAction,
+            beforeEnqueue: async () => {
+              // Increment loopVersion immediately before enqueue so guardrail
+              // iterationCount advances even if enqueue fails.
+              await db
+                .update(schema.sdlcLoop)
+                .set({
+                  loopVersion: sql`${schema.sdlcLoop.loopVersion} + 1`,
+                  updatedAt: now,
+                })
+                .where(eq(schema.sdlcLoop.id, loopId));
+            },
+          });
+          runtimeRouting.routed = true;
+          if (routeResult.didEnqueue) {
+            runtimeAction = "feedback_follow_up_queued";
+            feedbackQueuedMessage = routeResult.queuedMessage;
+            runtimeRouting.followUpQueued = true;
+            runtimeRouting.reason = "follow_up_queued";
+          } else {
+            runtimeRouting.reason = "follow_up_deduped";
+          }
+        } catch (error) {
+          console.error("[sdlc-loop] feedback runtime action failed", {
+            loopId,
+            signalId: signal.id,
+            causeType: signal.causeType,
+            error,
+          });
+          return {
+            processed: false,
+            reason: SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
+            ...(includeRuntimeRouting
+              ? {
+                  runtimeRouting: {
+                    ...runtimeRouting,
+                    reason: "follow_up_enqueue_failed",
+                    error: stringifyError(error),
+                  },
+                }
+              : {}),
+          };
+        }
+      } else if (
+        signalPolicy.isFeedbackSignal &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp &&
+        shouldSuppressFeedbackRuntimeAction
+      ) {
+        runtimeRouting.reason = "suppressed_for_loop_state";
+        console.log(
+          "[sdlc-loop] suppressing feedback runtime action outside PR babysitting phase",
+          {
+            loopId,
+            signalId: signal.id,
+            causeType: signal.causeType,
+            loopState: loopPhaseContext.effectivePhase,
+          },
+        );
+      } else if (
+        signalPolicy.isFeedbackSignal &&
+        gateEvaluationOutcome.shouldQueueRuntimeFollowUp
+      ) {
+        runtimeRouting.reason = "missing_pr_link";
+        console.warn(
+          "[sdlc-loop] skipping feedback runtime action due to missing PR link",
+          {
+            loopId,
+            signalId: signal.id,
+            causeType: signal.causeType,
+          },
+        );
+      } else if (signalPolicy.isFeedbackSignal) {
+        runtimeRouting.reason = "gate_eval_no_follow_up";
+      }
+
+      const refreshedLoop = refreshedLoopForRouting;
+
+      const refreshedLoopPhaseContext = refreshedLoop
+        ? buildPersistedLoopPhaseContext({
+            state: refreshedLoop.state,
+            blockedFromState: refreshedLoop.blockedFromState,
+          })
+        : null;
+      if (
+        refreshedLoopPhaseContext &&
+        refreshedLoopPhaseContext.effectivePhase === "babysitting" &&
+        signalPolicy.isFeedbackSignal
+      ) {
+        const preBabysitHeartbeat =
+          await signalClaimLeaseHeartbeat.refreshIfDue();
+        if (preBabysitHeartbeat !== "ok") {
+          return {
+            processed: false,
+            reason:
+              mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+                preBabysitHeartbeat,
+              ),
+          };
+        }
+
+        const babysitHeadSha =
+          getPayloadText(signal.payload, "headSha") ??
+          refreshedLoop?.currentHeadSha;
+        if (babysitHeadSha) {
+          const babysitEvaluation = await evaluateBabysitCompletionForHead({
+            db,
+            loopId,
+            headSha: babysitHeadSha,
+          });
+          const loopVersionForArtifact =
+            typeof loop.loopVersion === "number" &&
+            Number.isFinite(loop.loopVersion)
+              ? Math.max(loop.loopVersion, 0) + 1
+              : 1;
+          const babysitArtifact = await createBabysitEvaluationArtifactForHead({
+            db,
+            loopId,
+            headSha: babysitHeadSha,
+            loopVersion: loopVersionForArtifact,
+            payload: {
+              headSha: babysitHeadSha,
+              requiredCiPassed: babysitEvaluation.requiredCiPassed,
+              unresolvedReviewThreads:
+                babysitEvaluation.unresolvedReviewThreads,
+              unresolvedDeepBlockers: babysitEvaluation.unresolvedDeepBlockers,
+              unresolvedCarmackBlockers:
+                babysitEvaluation.unresolvedCarmackBlockers,
+              allRequiredGatesPassed: babysitEvaluation.allRequiredGatesPassed,
+            },
+            generatedBy: "system",
+            status: "accepted",
+          });
+          if (babysitEvaluation.allRequiredGatesPassed) {
+            await transitionSdlcLoopStateWithArtifact({
+              db,
+              loopId,
+              artifactId: babysitArtifact.id,
+              expectedPhase: "babysitting",
+              transitionEvent: "babysit_passed",
+              headSha: babysitHeadSha,
+              loopVersion: loopVersionForArtifact,
+              now,
+            });
+          } else {
+            // Self-scheduling: gates didn't pass, schedule a background
+            // recheck so the 1-min cron picks it up with fresh GitHub data.
+            scheduleBabysitRecheck(db, loopId).catch((err) => {
+              console.warn("[sdlc-loop] failed to schedule babysit recheck", {
+                loopId,
+                error: err,
+              });
+            });
+          }
+        }
+      }
+
+      const preOutboxHeartbeat = await signalClaimLeaseHeartbeat.refreshIfDue();
+      if (preOutboxHeartbeat !== "ok") {
+        return {
+          processed: false,
+          reason:
+            mapSignalClaimLeaseHeartbeatStatusToNoopReason(preOutboxHeartbeat),
+        };
+      }
+
+      let outboxId: string | null = null;
+      if (typeof effectivePrNumber === "number") {
+        const outbox = await enqueueSdlcOutboxAction({
+          db,
+          loopId,
+          transitionSeq: resolveSignalTransitionSeq({
+            loopVersion: loop.loopVersion,
+            signalReceivedAt: signal.receivedAt,
+            now,
           }),
-        },
+          actionType: "publish_status_comment",
+          actionKey: `signal-inbox:${signal.id}:publish-status-comment`,
+          payload: {
+            repoFullName: loop.repoFullName,
+            prNumber: effectivePrNumber,
+            body: buildPublicationStatusBody({
+              signal,
+              runtimeAction,
+            }),
+          },
+          now,
+        });
+        outboxId = outbox.outboxId;
+      }
+
+      const preCompleteHeartbeat =
+        await signalClaimLeaseHeartbeat.refreshIfDue();
+      if (preCompleteHeartbeat !== "ok") {
+        return {
+          processed: false,
+          reason:
+            mapSignalClaimLeaseHeartbeatStatusToNoopReason(
+              preCompleteHeartbeat,
+            ),
+        };
+      }
+
+      const markedProcessed = await completeSignalClaim({
+        db,
+        signalId: signal.id,
+        claimToken: signal.claimToken,
         now,
       });
-      outboxId = outbox.outboxId;
+
+      if (!markedProcessed) {
+        return { processed: false, reason: "signal_claim_lost" };
+      }
+      shouldReleaseClaim = false;
+
+      return {
+        processed: true,
+        signalId: signal.id,
+        causeType: signal.causeType,
+        runtimeAction,
+        outboxId,
+        feedbackQueuedMessage,
+        ...(includeRuntimeRouting ? { runtimeRouting } : {}),
+      };
+    } finally {
+      if (shouldReleaseClaim) {
+        await releaseSignalClaim({
+          db,
+          signalId: signal.id,
+          claimToken: signal.claimToken,
+        });
+      }
     }
-
-    const [markedProcessed] = await db
-      .update(schema.sdlcLoopSignalInbox)
-      .set({ processedAt: now })
-      .where(
-        and(
-          eq(schema.sdlcLoopSignalInbox.id, signal.id),
-          isNull(schema.sdlcLoopSignalInbox.processedAt),
-        ),
-      )
-      .returning({ id: schema.sdlcLoopSignalInbox.id });
-
-    if (!markedProcessed) {
-      return { processed: false, reason: "signal_claim_lost" };
-    }
-
-    return {
-      processed: true,
-      signalId: signal.id,
-      causeType: signal.causeType,
-      runtimeAction,
-      outboxId,
-      feedbackQueuedMessage,
-      ...(includeRuntimeRouting ? { runtimeRouting } : {}),
-    };
   } finally {
     const released = await releaseSdlcLoopLease({
       db,

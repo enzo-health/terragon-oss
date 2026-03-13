@@ -138,14 +138,9 @@ async function probeSandboxAgentEndpoint({
   session: ISandboxSession;
   options: CreateSandboxOptions;
 }) {
-  if (!options.featureFlags.sandboxAgentAcpTransport) {
-    return;
-  }
   const baseUrl = getSandboxAgentBaseUrl(options);
   if (!baseUrl) {
-    throw new Error(
-      "sandboxAgentAcpTransport is enabled but SANDBOX_AGENT_BASE_URL is missing",
-    );
+    return;
   }
   await ensureSandboxAgentRunning({ session, baseUrl });
   await waitForSandboxAgentHealth({ session, baseUrl });

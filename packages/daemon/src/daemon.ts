@@ -846,11 +846,6 @@ export class TerragonDaemon {
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.startHeartbeat(input.threadChatId);
     if (input.transportMode === "acp") {
-      if (!this.getFeatureFlag("sandboxAgentAcpTransport")) {
-        throw new Error(
-          "ACP transport requested but sandboxAgentAcpTransport feature flag is disabled",
-        );
-      }
       try {
         await this.runAcpTransportCommand(input);
       } catch (error) {
@@ -1263,6 +1258,49 @@ export class TerragonDaemon {
     let processHealthInterval: NodeJS.Timeout | null = null;
 
     try {
+      // Update MCP config with current env vars so the MCP server subprocess
+      // can reach the Terragon API (env vars change per dispatch).
+      if (this.mcpConfigPath) {
+        try {
+          const raw = this.runtime.readFileSync(this.mcpConfigPath);
+          const mcpConfig = JSON.parse(raw);
+          if (mcpConfig?.mcpServers?.terry) {
+            mcpConfig.mcpServers.terry.env = {
+              ...mcpConfig.mcpServers.terry.env,
+              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+              DAEMON_TOKEN: input.token,
+              TERRAGON_THREAD_ID: input.threadId,
+              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+            };
+            this.runtime.writeFileSync(
+              this.mcpConfigPath,
+              JSON.stringify(mcpConfig, null, 2),
+            );
+          }
+        } catch {
+          this.runtime.logger.warn(
+            "Failed to update MCP config with env vars for app-server",
+          );
+        }
+      }
+
+      // Write env vars to a well-known file so the MCP server can read them
+      // even when spawned by codex app-server (which reads ~/.codex/config.toml
+      // and doesn't pass env vars from the JSON MCP config).
+      try {
+        this.runtime.writeFileSync(
+          "/tmp/terragon-mcp-env.json",
+          JSON.stringify({
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            DAEMON_TOKEN: input.token,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+          }),
+        );
+      } catch {
+        this.runtime.logger.warn("Failed to write MCP env file for app-server");
+      }
+
       await this.applyAppServerRespawnBackoff();
       await manager.restartIfTokenChanged(input.token);
       await manager.ensureReady();
@@ -2849,6 +2887,47 @@ export class TerragonDaemon {
         },
       });
 
+      // Update MCP config with current env vars so the MCP server subprocess
+      // can reach the Terragon API (env vars change per dispatch).
+      if (this.mcpConfigPath) {
+        try {
+          const raw = this.runtime.readFileSync(this.mcpConfigPath);
+          const mcpConfig = JSON.parse(raw);
+          if (mcpConfig?.mcpServers?.terry) {
+            mcpConfig.mcpServers.terry.env = {
+              ...mcpConfig.mcpServers.terry.env,
+              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+              DAEMON_TOKEN: input.token,
+              TERRAGON_THREAD_ID: input.threadId,
+              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+            };
+            this.runtime.writeFileSync(
+              this.mcpConfigPath,
+              JSON.stringify(mcpConfig, null, 2),
+            );
+          }
+        } catch {
+          this.runtime.logger.warn("Failed to update MCP config with env vars");
+        }
+      }
+
+      // Write env vars to a well-known file so the MCP server can read them
+      // even when spawned by codex app-server (which reads ~/.codex/config.toml
+      // and doesn't pass env vars from the JSON MCP config).
+      try {
+        this.runtime.writeFileSync(
+          "/tmp/terragon-mcp-env.json",
+          JSON.stringify({
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            DAEMON_TOKEN: input.token,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+          }),
+        );
+      } catch {
+        this.runtime.logger.warn("Failed to write MCP env file");
+      }
+
       const { processId, pollInterval } = this.runtime.spawnCommandLine(
         command,
         {
@@ -2856,6 +2935,9 @@ export class TerragonDaemon {
             ...process.env,
             ...env,
             DAEMON_TOKEN: input.token,
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
           },
           onStdoutLine: (line) => {
             this.runtime.logger.debug("Agent output", { processId, line });
@@ -3627,6 +3709,25 @@ export class TerragonDaemon {
           })
         : null;
       const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+      const hasTerminalMessage = messages.some(
+        (m) =>
+          m.type === "result" ||
+          m.type === "custom-error" ||
+          m.type === "custom-stop",
+      );
+      let headShaAtCompletion: string | null = null;
+      if (hasTerminalMessage) {
+        try {
+          const sha = this.runtime
+            .execSync("git rev-parse HEAD 2>/dev/null")
+            .trim();
+          if (/^[0-9a-f]{40}$/i.test(sha)) {
+            headShaAtCompletion = sha;
+          }
+        } catch {
+          /* no git repo or git not available */
+        }
+      }
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -3640,6 +3741,7 @@ export class TerragonDaemon {
           ? { codexPreviousResponseId }
           : {}),
         ...(envelopeV2 ?? {}),
+        ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
       };
 
       const selfDispatchPayload = await this.runtime.serverPost(payload, token);
