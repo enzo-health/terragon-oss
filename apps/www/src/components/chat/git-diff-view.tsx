@@ -696,13 +696,13 @@ export function GitDiffView({
   }, []);
 
   // Collapse file tree by default when first becoming small screen
+  // Only run when isSmallScreen changes, not when showFileTree changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally only react to isSmallScreen
   React.useEffect(() => {
     if (isSmallScreen && showFileTree) {
       setShowFileTree(false);
     }
-    // Only run when isSmallScreen changes, not when showFileTree changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSmallScreen, showFileTree]);
+  }, [isSmallScreen]);
 
   // Auto-switch to split mode on wide screens (unless manually selected unified)
   React.useEffect(() => {

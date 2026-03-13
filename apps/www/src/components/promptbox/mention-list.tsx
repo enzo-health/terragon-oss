@@ -230,7 +230,8 @@ export const MentionList = forwardRef<
     setSelectedIndex(index);
   };
 
-  useEffect(() => setSelectedIndex(0), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when items change
+  useEffect(() => setSelectedIndex(0), [props.items]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: (eventProps: { event: KeyboardEvent }) => {
