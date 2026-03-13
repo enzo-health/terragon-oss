@@ -2,9 +2,10 @@
  * Babysit recheck: self-healing for missed GitHub webhooks.
  *
  * When a delivery loop is stuck in "babysitting" because we never received
- * a check_suite.completed webhook (e.g., ngrok was down), this module polls
- * GitHub directly for the CI status and inserts a synthetic signal so the
- * existing signal-inbox machinery can evaluate babysit completion.
+ * a check_suite.completed or pull_request_review webhook (e.g., ngrok was
+ * down), this module polls GitHub directly for CI status and review thread
+ * state, then inserts synthetic signals so the existing signal-inbox
+ * machinery can evaluate babysit completion.
  *
  * Two trigger points:
  * 1. UI page load — getDeliveryLoopStatusAction fires a background recheck
@@ -15,6 +16,7 @@ import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import { SDLC_CAUSE_IDENTITY_VERSION } from "@terragon/shared/model/delivery-loop";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
+import { fetchUnresolvedReviewThreadCount } from "@/app/api/webhooks/github/handlers";
 import { redis } from "@/lib/redis";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -24,11 +26,12 @@ const BABYSIT_RECHECK_COOLDOWN_SECONDS = 120; // 2 min between rechecks per loop
 type BabysitRecheckResult =
   | { action: "skipped"; reason: string }
   | { action: "signal_inserted"; signalId: string }
+  | { action: "signals_inserted"; signalIds: string[] }
   | { action: "no_signal_needed"; reason: string };
 
 /**
- * Poll GitHub CI for a babysitting loop and insert a synthetic
- * check_suite.completed signal if all checks have completed.
+ * Poll GitHub CI and review threads for a babysitting loop and insert
+ * synthetic signals if checks have completed or review state is available.
  *
  * Rate-limited to once per 2 minutes per loop via Redis.
  */
@@ -71,55 +74,107 @@ export async function recheckBabysitCompletion({
     return { action: "skipped", reason: "missing_head_sha_or_repo" };
   }
 
-  // Poll GitHub for current CI status
-  const ciSnapshot = await fetchCiSnapshotForHead({
-    repoFullName: loop.repoFullName,
-    headSha: loop.currentHeadSha,
-  });
+  // Poll GitHub for CI status and review threads in parallel
+  const [ciSnapshot, unresolvedThreadCount] = await Promise.all([
+    fetchCiSnapshotForHead({
+      repoFullName: loop.repoFullName,
+      headSha: loop.currentHeadSha,
+    }),
+    loop.prNumber
+      ? fetchUnresolvedReviewThreadCount({
+          repoFullName: loop.repoFullName,
+          prNumber: loop.prNumber,
+        })
+      : Promise.resolve(null),
+  ]);
 
-  if (!ciSnapshot) {
-    return { action: "no_signal_needed", reason: "github_poll_failed" };
+  const insertedSignalIds: string[] = [];
+
+  // Insert CI signal if checks completed
+  if (ciSnapshot?.complete) {
+    const syntheticDeliveryId = `babysit-recheck:${randomUUID()}`;
+    const syntheticSuiteId = `babysit-recheck:${loop.currentHeadSha}:${Date.now()}`;
+    const checkOutcome = ciSnapshot.failingChecks.length > 0 ? "fail" : "pass";
+
+    const inserted = await db
+      .insert(schema.sdlcLoopSignalInbox)
+      .values({
+        loopId: loop.id,
+        causeType: "check_suite.completed",
+        canonicalCauseId: `${syntheticDeliveryId}:${syntheticSuiteId}`,
+        signalHeadShaOrNull: null,
+        causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
+        payload: {
+          eventType: "check_suite.completed",
+          repoFullName: loop.repoFullName,
+          prNumber: loop.prNumber,
+          checkSuiteId: syntheticSuiteId,
+          checkOutcome,
+          headSha: loop.currentHeadSha,
+          ciSnapshotSource: "babysit_recheck",
+          ciSnapshotCheckNames: ciSnapshot.checkNames,
+          ciSnapshotFailingChecks: ciSnapshot.failingChecks,
+          ciSnapshotComplete: true,
+          sourceType: "automation",
+        },
+      })
+      .onConflictDoNothing()
+      .returning({ id: schema.sdlcLoopSignalInbox.id });
+
+    if (inserted.length > 0) {
+      insertedSignalIds.push(inserted[0]!.id);
+    }
   }
 
-  if (!ciSnapshot.complete) {
-    return { action: "no_signal_needed", reason: "checks_still_running" };
+  // Insert review signal if we got a thread count
+  if (unresolvedThreadCount !== null) {
+    const syntheticDeliveryId = `babysit-recheck-review:${randomUUID()}`;
+    const syntheticReviewId = `babysit-recheck-review:${loop.currentHeadSha}:${Date.now()}`;
+
+    const inserted = await db
+      .insert(schema.sdlcLoopSignalInbox)
+      .values({
+        loopId: loop.id,
+        causeType: "pull_request_review",
+        canonicalCauseId: `${syntheticDeliveryId}:${syntheticReviewId}:approved`,
+        signalHeadShaOrNull: null,
+        causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
+        payload: {
+          eventType: "pull_request_review.submitted",
+          repoFullName: loop.repoFullName,
+          prNumber: loop.prNumber,
+          reviewId: syntheticReviewId,
+          reviewState: "approved",
+          unresolvedThreadCount,
+          unresolvedThreadCountSource: "github_graphql",
+          headSha: loop.currentHeadSha,
+          reviewBody: null,
+          sourceType: "automation",
+        },
+      })
+      .onConflictDoNothing()
+      .returning({ id: schema.sdlcLoopSignalInbox.id });
+
+    if (inserted.length > 0) {
+      insertedSignalIds.push(inserted[0]!.id);
+    }
   }
 
-  // All checks completed — insert a synthetic check_suite.completed signal
-  const syntheticDeliveryId = `babysit-recheck:${randomUUID()}`;
-  const syntheticSuiteId = `babysit-recheck:${loop.currentHeadSha}:${Date.now()}`;
-  const checkOutcome = ciSnapshot.failingChecks.length > 0 ? "fail" : "pass";
-
-  const inserted = await db
-    .insert(schema.sdlcLoopSignalInbox)
-    .values({
-      loopId: loop.id,
-      causeType: "check_suite.completed",
-      canonicalCauseId: `${syntheticDeliveryId}:${syntheticSuiteId}`,
-      signalHeadShaOrNull: null,
-      causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
-      payload: {
-        eventType: "check_suite.completed",
-        repoFullName: loop.repoFullName,
-        prNumber: loop.prNumber,
-        checkSuiteId: syntheticSuiteId,
-        checkOutcome,
-        headSha: loop.currentHeadSha,
-        ciSnapshotSource: "babysit_recheck",
-        ciSnapshotCheckNames: ciSnapshot.checkNames,
-        ciSnapshotFailingChecks: ciSnapshot.failingChecks,
-        ciSnapshotComplete: true,
-        sourceType: "automation",
-      },
-    })
-    .onConflictDoNothing()
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
-
-  if (inserted.length === 0) {
-    return { action: "no_signal_needed", reason: "signal_deduplicated" };
+  if (insertedSignalIds.length === 0) {
+    const reasons: string[] = [];
+    if (!ciSnapshot) reasons.push("github_ci_poll_failed");
+    else if (!ciSnapshot.complete) reasons.push("checks_still_running");
+    else reasons.push("ci_signal_deduplicated");
+    if (unresolvedThreadCount === null) reasons.push("review_poll_failed");
+    else reasons.push("review_signal_deduplicated");
+    return { action: "no_signal_needed", reason: reasons.join("+") };
   }
 
-  return { action: "signal_inserted", signalId: inserted[0]!.id };
+  if (insertedSignalIds.length === 1) {
+    return { action: "signal_inserted", signalId: insertedSignalIds[0]! };
+  }
+
+  return { action: "signals_inserted", signalIds: insertedSignalIds };
 }
 
 // ---------------------------------------------------------------------------

@@ -642,7 +642,10 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
               db,
               loopId: loop.id,
             });
-            if (result.action === "signal_inserted") {
+            if (
+              result.action === "signal_inserted" ||
+              result.action === "signals_inserted"
+            ) {
               // Process the signal immediately
               const { runBestEffortSdlcSignalInboxTick } = await import(
                 "@/server-lib/delivery-loop/signal-inbox"
