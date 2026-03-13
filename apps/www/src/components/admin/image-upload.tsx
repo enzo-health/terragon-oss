@@ -94,6 +94,7 @@ export function AdminImageUpload() {
     }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: uploadFile is stable via React Compiler
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     for (const file of acceptedFiles) {
       const isImage = file.type.startsWith("image/");

@@ -115,7 +115,7 @@ export function useSetupScript({
       setStatus("preparing");
       startStream({ body: { environmentId, setupScript: script } });
     },
-    [clearOutputs, startStream, setStatus, environmentId],
+    [clearOutputs, startStream, environmentId],
   );
 
   const stop = useCallback(() => {
@@ -123,7 +123,7 @@ export function useSetupScript({
     if (status === "running" || status === "preparing") {
       setStatus("idle");
     }
-  }, [stopStream, status, setStatus]);
+  }, [stopStream, status]);
 
   return {
     // State

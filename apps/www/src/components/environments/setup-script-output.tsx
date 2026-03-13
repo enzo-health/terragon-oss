@@ -25,7 +25,7 @@ export function SetupScriptOutput({
   useEffect(() => {
     // Auto-scroll to bottom when new output is added
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [outputs]);
+  }, []);
 
   const handleCopy = async () => {
     if (copied) {

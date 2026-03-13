@@ -173,7 +173,7 @@ function MentionListView({
   // Reset selected index when items change
   useEffect(() => {
     setSelectedIndex(0);
-  }, [items]);
+  }, []);
 
   const handleSelectItem = useCallback(
     (index: number) => {

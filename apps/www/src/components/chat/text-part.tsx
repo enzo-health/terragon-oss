@@ -189,7 +189,7 @@ const TextPart = memo(function TextPart({
     const observer = new MutationObserver(runScan);
     observer.observe(container, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [processedText]);
+  }, []);
 
   // Apply collapse styles imperatively to code-block-body elements
   useEffect(() => {

@@ -134,7 +134,7 @@ export const SlashCommandList = forwardRef<
     setSelectedIndex(index);
   };
 
-  useEffect(() => setSelectedIndex(0), [props.items]);
+  useEffect(() => setSelectedIndex(0), []);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: (eventProps: { event: KeyboardEvent }) => {

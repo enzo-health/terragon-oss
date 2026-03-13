@@ -171,7 +171,7 @@ describe("Anthropic proxy route", () => {
     const request = createRequest({
       body: { model: VALID_MODEL, messages: [] },
     });
-    const response = await POST(request, { params: {} });
+    const response = await POST(request, { params: Promise.resolve({}) });
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -211,7 +211,7 @@ describe("Anthropic proxy route", () => {
       body: { model: VALID_MODEL, messages: [] },
     });
 
-    await POST(request, { params: {} });
+    await POST(request, { params: Promise.resolve({}) });
 
     expect(getDaemonTokenAuthContextOrNullMock).toHaveBeenCalledTimes(1);
     const authRequest = getDaemonTokenAuthContextOrNullMock.mock
@@ -236,7 +236,7 @@ describe("Anthropic proxy route", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const request = createRequest();
-    const response = await POST(request, { params: {} });
+    const response = await POST(request, { params: Promise.resolve({}) });
 
     expect(response.status).toBe(402);
     expect(await response.text()).toBe("Insufficient credits");
@@ -309,7 +309,7 @@ describe("Anthropic proxy route", () => {
     const request = createRequest({
       body: { model: VALID_MODEL, messages: [] },
     });
-    const response = await POST(request, { params: {} });
+    const response = await POST(request, { params: Promise.resolve({}) });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -332,7 +332,7 @@ describe("Anthropic proxy route", () => {
     const request = createRequest({
       body: { model: "claude-3-5-mini", messages: [] },
     });
-    const response = await POST(request, { params: {} });
+    const response = await POST(request, { params: Promise.resolve({}) });
 
     expect(response.status).toBe(400);
     expect(await response.text()).toContain("Claude Sonnet, Haiku, or Opus");
@@ -344,7 +344,7 @@ describe("Anthropic proxy route", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const request = createRequest({ body: { messages: [] } });
-    const response = await POST(request, { params: {} });
+    const response = await POST(request, { params: Promise.resolve({}) });
 
     expect(response.status).toBe(400);
     expect(await response.text()).toBe(

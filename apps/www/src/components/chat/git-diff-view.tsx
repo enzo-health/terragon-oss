@@ -702,7 +702,7 @@ export function GitDiffView({
     }
     // Only run when isSmallScreen changes, not when showFileTree changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSmallScreen]);
+  }, [isSmallScreen, showFileTree]);
 
   // Auto-switch to split mode on wide screens (unless manually selected unified)
   React.useEffect(() => {
