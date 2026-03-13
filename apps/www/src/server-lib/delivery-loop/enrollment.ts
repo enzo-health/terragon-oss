@@ -68,11 +68,13 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   repoFullName,
   threadId,
   planApprovalPolicy,
+  initialState,
 }: {
   userId: string;
   repoFullName: string;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  initialState?: "planning" | "implementing";
 }) {
   return await enrollSdlcLoopForThread({
     db,
@@ -80,6 +82,7 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
     repoFullName,
     threadId,
     planApprovalPolicy,
+    initialState,
   });
 }
 
@@ -89,12 +92,14 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   prNumber,
   threadId,
   planApprovalPolicy,
+  initialState,
 }: {
   userId: string;
   repoFullName: string;
   prNumber: number;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  initialState?: "planning" | "implementing";
 }) {
   const enrolled = await enrollSdlcLoopForThread({
     db,
@@ -102,6 +107,7 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
     repoFullName,
     threadId,
     planApprovalPolicy,
+    initialState,
   });
   const linked = await linkSdlcLoopToGithubPRForThread({
     db,
