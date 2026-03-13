@@ -9,7 +9,7 @@ const nextConfig = {
   images: {
     remotePatterns: [
       {
-        protocol: "https" as const,
+        protocol: "https",
         hostname: "cdn.terragonlabs.com",
         pathname: "/**",
       },
@@ -43,4 +43,6 @@ const nextConfig = {
   },
 };
 
-export default withBundleAnalyzer(nextConfig);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bundle-analyzer
+// peer-resolves next@15 (docs) vs next@16 (www), causing NextConfig type mismatch
+export default withBundleAnalyzer(nextConfig as any);
