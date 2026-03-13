@@ -9,6 +9,7 @@ import {
   magicLink,
 } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { symmetricDecrypt } from "better-auth/crypto";
 import { db } from "./db";
 import { env } from "@terragon/env/apps-www";
 import { getPostHogServer } from "./posthog-server";
@@ -174,6 +175,60 @@ export const auth = betterAuth({
       clientId: env.GITHUB_CLIENT_ID,
       clientSecret: env.GITHUB_CLIENT_SECRET,
       scope: ["read:user", "user:email", "read:org", "repo", "workflow"],
+      refreshAccessToken: async (encryptedRefreshToken: string) => {
+        // Better Auth passes the raw DB value which is encrypted — decrypt before sending to GitHub
+        const refreshToken = await symmetricDecrypt({
+          key: env.BETTER_AUTH_SECRET,
+          data: encryptedRefreshToken,
+        });
+
+        const response = await fetch(
+          "https://github.com/login/oauth/access_token",
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              client_id: env.GITHUB_CLIENT_ID,
+              client_secret: env.GITHUB_CLIENT_SECRET,
+              grant_type: "refresh_token",
+              refresh_token: refreshToken,
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`GitHub token refresh failed: ${response.status}`);
+        }
+
+        const data = (await response.json()) as {
+          access_token?: string;
+          refresh_token?: string;
+          expires_in?: number;
+          refresh_token_expires_in?: number;
+          error?: string;
+          error_description?: string;
+        };
+
+        if (data.error) {
+          throw new Error(
+            `GitHub token refresh error: ${data.error} - ${data.error_description}`,
+          );
+        }
+
+        return {
+          accessToken: data.access_token!,
+          refreshToken: data.refresh_token!,
+          accessTokenExpiresAt: data.expires_in
+            ? new Date(Date.now() + data.expires_in * 1000)
+            : undefined,
+          refreshTokenExpiresAt: data.refresh_token_expires_in
+            ? new Date(Date.now() + data.refresh_token_expires_in * 1000)
+            : undefined,
+        };
+      },
     },
   },
   plugins: [
