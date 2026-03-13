@@ -126,10 +126,19 @@ export async function recheckBabysitCompletion({
           checkSuiteId: deterministicSuiteId,
           checkOutcome,
           headSha: loop.currentHeadSha,
-          ciSnapshotSource: "babysit_recheck",
-          ciSnapshotCheckNames: ciSnapshot.checkNames,
-          ciSnapshotFailingChecks: ciSnapshot.failingChecks,
-          ciSnapshotComplete: ciSnapshot.complete,
+          // Use "github_check_runs" since we poll via checks.listForRef —
+          // the gate evaluator only trusts this source for optimistic passes.
+          // For partial snapshots (incomplete but failing), omit snapshot fields
+          // so the signal takes the per-check failure path instead of overwriting
+          // the required-check baseline.
+          ...(ciSnapshot.complete
+            ? {
+                ciSnapshotSource: "github_check_runs" as const,
+                ciSnapshotCheckNames: ciSnapshot.checkNames,
+                ciSnapshotFailingChecks: ciSnapshot.failingChecks,
+                ciSnapshotComplete: true,
+              }
+            : {}),
           sourceType: "automation",
         },
       })
@@ -272,7 +281,11 @@ export async function recheckCiGateCompletion({
     const reason = !ciSnapshot
       ? "github_ci_poll_failed"
       : "checks_running_no_failures";
-    console.log("[ci-gate-recheck] result", { loopId, action: "no_signal_needed", reason });
+    console.log("[ci-gate-recheck] result", {
+      loopId,
+      action: "no_signal_needed",
+      reason,
+    });
     return { action: "no_signal_needed", reason };
   }
 
@@ -296,10 +309,18 @@ export async function recheckCiGateCompletion({
         checkSuiteId: deterministicSuiteId,
         checkOutcome,
         headSha: loop.currentHeadSha,
-        ciSnapshotSource: "ci_gate_recheck",
-        ciSnapshotCheckNames: ciSnapshot.checkNames,
-        ciSnapshotFailingChecks: ciSnapshot.failingChecks,
-        ciSnapshotComplete: ciSnapshot.complete,
+        // Use "github_check_runs" since we poll via checks.listForRef —
+        // the gate evaluator only trusts this source for optimistic passes.
+        // For partial snapshots, omit snapshot fields so the signal takes
+        // the per-check failure path without overwriting the baseline.
+        ...(ciSnapshot.complete
+          ? {
+              ciSnapshotSource: "github_check_runs" as const,
+              ciSnapshotCheckNames: ciSnapshot.checkNames,
+              ciSnapshotFailingChecks: ciSnapshot.failingChecks,
+              ciSnapshotComplete: true,
+            }
+          : {}),
         sourceType: "automation",
       },
     })

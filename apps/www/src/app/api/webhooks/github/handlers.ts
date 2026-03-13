@@ -998,7 +998,7 @@ async function resolvePrNumbersFromSha({
             repo,
             commit_sha: headSha,
           });
-        return data.map((pr) => pr.number);
+        return data.filter((pr) => pr.state === "open").map((pr) => pr.number);
       } catch (error) {
         console.error(
           `GitHub API SHA→PR lookup failed for ${repoFullName}@${headSha}`,
