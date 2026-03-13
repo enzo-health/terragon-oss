@@ -30,7 +30,6 @@ import {
   markPlanTasksCompletedByAgent,
   persistCarmackReviewGateResult,
   persistDeepReviewGateResult,
-  persistSdlcCiGateEvaluation,
   transitionSdlcLoopStateWithArtifact,
   transitionSdlcLoopState,
   verifyPlanTaskCompletionForHead,
@@ -1432,12 +1431,12 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     return true;
   }
 
-  // ── CI gate: create PR if needed and auto-pass ──
-  // After review passes the loop enters ci_gate. The CI gate normally waits
-  // for GitHub webhook signals (check_run.completed), but during a checkpoint
-  // we can create the PR now and auto-pass CI so the pipeline continues.
+  // ── CI gate: create PR if needed, then wait for real CI results ──
+  // After review passes the loop enters ci_gate. Creating the PR triggers
+  // GitHub CI. The loop stays in ci_gate until real check_run.completed
+  // webhooks arrive or babysit-recheck polls GitHub directly.
   if (loopAfterReview.state === "ci_gate") {
-    // Create PR if one doesn't exist yet
+    // Create PR if one doesn't exist yet — this triggers GitHub CI
     if (!refreshedThread.githubPRNumber && !loopAfterReview.prNumber) {
       try {
         await openPullRequestForThread({
@@ -1455,22 +1454,8 @@ async function maybeRunStrictSdlcCheckpointPipeline({
         );
       }
     }
-
-    // Auto-pass CI gate with no required checks — the PR was just created,
-    // so no check results exist yet. Real CI evaluation happens via webhooks.
-    await persistSdlcCiGateEvaluation({
-      db,
-      loopId: loopAfterReview.id,
-      headSha,
-      loopVersion: loopVersionForGateRun,
-      triggerEventType: "check_suite.completed",
-      capabilityState: "supported",
-      rulesetChecks: [],
-      branchProtectionChecks: [],
-      allowlistChecks: [],
-      failingChecks: [],
-      provenance: { source: "checkpoint_auto_pass" },
-    });
+    // No auto-pass. The loop stays in ci_gate and waits for real
+    // check_run.completed / check_suite.completed signals.
   }
 
   const loopAfterCiGate = await getActiveSdlcLoopForThread({

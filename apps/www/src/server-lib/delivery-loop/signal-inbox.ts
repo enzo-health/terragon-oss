@@ -62,6 +62,17 @@ async function scheduleBabysitRecheck(db: DB, loopId: string): Promise<void> {
   await recheckBabysitCompletion({ db, loopId });
 }
 
+/**
+ * Schedule a background ci_gate recheck: poll GitHub CI and insert a
+ * synthetic signal if checks completed or failed. The 1-min cron drain will process it.
+ */
+async function scheduleCiGateRecheck(db: DB, loopId: string): Promise<void> {
+  const { recheckCiGateCompletion } = await import(
+    "@/server-lib/delivery-loop/babysit-recheck"
+  );
+  await recheckCiGateCompletion({ db, loopId });
+}
+
 const SDLC_SIGNAL_INBOX_LEASE_TTL_MS = 30_000;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_LOOPS = 20;
 const SDLC_SIGNAL_INBOX_DURABLE_DRAIN_MAX_SIGNALS_TOTAL = 50;
@@ -1248,6 +1259,21 @@ export async function runBestEffortSdlcSignalInboxTick({
             });
           }
         }
+      }
+
+      // ci_gate recheck: if the loop is in ci_gate after gate evaluation,
+      // schedule a recheck so missed webhooks don't leave it stuck.
+      if (
+        refreshedLoopPhaseContext &&
+        refreshedLoopPhaseContext.effectivePhase === "ci_gate" &&
+        signalPolicy.isFeedbackSignal
+      ) {
+        scheduleCiGateRecheck(db, loopId).catch((err) => {
+          console.warn("[sdlc-loop] failed to schedule ci_gate recheck", {
+            loopId,
+            error: err,
+          });
+        });
       }
 
       const preOutboxHeartbeat = await signalClaimLeaseHeartbeat.refreshIfDue();
