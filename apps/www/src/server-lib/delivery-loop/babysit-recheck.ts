@@ -133,7 +133,7 @@ export async function recheckBabysitCompletion({
           // the required-check baseline.
           ...(ciSnapshot.complete
             ? {
-                ciSnapshotSource: "github_check_runs" as const,
+                ciSnapshotSource: "github_check_runs",
                 ciSnapshotCheckNames: ciSnapshot.checkNames,
                 ciSnapshotFailingChecks: ciSnapshot.failingChecks,
                 ciSnapshotComplete: true,
@@ -219,8 +219,6 @@ export async function recheckBabysitCompletion({
 /**
  * Poll GitHub CI for a loop stuck in ci_gate and insert a synthetic signal
  * if checks have completed or have failing results.
- *
- * This mirrors recheckBabysitCompletion but for the ci_gate phase.
  */
 export async function recheckCiGateCompletion({
   db,
@@ -229,7 +227,31 @@ export async function recheckCiGateCompletion({
   db: DB;
   loopId: string;
 }): Promise<BabysitRecheckResult> {
-  const cooldownKey = `ci-gate-recheck:${loopId}`;
+  return pollAndInsertCiSignal({
+    db,
+    loopId,
+    expectedState: "ci_gate",
+    prefix: "ci-gate-recheck",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Shared CI recheck helper used by both babysitting and ci_gate rechecks
+// ---------------------------------------------------------------------------
+
+async function pollAndInsertCiSignal({
+  db,
+  loopId,
+  expectedState,
+  prefix,
+}: {
+  db: DB;
+  loopId: string;
+  expectedState: "babysitting" | "ci_gate";
+  prefix: string;
+}): Promise<BabysitRecheckResult> {
+  const logTag = `[${prefix}]`;
+  const cooldownKey = `${prefix}:${loopId}`;
   const alreadyChecked = await redis.set(cooldownKey, "1", {
     nx: true,
     ex: BABYSIT_RECHECK_COOLDOWN_SECONDS,
@@ -252,7 +274,7 @@ export async function recheckCiGateCompletion({
   if (!loop) {
     return { action: "skipped", reason: "loop_not_found" };
   }
-  if (loop.state !== "ci_gate") {
+  if (loop.state !== expectedState) {
     return { action: "skipped", reason: `state_is_${loop.state}` };
   }
   if (!loop.currentHeadSha || !loop.repoFullName) {
@@ -264,7 +286,7 @@ export async function recheckCiGateCompletion({
     headSha: loop.currentHeadSha,
   });
 
-  console.log("[ci-gate-recheck] poll results", {
+  console.log(`${logTag} poll results`, {
     loopId,
     headSha: loop.currentHeadSha,
     ci: ciSnapshot
@@ -281,7 +303,7 @@ export async function recheckCiGateCompletion({
     const reason = !ciSnapshot
       ? "github_ci_poll_failed"
       : "checks_running_no_failures";
-    console.log("[ci-gate-recheck] result", {
+    console.log(`${logTag} result`, {
       loopId,
       action: "no_signal_needed",
       reason,
@@ -291,8 +313,8 @@ export async function recheckCiGateCompletion({
 
   const checkOutcome = ciSnapshot.failingChecks.length > 0 ? "fail" : "pass";
   const deterministicSuiteId = ciSnapshot.complete
-    ? `ci-gate-recheck:ci:${loop.id}:${loop.currentHeadSha}`
-    : `ci-gate-recheck:ci:partial:${loop.id}:${loop.currentHeadSha}`;
+    ? `${prefix}:ci:${loop.id}:${loop.currentHeadSha}`
+    : `${prefix}:ci:partial:${loop.id}:${loop.currentHeadSha}`;
 
   const inserted = await db
     .insert(schema.sdlcLoopSignalInbox)
@@ -309,13 +331,13 @@ export async function recheckCiGateCompletion({
         checkSuiteId: deterministicSuiteId,
         checkOutcome,
         headSha: loop.currentHeadSha,
-        // Use "github_check_runs" since we poll via checks.listForRef —
-        // the gate evaluator only trusts this source for optimistic passes.
-        // For partial snapshots, omit snapshot fields so the signal takes
-        // the per-check failure path without overwriting the baseline.
+        // Use "github_check_runs" for complete snapshots since we poll via
+        // checks.listForRef — the gate evaluator only trusts this source for
+        // optimistic passes. For partial snapshots, omit snapshot fields so
+        // the signal takes the per-check failure path.
         ...(ciSnapshot.complete
           ? {
-              ciSnapshotSource: "github_check_runs" as const,
+              ciSnapshotSource: "github_check_runs",
               ciSnapshotCheckNames: ciSnapshot.checkNames,
               ciSnapshotFailingChecks: ciSnapshot.failingChecks,
               ciSnapshotComplete: true,
@@ -332,7 +354,7 @@ export async function recheckCiGateCompletion({
       action: "signal_inserted",
       signalId: inserted[0]!.id,
     };
-    console.log("[ci-gate-recheck] result", { loopId, ...result });
+    console.log(`${logTag} result`, { loopId, ...result });
     return result;
   }
 
@@ -340,7 +362,7 @@ export async function recheckCiGateCompletion({
     action: "no_signal_needed",
     reason: "ci_signal_deduplicated",
   };
-  console.log("[ci-gate-recheck] result", { loopId, ...result });
+  console.log(`${logTag} result`, { loopId, ...result });
   return result;
 }
 
