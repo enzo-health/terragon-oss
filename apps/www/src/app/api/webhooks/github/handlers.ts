@@ -25,7 +25,10 @@ import {
 import {
   getActiveSdlcLoopsForGithubPR,
   transitionActiveSdlcLoopsForGithubPREvent,
+  activeSdlcLoopStateList,
 } from "@terragon/shared/model/delivery-loop";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import * as schema from "@terragon/shared/db/schema";
 import {
   runPullRequestAutomation,
   runIssueAutomation,
@@ -976,6 +979,53 @@ export async function handlePullRequestReviewEvent(
   }
 }
 
+async function resolvePrNumbersFromSha({
+  repoFullName,
+  headSha,
+}: {
+  repoFullName: string;
+  headSha: string;
+}): Promise<number[]> {
+  const [owner, repo] = parseRepoFullName(repoFullName);
+
+  const [githubPrNumbers, dbPrNumbers] = await Promise.all([
+    (async (): Promise<number[]> => {
+      try {
+        const octokit = await getOctokitForApp({ owner, repo });
+        const { data } =
+          await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
+            owner,
+            repo,
+            commit_sha: headSha,
+          });
+        return data.map((pr) => pr.number);
+      } catch (error) {
+        console.error(
+          `GitHub API SHA→PR lookup failed for ${repoFullName}@${headSha}`,
+          error,
+        );
+        return [];
+      }
+    })(),
+    (async (): Promise<number[]> => {
+      const loops = await db.query.sdlcLoop.findMany({
+        where: and(
+          eq(schema.sdlcLoop.repoFullName, repoFullName),
+          eq(schema.sdlcLoop.currentHeadSha, headSha),
+          inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
+          isNotNull(schema.sdlcLoop.prNumber),
+        ),
+        columns: { prNumber: true },
+      });
+      return loops
+        .map((l) => l.prNumber)
+        .filter((n): n is number => n !== null);
+    })(),
+  ]);
+
+  return [...new Set([...githubPrNumbers, ...dbPrNumbers])];
+}
+
 // Handle check run events
 export async function handleCheckRunEvent(
   event: CheckRunEvent,
@@ -984,9 +1034,20 @@ export async function handleCheckRunEvent(
   try {
     const repoFullName = event.repository.full_name;
     const checkRun = event.check_run;
-    const prNumbers = checkRun.pull_requests.map((pr) => pr.number);
+    let prNumbers = checkRun.pull_requests.map((pr) => pr.number);
+    if (prNumbers.length === 0 && checkRun.head_sha) {
+      console.log(
+        `Check run ${checkRun.id} has no associated PRs inline, resolving from SHA ${checkRun.head_sha}`,
+      );
+      prNumbers = await resolvePrNumbersFromSha({
+        repoFullName,
+        headSha: checkRun.head_sha,
+      });
+    }
     if (prNumbers.length === 0) {
-      console.log(`Check run ${checkRun.id} has no associated PRs`);
+      console.log(
+        `Check run ${checkRun.id} has no associated PRs after SHA fallback, skipping`,
+      );
       return;
     }
     console.log(
@@ -1095,9 +1156,20 @@ export async function handleCheckSuiteEvent(
     const repoFullName = event.repository.full_name;
     const checkSuite = event.check_suite;
     // Get PRs associated with this check suite
-    const prNumbers = checkSuite.pull_requests.map((pr) => pr.number);
+    let prNumbers = checkSuite.pull_requests.map((pr) => pr.number);
+    if (prNumbers.length === 0 && checkSuite.head_sha) {
+      console.log(
+        `Check suite ${checkSuite.id} has no associated PRs inline, resolving from SHA ${checkSuite.head_sha}`,
+      );
+      prNumbers = await resolvePrNumbersFromSha({
+        repoFullName,
+        headSha: checkSuite.head_sha,
+      });
+    }
     if (prNumbers.length === 0) {
-      console.log(`Check suite ${checkSuite.id} has no associated PRs`);
+      console.log(
+        `Check suite ${checkSuite.id} has no associated PRs after SHA fallback, skipping`,
+      );
       return;
     }
     console.log(
