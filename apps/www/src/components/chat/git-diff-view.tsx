@@ -463,7 +463,9 @@ function FileDiffWrapper({
                 onLineClick: enableComments ? handleLineClick : undefined,
               }}
               lineAnnotations={lineAnnotations}
-              renderAnnotation={(annotation) => (
+              renderAnnotation={(
+                annotation: DiffLineAnnotation<CommentWidgetData>,
+              ) => (
                 <CommentWidget
                   side={annotation.side === "additions" ? 2 : 1}
                   lineNumber={annotation.lineNumber}

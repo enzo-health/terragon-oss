@@ -39,10 +39,10 @@ fi
 if command -v pnpm &>/dev/null; then
   echo ""
   echo "Running build..."
-  BUILD_START=$(date +%s%N 2>/dev/null || python3 -c "import time; print(int(time.time()*1e9))")
+  BUILD_START=$(python3 -c "import time; print(int(time.time()*1e9))")
   pnpm -C apps/www build --no-lint 2>&1 | tail -5
-  BUILD_END=$(date +%s%N 2>/dev/null || python3 -c "import time; print(int(time.time()*1e9))")
-  BUILD_SECONDS=$(echo "scale=1; ($BUILD_END - $BUILD_START) / 1000000000" | bc 2>/dev/null || echo "N/A")
+  BUILD_END=$(python3 -c "import time; print(int(time.time()*1e9))")
+  BUILD_SECONDS=$(python3 -c "print(f'{($BUILD_END - $BUILD_START) / 1e9:.1f}')")
   echo "METRIC build_time_seconds=$BUILD_SECONDS"
 fi
 

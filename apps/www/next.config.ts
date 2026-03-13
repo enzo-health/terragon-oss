@@ -44,4 +44,6 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withBundleAnalyzer(nextConfig);
+// Type assertion needed: @next/bundle-analyzer resolves its next peer dep
+// to a different version in the monorepo (docs uses next@15, www uses next@16)
+export default withBundleAnalyzer(nextConfig as any) as NextConfig;
