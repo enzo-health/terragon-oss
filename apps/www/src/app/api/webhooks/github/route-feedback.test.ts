@@ -194,6 +194,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       repoFullName: "owner/repo",
       prNumber: 42,
       threadId: "thread-1",
+      initialState: "implementing",
     });
     const routedPart = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0]
       .messages[0]?.parts[0];
@@ -323,6 +324,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       repoFullName: "owner/repo",
       prNumber: 42,
       threadId: "new-thread-id",
+      initialState: "planning",
     });
   });
 

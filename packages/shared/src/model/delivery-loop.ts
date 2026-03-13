@@ -1679,6 +1679,7 @@ export async function enrollSdlcLoopForThread({
   threadId,
   currentHeadSha,
   planApprovalPolicy,
+  initialState,
 }: {
   db: DB;
   userId: string;
@@ -1686,7 +1687,9 @@ export async function enrollSdlcLoopForThread({
   threadId: string;
   currentHeadSha?: string | null;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  initialState?: "planning" | "implementing";
 }) {
+  const effectiveInitialState = initialState ?? "planning";
   const now = new Date();
   const inserted = await db
     .insert(schema.sdlcLoop)
@@ -1694,7 +1697,7 @@ export async function enrollSdlcLoopForThread({
       userId,
       repoFullName,
       threadId,
-      state: "planning",
+      state: effectiveInitialState,
       currentHeadSha: currentHeadSha ?? null,
       planApprovalPolicy: planApprovalPolicy ?? "auto",
       updatedAt: now,
@@ -1716,13 +1719,13 @@ export async function enrollSdlcLoopForThread({
   }
 
   const reactivationSet: {
-    state: "planning";
+    state: "planning" | "implementing";
     stopReason: null;
     updatedAt: Date;
     currentHeadSha?: string | null;
     planApprovalPolicy?: SdlcPlanApprovalPolicy;
   } = {
-    state: "planning",
+    state: effectiveInitialState,
     stopReason: null,
     updatedAt: now,
   };
