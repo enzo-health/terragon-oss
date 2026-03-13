@@ -11,6 +11,7 @@ export function ImagePart({
     <img
       src={imageUrl}
       alt={alt || "Image"}
+      loading="lazy"
       className="max-w-[200px] cursor-pointer"
       onClick={onClick}
     />

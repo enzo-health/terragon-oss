@@ -50,6 +50,19 @@ Make the Terragon frontend feel **super snappy and instantaneous**. Target metri
 - [x] Removed empty QueryClient creation/dehydration in site-header layout
 - [x] Cached `getFeatureFlagsGlobal` with `React.cache` in BannerContainer
 
+### Round 3: PostHog removal + streaming perf
+
+- [x] Removed `posthog-js` entirely (~45KB gzipped off client bundle)
+- [x] Removed all client-side PostHog capture/identify calls (10 files)
+- [x] Removed PostHog proxy rewrites from `next.config.ts`
+- [x] Throttled MutationObserver in `text-part.tsx` with `requestAnimationFrame`
+
+### Round 4: Code splitting + asset optimization
+
+- [x] Dynamic import `@pierre/diffs/react` PatchDiff component (only loads on diff expand)
+- [x] Removed redundant font preconnect hints (next/font self-hosts at build time)
+- [x] Added `loading="lazy"` to chat image elements
+
 ## Ideas Backlog
 
 See `autoresearch.ideas.md` for future optimization ideas.
