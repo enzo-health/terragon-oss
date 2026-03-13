@@ -133,6 +133,9 @@ export function threadListQueryOptions(filters: ThreadListFilters = {}) {
     getNextPageParam: (lastPage, pages) => {
       return lastPage.length === limit ? pages.length : undefined;
     },
+    // Real-time WebSocket patches keep list fresh, so use a longer staleTime
+    // to avoid unnecessary refetches on mount/tab-switch
+    staleTime: 2 * 60 * 1000,
   };
   return options;
 }

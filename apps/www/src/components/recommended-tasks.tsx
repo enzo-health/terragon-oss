@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Sparkles } from "lucide-react";
 import type { AIModel } from "@terragon/agent/types";
 import { tasksForModel } from "./recommended-tasks.utils";
@@ -16,7 +17,7 @@ interface RecommendedTasksProps {
   selectedModel?: AIModel;
 }
 
-function ListRecommendedTaskItem({
+const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
   task,
   onTaskSelect,
   selectedModel,
@@ -53,7 +54,7 @@ function ListRecommendedTaskItem({
       </div>
     </button>
   );
-}
+});
 
 export function RecommendedTasks({
   onTaskSelect,

@@ -12,7 +12,6 @@ import { WorkflowIcon, EllipsisVerticalIcon } from "lucide-react";
 import { Input } from "../ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
 import { DraftTaskDialog } from "../chat/draft-task-dialog";
-import { useRouter } from "next/navigation";
 import { ThreadAgentIcon } from "../thread-agent-icon";
 
 export const ThreadListItem = memo(function ThreadListItem({
@@ -85,7 +84,7 @@ export const ThreadListItem = memo(function ThreadListItem({
 
   return (
     <>
-      <div className="relative group">
+      <div className="relative group animate-in fade-in slide-in-from-top-1 duration-200">
         <Link
           href={`/task/${thread.id}`}
           className={cn(
@@ -216,18 +215,14 @@ export const ThreadListItem = memo(function ThreadListItem({
 });
 
 function SmallAutomationIndicator({ automationId }: { automationId: string }) {
-  const router = useRouter();
   return (
-    <div
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        router.push(`/automations/${automationId}`);
-      }}
+    <Link
+      href={`/automations/${automationId}`}
+      onClick={(e) => e.stopPropagation()}
       className="cursor-pointer"
       title="Automation"
     >
       <WorkflowIcon className="size-4 text-muted-foreground" />
-    </div>
+    </Link>
   );
 }
