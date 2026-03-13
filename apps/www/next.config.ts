@@ -1,11 +1,10 @@
-import type { NextConfig } from "next";
 import bundleAnalyzer from "@next/bundle-analyzer";
 
 const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
 });
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   reactCompiler: true,
   images: {
     remotePatterns: [
@@ -44,6 +43,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-// Type assertion needed: @next/bundle-analyzer resolves its next peer dep
-// to a different version in the monorepo (docs uses next@15, www uses next@16)
-export default withBundleAnalyzer(nextConfig as any) as NextConfig;
+export default withBundleAnalyzer(nextConfig);
