@@ -564,6 +564,19 @@ function buildDeliveryIdOrFallback({
   return `no-delivery:${fallbackScope}`;
 }
 
+const REVIEW_FEEDBACK_EVENT_TYPES = new Set([
+  "pull_request_review.submitted",
+  "pull_request_review_comment.created",
+]);
+
+function resolveEnrollmentInitialState(
+  eventType: string,
+): "planning" | "implementing" {
+  return REVIEW_FEEDBACK_EVENT_TYPES.has(eventType)
+    ? "implementing"
+    : "planning";
+}
+
 function buildFeedbackDeliveryMarker(
   input: GithubFeedbackInput,
 ): string | null {
@@ -883,6 +896,7 @@ export async function routeGithubFeedbackOrSpawnThread(
               repoFullName: input.repoFullName,
               prNumber: input.prNumber,
               threadId: fallbackThread.id,
+              initialState: resolveEnrollmentInitialState(input.eventType),
             });
           } catch (error) {
             console.warn(
@@ -952,6 +966,7 @@ export async function routeGithubFeedbackOrSpawnThread(
         repoFullName: input.repoFullName,
         prNumber: input.prNumber,
         threadId,
+        initialState: resolveEnrollmentInitialState(input.eventType),
       });
     } catch (error) {
       console.warn(

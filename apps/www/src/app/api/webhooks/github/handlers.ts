@@ -334,7 +334,7 @@ type PullRequestReviewThreadCountQueryResult = {
   } | null;
 };
 
-async function fetchUnresolvedReviewThreadCount({
+export async function fetchUnresolvedReviewThreadCount({
   repoFullName,
   prNumber,
 }: {
