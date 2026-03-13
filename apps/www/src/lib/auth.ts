@@ -182,26 +182,22 @@ export const auth = betterAuth({
           data: encryptedRefreshToken,
         });
 
+        const body = new URLSearchParams({
+          client_id: env.GITHUB_CLIENT_ID,
+          client_secret: env.GITHUB_CLIENT_SECRET,
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+        });
+
         const response = await fetch(
           "https://github.com/login/oauth/access_token",
           {
             method: "POST",
-            headers: {
-              Accept: "application/json",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              client_id: env.GITHUB_CLIENT_ID,
-              client_secret: env.GITHUB_CLIENT_SECRET,
-              grant_type: "refresh_token",
-              refresh_token: refreshToken,
-            }),
+            headers: { Accept: "application/json" },
+            body,
+            signal: AbortSignal.timeout(10_000),
           },
         );
-
-        if (!response.ok) {
-          throw new Error(`GitHub token refresh failed: ${response.status}`);
-        }
 
         const data = (await response.json()) as {
           access_token?: string;
@@ -212,15 +208,21 @@ export const auth = betterAuth({
           error_description?: string;
         };
 
-        if (data.error) {
+        if (!response.ok || data.error) {
           throw new Error(
-            `GitHub token refresh error: ${data.error} - ${data.error_description}`,
+            `GitHub token refresh failed: ${data.error ?? response.status} - ${data.error_description ?? response.statusText}`,
+          );
+        }
+
+        if (!data.access_token || !data.refresh_token) {
+          throw new Error(
+            "GitHub token refresh returned incomplete payload: missing access_token or refresh_token",
           );
         }
 
         return {
-          accessToken: data.access_token!,
-          refreshToken: data.refresh_token!,
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token,
           accessTokenExpiresAt: data.expires_in
             ? new Date(Date.now() + data.expires_in * 1000)
             : undefined,

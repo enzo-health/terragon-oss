@@ -336,7 +336,7 @@ export async function getGitHubUserAccessToken({
   } catch (error) {
     console.error(
       `[github-oauth] Failed to get/refresh GitHub access token for user ${userId}`,
-      error instanceof Error ? error.message : error,
+      error,
     );
     try {
       const migratedLegacyTokens = await tryMigrateLegacyGitHubOAuthTokens({
