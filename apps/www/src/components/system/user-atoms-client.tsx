@@ -22,7 +22,8 @@ import {
 } from "@terragon/shared";
 import { useRealtimeUser } from "@/hooks/useRealtime";
 import { useAtom, useSetAtom } from "jotai";
-import posthog from "posthog-js";
+// Lazy-load posthog-js to reduce initial bundle (~45KB gzipped)
+const getPostHog = () => import("posthog-js").then((m) => m.default);
 import {
   userCredentialsAtom,
   userCredentialsRefetchAtom,
@@ -88,9 +89,11 @@ export function UserAtomsHydrator({
   });
   useEffect(() => {
     if (user) {
-      posthog.identify(user.id, {
-        name: user.name,
-        email: user.email,
+      getPostHog().then((posthog) => {
+        posthog.identify(user.id, {
+          name: user.name,
+          email: user.email,
+        });
       });
     }
   }, [user]);

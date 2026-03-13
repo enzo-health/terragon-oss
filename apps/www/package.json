@@ -11,7 +11,8 @@
     "storybook": "ladle serve",
     "tsc-watch": "tsc --noEmit --watch --preserveWatchOutput",
     "tsc-check": "tsc --noEmit",
-    "lint": "biome lint ."
+    "lint": "biome lint .",
+    "analyze": "ANALYZE=true next build"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.42",
@@ -71,6 +72,7 @@
     "@upstash/ratelimit": "^2.0.5",
     "@upstash/redis": "^1.35.0",
     "@vercel/functions": "^2.1.0",
+    "@vercel/speed-insights": "^2.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/xterm": "^5.5.0",
@@ -125,7 +127,9 @@
     "zod": "4.1.11"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.6",
     "@ladle/react": "^5.0.3",
+    "@next/bundle-analyzer": "^16.1.6",
     "@slack/web-api": "^7.10.0",
     "@tailwindcss/postcss": "^4.1.10",
     "@terragon/dev-env": "workspace:*",
@@ -134,7 +138,6 @@
     "@types/pg": "^8.15.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@biomejs/biome": "2.4.6",
     "postcss": "^8.5.5",
     "tailwindcss": "^4.1.10",
     "tsx": "^4.19.4",
