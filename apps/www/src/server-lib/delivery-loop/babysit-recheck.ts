@@ -103,10 +103,13 @@ export async function recheckBabysitCompletion({
 
   const insertedSignalIds: string[] = [];
 
-  // Insert CI signal if checks completed
-  if (ciSnapshot?.complete) {
+  // Insert CI signal if checks completed or have failing results
+  const hasFailing = (ciSnapshot?.failingChecks.length ?? 0) > 0;
+  if (ciSnapshot && (ciSnapshot.complete || hasFailing)) {
     const checkOutcome = ciSnapshot.failingChecks.length > 0 ? "fail" : "pass";
-    const deterministicSuiteId = `babysit-recheck:ci:${loop.id}:${loop.currentHeadSha}`;
+    const deterministicSuiteId = ciSnapshot.complete
+      ? `babysit-recheck:ci:${loop.id}:${loop.currentHeadSha}`
+      : `babysit-recheck:ci:partial:${loop.id}:${loop.currentHeadSha}`;
 
     const inserted = await db
       .insert(schema.sdlcLoopSignalInbox)
@@ -126,7 +129,7 @@ export async function recheckBabysitCompletion({
           ciSnapshotSource: "babysit_recheck",
           ciSnapshotCheckNames: ciSnapshot.checkNames,
           ciSnapshotFailingChecks: ciSnapshot.failingChecks,
-          ciSnapshotComplete: true,
+          ciSnapshotComplete: ciSnapshot.complete,
           sourceType: "automation",
         },
       })
@@ -174,7 +177,7 @@ export async function recheckBabysitCompletion({
   if (insertedSignalIds.length === 0) {
     const reasons: string[] = [];
     if (!ciSnapshot) reasons.push("github_ci_poll_failed");
-    else if (!ciSnapshot.complete) reasons.push("checks_still_running");
+    else if (!ciSnapshot.complete) reasons.push("checks_running_no_failures");
     else reasons.push("ci_signal_deduplicated");
     if (!loop.prNumber) reasons.push("no_pr_number");
     else if (unresolvedThreadCount === null) reasons.push("review_poll_failed");
@@ -201,6 +204,122 @@ export async function recheckBabysitCompletion({
     signalIds: insertedSignalIds,
   };
   console.log("[babysit-recheck] result", { loopId, ...result });
+  return result;
+}
+
+/**
+ * Poll GitHub CI for a loop stuck in ci_gate and insert a synthetic signal
+ * if checks have completed or have failing results.
+ *
+ * This mirrors recheckBabysitCompletion but for the ci_gate phase.
+ */
+export async function recheckCiGateCompletion({
+  db,
+  loopId,
+}: {
+  db: DB;
+  loopId: string;
+}): Promise<BabysitRecheckResult> {
+  const cooldownKey = `ci-gate-recheck:${loopId}`;
+  const alreadyChecked = await redis.set(cooldownKey, "1", {
+    nx: true,
+    ex: BABYSIT_RECHECK_COOLDOWN_SECONDS,
+  });
+  if (alreadyChecked !== "OK") {
+    return { action: "skipped", reason: "cooldown" };
+  }
+
+  const loop = await db.query.sdlcLoop.findFirst({
+    where: eq(schema.sdlcLoop.id, loopId),
+    columns: {
+      id: true,
+      state: true,
+      repoFullName: true,
+      prNumber: true,
+      currentHeadSha: true,
+    },
+  });
+
+  if (!loop) {
+    return { action: "skipped", reason: "loop_not_found" };
+  }
+  if (loop.state !== "ci_gate") {
+    return { action: "skipped", reason: `state_is_${loop.state}` };
+  }
+  if (!loop.currentHeadSha || !loop.repoFullName) {
+    return { action: "skipped", reason: "missing_head_sha_or_repo" };
+  }
+
+  const ciSnapshot = await fetchCiSnapshotForHead({
+    repoFullName: loop.repoFullName,
+    headSha: loop.currentHeadSha,
+  });
+
+  console.log("[ci-gate-recheck] poll results", {
+    loopId,
+    headSha: loop.currentHeadSha,
+    ci: ciSnapshot
+      ? {
+          complete: ciSnapshot.complete,
+          checkCount: ciSnapshot.checkNames.length,
+          failingCount: ciSnapshot.failingChecks.length,
+        }
+      : null,
+  });
+
+  const hasFailing = (ciSnapshot?.failingChecks.length ?? 0) > 0;
+  if (!ciSnapshot || (!ciSnapshot.complete && !hasFailing)) {
+    const reason = !ciSnapshot
+      ? "github_ci_poll_failed"
+      : "checks_running_no_failures";
+    console.log("[ci-gate-recheck] result", { loopId, action: "no_signal_needed", reason });
+    return { action: "no_signal_needed", reason };
+  }
+
+  const checkOutcome = ciSnapshot.failingChecks.length > 0 ? "fail" : "pass";
+  const deterministicSuiteId = ciSnapshot.complete
+    ? `ci-gate-recheck:ci:${loop.id}:${loop.currentHeadSha}`
+    : `ci-gate-recheck:ci:partial:${loop.id}:${loop.currentHeadSha}`;
+
+  const inserted = await db
+    .insert(schema.sdlcLoopSignalInbox)
+    .values({
+      loopId: loop.id,
+      causeType: "check_suite.completed",
+      canonicalCauseId: deterministicSuiteId,
+      signalHeadShaOrNull: loop.currentHeadSha,
+      causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
+      payload: {
+        eventType: "check_suite.completed",
+        repoFullName: loop.repoFullName,
+        prNumber: loop.prNumber,
+        checkSuiteId: deterministicSuiteId,
+        checkOutcome,
+        headSha: loop.currentHeadSha,
+        ciSnapshotSource: "ci_gate_recheck",
+        ciSnapshotCheckNames: ciSnapshot.checkNames,
+        ciSnapshotFailingChecks: ciSnapshot.failingChecks,
+        ciSnapshotComplete: ciSnapshot.complete,
+        sourceType: "automation",
+      },
+    })
+    .onConflictDoNothing()
+    .returning({ id: schema.sdlcLoopSignalInbox.id });
+
+  if (inserted.length > 0) {
+    const result: BabysitRecheckResult = {
+      action: "signal_inserted",
+      signalId: inserted[0]!.id,
+    };
+    console.log("[ci-gate-recheck] result", { loopId, ...result });
+    return result;
+  }
+
+  const result: BabysitRecheckResult = {
+    action: "no_signal_needed",
+    reason: "ci_signal_deduplicated",
+  };
+  console.log("[ci-gate-recheck] result", { loopId, ...result });
   return result;
 }
 
