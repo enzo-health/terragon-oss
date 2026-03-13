@@ -1012,7 +1012,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
 
   // ── Implementing-phase completion intercept ────────────────────────────────
 
-  it("transitions to review_gate when all tasks complete", async () => {
+  it("transitions to review_gate when all tasks complete and queues follow-up", async () => {
     dbState.signalFindFirst.mockResolvedValueOnce(
       makeDaemonTerminalSignal(
         { id: "signal-dt-complete-1" },
@@ -1040,7 +1040,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
       expect.objectContaining({
         processed: true,
         signalId: "signal-dt-complete-1",
-        runtimeAction: "none",
+        runtimeAction: "feedback_follow_up_queued",
       }),
     );
     expect(verifyPlanTaskCompletionForHead).toHaveBeenCalledWith(
@@ -1053,7 +1053,9 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         headSha: "sha-from-daemon",
       }),
     );
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    // After transitioning to review_gate, a follow-up must be queued so the
+    // agent wakes up and the checkpoint path runs the review gate inline.
+    expect(queueFollowUpInternal).toHaveBeenCalled();
   });
 
   it("uses loop.currentHeadSha as fallback when no headShaAtCompletion in payload", async () => {
@@ -1081,14 +1083,18 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     });
 
     expect(result).toEqual(
-      expect.objectContaining({ processed: true, runtimeAction: "none" }),
+      expect.objectContaining({
+        processed: true,
+        runtimeAction: "feedback_follow_up_queued",
+      }),
     );
     expect(verifyPlanTaskCompletionForHead).toHaveBeenCalledWith(
       expect.objectContaining({ headSha: "sha-loop-fallback" }),
     );
+    expect(queueFollowUpInternal).toHaveBeenCalled();
   });
 
-  it("auto-marks unmarked tasks and always transitions when headSha exists", async () => {
+  it("auto-marks unmarked tasks, transitions, and queues follow-up when headSha exists", async () => {
     dbState.signalFindFirst.mockResolvedValueOnce(
       makeDaemonTerminalSignal(
         { id: "signal-dt-incomplete-1" },
@@ -1113,7 +1119,10 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     });
 
     expect(result).toEqual(
-      expect.objectContaining({ processed: true, runtimeAction: "none" }),
+      expect.objectContaining({
+        processed: true,
+        runtimeAction: "feedback_follow_up_queued",
+      }),
     );
     expect(markPlanTasksCompletedByAgent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1127,10 +1136,10 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     expect(transitionSdlcLoopState).toHaveBeenCalledWith(
       expect.objectContaining({ transitionEvent: "implementation_completed" }),
     );
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(queueFollowUpInternal).toHaveBeenCalled();
   });
 
-  it("transitions even without plan artifact (headSha proves code was written)", async () => {
+  it("transitions even without plan artifact and queues follow-up (headSha proves code was written)", async () => {
     dbState.signalFindFirst.mockResolvedValueOnce(
       makeDaemonTerminalSignal(
         { id: "signal-dt-noplan-1" },
@@ -1147,7 +1156,10 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
     });
 
     expect(result).toEqual(
-      expect.objectContaining({ processed: true, runtimeAction: "none" }),
+      expect.objectContaining({
+        processed: true,
+        runtimeAction: "feedback_follow_up_queued",
+      }),
     );
     expect(verifyPlanTaskCompletionForHead).not.toHaveBeenCalled();
     expect(transitionSdlcLoopState).toHaveBeenCalledWith(
@@ -1156,7 +1168,7 @@ describe("runBestEffortSdlcSignalInboxTick", () => {
         headSha: "sha-loop-1",
       }),
     );
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(queueFollowUpInternal).toHaveBeenCalled();
   });
 
   it("suppresses re-dispatch for stopped daemon_terminal", async () => {

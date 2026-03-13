@@ -985,8 +985,11 @@ export async function runBestEffortSdlcSignalInboxTick({
       // ── Implementing-phase completion intercept ──
       // When a daemon_terminal fires during implementing with "completed" status
       // and we have a headSha proving the agent produced commits, auto-mark all
-      // tasks as done and transition to review_gate. Never re-dispatch during
-      // implementing — the review_gate and ci_gate handle real verification.
+      // tasks as done and transition to review_gate. After transitioning, keep
+      // shouldQueueRuntimeFollowUp=true so the generic routing code queues a
+      // follow-up — this wakes the agent, whose checkpoint path runs the review
+      // gate inline. Without this, the loop deadlocks in review_gate with no
+      // agent running and no follow-up queued.
       if (
         signal.causeType === "daemon_terminal" &&
         loopPhaseContext.effectivePhase === "implementing" &&
@@ -1048,7 +1051,10 @@ export async function runBestEffortSdlcSignalInboxTick({
               }
             }
 
-            // Always transition — review_gate and ci_gate do real verification
+            // Transition to review_gate — the checkpoint path runs the actual
+            // review inline when the agent wakes up. Keep
+            // shouldQueueRuntimeFollowUp=true so the follow-up routing below
+            // dispatches the agent.
             await transitionSdlcLoopState({
               db,
               loopId,
@@ -1061,9 +1067,8 @@ export async function runBestEffortSdlcSignalInboxTick({
                   : 1,
               now,
             });
-            gateEvaluationOutcome.shouldQueueRuntimeFollowUp = false;
             console.log(
-              "[sdlc-loop] implementing complete — transitioning to review_gate",
+              "[sdlc-loop] implementing complete — transitioning to review_gate, follow-up will be queued",
               { loopId, signalId: signal.id, headSha: effectiveHeadSha },
             );
           } else {
