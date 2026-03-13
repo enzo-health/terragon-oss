@@ -355,22 +355,20 @@ function StepperIndicator({
       data-slot="stepper-indicator"
       data-state={state}
       className={cn(
-        "border-background bg-accent text-accent-foreground data-[state=completed]:bg-primary data-[state=completed]:text-primary-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground relative flex size-6 shrink-0 items-center justify-center overflow-hidden",
+        "border-background bg-accent text-accent-foreground data-[state=completed]:bg-primary data-[state=completed]:text-primary-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground relative flex size-6 shrink-0 items-center justify-center overflow-hidden transition-colors duration-200",
         "rounded-full text-xs",
         className,
       )}
     >
       <div className="absolute">
-        {indicators &&
-        ((isLoading && indicators.loading) ||
-          (state === "completed" && indicators.completed) ||
-          (state === "active" && indicators.active) ||
-          (state === "inactive" && indicators.inactive))
-          ? (isLoading && indicators.loading) ||
-            (state === "completed" && indicators.completed) ||
-            (state === "active" && indicators.active) ||
-            (state === "inactive" && indicators.inactive)
-          : children}
+        {(() => {
+          const indicator =
+            (isLoading && indicators?.loading) ||
+            (state === "completed" && indicators?.completed) ||
+            (state === "active" && indicators?.active) ||
+            (state === "inactive" && indicators?.inactive);
+          return indicator || children;
+        })()}
       </div>
     </div>
   );
@@ -384,7 +382,7 @@ function StepperSeparator({ className }: React.ComponentProps<"div">) {
       data-slot="stepper-separator"
       data-state={state}
       className={cn(
-        "bg-muted rounded-sm group-data-[orientation=horizontal]/stepper-nav:h-0.5 group-data-[orientation=vertical]/stepper-nav:h-12 group-data-[orientation=vertical]/stepper-nav:w-0.5 m-0.5 group-data-[orientation=horizontal]/stepper-nav:flex-1",
+        "bg-muted rounded-sm group-data-[orientation=horizontal]/stepper-nav:h-0.5 group-data-[orientation=vertical]/stepper-nav:h-12 group-data-[orientation=vertical]/stepper-nav:w-0.5 m-0.5 group-data-[orientation=horizontal]/stepper-nav:flex-1 transition-colors duration-300",
         className,
       )}
     />

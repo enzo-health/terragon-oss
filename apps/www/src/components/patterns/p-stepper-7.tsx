@@ -422,16 +422,18 @@ export function DeliveryLoopTopProgressStepper({
                 {isLoading ? "--" : `${progressPercent}%`}
               </span>
             </div>
-            {needsAttention?.isBlocked ? (
-              <Badge variant="destructive" className="text-[11px]">
-                {needsAttention.blockerCount} blocker
-                {needsAttention.blockerCount === 1 ? "" : "s"}
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="text-[11px]">
-                On Track
-              </Badge>
-            )}
+            <span aria-live="polite">
+              {needsAttention?.isBlocked ? (
+                <Badge variant="destructive" className="text-[11px]">
+                  {needsAttention.blockerCount} blocker
+                  {needsAttention.blockerCount === 1 ? "" : "s"}
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-[11px]">
+                  On Track
+                </Badge>
+              )}
+            </span>
           </div>
         </div>
 
@@ -463,7 +465,7 @@ export function DeliveryLoopTopProgressStepper({
           }}
           className="w-full"
         >
-          <StepperNav className="gap-3 overflow-x-auto pb-1">
+          <StepperNav aria-label="Delivery loop progress" className="gap-3 overflow-x-auto pb-1">
             {phases.map((phase, index) => {
               const isStepDone =
                 phase.status === "passed" || phase.status === "degraded";
@@ -490,9 +492,9 @@ export function DeliveryLoopTopProgressStepper({
                   <StepperTrigger
                     disabled={!isExpandable}
                     className={cn(
-                      "h-auto items-start gap-2 rounded-lg px-1 py-1 disabled:opacity-100",
+                      "h-auto items-start gap-2 rounded-lg px-1.5 py-1.5 transition-colors duration-150 disabled:opacity-100",
                       isExpandable
-                        ? "cursor-pointer hover:bg-muted/50"
+                        ? "cursor-pointer hover:bg-muted/50 active:bg-muted/70"
                         : "cursor-default",
                     )}
                     onClick={
@@ -506,7 +508,7 @@ export function DeliveryLoopTopProgressStepper({
                   >
                     <StepperIndicator
                       className={cn(
-                        "size-8 border text-[11px] font-semibold",
+                        "size-8 border text-[11px] font-semibold shadow-sm",
                         isStepDone
                           ? "data-[state=completed]:border-emerald-600 data-[state=completed]:bg-emerald-600 data-[state=completed]:text-white"
                           : "",
@@ -537,7 +539,7 @@ export function DeliveryLoopTopProgressStepper({
                       <div className="flex items-center gap-1.5">
                         <span
                           className={cn(
-                            "inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                            "inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none transition-colors duration-200",
                             getStatusBadgeClass(phase.status),
                           )}
                         >
@@ -547,14 +549,20 @@ export function DeliveryLoopTopProgressStepper({
                         {hasGateChecks &&
                           phase.status !== "not_started" &&
                           phaseChecks.length > 1 && (
-                            <div className="flex items-center gap-0.5">
+                            <div
+                              className="flex items-center gap-0.5"
+                              role="group"
+                              aria-label={`${phase.label} sub-checks`}
+                            >
                               {phaseChecks.map((check) => (
                                 <div
                                   key={check.key}
                                   className={cn(
-                                    "size-1.5 rounded-full",
+                                    "size-1.5 rounded-full transition-colors duration-200",
                                     getGateDotColor(check.status),
                                   )}
+                                  role="img"
+                                  aria-label={`${check.label}: ${getCheckStatusLabel(check.status)}`}
                                 />
                               ))}
                             </div>
@@ -566,7 +574,7 @@ export function DeliveryLoopTopProgressStepper({
                   {isExpanded &&
                     phase.key === "planning" &&
                     data?.artifacts?.plannedTasks && (
-                      <>
+                      <div className="animate-in fade-in slide-in-from-top-1 duration-200">
                         {planCardModel ? (
                           <DeliveryLoopPlanReviewCard
                             plan={planCardModel}
@@ -580,14 +588,14 @@ export function DeliveryLoopTopProgressStepper({
                           threadId={threadId}
                           threadChatId={threadChatId}
                         />
-                      </>
+                      </div>
                     )}
 
                   {phases.length > index + 1 ? (
                     <StepperSeparator
                       className={cn(
-                        "mx-2",
-                        isStepDone ? "bg-emerald-600" : "bg-border",
+                        "mx-2 h-0.5",
+                        isStepDone ? "bg-emerald-600" : "bg-border/60",
                       )}
                     />
                   ) : null}
