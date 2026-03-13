@@ -10,7 +10,6 @@ import { toast } from "sonner";
 import { Pill } from "@/components/shared/pill";
 import { ChatHeaderButtons } from "./chat-header-buttons";
 import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
-import posthog from "posthog-js";
 import { ThreadStatusIndicator } from "@/components/thread-status";
 import { Input } from "@/components/ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
@@ -168,12 +167,6 @@ export const ChatHeader = memo(function ChatHeader({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline hover:text-foreground truncate min-w-[30px] max-w-[200px] block"
-                    onClick={() => {
-                      posthog.capture("base_branch_link_clicked", {
-                        repoFullName: thread.githubRepoFullName,
-                        baseBranchName: thread.repoBaseBranchName,
-                      });
-                    }}
                     title={thread.repoBaseBranchName}
                   >
                     {thread.repoBaseBranchName}
@@ -186,12 +179,6 @@ export const ChatHeader = memo(function ChatHeader({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline hover:text-foreground truncate min-w-[35px] block"
-                    onClick={() => {
-                      posthog.capture("head_branch_link_clicked", {
-                        repoFullName: thread.githubRepoFullName,
-                        branchName: thread.branchName,
-                      });
-                    }}
                     title={thread.branchName}
                   >
                     {thread.branchName}
@@ -204,10 +191,6 @@ export const ChatHeader = memo(function ChatHeader({
                       e.stopPropagation();
                       try {
                         navigator.clipboard.writeText(thread.branchName!);
-                        posthog.capture("branch_name_copied", {
-                          repoFullName: thread.githubRepoFullName,
-                          branchName: thread.branchName,
-                        });
                         toast.success("Copied branch name");
                       } catch (err) {
                         console.error("Failed to copy branch name", err);

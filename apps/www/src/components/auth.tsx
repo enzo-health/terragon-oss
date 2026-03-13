@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { MagicLinkSignInButton } from "./magic-link-auth";
-import posthog from "posthog-js";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
@@ -32,8 +31,6 @@ export async function signInWithGithub({
   const callbackURL = returnUrl
     ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
     : "/";
-
-  posthog.capture("signin_github_clicked", { location });
 
   await authClient.signIn.social(
     {

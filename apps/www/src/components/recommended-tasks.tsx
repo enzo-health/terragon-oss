@@ -4,7 +4,6 @@ import { memo } from "react";
 import { Sparkles } from "lucide-react";
 import type { AIModel } from "@terragon/agent/types";
 import { tasksForModel } from "./recommended-tasks.utils";
-import { usePostHog } from "posthog-js/react";
 
 interface RecommendedTask {
   id: string;
@@ -20,20 +19,11 @@ interface RecommendedTasksProps {
 const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
   task,
   onTaskSelect,
-  selectedModel,
 }: {
   task: RecommendedTask;
   onTaskSelect: (prompt: string) => void;
-  selectedModel?: AIModel;
 }) {
-  const posthog = usePostHog();
-
   const handleClick = () => {
-    posthog?.capture("recommended_task_clicked", {
-      taskLabel: task.label,
-      selectedModel: selectedModel,
-    });
-
     onTaskSelect(task.prompt);
   };
 
@@ -71,7 +61,6 @@ export function RecommendedTasks({
             key={task.id}
             task={task}
             onTaskSelect={onTaskSelect}
-            selectedModel={selectedModel}
           />
         ))}
       </div>
