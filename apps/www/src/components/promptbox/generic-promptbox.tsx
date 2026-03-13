@@ -174,7 +174,7 @@ export function GenericPromptBox({
       }
       initializedRef.current = true;
     }
-  }, [editor, message, autoFocus]);
+  }, [editor, autoFocus]);
 
   return (
     <SimplePromptBox

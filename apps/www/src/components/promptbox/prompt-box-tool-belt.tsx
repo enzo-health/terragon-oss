@@ -243,7 +243,7 @@ export function usePromptBoxToolBeltOptions({
         setSkipSetupCookie(value);
       }
     },
-    [shouldUseCookieValues, setSkipSetupCookie, setSkipSetupLocal],
+    [shouldUseCookieValues, setSkipSetupCookie],
   );
 
   const setDisableGitCheckpointing = useCallback(
@@ -253,11 +253,7 @@ export function usePromptBoxToolBeltOptions({
         setDisableGitCheckpointingCookie(value);
       }
     },
-    [
-      shouldUseCookieValues,
-      setDisableGitCheckpointingCookie,
-      setDisableGitCheckpointingLocal,
-    ],
+    [shouldUseCookieValues, setDisableGitCheckpointingCookie],
   );
 
   const setCreateNewBranch = useCallback(
@@ -267,7 +263,7 @@ export function usePromptBoxToolBeltOptions({
         setCreateNewBranchCookie(value);
       }
     },
-    [shouldUseCookieValues, setCreateNewBranchCookie, setCreateNewBranchState],
+    [shouldUseCookieValues, setCreateNewBranchCookie],
   );
 
   const branchNameRef = useRef(branchName);

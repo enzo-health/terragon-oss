@@ -351,7 +351,6 @@ function ChatUI({
     [
       dbMessages,
       isReadOnly,
-      promptBoxRef,
       shell?.childThreads,
       thread?.branchName,
       thread?.githubRepoFullName,

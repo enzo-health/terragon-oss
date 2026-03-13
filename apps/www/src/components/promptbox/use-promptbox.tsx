@@ -738,7 +738,7 @@ export function usePromptBox({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [editor, handleStop, isAgentWorking]);
+  }, [handleStop, isAgentWorking]);
 
   return {
     editor,
@@ -833,7 +833,7 @@ function useContentAndAttachedFiles({
       setStoredContentState(htmlStr);
       setPendingStoredContent({ htmlStr, isEmpty });
     },
-    [setStoredContentState],
+    [],
   );
   useEffect(() => {
     if (!pendingStoredContent || disableLocalStorage) {

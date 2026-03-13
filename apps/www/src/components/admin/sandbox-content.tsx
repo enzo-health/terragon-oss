@@ -83,7 +83,7 @@ export function AdminSandboxContent(props: {
         setIsLoadingLogs,
       });
     }
-  }, [props.sandboxId, props.sandboxProvider, setLogLines, setIsLoadingLogs]);
+  }, [props.sandboxId, props.sandboxProvider]);
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">

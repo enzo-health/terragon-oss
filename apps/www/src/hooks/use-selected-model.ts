@@ -73,7 +73,7 @@ export function useSelectedModel({
         setPersistedMultiAgentMode(value);
       }
     },
-    [persistToUserFlags, setPersistedMultiAgentMode, setMultiAgentModeInner],
+    [persistToUserFlags, setPersistedMultiAgentMode],
   );
 
   const { selectedModel, selectedModels } = useMemo(() => {
@@ -123,7 +123,7 @@ export function useSelectedModel({
         setPersistedSelectedModels(models);
       }
     },
-    [persistToUserFlags, setPersistedSelectedModels, setSelectedModelsInner],
+    [persistToUserFlags, setPersistedSelectedModels],
   );
 
   const setSelectedModel = useCallback(

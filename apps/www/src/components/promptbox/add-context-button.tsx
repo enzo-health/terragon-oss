@@ -171,6 +171,7 @@ function MentionListView({
   }, []);
 
   // Reset selected index when items change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency on items
   useEffect(() => {
     setSelectedIndex(0);
   }, [items]);
