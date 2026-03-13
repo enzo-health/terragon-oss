@@ -335,7 +335,7 @@ export async function getGitHubUserAccessToken({
     return result?.accessToken ?? null;
   } catch (error) {
     console.error(
-      `[github-oauth] Failed to get GitHub access token for user ${userId}`,
+      `[github-oauth] Failed to get/refresh GitHub access token for user ${userId}`,
       error,
     );
     try {
