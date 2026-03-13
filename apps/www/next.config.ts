@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  optimizePackageImports: ["lucide-react", "@radix-ui/react-icons"],
   experimental: {
     staleTimes: {
       // Cache dynamic pages for 3 minutes on client-side navigation
