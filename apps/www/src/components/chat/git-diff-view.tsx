@@ -1,13 +1,18 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
-  AnnotationSide,
+  type AnnotationSide,
   type DiffLineEventBaseProps,
   type DiffLineAnnotation,
-  PatchDiff,
 } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
+
+const PatchDiff = dynamic(
+  () => import("@pierre/diffs/react").then((mod) => mod.PatchDiff),
+  { ssr: false },
+);
 import {
   ChevronRight,
   ChevronDown,
