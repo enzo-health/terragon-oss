@@ -88,6 +88,20 @@ export async function recheckBabysitCompletion({
       : Promise.resolve(null),
   ]);
 
+  console.log("[babysit-recheck] poll results", {
+    loopId,
+    headSha: loop.currentHeadSha,
+    prNumber: loop.prNumber,
+    ci: ciSnapshot
+      ? {
+          complete: ciSnapshot.complete,
+          checkCount: ciSnapshot.checkNames.length,
+          failingCount: ciSnapshot.failingChecks.length,
+        }
+      : null,
+    unresolvedThreadCount,
+  });
+
   const insertedSignalIds: string[] = [];
 
   // Insert CI signal if checks completed
@@ -167,14 +181,29 @@ export async function recheckBabysitCompletion({
     else reasons.push("ci_signal_deduplicated");
     if (unresolvedThreadCount === null) reasons.push("review_poll_failed");
     else reasons.push("review_signal_deduplicated");
-    return { action: "no_signal_needed", reason: reasons.join("+") };
+    const result: BabysitRecheckResult = {
+      action: "no_signal_needed",
+      reason: reasons.join("+"),
+    };
+    console.log("[babysit-recheck] result", { loopId, ...result });
+    return result;
   }
 
   if (insertedSignalIds.length === 1) {
-    return { action: "signal_inserted", signalId: insertedSignalIds[0]! };
+    const result: BabysitRecheckResult = {
+      action: "signal_inserted",
+      signalId: insertedSignalIds[0]!,
+    };
+    console.log("[babysit-recheck] result", { loopId, ...result });
+    return result;
   }
 
-  return { action: "signals_inserted", signalIds: insertedSignalIds };
+  const result: BabysitRecheckResult = {
+    action: "signals_inserted",
+    signalIds: insertedSignalIds,
+  };
+  console.log("[babysit-recheck] result", { loopId, ...result });
+  return result;
 }
 
 // ---------------------------------------------------------------------------
