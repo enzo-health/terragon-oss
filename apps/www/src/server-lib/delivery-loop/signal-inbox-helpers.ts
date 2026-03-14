@@ -1,8 +1,5 @@
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
-import type {
-  SdlcLoopCauseType,
-  SdlcLoopState,
-} from "@terragon/shared/db/types";
+import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
 import {
   getEffectiveDeliveryLoopPhase,
   type DeliveryLoopSnapshot,
