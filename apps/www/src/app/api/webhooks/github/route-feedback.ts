@@ -24,19 +24,12 @@ import {
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
-import {
-  SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
-  runBestEffortSdlcSignalInboxTick,
-} from "@/server-lib/delivery-loop/signal-inbox";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type {
   WorkflowId,
   CorrelationId,
 } from "@terragon/shared/delivery-loop/domain/workflow";
-import { eq, and } from "drizzle-orm";
-import { featureFlagsDefinitions } from "@terragon/shared/model/feature-flags-definitions";
 
 export type FeedbackRoutingMode =
   | "reused_existing"
@@ -526,22 +519,7 @@ type CanonicalFeedbackSignal = ReturnType<typeof buildSdlcCanonicalCause> & {
   payload: Record<string, unknown>;
 };
 
-class EnrolledLoopSignalInboxRetryError extends Error {}
 class RetryableOwnerResolutionError extends Error {}
-
-function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
-  const iterationCount =
-    typeof loopVersion === "number" && Number.isFinite(loopVersion)
-      ? Math.max(loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: false,
-    cooldownUntil: null,
-    maxIterations: null,
-    manualIntentAllowed: true,
-    iterationCount,
-  };
-}
 
 function buildIdentityValueOrFallback({
   identityValue,
@@ -1004,9 +982,6 @@ export async function routeGithubFeedbackOrSpawnThread(
     const enrolledThreadChatId = getPrimaryThreadChatIdOrNull(enrolledThread);
 
     if (enrolledThreadChatId) {
-      const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-        activeSdlcLoop.loopVersion,
-      );
       const signalOutcome = await enqueueCanonicalSignalForEnrolledLoop({
         loopId: activeSdlcLoop.id,
         input,
@@ -1038,112 +1013,17 @@ export async function routeGithubFeedbackOrSpawnThread(
 
       if (signalOutcome !== "unsupported") {
         const leaseOwnerToken = `github-feedback:${input.eventType}:${input.deliveryId ?? "no-delivery"}:${input.prNumber}`;
-        let isV2Enabled: boolean =
-          featureFlagsDefinitions.sdlcLoopCoordinatorRouting.defaultValue;
-        try {
-          const flag = await db.query.featureFlags?.findFirst?.({
-            where: eq(schema.featureFlags.name, "sdlcLoopCoordinatorRouting"),
+        const v2Workflow = await getActiveWorkflowForThread({
+          db,
+          threadId: activeSdlcLoop.threadId,
+        });
+        if (v2Workflow) {
+          await runCoordinatorTick({
+            db,
+            workflowId: v2Workflow.id as WorkflowId,
+            correlationId: leaseOwnerToken as CorrelationId,
+            claimToken: leaseOwnerToken,
           });
-          if (flag) {
-            const userOverride = await db.query.userFeatureFlags?.findFirst?.({
-              where: and(
-                eq(schema.userFeatureFlags.userId, userId),
-                eq(schema.userFeatureFlags.featureFlagId, flag.id),
-              ),
-            });
-            isV2Enabled =
-              userOverride?.value ?? flag.globalOverride ?? flag.defaultValue;
-          }
-        } catch {
-          // Flag lookup failed — use default
-        }
-
-        let v2Handled = false;
-        if (isV2Enabled) {
-          try {
-            const v2Workflow = await getActiveWorkflowForThread({
-              db,
-              threadId: activeSdlcLoop.threadId,
-            });
-            if (v2Workflow) {
-              await runCoordinatorTick({
-                db,
-                workflowId: v2Workflow.id as WorkflowId,
-                correlationId: leaseOwnerToken as CorrelationId,
-                claimToken: leaseOwnerToken,
-              });
-            }
-            v2Handled = true;
-          } catch (error) {
-            console.warn(
-              "[github feedback routing] v2 coordinator tick failed, falling back to v1",
-              {
-                userId,
-                repoFullName: input.repoFullName,
-                prNumber: input.prNumber,
-                loopId: activeSdlcLoop.id,
-                error,
-              },
-            );
-          }
-        }
-        if (!v2Handled) {
-          try {
-            const signalInboxTickResult =
-              await runBestEffortSdlcSignalInboxTick({
-                db,
-                loopId: activeSdlcLoop.id,
-                leaseOwnerToken,
-                guardrailRuntime,
-              });
-            if (
-              !signalInboxTickResult.processed &&
-              signalInboxTickResult.reason ===
-                SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED
-            ) {
-              throw new EnrolledLoopSignalInboxRetryError(
-                `Failed to enqueue enrolled-loop feedback follow-up for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
-              );
-            }
-          } catch (error) {
-            if (error instanceof EnrolledLoopSignalInboxRetryError) {
-              throw error;
-            }
-            console.error(
-              "[github feedback routing] SDLC signal inbox tick failed after feedback enqueue",
-              {
-                userId,
-                repoFullName: input.repoFullName,
-                prNumber: input.prNumber,
-                eventType: input.eventType,
-                loopId: activeSdlcLoop.id,
-                error,
-              },
-            );
-            throw new EnrolledLoopSignalInboxRetryError(
-              `Failed to process enrolled-loop signal inbox tick for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
-            );
-          }
-          try {
-            await runBestEffortSdlcPublicationCoordinator({
-              db,
-              loopId: activeSdlcLoop.id,
-              leaseOwnerToken,
-              guardrailRuntime,
-            });
-          } catch (error) {
-            console.error(
-              "[github feedback routing] SDLC publication coordinator failed after feedback enqueue",
-              {
-                userId,
-                repoFullName: input.repoFullName,
-                prNumber: input.prNumber,
-                eventType: input.eventType,
-                loopId: activeSdlcLoop.id,
-                error,
-              },
-            );
-          }
         }
       }
       captureFeedbackRouting({
