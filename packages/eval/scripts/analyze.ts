@@ -81,6 +81,11 @@ function main() {
 
     if ("metrics" in baselineRaw && typeof baselineRaw.metrics === "object") {
       baselineMetrics = baselineRaw.metrics as EvalMetrics;
+    } else if (
+      "baselineMetrics" in baselineRaw &&
+      typeof baselineRaw.baselineMetrics === "object"
+    ) {
+      baselineMetrics = baselineRaw.baselineMetrics as EvalMetrics;
     } else if ("fixCycles" in baselineRaw) {
       baselineMetrics = baselineRaw as unknown as EvalMetrics;
     } else {
