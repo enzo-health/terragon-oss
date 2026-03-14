@@ -111,15 +111,27 @@ export async function tryAutoCompactThread({
   if (!threadChat) {
     return { didCompact: false, summary: null };
   }
-  // Check if we need to auto-compact based on context length
-  if (
-    threadChat.contextLength &&
-    threadChat.contextLength > MAX_CONTEXT_TOKENS
-  ) {
-    console.log("Auto-compacting due to context length", {
+  // Check if we need to auto-compact based on context length or message count.
+  // Message count fallback handles agents (e.g. Codex) that don't report token usage,
+  // leaving contextLength NULL even when the context window is exhausted.
+  const MAX_MESSAGE_COUNT_FALLBACK = 800;
+  const messageCount = threadChat.messages?.length ?? 0;
+  const shouldCompact =
+    (threadChat.contextLength != null &&
+      threadChat.contextLength > MAX_CONTEXT_TOKENS) ||
+    (threadChat.contextLength == null &&
+      messageCount > MAX_MESSAGE_COUNT_FALLBACK);
+  if (shouldCompact) {
+    const compactReason =
+      threadChat.contextLength != null
+        ? "context_length"
+        : "message_count_fallback";
+    console.log("Auto-compacting", {
       threadId,
       threadChatId: threadChat.id,
+      reason: compactReason,
       contextLength: threadChat.contextLength,
+      messageCount,
       maxContextTokens: MAX_CONTEXT_TOKENS,
     });
     getPostHogServer().capture({
@@ -127,7 +139,9 @@ export async function tryAutoCompactThread({
       event: "auto_compact",
       properties: {
         threadId,
+        reason: compactReason,
         contextLength: threadChat.contextLength,
+        messageCount,
         maxContextTokens: MAX_CONTEXT_TOKENS,
       },
     });

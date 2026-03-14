@@ -111,7 +111,18 @@ type DaemonTerminalErrorCategory =
 
 function mapDaemonTerminalCategoryToFailureCategory(
   category: DaemonTerminalErrorCategory,
+  errorMessage?: string | null,
 ): DeliveryLoopFailureCategory {
+  // Context window overflow is non-retryable regardless of agent type
+  if (
+    errorMessage &&
+    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
+      errorMessage,
+    )
+  ) {
+    return "config_error";
+  }
+
   switch (category) {
     case "provider_not_configured":
       return "config_error";
@@ -297,6 +308,7 @@ async function persistDaemonTerminalDispatchStatus(params: {
     `daemon terminal status: ${params.daemonRunStatus}`;
   const failureCategory = mapDaemonTerminalCategoryToFailureCategory(
     params.daemonErrorCategory,
+    params.daemonErrorMessage,
   );
 
   await Promise.all([
