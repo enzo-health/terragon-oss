@@ -73,6 +73,20 @@ export async function fetchCarmackReviewFindings(db: DB, loopId: string) {
   });
 }
 
+export async function fetchCiGateRuns(db: DB, loopId: string) {
+  return db.query.sdlcCiGateRun.findMany({
+    where: (r, { eq }) => eq(r.loopId, loopId),
+    orderBy: (r, { asc }) => asc(r.createdAt),
+  });
+}
+
+export async function fetchReviewThreadGateRuns(db: DB, loopId: string) {
+  return db.query.sdlcReviewThreadGateRun.findMany({
+    where: (r, { eq }) => eq(r.loopId, loopId),
+    orderBy: (r, { asc }) => asc(r.createdAt),
+  });
+}
+
 export async function fetchAgentRunContexts(db: DB, threadId: string) {
   return db.query.agentRunContext.findMany({
     where: (a, { eq }) => eq(a.threadId, threadId),

@@ -20,6 +20,8 @@ import {
   fetchDeepReviewFindings,
   fetchCarmackReviewRuns,
   fetchCarmackReviewFindings,
+  fetchCiGateRuns,
+  fetchReviewThreadGateRuns,
 } from "../src/capture/queries";
 import {
   extractUserMessages,
@@ -27,6 +29,7 @@ import {
   normalizeFindings,
   normalizeArtifacts,
   normalizePlanTasks,
+  normalizeGateEvents,
   assembleFixture,
 } from "../src/capture/normalize";
 
@@ -71,12 +74,18 @@ async function main() {
     const rawSignals = await fetchSignals(db, loopId);
 
     console.log("Fetching deep review runs & findings...");
-    await fetchDeepReviewRuns(db, loopId);
+    const deepReviewRuns = await fetchDeepReviewRuns(db, loopId);
     const rawDeepFindings = await fetchDeepReviewFindings(db, loopId);
 
     console.log("Fetching carmack review runs & findings...");
-    await fetchCarmackReviewRuns(db, loopId);
+    const carmackReviewRuns = await fetchCarmackReviewRuns(db, loopId);
     const rawCarmackFindings = await fetchCarmackReviewFindings(db, loopId);
+
+    console.log("Fetching CI gate runs...");
+    const rawCiGateRuns = await fetchCiGateRuns(db, loopId);
+
+    console.log("Fetching review thread gate runs...");
+    const rawReviewThreadGateRuns = await fetchReviewThreadGateRuns(db, loopId);
 
     // Extract plan text from plan artifact payload if available
     const planArtifact = rawArtifacts.find(
@@ -94,6 +103,12 @@ async function main() {
     );
     const artifacts = normalizeArtifacts(rawArtifacts as any);
     const planTasks = normalizePlanTasks(rawPlanTasks as any);
+    const gateEvents = normalizeGateEvents({
+      deepReviewRuns: deepReviewRuns as any,
+      carmackReviewRuns: carmackReviewRuns as any,
+      ciGateRuns: rawCiGateRuns as any,
+      reviewThreadGateRuns: rawReviewThreadGateRuns as any,
+    });
 
     // Assemble fixture
     console.log("Assembling fixture...");
@@ -103,6 +118,7 @@ async function main() {
       threadChat: threadChat as any,
       loop: loop as any,
       signals,
+      gateEvents,
       deepFindings,
       carmackFindings,
       artifacts,

@@ -7,6 +7,7 @@ import type {
   EvalSignal,
   EvalFinding,
   EvalArtifact,
+  EvalGateEvent,
   EvalPlanTask,
   EvalMetrics,
   SerializedUserMessage,
@@ -254,6 +255,110 @@ export function computeBaselineMetrics(
 }
 
 // ---------------------------------------------------------------------------
+// Gate event normalization
+// ---------------------------------------------------------------------------
+
+export function normalizeGateEvents({
+  deepReviewRuns,
+  carmackReviewRuns,
+  ciGateRuns,
+  reviewThreadGateRuns,
+}: {
+  deepReviewRuns: any[];
+  carmackReviewRuns: any[];
+  ciGateRuns: any[];
+  reviewThreadGateRuns: any[];
+}): EvalGateEvent[] {
+  const events: EvalGateEvent[] = [];
+
+  for (const run of deepReviewRuns) {
+    events.push({
+      index: 0,
+      gateType: "deep_review",
+      headSha: run.headSha,
+      loopVersion: run.loopVersion,
+      gatePassed: run.gatePassed,
+      status: run.status,
+      model: run.model ?? null,
+      rawOutput: run.rawOutput,
+      createdAt:
+        run.createdAt instanceof Date
+          ? run.createdAt.toISOString()
+          : String(run.createdAt),
+    });
+  }
+
+  for (const run of carmackReviewRuns) {
+    events.push({
+      index: 0,
+      gateType: "carmack_review",
+      headSha: run.headSha,
+      loopVersion: run.loopVersion,
+      gatePassed: run.gatePassed,
+      status: run.status,
+      model: run.model ?? null,
+      rawOutput: run.rawOutput,
+      createdAt:
+        run.createdAt instanceof Date
+          ? run.createdAt.toISOString()
+          : String(run.createdAt),
+    });
+  }
+
+  for (const run of ciGateRuns) {
+    events.push({
+      index: 0,
+      gateType: "ci",
+      headSha: run.headSha,
+      loopVersion: run.loopVersion,
+      gatePassed: run.gatePassed,
+      status: run.status,
+      model: null,
+      rawOutput: {
+        requiredChecks: run.requiredChecks,
+        failingRequiredChecks: run.failingRequiredChecks,
+        capabilityState: run.capabilityState,
+        requiredCheckSource: run.requiredCheckSource,
+      },
+      createdAt:
+        run.createdAt instanceof Date
+          ? run.createdAt.toISOString()
+          : String(run.createdAt),
+    });
+  }
+
+  for (const run of reviewThreadGateRuns) {
+    events.push({
+      index: 0,
+      gateType: "review_thread",
+      headSha: run.headSha,
+      loopVersion: run.loopVersion,
+      gatePassed: run.gatePassed,
+      status: run.status,
+      model: null,
+      rawOutput: {
+        unresolvedThreadCount: run.unresolvedThreadCount,
+        evaluationSource: run.evaluationSource,
+      },
+      createdAt:
+        run.createdAt instanceof Date
+          ? run.createdAt.toISOString()
+          : String(run.createdAt),
+    });
+  }
+
+  // Sort chronologically and assign indices
+  events.sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+  events.forEach((e, i) => {
+    e.index = i;
+  });
+
+  return events;
+}
+
+// ---------------------------------------------------------------------------
 // Full fixture assembly
 // ---------------------------------------------------------------------------
 
@@ -263,6 +368,7 @@ export function assembleFixture(params: {
   threadChat: RawThreadChat;
   loop: RawLoop;
   signals: EvalSignal[];
+  gateEvents: EvalGateEvent[];
   deepFindings: EvalFinding[];
   carmackFindings: EvalFinding[];
   artifacts: EvalArtifact[];
@@ -276,6 +382,7 @@ export function assembleFixture(params: {
     threadChat,
     loop,
     signals,
+    gateEvents,
     deepFindings,
     carmackFindings,
     artifacts,
@@ -316,6 +423,7 @@ export function assembleFixture(params: {
     },
     plan: planTasks.length > 0 ? { planText, tasks: planTasks } : null,
     signals,
+    gateEvents,
     prodFindings: {
       deep: deepFindings,
       carmack: carmackFindings,

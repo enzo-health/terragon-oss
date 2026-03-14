@@ -46,6 +46,9 @@ export type EvalFixture = {
   /** Signals in receivedAt order — the "script" for signal replay */
   signals: EvalSignal[];
 
+  /** Gate evaluation events (reviews, CI) in chronological order */
+  gateEvents: EvalGateEvent[];
+
   /** Review findings from prod (baseline for quality comparison) */
   prodFindings: {
     deep: EvalFinding[];
@@ -98,6 +101,19 @@ export type EvalArtifact = {
   headSha: string | null;
   createdAt: string;
   payloadSummary: Record<string, unknown>;
+};
+
+/** A captured gate evaluation record from prod — contains raw LLM/CI output */
+export type EvalGateEvent = {
+  index: number;
+  gateType: "deep_review" | "carmack_review" | "ci" | "review_thread";
+  headSha: string;
+  loopVersion: number;
+  gatePassed: boolean;
+  status: string;
+  model: string | null;
+  rawOutput: unknown;
+  createdAt: string;
 };
 
 // ---------------------------------------------------------------------------
