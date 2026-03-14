@@ -781,6 +781,9 @@ importers:
       drizzle-orm:
         specifier: ^0.43.1
         version: 0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)(postgres@3.4.8)
+      nanoid:
+        specifier: ^5.1.5
+        version: 5.1.6
     devDependencies:
       '@terragon/tsconfig':
         specifier: workspace:*
@@ -19508,7 +19511,7 @@ snapshots:
 
   postcss@8.5.6:
     dependencies:
-      nanoid: 5.1.5
+      nanoid: 5.1.6
       picocolors: 1.1.1
       source-map-js: 1.2.1
 

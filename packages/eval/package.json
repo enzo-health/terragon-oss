@@ -19,6 +19,7 @@
   "dependencies": {
     "@terragon/shared": "workspace:*",
     "dotenv": "^16.5.0",
-    "drizzle-orm": "^0.43.1"
+    "drizzle-orm": "^0.43.1",
+    "nanoid": "^5.1.5"
   }
 }
