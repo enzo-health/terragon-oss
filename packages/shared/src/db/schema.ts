@@ -1585,9 +1585,7 @@ export const sdlcLoopSignalInbox = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     causeType: text("cause_type").$type<SdlcLoopCauseType>().notNull(),
     canonicalCauseId: text("canonical_cause_id").notNull(),
     signalHeadShaOrNull: text("signal_head_sha_or_null"),
