@@ -1058,6 +1058,7 @@ export async function routeGithubFeedbackOrSpawnThread(
           // Flag lookup failed — use default
         }
 
+        let v2Handled = false;
         if (isV2Enabled) {
           try {
             const v2Workflow = await getActiveWorkflowForThread({
@@ -1072,23 +1073,21 @@ export async function routeGithubFeedbackOrSpawnThread(
                 claimToken: leaseOwnerToken,
               });
             }
+            v2Handled = true;
           } catch (error) {
-            console.error(
-              "[github feedback routing] v2 coordinator tick failed after feedback enqueue",
+            console.warn(
+              "[github feedback routing] v2 coordinator tick failed, falling back to v1",
               {
                 userId,
                 repoFullName: input.repoFullName,
                 prNumber: input.prNumber,
-                eventType: input.eventType,
                 loopId: activeSdlcLoop.id,
                 error,
               },
             );
-            throw new EnrolledLoopSignalInboxRetryError(
-              `Failed to process v2 coordinator tick for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
-            );
           }
-        } else {
+        }
+        if (!v2Handled) {
           try {
             const signalInboxTickResult =
               await runBestEffortSdlcSignalInboxTick({

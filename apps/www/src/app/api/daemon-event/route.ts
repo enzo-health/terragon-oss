@@ -1760,21 +1760,31 @@ export async function POST(request: Request) {
         if (claimResult.reason === "duplicate_event") {
           try {
             const useV2 = await isV2CoordinatorEnabled({ db, userId });
+            let v2Handled = false;
             if (useV2) {
-              const v2Workflow = await getActiveWorkflowForThread({
-                db,
-                threadId,
-              });
-              if (v2Workflow) {
-                await runCoordinatorTick({
+              try {
+                const v2Workflow = await getActiveWorkflowForThread({
                   db,
-                  workflowId: v2Workflow.id as WorkflowId,
-                  correlationId:
-                    `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-                  claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
+                  threadId,
                 });
+                if (v2Workflow) {
+                  await runCoordinatorTick({
+                    db,
+                    workflowId: v2Workflow.id as WorkflowId,
+                    correlationId:
+                      `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+                    claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
+                  });
+                }
+                v2Handled = true;
+              } catch (v2Err) {
+                console.warn(
+                  "[sdlc-loop-v2] coordinator tick failed, falling back to v1",
+                  { threadId, error: v2Err },
+                );
               }
-            } else {
+            }
+            if (!v2Handled) {
               const guardrailRuntime = buildCoordinatorGuardrailRuntime(
                 enrolledLoop.loopVersion,
               );
@@ -2117,31 +2127,44 @@ export async function POST(request: Request) {
   if (enrolledLoop && envelopeV2) {
     try {
       const useV2 = await isV2CoordinatorEnabled({ db, userId });
+      let v2Handled = false;
       if (useV2) {
-        const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-        if (v2Workflow) {
-          const tickResult = await runCoordinatorTick({
+        try {
+          const v2Workflow = await getActiveWorkflowForThread({
             db,
-            workflowId: v2Workflow.id as WorkflowId,
-            correlationId:
-              `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-            claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+            threadId,
           });
-          if (!tickResult.signalsProcessed) {
-            console.log(
-              "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
-              {
-                userId,
-                threadId,
-                threadChatId,
-                workflowId: v2Workflow.id,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-              },
-            );
+          if (v2Workflow) {
+            const tickResult = await runCoordinatorTick({
+              db,
+              workflowId: v2Workflow.id as WorkflowId,
+              correlationId:
+                `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+              claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+            });
+            if (!tickResult.signalsProcessed) {
+              console.log(
+                "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
+                {
+                  userId,
+                  threadId,
+                  threadChatId,
+                  workflowId: v2Workflow.id,
+                  eventId: envelopeV2.eventId,
+                  seq: envelopeV2.seq,
+                },
+              );
+            }
           }
+          v2Handled = true;
+        } catch (v2Err) {
+          console.warn(
+            "[sdlc-loop-v2] coordinator tick failed, falling back to v1",
+            { threadId, error: v2Err },
+          );
         }
-      } else {
+      }
+      if (!v2Handled) {
         const guardrailRuntime = buildCoordinatorGuardrailRuntime(
           enrolledLoop.loopVersion,
         );
