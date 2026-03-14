@@ -12,25 +12,47 @@ export function classifyDaemonError(
 ): DeliveryLoopFailureCategory | null {
   if (!rawErrorMessage) return null;
 
+  // Network / connectivity — daemon unreachable.
   if (
     /unix socket|econnrefused|enoent.*socket|no such file|connect failed/i.test(
       rawErrorMessage,
     ) ||
-    /daemon.*not running|daemon.*dead|ping.*fail/i.test(rawErrorMessage)
-  ) {
-    return "daemon_unreachable";
-  }
-  if (
-    /spawn|fork|exec|eacces|enoent.*daemon|cannot find module/i.test(
+    /daemon.*not running|daemon.*dead|ping.*fail/i.test(rawErrorMessage) ||
+    /econnreset|epipe|enetunreach|ehostunreach|enetreset|econnaborted/i.test(
       rawErrorMessage,
     )
   ) {
+    return "daemon_unreachable";
+  }
+  // Sandbox spawn / filesystem errors.
+  if (
+    /spawn|fork|exec|eacces|enoent.*daemon|cannot find module/i.test(
+      rawErrorMessage,
+    ) ||
+    /enospc|disk full|no space left/i.test(rawErrorMessage)
+  ) {
     return "daemon_spawn_failed";
   }
+  // Rate limiting — transient, retry same intent.
+  if (/rate.limit|429|too many requests|throttl/i.test(rawErrorMessage)) {
+    return "dispatch_ack_timeout";
+  }
+  // Timeouts.
   if (
     /timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(rawErrorMessage)
   ) {
     return "dispatch_ack_timeout";
+  }
+  // Auth / API key / billing — non-retryable.
+  if (
+    /invalid api.key|invalid.credential|authentication fail|unauthorized|403 forbidden/i.test(
+      rawErrorMessage,
+    ) ||
+    /quota.exceed|billing|insufficient.credit|payment required/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "config_error";
   }
 
   return null;
@@ -71,6 +93,14 @@ export function classifyDaemonEventError(
     return "claude_runtime_exit";
   if (/claude.*dispatch|dispatch.*fail/i.test(errorMessage))
     return "claude_dispatch_failed";
+
+  // Overloaded / capacity — transient, retry.
+  if (
+    /overloaded|server busy|capacity exceeded|service unavailable|503/i.test(
+      errorMessage,
+    )
+  )
+    return "codex_turn_failed";
 
   // Gate patterns.
   if (/gate.*fail|gate.*block/i.test(errorMessage)) return "gate_failed";

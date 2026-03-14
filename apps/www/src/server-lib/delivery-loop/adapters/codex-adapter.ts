@@ -51,12 +51,21 @@ function classifyCodexTerminalError(
     return "codex_subagent_failed";
   }
 
-  // Codex turn-level failure (API error, rate limit, etc.).
+  // Codex turn-level failure (API error, etc.).
   if (/codex.*turn.*fail|codex.*error/i.test(rawErrorMessage)) {
     return "codex_turn_failed";
   }
 
-  // Shared daemon-level patterns.
+  // Overloaded / capacity — transient, retry via budget.
+  if (
+    /overloaded|server busy|capacity exceeded|service unavailable|503/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "codex_turn_failed";
+  }
+
+  // Shared daemon-level patterns (rate limits, auth, network, disk, timeouts).
   return classifyDaemonError(rawErrorMessage, exitCode) ?? "unknown";
 }
 
