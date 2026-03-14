@@ -1,5 +1,6 @@
 "use client";
 
+import isEqual from "fast-deep-equal";
 import { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
 import {
   DBMessage,
@@ -235,14 +236,16 @@ function applyChatSummaryFields(
  * structurally identical to `append`, indicating a duplicate delivery.
  */
 function tailMatchesAppend(messages: unknown[], append: unknown[]): boolean {
+  if (append.length === 0) return false;
   const offset = messages.length - append.length;
+  if (offset < 0) return false;
   for (let i = 0; i < append.length; i++) {
     const cached = messages[offset + i];
     const incoming = append[i];
     // Fast path: reference equality (same object from optimistic update)
     if (cached === incoming) continue;
-    // Slow path: structural comparison via JSON serialization
-    if (JSON.stringify(cached) !== JSON.stringify(incoming)) return false;
+    // Deep structural comparison (key-order independent, safe for all types)
+    if (!isEqual(cached, incoming)) return false;
   }
   return true;
 }

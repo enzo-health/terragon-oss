@@ -394,6 +394,64 @@ describe("applyThreadPatchToQueryClient", () => {
     });
   });
 
+  it("invalidates when tail of cached messages matches appendMessages (duplicate delivery)", () => {
+    const queryClient = createQueryClient();
+    const agentMsg = {
+      type: "agent" as const,
+      parent_tool_use_id: null,
+      parts: [{ type: "text" as const, text: "Working on it" }],
+    };
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "Initial prompt" }],
+          },
+          agentMsg,
+        ],
+        messageCount: 2,
+        updatedAt: new Date(NEXT_CHAT_UPDATED_AT),
+        chatSequence: NEXT_CHAT_SEQUENCE,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // Send the same message as an append — should detect tail-overlap duplicate
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: NEXT_CHAT_SEQUENCE,
+        expectedMessageCount: 1,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Working on it" }],
+          },
+        ],
+        chat: {
+          updatedAt: NEXT_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    // Should invalidate (refetch) rather than appending a duplicate
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+    // Message count should remain 2, not grow to 3
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(nextChat?.messages).toHaveLength(2);
+  });
+
   it("invalidates explicit chat refetch patches without mutating the cache", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
