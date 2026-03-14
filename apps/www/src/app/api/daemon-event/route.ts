@@ -2,7 +2,6 @@ import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
@@ -12,90 +11,30 @@ import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
-  createDispatchIntent as createDurableDispatchIntent,
   getActiveSdlcLoopForThread,
   SDLC_CAUSE_IDENTITY_VERSION,
-  markDispatchIntentDispatched,
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
   type DeliveryLoopFailureCategory,
-  type DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
 import {
   buildDispatchIntentId,
-  createDispatchIntent,
   getReplayableSelfDispatch,
-  storeSelfDispatchReplay,
   updateDispatchIntent,
 } from "@/server-lib/delivery-loop/dispatch-intent";
-import {
-  handleAckReceived,
-  startAckTimeout,
-} from "@/server-lib/delivery-loop/ack-lifecycle";
+import { handleAckReceived } from "@/server-lib/delivery-loop/ack-lifecycle";
 import {
   getAgentRunContextByRunId,
-  upsertAgentRunContext,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type {
   WorkflowId,
   CorrelationId,
 } from "@terragon/shared/delivery-loop/domain/workflow";
-import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
-import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
-import { featureFlagsDefinitions } from "@terragon/shared/model/feature-flags-definitions";
-import {
-  getThreadChat,
-  getThreadMinimal,
-  updateThreadChat,
-} from "@terragon/shared/model/threads";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import {
-  normalizedModelForDaemon,
-  getDefaultModelForAgent,
-  shouldUseCredits,
-} from "@terragon/agent/utils";
-import { getUserCredentials } from "@/server-lib/user-credentials";
-import { randomUUID } from "node:crypto";
-
-/**
- * Safe check for sdlcLoopCoordinatorRouting flag. Uses sequential DB
- * queries to avoid Promise.all unhandled-rejection issues when DB tables
- * are unavailable (e.g., in partial test mocks).
- */
-async function isV2CoordinatorEnabled(params: {
-  db: typeof db;
-  userId: string;
-}): Promise<boolean> {
-  try {
-    const flag = await params.db.query.featureFlags?.findFirst?.({
-      where: eq(schema.featureFlags.name, "sdlcLoopCoordinatorRouting"),
-    });
-    if (!flag) {
-      return featureFlagsDefinitions.sdlcLoopCoordinatorRouting.defaultValue;
-    }
-    // Check for user-level override
-    const userOverride = await params.db.query.userFeatureFlags?.findFirst?.({
-      where: and(
-        eq(schema.userFeatureFlags.userId, params.userId),
-        eq(schema.userFeatureFlags.featureFlagId, flag.id),
-      ),
-    });
-    if (userOverride) return userOverride.value;
-    return flag.globalOverride ?? flag.defaultValue;
-  } catch {
-    return featureFlagsDefinitions.sdlcLoopCoordinatorRouting.defaultValue;
-  }
-}
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -128,16 +67,8 @@ type DaemonEventCommitResult =
     };
 
 const DAEMON_EVENT_CLAIM_STALE_MS = 5 * 60 * 1000;
-const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
-
-/**
- * Circuit breaker: maximum number of consecutive auto-dispatched follow-up
- * runs (daemon_terminal with daemonRunStatus=completed) before we stop
- * auto-dispatching to prevent infinite loops.
- */
-const MAX_CONSECUTIVE_AUTO_DISPATCHES = 7;
 
 type DaemonTerminalErrorCategory =
   | "provider_not_configured"
@@ -214,78 +145,6 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
     },
     { status: state.status ?? 200 },
   );
-}
-
-type AutoDispatchCircuitBreakerRow = {
-  daemonRunStatus: string | null;
-  autoDispatchProvenance:
-    | boolean
-    | "true"
-    | "false"
-    | "t"
-    | "f"
-    | "1"
-    | "0"
-    | 1
-    | 0
-    | null;
-};
-
-function parseAutoDispatchProvenance(
-  value: AutoDispatchCircuitBreakerRow["autoDispatchProvenance"],
-): boolean {
-  return (
-    value === true ||
-    value === "true" ||
-    value === "t" ||
-    value === 1 ||
-    value === "1"
-  );
-}
-
-/**
- * Count trailing consecutive daemon_terminal signals for this loop where:
- * 1) daemonRunStatus = completed, and
- * 2) the run has dispatch-intent provenance (auto-dispatch path).
- *
- * Any terminal signal that does not satisfy both conditions resets the streak.
- */
-async function countConsecutiveCompletedAutoDispatches({
-  loopId,
-}: {
-  loopId: string;
-}): Promise<number> {
-  const result = await db.execute(sql`
-    SELECT
-      ${schema.sdlcLoopSignalInbox.payload}->>'daemonRunStatus' AS "daemonRunStatus",
-      CASE
-        WHEN ${schema.deliveryLoopDispatchIntent.id} IS NULL THEN false
-        ELSE true
-      END AS "autoDispatchProvenance"
-    FROM ${schema.sdlcLoopSignalInbox}
-    LEFT JOIN ${schema.deliveryLoopDispatchIntent}
-      ON ${schema.deliveryLoopDispatchIntent.loopId} = ${schema.sdlcLoopSignalInbox.loopId}
-     AND ${schema.deliveryLoopDispatchIntent.runId} = (${schema.sdlcLoopSignalInbox.payload}->>'runId')
-    WHERE ${schema.sdlcLoopSignalInbox.loopId} = ${loopId}
-      AND ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal'
-      AND ${schema.sdlcLoopSignalInbox.processedAt} IS NOT NULL
-    ORDER BY ${schema.sdlcLoopSignalInbox.processedAt} DESC
-    LIMIT ${MAX_CONSECUTIVE_AUTO_DISPATCHES + 1}
-  `);
-  const rows = (result as unknown as { rows: AutoDispatchCircuitBreakerRow[] })
-    .rows;
-  let consecutiveCount = 0;
-  for (const row of rows) {
-    if (
-      row.daemonRunStatus === "completed" &&
-      parseAutoDispatchProvenance(row.autoDispatchProvenance)
-    ) {
-      consecutiveCount += 1;
-      continue;
-    }
-    break;
-  }
-  return consecutiveCount;
 }
 
 function getDaemonProcessingEventClaimKey({
@@ -426,20 +285,6 @@ async function rollbackEnrolledLoopProcessingEventClaim({
   await redis.del(claimKey);
 }
 
-function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
-  const iterationCount =
-    typeof loopVersion === "number" && Number.isFinite(loopVersion)
-      ? Math.max(loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: false,
-    cooldownUntil: null,
-    maxIterations: 15,
-    manualIntentAllowed: true,
-    iterationCount,
-  };
-}
-
 function getDaemonEventEnvelopeV2(
   body: DaemonEventAPIBody,
 ): DaemonEventEnvelopeV2 | null {
@@ -542,20 +387,6 @@ function deriveDaemonTerminalErrorInfo(
     errorMessage: null,
     errorCategory: "unknown",
   };
-}
-
-function getDeliveryLoopDaemonRecoveryKey({
-  loopId,
-  loopVersion,
-}: {
-  loopId: string;
-  loopVersion: number;
-}) {
-  return `sdlc-daemon-follow-up-recovery:${loopId}:${loopVersion}`;
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseDaemonCapabilitiesHeader(
@@ -1188,473 +1019,6 @@ export async function POST(request: Request) {
     }
   };
 
-  const maybeProcessDaemonTerminalFollowUp = async ({
-    tickResult,
-    loopId,
-    loopVersion,
-    sourceRunId,
-    eventId,
-    seq,
-  }: {
-    tickResult: Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>;
-    loopId: string;
-    loopVersion: number;
-    sourceRunId: string;
-    eventId: string;
-    seq: number;
-  }) => {
-    if (
-      !tickResult.processed ||
-      tickResult.causeType !== "daemon_terminal" ||
-      tickResult.runtimeAction !== "feedback_follow_up_queued"
-    ) {
-      return;
-    }
-
-    // Circuit breaker: prevent infinite consecutive auto-dispatch loops.
-    const completedCount = await countConsecutiveCompletedAutoDispatches({
-      loopId,
-    });
-    if (completedCount >= MAX_CONSECUTIVE_AUTO_DISPATCHES) {
-      console.warn(
-        "[sdlc-loop] circuit breaker: too many consecutive auto-dispatches, skipping follow-up",
-        {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          completedCount,
-          threshold: MAX_CONSECUTIVE_AUTO_DISPATCHES,
-          eventId,
-          seq,
-        },
-      );
-      return;
-    }
-
-    const followUpOwnerRunId = sourceRunId;
-
-    // Check if daemon supports self-dispatch.
-    const daemonSupportsSelfDispatch = daemonCapabilities.has(
-      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
-    );
-
-    if (daemonSupportsSelfDispatch) {
-      const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
-      let preparedDispatch: { intentId: string; runId: string } | null = null;
-      let preparedRunId: string | null = null;
-      try {
-        // Use the queued message directly from the tick result to avoid
-        // a race with handleThreadFinish's maybeProcessFollowUpQueue which
-        // can consume queued messages from the DB before we read them.
-        const feedbackMsg = tickResult.feedbackQueuedMessage;
-        if (!feedbackMsg) {
-          console.warn(
-            "[sdlc-loop] self-dispatch: no feedback message from tick result, falling back",
-            { userId, threadId, threadChatId, loopId },
-          );
-          // Fall through to existing path
-        } else {
-          // Also need thread chat for agent info
-          const [threadChatForDispatch, threadForDispatch] = await Promise.all([
-            getThreadChat({ db, userId, threadId, threadChatId }),
-            getThreadMinimal({ db, threadId, userId }),
-          ]);
-          if (!threadChatForDispatch) {
-            console.warn(
-              "[sdlc-loop] self-dispatch: thread chat not found, falling back",
-              { userId, threadId, threadChatId, loopId },
-            );
-          } else if (!threadForDispatch || !threadForDispatch.codesandboxId) {
-            console.warn(
-              "[sdlc-loop] self-dispatch: thread or sandbox not found, falling back",
-              { userId, threadId, loopId },
-            );
-          } else {
-            // Build prompt from the feedback message (text parts only).
-            // If any non-text parts exist, fall back to the queue path
-            // which handles the full message format.
-            const queuedMessages = [feedbackMsg];
-            const promptParts: string[] = [];
-            let hasNonTextParts = false;
-            for (const qMsg of queuedMessages) {
-              if ("parts" in qMsg && Array.isArray(qMsg.parts)) {
-                for (const part of qMsg.parts) {
-                  if (
-                    part &&
-                    typeof part === "object" &&
-                    "text" in part &&
-                    typeof part.text === "string"
-                  ) {
-                    promptParts.push(part.text);
-                  } else if (part && typeof part === "object") {
-                    hasNonTextParts = true;
-                  }
-                }
-              }
-            }
-
-            if (hasNonTextParts) {
-              console.warn(
-                "[sdlc-loop] self-dispatch: non-text message parts detected, falling back",
-                { userId, threadId, threadChatId, loopId },
-              );
-            } else if (!promptParts.join("\n\n").trim()) {
-              console.warn(
-                "[sdlc-loop] self-dispatch: empty prompt from queued messages, falling back",
-                { userId, threadId, threadChatId, loopId },
-              );
-            } else {
-              const prompt = promptParts.join("\n\n");
-              const newRunId = randomUUID();
-              const newTokenNonce = randomUUID();
-              preparedRunId = newRunId;
-              const agent = threadChatForDispatch.agent;
-              const agentVersion = threadChatForDispatch.agentVersion;
-              const model = normalizedModelForDaemon(
-                getDefaultModelForAgent({ agent, agentVersion }),
-              );
-              const sandboxId = threadForDispatch.codesandboxId;
-
-              // SDLC follow-ups always use allowAll — same as startAgentMessage
-              // which forces allowAll when activeSdlcLoop is true.
-              const effectivePermissionMode = "allowAll" as const;
-              const transportMode =
-                agent === "codex"
-                  ? ("codex-app-server" as const)
-                  : agent === "gemini"
-                    ? ("legacy" as const)
-                    : ("acp" as const);
-              const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
-
-              // Phase 1: Create run context (must exist before credentials).
-              await upsertAgentRunContext({
-                db,
-                runId: newRunId,
-                userId,
-                threadId,
-                threadChatId,
-                sandboxId,
-                transportMode,
-                protocolVersion,
-                agent,
-                permissionMode: effectivePermissionMode,
-                requestedSessionId: null,
-                resolvedSessionId: null,
-                status: "pending",
-                tokenNonce: newTokenNonce,
-                daemonTokenKeyId: null,
-              });
-
-              // Phase 2: These are all independent — batch them.
-              // - createDaemonRunCredentials: creates API key + updates run context status
-              // - updateThreadChat: clears error state
-              // - createDispatchIntent: Redis realtime intent
-              // - getUserCredentials: reads user credential records
-              const [{ token }, , dispatchIntent, userCredentials] =
-                await Promise.all([
-                  createDaemonRunCredentials({
-                    userId,
-                    threadId,
-                    threadChatId,
-                    sandboxId,
-                    runId: newRunId,
-                    tokenNonce: newTokenNonce,
-                    agent,
-                    transportMode,
-                    protocolVersion,
-                  }),
-                  updateThreadChat({
-                    db,
-                    userId,
-                    threadId,
-                    threadChatId,
-                    updates: {
-                      errorMessage: null,
-                      errorMessageInfo: null,
-                    },
-                  }),
-                  createDispatchIntent({
-                    loopId,
-                    threadId,
-                    threadChatId,
-                    targetPhase: "implementing",
-                    selectedAgent: agent as DeliveryLoopSelectedAgent,
-                    executionClass: "implementation_runtime",
-                    dispatchMechanism: "self_dispatch",
-                    runId: newRunId,
-                    maxRetries: 3,
-                  }),
-                  getUserCredentials({ userId }),
-                ]);
-              preparedDispatch = {
-                intentId: dispatchIntent.id,
-                runId: newRunId,
-              };
-              const useCredits = shouldUseCredits(agent, userCredentials);
-
-              const preparedSelfDispatchPayload = {
-                token,
-                prompt,
-                runId: newRunId,
-                tokenNonce: newTokenNonce,
-                model,
-                agent,
-                agentVersion,
-                sessionId: null,
-                featureFlags: userFeatureFlags,
-                permissionMode: effectivePermissionMode,
-                transportMode,
-                protocolVersion,
-                threadId,
-                threadChatId,
-                useCredits: useCredits || undefined,
-              };
-
-              // Phase 3: Persist durable intent, replay record, and mark
-              // dispatched — all independent of each other.
-              await Promise.all([
-                createDurableDispatchIntent(db, {
-                  loopId,
-                  threadId,
-                  threadChatId,
-                  runId: newRunId,
-                  targetPhase: "implementing",
-                  selectedAgent: agent as DeliveryLoopSelectedAgent,
-                  executionClass: "implementation_runtime",
-                  dispatchMechanism: "self_dispatch",
-                }),
-                storeSelfDispatchReplay({
-                  threadChatId,
-                  sourceEventId: eventId,
-                  sourceSeq: seq,
-                  sourceRunId,
-                  dispatchIntentId: dispatchIntent.id,
-                  destinationRunId: newRunId,
-                  payload: preparedSelfDispatchPayload,
-                }),
-                updateDispatchIntent(dispatchIntent.id, threadChatId, {
-                  status: "dispatched",
-                }),
-                markDispatchIntentDispatched(db, newRunId),
-              ]);
-
-              // Transition status only once the dispatch payload is fully prepared.
-              const { didUpdateStatus } = await updateThreadChatWithTransition({
-                userId,
-                threadId,
-                threadChatId,
-                eventType: "user.message",
-              });
-              if (!didUpdateStatus) {
-                console.warn(
-                  "[sdlc-loop] self-dispatch: status transition failed, falling back",
-                  { userId, threadId, threadChatId, loopId, runId: newRunId },
-                );
-                throw new Error("self-dispatch status transition failed");
-              }
-
-              // Only arm the timeout once the replay record exists and the
-              // self-dispatch payload is actually recoverable on retries.
-              startAckTimeout({
-                db,
-                runId: newRunId,
-                loopId,
-                threadChatId,
-              });
-              selfDispatchPayload = preparedSelfDispatchPayload;
-
-              console.log("[sdlc-loop] self-dispatch payload prepared", {
-                userId,
-                threadId,
-                threadChatId,
-                loopId,
-                runId: newRunId,
-                eventId,
-                seq,
-              });
-              return; // Skip maybeProcessFollowUpQueue
-            }
-          }
-        }
-      } catch (error) {
-        const failureMessage =
-          error instanceof Error
-            ? error.message
-            : "self-dispatch preparation failed";
-        if (preparedDispatch || preparedRunId) {
-          try {
-            const cleanupOperations: Array<Promise<unknown>> = [];
-            if (preparedDispatch) {
-              cleanupOperations.push(
-                updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
-                  status: "failed",
-                  lastError: failureMessage,
-                  lastFailureCategory: "config_error",
-                }),
-              );
-              cleanupOperations.push(
-                markDispatchIntentFailed(
-                  db,
-                  preparedDispatch.runId,
-                  "config_error",
-                  failureMessage,
-                ),
-              );
-            }
-            if (preparedRunId) {
-              cleanupOperations.push(
-                updateAgentRunContext({
-                  db,
-                  runId: preparedRunId,
-                  userId,
-                  updates: {
-                    status: "failed",
-                  },
-                }),
-              );
-            }
-            await Promise.all(cleanupOperations);
-          } catch (cleanupError) {
-            console.error(
-              "[sdlc-loop] failed to clean up abandoned self-dispatch run",
-              {
-                userId,
-                threadId,
-                threadChatId,
-                loopId,
-                runId: preparedRunId ?? preparedDispatch?.runId ?? null,
-                cleanupError,
-              },
-            );
-          }
-        }
-        console.error(
-          "[sdlc-loop] self-dispatch preparation failed, falling back to queue",
-          {
-            userId,
-            threadId,
-            threadChatId,
-            loopId,
-            eventId,
-            seq,
-            error,
-          },
-        );
-      }
-    }
-
-    // Existing fallback path
-    let followUpResult = await maybeProcessFollowUpQueue({
-      threadId,
-      threadChatId,
-      userId,
-      runId: followUpOwnerRunId,
-    });
-    console.log(
-      "[sdlc-loop] daemon terminal follow-up queue processing completed",
-      {
-        userId,
-        threadId,
-        threadChatId,
-        loopId,
-        runId: followUpOwnerRunId,
-        eventId,
-        seq,
-        runtimeRouting: tickResult.runtimeRouting ?? null,
-        followUpResult,
-      },
-    );
-
-    if (
-      !followUpResult.processed &&
-      followUpResult.reason === "no_queued_messages" &&
-      tickResult.feedbackQueuedMessage
-    ) {
-      console.warn(
-        "[sdlc-loop] daemon terminal follow-up invariant violated; re-enqueueing feedback message",
-        {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          runId: followUpOwnerRunId,
-          eventId,
-          seq,
-        },
-      );
-      await queueFollowUpInternal({
-        userId,
-        threadId,
-        threadChatId,
-        messages: [tickResult.feedbackQueuedMessage],
-        appendOrReplace: "append",
-        source: "github",
-      });
-      followUpResult = await maybeProcessFollowUpQueue({
-        threadId,
-        threadChatId,
-        userId,
-        runId: followUpOwnerRunId,
-      });
-      console.log(
-        "[sdlc-loop] daemon terminal follow-up queue recovery completed",
-        {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          runId: followUpOwnerRunId,
-          eventId,
-          seq,
-          followUpResult,
-        },
-      );
-    }
-
-    if (
-      followUpResult.processed ||
-      followUpResult.reason !== "stale_cas_busy"
-    ) {
-      return;
-    }
-
-    const recoveryKey = getDeliveryLoopDaemonRecoveryKey({
-      loopId,
-      loopVersion,
-    });
-    const didScheduleRecovery = await redis.set(recoveryKey, "1", {
-      nx: true,
-      ex: SDLC_DAEMON_RECOVERY_TTL_SECONDS,
-    });
-    if (didScheduleRecovery !== "OK") {
-      return;
-    }
-
-    waitUntil(
-      (async () => {
-        await sleep(1_500);
-        const retryResult = await maybeProcessFollowUpQueue({
-          threadId,
-          threadChatId,
-          userId,
-          runId: followUpOwnerRunId,
-        });
-        console.log("[sdlc-loop] daemon follow-up recovery retry completed", {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          loopVersion,
-          runId: followUpOwnerRunId,
-          eventId,
-          seq,
-          retryResult,
-        });
-      })(),
-    );
-  };
-
   if (enrolledLoop) {
     if (!envelopeV2) {
       console.error(
@@ -1759,55 +1123,17 @@ export async function POST(request: Request) {
         }
         if (claimResult.reason === "duplicate_event") {
           try {
-            const useV2 = await isV2CoordinatorEnabled({ db, userId });
-            let v2Handled = false;
-            if (useV2) {
-              try {
-                const v2Workflow = await getActiveWorkflowForThread({
-                  db,
-                  threadId,
-                });
-                if (v2Workflow) {
-                  await runCoordinatorTick({
-                    db,
-                    workflowId: v2Workflow.id as WorkflowId,
-                    correlationId:
-                      `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-                    claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-                  });
-                }
-                v2Handled = true;
-              } catch (v2Err) {
-                console.warn(
-                  "[sdlc-loop-v2] coordinator tick failed, falling back to v1",
-                  { threadId, error: v2Err },
-                );
-              }
-            }
-            if (!v2Handled) {
-              const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-                enrolledLoop.loopVersion,
-              );
-              const signalTickResult = await runBestEffortSdlcSignalInboxTick({
+            const v2Workflow = await getActiveWorkflowForThread({
+              db,
+              threadId,
+            });
+            if (v2Workflow) {
+              await runCoordinatorTick({
                 db,
-                loopId: enrolledLoop.id,
-                leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-                guardrailRuntime,
-                includeRuntimeRouting: true,
-              });
-              await maybeProcessDaemonTerminalFollowUp({
-                tickResult: signalTickResult,
-                loopId: enrolledLoop.id,
-                loopVersion: enrolledLoop.loopVersion,
-                sourceRunId: envelopeV2.runId,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-              });
-              await runBestEffortSdlcPublicationCoordinator({
-                db,
-                loopId: enrolledLoop.id,
-                leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-                guardrailRuntime,
+                workflowId: v2Workflow.id as WorkflowId,
+                correlationId:
+                  `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+                claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
               });
             }
           } catch (error) {
@@ -2126,84 +1452,31 @@ export async function POST(request: Request) {
 
   if (enrolledLoop && envelopeV2) {
     try {
-      const useV2 = await isV2CoordinatorEnabled({ db, userId });
-      let v2Handled = false;
-      if (useV2) {
-        try {
-          const v2Workflow = await getActiveWorkflowForThread({
-            db,
-            threadId,
-          });
-          if (v2Workflow) {
-            const tickResult = await runCoordinatorTick({
-              db,
-              workflowId: v2Workflow.id as WorkflowId,
-              correlationId:
-                `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-              claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-            });
-            if (!tickResult.signalsProcessed) {
-              console.log(
-                "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
-                {
-                  userId,
-                  threadId,
-                  threadChatId,
-                  workflowId: v2Workflow.id,
-                  eventId: envelopeV2.eventId,
-                  seq: envelopeV2.seq,
-                },
-              );
-            }
-          }
-          v2Handled = true;
-        } catch (v2Err) {
-          console.warn(
-            "[sdlc-loop-v2] coordinator tick failed, falling back to v1",
-            { threadId, error: v2Err },
-          );
-        }
-      }
-      if (!v2Handled) {
-        const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-          enrolledLoop.loopVersion,
-        );
-        const signalTickResult = await runBestEffortSdlcSignalInboxTick({
+      const v2Workflow = await getActiveWorkflowForThread({
+        db,
+        threadId,
+      });
+      if (v2Workflow) {
+        const tickResult = await runCoordinatorTick({
           db,
-          loopId: enrolledLoop.id,
-          leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-          guardrailRuntime,
-          includeRuntimeRouting: true,
+          workflowId: v2Workflow.id as WorkflowId,
+          correlationId:
+            `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+          claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
         });
-        await maybeProcessDaemonTerminalFollowUp({
-          tickResult: signalTickResult,
-          loopId: enrolledLoop.id,
-          loopVersion: enrolledLoop.loopVersion,
-          sourceRunId: envelopeV2.runId,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-        });
-        if (!signalTickResult.processed) {
+        if (!tickResult.signalsProcessed) {
           console.log(
-            "[sdlc-loop] daemon event tick skipped follow-up dispatch",
+            "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
             {
               userId,
               threadId,
               threadChatId,
-              loopId: enrolledLoop.id,
+              workflowId: v2Workflow.id,
               eventId: envelopeV2.eventId,
               seq: envelopeV2.seq,
-              reason: signalTickResult.reason,
             },
           );
         }
-
-        await runBestEffortSdlcPublicationCoordinator({
-          db,
-          loopId: enrolledLoop.id,
-          leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-          guardrailRuntime,
-        });
       }
     } catch (error) {
       console.error("[sdlc-loop] best-effort coordinator tick failed", {
