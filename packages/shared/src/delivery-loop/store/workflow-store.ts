@@ -26,6 +26,18 @@ export async function getActiveWorkflowForThread(params: {
   });
 }
 
+export async function listActiveWorkflowIds(params: {
+  db: Pick<DB, "query">;
+  limit?: number;
+}) {
+  const rows = await params.db.query.deliveryWorkflow.findMany({
+    where: notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
+    columns: { id: true, threadId: true },
+    limit: params.limit ?? 50,
+  });
+  return rows;
+}
+
 export async function createWorkflow(params: {
   db: Pick<DB, "insert">;
   threadId: string;

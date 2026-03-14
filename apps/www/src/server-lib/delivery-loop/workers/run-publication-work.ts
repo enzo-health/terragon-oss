@@ -4,16 +4,42 @@ import {
   failWorkItem,
   supersedePendingWorkItems,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { eq } from "drizzle-orm";
+import * as schema from "@terragon/shared/db/schema";
+import {
+  upsertSdlcCanonicalStatusComment,
+  upsertSdlcCanonicalCheckSummary,
+  classifySdlcPublicationFailure,
+} from "../publication";
 
 export type PublicationWorkPayload = {
   target: { kind: string };
   workflowState: string;
 };
 
+/** Map v2 workflow state to a human-readable status body for PR comments. */
+function formatStatusBody(workflowState: string): string {
+  const stateLabels: Record<string, string> = {
+    planning: "Planning phase in progress",
+    implementing: "Implementation in progress",
+    gating: "Waiting on gate checks (review / CI / UI)",
+    awaiting_pr: "Awaiting PR creation",
+    babysitting: "Babysitting — monitoring CI and reviews",
+    awaiting_plan_approval: "Awaiting plan approval from human",
+    awaiting_manual_fix: "Awaiting manual fix from human",
+    awaiting_operator_action: "Awaiting operator action",
+    done: "Delivery loop completed",
+    stopped: "Delivery loop stopped",
+    terminated: "Delivery loop terminated",
+  };
+  const label = stateLabels[workflowState] ?? `State: ${workflowState}`;
+  return `Terragon Delivery Loop v2 status update.\n\n- Current state: \`${workflowState}\`\n- ${label}`;
+}
+
 /**
- * Execute a publication work item: check for superseded publications,
- * then format and publish to the target. Actual GitHub integration is
- * wired during Phase 7 migration.
+ * Execute a publication work item: supersede stale publications,
+ * look up the sdlcLoop for repo/PR info, then publish a status comment
+ * or check run summary to GitHub.
  */
 export async function runPublicationWork(params: {
   db: DB;
@@ -31,44 +57,100 @@ export async function runPublicationWork(params: {
       excludeItemId: params.workItemId,
     });
 
-    // 2. Format and publish to target (GitHub comment, check run, etc.)
-    //
-    // TODO(Phase 7 wiring): Integrate with existing publication infrastructure:
-    //
-    // - upsertSdlcCanonicalStatusComment() from
-    //   apps/www/src/server-lib/delivery-loop/publication.ts
-    //   Upserts a canonical status comment on the GitHub PR.
-    //   Needs: db, loopId, repoFullName, prNumber, body
-    //
-    // - upsertSdlcCanonicalCheckSummary() from
-    //   apps/www/src/server-lib/delivery-loop/publication.ts
-    //   Upserts a check run summary on the GitHub PR.
-    //   Needs: db, loopId, payload (repoFullName, prNumber, title, summary, etc.)
-    //
-    // - enqueueSdlcOutboxAction() from
-    //   packages/shared/src/model/delivery-loop/outbox.ts
-    //   Uses the supersession pattern: newer publications supersede older
-    //   pending ones in the same supersessionGroup, preventing stale comments.
-    //
-    // - classifySdlcPublicationFailure() from
-    //   apps/www/src/server-lib/delivery-loop/publication.ts
-    //   Classifies GitHub API errors into retriable vs non-retriable.
-    //
-    // Flow:
-    //   a) Read sdlcLoop to get repoFullName, prNumber
-    //   b) Format the status body based on params.payload.workflowState
-    //   c) Call upsertSdlcCanonicalStatusComment or upsertSdlcCanonicalCheckSummary
-    //   d) On failure, classify via classifySdlcPublicationFailure for retry logic
-    //
+    // 2. Load workflow to get threadId, then look up sdlcLoop
+    const { getWorkflow } = await import(
+      "@terragon/shared/delivery-loop/store/workflow-store"
+    );
+    const workflow = await getWorkflow({
+      db: params.db,
+      workflowId: params.workflowId,
+    });
+    if (!workflow) {
+      await failWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+        errorCode: "workflow_not_found",
+        errorMessage: `Workflow ${params.workflowId} not found`,
+      });
+      return;
+    }
 
-    // 3. Complete work item
+    const loop = await params.db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.threadId, workflow.threadId),
+    });
+    if (!loop) {
+      await failWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+        errorCode: "loop_not_found",
+        errorMessage: `No sdlcLoop found for threadId ${workflow.threadId}`,
+      });
+      return;
+    }
+
+    // 3. Only publish if the loop has a PR number
+    if (typeof loop.prNumber === "number") {
+      const body = formatStatusBody(params.payload.workflowState);
+      const targetKind = params.payload.target.kind;
+
+      try {
+        if (targetKind === "check_run_summary") {
+          await upsertSdlcCanonicalCheckSummary({
+            db: params.db,
+            loopId: loop.id,
+            payload: {
+              repoFullName: loop.repoFullName,
+              prNumber: loop.prNumber,
+              title: "Terragon Delivery Loop",
+              summary: body,
+              status:
+                params.payload.workflowState === "done" ||
+                params.payload.workflowState === "stopped" ||
+                params.payload.workflowState === "terminated"
+                  ? "completed"
+                  : "in_progress",
+              conclusion:
+                params.payload.workflowState === "done"
+                  ? "success"
+                  : params.payload.workflowState === "stopped" ||
+                      params.payload.workflowState === "terminated"
+                    ? "cancelled"
+                    : undefined,
+            },
+          });
+        } else {
+          // Default: status_comment
+          await upsertSdlcCanonicalStatusComment({
+            db: params.db,
+            loopId: loop.id,
+            repoFullName: loop.repoFullName,
+            prNumber: loop.prNumber,
+            body,
+          });
+        }
+      } catch (pubErr) {
+        const classified = classifySdlcPublicationFailure(pubErr);
+        if (!classified.retriable) {
+          // Non-retriable error — complete the work item to avoid infinite retries
+          console.warn(
+            "[publication-worker] non-retriable publication error, completing work item",
+            { loopId: loop.id, errorCode: classified.errorCode },
+          );
+        } else {
+          throw pubErr; // Let the outer catch handle retry
+        }
+      }
+    }
+
+    // 4. Complete work item
     await completeWorkItem({
       db: params.db,
       workItemId: params.workItemId,
       claimToken: params.claimToken,
     });
   } catch (err) {
-    // 4. On failure: fail work item with retry
     const retryAt = new Date(Date.now() + 15_000); // 15s backoff
     await failWorkItem({
       db: params.db,

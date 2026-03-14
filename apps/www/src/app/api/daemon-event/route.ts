@@ -40,12 +40,19 @@ import {
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
+import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import type {
+  WorkflowId,
+  CorrelationId,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { waitUntil } from "@vercel/functions";
 import { redis } from "@/lib/redis";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { featureFlagsDefinitions } from "@terragon/shared/model/feature-flags-definitions";
 import {
   getThreadChat,
   getThreadMinimal,
@@ -59,6 +66,36 @@ import {
 } from "@terragon/agent/utils";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import { randomUUID } from "node:crypto";
+
+/**
+ * Safe check for sdlcLoopCoordinatorRouting flag. Uses sequential DB
+ * queries to avoid Promise.all unhandled-rejection issues when DB tables
+ * are unavailable (e.g., in partial test mocks).
+ */
+async function isV2CoordinatorEnabled(params: {
+  db: typeof db;
+  userId: string;
+}): Promise<boolean> {
+  try {
+    const flag = await params.db.query.featureFlags?.findFirst?.({
+      where: eq(schema.featureFlags.name, "sdlcLoopCoordinatorRouting"),
+    });
+    if (!flag) {
+      return featureFlagsDefinitions.sdlcLoopCoordinatorRouting.defaultValue;
+    }
+    // Check for user-level override
+    const userOverride = await params.db.query.userFeatureFlags?.findFirst?.({
+      where: and(
+        eq(schema.userFeatureFlags.userId, params.userId),
+        eq(schema.userFeatureFlags.featureFlagId, flag.id),
+      ),
+    });
+    if (userOverride) return userOverride.value;
+    return flag.globalOverride ?? flag.defaultValue;
+  } catch {
+    return featureFlagsDefinitions.sdlcLoopCoordinatorRouting.defaultValue;
+  }
+}
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -1722,30 +1759,47 @@ export async function POST(request: Request) {
         }
         if (claimResult.reason === "duplicate_event") {
           try {
-            const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-              enrolledLoop.loopVersion,
-            );
-            const signalTickResult = await runBestEffortSdlcSignalInboxTick({
-              db,
-              loopId: enrolledLoop.id,
-              leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-              guardrailRuntime,
-              includeRuntimeRouting: true,
-            });
-            await maybeProcessDaemonTerminalFollowUp({
-              tickResult: signalTickResult,
-              loopId: enrolledLoop.id,
-              loopVersion: enrolledLoop.loopVersion,
-              sourceRunId: envelopeV2.runId,
-              eventId: envelopeV2.eventId,
-              seq: envelopeV2.seq,
-            });
-            await runBestEffortSdlcPublicationCoordinator({
-              db,
-              loopId: enrolledLoop.id,
-              leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-              guardrailRuntime,
-            });
+            const useV2 = await isV2CoordinatorEnabled({ db, userId });
+            if (useV2) {
+              const v2Workflow = await getActiveWorkflowForThread({
+                db,
+                threadId,
+              });
+              if (v2Workflow) {
+                await runCoordinatorTick({
+                  db,
+                  workflowId: v2Workflow.id as WorkflowId,
+                  correlationId:
+                    `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+                  claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
+                });
+              }
+            } else {
+              const guardrailRuntime = buildCoordinatorGuardrailRuntime(
+                enrolledLoop.loopVersion,
+              );
+              const signalTickResult = await runBestEffortSdlcSignalInboxTick({
+                db,
+                loopId: enrolledLoop.id,
+                leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
+                guardrailRuntime,
+                includeRuntimeRouting: true,
+              });
+              await maybeProcessDaemonTerminalFollowUp({
+                tickResult: signalTickResult,
+                loopId: enrolledLoop.id,
+                loopVersion: enrolledLoop.loopVersion,
+                sourceRunId: envelopeV2.runId,
+                eventId: envelopeV2.eventId,
+                seq: envelopeV2.seq,
+              });
+              await runBestEffortSdlcPublicationCoordinator({
+                db,
+                loopId: enrolledLoop.id,
+                leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
+                guardrailRuntime,
+              });
+            }
           } catch (error) {
             console.error(
               "[sdlc-loop] duplicate daemon event dedupe tick failed — FULL ERROR:",
@@ -2062,57 +2116,81 @@ export async function POST(request: Request) {
 
   if (enrolledLoop && envelopeV2) {
     try {
-      const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-        enrolledLoop.loopVersion,
-      );
-      const signalTickResult = await runBestEffortSdlcSignalInboxTick({
-        db,
-        loopId: enrolledLoop.id,
-        leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-        guardrailRuntime,
-        includeRuntimeRouting: true,
-      });
-      await maybeProcessDaemonTerminalFollowUp({
-        tickResult: signalTickResult,
-        loopId: enrolledLoop.id,
-        loopVersion: enrolledLoop.loopVersion,
-        sourceRunId: envelopeV2.runId,
-        eventId: envelopeV2.eventId,
-        seq: envelopeV2.seq,
-      });
-      if (!signalTickResult.processed) {
-        console.log(
-          "[sdlc-loop] daemon event tick skipped follow-up dispatch",
-          {
-            userId,
-            threadId,
-            threadChatId,
-            loopId: enrolledLoop.id,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-            reason: signalTickResult.reason,
-          },
+      const useV2 = await isV2CoordinatorEnabled({ db, userId });
+      if (useV2) {
+        const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+        if (v2Workflow) {
+          const tickResult = await runCoordinatorTick({
+            db,
+            workflowId: v2Workflow.id as WorkflowId,
+            correlationId:
+              `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+            claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+          });
+          if (!tickResult.signalsProcessed) {
+            console.log(
+              "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
+              {
+                userId,
+                threadId,
+                threadChatId,
+                workflowId: v2Workflow.id,
+                eventId: envelopeV2.eventId,
+                seq: envelopeV2.seq,
+              },
+            );
+          }
+        }
+      } else {
+        const guardrailRuntime = buildCoordinatorGuardrailRuntime(
+          enrolledLoop.loopVersion,
         );
-      }
-
-      await runBestEffortSdlcPublicationCoordinator({
-        db,
-        loopId: enrolledLoop.id,
-        leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-        guardrailRuntime,
-      });
-    } catch (error) {
-      console.error(
-        "[sdlc-loop] best-effort publication coordinator tick failed",
-        {
-          userId,
-          threadId,
+        const signalTickResult = await runBestEffortSdlcSignalInboxTick({
+          db,
           loopId: enrolledLoop.id,
+          leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+          guardrailRuntime,
+          includeRuntimeRouting: true,
+        });
+        await maybeProcessDaemonTerminalFollowUp({
+          tickResult: signalTickResult,
+          loopId: enrolledLoop.id,
+          loopVersion: enrolledLoop.loopVersion,
+          sourceRunId: envelopeV2.runId,
           eventId: envelopeV2.eventId,
           seq: envelopeV2.seq,
-          error,
-        },
-      );
+        });
+        if (!signalTickResult.processed) {
+          console.log(
+            "[sdlc-loop] daemon event tick skipped follow-up dispatch",
+            {
+              userId,
+              threadId,
+              threadChatId,
+              loopId: enrolledLoop.id,
+              eventId: envelopeV2.eventId,
+              seq: envelopeV2.seq,
+              reason: signalTickResult.reason,
+            },
+          );
+        }
+
+        await runBestEffortSdlcPublicationCoordinator({
+          db,
+          loopId: enrolledLoop.id,
+          leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+          guardrailRuntime,
+        });
+      }
+    } catch (error) {
+      console.error("[sdlc-loop] best-effort coordinator tick failed", {
+        userId,
+        threadId,
+        loopId: enrolledLoop.id,
+        eventId: envelopeV2.eventId,
+        seq: envelopeV2.seq,
+        error,
+      });
     }
   }
 

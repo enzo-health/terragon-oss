@@ -7,6 +7,8 @@ import {
 } from "@terragon/shared/model/delivery-loop";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { ensureV2WorkflowExists } from "./coordinator/enrollment-bridge";
 
 export function isSdlcLoopEnrollmentAllowedForThread({
   sourceType,
@@ -76,7 +78,7 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
   initialState?: "planning" | "implementing";
 }) {
-  return await enrollSdlcLoopForThread({
+  const enrolled = await enrollSdlcLoopForThread({
     db,
     userId,
     repoFullName,
@@ -84,6 +86,19 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
     planApprovalPolicy,
     initialState,
   });
+
+  if (enrolled) {
+    await tryEnsureV2Workflow({
+      userId,
+      threadId,
+      sdlcLoopId: enrolled.id,
+      sdlcLoopState: enrolled.state,
+      sdlcBlockedFromState: enrolled.blockedFromState,
+      headSha: enrolled.currentHeadSha,
+    });
+  }
+
+  return enrolled;
 }
 
 export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
@@ -117,6 +132,18 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
     prNumber,
   });
   const activeLoop = linked ?? enrolled;
+
+  if (activeLoop) {
+    await tryEnsureV2Workflow({
+      userId,
+      threadId,
+      sdlcLoopId: activeLoop.id,
+      sdlcLoopState: activeLoop.state,
+      sdlcBlockedFromState: activeLoop.blockedFromState,
+      headSha: activeLoop.currentHeadSha,
+    });
+  }
+
   if (
     activeLoop &&
     [
@@ -158,4 +185,41 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   }
 
   return null;
+}
+
+async function tryEnsureV2Workflow(params: {
+  userId: string;
+  threadId: string;
+  sdlcLoopId: string;
+  sdlcLoopState: string;
+  sdlcBlockedFromState?: string | null;
+  headSha?: string | null;
+}) {
+  try {
+    const isV2Enabled = await getFeatureFlagForUser({
+      db,
+      userId: params.userId,
+      flagName: "sdlcLoopCoordinatorRouting",
+    });
+    if (!isV2Enabled) return;
+
+    await ensureV2WorkflowExists({
+      db,
+      threadId: params.threadId,
+      sdlcLoopId: params.sdlcLoopId,
+      sdlcLoopState: params.sdlcLoopState as Parameters<
+        typeof ensureV2WorkflowExists
+      >[0]["sdlcLoopState"],
+      sdlcBlockedFromState: params.sdlcBlockedFromState as Parameters<
+        typeof ensureV2WorkflowExists
+      >[0]["sdlcBlockedFromState"],
+      headSha: params.headSha,
+    });
+  } catch (err) {
+    console.error("[delivery-loop enrollment] v2 workflow bridge failed", {
+      threadId: params.threadId,
+      sdlcLoopId: params.sdlcLoopId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

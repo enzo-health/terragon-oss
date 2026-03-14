@@ -4,6 +4,14 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { eq, desc } from "drizzle-orm";
+import * as schema from "@terragon/shared/db/schema";
+import { randomUUID } from "node:crypto";
+import {
+  createDispatchIntent,
+  type CreateDispatchIntentParams,
+} from "../dispatch-intent";
+import { startAckTimeout } from "../ack-lifecycle";
 
 export type DispatchWorkPayload = {
   executionClass: ExecutionClass;
@@ -13,9 +21,11 @@ export type DispatchWorkPayload = {
 };
 
 /**
- * Execute a dispatch work item: load the workflow, determine the dispatch
- * target, and execute the dispatch. Actual sandbox/daemon integration is
- * wired during Phase 7 migration.
+ * Execute a dispatch work item: load the workflow, look up the sdlcLoop
+ * and threadChat, create a dispatch intent, and start an ack timeout.
+ *
+ * The actual daemon dispatch happens through the follow-up queue — the
+ * worker's job is to prepare the intent and mark the work item completed.
  */
 export async function runDispatchWork(params: {
   db: DB;
@@ -43,44 +53,92 @@ export async function runDispatchWork(params: {
       return;
     }
 
-    // 2. Determine dispatch target (agent type, sandbox)
-    // 3. Execute dispatch
-    //
-    // TODO(Phase 7 wiring): Integrate with existing dispatch infrastructure:
-    //
-    // - createDispatchIntent() from
-    //   apps/www/src/server-lib/delivery-loop/dispatch-intent.ts
-    //   Creates a Redis-backed dispatch intent for real-time tracking.
-    //   Needs: loopId, threadId, threadChatId, targetPhase, selectedAgent,
-    //          executionClass, dispatchMechanism, runId, maxRetries
-    //
-    // - handleAckReceived() from
-    //   apps/www/src/server-lib/delivery-loop/ack-lifecycle.ts
-    //   Called when the first daemon event arrives to mark intent as acknowledged.
-    //
-    // - startAckTimeout() from
-    //   apps/www/src/server-lib/delivery-loop/ack-lifecycle.ts
-    //   Schedules an ack timeout check; calls handleAckTimeout on expiry.
-    //
-    // - The v2 DispatchSubState (workflow.dispatch) tracks queued/sent/acked/failed
-    //   status and should be kept in sync with the Redis dispatch intent.
-    //
-    // Flow:
-    //   a) Read the sdlcLoop to get threadId, threadChatId, repoFullName
-    //   b) Create dispatch intent via createDispatchIntent()
-    //   c) Prepare sandbox / credentials
-    //   d) Send dispatch to daemon
-    //   e) Start ack timeout via startAckTimeout()
-    //
+    // 2. Look up sdlcLoop by threadId to get loopId, repoFullName
+    const loop = await params.db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.threadId, workflow.threadId),
+    });
+    if (!loop) {
+      await failWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+        errorCode: "loop_not_found",
+        errorMessage: `No sdlcLoop found for threadId ${workflow.threadId}`,
+      });
+      return;
+    }
 
-    // 4. Complete work item
+    // 3. Look up the latest threadChat to get threadChatId
+    const threadChat = await params.db.query.threadChat.findFirst({
+      where: eq(schema.threadChat.threadId, workflow.threadId),
+      orderBy: [desc(schema.threadChat.createdAt)],
+    });
+    if (!threadChat) {
+      await failWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+        errorCode: "thread_chat_not_found",
+        errorMessage: `No threadChat found for threadId ${workflow.threadId}`,
+      });
+      return;
+    }
+
+    // 4. Determine target phase from workflow state
+    const targetPhase =
+      workflow.kind === "planning"
+        ? "planning"
+        : workflow.kind === "gating"
+          ? "reviewing"
+          : "implementing";
+
+    // 5. Create dispatch intent (Redis-backed real-time tracking)
+    const runId = randomUUID();
+    const intentParams: CreateDispatchIntentParams = {
+      loopId: loop.id,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
+      selectedAgent: "claudeCode",
+      executionClass: params.payload.executionClass,
+      dispatchMechanism: "self_dispatch",
+      runId,
+      maxRetries: 3,
+    };
+
+    try {
+      await createDispatchIntent(intentParams);
+    } catch (intentErr) {
+      // If an active intent already exists, that's OK — don't fail the work item
+      if (
+        intentErr instanceof Error &&
+        intentErr.message.includes("active intent")
+      ) {
+        await completeWorkItem({
+          db: params.db,
+          workItemId: params.workItemId,
+          claimToken: params.claimToken,
+        });
+        return;
+      }
+      throw intentErr;
+    }
+
+    // 6. Start ack timeout (best-effort in-process timer)
+    startAckTimeout({
+      db: params.db,
+      runId,
+      loopId: loop.id,
+      threadChatId: threadChat.id,
+    });
+
+    // 7. Complete work item
     await completeWorkItem({
       db: params.db,
       workItemId: params.workItemId,
       claimToken: params.claimToken,
     });
   } catch (err) {
-    // 5. On failure: fail work item with retry
     const retryAt = new Date(Date.now() + 30_000); // 30s backoff
     await failWorkItem({
       db: params.db,
