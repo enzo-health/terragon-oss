@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { DB } from "../../db";
 import * as schema from "../../db/schema";
 import type {
@@ -26,6 +27,7 @@ export async function persistSdlcReviewThreadGateEvaluation({
   unresolvedThreadCount,
   timeoutMs,
   errorCode,
+  idempotencyKey,
   now = new Date(),
 }: {
   db: DB;
@@ -40,9 +42,29 @@ export async function persistSdlcReviewThreadGateEvaluation({
   unresolvedThreadCount: number;
   timeoutMs?: number | null;
   errorCode?: string | null;
+  idempotencyKey?: string;
   now?: Date;
 }): Promise<PersistSdlcReviewThreadGateResult> {
   return await db.transaction(async (tx) => {
+    if (idempotencyKey) {
+      const existing = await tx.query.sdlcReviewThreadGateRun.findFirst({
+        where: eq(
+          schema.sdlcReviewThreadGateRun.idempotencyKey,
+          idempotencyKey,
+        ),
+      });
+      if (existing) {
+        return {
+          runId: existing.id,
+          status: existing.status,
+          gatePassed: existing.gatePassed,
+          unresolvedThreadCount: existing.unresolvedThreadCount,
+          shouldQueueFollowUp: false,
+          loopUpdateOutcome: "updated",
+        };
+      }
+    }
+
     const hasTransientError = Boolean(errorCode);
     const gatePassed = !hasTransientError && unresolvedThreadCount === 0;
     const status: SdlcReviewThreadGateStatus = hasTransientError
@@ -64,6 +86,7 @@ export async function persistSdlcReviewThreadGateEvaluation({
         timeoutMs: timeoutMs ?? null,
         triggerEventType,
         errorCode: errorCode ?? null,
+        idempotencyKey: idempotencyKey ?? null,
         createdAt: now,
         updatedAt: now,
       })
@@ -81,6 +104,7 @@ export async function persistSdlcReviewThreadGateEvaluation({
           timeoutMs: timeoutMs ?? null,
           triggerEventType,
           errorCode: errorCode ?? null,
+          idempotencyKey: idempotencyKey ?? null,
           updatedAt: now,
         },
       })

@@ -75,6 +75,7 @@ import {
   transitionSdlcLoopState,
   transitionLoopToStoppedAndCancelPendingOutbox,
   verifyPlanTaskCompletionForHead,
+  isStaleNoop,
 } from "./delivery-loop";
 
 const db = createDb(env.DATABASE_URL!);
@@ -1869,7 +1870,7 @@ describe("sdlc loop model", () => {
       rulesetChecks: ["tests"],
       failingChecks: ["tests"],
     });
-    expect(ciResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(isStaleNoop(ciResult.loopUpdateOutcome)).toBe(true);
     expect(ciResult.shouldQueueFollowUp).toBe(false);
 
     const reviewResult = await persistSdlcReviewThreadGateEvaluation({
@@ -1881,7 +1882,7 @@ describe("sdlc loop model", () => {
       evaluationSource: "polling",
       unresolvedThreadCount: 2,
     });
-    expect(reviewResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(isStaleNoop(reviewResult.loopUpdateOutcome)).toBe(true);
     expect(reviewResult.shouldQueueFollowUp).toBe(false);
 
     const deepResult = await persistDeepReviewGateResult({
@@ -1905,7 +1906,7 @@ describe("sdlc loop model", () => {
         ],
       },
     });
-    expect(deepResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(isStaleNoop(deepResult.loopUpdateOutcome)).toBe(true);
     expect(deepResult.shouldQueueFollowUp).toBe(false);
 
     const carmackResult = await persistCarmackReviewGateResult({
@@ -1929,7 +1930,7 @@ describe("sdlc loop model", () => {
         ],
       },
     });
-    expect(carmackResult.loopUpdateOutcome).toBe("stale_noop");
+    expect(isStaleNoop(carmackResult.loopUpdateOutcome)).toBe(true);
     expect(carmackResult.shouldQueueFollowUp).toBe(false);
 
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
@@ -1974,7 +1975,7 @@ describe("sdlc loop model", () => {
       loopId: loop!.id,
       transitionEvent: "implementation_progress",
     });
-    expect(unversioned).toBe("stale_noop");
+    expect(isStaleNoop(unversioned)).toBe(true);
 
     let reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
@@ -2024,7 +2025,7 @@ describe("sdlc loop model", () => {
       transitionEvent: "implementation_progress",
     });
 
-    expect(transitionOutcome).toBe("stale_noop");
+    expect(isStaleNoop(transitionOutcome)).toBe(true);
 
     const reloadedLoop = await db.query.sdlcLoop.findFirst({
       where: eq(schema.sdlcLoop.id, loop!.id),
@@ -2073,7 +2074,7 @@ describe("sdlc loop model", () => {
         headSha: "sha-out-of-phase",
         loopVersion: 8,
       });
-      expect(outcome).toBe("stale_noop");
+      expect(isStaleNoop(outcome)).toBe(true);
     }
 
     const reloadedLoop = await db.query.sdlcLoop.findFirst({

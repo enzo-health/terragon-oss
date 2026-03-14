@@ -228,6 +228,7 @@ export async function claimNextUnprocessedSignal({
   const claimableWhere = and(
     eq(schema.sdlcLoopSignalInbox.loopId, loopId),
     isNull(schema.sdlcLoopSignalInbox.processedAt),
+    isNull(schema.sdlcLoopSignalInbox.deadLetteredAt),
     or(
       isNull(schema.sdlcLoopSignalInbox.claimToken),
       lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
@@ -757,4 +758,74 @@ export async function persistGateEvaluationForSignal({
     evaluation.shouldQueueFollowUp ||
     (unresolvedThreadCount > 0 && effectiveLoopPhase !== "babysitting")
   );
+}
+
+// ---------------------------------------------------------------------------
+// Dead Letter Queue
+// ---------------------------------------------------------------------------
+
+const MAX_SIGNAL_PROCESSING_ATTEMPTS = 5;
+
+export function shouldDeadLetterSignal(attemptCount: number): boolean {
+  return attemptCount >= MAX_SIGNAL_PROCESSING_ATTEMPTS;
+}
+
+export async function deferSignalProcessing(params: {
+  db: DB;
+  signalId: string;
+  claimToken: string;
+  error: string;
+  baseBackoffMs?: number;
+  now?: Date;
+}): Promise<{ deferred: boolean; attemptCount: number }> {
+  const [updated] = await params.db
+    .update(schema.sdlcLoopSignalInbox)
+    .set({
+      claimToken: null,
+      claimedAt: null,
+      processingAttemptCount: sql`${schema.sdlcLoopSignalInbox.processingAttemptCount} + 1`,
+      lastProcessingError: params.error,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
+        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+      ),
+    )
+    .returning({
+      id: schema.sdlcLoopSignalInbox.id,
+      processingAttemptCount: schema.sdlcLoopSignalInbox.processingAttemptCount,
+    });
+
+  if (!updated) {
+    return { deferred: false, attemptCount: 0 };
+  }
+  return { deferred: true, attemptCount: updated.processingAttemptCount };
+}
+
+export async function deadLetterSignal(params: {
+  db: DB;
+  signalId: string;
+  claimToken: string;
+  reason: string;
+  now?: Date;
+}): Promise<boolean> {
+  const now = params.now ?? new Date();
+  const [updated] = await params.db
+    .update(schema.sdlcLoopSignalInbox)
+    .set({
+      deadLetteredAt: now,
+      deadLetterReason: params.reason,
+      processedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
+        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
+        isNull(schema.sdlcLoopSignalInbox.processedAt),
+      ),
+    )
+    .returning({ id: schema.sdlcLoopSignalInbox.id });
+  return Boolean(updated);
 }

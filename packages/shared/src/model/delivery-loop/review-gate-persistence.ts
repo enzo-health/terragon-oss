@@ -289,7 +289,7 @@ async function persistReviewGateResult({
             blockedFromState: "review_gate",
             now: new Date(),
           })
-        : "stale_noop";
+        : { staleReason: "where_guard_miss" as const };
 
       return {
         runId: run.id,
@@ -424,7 +424,7 @@ async function persistReviewGateResult({
           blockedFromState: status === "blocked" ? "review_gate" : null,
           now: new Date(),
         })
-      : "stale_noop";
+      : { staleReason: "where_guard_miss" as const };
 
     const unresolvedBlockingFindings = (
       await (tx as any)

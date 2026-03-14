@@ -100,6 +100,67 @@ export async function acquireSdlcLoopLease({
   };
 }
 
+export type SdlcLoopLeaseRefreshResult =
+  | { refreshed: true; leaseExpiresAt: Date }
+  | {
+      refreshed: false;
+      reason: "epoch_changed" | "not_owner" | "not_found";
+    };
+
+export async function refreshSdlcLoopLease({
+  db,
+  loopId,
+  leaseOwner,
+  leaseEpoch,
+  leaseTtlMs,
+  now = new Date(),
+}: {
+  db: DB;
+  loopId: string;
+  leaseOwner: string;
+  leaseEpoch: number;
+  leaseTtlMs: number;
+  now?: Date;
+}): Promise<SdlcLoopLeaseRefreshResult> {
+  const leaseExpiresAt = new Date(now.getTime() + leaseTtlMs);
+
+  const updated = await db
+    .update(schema.sdlcLoopLease)
+    .set({
+      leaseExpiresAt,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.sdlcLoopLease.loopId, loopId),
+        eq(schema.sdlcLoopLease.leaseOwner, leaseOwner),
+        eq(schema.sdlcLoopLease.leaseEpoch, leaseEpoch),
+      ),
+    )
+    .returning({
+      leaseExpiresAt: schema.sdlcLoopLease.leaseExpiresAt,
+    });
+
+  if (updated[0]) {
+    return {
+      refreshed: true,
+      leaseExpiresAt: updated[0].leaseExpiresAt ?? leaseExpiresAt,
+    };
+  }
+
+  const existing = await db.query.sdlcLoopLease.findFirst({
+    where: eq(schema.sdlcLoopLease.loopId, loopId),
+  });
+
+  if (!existing) {
+    return { refreshed: false, reason: "not_found" };
+  }
+  if (existing.leaseOwner !== leaseOwner) {
+    return { refreshed: false, reason: "not_owner" };
+  }
+  return { refreshed: false, reason: "epoch_changed" };
+}
+
 export async function releaseSdlcLoopLease({
   db,
   loopId,

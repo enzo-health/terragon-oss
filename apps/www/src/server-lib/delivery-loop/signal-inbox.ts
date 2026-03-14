@@ -14,6 +14,7 @@ import {
   evaluateSdlcLoopGuardrails,
   getLatestAcceptedArtifact,
   releaseSdlcLoopLease,
+  refreshSdlcLoopLease,
   transitionSdlcLoopState,
   transitionSdlcLoopStateWithArtifact,
   markPlanTasksCompletedByAgent,
@@ -242,6 +243,60 @@ function createSignalClaimLeaseHeartbeat(params: {
       }
 
       return "ok";
+    },
+  };
+}
+
+export function createAutoRefreshingHeartbeat(params: {
+  db: DB;
+  loopId: string;
+  leaseOwner: string;
+  leaseEpoch: number;
+  leaseTtlMs: number;
+  signalId: string;
+  claimToken: string;
+  intervalMs?: number;
+}): {
+  start(): void;
+  stop(): void;
+  isHealthy(): boolean;
+} {
+  let healthy = true;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  return {
+    start() {
+      timer = setInterval(async () => {
+        try {
+          const [leaseResult, claimResult] = await Promise.all([
+            refreshSdlcLoopLease({
+              db: params.db,
+              loopId: params.loopId,
+              leaseOwner: params.leaseOwner,
+              leaseEpoch: params.leaseEpoch,
+              leaseTtlMs: params.leaseTtlMs,
+            }),
+            refreshSignalClaim({
+              db: params.db,
+              signalId: params.signalId,
+              claimToken: params.claimToken,
+              now: new Date(),
+            }),
+          ]);
+          if (!leaseResult.refreshed || !claimResult) {
+            healthy = false;
+          }
+        } catch {
+          healthy = false;
+        }
+      }, params.intervalMs ?? 8_000);
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+    isHealthy() {
+      return healthy;
     },
   };
 }

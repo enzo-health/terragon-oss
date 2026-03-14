@@ -1602,6 +1602,12 @@ export const sdlcLoopSignalInbox = pgTable(
     claimedAt: timestamp("claimed_at", { mode: "date" }),
     committedAt: timestamp("committed_at", { mode: "date" }),
     processedAt: timestamp("processed_at", { mode: "date" }),
+    processingAttemptCount: integer("processing_attempt_count")
+      .notNull()
+      .default(0),
+    lastProcessingError: text("last_processing_error"),
+    deadLetteredAt: timestamp("dead_lettered_at", { mode: "date" }),
+    deadLetterReason: text("dead_letter_reason"),
   },
   (table) => [
     uniqueIndex("sdlc_loop_signal_inbox_dedupe_unique").on(
@@ -1930,6 +1936,7 @@ export const sdlcCiGateRun = pgTable(
     normalizationVersion: integer("normalization_version").notNull().default(1),
     triggerEventType: text("trigger_event_type").notNull(),
     errorCode: text("error_code"),
+    idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" })
       .notNull()
@@ -1941,6 +1948,9 @@ export const sdlcCiGateRun = pgTable(
       table.loopId,
       table.headSha,
     ),
+    uniqueIndex("sdlc_ci_gate_run_idempotency_key_unique")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
     index("sdlc_ci_gate_run_loop_created_index").on(
       table.loopId,
       table.createdAt,
@@ -1971,6 +1981,7 @@ export const sdlcReviewThreadGateRun = pgTable(
     timeoutMs: integer("timeout_ms"),
     triggerEventType: text("trigger_event_type").notNull(),
     errorCode: text("error_code"),
+    idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" })
       .notNull()
@@ -1982,6 +1993,9 @@ export const sdlcReviewThreadGateRun = pgTable(
       table.loopId,
       table.headSha,
     ),
+    uniqueIndex("sdlc_review_thread_gate_run_idempotency_key_unique")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
     index("sdlc_review_thread_gate_run_loop_created_index").on(
       table.loopId,
       table.createdAt,
@@ -2049,6 +2063,175 @@ export const linearWebhookDeliveries = pgTable("linear_webhook_deliveries", {
   threadId: text("thread_id"), // set once thread is created
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// Delivery Loop v2 tables
+// ---------------------------------------------------------------------------
+
+export const deliveryWorkflow = pgTable(
+  "delivery_workflow",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    generation: integer("generation").notNull(),
+    kind: text("kind").notNull(),
+    version: integer("version").notNull().default(0),
+    stateJson: jsonb("state_json").notNull(),
+    fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
+    maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
+    headSha: text("head_sha"),
+    reviewSurfaceJson: jsonb("review_surface_json"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    lastActivityAt: timestamp("last_activity_at", { mode: "date" }),
+  },
+  (table) => [
+    uniqueIndex("delivery_workflow_thread_generation_unique").on(
+      table.threadId,
+      table.generation,
+    ),
+    index("delivery_workflow_kind_index").on(table.kind),
+    index("delivery_workflow_thread_id_index").on(table.threadId),
+  ],
+);
+
+export const deliveryWorkflowEvent = pgTable(
+  "delivery_workflow_event",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    eventKind: text("event_kind").notNull(),
+    stateBefore: text("state_before").notNull(),
+    stateAfter: text("state_after"),
+    gateBefore: text("gate_before"),
+    gateAfter: text("gate_after"),
+    payloadJson: jsonb("payload_json"),
+    signalId: text("signal_id"),
+    triggerSource: text("trigger_source").notNull(),
+    headSha: text("head_sha"),
+    previousPhaseDurationMs: integer("previous_phase_duration_ms"),
+    occurredAt: timestamp("occurred_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("delivery_workflow_event_seq_unique").on(
+      table.workflowId,
+      table.seq,
+    ),
+    index("delivery_workflow_event_occurred_index").on(
+      table.workflowId,
+      table.occurredAt,
+    ),
+    index("delivery_workflow_event_correlation_index").on(table.correlationId),
+  ],
+);
+
+export const deliveryWorkItem = pgTable(
+  "delivery_work_item",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    correlationId: text("correlation_id").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    scheduledAt: timestamp("scheduled_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+    claimedAt: timestamp("claimed_at", { mode: "date" }),
+    claimToken: text("claim_token"),
+    payloadJson: jsonb("payload_json").notNull(),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    completedAt: timestamp("completed_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("delivery_work_item_workflow_status_index").on(
+      table.workflowId,
+      table.status,
+    ),
+    index("delivery_work_item_claimable_index")
+      .on(table.status, table.scheduledAt)
+      .where(sql`${table.status} = 'pending'`),
+    index("delivery_work_item_correlation_index").on(table.correlationId),
+  ],
+);
+
+export const deliveryLoopIncident = pgTable(
+  "delivery_loop_incident",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    incidentType: text("incident_type").notNull(),
+    severity: text("severity").notNull(),
+    status: text("status").notNull().default("open"),
+    detail: text("detail"),
+    openedAt: timestamp("opened_at", { mode: "date" }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("delivery_loop_incident_workflow_status_index").on(
+      table.workflowId,
+      table.status,
+    ),
+  ],
+);
+
+export const deliveryLoopRuntimeStatus = pgTable(
+  "delivery_loop_runtime_status",
+  {
+    workflowId: text("workflow_id")
+      .primaryKey()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    state: text("state").notNull(),
+    gate: text("gate"),
+    pendingActionKind: text("pending_action_kind"),
+    health: text("health").notNull().default("healthy"),
+    lastSignalAt: timestamp("last_signal_at", { mode: "date" }),
+    lastTransitionAt: timestamp("last_transition_at", { mode: "date" }),
+    lastDispatchAt: timestamp("last_dispatch_at", { mode: "date" }),
+    oldestUnprocessedSignalAgeMs: integer("oldest_unprocessed_signal_age_ms"),
+    fixAttemptCount: integer("fix_attempt_count"),
+    openIncidentCount: integer("open_incident_count"),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+);
 
 export const deliveryLoopDispatchIntent = pgTable(
   "delivery_loop_dispatch_intent",

@@ -54,10 +54,28 @@ function resolveRequiredCheckSource({
   return { source: "no_required", requiredChecks: [] };
 }
 
+export type StaleNoopReason =
+  | "loop_not_found"
+  | "state_not_canonical"
+  | "transition_unmapped"
+  | "transition_invalid"
+  | "version_conflict"
+  | "headsha_conflict"
+  | "where_guard_miss"
+  | "wrong_state_for_event";
+
 export type SdlcGateLoopUpdateOutcome =
   | "updated"
   | "terminal_noop"
-  | "stale_noop";
+  | { staleReason: StaleNoopReason };
+
+export function isStaleNoop(
+  outcome: SdlcGateLoopUpdateOutcome,
+): outcome is { staleReason: StaleNoopReason } {
+  return (
+    typeof outcome === "object" && outcome !== null && "staleReason" in outcome
+  );
+}
 
 export const fixAttemptIncrementEvents: ReadonlySet<SdlcLoopTransitionEvent> =
   new Set([
@@ -225,7 +243,7 @@ export async function persistGuardedGateLoopState({
   });
 
   if (!loop) {
-    return "stale_noop";
+    return { staleReason: "loop_not_found" };
   }
 
   if (!activeSdlcLoopStateSet.has(loop.state)) {
@@ -242,10 +260,10 @@ export async function persistGuardedGateLoopState({
     loop.state !== "planning" &&
     loop.state !== "implementing"
   ) {
-    return "stale_noop";
+    return { staleReason: "wrong_state_for_event" };
   }
   if (!DELIVERY_LOOP_CANONICAL_STATE_SET.has(loop.state as DeliveryLoopState)) {
-    return "stale_noop";
+    return { staleReason: "state_not_canonical" };
   }
 
   const persistedBlockedFromState = coerceDeliveryLoopResumableState(
@@ -259,7 +277,7 @@ export async function persistGuardedGateLoopState({
         typeof loop.prNumber === "number" && Number.isFinite(loop.prNumber),
     });
   if (!canonicalTransitionEvent) {
-    return "stale_noop";
+    return { staleReason: "transition_unmapped" };
   }
 
   let reducedTransition: DeliveryLoopTransitionResult | null =
@@ -288,7 +306,7 @@ export async function persistGuardedGateLoopState({
       : (reducedTransition?.state ?? null);
 
   if (!nextState) {
-    return "stale_noop";
+    return { staleReason: "transition_invalid" };
   }
 
   const shouldIncrementFixAttempt =
@@ -310,7 +328,7 @@ export async function persistGuardedGateLoopState({
 
   if (normalizedLoopVersion !== null) {
     if (loop.loopVersion > normalizedLoopVersion) {
-      return "stale_noop";
+      return { staleReason: "version_conflict" };
     }
 
     if (
@@ -319,7 +337,7 @@ export async function persistGuardedGateLoopState({
       loop.currentHeadSha !== null &&
       loop.currentHeadSha !== headSha
     ) {
-      return "stale_noop";
+      return { staleReason: "headsha_conflict" };
     }
   }
 
@@ -395,7 +413,7 @@ export async function persistGuardedGateLoopState({
   }
 
   if (!whereCondition) {
-    return "stale_noop";
+    return { staleReason: "where_guard_miss" };
   }
 
   const [updated] = await tx
@@ -404,7 +422,7 @@ export async function persistGuardedGateLoopState({
     .where(whereCondition)
     .returning({ id: schema.sdlcLoop.id });
 
-  return updated ? "updated" : "stale_noop";
+  return updated ? "updated" : { staleReason: "where_guard_miss" };
 }
 
 export async function transitionSdlcLoopState({

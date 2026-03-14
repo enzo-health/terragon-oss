@@ -587,7 +587,10 @@ async function transitionImplementationGateBlocked({
     transitionEvent: "implementation_gate_blocked",
     blockedFromState: "implementing",
   });
-  if (outcome === "stale_noop" || outcome === "terminal_noop") {
+  if (
+    (typeof outcome === "object" && "staleReason" in outcome) ||
+    outcome === "terminal_noop"
+  ) {
     return true;
   }
   const refreshedLoop = await getActiveSdlcLoopForThread({
