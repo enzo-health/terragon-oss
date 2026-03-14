@@ -50,6 +50,14 @@ export function classifyDaemonEventError(
   const daemonCategory = classifyDaemonError(errorMessage, null);
   if (daemonCategory) return daemonCategory;
 
+  // Context window overflow — non-retryable with the same input.
+  if (
+    /context.window|ran out of room|context.*too long|token limit|max.*tokens.*exceeded/i.test(
+      errorMessage,
+    )
+  )
+    return "config_error";
+
   // Codex-specific patterns.
   if (/codex.*app.?server.*exit|app.?server.*crash/i.test(errorMessage))
     return "codex_app_server_exit";

@@ -32,6 +32,15 @@ function classifyCodexTerminalError(
       : "unknown";
   }
 
+  // Context window overflow — non-retryable with the same input.
+  if (
+    /context.window|ran out of room|context.*too long|token limit|max.*tokens.*exceeded/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "config_error";
+  }
+
   // Codex app-server process exited or crashed.
   if (/codex.*app.?server.*exit|app.?server.*crash/i.test(rawErrorMessage)) {
     return "codex_app_server_exit";
