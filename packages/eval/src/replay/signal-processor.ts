@@ -62,11 +62,25 @@ async function replayGateEvents({
   fallbackLoopVersion: number;
 }) {
   const matching = gateEvents.filter((e) => e.headSha === headSha);
-  for (const event of matching) {
+
+  // Separate review gates from CI/review_thread gates — reviews must
+  // complete first, then if all pass we fire review_passed before
+  // processing CI/review_thread gates.
+  const reviewGates = matching.filter(
+    (e) => e.gateType === "deep_review" || e.gateType === "carmack_review",
+  );
+  const postReviewGates = matching.filter(
+    (e) => e.gateType === "ci" || e.gateType === "review_thread",
+  );
+
+  let deepPassed = false;
+  let carmackPassed = false;
+
+  for (const event of reviewGates) {
     const ver = await freshLoopVersion(db, shared, loopId, fallbackLoopVersion);
 
     if (event.gateType === "deep_review") {
-      await shared.persistDeepReviewGateResult({
+      const result = await shared.persistDeepReviewGateResult({
         db,
         loopId,
         headSha,
@@ -75,8 +89,9 @@ async function replayGateEvents({
         rawOutput: event.rawOutput,
         updateLoopState: true,
       });
+      deepPassed = result.gatePassed;
     } else if (event.gateType === "carmack_review") {
-      await shared.persistCarmackReviewGateResult({
+      const result = await shared.persistCarmackReviewGateResult({
         db,
         loopId,
         headSha,
@@ -85,8 +100,71 @@ async function replayGateEvents({
         rawOutput: event.rawOutput,
         updateLoopState: true,
       });
+      carmackPassed = result.gatePassed;
     }
-    // ci and review_thread gate events are handled by persistGateEvaluationForSignal
+  }
+
+  // If both reviews passed, fire review_passed to advance to ci_gate
+  if (deepPassed && carmackPassed) {
+    const ver = await freshLoopVersion(db, shared, loopId, fallbackLoopVersion);
+    await shared.transitionSdlcLoopState({
+      db,
+      loopId,
+      transitionEvent: "review_passed" as any,
+      headSha,
+      loopVersion: ver + 1,
+    });
+  }
+
+  // Process CI and review_thread gate events
+  let allPostReviewPassed = postReviewGates.length > 0;
+  for (const event of postReviewGates) {
+    const ver = await freshLoopVersion(db, shared, loopId, fallbackLoopVersion);
+    const transitionEvent = event.gatePassed
+      ? event.gateType === "ci"
+        ? "ci_gate_passed"
+        : "review_threads_gate_passed"
+      : event.gateType === "ci"
+        ? "ci_gate_blocked"
+        : "review_threads_gate_blocked";
+    await shared.transitionSdlcLoopState({
+      db,
+      loopId,
+      transitionEvent: transitionEvent as any,
+      headSha,
+      loopVersion: ver + 1,
+    });
+    if (!event.gatePassed) allPostReviewPassed = false;
+  }
+
+  // If all gates passed (review + CI + review_thread), auto-advance
+  // through ui_gate → awaiting_pr_link → babysitting → done.
+  // In production these steps involve UI smoke tests and PR linking
+  // which we don't replay — we just advance the state machine.
+  if (deepPassed && carmackPassed && allPostReviewPassed) {
+    const advanceEvents = [
+      "ui_smoke_passed",
+      "pr_linked",
+      "babysit_passed",
+      "pr_merged",
+    ] as const;
+    for (const evt of advanceEvents) {
+      const ver = await freshLoopVersion(
+        db,
+        shared,
+        loopId,
+        fallbackLoopVersion,
+      );
+      const outcome = await shared.transitionSdlcLoopState({
+        db,
+        loopId,
+        transitionEvent: evt as any,
+        headSha,
+        loopVersion: ver + 1,
+      });
+      // Stop if the transition didn't apply (wrong state)
+      if (outcome !== "updated") break;
+    }
   }
 }
 
@@ -538,6 +616,59 @@ async function processSignal({
       signal: claimed,
       now,
     });
+
+    // If this signal references a headSha with unreplayed gate events,
+    // replay them — covers the case where a daemon_terminal for this
+    // headSha was not captured in the fixture.
+    const headSha = getPayloadText(signal.payload, "headSha") || "";
+    if (
+      headSha &&
+      headSha !== loopBefore.currentHeadSha &&
+      gateEvents.length > 0
+    ) {
+      const hasGates = gateEvents.some((e) => e.headSha === headSha);
+      if (hasGates) {
+        // Update currentHeadSha and bump loopVersion
+        const ver = await freshLoopVersion(
+          db,
+          shared,
+          seeded.loopId,
+          loopVersion,
+        );
+        const nextVer = ver + 1;
+
+        // Transition implementing → review_gate if needed
+        if (previousState === "implementing") {
+          await shared.transitionSdlcLoopState({
+            db,
+            loopId: seeded.loopId,
+            transitionEvent: "implementation_completed" as any,
+            headSha,
+            loopVersion: nextVer,
+          });
+        } else {
+          await db
+            .update(shared.schema.sdlcLoop)
+            .set({
+              currentHeadSha: headSha,
+              loopVersion: nextVer,
+              updatedAt: new Date(),
+            })
+            .where(
+              (shared.eq as any)(shared.schema.sdlcLoop.id, seeded.loopId),
+            );
+        }
+
+        await replayGateEvents({
+          db,
+          shared,
+          loopId: seeded.loopId,
+          headSha,
+          gateEvents,
+          fallbackLoopVersion: nextVer,
+        });
+      }
+    }
     return;
   }
 

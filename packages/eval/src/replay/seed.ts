@@ -109,6 +109,21 @@ export async function seedFromFixture({
   });
   if (!loop) throw new Error("Failed to enroll SDLC loop");
 
+  // Set maxFixAttempts high enough to replay the full trace without
+  // artificial blocking. In prod, humans may have resumed blocked loops
+  // mid-trace, but we can't replay resume events.
+  const gateHeadShas = new Set(
+    (fixture.gateEvents ?? []).map((e) => e.headSha),
+  );
+  const neededAttempts = Math.max(
+    fixture.loop.maxFixAttempts,
+    gateHeadShas.size,
+  );
+  await db
+    .update(schema.sdlcLoop)
+    .set({ maxFixAttempts: neededAttempts })
+    .where((shared.eq as any)(schema.sdlcLoop.id, loop.id));
+
   // 4. Seed plan if present
   if (fixture.plan) {
     const planPayload = {
