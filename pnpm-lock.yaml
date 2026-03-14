@@ -424,7 +424,7 @@ importers:
         version: 16.5.0
       drizzle-orm:
         specifier: ^0.43.1
-        version: 0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)
+        version: 0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)(postgres@3.4.8)
       fast-deep-equal:
         specifier: ^3.1.3
         version: 3.1.3
@@ -770,6 +770,34 @@ importers:
         specifier: 5.8.3
         version: 5.8.3
 
+  packages/eval:
+    dependencies:
+      '@terragon/shared':
+        specifier: workspace:*
+        version: link:../shared
+      dotenv:
+        specifier: ^16.5.0
+        version: 16.5.0
+      drizzle-orm:
+        specifier: ^0.43.1
+        version: 0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)(postgres@3.4.8)
+      nanoid:
+        specifier: ^5.1.5
+        version: 5.1.6
+    devDependencies:
+      '@terragon/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: 24.0.1
+        version: 24.0.1
+      tsx:
+        specifier: 4.20.3
+        version: 4.20.3
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+
   packages/mcp-server:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -934,7 +962,7 @@ importers:
         version: 4.1.0
       drizzle-orm:
         specifier: ^0.43.1
-        version: 0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)
+        version: 0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)(postgres@3.4.8)
       nanoid:
         specifier: ^5.1.5
         version: 5.1.5
@@ -8884,6 +8912,10 @@ packages:
   postgres-range@1.1.4:
     resolution: {integrity: sha512-i/hbxIE9803Alj/6ytL7UHQxRvZkI9O4Sy+J3HGc4F4oo/2eQAjTSNJ0bfxyse3bH0nuVesCk+3IRLaMtG3H6w==}
 
+  postgres@3.4.8:
+    resolution: {integrity: sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==}
+    engines: {node: '>=12'}
+
   posthog-node@5.1.1:
     resolution: {integrity: sha512-6VISkNdxO24ehXiDA4dugyCSIV7lpGVaEu5kn/dlAj+SJ1lgcDru9PQ8p/+GSXsXVxohd1t7kHL2JKc9NoGb0w==}
     engines: {node: '>=20'}
@@ -11267,7 +11299,7 @@ snapshots:
       '@babel/traverse': 7.27.4
       '@babel/types': 7.28.2
       convert-source-map: 2.0.0
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       gensync: 1.0.0-beta.2
       json5: 2.2.3
       semver: 6.3.1
@@ -11378,7 +11410,7 @@ snapshots:
       '@babel/parser': 7.27.5
       '@babel/template': 7.27.2
       '@babel/types': 7.28.2
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       globals: 11.12.0
     transitivePeerDependencies:
       - supports-color
@@ -11391,7 +11423,7 @@ snapshots:
       '@babel/parser': 7.28.3
       '@babel/template': 7.27.2
       '@babel/types': 7.28.2
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -12480,7 +12512,7 @@ snapshots:
       classnames: 2.5.1
       commander: 12.1.0
       cross-spawn: 7.0.6
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       get-port: 7.1.0
       globby: 14.1.0
       history: 5.3.0
@@ -16446,10 +16478,6 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
-  debug@4.4.1:
-    dependencies:
-      ms: 2.1.3
-
   debug@4.4.1(supports-color@5.5.0):
     dependencies:
       ms: 2.1.3
@@ -16595,7 +16623,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0):
+  drizzle-orm@0.43.1(@cloudflare/workers-types@4.20240718.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.2)(bun-types@1.2.15)(kysely@0.28.7)(pg@8.16.0)(postgres@3.4.8):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20240718.0
       '@opentelemetry/api': 1.9.0
@@ -16603,6 +16631,7 @@ snapshots:
       bun-types: 1.2.15
       kysely: 0.28.7
       pg: 8.16.0
+      postgres: 3.4.8
 
   dunder-proto@1.0.1:
     dependencies:
@@ -18155,7 +18184,7 @@ snapshots:
       content-disposition: 0.5.4
       content-type: 1.0.5
       cookies: 0.9.1
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       delegates: 1.0.0
       depd: 2.0.0
       destroy: 1.2.0
@@ -19482,7 +19511,7 @@ snapshots:
 
   postcss@8.5.6:
     dependencies:
-      nanoid: 5.1.5
+      nanoid: 5.1.6
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
@@ -19507,6 +19536,9 @@ snapshots:
   postgres-interval@3.0.0: {}
 
   postgres-range@1.1.4: {}
+
+  postgres@3.4.8:
+    optional: true
 
   posthog-node@5.1.1: {}
 
@@ -21152,7 +21184,7 @@ snapshots:
   vite-node@3.1.4(@types/node@24.0.1)(jiti@2.4.2)(lightningcss@1.30.1)(terser@5.40.0)(tsx@4.20.3)(yaml@2.8.0):
     dependencies:
       cac: 6.7.14
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       es-module-lexer: 1.7.0
       pathe: 2.0.3
       vite: 6.3.5(@types/node@24.0.1)(jiti@2.4.2)(lightningcss@1.30.1)(terser@5.40.0)(tsx@4.20.3)(yaml@2.8.0)
@@ -21172,7 +21204,7 @@ snapshots:
 
   vite-tsconfig-paths@5.1.4(typescript@5.8.3)(vite@6.3.5(@types/node@24.0.1)(jiti@2.4.2)(lightningcss@1.30.1)(terser@5.40.0)(tsx@4.20.3)(yaml@2.8.0)):
     dependencies:
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.8.3)
     optionalDependencies:
@@ -21208,7 +21240,7 @@ snapshots:
       '@vitest/spy': 3.1.4
       '@vitest/utils': 3.1.4
       chai: 5.2.0
-      debug: 4.4.1
+      debug: 4.4.1(supports-color@5.5.0)
       expect-type: 1.2.1
       magic-string: 0.30.17
       pathe: 2.0.3

@@ -3789,7 +3789,9 @@ function shouldResetFixAttemptCountOnTransition({
     return true;
   }
   if (previousState === "implementing" && nextState === "review_gate") {
-    return true;
+    // This is a fix-cycle return, not genuine phase advancement.
+    // Resetting here prevents maxFixAttempts from ever triggering.
+    return false;
   }
   if (previousState === "review_gate" && nextState === "ci_gate") {
     return true;

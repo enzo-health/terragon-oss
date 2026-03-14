@@ -2197,7 +2197,7 @@ describe("sdlc loop model", () => {
     expect(reloaded?.state).toBe("implementing");
   });
 
-  it("resets fix attempts when phase advances", async () => {
+  it("preserves fix attempt count on implementing→review_gate (fix cycle return)", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -2232,7 +2232,47 @@ describe("sdlc loop model", () => {
       where: eq(schema.sdlcLoop.id, loop!.id),
     });
     expect(reloaded?.state).toBe("review_gate");
-    expect(reloaded?.fixAttemptCount).toBe(0);
+    expect(reloaded?.fixAttemptCount).toBe(3);
+  });
+
+  it("blocks loop when fix attempts exceed maxFixAttempts", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    const loop = await enrollSdlcLoopForThread({
+      db,
+      userId: user.id,
+      repoFullName: "owner/repo",
+      threadId,
+    });
+
+    // Simulate: review_gate with fixAttemptCount at maxFixAttempts
+    await db
+      .update(schema.sdlcLoop)
+      .set({
+        state: "review_gate",
+        fixAttemptCount: 6,
+        maxFixAttempts: 6,
+      })
+      .where(eq(schema.sdlcLoop.id, loop!.id));
+
+    // Next review_blocked should trigger exhausted_retryable_failure → blocked
+    const outcome = await transitionSdlcLoopState({
+      db,
+      loopId: loop!.id,
+      transitionEvent: "review_blocked",
+    });
+    expect(outcome).toBe("updated");
+
+    const reloaded = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, loop!.id),
+    });
+    expect(reloaded?.state).toBe("blocked");
   });
 
   it("resets fix attempts when UI smoke passes without a PR link", async () => {

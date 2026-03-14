@@ -491,10 +491,13 @@ export async function startAgentMessage({
           let sessionId = threadChat.sessionId;
           let codexPreviousResponseId =
             threadChat.codexPreviousResponseId ?? null;
-          // If sandbox was just resumed (booting), previous session is dead.
-          // Force fresh session to avoid "Resource not found" from stale ACP refs.
+          // If sandbox was just resumed (booting), ACP sessions are dead.
+          // Codex app-server sessions are server-side persistent and survive
+          // hibernation; daemon falls back to thread/start if session is gone.
           if (threadChat.status === "booting") {
-            sessionId = null;
+            if (threadChat.agent !== "codex") {
+              sessionId = null;
+            }
             codexPreviousResponseId = null;
           }
           const { summary, didCompact } = await tryAutoCompactThread({

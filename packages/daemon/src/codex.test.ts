@@ -80,6 +80,34 @@ describe("parseCodexLine", () => {
     });
   });
 
+  test("should skip agent_message on item.started", () => {
+    const line =
+      '{"type":"item.started","item":{"id":"item_1","type":"agent_message","text":"Hey!"}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    expect(results).toHaveLength(0);
+  });
+
+  test("should skip agent_message on item.updated", () => {
+    const line =
+      '{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Hey! What can I"}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    expect(results).toHaveLength(0);
+  });
+
+  test("should skip reasoning on item.started", () => {
+    const line =
+      '{"type":"item.started","item":{"id":"item_0","type":"reasoning","text":"Thinking..."}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    expect(results).toHaveLength(0);
+  });
+
+  test("should skip reasoning on item.updated", () => {
+    const line =
+      '{"type":"item.updated","item":{"id":"item_0","type":"reasoning","text":"Thinking about the problem..."}}';
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    expect(results).toHaveLength(0);
+  });
+
   test("should parse command_execution with in_progress status", () => {
     const line =
       '{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"bash -lc ls","aggregated_output":"","status":"in_progress"}}';

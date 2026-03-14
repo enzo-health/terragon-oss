@@ -1290,7 +1290,7 @@ export async function POST(request: Request) {
                     : ("acp" as const);
               const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
 
-              // Create run context
+              // Phase 1: Create run context (must exist before credentials).
               await upsertAgentRunContext({
                 db,
                 runId: newRunId,
@@ -1309,58 +1309,51 @@ export async function POST(request: Request) {
                 daemonTokenKeyId: null,
               });
 
-              // Create API key
-              const { token } = await createDaemonRunCredentials({
-                userId,
-                threadId,
-                threadChatId,
-                sandboxId,
-                runId: newRunId,
-                tokenNonce: newTokenNonce,
-                agent,
-                transportMode,
-                protocolVersion,
-              });
-
-              await updateThreadChat({
-                db,
-                userId,
-                threadId,
-                threadChatId,
-                updates: {
-                  errorMessage: null,
-                  errorMessageInfo: null,
-                },
-              });
-
-              // Persist realtime and durable dispatch intents before payload handoff.
-              const dispatchIntent = await createDispatchIntent({
-                loopId,
-                threadId,
-                threadChatId,
-                targetPhase: "implementing",
-                selectedAgent: agent as DeliveryLoopSelectedAgent,
-                executionClass: "implementation_runtime",
-                dispatchMechanism: "self_dispatch",
-                runId: newRunId,
-                maxRetries: 3,
-              });
+              // Phase 2: These are all independent — batch them.
+              // - createDaemonRunCredentials: creates API key + updates run context status
+              // - updateThreadChat: clears error state
+              // - createDispatchIntent: Redis realtime intent
+              // - getUserCredentials: reads user credential records
+              const [{ token }, , dispatchIntent, userCredentials] =
+                await Promise.all([
+                  createDaemonRunCredentials({
+                    userId,
+                    threadId,
+                    threadChatId,
+                    sandboxId,
+                    runId: newRunId,
+                    tokenNonce: newTokenNonce,
+                    agent,
+                    transportMode,
+                    protocolVersion,
+                  }),
+                  updateThreadChat({
+                    db,
+                    userId,
+                    threadId,
+                    threadChatId,
+                    updates: {
+                      errorMessage: null,
+                      errorMessageInfo: null,
+                    },
+                  }),
+                  createDispatchIntent({
+                    loopId,
+                    threadId,
+                    threadChatId,
+                    targetPhase: "implementing",
+                    selectedAgent: agent as DeliveryLoopSelectedAgent,
+                    executionClass: "implementation_runtime",
+                    dispatchMechanism: "self_dispatch",
+                    runId: newRunId,
+                    maxRetries: 3,
+                  }),
+                  getUserCredentials({ userId }),
+                ]);
               preparedDispatch = {
                 intentId: dispatchIntent.id,
                 runId: newRunId,
               };
-              await createDurableDispatchIntent(db, {
-                loopId,
-                threadId,
-                threadChatId,
-                runId: newRunId,
-                targetPhase: "implementing",
-                selectedAgent: agent as DeliveryLoopSelectedAgent,
-                executionClass: "implementation_runtime",
-                dispatchMechanism: "self_dispatch",
-              });
-
-              const userCredentials = await getUserCredentials({ userId });
               const useCredits = shouldUseCredits(agent, userCredentials);
 
               const preparedSelfDispatchPayload = {
@@ -1380,19 +1373,34 @@ export async function POST(request: Request) {
                 threadChatId,
                 useCredits: useCredits || undefined,
               };
-              await storeSelfDispatchReplay({
-                threadChatId,
-                sourceEventId: eventId,
-                sourceSeq: seq,
-                sourceRunId,
-                dispatchIntentId: dispatchIntent.id,
-                destinationRunId: newRunId,
-                payload: preparedSelfDispatchPayload,
-              });
-              await updateDispatchIntent(dispatchIntent.id, threadChatId, {
-                status: "dispatched",
-              });
-              await markDispatchIntentDispatched(db, newRunId);
+
+              // Phase 3: Persist durable intent, replay record, and mark
+              // dispatched — all independent of each other.
+              await Promise.all([
+                createDurableDispatchIntent(db, {
+                  loopId,
+                  threadId,
+                  threadChatId,
+                  runId: newRunId,
+                  targetPhase: "implementing",
+                  selectedAgent: agent as DeliveryLoopSelectedAgent,
+                  executionClass: "implementation_runtime",
+                  dispatchMechanism: "self_dispatch",
+                }),
+                storeSelfDispatchReplay({
+                  threadChatId,
+                  sourceEventId: eventId,
+                  sourceSeq: seq,
+                  sourceRunId,
+                  dispatchIntentId: dispatchIntent.id,
+                  destinationRunId: newRunId,
+                  payload: preparedSelfDispatchPayload,
+                }),
+                updateDispatchIntent(dispatchIntent.id, threadChatId, {
+                  status: "dispatched",
+                }),
+                markDispatchIntentDispatched(db, newRunId),
+              ]);
 
               // Transition status only once the dispatch payload is fully prepared.
               const { didUpdateStatus } = await updateThreadChatWithTransition({
@@ -1883,26 +1891,36 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
-  if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
-    await commitEnrolledLoopProcessingEvent({
-      loopId: enrolledLoop.id,
-      envelope: envelopeV2,
-    });
-  }
-
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
   const resolvedStatus = daemonRunStatusFromMessages;
 
-  if (runContext) {
-    await updateAgentRunContext({
-      db,
-      userId,
-      runId: runContext.runId,
-      updates: {
-        resolvedSessionId,
-        status: resolvedStatus,
-      },
-    });
+  // Processing event commit and run context update are independent — batch them.
+  {
+    const postHandleOps: Array<Promise<unknown>> = [];
+    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+      postHandleOps.push(
+        commitEnrolledLoopProcessingEvent({
+          loopId: enrolledLoop.id,
+          envelope: envelopeV2,
+        }),
+      );
+    }
+    if (runContext) {
+      postHandleOps.push(
+        updateAgentRunContext({
+          db,
+          userId,
+          runId: runContext.runId,
+          updates: {
+            resolvedSessionId,
+            status: resolvedStatus,
+          },
+        }),
+      );
+    }
+    if (postHandleOps.length > 0) {
+      await Promise.all(postHandleOps);
+    }
   }
 
   if (resolvedStatus === "failed") {
@@ -1970,70 +1988,75 @@ export async function POST(request: Request) {
     }
   }
 
-  if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {
-    const commitResult = await commitEnrolledLoopDaemonEventClaim({
-      signalInboxId: claimedSignalInboxId,
-      loopId: enrolledLoop.id,
-      eventId: envelopeV2.eventId,
-    });
-    if (!commitResult.committed) {
-      console.error(
-        "[sdlc-loop] failed to mark daemon signal claim as committed",
-        {
-          userId,
-          threadId,
-          loopId: enrolledLoop.id,
-          signalInboxId: claimedSignalInboxId,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          commitState: commitResult.state,
-        },
-      );
-      return new Response("failed to commit daemon event claim", {
-        status: 500,
-      });
-    }
-    if (commitResult.state === "already_committed_or_processed") {
-      console.warn(
-        "[sdlc-loop] daemon signal claim already committed or processed before commit step",
-        {
-          userId,
-          threadId,
-          loopId: enrolledLoop.id,
-          signalInboxId: claimedSignalInboxId,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-        },
-      );
-    }
-  }
+  // Signal commit and dispatch status persistence are independent — run
+  // them concurrently. The dispatch status is best-effort (errors are
+  // warnings), while the signal commit is required before the inbox tick.
+  if (enrolledLoop && envelopeV2) {
+    const dispatchStatusPromise =
+      daemonRunStatusFromMessages !== "processing"
+        ? persistDaemonTerminalDispatchStatus({
+            loopId: enrolledLoop.id,
+            threadChatId,
+            runId: envelopeV2.runId,
+            daemonRunStatus: daemonRunStatusFromMessages,
+            daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+            daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+          }).catch((error) => {
+            console.warn(
+              "[delivery-loop] failed to persist terminal dispatch intent status",
+              {
+                loopId: enrolledLoop.id,
+                threadId,
+                threadChatId,
+                runId: envelopeV2.runId,
+                daemonRunStatus: daemonRunStatusFromMessages,
+                error,
+              },
+            );
+          })
+        : null;
 
-  if (
-    enrolledLoop &&
-    envelopeV2 &&
-    daemonRunStatusFromMessages !== "processing"
-  ) {
-    try {
-      await persistDaemonTerminalDispatchStatus({
-        loopId: enrolledLoop.id,
-        threadChatId,
-        runId: envelopeV2.runId,
-        daemonRunStatus: daemonRunStatusFromMessages,
-        daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-        daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-      });
-    } catch (error) {
-      console.warn(
-        "[delivery-loop] failed to persist terminal dispatch intent status",
-        {
+    if (claimedSignalInboxId) {
+      const [commitResult] = await Promise.all([
+        commitEnrolledLoopDaemonEventClaim({
+          signalInboxId: claimedSignalInboxId,
           loopId: enrolledLoop.id,
-          threadId,
-          threadChatId,
-          runId: envelopeV2.runId,
-          daemonRunStatus: daemonRunStatusFromMessages,
-          error,
-        },
-      );
+          eventId: envelopeV2.eventId,
+        }),
+        dispatchStatusPromise,
+      ]);
+      if (!commitResult.committed) {
+        console.error(
+          "[sdlc-loop] failed to mark daemon signal claim as committed",
+          {
+            userId,
+            threadId,
+            loopId: enrolledLoop.id,
+            signalInboxId: claimedSignalInboxId,
+            eventId: envelopeV2.eventId,
+            seq: envelopeV2.seq,
+            commitState: commitResult.state,
+          },
+        );
+        return new Response("failed to commit daemon event claim", {
+          status: 500,
+        });
+      }
+      if (commitResult.state === "already_committed_or_processed") {
+        console.warn(
+          "[sdlc-loop] daemon signal claim already committed or processed before commit step",
+          {
+            userId,
+            threadId,
+            loopId: enrolledLoop.id,
+            signalInboxId: claimedSignalInboxId,
+            eventId: envelopeV2.eventId,
+            seq: envelopeV2.seq,
+          },
+        );
+      }
+    } else if (dispatchStatusPromise) {
+      await dispatchStatusPromise;
     }
   }
 

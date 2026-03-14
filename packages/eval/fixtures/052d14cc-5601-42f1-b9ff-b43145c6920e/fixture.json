@@ -1,0 +1,2755 @@
+{
+  "version": 1,
+  "capturedAt": "2026-03-14T04:40:37.242Z",
+  "sourceThreadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+  "sourceThreadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+  "thread": {
+    "name": "Work on this ticket\n\nOverview\n\nGeneralize the existing task-specific comment infrastructure in lib/core/communications/channels/comments/ to support any entity type. This is the foundational work that enables all subsequent migrations and new comment capabilities.\n\nWhat Changes\n\n1. Schema: Extend ConversationReferenceType enum\n\nFile: apps/dashboard/database/prisma/schema/communication.prisma\n\nAdd ELIGIBILITY_CHECK, CONTACT, PAYER to the ConversationReferenceType enum\n\nAdd manualVerificationNotes String? inline field to EligibilityCheck model\n\nRun pnpm --filter database migrate dev && pnpm --filter database generate\n\n2. Generalize comment helpers\n\nDirectory: apps/dashboard/lib/core/communications/channels/comments/\n\nRefactor task-specific helpers to accept referenceType + referenceId:\n\nCurrent (Task-Specific)\n\nGeneralized\n\nbuildTaskConversationReference(taskId)\n\nbuildConversationReference(referenceType, referenceId)\n\nextractTaskReference(conversation)\n\nextractEntityReference(conversation) returning { referenceType, referenceId }\n\nfetchCommentResources(orgId, taskId, ...)\n\nfetchCommentResources(orgId, referenceType, referenceId, ...)\n\nvalidateCommentAuthorization(orgId, authorId, ...)\n\nvalidateCommentAuthorization(orgId, referenceType, referenceId, authorId, ...)\n\ncreateCommentCommunication({ taskId, ... })\n\ncreateCommentCommunication({ referenceType, referenceId, ... })\n\nlistCommentCommunications({ taskId, ... })\n\nlistCommentCommunications({ referenceType, referenceId, ... })\n\n3. Entity validation registry\n\nFile: apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts\n\nCreate a Record<ConversationReferenceType, EntityValidator> mapping\n\nEach validator checks the referenced entity exists and user has access\n\nStart with TASK, PATIENT, ELIGIBILITY_CHECK; add CONTACT and PAYER stubs for Phases 3-4\n\n4. Update inbox filter\n\nFile: list-conversations.ts in communications bounded context\n\nReplace { referenceType: { not: ConversationReferenceType.TASK } } with { referenceType: { not: { in: ENTITY_COMMENT_REFERENCE_TYPES } } }\n\nDefine ENTITY_COMMENT_REFERENCE_TYPES constant\n\nAcceptance Criteria\n\nConversationReferenceType enum includes ELIGIBILITY_CHECK, CONTACT, PAYER\n\nEligibilityCheck model has manualVerificationNotes field\n\nComment helpers accept any ConversationReferenceType (not just TASK)\n\nEntity validator registry is in place with validators for TASK, PATIENT, ELIGIBILITY_CHECK\n\nInbox filter excludes all entity-comment reference types\n\nExisting task comments continue to work (no regression)\n\nAll checks pass: pnpm lint:fix && pnpm format:fix && pnpm typecheck:native && pnpm lint:custom\n\nReferences\n\nADR: Unified Notes System (Phase 1 section)\n\nCurrent task comment implementation: lib/core/communications/channels/comments/\n\nCommunication schema: apps/dashboard/database/prisma/schema/communication.prisma\n\n",
+    "githubRepoFullName": "enzo-health/bonaparte",
+    "repoBaseBranchName": "main",
+    "branchName": "terragon/emnw5z-m231pf",
+    "sandboxProvider": "daytona",
+    "sandboxSize": "large"
+  },
+  "threadChat": {
+    "agent": "codex",
+    "agentVersion": 0,
+    "permissionMode": "allowAll",
+    "userMessages": [
+      {
+        "role": "user",
+        "content": "",
+        "timestamp": "2026-03-08T00:35:25.692Z"
+      },
+      {
+        "role": "user",
+        "content": "SDLC phase advanced to implementing. Execute the approved plan now.\n\nImplement the planned changes directly in code.\n\nAfter implementing, signal phaseComplete: true again to trigger mandatory review, UI smoke, and PR steps.",
+        "timestamp": "2026-03-08T00:37:33.902Z"
+      },
+      {
+        "role": "user",
+        "content": "SDLC review phase blocked. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.\n\nDeep review blocking findings:\n1. [HIGH] Entity validators do not enforce per-user access despite accepting authorId (authorization)\nIn apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts, validators for TASK/PATIENT/ELIGIBILITY_CHECK only check existence within organization and never use `authorId`. This violates the stated requirement that validation must confirm the user has access to the referenced entity. As implemented, any org member can create comments on any entity in-org if they know the ID.\n2. [HIGH] Generalized comment mutations discard entity identity by returning empty taskId (api-contract)\nThe mutation contract remains task-specific (`CommentMutationResult.taskId: string`), and create/update/delete now return `\"\"` for non-TASK references (apps/dashboard/lib/core/communications/channels/comments/create-comment.ts, update-comment.ts, delete-comment.ts, types.ts). This loses the referenced entity context and makes downstream cache invalidation/event handling ambiguous or incorrect for non-task comments.\n\nCarmack review blocking findings:\n1. [HIGH] Entity validator registry does not enforce per-entity access control (authorization)\nIn `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts`, validators only check entity existence by `organizationId` and never use `authorId` (despite the contract requiring access checks). This violates the stated requirement that each validator confirms both existence and user access, and creates an authorization gap for non-task entity comments.\n2. [HIGH] Task delete path now accepts all entity-comment reference types (boundary-regression)\n`fetchCommentForDeletion` was widened from `referenceType: TASK` to `referenceType in ENTITY_COMMENT_REFERENCE_TYPES` (`apps/dashboard/lib/core/communications/channels/comments/helpers/fetch-for-deletion.ts`). `delete-task-comment` still represents a task-scoped API, so this change lets task-scoped deletion logic operate on non-task comments by ID, breaking bounded-context intent and potentially bypassing future entity-specific policy gates.\n3. [MEDIUM] Non-task comment mutations return empty-string `taskId` sentinel (api-contract)\n`createCommentCommunication`, `updateCommentCommunication`, and `deleteCommentCommunication` now return `taskId: \"\"` for non-task references (`create-comment.ts`, `update-comment.ts`, `delete-comment.ts`). Empty-string sentinel values are non-type-safe and can cause incorrect cache invalidation/routing behavior in downstream consumers that treat `taskId` as a real identifier.",
+        "timestamp": "2026-03-08T00:47:32.324Z"
+      }
+    ]
+  },
+  "loop": {
+    "planApprovalPolicy": "auto",
+    "maxFixAttempts": 6
+  },
+  "plan": {
+    "planText": "",
+    "tasks": [
+      {
+        "stableTaskId": "schema-conversation-reference-expansion",
+        "title": "Extend communication schema for new reference types",
+        "acceptanceCriteria": [
+          "ConversationReferenceType enum includes TASK, PATIENT, ELIGIBILITY_CHECK, CONTACT, and PAYER as needed for entity comments",
+          "EligibilityCheck model contains nullable `manualVerificationNotes` field",
+          "Prisma migration and client generation complete without schema errors"
+        ],
+        "status": "done"
+      },
+      {
+        "stableTaskId": "entity-validator-registry",
+        "title": "Introduce entity validator registry for comment authorization and existence checks",
+        "acceptanceCriteria": [
+          "Registry is keyed by `ConversationReferenceType` (no magic strings)",
+          "TASK, PATIENT, and ELIGIBILITY_CHECK validators verify entity existence and caller access",
+          "CONTACT and PAYER entries exist as explicit stubs with safe failure behavior or TODO contract for future phases",
+          "Comment authorization path uses registry dispatch based on `referenceType`"
+        ],
+        "status": "done"
+      },
+      {
+        "stableTaskId": "regression-and-quality-validation",
+        "title": "Validate backward compatibility and run quality gates",
+        "acceptanceCriteria": [
+          "Existing TASK comment create/list/read flows still pass (backward compatibility)",
+          "Tests cover at least one non-TASK entity reference path (ELIGIBILITY_CHECK preferred)",
+          "`pnpm lint:fix && pnpm format:fix && pnpm typecheck:native && pnpm lint:custom` pass",
+          "No HIPAA-sensitive logging introduced"
+        ],
+        "status": "done"
+      },
+      {
+        "stableTaskId": "comments-api-generalization",
+        "title": "Refactor comments channel helpers to entity-agnostic signatures",
+        "acceptanceCriteria": [
+          "`buildTaskConversationReference` replaced by `buildConversationReference(referenceType, referenceId)`",
+          "`extractTaskReference` replaced by `extractEntityReference(conversation)` returning `{ referenceType, referenceId }`",
+          "`fetchCommentResources`, `validateCommentAuthorization`, `createCommentCommunication`, and `listCommentCommunications` accept `referenceType` + `referenceId`",
+          "No `as unknown as` introduced; type-bridge and enum rules remain compliant"
+        ],
+        "status": "done"
+      },
+      {
+        "stableTaskId": "inbox-filter-entity-comments",
+        "title": "Update inbox conversation filtering for generalized entity comments",
+        "acceptanceCriteria": [
+          "Filter no longer hardcodes `ConversationReferenceType.TASK` exclusion",
+          "`ENTITY_COMMENT_REFERENCE_TYPES` constant is defined and used in inbox query logic",
+          "Inbox excludes all entity-comment threads represented in the constant"
+        ],
+        "status": "done"
+      }
+    ]
+  },
+  "signals": [
+    {
+      "index": 0,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a6a5ddc152aa3d044d6dc24a16d5ce140ae9141ed2ae2b9dda57054e30f7bcfa",
+      "payload": {
+        "seq": 0,
+        "runId": "02cbbb86-a430-43ce-8318-52735e195a0a",
+        "eventId": "a6a5ddc152aa3d044d6dc24a16d5ce140ae9141ed2ae2b9dda57054e30f7bcfa",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:05.945Z",
+      "delayFromPreviousMs": 0
+    },
+    {
+      "index": 1,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "f9db1c85096bd2f4bed5e5fb87557735998871c993baaa2904b64f119dee02c1",
+      "payload": {
+        "seq": 1,
+        "runId": "02cbbb86-a430-43ce-8318-52735e195a0a",
+        "eventId": "f9db1c85096bd2f4bed5e5fb87557735998871c993baaa2904b64f119dee02c1",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:09.108Z",
+      "delayFromPreviousMs": 3163
+    },
+    {
+      "index": 2,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "25d5173f23508424357a19b8d2ec33189b639d973d8ac05ca7abb9962af51cc2",
+      "payload": {
+        "seq": 2,
+        "runId": "02cbbb86-a430-43ce-8318-52735e195a0a",
+        "eventId": "25d5173f23508424357a19b8d2ec33189b639d973d8ac05ca7abb9962af51cc2",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:13.544Z",
+      "delayFromPreviousMs": 4436
+    },
+    {
+      "index": 3,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "4f5d14521d0fde3220483ec26cbd399978b0a4a66a3070f73fc473258b2de235",
+      "payload": {
+        "seq": 3,
+        "runId": "02cbbb86-a430-43ce-8318-52735e195a0a",
+        "eventId": "4f5d14521d0fde3220483ec26cbd399978b0a4a66a3070f73fc473258b2de235",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "completed",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:25.566Z",
+      "delayFromPreviousMs": 12022
+    },
+    {
+      "index": 4,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "5a99316cf2e21e1f42c17058fde1cd68447a44fed848a01f63377e7843b152a7",
+      "payload": {
+        "seq": 0,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "5a99316cf2e21e1f42c17058fde1cd68447a44fed848a01f63377e7843b152a7",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:43.608Z",
+      "delayFromPreviousMs": 18042
+    },
+    {
+      "index": 5,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "9ac68855fb56b16366721e6583a822fc1437f90f26ee4fb68f894fdef574311c",
+      "payload": {
+        "seq": 1,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "9ac68855fb56b16366721e6583a822fc1437f90f26ee4fb68f894fdef574311c",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:46.419Z",
+      "delayFromPreviousMs": 2811
+    },
+    {
+      "index": 6,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "239c2c6e12098db2848eb45767e31f7549b8b397538a6a3d053632fff9ad23a9",
+      "payload": {
+        "seq": 2,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "239c2c6e12098db2848eb45767e31f7549b8b397538a6a3d053632fff9ad23a9",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:50.409Z",
+      "delayFromPreviousMs": 3990
+    },
+    {
+      "index": 7,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "4ef8fc56e3bdebc6ffeaa51a9a1754b773535074d1cb3f68c82bfb7ad71cbf6c",
+      "payload": {
+        "seq": 3,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "4ef8fc56e3bdebc6ffeaa51a9a1754b773535074d1cb3f68c82bfb7ad71cbf6c",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:52.803Z",
+      "delayFromPreviousMs": 2394
+    },
+    {
+      "index": 8,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "eb0b74bb64222b77a3c3a60337444d11f0f2dce85b715699e44dd5105db59285",
+      "payload": {
+        "seq": 4,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "eb0b74bb64222b77a3c3a60337444d11f0f2dce85b715699e44dd5105db59285",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:37:54.203Z",
+      "delayFromPreviousMs": 1400
+    },
+    {
+      "index": 9,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "7b12ce2264192a9c64e8e6fe514eb687b55aa0f7c48f2841e9dfa1f6456513ef",
+      "payload": {
+        "seq": 5,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "7b12ce2264192a9c64e8e6fe514eb687b55aa0f7c48f2841e9dfa1f6456513ef",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:02.458Z",
+      "delayFromPreviousMs": 8255
+    },
+    {
+      "index": 10,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "dd0c7cd917f12f7f49b72e931fa93f2f2d699de526d5102af87681129c4a0993",
+      "payload": {
+        "seq": 6,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "dd0c7cd917f12f7f49b72e931fa93f2f2d699de526d5102af87681129c4a0993",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:03.853Z",
+      "delayFromPreviousMs": 1395
+    },
+    {
+      "index": 11,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "30baf6e1ecac45e5271b4c3808662b47f551278e28655ecd236a28b91f53f353",
+      "payload": {
+        "seq": 7,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "30baf6e1ecac45e5271b4c3808662b47f551278e28655ecd236a28b91f53f353",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:11.004Z",
+      "delayFromPreviousMs": 7151
+    },
+    {
+      "index": 12,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "af59c5142afac3058b0666b1334847227423beaeed60f9b02b46fdeced1b12bd",
+      "payload": {
+        "seq": 8,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "af59c5142afac3058b0666b1334847227423beaeed60f9b02b46fdeced1b12bd",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:13.689Z",
+      "delayFromPreviousMs": 2685
+    },
+    {
+      "index": 13,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c3e5a6d6c7183362f94e0adbf71b2d1e9eab4efb7333bcd5ee35d8d51e3e3aee",
+      "payload": {
+        "seq": 9,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c3e5a6d6c7183362f94e0adbf71b2d1e9eab4efb7333bcd5ee35d8d51e3e3aee",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:15.064Z",
+      "delayFromPreviousMs": 1375
+    },
+    {
+      "index": 14,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "d3350c91e4a6322c94ef8f14fbd214f4ebc54b227439a5f18ce25d26208f9b32",
+      "payload": {
+        "seq": 10,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "d3350c91e4a6322c94ef8f14fbd214f4ebc54b227439a5f18ce25d26208f9b32",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:18.673Z",
+      "delayFromPreviousMs": 3609
+    },
+    {
+      "index": 15,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "8aa3f8e52ae0f7e37f91606648ad4b5decdd9e9405518d6b42b385e1fb399743",
+      "payload": {
+        "seq": 11,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "8aa3f8e52ae0f7e37f91606648ad4b5decdd9e9405518d6b42b385e1fb399743",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:20.066Z",
+      "delayFromPreviousMs": 1393
+    },
+    {
+      "index": 16,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "3db7bcc0cc3e1a1727f7c0b0fb5fc57985ef69c95ddf4e3440fcc06e0294dbdb",
+      "payload": {
+        "seq": 12,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "3db7bcc0cc3e1a1727f7c0b0fb5fc57985ef69c95ddf4e3440fcc06e0294dbdb",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:30.105Z",
+      "delayFromPreviousMs": 10039
+    },
+    {
+      "index": 17,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "f06dc09bdeaa5ecf2126495d1201668a5d823e195ac1a63fb1d0581b737666d2",
+      "payload": {
+        "seq": 13,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "f06dc09bdeaa5ecf2126495d1201668a5d823e195ac1a63fb1d0581b737666d2",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:31.562Z",
+      "delayFromPreviousMs": 1457
+    },
+    {
+      "index": 18,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "1a4b3dc860df97668b2b109bafaed159871b708a9099ce4dc929aa1c272e41c9",
+      "payload": {
+        "seq": 14,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "1a4b3dc860df97668b2b109bafaed159871b708a9099ce4dc929aa1c272e41c9",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:33.961Z",
+      "delayFromPreviousMs": 2399
+    },
+    {
+      "index": 19,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "5d807f2fe39f867de9cc7b162492f16d8caac55f1cca3f881563bbf1f92cf3e4",
+      "payload": {
+        "seq": 15,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "5d807f2fe39f867de9cc7b162492f16d8caac55f1cca3f881563bbf1f92cf3e4",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:38.393Z",
+      "delayFromPreviousMs": 4432
+    },
+    {
+      "index": 20,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "ba0c050b71fd4c31e5c33a5ae84c3f2f94ea75808aa31b159c1c1916edfe0e19",
+      "payload": {
+        "seq": 16,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "ba0c050b71fd4c31e5c33a5ae84c3f2f94ea75808aa31b159c1c1916edfe0e19",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:40.688Z",
+      "delayFromPreviousMs": 2295
+    },
+    {
+      "index": 21,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "bb0037bba488bbe2e56f44993b08850dcbfbc4734ba5eeb296442b3665d4ee86",
+      "payload": {
+        "seq": 17,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "bb0037bba488bbe2e56f44993b08850dcbfbc4734ba5eeb296442b3665d4ee86",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:43.779Z",
+      "delayFromPreviousMs": 3091
+    },
+    {
+      "index": 22,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "480f6999604e6038dca6149f5c7bd57286727a051c35e48ddb3eede112d1ab37",
+      "payload": {
+        "seq": 18,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "480f6999604e6038dca6149f5c7bd57286727a051c35e48ddb3eede112d1ab37",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:38:56.980Z",
+      "delayFromPreviousMs": 13201
+    },
+    {
+      "index": 23,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "5a42b993e7e8e0f1a343e828be499c9c12d36549d7d03e7b0bf6f8c4000cb2fd",
+      "payload": {
+        "seq": 19,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "5a42b993e7e8e0f1a343e828be499c9c12d36549d7d03e7b0bf6f8c4000cb2fd",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:05.783Z",
+      "delayFromPreviousMs": 8803
+    },
+    {
+      "index": 24,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c929f9e9cdecc69dfec23521275804e00c10dafe5cc6ef1524b4cd1eb07e117d",
+      "payload": {
+        "seq": 20,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c929f9e9cdecc69dfec23521275804e00c10dafe5cc6ef1524b4cd1eb07e117d",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:08.960Z",
+      "delayFromPreviousMs": 3177
+    },
+    {
+      "index": 25,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "3b48cb3e9995697da63584b9dc741ce4e467884e34821549819a40d8021bfa72",
+      "payload": {
+        "seq": 21,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "3b48cb3e9995697da63584b9dc741ce4e467884e34821549819a40d8021bfa72",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:10.540Z",
+      "delayFromPreviousMs": 1580
+    },
+    {
+      "index": 26,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "d0ad40adba424f40bc82f89ce57e6c6c60bda566146369ba1abb1f64172c4015",
+      "payload": {
+        "seq": 22,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "d0ad40adba424f40bc82f89ce57e6c6c60bda566146369ba1abb1f64172c4015",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:13.162Z",
+      "delayFromPreviousMs": 2622
+    },
+    {
+      "index": 27,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "521ac6f590fc2954f5aa9b816b101b14dee190a62b97f655a1e661fddc9ec442",
+      "payload": {
+        "seq": 23,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "521ac6f590fc2954f5aa9b816b101b14dee190a62b97f655a1e661fddc9ec442",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:18.291Z",
+      "delayFromPreviousMs": 5129
+    },
+    {
+      "index": 28,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "03123fcd50c57673fe2e6399e4fc73cf954d55b8067ceb5924a69df90bbe9b93",
+      "payload": {
+        "seq": 24,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "03123fcd50c57673fe2e6399e4fc73cf954d55b8067ceb5924a69df90bbe9b93",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:30.977Z",
+      "delayFromPreviousMs": 12686
+    },
+    {
+      "index": 29,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a6d841bb90a41b46c11f13c4a8cc6edf14a9fe0be843bf486f182cd54e45d408",
+      "payload": {
+        "seq": 25,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "a6d841bb90a41b46c11f13c4a8cc6edf14a9fe0be843bf486f182cd54e45d408",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:34.397Z",
+      "delayFromPreviousMs": 3420
+    },
+    {
+      "index": 30,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "19bf72eb8f4da1b8d6de57a4db9c3a6af73d84bec0dc31be7f0705bca8ce43cc",
+      "payload": {
+        "seq": 26,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "19bf72eb8f4da1b8d6de57a4db9c3a6af73d84bec0dc31be7f0705bca8ce43cc",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:37.387Z",
+      "delayFromPreviousMs": 2990
+    },
+    {
+      "index": 31,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "f175a05cbb94431f958758fce77a7af90ea5c1cb2e4c9aa57606b046511c0d70",
+      "payload": {
+        "seq": 27,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "f175a05cbb94431f958758fce77a7af90ea5c1cb2e4c9aa57606b046511c0d70",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:40.954Z",
+      "delayFromPreviousMs": 3567
+    },
+    {
+      "index": 32,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "ebd5626e6a7ef9ab51b447383460422cdd255bdc172b870a50f72ec1ae7a1d1c",
+      "payload": {
+        "seq": 28,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "ebd5626e6a7ef9ab51b447383460422cdd255bdc172b870a50f72ec1ae7a1d1c",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:44.186Z",
+      "delayFromPreviousMs": 3232
+    },
+    {
+      "index": 33,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a65ca969ca1eace279cd30d7742524999728faf9538e6ccf7f18889a3e9e5e61",
+      "payload": {
+        "seq": 29,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "a65ca969ca1eace279cd30d7742524999728faf9538e6ccf7f18889a3e9e5e61",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:51.190Z",
+      "delayFromPreviousMs": 7004
+    },
+    {
+      "index": 34,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "da4109ca79f551a0949deef72adeaaadb213217b236273f51cb0fbb0557ed95b",
+      "payload": {
+        "seq": 30,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "da4109ca79f551a0949deef72adeaaadb213217b236273f51cb0fbb0557ed95b",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:39:56.730Z",
+      "delayFromPreviousMs": 5540
+    },
+    {
+      "index": 35,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "3a670adbb36d993981fa66d33f64ca4ac7091a72d7b39246f3b7f1e78f10bf68",
+      "payload": {
+        "seq": 31,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "3a670adbb36d993981fa66d33f64ca4ac7091a72d7b39246f3b7f1e78f10bf68",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:07.186Z",
+      "delayFromPreviousMs": 10456
+    },
+    {
+      "index": 36,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "1e3c508a8fed24dfd1a1bc551ffb8c29fb7c56dfe870e225ec54345239db6cf5",
+      "payload": {
+        "seq": 32,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "1e3c508a8fed24dfd1a1bc551ffb8c29fb7c56dfe870e225ec54345239db6cf5",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:10.440Z",
+      "delayFromPreviousMs": 3254
+    },
+    {
+      "index": 37,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "444570593417ebca92d5127cbced08b067a354988694258388a636af424691bc",
+      "payload": {
+        "seq": 33,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "444570593417ebca92d5127cbced08b067a354988694258388a636af424691bc",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:21.031Z",
+      "delayFromPreviousMs": 10591
+    },
+    {
+      "index": 38,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "e847a395b34bb9c4f8263e0a0e408b95ea74c3dd5806652181636fa47d9093dd",
+      "payload": {
+        "seq": 34,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "e847a395b34bb9c4f8263e0a0e408b95ea74c3dd5806652181636fa47d9093dd",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:23.136Z",
+      "delayFromPreviousMs": 2105
+    },
+    {
+      "index": 39,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "6d49716b15dca38efd69a3a9a20cf48a6c8c39fa0bd5cf8bbae8224b903af6d8",
+      "payload": {
+        "seq": 35,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "6d49716b15dca38efd69a3a9a20cf48a6c8c39fa0bd5cf8bbae8224b903af6d8",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:27.097Z",
+      "delayFromPreviousMs": 3961
+    },
+    {
+      "index": 40,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "006f4ed9355b92d9a1ab5351929541cc554d2bf4a3eb1ddab0160f3335e31131",
+      "payload": {
+        "seq": 36,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "006f4ed9355b92d9a1ab5351929541cc554d2bf4a3eb1ddab0160f3335e31131",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:30.582Z",
+      "delayFromPreviousMs": 3485
+    },
+    {
+      "index": 41,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "cdfa8b33f8d920d4693960f0215478a0b5d56d8542119b2894c43bbf1efed751",
+      "payload": {
+        "seq": 37,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "cdfa8b33f8d920d4693960f0215478a0b5d56d8542119b2894c43bbf1efed751",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:52.061Z",
+      "delayFromPreviousMs": 21479
+    },
+    {
+      "index": 42,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "47b118663a40b09a96a9d17f3c31e95e16ec850a03c86f772a6c136d106ba667",
+      "payload": {
+        "seq": 38,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "47b118663a40b09a96a9d17f3c31e95e16ec850a03c86f772a6c136d106ba667",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:40:54.178Z",
+      "delayFromPreviousMs": 2117
+    },
+    {
+      "index": 43,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "7afc9f0192210e0d07820894e7c8d1b786e81000e69f898a494a1682d14bcc62",
+      "payload": {
+        "seq": 39,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "7afc9f0192210e0d07820894e7c8d1b786e81000e69f898a494a1682d14bcc62",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:07.009Z",
+      "delayFromPreviousMs": 12831
+    },
+    {
+      "index": 44,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "36a63da334c02511c11abecf46ea6079daa7dbb389308f606de3a0474f2a28af",
+      "payload": {
+        "seq": 40,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "36a63da334c02511c11abecf46ea6079daa7dbb389308f606de3a0474f2a28af",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:09.743Z",
+      "delayFromPreviousMs": 2734
+    },
+    {
+      "index": 45,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "0d9036d40feeab59cd1b847d2eb46bede57b7e9e1b9709e2fd1cc8455d90f4b9",
+      "payload": {
+        "seq": 41,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "0d9036d40feeab59cd1b847d2eb46bede57b7e9e1b9709e2fd1cc8455d90f4b9",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:11.044Z",
+      "delayFromPreviousMs": 1301
+    },
+    {
+      "index": 46,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c4b58c353f69ccda1d3e0fbfb19781136ab89dd9c67dbf839b8a999571eab795",
+      "payload": {
+        "seq": 42,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c4b58c353f69ccda1d3e0fbfb19781136ab89dd9c67dbf839b8a999571eab795",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:13.956Z",
+      "delayFromPreviousMs": 2912
+    },
+    {
+      "index": 47,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a39da340cc4cdb7a009bbf81d2723aea826c74bea1f8a5f01aedae1efec00685",
+      "payload": {
+        "seq": 43,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "a39da340cc4cdb7a009bbf81d2723aea826c74bea1f8a5f01aedae1efec00685",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:18.524Z",
+      "delayFromPreviousMs": 4568
+    },
+    {
+      "index": 48,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "d5aee50ee43938216896fa6f4dc227919f9fff8da8c0e10c128dc86277ae52c3",
+      "payload": {
+        "seq": 44,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "d5aee50ee43938216896fa6f4dc227919f9fff8da8c0e10c128dc86277ae52c3",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:20.240Z",
+      "delayFromPreviousMs": 1716
+    },
+    {
+      "index": 49,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "2f5d15242e6929262a15ac7cad6f4168b0ea6fe2102e1d8a39c1917c4f23a7ef",
+      "payload": {
+        "seq": 45,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "2f5d15242e6929262a15ac7cad6f4168b0ea6fe2102e1d8a39c1917c4f23a7ef",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:21.791Z",
+      "delayFromPreviousMs": 1551
+    },
+    {
+      "index": 50,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "4f2f3d5d082f1126d0b0deeb430f32361c28620110b6a3371bb957106ceb5f19",
+      "payload": {
+        "seq": 46,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "4f2f3d5d082f1126d0b0deeb430f32361c28620110b6a3371bb957106ceb5f19",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:24.511Z",
+      "delayFromPreviousMs": 2720
+    },
+    {
+      "index": 51,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "fbef6d3492d0b091a94f8c6ecc0da8a5f0adbcf5b731a772d2770e14836c2390",
+      "payload": {
+        "seq": 47,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "fbef6d3492d0b091a94f8c6ecc0da8a5f0adbcf5b731a772d2770e14836c2390",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:26.061Z",
+      "delayFromPreviousMs": 1550
+    },
+    {
+      "index": 52,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "2ad7880a40b588cd31375301e554023617cec0a981c1d1e801e24dbedcc226a7",
+      "payload": {
+        "seq": 48,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "2ad7880a40b588cd31375301e554023617cec0a981c1d1e801e24dbedcc226a7",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:28.363Z",
+      "delayFromPreviousMs": 2302
+    },
+    {
+      "index": 53,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "0a9968645d74d65c435af7c882e83344aeee4a8ef9d36118647809c737bc09ae",
+      "payload": {
+        "seq": 49,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "0a9968645d74d65c435af7c882e83344aeee4a8ef9d36118647809c737bc09ae",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:32.214Z",
+      "delayFromPreviousMs": 3851
+    },
+    {
+      "index": 54,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "18557853c137732cf29818deb7eee7774e34dfd3d1a3d907113899fff35fc2d7",
+      "payload": {
+        "seq": 50,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "18557853c137732cf29818deb7eee7774e34dfd3d1a3d907113899fff35fc2d7",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:35.762Z",
+      "delayFromPreviousMs": 3548
+    },
+    {
+      "index": 55,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a965513ee3e45af49ffd5847c0dac73025ba2ec7e34ac2f4f10c942dec592d8d",
+      "payload": {
+        "seq": 51,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "a965513ee3e45af49ffd5847c0dac73025ba2ec7e34ac2f4f10c942dec592d8d",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:39.434Z",
+      "delayFromPreviousMs": 3672
+    },
+    {
+      "index": 56,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "541a97004de4dd54e74f258889d76deade851cfe79ebdbf09a10677c42d40c49",
+      "payload": {
+        "seq": 52,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "541a97004de4dd54e74f258889d76deade851cfe79ebdbf09a10677c42d40c49",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:46.095Z",
+      "delayFromPreviousMs": 6661
+    },
+    {
+      "index": 57,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "b83e401951e5858cda46d68eae8b50274c6a786130dedd0fb930a76ff5166f15",
+      "payload": {
+        "seq": 53,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "b83e401951e5858cda46d68eae8b50274c6a786130dedd0fb930a76ff5166f15",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:49.547Z",
+      "delayFromPreviousMs": 3452
+    },
+    {
+      "index": 58,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "084552ade9a0e55dc44fd146b250a898e1aa939a5f8ffd527728c01f1dc604f6",
+      "payload": {
+        "seq": 54,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "084552ade9a0e55dc44fd146b250a898e1aa939a5f8ffd527728c01f1dc604f6",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:54.155Z",
+      "delayFromPreviousMs": 4608
+    },
+    {
+      "index": 59,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "94618fa0ac1d7dba0d461a230eb9c82b935413dae80ed18f7eb9226d3ddf6061",
+      "payload": {
+        "seq": 55,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "94618fa0ac1d7dba0d461a230eb9c82b935413dae80ed18f7eb9226d3ddf6061",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:41:57.387Z",
+      "delayFromPreviousMs": 3232
+    },
+    {
+      "index": 60,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "27ef1b8741742da98e573f89296eb26459f6224c42dd73b6167abaedc9154f80",
+      "payload": {
+        "seq": 56,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "27ef1b8741742da98e573f89296eb26459f6224c42dd73b6167abaedc9154f80",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:00.169Z",
+      "delayFromPreviousMs": 2782
+    },
+    {
+      "index": 61,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "dc82d50e8044f4eadd97a562ba30ec4ae43bcc829375bab6389527dba3ad4e28",
+      "payload": {
+        "seq": 57,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "dc82d50e8044f4eadd97a562ba30ec4ae43bcc829375bab6389527dba3ad4e28",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:04.148Z",
+      "delayFromPreviousMs": 3979
+    },
+    {
+      "index": 62,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "613b2895df28b9247ccc8e26f1f235fd9b6ad9cbdafde767283be2c9a2b30f09",
+      "payload": {
+        "seq": 58,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "613b2895df28b9247ccc8e26f1f235fd9b6ad9cbdafde767283be2c9a2b30f09",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:07.185Z",
+      "delayFromPreviousMs": 3037
+    },
+    {
+      "index": 63,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "8df613dba3e640fc16535f09097d6a744fcef68cf7d0c14cd95772d00116b025",
+      "payload": {
+        "seq": 59,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "8df613dba3e640fc16535f09097d6a744fcef68cf7d0c14cd95772d00116b025",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:08.515Z",
+      "delayFromPreviousMs": 1330
+    },
+    {
+      "index": 64,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "3ccc0aa18d987c95194a7605979eaf9670bcbb2cd43630d0a47cabf9a85a4667",
+      "payload": {
+        "seq": 60,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "3ccc0aa18d987c95194a7605979eaf9670bcbb2cd43630d0a47cabf9a85a4667",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:09.810Z",
+      "delayFromPreviousMs": 1295
+    },
+    {
+      "index": 65,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "03bc2aa862a2b4314b38cfd33a2a9baaeb6117f1a2d15f155a24be670052b85c",
+      "payload": {
+        "seq": 61,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "03bc2aa862a2b4314b38cfd33a2a9baaeb6117f1a2d15f155a24be670052b85c",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:14.237Z",
+      "delayFromPreviousMs": 4427
+    },
+    {
+      "index": 66,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "65f5e5c23a201a8b0fb213d4902840a4ac1b535a7af248314fe2ab05eb5b8b50",
+      "payload": {
+        "seq": 62,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "65f5e5c23a201a8b0fb213d4902840a4ac1b535a7af248314fe2ab05eb5b8b50",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:18.191Z",
+      "delayFromPreviousMs": 3954
+    },
+    {
+      "index": 67,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "cf2e1899f844d90ed99096f9d051ff578fe6d701e323891ba15398e06d56eba7",
+      "payload": {
+        "seq": 63,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "cf2e1899f844d90ed99096f9d051ff578fe6d701e323891ba15398e06d56eba7",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:19.536Z",
+      "delayFromPreviousMs": 1345
+    },
+    {
+      "index": 68,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "6009cd0204b427a3f38c4f4165fe7774127e44b0695715b9e258ff0b4fe8d4d2",
+      "payload": {
+        "seq": 64,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "6009cd0204b427a3f38c4f4165fe7774127e44b0695715b9e258ff0b4fe8d4d2",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:21.416Z",
+      "delayFromPreviousMs": 1880
+    },
+    {
+      "index": 69,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "64111b65037a72e50d6fa9a3df454a5dc3f929771b588eda04fb23ac31688ce8",
+      "payload": {
+        "seq": 65,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "64111b65037a72e50d6fa9a3df454a5dc3f929771b588eda04fb23ac31688ce8",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:23.985Z",
+      "delayFromPreviousMs": 2569
+    },
+    {
+      "index": 70,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "52f0ea60589d522c1a5c19e86d5cde88aca0d058d04418216121b240d454122d",
+      "payload": {
+        "seq": 66,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "52f0ea60589d522c1a5c19e86d5cde88aca0d058d04418216121b240d454122d",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:26.985Z",
+      "delayFromPreviousMs": 3000
+    },
+    {
+      "index": 71,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "b4510052ed434b0e929bc3872fd6cfeda81d66da7d4e4340145d2fd4cd8963c1",
+      "payload": {
+        "seq": 67,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "b4510052ed434b0e929bc3872fd6cfeda81d66da7d4e4340145d2fd4cd8963c1",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:29.275Z",
+      "delayFromPreviousMs": 2290
+    },
+    {
+      "index": 72,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "3e783249a843c016039321833e092c7cc4767e00c3ebfefbd638f1e0bd22e5f8",
+      "payload": {
+        "seq": 68,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "3e783249a843c016039321833e092c7cc4767e00c3ebfefbd638f1e0bd22e5f8",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:30.633Z",
+      "delayFromPreviousMs": 1358
+    },
+    {
+      "index": 73,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c497955e3125361a2c0e896f23a6ec8402c8282b6134860e37c57526f402fd7f",
+      "payload": {
+        "seq": 69,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c497955e3125361a2c0e896f23a6ec8402c8282b6134860e37c57526f402fd7f",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:32.146Z",
+      "delayFromPreviousMs": 1513
+    },
+    {
+      "index": 74,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "f6ccf63564fac9ea9976a6d6711d3c8ba06c95ebe1d351bdde6e3ec2dcb9cc40",
+      "payload": {
+        "seq": 70,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "f6ccf63564fac9ea9976a6d6711d3c8ba06c95ebe1d351bdde6e3ec2dcb9cc40",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:35.243Z",
+      "delayFromPreviousMs": 3097
+    },
+    {
+      "index": 75,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "8138759e7675f100ddbc4826af2fa931e50b20b5aa5342bca396e886fbe56354",
+      "payload": {
+        "seq": 71,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "8138759e7675f100ddbc4826af2fa931e50b20b5aa5342bca396e886fbe56354",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:36.702Z",
+      "delayFromPreviousMs": 1459
+    },
+    {
+      "index": 76,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a78c17e114c588f7e6a825fad569235d3020e0dbf680cdbf8b65fcca1a092008",
+      "payload": {
+        "seq": 72,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "a78c17e114c588f7e6a825fad569235d3020e0dbf680cdbf8b65fcca1a092008",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:42.670Z",
+      "delayFromPreviousMs": 5968
+    },
+    {
+      "index": 77,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "bedddd80853de6b20e874a0a4e82f38c188073cf37b41ab340780a46ddfa60aa",
+      "payload": {
+        "seq": 73,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "bedddd80853de6b20e874a0a4e82f38c188073cf37b41ab340780a46ddfa60aa",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:44.708Z",
+      "delayFromPreviousMs": 2038
+    },
+    {
+      "index": 78,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "d5a562c1f5dff865380849538da53474790aaa86c3b09618c82edf760eb1f4a4",
+      "payload": {
+        "seq": 74,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "d5a562c1f5dff865380849538da53474790aaa86c3b09618c82edf760eb1f4a4",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:47.797Z",
+      "delayFromPreviousMs": 3089
+    },
+    {
+      "index": 79,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c809b6dc9e083d3b20f9699b8325592894b5443a51d8daa8de4da6b1998b711c",
+      "payload": {
+        "seq": 75,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c809b6dc9e083d3b20f9699b8325592894b5443a51d8daa8de4da6b1998b711c",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:50.549Z",
+      "delayFromPreviousMs": 2752
+    },
+    {
+      "index": 80,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "bf050e4ca2e1f2cf3256200b9ac7ef4c3dcc629c7315e981160e50ae6a88e6b6",
+      "payload": {
+        "seq": 76,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "bf050e4ca2e1f2cf3256200b9ac7ef4c3dcc629c7315e981160e50ae6a88e6b6",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:51.842Z",
+      "delayFromPreviousMs": 1293
+    },
+    {
+      "index": 81,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "9c4a705965881f72b598ca24739742222849993e745886cddedffd1d226237ae",
+      "payload": {
+        "seq": 77,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "9c4a705965881f72b598ca24739742222849993e745886cddedffd1d226237ae",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:53.139Z",
+      "delayFromPreviousMs": 1297
+    },
+    {
+      "index": 82,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "d8b7346bb1645277c467098ea8959c368388f5c18324f1db5abc7578755a097f",
+      "payload": {
+        "seq": 78,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "d8b7346bb1645277c467098ea8959c368388f5c18324f1db5abc7578755a097f",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:54.490Z",
+      "delayFromPreviousMs": 1351
+    },
+    {
+      "index": 83,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "fde3848bbeabd8295df7c4b45cbc3a9c6729af14d321ce346a0cfd04b6104b80",
+      "payload": {
+        "seq": 79,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "fde3848bbeabd8295df7c4b45cbc3a9c6729af14d321ce346a0cfd04b6104b80",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:56.097Z",
+      "delayFromPreviousMs": 1607
+    },
+    {
+      "index": 84,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "07e624bf9b54b9401d08aaafaf5b38a039ebb470ae252f1f71e03f932895fff8",
+      "payload": {
+        "seq": 80,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "07e624bf9b54b9401d08aaafaf5b38a039ebb470ae252f1f71e03f932895fff8",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:42:57.779Z",
+      "delayFromPreviousMs": 1682
+    },
+    {
+      "index": 85,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "5489316c6ce6a7ab7752582ac7fdaa3abfce53bbe22e5ad68bbe33bd7ba05a7d",
+      "payload": {
+        "seq": 81,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "5489316c6ce6a7ab7752582ac7fdaa3abfce53bbe22e5ad68bbe33bd7ba05a7d",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:03.204Z",
+      "delayFromPreviousMs": 5425
+    },
+    {
+      "index": 86,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "6d7b7d0fcabb81178cd90432caff25bebead3716a11321626869d531683d4ad1",
+      "payload": {
+        "seq": 82,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "6d7b7d0fcabb81178cd90432caff25bebead3716a11321626869d531683d4ad1",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:06.459Z",
+      "delayFromPreviousMs": 3255
+    },
+    {
+      "index": 87,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "ba456c3e04ffa871d63340342b61a345371f008b2391fc2e8b92eed9d03b74c3",
+      "payload": {
+        "seq": 83,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "ba456c3e04ffa871d63340342b61a345371f008b2391fc2e8b92eed9d03b74c3",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:08.247Z",
+      "delayFromPreviousMs": 1788
+    },
+    {
+      "index": 88,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "49436b60dbb31f3308c55e74ceb3e0d316ef54fb2b6fb3f610fb9523281b60b1",
+      "payload": {
+        "seq": 84,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "49436b60dbb31f3308c55e74ceb3e0d316ef54fb2b6fb3f610fb9523281b60b1",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:17.144Z",
+      "delayFromPreviousMs": 8897
+    },
+    {
+      "index": 89,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "e956c46e8dfad026e9f1721900f158a2e19199617d9fa98403635e303d30d1df",
+      "payload": {
+        "seq": 85,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "e956c46e8dfad026e9f1721900f158a2e19199617d9fa98403635e303d30d1df",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:18.575Z",
+      "delayFromPreviousMs": 1431
+    },
+    {
+      "index": 90,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "e6080500477aca1648ff3ae548428c099a6a576794170fa1b25e3d8afcaf825a",
+      "payload": {
+        "seq": 86,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "e6080500477aca1648ff3ae548428c099a6a576794170fa1b25e3d8afcaf825a",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:23.357Z",
+      "delayFromPreviousMs": 4782
+    },
+    {
+      "index": 91,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "2c17597c9b8f6314d692e8402f9702f4f6c8af63ff03912edb55657d68e10270",
+      "payload": {
+        "seq": 87,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "2c17597c9b8f6314d692e8402f9702f4f6c8af63ff03912edb55657d68e10270",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:33.325Z",
+      "delayFromPreviousMs": 9968
+    },
+    {
+      "index": 92,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "6eacacd5e83ad859234f0047ae10f848032a33c0fc91df5e24544240711992ec",
+      "payload": {
+        "seq": 88,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "6eacacd5e83ad859234f0047ae10f848032a33c0fc91df5e24544240711992ec",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:37.265Z",
+      "delayFromPreviousMs": 3940
+    },
+    {
+      "index": 93,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "95aea7629ad8f99c22cd189ae4ef99514b16379f26a56e929234cebe634407f9",
+      "payload": {
+        "seq": 89,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "95aea7629ad8f99c22cd189ae4ef99514b16379f26a56e929234cebe634407f9",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:39.055Z",
+      "delayFromPreviousMs": 1790
+    },
+    {
+      "index": 94,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "8201c267bc9038625842c5e6ec7895979acc7dfd603baa3b8ac28cfbb0a580c2",
+      "payload": {
+        "seq": 90,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "8201c267bc9038625842c5e6ec7895979acc7dfd603baa3b8ac28cfbb0a580c2",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:41.921Z",
+      "delayFromPreviousMs": 2866
+    },
+    {
+      "index": 95,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "60e3d928689d26c567eb8356aab83e3b3570555a51697fc4e9dfb4ac4e16bfcc",
+      "payload": {
+        "seq": 91,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "60e3d928689d26c567eb8356aab83e3b3570555a51697fc4e9dfb4ac4e16bfcc",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:45.305Z",
+      "delayFromPreviousMs": 3384
+    },
+    {
+      "index": 96,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "b1a4488ad3b4da8deeabc90ba79fa15710d45bca512725d60e0d2293be3a8747",
+      "payload": {
+        "seq": 92,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "b1a4488ad3b4da8deeabc90ba79fa15710d45bca512725d60e0d2293be3a8747",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:48.703Z",
+      "delayFromPreviousMs": 3398
+    },
+    {
+      "index": 97,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "b5082565633ee8a46d5c27ebe3738b4ce5136854e940dbcbd5cc115aec284fc4",
+      "payload": {
+        "seq": 93,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "b5082565633ee8a46d5c27ebe3738b4ce5136854e940dbcbd5cc115aec284fc4",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:50.054Z",
+      "delayFromPreviousMs": 1351
+    },
+    {
+      "index": 98,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "1b2be8659dba8eab2c114e3edc240a2599f804946266e1d5a4e09faadeec1827",
+      "payload": {
+        "seq": 94,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "1b2be8659dba8eab2c114e3edc240a2599f804946266e1d5a4e09faadeec1827",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:51.599Z",
+      "delayFromPreviousMs": 1545
+    },
+    {
+      "index": 99,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "e9ec92c56b140e1010668fff44cf59be5057264b6371c907f98b42a92af103d3",
+      "payload": {
+        "seq": 95,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "e9ec92c56b140e1010668fff44cf59be5057264b6371c907f98b42a92af103d3",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:54.551Z",
+      "delayFromPreviousMs": 2952
+    },
+    {
+      "index": 100,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "19294510eac9d87a119404b696a17e0a5c1e3f1ea83e8710f521a9cb9a46524d",
+      "payload": {
+        "seq": 96,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "19294510eac9d87a119404b696a17e0a5c1e3f1ea83e8710f521a9cb9a46524d",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:55.829Z",
+      "delayFromPreviousMs": 1278
+    },
+    {
+      "index": 101,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c52179b0f80359df19fa52574e26799bdd2432adf9044313e7614dc67d43231a",
+      "payload": {
+        "seq": 97,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c52179b0f80359df19fa52574e26799bdd2432adf9044313e7614dc67d43231a",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:57.731Z",
+      "delayFromPreviousMs": 1902
+    },
+    {
+      "index": 102,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "ca08ff330344a9982e107d63210a6020ccbda49830ea246deb1b17d95918d392",
+      "payload": {
+        "seq": 98,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "ca08ff330344a9982e107d63210a6020ccbda49830ea246deb1b17d95918d392",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:43:59.353Z",
+      "delayFromPreviousMs": 1622
+    },
+    {
+      "index": 103,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "a55d31fa99335d721e043cffa2c6ac7f3203dde5c0ecb99498426c14a1028c98",
+      "payload": {
+        "seq": 99,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "a55d31fa99335d721e043cffa2c6ac7f3203dde5c0ecb99498426c14a1028c98",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:03.546Z",
+      "delayFromPreviousMs": 4193
+    },
+    {
+      "index": 104,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "05d717b99e204c8f63da201441930b2e805cc58212e935b6ba5fabe795336313",
+      "payload": {
+        "seq": 100,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "05d717b99e204c8f63da201441930b2e805cc58212e935b6ba5fabe795336313",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:05.270Z",
+      "delayFromPreviousMs": 1724
+    },
+    {
+      "index": 105,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "7ecb37b1e56aacaa73fbc0607d677aab4eb2762b8011f31e5c9693eef82144b6",
+      "payload": {
+        "seq": 101,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "7ecb37b1e56aacaa73fbc0607d677aab4eb2762b8011f31e5c9693eef82144b6",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:08.204Z",
+      "delayFromPreviousMs": 2934
+    },
+    {
+      "index": 106,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "df2c20a839856ea14391628d20b56d39aa74ee582204742cb91c89503483e2af",
+      "payload": {
+        "seq": 102,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "df2c20a839856ea14391628d20b56d39aa74ee582204742cb91c89503483e2af",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:11.339Z",
+      "delayFromPreviousMs": 3135
+    },
+    {
+      "index": 107,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "78b6fb0b238c0b88ed82ff5494d1983689200acd977e4edce8875a1977565e5f",
+      "payload": {
+        "seq": 103,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "78b6fb0b238c0b88ed82ff5494d1983689200acd977e4edce8875a1977565e5f",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:12.727Z",
+      "delayFromPreviousMs": 1388
+    },
+    {
+      "index": 108,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "fdf02988cc9b5880c2df6645a2e584319b2a0e6caff4df0b6c0e516651ed5447",
+      "payload": {
+        "seq": 104,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "fdf02988cc9b5880c2df6645a2e584319b2a0e6caff4df0b6c0e516651ed5447",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:14.023Z",
+      "delayFromPreviousMs": 1296
+    },
+    {
+      "index": 109,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "8714d5aa6c1f0b1e95fc8d236a30f24fb54ec9f0b6a7af81f52d2670473006ca",
+      "payload": {
+        "seq": 105,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "8714d5aa6c1f0b1e95fc8d236a30f24fb54ec9f0b6a7af81f52d2670473006ca",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:15.422Z",
+      "delayFromPreviousMs": 1399
+    },
+    {
+      "index": 110,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "50a7821c61d13c4deccbd686d4ceab82384040ae8642045eceafbf1fa11f1982",
+      "payload": {
+        "seq": 106,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "50a7821c61d13c4deccbd686d4ceab82384040ae8642045eceafbf1fa11f1982",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:17.784Z",
+      "delayFromPreviousMs": 2362
+    },
+    {
+      "index": 111,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "6c3c7b92831560d4552bbc1e5f6391bc985524d96229c245dfda58532e939b9a",
+      "payload": {
+        "seq": 107,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "6c3c7b92831560d4552bbc1e5f6391bc985524d96229c245dfda58532e939b9a",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:21.177Z",
+      "delayFromPreviousMs": 3393
+    },
+    {
+      "index": 112,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "0a1a0c4901ec54710c38c3f2f57f254e1355301f0787877642e6ee3bbb115a60",
+      "payload": {
+        "seq": 108,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "0a1a0c4901ec54710c38c3f2f57f254e1355301f0787877642e6ee3bbb115a60",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:39.211Z",
+      "delayFromPreviousMs": 18034
+    },
+    {
+      "index": 113,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c485027a4ad746ce207b90520f2edc3064a1d902a698dbe7c798761b87d9cf98",
+      "payload": {
+        "seq": 109,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c485027a4ad746ce207b90520f2edc3064a1d902a698dbe7c798761b87d9cf98",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:43.136Z",
+      "delayFromPreviousMs": 3925
+    },
+    {
+      "index": 114,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "853bd1b7234342c0d0f25ff2226a217d37f495f498613e2b8b34b76dbacadf10",
+      "payload": {
+        "seq": 110,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "853bd1b7234342c0d0f25ff2226a217d37f495f498613e2b8b34b76dbacadf10",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:44.561Z",
+      "delayFromPreviousMs": 1425
+    },
+    {
+      "index": 115,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "586a448fe0bcce7d498e79b55e955b04af23a10a767f222d972dbb6d70e356de",
+      "payload": {
+        "seq": 111,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "586a448fe0bcce7d498e79b55e955b04af23a10a767f222d972dbb6d70e356de",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:46.053Z",
+      "delayFromPreviousMs": 1492
+    },
+    {
+      "index": 116,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "c8109852dd418f3fc5b46b947e640d266305d26bc9f2c7ecf6b4ca191ee89dce",
+      "payload": {
+        "seq": 112,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "c8109852dd418f3fc5b46b947e640d266305d26bc9f2c7ecf6b4ca191ee89dce",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:48.116Z",
+      "delayFromPreviousMs": 2063
+    },
+    {
+      "index": 117,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "52b36884f5e2fcf85d6977ee6ad7e6277c474a51e9785fb3bdd56606322921ff",
+      "payload": {
+        "seq": 113,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "52b36884f5e2fcf85d6977ee6ad7e6277c474a51e9785fb3bdd56606322921ff",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:50.575Z",
+      "delayFromPreviousMs": 2459
+    },
+    {
+      "index": 118,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "9bc4d4abe155382fd77af6f2e98d24ab9fd4fdbb28da1829f4f094f007e9dca4",
+      "payload": {
+        "seq": 114,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "9bc4d4abe155382fd77af6f2e98d24ab9fd4fdbb28da1829f4f094f007e9dca4",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:52.574Z",
+      "delayFromPreviousMs": 1999
+    },
+    {
+      "index": 119,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "31f42fcca860ecd850fdadabfb43ef23b3538ca2fb255d60972642d16139918a",
+      "payload": {
+        "seq": 115,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "31f42fcca860ecd850fdadabfb43ef23b3538ca2fb255d60972642d16139918a",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:56.905Z",
+      "delayFromPreviousMs": 4331
+    },
+    {
+      "index": 120,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "72b0f0710cc9f6abeddfce5057f482812abe00503c532de80367b6914ef05ec5",
+      "payload": {
+        "seq": 116,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "72b0f0710cc9f6abeddfce5057f482812abe00503c532de80367b6914ef05ec5",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:44:58.397Z",
+      "delayFromPreviousMs": 1492
+    },
+    {
+      "index": 121,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "43b9035f851e56913a84793445e72931e35eeea0cfe7b1e1e099874f04c8433d",
+      "payload": {
+        "seq": 117,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "43b9035f851e56913a84793445e72931e35eeea0cfe7b1e1e099874f04c8433d",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:00.732Z",
+      "delayFromPreviousMs": 2335
+    },
+    {
+      "index": 122,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "23b5b0571812671fda9fb549278b029f0f37a41db066b247a954d38fb36138d7",
+      "payload": {
+        "seq": 118,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "23b5b0571812671fda9fb549278b029f0f37a41db066b247a954d38fb36138d7",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:02.644Z",
+      "delayFromPreviousMs": 1912
+    },
+    {
+      "index": 123,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "701a7381eab3b4c2f830dd6adf05716a4aee1c8922672cb056d4a2c51d9c7c35",
+      "payload": {
+        "seq": 119,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "701a7381eab3b4c2f830dd6adf05716a4aee1c8922672cb056d4a2c51d9c7c35",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:06.667Z",
+      "delayFromPreviousMs": 4023
+    },
+    {
+      "index": 124,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "82bd7c30efed60c01812ed7b53e8f2e9d237d7c75afb7fb72ac5a753697fadf2",
+      "payload": {
+        "seq": 120,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "82bd7c30efed60c01812ed7b53e8f2e9d237d7c75afb7fb72ac5a753697fadf2",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:10.255Z",
+      "delayFromPreviousMs": 3588
+    },
+    {
+      "index": 125,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "f8bcd3da92329888f2b67cce4f0bef25bddb5cfc49486114ef43c5c13b62ac34",
+      "payload": {
+        "seq": 121,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "f8bcd3da92329888f2b67cce4f0bef25bddb5cfc49486114ef43c5c13b62ac34",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:12.169Z",
+      "delayFromPreviousMs": 1914
+    },
+    {
+      "index": 126,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "e9df53e29254a53195a416d3beb031f23765f48b124c09c4db6daf0f64de221b",
+      "payload": {
+        "seq": 122,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "e9df53e29254a53195a416d3beb031f23765f48b124c09c4db6daf0f64de221b",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:14.808Z",
+      "delayFromPreviousMs": 2639
+    },
+    {
+      "index": 127,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "d122e59dbb35206d48dc824a0c109d157119d7789866e27883cf44c8c4f71a84",
+      "payload": {
+        "seq": 123,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "d122e59dbb35206d48dc824a0c109d157119d7789866e27883cf44c8c4f71a84",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:18.785Z",
+      "delayFromPreviousMs": 3977
+    },
+    {
+      "index": 128,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "612eedcf9cb70aa5ee75b535226ce2a5ef3722b58fc9edb557ac558df5052808",
+      "payload": {
+        "seq": 124,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "612eedcf9cb70aa5ee75b535226ce2a5ef3722b58fc9edb557ac558df5052808",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "processing",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:26.256Z",
+      "delayFromPreviousMs": 7471
+    },
+    {
+      "index": 129,
+      "causeType": "daemon_terminal",
+      "canonicalCauseId": "cd1a130873f5c49e1111c54ba624695e66c597b5f60a81613daae3e5745b4974",
+      "payload": {
+        "seq": 125,
+        "runId": "b24acebe-405b-4c3e-8b78-78782500a9b3",
+        "eventId": "cd1a130873f5c49e1111c54ba624695e66c597b5f60a81613daae3e5745b4974",
+        "threadId": "052d14cc-5601-42f1-b9ff-b43145c6920e",
+        "eventType": "daemon_terminal",
+        "threadChatId": "6146adad-b6ae-456f-8b37-c8796fffea1a",
+        "payloadVersion": 2,
+        "daemonRunStatus": "completed",
+        "daemonErrorMessage": null,
+        "daemonErrorCategory": "unknown"
+      },
+      "receivedAt": "2026-03-08T00:45:44.071Z",
+      "delayFromPreviousMs": 17815
+    }
+  ],
+  "gateEvents": [
+    {
+      "index": 0,
+      "gateType": "deep_review",
+      "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+      "loopVersion": 2,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Entity validators do not enforce per-user access despite accepting authorId",
+            "detail": "In apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts, validators for TASK/PATIENT/ELIGIBILITY_CHECK only check existence within organization and never use `authorId`. This violates the stated requirement that validation must confirm the user has access to the referenced entity. As implemented, any org member can create comments on any entity in-org if they know the ID.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Implement access-aware checks in each validator (or delegated policy functions) using `authorId` and entity-specific authorization rules. If access cannot be verified for a reference type, fail closed with an authorization error.",
+            "stableFindingId": "DR-001"
+          },
+          {
+            "title": "Generalized comment mutations discard entity identity by returning empty taskId",
+            "detail": "The mutation contract remains task-specific (`CommentMutationResult.taskId: string`), and create/update/delete now return `\"\"` for non-TASK references (apps/dashboard/lib/core/communications/channels/comments/create-comment.ts, update-comment.ts, delete-comment.ts, types.ts). This loses the referenced entity context and makes downstream cache invalidation/event handling ambiguous or incorrect for non-task comments.",
+            "category": "api-contract",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Replace task-only result fields with a generalized reference payload (e.g. `{ referenceType, referenceId }`) and update callers accordingly. Keep task-specific adapters only at task-boundary procedures if needed.",
+            "stableFindingId": "DR-002"
+          }
+        ]
+      },
+      "createdAt": "2026-03-08T00:46:51.361Z"
+    },
+    {
+      "index": 1,
+      "gateType": "carmack_review",
+      "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+      "loopVersion": 2,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Entity validator registry does not enforce per-entity access control",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts`, validators only check entity existence by `organizationId` and never use `authorId` (despite the contract requiring access checks). This violates the stated requirement that each validator confirms both existence and user access, and creates an authorization gap for non-task entity comments.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Implement entity-specific access checks inside each validator (or delegated policy functions), and use `authorId` to enforce read/comment permissions for TASK, PATIENT, and ELIGIBILITY_CHECK before allowing comment creation/list/update/delete.",
+            "stableFindingId": "CR-001"
+          },
+          {
+            "title": "Task delete path now accepts all entity-comment reference types",
+            "detail": "`fetchCommentForDeletion` was widened from `referenceType: TASK` to `referenceType in ENTITY_COMMENT_REFERENCE_TYPES` (`apps/dashboard/lib/core/communications/channels/comments/helpers/fetch-for-deletion.ts`). `delete-task-comment` still represents a task-scoped API, so this change lets task-scoped deletion logic operate on non-task comments by ID, breaking bounded-context intent and potentially bypassing future entity-specific policy gates.",
+            "category": "boundary-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Keep task-scoped deletion constrained to `ConversationReferenceType.TASK` in the task procedure path, or require explicit `{ referenceType, referenceId }` in delete input and verify conversation binding matches the requested entity context.",
+            "stableFindingId": "CR-002"
+          },
+          {
+            "title": "Non-task comment mutations return empty-string `taskId` sentinel",
+            "detail": "`createCommentCommunication`, `updateCommentCommunication`, and `deleteCommentCommunication` now return `taskId: \"\"` for non-task references (`create-comment.ts`, `update-comment.ts`, `delete-comment.ts`). Empty-string sentinel values are non-type-safe and can cause incorrect cache invalidation/routing behavior in downstream consumers that treat `taskId` as a real identifier.",
+            "category": "api-contract",
+            "severity": "medium",
+            "isBlocking": true,
+            "suggestedFix": "Replace `taskId` sentinel with a discriminated return contract containing `{ referenceType, referenceId }`, or make `taskId` nullable/optional and ensure callers branch explicitly on `referenceType`.",
+            "stableFindingId": "CR-003"
+          }
+        ]
+      },
+      "createdAt": "2026-03-08T00:47:32.284Z"
+    }
+  ],
+  "prodFindings": {
+    "deep": [
+      {
+        "stableFindingId": "DR-001",
+        "title": "Entity validators do not enforce per-user access despite accepting authorId",
+        "severity": "high",
+        "category": "authorization",
+        "isBlocking": true,
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "reviewer": "deep"
+      },
+      {
+        "stableFindingId": "DR-002",
+        "title": "Generalized comment mutations discard entity identity by returning empty taskId",
+        "severity": "high",
+        "category": "api-contract",
+        "isBlocking": true,
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "reviewer": "deep"
+      }
+    ],
+    "carmack": [
+      {
+        "stableFindingId": "CR-001",
+        "title": "Entity validator registry does not enforce per-entity access control",
+        "severity": "high",
+        "category": "authorization",
+        "isBlocking": true,
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "reviewer": "carmack"
+      },
+      {
+        "stableFindingId": "CR-002",
+        "title": "Task delete path now accepts all entity-comment reference types",
+        "severity": "high",
+        "category": "boundary-regression",
+        "isBlocking": true,
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "reviewer": "carmack"
+      },
+      {
+        "stableFindingId": "CR-003",
+        "title": "Non-task comment mutations return empty-string `taskId` sentinel",
+        "severity": "medium",
+        "category": "api-contract",
+        "isBlocking": true,
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "reviewer": "carmack"
+      }
+    ]
+  },
+  "prodArtifacts": [
+    {
+      "phase": "planning",
+      "artifactType": "plan_spec",
+      "status": "accepted",
+      "headSha": null,
+      "createdAt": "2026-03-08T00:37:33.849Z",
+      "payloadSummary": {
+        "tasks": "[Array(5)]",
+        "source": "agent_text",
+        "planText": "Generalize comment infrastructure from TASK-only references to entity-agnostic references by expanding schema enums, introducing a validator registry keyed by ConversationReferenceType, refactoring helper APIs to take {referenceType, referenceId}, and updating inbox filtering to exclude all entity-comment reference types while preserving TASK behavior."
+      }
+    },
+    {
+      "phase": "implementing",
+      "artifactType": "implementation_snapshot",
+      "status": "accepted",
+      "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+      "createdAt": "2026-03-08T00:46:02.939Z",
+      "payloadSummary": {
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "summary": "Implementation snapshot for 9b82e13afe7f",
+        "changedFiles": "[Array(23)]",
+        "completedTaskIds": "[Array(5)]"
+      }
+    },
+    {
+      "phase": "reviewing",
+      "artifactType": "review_bundle",
+      "status": "accepted",
+      "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+      "createdAt": "2026-03-08T00:47:32.303Z",
+      "payloadSummary": {
+        "headSha": "9b82e13afe7f435c775d10787eb5ac9b263383f0",
+        "summary": "Deep/Carmack review gates reported blockers.",
+        "deepRunId": "d579cf2c-435b-4b97-a3da-c3382964bbc7",
+        "gatePassed": false,
+        "carmackRunId": "c2e977cd-93c5-4331-93a8-e8c36d7ac219",
+        "deepBlockingFindings": 2,
+        "carmackBlockingFindings": 3
+      }
+    }
+  ],
+  "baselineMetrics": {
+    "totalSignals": 130,
+    "fixCycles": 1,
+    "maxFixCyclesBeforeBlock": 1,
+    "totalDurationMs": 518126,
+    "convergenceRate": 0.5,
+    "totalFindings": 5,
+    "blockingFindings": 5,
+    "uniqueRootCauses": 5,
+    "signalToNoiseRatio": 1,
+    "crossReviewerDuplicates": 0,
+    "finalState": "implementing",
+    "succeeded": true
+  }
+}

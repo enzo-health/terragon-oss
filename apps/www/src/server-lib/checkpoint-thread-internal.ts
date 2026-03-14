@@ -1267,69 +1267,85 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       `Branch: ${branchName}`,
     ].join("\n");
 
-    let deepResult: Awaited<
-      ReturnType<typeof persistDeepReviewGateResult>
-    > | null = null;
-    let deepError: string | null = null;
-    try {
-      const deepOutput = await runDeepReviewGate({
-        session,
-        repoFullName: refreshedThread.githubRepoFullName,
-        prNumber: refreshedThread.githubPRNumber,
-        headSha,
-        taskContext,
-        gitDiff: diffOutput,
-        model: SDLC_REVIEW_GATE_MODEL,
-      });
-      deepResult = await persistDeepReviewGateResult({
-        db,
-        loopId: reviewLoop.id,
-        headSha,
-        loopVersion: loopVersionForGateRun,
-        model: SDLC_REVIEW_GATE_MODEL,
-        rawOutput: deepOutput,
-        updateLoopState: false,
-      });
-    } catch (error) {
-      deepError = error instanceof Error ? error.message : "Unknown error";
-      console.error("[sdlc-loop] deep review gate execution failed", {
-        loopId: reviewLoop.id,
-        threadId,
-        error,
-      });
-    }
+    // Run deep + carmack reviews in parallel — they are independent AI
+    // evaluations against the same diff and can safely share the sandbox
+    // session (each writes to a unique temp file).
+    const deepGatePromise = (async () => {
+      try {
+        const deepOutput = await runDeepReviewGate({
+          session,
+          repoFullName: refreshedThread.githubRepoFullName,
+          prNumber: refreshedThread.githubPRNumber,
+          headSha,
+          taskContext,
+          gitDiff: diffOutput,
+          model: SDLC_REVIEW_GATE_MODEL,
+        });
+        const result = await persistDeepReviewGateResult({
+          db,
+          loopId: reviewLoop.id,
+          headSha,
+          loopVersion: loopVersionForGateRun,
+          model: SDLC_REVIEW_GATE_MODEL,
+          rawOutput: deepOutput,
+          updateLoopState: false,
+        });
+        return { result, error: null };
+      } catch (error) {
+        console.error("[sdlc-loop] deep review gate execution failed", {
+          loopId: reviewLoop.id,
+          threadId,
+          error,
+        });
+        return {
+          result: null,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+      }
+    })();
 
-    let carmackResult: Awaited<
-      ReturnType<typeof persistCarmackReviewGateResult>
-    > | null = null;
-    let carmackError: string | null = null;
-    try {
-      const carmackOutput = await runCarmackReviewGate({
-        session,
-        repoFullName: refreshedThread.githubRepoFullName,
-        prNumber: refreshedThread.githubPRNumber,
-        headSha,
-        taskContext,
-        gitDiff: diffOutput,
-        model: SDLC_REVIEW_GATE_MODEL,
-      });
-      carmackResult = await persistCarmackReviewGateResult({
-        db,
-        loopId: reviewLoop.id,
-        headSha,
-        loopVersion: loopVersionForGateRun,
-        model: SDLC_REVIEW_GATE_MODEL,
-        rawOutput: carmackOutput,
-        updateLoopState: false,
-      });
-    } catch (error) {
-      carmackError = error instanceof Error ? error.message : "Unknown error";
-      console.error("[sdlc-loop] carmack review gate execution failed", {
-        loopId: reviewLoop.id,
-        threadId,
-        error,
-      });
-    }
+    const carmackGatePromise = (async () => {
+      try {
+        const carmackOutput = await runCarmackReviewGate({
+          session,
+          repoFullName: refreshedThread.githubRepoFullName,
+          prNumber: refreshedThread.githubPRNumber,
+          headSha,
+          taskContext,
+          gitDiff: diffOutput,
+          model: SDLC_REVIEW_GATE_MODEL,
+        });
+        const result = await persistCarmackReviewGateResult({
+          db,
+          loopId: reviewLoop.id,
+          headSha,
+          loopVersion: loopVersionForGateRun,
+          model: SDLC_REVIEW_GATE_MODEL,
+          rawOutput: carmackOutput,
+          updateLoopState: false,
+        });
+        return { result, error: null };
+      } catch (error) {
+        console.error("[sdlc-loop] carmack review gate execution failed", {
+          loopId: reviewLoop.id,
+          threadId,
+          error,
+        });
+        return {
+          result: null,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+      }
+    })();
+
+    const [deepGate, carmackGate] = await Promise.all([
+      deepGatePromise,
+      carmackGatePromise,
+    ]);
+    const deepResult = deepGate.result;
+    const deepError = deepGate.error;
+    const carmackResult = carmackGate.result;
+    const carmackError = carmackGate.error;
 
     const deepBlocked =
       deepError !== null ||
