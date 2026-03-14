@@ -176,6 +176,49 @@ export function parseClaudePromptTooLongMessage(
   return false;
 }
 
+/**
+ * Detect context-window overflow for any agent, including Codex.
+ * Codex errors arrive as `result` with `is_error: true` or `custom-error`
+ * and use different phrasing than Claude Code's prompt-too-long messages.
+ */
+export function parseContextWindowExhausted(message: ClaudeMessage): boolean {
+  // Claude Code path (existing)
+  if (parseClaudePromptTooLongMessage(message)) {
+    return true;
+  }
+
+  // Codex path — result with is_error containing context overflow keywords
+  if (
+    message.type === "result" &&
+    message.is_error &&
+    "result" in message &&
+    typeof message.result === "string"
+  ) {
+    if (
+      /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window/i.test(
+        message.result,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  // custom-error with context overflow in error_info
+  if (message.type === "custom-error") {
+    const info = "error_info" in message ? (message as any).error_info : null;
+    if (
+      typeof info === "string" &&
+      /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window/i.test(
+        info,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function parseCodexErrorMessage(message: ClaudeMessage): null | string {
   if (
     message.type === "result" &&

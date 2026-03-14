@@ -31,6 +31,7 @@ import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue"
 import {
   parseClaudeOverloadedMessage,
   parseClaudePromptTooLongMessage,
+  parseContextWindowExhausted,
   parseClaudeRateLimitMessage,
   parseClaudeRateLimitMessageStr,
   parseCodexErrorMessage,
@@ -318,6 +319,19 @@ export async function handleDaemonEvent({
           customErrorMessage = maybeCodexErrorMessage;
         }
       }
+      // Agent-agnostic context window exhaustion check (catches Codex
+      // "context_length_exceeded" errors that parseClaudePromptTooLongMessage misses)
+      if (!isPromptTooLong && parseContextWindowExhausted(message)) {
+        isPromptTooLong = true;
+        isError = true;
+      }
+    }
+    // Also check custom-error messages for context window exhaustion
+    if (
+      message.type === "custom-error" &&
+      parseContextWindowExhausted(message)
+    ) {
+      isPromptTooLong = true;
     }
     if (message.type === "assistant") {
       if (threadChat.agent === "claudeCode") {
