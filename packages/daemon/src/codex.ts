@@ -829,6 +829,13 @@ export function parseCodexItem({
   // Handle different item types
   switch (itemType) {
     case "reasoning": {
+      // Only emit on item.completed — item.started/item.updated carry
+      // accumulated text that coalesceAssistantTextMessages concatenates,
+      // causing duplication. Other item types (web_search, mcp_tool_call)
+      // already guard on eventType.
+      if (eventType !== "item.completed") {
+        return messages;
+      }
       messages.push({
         type: "assistant",
         message: {
@@ -847,6 +854,9 @@ export function parseCodexItem({
       return messages;
     }
     case "agent_message": {
+      if (eventType !== "item.completed") {
+        return messages;
+      }
       messages.push({
         type: "assistant",
         message: {
