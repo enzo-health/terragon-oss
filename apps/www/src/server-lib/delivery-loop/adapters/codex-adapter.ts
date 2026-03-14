@@ -32,6 +32,15 @@ function classifyCodexTerminalError(
       : "unknown";
   }
 
+  // Context window overflow — non-retryable with the same input.
+  if (
+    /context.window|ran out of room|context.*too long|token limit|max.*tokens.*exceeded/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "config_error";
+  }
+
   // Codex app-server process exited or crashed.
   if (/codex.*app.?server.*exit|app.?server.*crash/i.test(rawErrorMessage)) {
     return "codex_app_server_exit";
@@ -42,12 +51,21 @@ function classifyCodexTerminalError(
     return "codex_subagent_failed";
   }
 
-  // Codex turn-level failure (API error, rate limit, etc.).
+  // Codex turn-level failure (API error, etc.).
   if (/codex.*turn.*fail|codex.*error/i.test(rawErrorMessage)) {
     return "codex_turn_failed";
   }
 
-  // Shared daemon-level patterns.
+  // Overloaded / capacity — transient, retry via budget.
+  if (
+    /overloaded|server busy|capacity exceeded|service unavailable|503/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "codex_turn_failed";
+  }
+
+  // Shared daemon-level patterns (rate limits, auth, network, disk, timeouts).
   return classifyDaemonError(rawErrorMessage, exitCode) ?? "unknown";
 }
 

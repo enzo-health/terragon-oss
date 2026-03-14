@@ -605,7 +605,7 @@ export async function getThreadPageChatWithPermissions({
       messages,
       queuedMessages: thread.queuedMessages ?? [],
       messageCount: messages.length,
-      chatSequence: null,
+      chatSequence: thread.updatedAt.getTime(),
     };
   }
 
@@ -639,7 +639,7 @@ export async function getThreadPageChatWithPermissions({
   return {
     ...threadChat,
     messageCount: threadChat.messages?.length ?? 0,
-    chatSequence: null,
+    chatSequence: threadChat.updatedAt.getTime(),
   };
 }
 

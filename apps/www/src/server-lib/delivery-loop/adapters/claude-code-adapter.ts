@@ -32,6 +32,24 @@ function classifyClaudeTerminalError(
       : "unknown";
   }
 
+  // Context window overflow — non-retryable with the same input.
+  if (
+    /context.window|ran out of room|context.*too long|token limit|max.*tokens.*exceeded/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "config_error";
+  }
+
+  // Overloaded / capacity — transient, retry.
+  if (
+    /overloaded|server busy|capacity exceeded|service unavailable|503/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "claude_runtime_exit";
+  }
+
   // Claude-specific patterns.
   if (/claude.*dispatch|dispatch.*fail/i.test(rawErrorMessage)) {
     return "claude_dispatch_failed";
@@ -40,7 +58,7 @@ function classifyClaudeTerminalError(
     return "claude_runtime_exit";
   }
 
-  // Shared daemon-level patterns.
+  // Shared daemon-level patterns (rate limits, auth, network, disk, timeouts).
   return classifyDaemonError(rawErrorMessage, exitCode) ?? "unknown";
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import isEqual from "fast-deep-equal";
 import { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
 import {
   DBMessage,
@@ -230,6 +231,25 @@ function applyChatSummaryFields(
   };
 }
 
+/**
+ * Returns true if the last `append.length` items in `messages` are
+ * structurally identical to `append`, indicating a duplicate delivery.
+ */
+function tailMatchesAppend(messages: unknown[], append: unknown[]): boolean {
+  if (append.length === 0) return false;
+  const offset = messages.length - append.length;
+  if (offset < 0) return false;
+  for (let i = 0; i < append.length; i++) {
+    const cached = messages[offset + i];
+    const incoming = append[i];
+    // Fast path: reference equality (same object from optimistic update)
+    if (cached === incoming) continue;
+    // Deep structural comparison (key-order independent, safe for all types)
+    if (!isEqual(cached, incoming)) return false;
+  }
+  return true;
+}
+
 function sequenceMatchesUpdatedAt(
   sequence: number | null | undefined,
   updatedAt: Date | string | null | undefined,
@@ -294,6 +314,16 @@ function applyChatFields(
     if (
       patch.expectedMessageCount !== undefined &&
       patch.expectedMessageCount !== nextMessages.length
+    ) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    // Safety net: detect tail-overlap duplicates where the last N cache messages
+    // match the incoming appendMessages (e.g. from WebSocket reconnection replay
+    // or a broadcast arriving after the data was already fetched).
+    if (
+      patch.appendMessages.length > 0 &&
+      nextMessages.length >= patch.appendMessages.length &&
+      tailMatchesAppend(nextMessages, patch.appendMessages)
     ) {
       return { chat, shouldInvalidate: true, shouldIgnore: false };
     }
