@@ -32,7 +32,34 @@ export async function runPublicationWork(params: {
     });
 
     // 2. Format and publish to target (GitHub comment, check run, etc.)
-    // Placeholder: actual publication integration during Phase 7
+    //
+    // TODO(Phase 7 wiring): Integrate with existing publication infrastructure:
+    //
+    // - upsertSdlcCanonicalStatusComment() from
+    //   apps/www/src/server-lib/delivery-loop/publication.ts
+    //   Upserts a canonical status comment on the GitHub PR.
+    //   Needs: db, loopId, repoFullName, prNumber, body
+    //
+    // - upsertSdlcCanonicalCheckSummary() from
+    //   apps/www/src/server-lib/delivery-loop/publication.ts
+    //   Upserts a check run summary on the GitHub PR.
+    //   Needs: db, loopId, payload (repoFullName, prNumber, title, summary, etc.)
+    //
+    // - enqueueSdlcOutboxAction() from
+    //   packages/shared/src/model/delivery-loop/outbox.ts
+    //   Uses the supersession pattern: newer publications supersede older
+    //   pending ones in the same supersessionGroup, preventing stale comments.
+    //
+    // - classifySdlcPublicationFailure() from
+    //   apps/www/src/server-lib/delivery-loop/publication.ts
+    //   Classifies GitHub API errors into retriable vs non-retriable.
+    //
+    // Flow:
+    //   a) Read sdlcLoop to get repoFullName, prNumber
+    //   b) Format the status body based on params.payload.workflowState
+    //   c) Call upsertSdlcCanonicalStatusComment or upsertSdlcCanonicalCheckSummary
+    //   d) On failure, classify via classifySdlcPublicationFailure for retry logic
+    //
 
     // 3. Complete work item
     await completeWorkItem({

@@ -52,12 +52,65 @@ export async function runBabysitWork(params: {
     }
 
     // 3. Run babysit recheck logic
-    // Placeholder: actual babysit evaluation during Phase 7
-    // Will check:
-    //   - CI gate status for current head SHA
-    //   - Review thread resolution
-    //   - Deep/carmack review findings
-    // Then append babysit_passed or babysit_blocked signal
+    //
+    // TODO(Phase 7 wiring): Wire to existing babysit evaluation:
+    //
+    // - evaluateBabysitCompletionForHead() from
+    //   packages/shared/src/model/signal-inbox-core.ts
+    //   Checks CI gate status, review thread resolution, deep/carmack
+    //   review findings for the current head SHA.
+    //   Returns: { requiredCiPassed, unresolvedReviewThreads,
+    //              unresolvedDeepBlockers, unresolvedCarmackBlockers,
+    //              allRequiredGatesPassed }
+    //
+    // - recheckBabysitCompletion() from
+    //   apps/www/src/server-lib/delivery-loop/babysit-recheck.ts
+    //   Polls GitHub CI and review threads directly (for missed webhooks),
+    //   inserts synthetic signals into sdlcLoopSignalInbox.
+    //
+    // - appendSignalToInbox() from
+    //   packages/shared/src/delivery-loop/store/signal-inbox-store.ts
+    //   Appends a babysit_passed or babysit_blocked signal to the v2
+    //   signal inbox so the coordinator tick picks it up.
+    //
+    // Flow:
+    //   a) Extract headSha from workflow.stateJson
+    //   b) Call evaluateBabysitCompletionForHead({ db, loopId, headSha })
+    //   c) If allRequiredGatesPassed → append babysit_passed signal
+    //   d) Else → schedule a recheck via recheckBabysitCompletion()
+    //      or append babysit_blocked signal
+    //
+
+    const headSha = (workflow.headSha as string) ?? null;
+    if (headSha) {
+      const { evaluateBabysitCompletionForHead } = await import(
+        "@terragon/shared/model/signal-inbox-core"
+      );
+      const babysitResult = await evaluateBabysitCompletionForHead({
+        db: params.db,
+        loopId: params.payload.workflowId,
+        headSha,
+      });
+
+      if (babysitResult.allRequiredGatesPassed) {
+        // Append babysit_passed signal for the coordinator tick
+        const { appendSignalToInbox } = await import(
+          "@terragon/shared/delivery-loop/store/signal-inbox-store"
+        );
+        await appendSignalToInbox({
+          db: params.db,
+          loopId: params.payload.workflowId,
+          causeType: "babysit_recheck",
+          payload: {
+            source: "timer",
+            event: { kind: "babysit_due" },
+            babysitPassed: true,
+            headSha,
+          },
+        });
+      }
+      // If gates did not pass, the periodic cron recheck handles retries.
+    }
 
     // 4. Complete work item
     await completeWorkItem({
