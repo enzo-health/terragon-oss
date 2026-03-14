@@ -1,11 +1,13 @@
 /**
  * Signal processing for replay: insert, claim, process, complete.
  *
- * Maps each fixture signal into DB operations mirroring the production
- * signal-inbox pipeline, but without Next.js orchestration.
+ * Faithfully replicates the production signal-inbox pipeline
+ * (apps/www/src/server-lib/delivery-loop/signal-inbox.ts) including
+ * gate evaluations, task completion, artifact creation, and review
+ * gate replay — without Next.js orchestration or real agent dispatch.
  */
 
-import type { EvalSignal } from "../types";
+import type { EvalSignal, EvalGateEvent } from "../types";
 import type { SharedModules, DB } from "./shared-loader";
 import type { SeededState } from "./seed";
 import type {
@@ -14,66 +16,78 @@ import type {
 } from "@terragon/shared/db/types";
 
 // ---------------------------------------------------------------------------
-// Cause-type to transition-event mapping
+// Helpers
 // ---------------------------------------------------------------------------
 
+function getPayloadText(
+  payload: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const v = payload[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/** Re-read loop version from DB (optimistic locking). */
+async function freshLoopVersion(
+  db: DB,
+  shared: SharedModules,
+  loopId: string,
+  fallback: number,
+): Promise<number> {
+  const [row] = await db
+    .select({ loopVersion: shared.schema.sdlcLoop.loopVersion })
+    .from(shared.schema.sdlcLoop)
+    .where((shared.eq as any)(shared.schema.sdlcLoop.id, loopId));
+  return row?.loopVersion ?? fallback;
+}
+
 /**
- * Derives the appropriate SdlcLoopTransitionEvent from the signal's causeType
- * and payload. This is a simplified version of the production routing logic —
- * in replay mode we only exercise the state machine, not the full orchestrator.
+ * Replay gate events (deep_review / carmack_review) that match a given headSha.
+ * In production the agent wakes up and runs the review gate inline; here we
+ * replay the captured LLM outputs to exercise the same DB writes.
  */
-function deriveTransitionEvent(
-  signal: EvalSignal,
-  currentState: string,
-): string | null {
-  const payload = signal.payload;
-  const causeType = signal.causeType;
+async function replayGateEvents({
+  db,
+  shared,
+  loopId,
+  headSha,
+  gateEvents,
+  fallbackLoopVersion,
+}: {
+  db: DB;
+  shared: SharedModules;
+  loopId: string;
+  headSha: string;
+  gateEvents: EvalGateEvent[];
+  fallbackLoopVersion: number;
+}) {
+  const matching = gateEvents.filter((e) => e.headSha === headSha);
+  for (const event of matching) {
+    const ver = await freshLoopVersion(db, shared, loopId, fallbackLoopVersion);
 
-  if (causeType === "daemon_terminal") {
-    const status = payload.daemonRunStatus as string | undefined;
-    if (status === "stopped") return "manual_stop";
-
-    // daemon_terminal in implementing → implementation_completed
-    if (currentState === "implementing") return "implementation_completed";
-    // daemon_terminal in planning → plan_completed
-    if (currentState === "planning") return "plan_completed";
-    return null;
+    if (event.gateType === "deep_review") {
+      await shared.persistDeepReviewGateResult({
+        db,
+        loopId,
+        headSha,
+        loopVersion: ver,
+        model: event.model ?? "eval-replay",
+        rawOutput: event.rawOutput,
+        updateLoopState: true,
+      });
+    } else if (event.gateType === "carmack_review") {
+      await shared.persistCarmackReviewGateResult({
+        db,
+        loopId,
+        headSha,
+        loopVersion: ver,
+        model: event.model ?? "eval-replay",
+        rawOutput: event.rawOutput,
+        updateLoopState: true,
+      });
+    }
+    // ci and review_thread gate events are handled by persistGateEvaluationForSignal
   }
-
-  if (
-    causeType === "check_run.completed" ||
-    causeType === "check_suite.completed"
-  ) {
-    // CI signals: handled via persistSdlcCiGateEvaluation which
-    // internally calls transitionSdlcLoopState. Return null to indicate
-    // the gate evaluation handles the transition.
-    return null;
-  }
-
-  if (
-    causeType === "pull_request_review" ||
-    causeType === "pull_request_review_comment"
-  ) {
-    // Review signals: handled via persistGateEvaluationForSignal
-    return null;
-  }
-
-  if (causeType === "pull_request.synchronize") {
-    if (currentState === "awaiting_pr_link") return "pr_linked";
-    return null;
-  }
-
-  if (causeType === "pull_request.closed") {
-    const merged = payload.merged as boolean | undefined;
-    return merged ? "pr_merged" : "pr_closed_unmerged";
-  }
-
-  if (causeType === "pull_request.reopened") {
-    // No direct transition event — usually re-enrolls the loop
-    return null;
-  }
-
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,11 +112,13 @@ export async function replaySignal({
   shared,
   seeded,
   signal,
+  gateEvents,
 }: {
   db: DB;
   shared: SharedModules;
   seeded: SeededState;
   signal: EvalSignal;
+  gateEvents?: EvalGateEvent[];
 }): Promise<SignalReplayResult> {
   const { schema, eq, nanoid } = shared;
   const startMs = Date.now();
@@ -183,59 +199,26 @@ export async function replaySignal({
     };
   }
 
-  // 3. Process: gate evaluation + state transition
+  // 3. Process signal based on causeType and current state
   let transitionEvent: string | null = null;
   let error: string | null = null;
 
   try {
-    // For gate-evaluated signals (CI checks, reviews), run persistGateEvaluationForSignal
-    const isFeedbackSignal =
-      signal.causeType === "daemon_terminal" ||
-      signal.causeType === "check_run.completed" ||
-      signal.causeType === "check_suite.completed" ||
-      signal.causeType === "pull_request_review" ||
-      signal.causeType === "pull_request_review_comment";
-
-    if (isFeedbackSignal) {
-      await shared.persistGateEvaluationForSignal({
-        db,
-        loop: {
-          id: seeded.loopId,
-          loopVersion,
-          currentHeadSha: loopBefore.currentHeadSha,
-          state: previousState as SdlcLoopState,
-          blockedFromState:
-            (loopBefore.blockedFromState as SdlcLoopState) ?? null,
-        },
-        signal: claimed,
-        now,
-      });
-    }
-
-    // Derive explicit transition event
-    transitionEvent = deriveTransitionEvent(signal, previousState);
-
-    if (transitionEvent) {
-      // Re-read loop version after gate evaluation may have incremented it
-      const [freshLoop] = await db
-        .select({ loopVersion: schema.sdlcLoop.loopVersion })
-        .from(schema.sdlcLoop)
-        .where((eq as any)(schema.sdlcLoop.id, seeded.loopId));
-      const freshVersion = freshLoop?.loopVersion ?? loopVersion;
-
-      const headSha =
-        (signal.payload.headSha as string) ??
-        (signal.payload.headShaAtCompletion as string) ??
-        undefined;
-
-      await shared.transitionSdlcLoopState({
-        db,
-        loopId: seeded.loopId,
-        transitionEvent: transitionEvent as any,
-        loopVersion: freshVersion,
-        headSha,
-      });
-    }
+    await processSignal({
+      db,
+      shared,
+      seeded,
+      signal,
+      claimed,
+      loopBefore,
+      loopVersion,
+      previousState,
+      now,
+      gateEvents: gateEvents ?? [],
+      setTransitionEvent: (e) => {
+        transitionEvent = e;
+      },
+    });
   } catch (err: unknown) {
     error = err instanceof Error ? err.message : String(err);
   }
@@ -272,4 +255,312 @@ export async function replaySignal({
     fixAttemptCount: loopAfter?.fixAttemptCount ?? 0,
     error,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Per-causeType processing
+// ---------------------------------------------------------------------------
+
+async function processSignal({
+  db,
+  shared,
+  seeded,
+  signal,
+  claimed,
+  loopBefore,
+  loopVersion,
+  previousState,
+  now,
+  gateEvents,
+  setTransitionEvent,
+}: {
+  db: DB;
+  shared: SharedModules;
+  seeded: SeededState;
+  signal: EvalSignal;
+  claimed: {
+    id: string;
+    causeType: SdlcLoopCauseType;
+    canonicalCauseId: string;
+    payload: Record<string, unknown> | null;
+    receivedAt: Date;
+    claimToken: string;
+  };
+  loopBefore: {
+    state: string;
+    loopVersion: number | null;
+    fixAttemptCount: number | null;
+    currentHeadSha: string | null;
+    blockedFromState: string | null;
+  };
+  loopVersion: number;
+  previousState: string;
+  now: Date;
+  gateEvents: EvalGateEvent[];
+  setTransitionEvent: (e: string | null) => void;
+}) {
+  const causeType = signal.causeType;
+
+  // ── daemon_terminal ──
+  if (causeType === "daemon_terminal") {
+    // Run gate evaluation (for daemon_terminal this just returns true)
+    await shared.persistGateEvaluationForSignal({
+      db,
+      loop: {
+        id: seeded.loopId,
+        loopVersion,
+        currentHeadSha: loopBefore.currentHeadSha,
+        state: previousState as SdlcLoopState,
+        blockedFromState:
+          (loopBefore.blockedFromState as SdlcLoopState) ?? null,
+      },
+      signal: claimed,
+      now,
+    });
+
+    const daemonRunStatus = getPayloadText(signal.payload, "daemonRunStatus");
+
+    if (daemonRunStatus === "stopped") {
+      setTransitionEvent("manual_stop");
+      const ver = await freshLoopVersion(
+        db,
+        shared,
+        seeded.loopId,
+        loopVersion,
+      );
+      await shared.transitionSdlcLoopState({
+        db,
+        loopId: seeded.loopId,
+        transitionEvent: "manual_stop" as any,
+        loopVersion: ver,
+      });
+      return;
+    }
+
+    if (previousState === "planning") {
+      setTransitionEvent("plan_completed");
+      const ver = await freshLoopVersion(
+        db,
+        shared,
+        seeded.loopId,
+        loopVersion,
+      );
+      await shared.transitionSdlcLoopState({
+        db,
+        loopId: seeded.loopId,
+        transitionEvent: "plan_completed" as any,
+        loopVersion: ver,
+      });
+      return;
+    }
+
+    // ── Implementing-phase completion intercept ──
+    if (previousState === "implementing" && daemonRunStatus === "completed") {
+      const headShaAtCompletion = getPayloadText(
+        signal.payload,
+        "headShaAtCompletion",
+      );
+      const effectiveHeadSha =
+        headShaAtCompletion || loopBefore.currentHeadSha || "";
+
+      if (effectiveHeadSha) {
+        // Fetch latest accepted plan artifact
+        const acceptedPlanArtifact = await shared.getLatestAcceptedArtifact({
+          db,
+          loopId: seeded.loopId,
+          phase: "planning" as any,
+          includeApprovedForPlanning: true,
+        });
+
+        if (acceptedPlanArtifact) {
+          // Verify task completion and auto-mark incomplete tasks
+          const verified = await shared.verifyPlanTaskCompletionForHead({
+            db,
+            loopId: seeded.loopId,
+            artifactId: acceptedPlanArtifact.id,
+            headSha: effectiveHeadSha,
+          });
+
+          const unmarkedTaskIds = [
+            ...verified.incompleteTaskIds,
+            ...verified.invalidEvidenceTaskIds,
+          ];
+          if (unmarkedTaskIds.length > 0) {
+            await shared.markPlanTasksCompletedByAgent({
+              db,
+              loopId: seeded.loopId,
+              artifactId: acceptedPlanArtifact.id,
+              completions: unmarkedTaskIds.map((id) => ({
+                stableTaskId: id,
+                status: "done" as const,
+                evidence: {
+                  headSha: effectiveHeadSha,
+                  note: "auto-marked on implementing completion",
+                },
+              })),
+            });
+          }
+        }
+
+        // Transition to review_gate
+        setTransitionEvent("implementation_completed");
+        const ver = await freshLoopVersion(
+          db,
+          shared,
+          seeded.loopId,
+          loopVersion,
+        );
+        await shared.transitionSdlcLoopState({
+          db,
+          loopId: seeded.loopId,
+          transitionEvent: "implementation_completed" as any,
+          headSha: effectiveHeadSha,
+          loopVersion: ver,
+        });
+
+        // Replay gate events (deep_review / carmack_review) for this head
+        if (gateEvents.length > 0) {
+          await replayGateEvents({
+            db,
+            shared,
+            loopId: seeded.loopId,
+            headSha: effectiveHeadSha,
+            gateEvents,
+            fallbackLoopVersion: ver,
+          });
+        }
+      }
+      return;
+    }
+
+    // ── review_gate re-dispatch ──
+    if (previousState === "review_gate") {
+      // Agent woke up to fix things — just check for gate events to replay
+      const headSha =
+        getPayloadText(signal.payload, "headShaAtCompletion") ||
+        getPayloadText(signal.payload, "headSha") ||
+        loopBefore.currentHeadSha ||
+        "";
+      if (headSha && gateEvents.length > 0) {
+        await replayGateEvents({
+          db,
+          shared,
+          loopId: seeded.loopId,
+          headSha,
+          gateEvents,
+          fallbackLoopVersion: loopVersion,
+        });
+      }
+      return;
+    }
+
+    // Other states: daemon_terminal with no specific handling
+    return;
+  }
+
+  // ── CI signals ──
+  if (
+    causeType === "check_run.completed" ||
+    causeType === "check_suite.completed"
+  ) {
+    await shared.persistGateEvaluationForSignal({
+      db,
+      loop: {
+        id: seeded.loopId,
+        loopVersion,
+        currentHeadSha: loopBefore.currentHeadSha,
+        state: previousState as SdlcLoopState,
+        blockedFromState:
+          (loopBefore.blockedFromState as SdlcLoopState) ?? null,
+      },
+      signal: claimed,
+      now,
+    });
+    return;
+  }
+
+  // ── Review signals ──
+  if (
+    causeType === "pull_request_review" ||
+    causeType === "pull_request_review_comment"
+  ) {
+    await shared.persistGateEvaluationForSignal({
+      db,
+      loop: {
+        id: seeded.loopId,
+        loopVersion,
+        currentHeadSha: loopBefore.currentHeadSha,
+        state: previousState as SdlcLoopState,
+        blockedFromState:
+          (loopBefore.blockedFromState as SdlcLoopState) ?? null,
+      },
+      signal: claimed,
+      now,
+    });
+    return;
+  }
+
+  // ── PR synchronize → pr_linked ──
+  if (causeType === "pull_request.synchronize") {
+    if (previousState === "awaiting_pr_link") {
+      const prNumber = signal.payload.prNumber as number | undefined;
+      const repoFullName = signal.payload.repoFullName as string | undefined;
+      const pullRequestUrl = signal.payload.pullRequestUrl as
+        | string
+        | undefined;
+
+      if (prNumber && repoFullName) {
+        const ver = await freshLoopVersion(
+          db,
+          shared,
+          seeded.loopId,
+          loopVersion,
+        );
+        await shared.createPrLinkArtifact({
+          db,
+          loopId: seeded.loopId,
+          loopVersion: ver,
+          payload: {
+            repoFullName,
+            prNumber,
+            pullRequestUrl: pullRequestUrl ?? "",
+            operation: "linked",
+          },
+        });
+
+        setTransitionEvent("pr_linked");
+        const ver2 = await freshLoopVersion(
+          db,
+          shared,
+          seeded.loopId,
+          loopVersion,
+        );
+        await shared.transitionSdlcLoopState({
+          db,
+          loopId: seeded.loopId,
+          transitionEvent: "pr_linked" as any,
+          loopVersion: ver2,
+        });
+      }
+    }
+    return;
+  }
+
+  // ── PR closed ──
+  if (causeType === "pull_request.closed") {
+    const merged = signal.payload.merged as boolean | undefined;
+    const event = merged ? "pr_merged" : "pr_closed_unmerged";
+    setTransitionEvent(event);
+
+    const ver = await freshLoopVersion(db, shared, seeded.loopId, loopVersion);
+    await shared.transitionSdlcLoopState({
+      db,
+      loopId: seeded.loopId,
+      transitionEvent: event as any,
+      loopVersion: ver,
+    });
+    return;
+  }
+
+  // Other cause types: no-op
 }

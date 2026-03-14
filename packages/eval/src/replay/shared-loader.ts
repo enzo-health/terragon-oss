@@ -27,6 +27,7 @@ export async function loadSharedModules() {
     persistDeepReviewGateResult,
     persistCarmackReviewGateResult,
     buildSdlcCanonicalCause,
+    getLatestAcceptedArtifact,
   } = await import("@terragon/shared/model/delivery-loop");
 
   const {
@@ -57,6 +58,7 @@ export async function loadSharedModules() {
     createReviewBundleArtifactForHead,
     createUiSmokeArtifactForHead,
     createPrLinkArtifact,
+    getLatestAcceptedArtifact,
     createBabysitEvaluationArtifactForHead,
     persistSdlcCiGateEvaluation,
     persistDeepReviewGateResult,

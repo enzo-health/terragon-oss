@@ -89,7 +89,13 @@ async function main() {
     const results = [];
 
     for (const signal of fixture.signals) {
-      const result = await replaySignal({ db, shared, seeded, signal });
+      const result = await replaySignal({
+        db,
+        shared,
+        seeded,
+        signal,
+        gateEvents: fixture.gateEvents ?? [],
+      });
       results.push(result);
 
       stateTrace.push({
