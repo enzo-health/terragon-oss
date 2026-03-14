@@ -105,7 +105,7 @@ export async function seedFromFixture({
     userId,
     repoFullName: fixture.thread.githubRepoFullName,
     threadId,
-    planApprovalPolicy: fixture.loop.planApprovalPolicy as "auto" | "manual",
+    planApprovalPolicy: fixture.loop.planApprovalPolicy as any,
   });
   if (!loop) throw new Error("Failed to enroll SDLC loop");
 
@@ -171,30 +171,35 @@ export async function cleanupSeededState({
   const { schema, eq } = shared;
 
   // sdlcLoop cascade-deletes artifacts, tasks, signals, outbox
+  // Cast eq() calls through any to avoid drizzle-orm dual-instance type conflicts
   if (state.loopId) {
     await db
       .delete(schema.sdlcLoop)
-      .where(eq(schema.sdlcLoop.id, state.loopId));
+      .where((eq as any)(schema.sdlcLoop.id, state.loopId));
   }
   if (state.threadId) {
     await db
       .delete(schema.threadChat)
-      .where(eq(schema.threadChat.threadId, state.threadId));
-    await db.delete(schema.thread).where(eq(schema.thread.id, state.threadId));
+      .where((eq as any)(schema.threadChat.threadId, state.threadId));
+    await db
+      .delete(schema.thread)
+      .where((eq as any)(schema.thread.id, state.threadId));
   }
   if (state.userId) {
     await db
       .delete(schema.session)
-      .where(eq(schema.session.userId, state.userId));
+      .where((eq as any)(schema.session.userId, state.userId));
     await db
       .delete(schema.subscription)
-      .where(eq(schema.subscription.referenceId, state.userId));
+      .where((eq as any)(schema.subscription.referenceId, state.userId));
     await db
       .delete(schema.account)
-      .where(eq(schema.account.userId, state.userId));
+      .where((eq as any)(schema.account.userId, state.userId));
     await db
       .delete(schema.userFlags)
-      .where(eq(schema.userFlags.userId, state.userId));
-    await db.delete(schema.user).where(eq(schema.user.id, state.userId));
+      .where((eq as any)(schema.userFlags.userId, state.userId));
+    await db
+      .delete(schema.user)
+      .where((eq as any)(schema.user.id, state.userId));
   }
 }

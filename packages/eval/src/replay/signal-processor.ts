@@ -5,7 +5,7 @@
  * signal-inbox pipeline, but without Next.js orchestration.
  */
 
-import type { EvalSignal, StateTransition } from "../types";
+import type { EvalSignal } from "../types";
 import type { SharedModules, DB } from "./shared-loader";
 import type { SeededState } from "./seed";
 import type {
@@ -117,7 +117,7 @@ export async function replaySignal({
       blockedFromState: schema.sdlcLoop.blockedFromState,
     })
     .from(schema.sdlcLoop)
-    .where(eq(schema.sdlcLoop.id, seeded.loopId));
+    .where((eq as any)(schema.sdlcLoop.id, seeded.loopId));
 
   if (!loopBefore) {
     return {
@@ -220,7 +220,7 @@ export async function replaySignal({
       const [freshLoop] = await db
         .select({ loopVersion: schema.sdlcLoop.loopVersion })
         .from(schema.sdlcLoop)
-        .where(eq(schema.sdlcLoop.id, seeded.loopId));
+        .where((eq as any)(schema.sdlcLoop.id, seeded.loopId));
       const freshVersion = freshLoop?.loopVersion ?? loopVersion;
 
       const headSha =
@@ -256,7 +256,7 @@ export async function replaySignal({
       fixAttemptCount: schema.sdlcLoop.fixAttemptCount,
     })
     .from(schema.sdlcLoop)
-    .where(eq(schema.sdlcLoop.id, seeded.loopId));
+    .where((eq as any)(schema.sdlcLoop.id, seeded.loopId));
 
   const nextState = loopAfter?.state ?? previousState;
 

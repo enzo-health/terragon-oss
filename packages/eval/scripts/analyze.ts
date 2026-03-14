@@ -26,12 +26,12 @@ function parseArgs(): { runDir: string; baselineFile: string | null } {
     process.exit(1);
   }
 
-  const runDir = resolve(args[0]);
+  const runDir = resolve(args[0]!);
   let baselineFile: string | null = null;
 
   const bIdx = args.indexOf("--baseline");
   if (bIdx !== -1 && args[bIdx + 1]) {
-    baselineFile = resolve(args[bIdx + 1]);
+    baselineFile = resolve(args[bIdx + 1]!);
   }
 
   return { runDir, baselineFile };

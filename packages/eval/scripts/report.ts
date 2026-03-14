@@ -21,7 +21,7 @@ function main() {
     process.exit(1);
   }
 
-  const runDir = resolve(args[0]);
+  const runDir = resolve(args[0]!);
   const analysisPath = resolve(runDir, "analysis.json");
 
   if (!existsSync(analysisPath)) {

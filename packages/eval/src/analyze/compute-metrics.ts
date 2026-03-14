@@ -23,7 +23,7 @@ export function computeMetrics(run: EvalRun): EvalMetrics {
   // Max fix attempt count at last transition
   const maxFixCyclesBeforeBlock =
     stateTrace.length > 0
-      ? stateTrace[stateTrace.length - 1].fixAttemptCount
+      ? stateTrace[stateTrace.length - 1]!.fixAttemptCount
       : 0;
 
   // Finding metrics
@@ -45,7 +45,7 @@ export function computeMetrics(run: EvalRun): EvalMetrics {
   // Final state
   const finalState =
     stateTrace.length > 0
-      ? stateTrace[stateTrace.length - 1].nextState
+      ? stateTrace[stateTrace.length - 1]!.nextState
       : "unknown";
   const succeeded = finalState === "completed" || finalState === "merged";
 
@@ -77,8 +77,8 @@ function countFixCycles(trace: StateTransition[]): number {
 
 function computeDurationMs(trace: StateTransition[]): number {
   if (trace.length < 2) return 0;
-  const first = new Date(trace[0].timestamp).getTime();
-  const last = new Date(trace[trace.length - 1].timestamp).getTime();
+  const first = new Date(trace[0]!.timestamp).getTime();
+  const last = new Date(trace[trace.length - 1]!.timestamp).getTime();
   const duration = last - first;
   return Number.isFinite(duration) ? Math.max(0, duration) : 0;
 }

@@ -11,7 +11,7 @@ export function formatComparisonTable(comparisons: MetricComparison[]): string {
   for (const row of comparisons) {
     const vals = rowValues(row);
     for (let i = 0; i < vals.length; i++) {
-      widths[i] = Math.max(widths[i], vals[i].length);
+      widths[i] = Math.max(widths[i]!, vals[i]!.length);
     }
   }
 
@@ -58,7 +58,7 @@ function border(pos: "top" | "mid" | "bottom", widths: number[]): string {
 function dataRow(values: string[], widths: number[]): string {
   const cells = values.map((v, i) => {
     const content =
-      v.length < widths[i] - 1 ? ` ${v}`.padEnd(widths[i]) : ` ${v} `;
+      v.length < widths[i]! - 1 ? ` ${v}`.padEnd(widths[i]!) : ` ${v} `;
     return content;
   });
   return "\u2502" + cells.join("\u2502") + "\u2502";

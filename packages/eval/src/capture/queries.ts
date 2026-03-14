@@ -4,7 +4,7 @@
  * Uses the drizzle relational query API to avoid cross-package type issues.
  */
 
-import type { EvalDb as DB } from "../db";
+import type { DB } from "../db";
 
 export async function fetchThread(db: DB, threadId: string) {
   const row = await db.query.thread.findFirst({

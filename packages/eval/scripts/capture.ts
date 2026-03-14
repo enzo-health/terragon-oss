@@ -1,21 +1,14 @@
 #!/usr/bin/env tsx
-/**
- * Capture a full thread trace from prod DB into an EvalFixture.
- *
- * Usage:
- *   pnpm -C packages/eval capture <threadId>
- *   tsx scripts/capture.ts <threadId>
- */
 
 import { resolve } from "path";
-import { mkdirSync, writeFileSync } from "fs";
 import { config } from "dotenv";
-
-// Load .env.local from repo root
+// Load .env.local from repo root before any module reads process.env
 config({ path: resolve(__dirname, "../../../.env.local") });
 
+import { mkdirSync, writeFileSync } from "fs";
+
+import { FIXTURES_DIR } from "../src/config";
 import { createDb } from "../src/db";
-import { FIXTURES_DIR, PROD_DATABASE_URL } from "../src/config";
 import {
   fetchThread,
   fetchThreadChat,
@@ -23,16 +16,19 @@ import {
   fetchArtifacts,
   fetchPlanTasks,
   fetchSignals,
+  fetchDeepReviewRuns,
   fetchDeepReviewFindings,
+  fetchCarmackReviewRuns,
   fetchCarmackReviewFindings,
-  fetchAgentRunContexts,
+} from "../src/capture/queries";
+import {
   extractUserMessages,
   normalizeSignals,
   normalizeFindings,
   normalizeArtifacts,
   normalizePlanTasks,
   assembleFixture,
-} from "../src/capture";
+} from "../src/capture/normalize";
 
 async function main() {
   const threadId = process.argv[2];
@@ -41,119 +37,90 @@ async function main() {
     process.exit(1);
   }
 
-  if (!PROD_DATABASE_URL) {
+  // Read env directly after dotenv.config() — import hoisting means
+  // config.ts may have already read an empty process.env at load time
+  const dbUrl = process.env.PROD_DATABASE_URL ?? process.env.DATABASE_URL ?? "";
+  if (!dbUrl) {
     console.error(
       "No database URL found. Set PROD_DATABASE_URL or DATABASE_URL in .env.local",
     );
     process.exit(1);
   }
 
-  console.log(`Connecting to database...`);
-  const db = createDb(PROD_DATABASE_URL);
+  console.log("Connecting to prod database...");
+  const db = await createDb(dbUrl);
 
-  console.log(`Fetching thread ${threadId}...`);
+  try {
+    console.log(`Fetching thread ${threadId}...`);
+    const thread = await fetchThread(db, threadId);
 
-  // Fetch thread + threadChat
-  const threadRow = await fetchThread(db, threadId);
-  const threadChatRow = await fetchThreadChat(db, threadId);
+    console.log("Fetching thread chat...");
+    const threadChat = await fetchThreadChat(db, threadId);
 
-  // Fetch loop
-  const loopRow = await fetchLoop(db, threadId);
-  const loopId = loopRow.id;
+    console.log("Fetching SDLC loop...");
+    const loop = await fetchLoop(db, threadId);
+    const loopId = (loop as any).id as string;
 
-  // Fetch all related data in parallel
-  const [
-    artifactRows,
-    planTaskRows,
-    signalRows,
-    deepFindingRows,
-    carmackFindingRows,
-    agentRunRows,
-  ] = await Promise.all([
-    fetchArtifacts(db, loopId),
-    fetchPlanTasks(db, loopId),
-    fetchSignals(db, loopId),
-    fetchDeepReviewFindings(db, loopId),
-    fetchCarmackReviewFindings(db, loopId),
-    fetchAgentRunContexts(db, threadId),
-  ]);
+    console.log("Fetching artifacts...");
+    const rawArtifacts = await fetchArtifacts(db, loopId);
 
-  // Extract user messages from thread_chat or thread messages
-  const messages = threadChatRow.messages ?? threadRow.messages ?? [];
-  const userMessages = extractUserMessages(messages);
+    console.log("Fetching plan tasks...");
+    const rawPlanTasks = await fetchPlanTasks(db, loopId);
 
-  // Normalize
-  const signals = normalizeSignals(signalRows);
-  const deepFindings = normalizeFindings(deepFindingRows, "deep");
-  const carmackFindings = normalizeFindings(carmackFindingRows, "carmack");
-  const artifacts = normalizeArtifacts(artifactRows);
-  const planTasks = normalizePlanTasks(planTaskRows);
+    console.log("Fetching signals...");
+    const rawSignals = await fetchSignals(db, loopId);
 
-  // Extract plan text from the active plan artifact
-  let planText = "";
-  if (loopRow.activePlanArtifactId) {
-    const planArtifact = artifactRows.find(
-      (a: { id: string }) => a.id === loopRow.activePlanArtifactId,
+    console.log("Fetching deep review runs & findings...");
+    await fetchDeepReviewRuns(db, loopId);
+    const rawDeepFindings = await fetchDeepReviewFindings(db, loopId);
+
+    console.log("Fetching carmack review runs & findings...");
+    await fetchCarmackReviewRuns(db, loopId);
+    const rawCarmackFindings = await fetchCarmackReviewFindings(db, loopId);
+
+    // Extract plan text from plan artifact payload if available
+    const planArtifact = rawArtifacts.find(
+      (a) => (a.artifactType as string) === "plan",
     );
-    if (planArtifact?.payload && typeof planArtifact.payload === "object") {
-      const payload = planArtifact.payload as Record<string, unknown>;
-      if (typeof payload.planText === "string") {
-        planText = payload.planText;
-      }
-    }
+    const planText = (planArtifact?.payload as any)?.planText ?? "";
+
+    // Normalize all data
+    const userMessages = extractUserMessages(threadChat.messages as any);
+    const signals = normalizeSignals(rawSignals as any);
+    const deepFindings = normalizeFindings(rawDeepFindings as any, "deep");
+    const carmackFindings = normalizeFindings(
+      rawCarmackFindings as any,
+      "carmack",
+    );
+    const artifacts = normalizeArtifacts(rawArtifacts as any);
+    const planTasks = normalizePlanTasks(rawPlanTasks as any);
+
+    // Assemble fixture
+    console.log("Assembling fixture...");
+    const fixture = assembleFixture({
+      threadId,
+      thread: thread as any,
+      threadChat: threadChat as any,
+      loop: loop as any,
+      signals,
+      deepFindings,
+      carmackFindings,
+      artifacts,
+      planTasks,
+      userMessages,
+      planText,
+    });
+
+    // Write fixture to disk
+    const outDir = resolve(FIXTURES_DIR, threadId);
+    mkdirSync(outDir, { recursive: true });
+    const outPath = resolve(outDir, "fixture.json");
+    writeFileSync(outPath, JSON.stringify(fixture, null, 2) + "\n");
+    console.log(`Fixture written to ${outPath}`);
+  } finally {
+    console.log("Closing database connection...");
+    await (db.$client as any).end();
   }
-
-  // Assemble fixture
-  const fixture = assembleFixture({
-    threadId,
-    thread: threadRow,
-    threadChat: threadChatRow,
-    loop: loopRow,
-    signals,
-    deepFindings,
-    carmackFindings,
-    artifacts,
-    planTasks,
-    userMessages,
-    planText,
-  });
-
-  // Write to fixtures/<threadId-prefix>/fixture.json
-  const prefix = threadId.slice(0, 8);
-  const fixtureDir = resolve(FIXTURES_DIR, prefix);
-  mkdirSync(fixtureDir, { recursive: true });
-
-  const outPath = resolve(fixtureDir, "fixture.json");
-  writeFileSync(outPath, JSON.stringify(fixture, null, 2) + "\n");
-
-  // Print summary
-  console.log(`\n--- Capture Summary ---`);
-  console.log(`Thread:          ${threadId}`);
-  console.log(`ThreadChat:      ${threadChatRow.id}`);
-  console.log(`Loop:            ${loopId}`);
-  console.log(
-    `Agent:           ${threadChatRow.agent} v${threadChatRow.agentVersion}`,
-  );
-  console.log(`Repo:            ${threadRow.githubRepoFullName}`);
-  console.log(`Final state:     ${loopRow.state}`);
-  console.log(`Signals:         ${signals.length}`);
-  console.log(`Plan tasks:      ${planTasks.length}`);
-  console.log(`Artifacts:       ${artifacts.length}`);
-  console.log(`Deep findings:   ${deepFindings.length}`);
-  console.log(`Carmack findings:${carmackFindings.length}`);
-  console.log(`Agent runs:      ${agentRunRows.length}`);
-  console.log(`User messages:   ${userMessages.length}`);
-  console.log(`Fix cycles:      ${fixture.baselineMetrics.fixCycles}`);
-  console.log(
-    `Convergence:     ${fixture.baselineMetrics.convergenceRate.toFixed(3)}`,
-  );
-  console.log(
-    `Duration:        ${(fixture.baselineMetrics.totalDurationMs / 1000).toFixed(1)}s`,
-  );
-  console.log(`Succeeded:       ${fixture.baselineMetrics.succeeded}`);
-  console.log(`\nWritten to: ${outPath}`);
-
-  process.exit(0);
 }
 
 main().catch((err) => {
