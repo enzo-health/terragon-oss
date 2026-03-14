@@ -1067,8 +1067,30 @@ export async function runBestEffortSdlcSignalInboxTick({
                   : 1,
               now,
             });
+
+            // Recompute phase context so the follow-up message reflects
+            // review_gate, not the pre-transition implementing state.
+            const postTransitionLoop = await db.query.sdlcLoop.findFirst({
+              where: eq(schema.sdlcLoop.id, loopId),
+              columns: {
+                state: true,
+                currentHeadSha: true,
+                blockedFromState: true,
+                prNumber: true,
+              },
+            });
+            if (postTransitionLoop) {
+              Object.assign(
+                loopPhaseContext,
+                buildPersistedLoopPhaseContext({
+                  state: postTransitionLoop.state,
+                  blockedFromState: postTransitionLoop.blockedFromState,
+                }),
+              );
+            }
+
             console.log(
-              "[sdlc-loop] implementing complete — transitioning to review_gate, follow-up will be queued",
+              "[sdlc-loop] implementing complete — transitioned to review_gate, follow-up routing enabled",
               { loopId, signalId: signal.id, headSha: effectiveHeadSha },
             );
           } else {
