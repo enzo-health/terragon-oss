@@ -81,6 +81,26 @@ export type DeliveryLoopDispatchIntentRow =
   typeof schema.deliveryLoopDispatchIntent.$inferSelect;
 export type DeliveryLoopDispatchIntentInsert =
   typeof schema.deliveryLoopDispatchIntent.$inferInsert;
+
+// Delivery Loop v2 tables
+export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
+export type DeliveryWorkflowInsert =
+  typeof schema.deliveryWorkflow.$inferInsert;
+export type DeliveryWorkflowEventRow =
+  typeof schema.deliveryWorkflowEvent.$inferSelect;
+export type DeliveryWorkflowEventInsert =
+  typeof schema.deliveryWorkflowEvent.$inferInsert;
+export type DeliveryWorkItemRow = typeof schema.deliveryWorkItem.$inferSelect;
+export type DeliveryWorkItemInsert =
+  typeof schema.deliveryWorkItem.$inferInsert;
+export type DeliveryLoopIncidentRow =
+  typeof schema.deliveryLoopIncident.$inferSelect;
+export type DeliveryLoopIncidentInsert =
+  typeof schema.deliveryLoopIncident.$inferInsert;
+export type DeliveryLoopRuntimeStatusRow =
+  typeof schema.deliveryLoopRuntimeStatus.$inferSelect;
+export type DeliveryLoopRuntimeStatusInsert =
+  typeof schema.deliveryLoopRuntimeStatus.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;

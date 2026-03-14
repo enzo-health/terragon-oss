@@ -15,6 +15,8 @@ import type {
   SdlcCarmackReviewSeverity,
   SdlcCarmackReviewStatus,
 } from "../../db/types";
+import type { GateVerdict } from "../../delivery-loop/domain/events";
+import type { GitSha } from "../../delivery-loop/domain/workflow";
 import type { SdlcLoopTransitionEvent } from "./state-constants";
 import type { SdlcGateLoopUpdateOutcome } from "./guarded-state";
 import { persistGuardedGateLoopState } from "./guarded-state";
@@ -107,6 +109,23 @@ export type DeepReviewGateOutput = ReviewGateOutput;
 export type CarmackReviewGateOutput = ReviewGateOutput;
 export type PersistDeepReviewGateResult = PersistReviewGateResult;
 export type PersistCarmackReviewGateResult = PersistReviewGateResult;
+
+/** Convert a review gate persistence result to a v2 GateVerdict */
+export function toReviewGateVerdict(
+  result: PersistReviewGateResult,
+  headSha: string,
+  loopVersion: number,
+): GateVerdict {
+  return {
+    gate: "review",
+    passed: result.gatePassed,
+    event: result.gatePassed ? "gate_passed" : "gate_blocked",
+    runId: result.runId,
+    headSha: headSha as GitSha,
+    loopVersion,
+    findingCount: result.unresolvedBlockingFindings,
+  };
+}
 
 // Backwards-compatible schema aliases
 export const deepReviewFindingSchema = reviewFindingSchema;

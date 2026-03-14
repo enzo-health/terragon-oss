@@ -1,0 +1,433 @@
+import type { DB } from "@terragon/shared/db";
+import type {
+  WorkflowId,
+  CorrelationId,
+  DeliveryWorkflow,
+} from "@terragon/shared/delivery-loop/domain/workflow";
+import { reduceWorkflow } from "@terragon/shared/delivery-loop/domain/transitions";
+import { derivePendingAction } from "@terragon/shared/delivery-loop/domain/transitions";
+import {
+  deriveHealth,
+  shouldOpenIncident,
+} from "@terragon/shared/delivery-loop/domain/observability";
+import {
+  getWorkflow,
+  updateWorkflowState,
+} from "@terragon/shared/delivery-loop/store/workflow-store";
+import { appendWorkflowEvent } from "@terragon/shared/delivery-loop/store/event-store";
+import {
+  claimNextUnprocessedSignal,
+  completeSignalClaim,
+  deadLetterSignal,
+} from "@terragon/shared/delivery-loop/store/signal-inbox-store";
+import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { upsertRuntimeStatus } from "@terragon/shared/delivery-loop/store/runtime-status-store";
+import {
+  openIncident,
+  getOpenIncidents,
+} from "@terragon/shared/delivery-loop/store/incident-store";
+
+import { reduceSignalToEvent } from "./reduce-signals";
+import { resolveWorkItems } from "./schedule-work";
+import { buildWorkflowEvent } from "./append-events";
+
+export type CoordinatorTickResult = {
+  workflowId: WorkflowId;
+  correlationId: CorrelationId;
+  signalsProcessed: number;
+  transitioned: boolean;
+  stateBefore: string;
+  stateAfter: string;
+  workItemsScheduled: number;
+  incidentsEvaluated: boolean;
+};
+
+const MAX_SIGNALS_PER_TICK = 10;
+
+export async function runCoordinatorTick(params: {
+  db: DB;
+  workflowId: WorkflowId;
+  correlationId: CorrelationId;
+  claimToken?: string;
+  now?: Date;
+}): Promise<CoordinatorTickResult> {
+  const {
+    db,
+    workflowId,
+    correlationId,
+    claimToken = correlationId,
+    now = new Date(),
+  } = params;
+
+  // 1. Load workflow aggregate
+  const workflowRow = await getWorkflow({ db, workflowId });
+  if (!workflowRow) {
+    throw new Error(`Workflow ${workflowId} not found`);
+  }
+
+  // Hydrate the workflow from the DB row into our domain type.
+  // The store returns a row; we cast to the domain aggregate since the
+  // store schema mirrors the discriminated union shape.
+  let workflow = hydrateWorkflow(workflowRow);
+  const stateBefore = workflow.kind;
+
+  let signalsProcessed = 0;
+  let transitioned = false;
+  let workItemsScheduled = 0;
+
+  // 2. Process pending signals (up to limit per tick)
+  for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
+    const signal = await claimNextUnprocessedSignal({
+      db,
+      loopId: workflowId,
+      claimToken,
+      now,
+    });
+    if (!signal) break;
+
+    // 3a. Reduce signal to a LoopEvent
+    const deliverySignal = parseSignalPayload(signal.causeType, signal.payload);
+    if (!deliverySignal) {
+      // Unrecognized signal — dead-letter it
+      await deadLetterSignal({
+        db,
+        signalId: signal.id,
+        claimToken,
+        reason: `Unrecognized signal cause type: ${signal.causeType}`,
+        now,
+      });
+      signalsProcessed++;
+      continue;
+    }
+
+    const reduction = reduceSignalToEvent({
+      signal: deliverySignal,
+      workflow,
+    });
+
+    if (!reduction) {
+      // No state transition for this signal — complete it and move on
+      await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
+      signalsProcessed++;
+      continue;
+    }
+
+    // 3b. Apply the state machine transition
+    const newWorkflow = reduceWorkflow({
+      snapshot: workflow,
+      event: reduction.event,
+      context: reduction.context,
+      now,
+    });
+
+    if (!newWorkflow) {
+      // Invalid transition — log warning and skip
+      console.warn(
+        `[coordinator] Invalid transition: ${workflow.kind} + ${reduction.event} (workflow=${workflowId})`,
+      );
+      await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
+      signalsProcessed++;
+      continue;
+    }
+
+    // 3c. Resolve work items from the transition
+    const scheduledItems = resolveWorkItems({
+      previousWorkflow: workflow,
+      newWorkflow,
+      event: reduction.event,
+      now,
+    });
+
+    // 3d. Build the audit event
+    const workflowEvent = buildWorkflowEvent({
+      previousWorkflow: workflow,
+      newWorkflow,
+      event: reduction.event,
+      context: reduction.context,
+    });
+
+    // 4. Persist everything in a single transaction
+    await db.transaction(async (tx) => {
+      // 4a. Update workflow state (optimistic concurrency)
+      const updateResult = await updateWorkflowState({
+        db: tx,
+        workflowId,
+        expectedVersion: workflow.version,
+        kind: newWorkflow.kind,
+        stateJson: serializeWorkflowState(newWorkflow),
+        fixAttemptCount: newWorkflow.fixAttemptCount,
+        headSha: extractHeadSha(newWorkflow),
+        reviewSurfaceJson: extractReviewSurface(newWorkflow),
+        now,
+      });
+
+      if (!updateResult.updated) {
+        throw new Error(
+          `Version conflict on workflow ${workflowId} (expected ${workflow.version})`,
+        );
+      }
+
+      // 4b. Append audit event
+      await appendWorkflowEvent({
+        db: tx,
+        workflowId,
+        correlationId,
+        eventKind: workflowEvent.kind,
+        stateBefore: workflow.kind,
+        stateAfter: newWorkflow.kind,
+        gateBefore: extractGateKind(workflow),
+        gateAfter: extractGateKind(newWorkflow),
+        payloadJson: workflowEvent as unknown as Record<string, unknown>,
+        signalId: signal.id,
+        triggerSource: deliverySignal.source,
+        headSha: extractHeadSha(newWorkflow),
+      });
+
+      // 4c. Enqueue work items
+      for (const item of scheduledItems) {
+        await enqueueWorkItem({
+          db: tx,
+          workflowId,
+          correlationId,
+          kind: item.kind,
+          payloadJson: item.payloadJson,
+          scheduledAt: item.scheduledAt,
+        });
+      }
+
+      // 4d. Update runtime status
+      const pendingAction = derivePendingAction(newWorkflow);
+      await upsertRuntimeStatus({
+        db: tx as unknown as DB,
+        workflowId,
+        state: newWorkflow.kind,
+        gate: extractGateKind(newWorkflow),
+        pendingActionKind: pendingAction?.kind ?? null,
+        health: "healthy",
+        lastSignalAt: now,
+        lastTransitionAt: now,
+        fixAttemptCount: newWorkflow.fixAttemptCount,
+      });
+    });
+
+    // 4e. Complete the signal (outside transaction — idempotent)
+    await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
+
+    // Update in-memory workflow for next iteration
+    workflow = newWorkflow;
+    transitioned = true;
+    signalsProcessed++;
+    workItemsScheduled += scheduledItems.length;
+  }
+
+  // 5. Evaluate incident conditions
+  let incidentsEvaluated = false;
+  const phaseDurationMs = now.getTime() - workflow.updatedAt.getTime();
+  const openIncidents = await getOpenIncidents({ db, workflowId });
+
+  const incidentCheck = shouldOpenIncident({
+    workflow,
+    phaseDurationMs,
+    fixAttemptCount: workflow.fixAttemptCount,
+    maxFixAttempts: workflow.maxFixAttempts,
+    unprocessedSignalCount: 0, // post-processing, signals are drained
+    dlqSignalCount: 0,
+  });
+
+  if (incidentCheck) {
+    const alreadyOpen = openIncidents.some(
+      (i) => i.incidentType === incidentCheck.incidentType,
+    );
+    if (!alreadyOpen) {
+      await openIncident({
+        db,
+        workflowId,
+        incidentType: incidentCheck.incidentType,
+        severity: incidentCheck.severity,
+        detail: incidentCheck.detail,
+        now,
+      });
+    }
+    incidentsEvaluated = true;
+  }
+
+  // Update runtime health after incident evaluation
+  const health = deriveHealth({
+    workflow,
+    oldestUnprocessedSignalAge: 0,
+    openIncidents: openIncidents.map((i) => ({
+      id: i.id,
+      workflowId: workflowId,
+      incidentType: i.incidentType,
+      severity: i.severity as "warning" | "critical",
+      status: i.status as "open" | "acknowledged" | "resolved",
+      detail: i.detail ?? "",
+      openedAt: i.openedAt ?? now,
+      resolvedAt: i.resolvedAt ?? null,
+    })),
+    now,
+  });
+
+  await upsertRuntimeStatus({
+    db,
+    workflowId,
+    state: workflow.kind,
+    gate: extractGateKind(workflow),
+    pendingActionKind: derivePendingAction(workflow)?.kind ?? null,
+    health: health.kind,
+    lastSignalAt: signalsProcessed > 0 ? now : null,
+    lastTransitionAt: transitioned ? now : null,
+    fixAttemptCount: workflow.fixAttemptCount,
+    openIncidentCount:
+      openIncidents.length +
+      (incidentCheck &&
+      !openIncidents.some((i) => i.incidentType === incidentCheck.incidentType)
+        ? 1
+        : 0),
+  });
+
+  return {
+    workflowId,
+    correlationId,
+    signalsProcessed,
+    transitioned,
+    stateBefore,
+    stateAfter: workflow.kind,
+    workItemsScheduled,
+    incidentsEvaluated,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+type SignalCauseType = string;
+
+function parseSignalPayload(
+  causeType: SignalCauseType,
+  payload: Record<string, unknown> | null,
+):
+  | import("@terragon/shared/delivery-loop/domain/signals").DeliverySignal
+  | null {
+  if (!payload) return null;
+
+  // Map the v1 cause types to v2 DeliverySignal shape.
+  // The signal inbox stores signals with causeType + payload; we
+  // translate to the typed discriminated union here.
+  const source = payload.source as string | undefined;
+  const event = payload.event as Record<string, unknown> | undefined;
+
+  if (source && event) {
+    // Already in v2 shape
+    return payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").DeliverySignal;
+  }
+
+  // Attempt v1 causeType mapping
+  switch (causeType) {
+    case "daemon_run_completed":
+    case "daemon_run_failed":
+    case "daemon_progress":
+      return {
+        source: "daemon",
+        event:
+          payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").DaemonSignal,
+      };
+    case "github_ci_changed":
+    case "github_review_changed":
+    case "github_pr_closed":
+    case "github_pr_synchronized":
+      return {
+        source: "github",
+        event:
+          payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").GitHubSignal,
+      };
+    case "human_resume":
+    case "human_bypass":
+    case "human_stop":
+    case "human_mark_done":
+      return {
+        source: "human",
+        event:
+          payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").HumanSignal,
+      };
+    case "timer_dispatch_ack_expired":
+    case "timer_babysit_due":
+    case "timer_heartbeat":
+      return {
+        source: "timer",
+        event:
+          payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").TimerSignal,
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Hydrate a DB row into the domain DeliveryWorkflow aggregate.
+ * The DB stores kind + stateJson; we merge them into the discriminated union.
+ */
+function hydrateWorkflow(row: Record<string, unknown>): DeliveryWorkflow {
+  const stateJson = (row.stateJson ?? {}) as Record<string, unknown>;
+  return {
+    workflowId:
+      row.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
+    threadId:
+      row.threadId as import("@terragon/shared/delivery-loop/domain/workflow").ThreadId,
+    generation: (row.generation as number) ?? 1,
+    version: (row.version as number) ?? 0,
+    fixAttemptCount: (row.fixAttemptCount as number) ?? 0,
+    maxFixAttempts: (row.maxFixAttempts as number) ?? 6,
+    createdAt: row.createdAt as Date,
+    updatedAt: row.updatedAt as Date,
+    lastActivityAt: (row.lastActivityAt as Date) ?? null,
+    kind: row.kind as string,
+    ...stateJson,
+  } as DeliveryWorkflow;
+}
+
+function serializeWorkflowState(
+  workflow: DeliveryWorkflow,
+): Record<string, unknown> {
+  // Extract state-specific fields (everything except WorkflowCommon + kind)
+  const {
+    workflowId: _wfId,
+    threadId: _tid,
+    generation: _gen,
+    version: _ver,
+    fixAttemptCount: _fac,
+    maxFixAttempts: _mfa,
+    createdAt: _ca,
+    updatedAt: _ua,
+    lastActivityAt: _laa,
+    kind: _k,
+    ...stateFields
+  } = workflow;
+  return stateFields;
+}
+
+function extractHeadSha(workflow: DeliveryWorkflow): string | null {
+  if (
+    workflow.kind === "gating" ||
+    workflow.kind === "awaiting_pr" ||
+    workflow.kind === "babysitting"
+  ) {
+    return workflow.headSha;
+  }
+  return null;
+}
+
+function extractGateKind(workflow: DeliveryWorkflow): string | null {
+  if (workflow.kind === "gating") return workflow.gate.kind;
+  return null;
+}
+
+function extractReviewSurface(
+  workflow: DeliveryWorkflow,
+): Record<string, unknown> | null {
+  if (workflow.kind === "babysitting") {
+    return workflow.reviewSurface as unknown as Record<string, unknown>;
+  }
+  return null;
+}

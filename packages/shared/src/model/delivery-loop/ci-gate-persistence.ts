@@ -6,6 +6,8 @@ import type {
   SdlcCiGateStatus,
   SdlcCiRequiredCheckSource,
 } from "../../db/types";
+import type { GateVerdict } from "../../delivery-loop/domain/events";
+import type { GitSha } from "../../delivery-loop/domain/workflow";
 import type { SdlcGateLoopUpdateOutcome } from "./guarded-state";
 import {
   persistGuardedGateLoopState,
@@ -23,6 +25,23 @@ export type PersistSdlcCiGateEvaluationResult = {
   shouldQueueFollowUp: boolean;
   loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
 };
+
+/** Convert a CI gate persistence result to a v2 GateVerdict */
+export function toCiGateVerdict(
+  result: PersistSdlcCiGateEvaluationResult,
+  headSha: string,
+  loopVersion: number,
+): GateVerdict {
+  return {
+    gate: "ci",
+    passed: result.gatePassed,
+    event: result.gatePassed ? "gate_passed" : "gate_blocked",
+    runId: result.runId,
+    headSha: headSha as GitSha,
+    loopVersion,
+    findingCount: result.failingRequiredChecks.length,
+  };
+}
 
 export async function persistSdlcCiGateEvaluation({
   db,

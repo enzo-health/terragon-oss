@@ -5,6 +5,8 @@ import type {
   SdlcReviewThreadEvaluationSource,
   SdlcReviewThreadGateStatus,
 } from "../../db/types";
+import type { GateVerdict } from "../../delivery-loop/domain/events";
+import type { GitSha } from "../../delivery-loop/domain/workflow";
 import type { SdlcGateLoopUpdateOutcome } from "./guarded-state";
 import { persistGuardedGateLoopState } from "./guarded-state";
 
@@ -16,6 +18,23 @@ export type PersistSdlcReviewThreadGateResult = {
   shouldQueueFollowUp: boolean;
   loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
 };
+
+/** Convert a review-thread gate persistence result to a v2 GateVerdict */
+export function toReviewThreadGateVerdict(
+  result: PersistSdlcReviewThreadGateResult,
+  headSha: string,
+  loopVersion: number,
+): GateVerdict {
+  return {
+    gate: "review",
+    passed: result.gatePassed,
+    event: result.gatePassed ? "gate_passed" : "gate_blocked",
+    runId: result.runId,
+    headSha: headSha as GitSha,
+    loopVersion,
+    findingCount: result.unresolvedThreadCount,
+  };
+}
 
 export async function persistSdlcReviewThreadGateEvaluation({
   db,
