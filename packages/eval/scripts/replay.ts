@@ -116,14 +116,69 @@ async function main() {
     const totalDurationMs = Date.now() - replayStart;
     const completedAt = new Date().toISOString();
 
-    // 7. Compute metrics from the state trace
+    // 7. Query findings from DB (written by gate event replay)
+    const deepFindings = await db
+      .select({
+        id: shared.schema.sdlcDeepReviewFinding.id,
+        title: shared.schema.sdlcDeepReviewFinding.title,
+        severity: shared.schema.sdlcDeepReviewFinding.severity,
+        category: shared.schema.sdlcDeepReviewFinding.category,
+        isBlocking: shared.schema.sdlcDeepReviewFinding.isBlocking,
+        headSha: shared.schema.sdlcDeepReviewFinding.headSha,
+      })
+      .from(shared.schema.sdlcDeepReviewFinding)
+      .where(
+        (shared.eq as any)(
+          shared.schema.sdlcDeepReviewFinding.loopId,
+          seeded.loopId,
+        ),
+      );
+
+    const carmackFindings = await db
+      .select({
+        id: shared.schema.sdlcCarmackReviewFinding.id,
+        title: shared.schema.sdlcCarmackReviewFinding.title,
+        severity: shared.schema.sdlcCarmackReviewFinding.severity,
+        category: shared.schema.sdlcCarmackReviewFinding.category,
+        isBlocking: shared.schema.sdlcCarmackReviewFinding.isBlocking,
+        headSha: shared.schema.sdlcCarmackReviewFinding.headSha,
+      })
+      .from(shared.schema.sdlcCarmackReviewFinding)
+      .where(
+        (shared.eq as any)(
+          shared.schema.sdlcCarmackReviewFinding.loopId,
+          seeded.loopId,
+        ),
+      );
+
+    const allFindings = [...deepFindings, ...carmackFindings];
+    const blockingFindings = allFindings.filter((f) => f.isBlocking);
+    const uniqueTitles = new Set(allFindings.map((f) => f.title));
+
+    // Check for cross-reviewer duplicates (same title in both deep + carmack)
+    const deepTitles = new Set(deepFindings.map((f) => f.title));
+    const carmackTitles = new Set(carmackFindings.map((f) => f.title));
+    let crossReviewerDuplicates = 0;
+    for (const t of deepTitles) {
+      if (carmackTitles.has(t)) crossReviewerDuplicates++;
+    }
+
+    // 8. Compute metrics from the state trace
     const metrics = computeMetrics({
       results,
       trace: stateTrace,
       totalDurationMs,
     });
 
-    // 8. Get code version via git
+    // Override finding metrics with real data from DB
+    metrics.totalFindings = allFindings.length;
+    metrics.blockingFindings = blockingFindings.length;
+    metrics.uniqueRootCauses = uniqueTitles.size;
+    metrics.signalToNoiseRatio =
+      allFindings.length > 0 ? uniqueTitles.size / allFindings.length : 0;
+    metrics.crossReviewerDuplicates = crossReviewerDuplicates;
+
+    // 9. Get code version via git
     let codeVersion = "unknown";
     try {
       codeVersion = execSync("git rev-parse HEAD", {
@@ -145,7 +200,26 @@ async function main() {
       completedAt,
       stateTrace,
       metrics,
-      findings: { deep: [], carmack: [] },
+      findings: {
+        deep: deepFindings.map((f) => ({
+          stableFindingId: f.id,
+          title: f.title,
+          severity: f.severity,
+          category: f.category,
+          isBlocking: f.isBlocking,
+          headSha: f.headSha,
+          reviewer: "deep" as const,
+        })),
+        carmack: carmackFindings.map((f) => ({
+          stableFindingId: f.id,
+          title: f.title,
+          severity: f.severity,
+          category: f.category,
+          isBlocking: f.isBlocking,
+          headSha: f.headSha,
+          reviewer: "carmack" as const,
+        })),
+      },
     };
 
     // 10. Write run result to runs/<runId>/run.json
@@ -165,6 +239,11 @@ async function main() {
     console.log(`Final state:     ${metrics.finalState}`);
     console.log(`Succeeded:       ${metrics.succeeded}`);
     console.log(`Convergence:     ${metrics.convergenceRate.toFixed(3)}`);
+    console.log(
+      `Findings:        ${metrics.totalFindings} (${metrics.blockingFindings} blocking)`,
+    );
+    console.log(`Unique causes:   ${metrics.uniqueRootCauses}`);
+    console.log(`Cross-dup:       ${metrics.crossReviewerDuplicates}`);
     console.log(`Duration:        ${(totalDurationMs / 1000).toFixed(1)}s`);
     console.log(`\nWritten to: ${runPath}`);
   } finally {
