@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "capturedAt": "2026-03-14T03:36:06.804Z",
+  "capturedAt": "2026-03-14T04:19:54.920Z",
   "sourceThreadId": "a0426a4b-7386-4f14-b7d7-0a432cc11d3f",
   "sourceThreadChatId": "a14abe48-98bd-422d-8ac1-17d6331e2288",
   "thread": {
@@ -499,6 +499,688 @@
       },
       "receivedAt": "2026-03-13T23:00:32.950Z",
       "delayFromPreviousMs": 387042
+    }
+  ],
+  "gateEvents": [
+    {
+      "index": 0,
+      "gateType": "deep_review",
+      "headSha": "8b76c9da615f1410e18c87908e274459a354c7c9",
+      "loopVersion": 3,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment endpoints can mutate/delete non-task comments before rejecting request",
+            "detail": "The task-scoped procedures validate `referenceType === TASK` only after calling core mutation functions that already perform side effects. In `delete-task-comment.ts`, `deleteCommentCommunication` deletes the communication before the procedure checks the returned reference type. In `toggle-star-comment.ts` and `update-task-comment.ts`, the procedure checks `referenceType` only after `toggleStarComment` / `updateCommentCommunication` have already updated data. This allows a caller with a valid non-task comment ID in the same org to trigger mutation/deletion and still receive BAD_REQUEST, causing silent cross-entity data changes.",
+            "category": "data-integrity/authorization",
+            "severity": "critical",
+            "isBlocking": true,
+            "suggestedFix": "Enforce expected reference type before side effects. Preferred: add an `expectedReferenceType` (TASK) parameter to core functions and include it in the `where` clause used to fetch/update/delete, failing before mutation if mismatched. Alternatively, add task-only wrappers or preflight queries in task procedures that validate conversation reference type is TASK before invoking mutation/delete.",
+            "stableFindingId": "DR-001-task-procedures-mutate-before-task-reference-validation"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T21:43:33.027Z"
+    },
+    {
+      "index": 1,
+      "gateType": "carmack_review",
+      "headSha": "8b76c9da615f1410e18c87908e274459a354c7c9",
+      "loopVersion": 3,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Entity validator registry does not enforce per-entity access control",
+            "detail": "The new registry in `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts` only verifies `(organizationId, referenceId)` existence. `validateCommentAuthorization` calls it without user context, so validators cannot enforce entity-level visibility/permissions. This violates the stated requirement that each validator checks entity existence and user access, and can allow comment creation on entities the caller should not access within the org.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Change the validator contract to accept actor context (at minimum `authorId`, and any role/team context needed), pass it from `validateCommentAuthorization`, and implement per-entity authorization checks for TASK, PATIENT, and ELIGIBILITY_CHECK using existing bounded-context access rules rather than org membership alone.",
+            "stableFindingId": "carmack-entity-validator-access-control"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T21:44:06.251Z"
+    },
+    {
+      "index": 2,
+      "gateType": "deep_review",
+      "headSha": "b5aa59877aa2e30e2cec5ed3dcc71d2ede1099ff",
+      "loopVersion": 4,
+      "gatePassed": true,
+      "status": "passed",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": true,
+        "blockingFindings": []
+      },
+      "createdAt": "2026-03-13T21:48:50.534Z"
+    },
+    {
+      "index": 3,
+      "gateType": "carmack_review",
+      "headSha": "b5aa59877aa2e30e2cec5ed3dcc71d2ede1099ff",
+      "loopVersion": 4,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Comment mutations no longer enforce comment-channel conversation type",
+            "detail": "The generalized delete/toggle paths now treat any communication with a non-null entity reference as a comment, without requiring `conversation.type === TASK` (the actual comment channel). `fetchCommentForDeletion` filters only by `conversation.referenceType in ENTITY_COMMENT_REFERENCE_TYPES`, and `toggleStarComment` only calls `extractEntityReference` (non-null check). This allows cross-channel mutation/deletion when non-comment conversations carry entity references, violating channel boundaries and making behavior non-deterministic across future entity-linked channels.",
+            "category": "architectural-correctness",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Enforce comment-channel identity in all comment mutations: add `conversation.type: ConversationType.TASK` (or an explicit shared `isEntityCommentConversation` predicate) in `fetchCommentForDeletion`, `toggleStarComment` lookup/update preconditions, and any new generalized comment mutator entrypoints. Keep this invariant centralized in one helper used by update/delete/toggle/list.",
+            "stableFindingId": "comments-channel-type-not-enforced"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T21:51:06.642Z"
+    },
+    {
+      "index": 4,
+      "gateType": "deep_review",
+      "headSha": "36c989f40d87834c2aa83016f9d2e615dd027154",
+      "loopVersion": 5,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Unused type import will fail lint/type checks",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/helpers/fetch-for-deletion.ts`, `ConversationReferenceType` is imported as a type but never used. With the repository's enforced lint gates, this is a CI-blocking defect.",
+            "category": "lint",
+            "severity": "medium",
+            "isBlocking": true,
+            "suggestedFix": "Remove the unused `import type { ConversationReferenceType } from \"@/database/enums\";` line from `fetch-for-deletion.ts`.",
+            "stableFindingId": "apps-dashboard-comments-fetch-for-deletion-unused-import"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T21:53:49.979Z"
+    },
+    {
+      "index": 5,
+      "gateType": "carmack_review",
+      "headSha": "36c989f40d87834c2aa83016f9d2e615dd027154",
+      "loopVersion": 5,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Entity access validation is only enforced on create, not on read/update/delete/star paths",
+            "detail": "The new entity validator registry is wired into `createCommentCommunication` via `validateCommentAuthorization`, but `listCommentCommunications`, `updateCommentCommunication`, `deleteCommentCommunication`, and `toggleStarComment` do not validate actor access against `{referenceType, referenceId}`. In a generalized multi-entity comment system, this leaves core operations dependent on outer adapters for safety and breaks the architectural invariant that entity access is centrally enforced.",
+            "category": "authorization/architecture",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Add `actorUserId` to non-create comment operations and invoke `validateEntityReference` for the extracted/target entity reference in each path. Keep this enforcement in core comment channel functions (not only tRPC wrappers).",
+            "stableFindingId": "carmack-001"
+          },
+          {
+            "title": "Update path mutates data before verifying comment/entity invariants",
+            "detail": "`updateCommentCommunication` performs `prisma.communication.update` first, then calls `extractEntityReference`. If the communication is not a valid entity-comment conversation (missing/null reference fields), the function throws after the write already committed. That creates non-deterministic error semantics and allows unintended mutation on invalid targets.",
+            "category": "determinism/idempotency",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Validate target communication as an entity-comment before mutation (including conversation type/reference checks), then update. Prefer a single transaction with pre-read + guarded update, or relational `where` constraints that only match valid entity-comment communications.",
+            "stableFindingId": "carmack-002"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T21:55:26.180Z"
+    },
+    {
+      "index": 6,
+      "gateType": "deep_review",
+      "headSha": "6476654fc44b9812ce1c329fd6631c206969d257",
+      "loopVersion": 6,
+      "gatePassed": true,
+      "status": "passed",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": true,
+        "blockingFindings": []
+      },
+      "createdAt": "2026-03-13T21:59:31.631Z"
+    },
+    {
+      "index": 7,
+      "gateType": "carmack_review",
+      "headSha": "6476654fc44b9812ce1c329fd6631c206969d257",
+      "loopVersion": 6,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Prisma schema changed without committed migration artifacts",
+            "detail": "The diff updates Prisma schemas (`communication.prisma` enum and `billing.prisma` EligibilityCheck field) but does not include any migration files. That creates nondeterministic environments (schema drift between local/CI/prod) and can break deploy/runtime behavior when generated client and actual DB schema diverge.",
+            "category": "schema/migrations",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Run and commit the generated migration(s) for both schema changes (plus regenerated client artifacts as required by repo conventions), then re-run the required quality gates.",
+            "stableFindingId": "carmack-migration-artifacts-missing"
+          },
+          {
+            "title": "Comment read/update/delete paths incorrectly require referenced entity to still exist",
+            "detail": "`validateEntityReference` is now invoked in non-create paths (`list-comments.ts`, `update-comment.ts`, `toggle-star-comment.ts`, `delete-comment.ts`, and via `validate-authorization.ts`). Because validators enforce entity existence, existing comment threads become inaccessible/non-modifiable/non-deletable if the underlying entity is deleted or temporarily unavailable. This creates operational dead-ends and breaks idempotent cleanup semantics for already-persisted comments.",
+            "category": "correctness/edge-cases",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Restrict strict entity existence validation to create-time. For existing comment operations, authorize based on conversation ownership/org access and conversation reference integrity, allowing operations on persisted comments even if the backing entity record no longer exists.",
+            "stableFindingId": "carmack-entity-existence-hard-dependency"
+          },
+          {
+            "title": "Task comment procedures perform direct Prisma pre-checks, creating adapter-layer drift and TOCTOU risk",
+            "detail": "`delete-task-comment.ts`, `toggle-star-comment.ts`, and `update-task-comment.ts` introduced `assertTaskCommentReference` with direct Prisma reads in the tRPC adapter layer before calling core comment mutations. This duplicates domain logic across layers and introduces check-then-act races (state may change between pre-check and mutation), producing inconsistent error semantics and non-deterministic behavior.",
+            "category": "architecture/race-safety",
+            "severity": "medium",
+            "isBlocking": true,
+            "suggestedFix": "Move task-reference assertion into a single core/domain function used atomically by mutation flows, and keep tRPC procedures as thin adapters that map domain errors to TRPC errors.",
+            "stableFindingId": "carmack-trpc-thin-adapter-violation-toctou"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:00:47.647Z"
+    },
+    {
+      "index": 8,
+      "gateType": "carmack_review",
+      "headSha": "4ea2a2ab75e67bbb1b6d90991762543fd3947b82",
+      "loopVersion": 7,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Unsupported reference types are silently allowed in non-create flows",
+            "detail": "`validateEntityReference` returns early when `validateExistence === false`, before invoking `ENTITY_VALIDATORS`. `listCommentCommunications`, `updateCommentCommunication`, `deleteCommentCommunication`, and `toggleStarComment` all pass `validateExistence: false`, so `CONTACT`/`PAYER` stub validators are bypassed and those reference types can be read/mutated if rows exist. That breaks the intended phased rollout and creates inconsistent behavior between create vs. update/delete/list paths.",
+            "category": "architecture/correctness",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Refactor `validateEntityReference` so type-level validation always runs (including stubs), and only the existence query is optionally skipped. For example, pass `validateExistence` into each validator and have TASK/PATIENT/ELIGIBILITY conditionally skip DB existence checks while CONTACT/PAYER always throw.",
+            "stableFindingId": "carmack-entity-validator-stub-bypass"
+          },
+          {
+            "title": "Entity authorization is reduced to organization membership only",
+            "detail": "The new validator registry claims to check \"user has access\", but current implementation only verifies membership in the organization, then checks entity existence by `organizationId`. `userId` is unused in TASK/PATIENT/ELIGIBILITY validators. This allows any org member reaching these core functions to operate on comments for entities they may not be authorized to access, which is a cross-entity authorization gap.",
+            "category": "authorization/race-safety",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Implement entity-scoped access checks in each validator (or delegate to existing domain authorization helpers) using `userId` plus entity ACL context (team assignment, ownership, role constraints), not just organization membership.",
+            "stableFindingId": "carmack-entity-access-not-enforced"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:12:00.909Z"
+    },
+    {
+      "index": 9,
+      "gateType": "deep_review",
+      "headSha": "299686585781bab399ca8751737134524fbd318c",
+      "loopVersion": 8,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment authorization now incorrectly restricts access to assignee/creator",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts`, `validateTaskEntity` allows non-privileged users only when `task.assigneeId = userId` or `task.createdBy = userId`. This validator is now invoked by create/list/update/delete/star comment flows. Previously, task comment access depended on higher-level task policies and did not impose this assignee/creator-only constraint, so users with legitimate task access (but not assignee/creator) will now fail with `Task not found or user does not have access`, breaking existing task comment behavior.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Replace the ad-hoc assignee/creator predicate with the same task visibility/authorization logic used by the task domain (or remove this extra restriction for TASK and rely on existing task RBAC checks from callers). Ensure comment access rules match existing task access semantics to avoid regressions.",
+            "stableFindingId": "DRV-001-task-comment-access-regression"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:17:48.434Z"
+    },
+    {
+      "index": 10,
+      "gateType": "carmack_review",
+      "headSha": "299686585781bab399ca8751737134524fbd318c",
+      "loopVersion": 8,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment authorization is now narrower than existing task access model",
+            "detail": "The new entity validator path enforces TASK access as `assigneeId == userId OR createdBy == userId` for non-privileged roles (`validateTaskEntity` in `entity-validators.ts`). `createCommentCommunication` and `listCommentCommunications` now require this check via `validateEntityReference`, which blocks org members who can legitimately view/update tasks (via RBAC/policy) but are neither assignee nor creator. This is a behavioral regression against the acceptance criterion that existing task comments continue to work, and it can fail deterministically for first-time commenters on shared tasks.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Align TASK entity validation with the system’s canonical task authorization semantics (same policy surface used by task procedures), not assignee/creator-only checks. At minimum, use existing task-access predicates used elsewhere for read/update permissions, and keep historical participant fallback only for deleted-entity handling.",
+            "stableFindingId": "CRG-001-task-comment-auth-regression"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:18:34.042Z"
+    },
+    {
+      "index": 11,
+      "gateType": "deep_review",
+      "headSha": "00d2bb25f82b66356a48196149118f2569d6e579",
+      "loopVersion": 9,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "CUSTOM role is treated as globally privileged for entity comment access",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts`, `hasPrivilegedEntityAccess` returns true for `Role.CUSTOM`. This bypasses entity-level access checks for PATIENT and ELIGIBILITY_CHECK (only existence is checked), allowing custom-role users to read/mutate comments on entities they should not access. In this codebase, CUSTOM represents scoped RBAC roles, not implicit admin.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Remove `Role.CUSTOM` from `hasPrivilegedEntityAccess` (limit privileged bypass to OWNER/ADMIN), or gate CUSTOM via explicit permissions before bypassing entity-scoped checks.",
+            "stableFindingId": "comments-entity-validator-custom-role-privilege-escalation"
+          },
+          {
+            "title": "TASK entity validator does not enforce user-level access",
+            "detail": "The TASK validator in `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts` only checks task existence when `validateExistence` is true and performs no task-scoped access check; when `validateExistence` is false it returns immediately. Callers like list/update/delete/toggle use `validateExistence: false`, so membership alone is sufficient to act on task comments, violating the stated requirement that validators check entity existence and user access.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Implement task access checks in `validateTaskEntity` (e.g., assignee/creator/authorized relationship or existing participant fallback for historical comments) and keep `validateExistence:false` from bypassing access validation.",
+            "stableFindingId": "comments-entity-validator-task-access-not-enforced"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:21:51.468Z"
+    },
+    {
+      "index": 12,
+      "gateType": "carmack_review",
+      "headSha": "00d2bb25f82b66356a48196149118f2569d6e579",
+      "loopVersion": 9,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Authorization failures are surfaced as 500s instead of deterministic 403/400 domain errors",
+            "detail": "The new `validateEntityReference` path throws generic `Error` strings (e.g., \"User does not have access to this entity\", stub errors for CONTACT/PAYER), but task procedures (`delete-task-comment.ts`, `toggle-star-comment.ts`, `update-task-comment.ts`) only map a small subset of messages and otherwise return `INTERNAL_SERVER_ERROR`. This creates incorrect API semantics, unstable client behavior, and can mask authorization failures as server faults.",
+            "category": "error-handling/authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Introduce typed domain errors (Forbidden/NotFound/BadRequest) in `entity-validators.ts` and map them explicitly in all comment procedures. Do not rely on string matching of generic errors.",
+            "stableFindingId": "carmack-auth-error-mapping-001"
+          },
+          {
+            "title": "CONTACT/PAYER stub validators create operational dead-ends for existing or future records",
+            "detail": "`ENTITY_COMMENT_REFERENCE_TYPES` includes CONTACT/PAYER everywhere (fetch/update/delete/toggle/list filters), but `validateEntityReference` hard-throws \"not supported yet\" for those types even when `validateExistence: false`. If any CONTACT/PAYER comment threads exist (from partial rollout, migration drift, or manual data), mutation/read paths become non-recoverable and non-idempotent because even cleanup operations cannot proceed.",
+            "category": "idempotency/edge-cases",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Allow read/update/delete authorization paths for unsupported types when operating on already-existing conversations (especially with `validateExistence: false`), while still blocking creation of new CONTACT/PAYER comments until full support lands.",
+            "stableFindingId": "carmack-unsupported-type-deadend-002"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:23:22.456Z"
+    },
+    {
+      "index": 13,
+      "gateType": "deep_review",
+      "headSha": "71b10898f3572e997ec95b567d64609bedfb54aa",
+      "loopVersion": 10,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task timeline comment reads now require historical comment participation",
+            "detail": "`listCommentCommunications` now calls `validateEntityReference(..., validateExistence: false)` (apps/dashboard/lib/core/communications/channels/comments/list-comments.ts). For `TASK`, that path enforces `validateHistoricalCommentAccess` in `validateTaskEntity` (apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts), which only allows users already present in `userConversation`/`participant`. This breaks existing task timeline behavior: users with valid task read access (RBAC + task membership) but no prior comment participation can no longer read comments. That violates the no-regression acceptance criterion for existing task comments.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "For list/read flows, do not use TASK historical-participation gating. Either call `validateEntityReference` with `validateExistence: true` for reads, or split validator modes so TASK read access checks current task authorization semantics (same as timeline/task read policy) while keeping historical-access mode only for mutation-on-existing-comment cases where needed.",
+            "stableFindingId": "DR-001-task-comment-read-access-regression"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:28:42.364Z"
+    },
+    {
+      "index": 14,
+      "gateType": "carmack_review",
+      "headSha": "71b10898f3572e997ec95b567d64609bedfb54aa",
+      "loopVersion": 10,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "TASK validation in access-only mode blocks legitimate existing-task access",
+            "detail": "In `entity-validators.ts`, `validateTaskEntity` immediately routes `validateExistence=false` to `validateHistoricalCommentAccess` and never checks current task existence/access. `listCommentCommunications` now calls `validateEntityReference(..., validateExistence: false)`, so a user with valid current access to an existing task can be denied unless they are already in historical conversation/participant rows. This is a behavioral regression for task comment reads and violates the requirement that existing task comments continue to work.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Adjust TASK validator semantics to match PATIENT/ELIGIBILITY behavior: when `validateExistence=false`, first allow if task exists in org (and user has current access policy), then fall back to historical conversation access only when entity no longer exists. Alternatively add an explicit mode flag (`allowHistoricalFallback`) and use it only where deleted-entity support is required.",
+            "stableFindingId": "carmack-task-validator-historical-only-regression"
+          },
+          {
+            "title": "Update/delete/star mutations are now nondeterministically gated by historical conversation membership",
+            "detail": "`update-comment.ts`, `delete-comment.ts`, and `toggle-star-comment.ts` all call `validateEntityReference(..., validateExistence: false)`. For TASK, this ties authorization to presence of `userConversation`/`participant` records, which can be absent for otherwise authorized users and can vary based on async participant creation/history state. Mutation authorization becomes dependent on incidental conversation history instead of entity access rules, causing regressions and nondeterministic failures.",
+            "category": "race-safety-and-determinism",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Decouple mutation authorization from historical participant presence for existing TASK entities. Use current entity access validation first; only use historical fallback when the referenced entity is actually deleted/unavailable. Ensure authorization criteria are consistent across list/update/delete/star paths.",
+            "stableFindingId": "carmack-mutation-auth-coupled-to-historical-membership"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:29:32.381Z"
+    },
+    {
+      "index": 15,
+      "gateType": "deep_review",
+      "headSha": "0f2bbe5ba75fbb302d4b8a6acc9ca108e888061d",
+      "loopVersion": 11,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Updating comments can crash when existing comment body is null",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/update-comment.ts`, `oldText` is now taken from `existing.body` and passed to `findNewlyMentionedUsers(oldText, text)`. `Communication.body` is nullable (`String?` in Prisma schema), so this can pass `null` into mention parsing and fail at runtime. The previous implementation explicitly guarded null via `fetchExistingCommentText` returning `null` and throwing before mention diffing.",
+            "category": "runtime-bug",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Restore a null guard before mention diffing (e.g., throw `Communication not found` if `existing.body` is null, or safely coalesce with `const oldText = existing.body ?? \"\"` and ensure mention extraction handles empty text).",
+            "stableFindingId": "comments-update-null-body-mentions-crash"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:32:48.318Z"
+    },
+    {
+      "index": 16,
+      "gateType": "carmack_review",
+      "headSha": "0f2bbe5ba75fbb302d4b8a6acc9ca108e888061d",
+      "loopVersion": 11,
+      "gatePassed": true,
+      "status": "passed",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": true,
+        "blockingFindings": []
+      },
+      "createdAt": "2026-03-13T22:34:42.662Z"
+    },
+    {
+      "index": 17,
+      "gateType": "deep_review",
+      "headSha": "c4b96996d9609282c5b43bb9dde08c4a33be80c7",
+      "loopVersion": 12,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Inbox exclusion now drops non-comment conversations by referenceType alone",
+            "detail": "In `apps/dashboard/lib/core/communications/conversations/list-conversations.ts`, the `excludeTaskComments` filters (both raw SQL and Prisma where-clause) exclude any conversation whose `referenceType` is in `ENTITY_COMMENT_REFERENCE_TYPES`, without constraining conversation `type`. This broadens behavior from task-only exclusion to suppressing unrelated conversations that happen to use these reference types (for example future/team chat conversations linked to PATIENT/CONTACT/PAYER). The new test also codifies this broader suppression using `TEAM_CHAT`, which indicates likely unintended behavior expansion.",
+            "category": "behavioral-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Scope exclusion to comment-thread conversation type as well. In SQL: exclude only when `conv.type = 'TASK'` and `conv.reference_type IN (...)`. In Prisma: use an OR that keeps conversations where `type != TASK` or `referenceType` is null/not in the entity-comment set.",
+            "stableFindingId": "DR-001-exclude-task-comments-missing-type-guard"
+          },
+          {
+            "title": "Prisma enum exclusion filter uses unstable/incorrect nested `not: { in: ... }` pattern",
+            "detail": "In `apps/dashboard/lib/core/communications/conversations/list-conversations.ts` (`buildWhereClause`), the filter uses `{ referenceType: { not: { in: [...] } } }`. For Prisma enum filters, the canonical and stable form is `notIn`. This nested form is atypical and risks type/runtime incompatibility depending on generated Prisma types, making the exclusion path fragile.",
+            "category": "query-correctness",
+            "severity": "medium",
+            "isBlocking": true,
+            "suggestedFix": "Replace with `{ referenceType: { notIn: [...ENTITY_COMMENT_REFERENCE_TYPES] } }` (while preserving explicit null handling in the surrounding OR).",
+            "stableFindingId": "DR-002-prisma-enum-filter-shape"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:37:57.846Z"
+    },
+    {
+      "index": 18,
+      "gateType": "carmack_review",
+      "headSha": "c4b96996d9609282c5b43bb9dde08c4a33be80c7",
+      "loopVersion": 12,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment update now returns 500 for expected domain errors",
+            "detail": "In `apps/dashboard/trpc/routers/web/tasks/tasks/procedures/update-task-comment.ts`, the catch block only maps typed `NotFoundError`/`ForbiddenError`/`ValidationError`, then falls through to `INTERNAL_SERVER_ERROR`. But `updateCommentCommunication` throws plain `Error` for common cases like `Communication not found` and `Comment is not associated with a task`. Those now surface as 500s instead of deterministic client-facing 404/400 behavior, which is a regression and breaks contract-level error handling.",
+            "category": "API error semantics",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Map known string errors (at minimum `Communication not found`, `Comment is not associated with a task`, `Entity reference missing on conversation`) to `TRPCError` codes, or convert `updateCommentCommunication` to throw typed domain errors consistently so the procedure can classify them without fragile string matching.",
+            "stableFindingId": "carmack-update-task-comment-incorrect-error-mapping"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:40:00.927Z"
+    },
+    {
+      "index": 19,
+      "gateType": "deep_review",
+      "headSha": "3b3fbe1f5aac4de0927ff7bd80ce8b450122443c",
+      "loopVersion": 13,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "SQL `excludeTaskComments` filter incorrectly drops TASK conversations with `NULL` reference_type",
+            "detail": "In `apps/dashboard/lib/core/communications/conversations/list-conversations.ts`, `buildBusinessFiltersSql()` now uses `NOT (conv.type = 'TASK' AND conv.reference_type IN (...))`. For rows where `conv.type = 'TASK'` and `conv.reference_type IS NULL`, the inner expression evaluates to `NULL`, and `NOT NULL` remains `NULL`, which fails the WHERE clause. This silently excludes TASK conversations with null reference_type. The Prisma path (`buildWhereClause`) explicitly keeps `referenceType: null`, so SQL and Prisma behavior diverge.",
+            "category": "data-filtering",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Make the SQL predicate null-safe and mirror Prisma logic exactly, e.g. `conv.type != 'TASK' OR conv.reference_type IS NULL OR conv.reference_type NOT IN (...)` (or use `IS DISTINCT FROM` semantics) so TASK+NULL rows are retained.",
+            "stableFindingId": "list-conversations-sql-null-task-reference-filter-mismatch"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:43:22.324Z"
+    },
+    {
+      "index": 20,
+      "gateType": "carmack_review",
+      "headSha": "3b3fbe1f5aac4de0927ff7bd80ce8b450122443c",
+      "loopVersion": 13,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Raw SQL excludeTaskComments filter drops TASK conversations with NULL reference_type",
+            "detail": "In `buildBusinessFiltersSql`, the new condition `NOT (conv.type = TASK AND conv.reference_type IN (...))` is not NULL-safe. For rows where `conv.type = TASK` and `conv.reference_type IS NULL`, SQL evaluates the inner expression to NULL, then `NOT NULL` remains NULL, which is filtered out by WHERE. The Prisma path (`buildWhereClause`) explicitly keeps `referenceType: null`, so SQL and Prisma paths now diverge. This affects the raw SQL execution paths (`fetchOrderedConversationPage` and read/unread count queries), creating nondeterministic results depending on query mode.",
+            "category": "architectural-correctness",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Make the SQL predicate NULL-safe and semantically identical to Prisma logic, e.g. `(conv.type != TASK OR conv.reference_type IS NULL OR conv.reference_type NOT IN (...))` (with proper enum casts), or wrap with explicit `IS NULL` handling in the existing `NOT (...)` form.",
+            "stableFindingId": "carmack-list-conversations-null-filter-sql-parity"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:44:58.730Z"
+    },
+    {
+      "index": 21,
+      "gateType": "deep_review",
+      "headSha": "840e4de8a9cf431c7791ac6c924dfdc99bc2d2c5",
+      "loopVersion": 14,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "TASK entity validator does not enforce task-level access",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts`, `validateTaskEntity` only checks that the task exists in the organization, and does not verify that the requesting user has access to that task. Multiple generalized comment operations (`listCommentCommunications`, `updateCommentCommunication`, `toggleStarComment`, `deleteCommentCommunication`) now rely on `validateEntityReference`, so this effectively allows any org member to act on task comment threads if they know IDs. This violates the stated requirement that validators ensure both existence and user access.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Update `validateTaskEntity` to enforce task-level authorization (for example, using the same task access predicate/policy used elsewhere in task APIs, or at minimum requiring assignee/creator/team-based access), with the same historical-access fallback only when `validateExistence === false` and the task no longer exists.",
+            "stableFindingId": "comments-entity-validator-task-access-too-broad"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:47:04.188Z"
+    },
+    {
+      "index": 22,
+      "gateType": "carmack_review",
+      "headSha": "840e4de8a9cf431c7791ac6c924dfdc99bc2d2c5",
+      "loopVersion": 14,
+      "gatePassed": true,
+      "status": "passed",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": true,
+        "blockingFindings": []
+      },
+      "createdAt": "2026-03-13T22:47:52.197Z"
+    },
+    {
+      "index": 23,
+      "gateType": "deep_review",
+      "headSha": "c6fa9b3f91a432d4cd2eb05dfd7bc5f7b48531fb",
+      "loopVersion": 15,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment creation now blocks existing thread participants who are not assignee/creator",
+            "detail": "The new `validateEntityReference` path used by `createCommentCommunication` calls `validateTaskEntity` with `validateExistence=true`, which only authorizes TASK access for `assigneeId`/`createdBy` (or ADMIN/OWNER). Users with legitimate existing access to the task comment thread (e.g. previously mentioned participants) are denied when creating new comments. This is a behavioral regression versus prior task-comment behavior and violates the acceptance criterion that existing task comments continue to work.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Adjust TASK validation to permit existing conversation participants (via `validateHistoricalCommentAccess`) when creating/listing comments, not only when `validateExistence=false`. A safe approach is to fall back to historical participant access before throwing forbidden for TASK, or invoke entity validation in create with a mode that preserves prior participant-based access semantics while still enforcing org membership.",
+            "stableFindingId": "DR-ENTITY-COMMENTS-001"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:51:55.040Z"
+    },
+    {
+      "index": 24,
+      "gateType": "carmack_review",
+      "headSha": "c6fa9b3f91a432d4cd2eb05dfd7bc5f7b48531fb",
+      "loopVersion": 15,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment authorization regressed from policy-driven access to assignee/creator-only checks",
+            "detail": "The new `validateTaskEntity` logic in `entity-validators.ts` grants non-admin access only when `task.assigneeId === userId` or `task.createdBy === userId` (plus historical thread participation in `validateExistence=false` paths). This is now invoked by create/list/update/delete/star comment flows. Previously, task comment routes were guarded by task RBAC procedures and did not hard-restrict to assignee/creator. This change can block legitimate users (e.g. supervisors/care-team users with task permissions) from viewing or mutating existing task comments, violating the acceptance criterion that existing task comments continue to work.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Restore backward-compatible task access semantics in `validateTaskEntity` by using the same task-level authorization model as existing task procedures (or at minimum preserve prior behavior for TASK comments). Do not gate TASK comment access solely on assignee/creator; align with established RBAC/policy checks used by task APIs.",
+            "stableFindingId": "CR-AUTHZ-TASK-COMMENT-REGRESSION-001"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:52:37.744Z"
+    },
+    {
+      "index": 25,
+      "gateType": "deep_review",
+      "headSha": "e81b38c8dee23490f88dc3b30eaadd06ed6f8834",
+      "loopVersion": 16,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment operations are now over-restricted to assignee/creator and can block valid task users",
+            "detail": "In `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts`, `validateTaskEntity` grants non-admin access only when `task.assigneeId === userId` or `task.createdBy === userId` (or historical thread participation). Comment list/update/delete/star paths now depend on this validator, so users who are authorized for task read/update via broader task RBAC (but are neither assignee nor creator) can be incorrectly denied. This violates the no-regression requirement for existing task comments.",
+            "category": "authorization",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Replace the hardcoded `assigneeId/createdBy` check with the same task-access predicate used by existing task RBAC/read/update flows (shared helper/service), then keep historical-thread fallback only for legacy/deleted-task scenarios.",
+            "stableFindingId": "comments-task-validator-overrestrictive-access"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:56:56.961Z"
+    },
+    {
+      "index": 26,
+      "gateType": "carmack_review",
+      "headSha": "e81b38c8dee23490f88dc3b30eaadd06ed6f8834",
+      "loopVersion": 16,
+      "gatePassed": false,
+      "status": "blocked",
+      "model": "gpt-5.3-codex-medium",
+      "rawOutput": {
+        "gatePassed": false,
+        "blockingFindings": [
+          {
+            "title": "Task comment authorization is narrowed to assignee/creator and can reject valid task users",
+            "detail": "The new TASK validator in `apps/dashboard/lib/core/communications/channels/comments/entity-validators.ts` treats non-admin/owner access as `assigneeId == user || createdBy == user` (with historical participant fallback). This is stricter than task-domain authorization used by existing task procedures and can block legitimate users who have task access via RBAC/team scope but are not assignee/creator. Because `listCommentCommunications`, `createCommentCommunication`, `updateCommentCommunication`, `toggleStarComment`, and `deleteCommentCommunication` now depend on this validator, this introduces cross-cutting behavioral regression and inconsistent authorization semantics.",
+            "category": "authorization-regression",
+            "severity": "high",
+            "isBlocking": true,
+            "suggestedFix": "Replace ad-hoc TASK access logic with the canonical task access check used by the tasks bounded context (or, for task routes already protected by task RBAC, validate existence only and keep mutation-specific checks separate). Ensure comment-layer authorization composes with existing RBAC instead of redefining narrower rules.",
+            "stableFindingId": "CR-AUTHZ-TASK-ENTITY-REGRESSION"
+          }
+        ]
+      },
+      "createdAt": "2026-03-13T22:57:58.633Z"
     }
   ],
   "prodFindings": {

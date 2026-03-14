@@ -402,7 +402,7 @@ async function processSignal({
           }
         }
 
-        // Transition to review_gate
+        // Transition to review_gate (increment loopVersion like production)
         setTransitionEvent("implementation_completed");
         const ver = await freshLoopVersion(
           db,
@@ -415,7 +415,7 @@ async function processSignal({
           loopId: seeded.loopId,
           transitionEvent: "implementation_completed" as any,
           headSha: effectiveHeadSha,
-          loopVersion: ver,
+          loopVersion: ver + 1,
         });
 
         // Replay gate events (deep_review / carmack_review) for this head
@@ -426,7 +426,7 @@ async function processSignal({
             loopId: seeded.loopId,
             headSha: effectiveHeadSha,
             gateEvents,
-            fallbackLoopVersion: ver,
+            fallbackLoopVersion: ver + 1,
           });
         }
       }
@@ -434,14 +434,55 @@ async function processSignal({
     }
 
     // ── review_gate re-dispatch ──
+    // In production, between signals the agent already ran the gate pipeline
+    // (blocking → implementing), pushed a fix, and re-completed. We replay
+    // this by directly updating currentHeadSha and loopVersion (avoiding
+    // the state machine's fixAttemptCount increment for the synthetic
+    // transition), then replaying the captured gate evaluations which will
+    // apply the real state transitions.
     if (previousState === "review_gate") {
-      // Agent woke up to fix things — just check for gate events to replay
       const headSha =
         getPayloadText(signal.payload, "headShaAtCompletion") ||
         getPayloadText(signal.payload, "headSha") ||
         loopBefore.currentHeadSha ||
         "";
-      if (headSha && gateEvents.length > 0) {
+
+      if (headSha && headSha !== loopBefore.currentHeadSha) {
+        // Update currentHeadSha and bump loopVersion directly — this
+        // simulates the agent having pushed new code without going through
+        // the full review_gate→implementing→review_gate cycle which would
+        // double-count fix attempts.
+        const ver = await freshLoopVersion(
+          db,
+          shared,
+          seeded.loopId,
+          loopVersion,
+        );
+        const nextVer = ver + 1;
+        await db
+          .update(shared.schema.sdlcLoop)
+          .set({
+            currentHeadSha: headSha,
+            loopVersion: nextVer,
+            updatedAt: new Date(),
+          })
+          .where((shared.eq as any)(shared.schema.sdlcLoop.id, seeded.loopId));
+
+        setTransitionEvent("review_gate_redispatch");
+
+        // Replay gate events for the new headSha
+        if (gateEvents.length > 0) {
+          await replayGateEvents({
+            db,
+            shared,
+            loopId: seeded.loopId,
+            headSha,
+            gateEvents,
+            fallbackLoopVersion: nextVer,
+          });
+        }
+      } else if (headSha && gateEvents.length > 0) {
+        // Same headSha as before — just replay gate events
         await replayGateEvents({
           db,
           shared,
