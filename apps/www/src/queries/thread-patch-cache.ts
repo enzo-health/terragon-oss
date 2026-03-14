@@ -230,6 +230,23 @@ function applyChatSummaryFields(
   };
 }
 
+/**
+ * Returns true if the last `append.length` items in `messages` are
+ * structurally identical to `append`, indicating a duplicate delivery.
+ */
+function tailMatchesAppend(messages: unknown[], append: unknown[]): boolean {
+  const offset = messages.length - append.length;
+  for (let i = 0; i < append.length; i++) {
+    const cached = messages[offset + i];
+    const incoming = append[i];
+    // Fast path: reference equality (same object from optimistic update)
+    if (cached === incoming) continue;
+    // Slow path: structural comparison via JSON serialization
+    if (JSON.stringify(cached) !== JSON.stringify(incoming)) return false;
+  }
+  return true;
+}
+
 function sequenceMatchesUpdatedAt(
   sequence: number | null | undefined,
   updatedAt: Date | string | null | undefined,
@@ -294,6 +311,16 @@ function applyChatFields(
     if (
       patch.expectedMessageCount !== undefined &&
       patch.expectedMessageCount !== nextMessages.length
+    ) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    // Safety net: detect tail-overlap duplicates where the last N cache messages
+    // match the incoming appendMessages (e.g. from WebSocket reconnection replay
+    // or a broadcast arriving after the data was already fetched).
+    if (
+      patch.appendMessages.length > 0 &&
+      nextMessages.length >= patch.appendMessages.length &&
+      tailMatchesAppend(nextMessages, patch.appendMessages)
     ) {
       return { chat, shouldInvalidate: true, shouldIgnore: false };
     }
