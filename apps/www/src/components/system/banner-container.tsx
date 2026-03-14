@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { TopBanner } from "@/components/system/top-banner";
 import { BannerBar } from "@/components/system/banner-bar";
 import { BannerPriorityGate } from "@/components/system/banner-container.client";
@@ -6,6 +7,9 @@ import { getFeatureFlagsGlobal } from "@terragon/shared/model/feature-flags";
 import { publicDocsUrl } from "@terragon/env/next-public";
 import Link from "next/link";
 
+// Deduplicate across layout segments that both render BannerContainer
+const getCachedFeatureFlags = cache(() => getFeatureFlagsGlobal({ db }));
+
 /**
  * Shows at most one banner, in priority order:
  * 1) Shutdown banner (if shutdown mode enabled)
@@ -13,7 +17,7 @@ import Link from "next/link";
  * 3) Otherwise, the TopBanner (global/admin-configured or outage-driven)
  */
 export async function BannerContainer() {
-  const flags = await getFeatureFlagsGlobal({ db });
+  const flags = await getCachedFeatureFlags();
 
   // Shutdown banner has highest priority
   if (flags.shutdownMode) {

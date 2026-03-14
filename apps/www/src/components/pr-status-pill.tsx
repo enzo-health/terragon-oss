@@ -6,7 +6,6 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
 } from "lucide-react";
-import posthog from "posthog-js";
 
 const checksSuccessIcon =
   "https://github.githubassets.com/favicons/favicon-success.png";
@@ -134,7 +133,6 @@ export const PRStatusPill = ({
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        posthog.capture("pr_link_clicked", { repoFullName, prNumber });
         window.open(
           `https://github.com/${repoFullName}/pull/${prNumber}`,
           "_blank",

@@ -186,9 +186,22 @@ const TextPart = memo(function TextPart({
     runScan();
 
     // Observe for new code blocks rendered asynchronously (Suspense, lazy highlight)
-    const observer = new MutationObserver(runScan);
+    // Throttle via requestAnimationFrame to avoid running scanForCodeBlocks
+    // hundreds of times per second during agent streaming
+    let rafId: number | null = null;
+    const throttledScan = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        runScan();
+      });
+    };
+    const observer = new MutationObserver(throttledScan);
     observer.observe(container, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   // Apply collapse styles imperatively to code-block-body elements
