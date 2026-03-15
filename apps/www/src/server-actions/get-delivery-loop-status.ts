@@ -627,7 +627,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
     };
 
     // Fire-and-forget: if the loop is babysitting, trigger a background
-    // recheck of GitHub CI to self-heal from missed webhooks.
+    // v2 coordinator tick to process any pending signals.
     if (
       loop.state === "babysitting" &&
       activeSdlcLoopStateSet.has(loop.state)
@@ -635,36 +635,27 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       waitUntil(
         (async () => {
           try {
-            const { recheckBabysitCompletion } = await import(
-              "@/server-lib/delivery-loop/babysit-recheck"
+            const { getActiveWorkflowForThread } = await import(
+              "@terragon/shared/delivery-loop/store/workflow-store"
             );
-            const result = await recheckBabysitCompletion({
+            const workflow = await getActiveWorkflowForThread({
               db,
-              loopId: loop.id,
+              threadId: loop.threadId,
             });
-            if (
-              result.action === "signal_inserted" ||
-              result.action === "signals_inserted"
-            ) {
-              // Process the signal immediately
-              const { runBestEffortSdlcSignalInboxTick } = await import(
-                "@/server-lib/delivery-loop/signal-inbox"
+            if (workflow) {
+              const { runCoordinatorTick } = await import(
+                "@/server-lib/delivery-loop/coordinator/tick"
               );
-              await runBestEffortSdlcSignalInboxTick({
+              await runCoordinatorTick({
                 db,
-                loopId: loop.id,
-                leaseOwnerToken: `babysit-recheck:${loop.id}`,
-                guardrailRuntime: {
-                  killSwitchEnabled: false,
-                  cooldownUntil: null,
-                  maxIterations: null,
-                  manualIntentAllowed: true,
-                  iterationCount: Math.max(loop.loopVersion ?? 0, 0),
-                },
+                workflowId:
+                  workflow.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
+                correlationId:
+                  `babysit-recheck:${loop.id}:${Date.now()}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
               });
             }
           } catch (error) {
-            console.warn("[babysit-recheck] background recheck failed", {
+            console.warn("[babysit-recheck] background v2 tick failed", {
               loopId: loop.id,
               error,
             });

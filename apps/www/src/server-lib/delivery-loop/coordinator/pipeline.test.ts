@@ -22,7 +22,6 @@ import {
 import {
   createWorkflow,
   getWorkflow,
-  getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendSignalToInbox } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
 import { getWorkflowEvents } from "@terragon/shared/delivery-loop/store/event-store";

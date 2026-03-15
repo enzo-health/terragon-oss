@@ -174,6 +174,18 @@ vi.mock("@/agent/update-status", () => ({
   updateThreadChatWithTransition: vi.fn(),
 }));
 
+vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+  getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
+  runCoordinatorTick: vi.fn().mockResolvedValue({
+    transitioned: false,
+    signalsProcessed: 0,
+    workItemsScheduled: 0,
+  }),
+}));
+
 function createDaemonRequest(
   body: Record<string, unknown>,
   headers: Record<string, string> = {},
@@ -621,55 +633,8 @@ describe("daemon-event route", () => {
     );
   });
 
-  it("re-enqueues daemon-terminal feedback when runtime follow-up is expected but queue is empty", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(maybeProcessFollowUpQueue)
-      .mockResolvedValueOnce({
-        processed: false,
-        reason: "no_queued_messages",
-      } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>)
-      .mockResolvedValueOnce({
-        processed: true,
-        reason: "dispatch_started_batch",
-      } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-follow-up",
-        runId: "run-1",
-        seq: 0,
-      }),
-    );
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(queueFollowUpInternal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          expect.objectContaining({
-            parts: [{ type: "text", text: "Please address this feedback." }],
-          }),
-        ],
-        appendOrReplace: "append",
-        source: "github",
-      }),
-    );
-    expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(2);
-    expect(data.acknowledgedEventId).toBe("event-follow-up");
-    expect(data.acknowledgedSeq).toBe(0);
-  });
+  // Removed: "re-enqueues daemon-terminal feedback" — v1 follow-up re-enqueue
+  // logic was removed; v2 handles dispatch via work items.
 
   it("replays self-dispatch on duplicate terminal acknowledgements", async () => {
     vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
@@ -775,42 +740,8 @@ describe("daemon-event route", () => {
     expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
 
-  it("does not trip circuit breaker for completed runs without auto-dispatch provenance", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
-      processed: true,
-      reason: "dispatch_started_batch",
-    } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
-    dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
-      rows: [
-        {
-          daemonRunStatus: "completed",
-          autoDispatchProvenance: false,
-        },
-      ],
-    });
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-non-auto-provenance",
-        runId: "run-1",
-        seq: 0,
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(1);
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
-  });
+  // Removed: "does not trip circuit breaker" — v1 auto-dispatch circuit breaker
+  // was removed; v2 uses self-dispatch with its own circuit breaker in daemon-ingress.
 
   it("persists codexPreviousResponseId for successful codex app-server completions", async () => {
     vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
