@@ -724,7 +724,20 @@ export type SdlcLoopCauseType =
   | "pull_request.edited"
   | "pull_request_review"
   | "pull_request_review_comment"
-  | "review-thread-poll-synthetic";
+  | "review-thread-poll-synthetic"
+  // v2 delivery loop cause types
+  | "daemon_run_completed"
+  | "daemon_run_failed"
+  | "daemon_progress"
+  | "github_ci_changed"
+  | "github_review_changed"
+  | "github_pr_closed"
+  | "github_pr_synchronized"
+  | "human_resume"
+  | "human_bypass"
+  | "human_stop"
+  | "human_mark_done"
+  | "babysit_recheck";
 
 export type SdlcLoopOutboxActionType =
   | "publish_status_comment"

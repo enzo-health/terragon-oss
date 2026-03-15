@@ -198,7 +198,7 @@ export async function runCoordinatorTick(params: {
       // 4d. Update runtime status
       const pendingAction = derivePendingAction(newWorkflow);
       await upsertRuntimeStatus({
-        db: tx as unknown as DB,
+        db: tx,
         workflowId,
         state: newWorkflow.kind,
         gate: extractGateKind(newWorkflow),

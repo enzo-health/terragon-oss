@@ -3,7 +3,7 @@ import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
 export async function upsertRuntimeStatus(params: {
-  db: DB;
+  db: Pick<DB, "insert" | "update">;
   workflowId: string;
   state: string;
   gate?: string | null;

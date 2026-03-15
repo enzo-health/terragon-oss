@@ -1,4 +1,5 @@
 import type { DB } from "@terragon/shared/db";
+import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
   DaemonCompletionResult,
@@ -127,7 +128,7 @@ export async function handleDaemonIngress(params: {
     db: params.db,
     loopId: workflowId,
     causeType,
-    payload: signal as unknown as Record<string, unknown>,
+    payload: signal as Record<string, unknown>,
   });
 
   // Self-dispatch path: if the daemon completed and we haven't hit the
@@ -166,8 +167,8 @@ export async function handleDaemonIngress(params: {
   return { selfDispatch: null };
 }
 
-function mapSignalToCauseType(signal: DeliverySignal): string {
-  if (signal.source !== "daemon") return "daemon_event";
+function mapSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
+  if (signal.source !== "daemon") return "daemon_run_completed";
   switch (signal.event.kind) {
     case "run_completed":
       return "daemon_run_completed";

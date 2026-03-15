@@ -119,18 +119,25 @@ async function injectGitHubSignal(
   if (!signal)
     throw new Error(`GitHub event not recognized: ${rawEvent.action}`);
 
-  const causeTypeMap: Record<string, string> = {
+  const causeTypeMap: Record<
+    string,
+    import("@terragon/shared/db/types").SdlcLoopCauseType
+  > = {
     ci_changed: "github_ci_changed",
     review_changed: "github_review_changed",
     pr_closed: "github_pr_closed",
     pr_synchronized: "github_pr_synchronized",
   };
 
+  const causeType = causeTypeMap[signal.event.kind];
+  if (!causeType)
+    throw new Error(`Unknown GitHub signal kind: ${signal.event.kind}`);
+
   await appendSignalToInbox({
     db,
     loopId: workflowId,
-    causeType: causeTypeMap[signal.event.kind] ?? "github_event",
-    payload: signal as unknown as Record<string, unknown>,
+    causeType,
+    payload: signal as Record<string, unknown>,
   });
 }
 
@@ -800,7 +807,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         db,
         loopId: wf.id,
         causeType: "daemon_run_completed",
-        payload: signal as unknown as Record<string, unknown>,
+        payload: signal as Record<string, unknown>,
       });
 
       const result = await tick(wf.id);
@@ -845,7 +852,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         db,
         loopId: wf.id,
         causeType: "github_review_changed",
-        payload: signal as unknown as Record<string, unknown>,
+        payload: signal as Record<string, unknown>,
       });
 
       const result = await tick(wf.id);

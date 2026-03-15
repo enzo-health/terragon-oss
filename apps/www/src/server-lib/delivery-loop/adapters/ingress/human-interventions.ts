@@ -1,4 +1,5 @@
 import type { DB } from "@terragon/shared/db";
+import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
 import type {
   WorkflowId,
   GateKind,
@@ -79,7 +80,7 @@ export async function handleHumanAction(params: {
     db: params.db,
     loopId: params.workflowId,
     causeType,
-    payload: signal as unknown as Record<string, unknown>,
+    payload: signal as Record<string, unknown>,
   });
 
   if (params.wakeCoordinator) {
@@ -92,8 +93,8 @@ export async function handleHumanAction(params: {
   }
 }
 
-function mapHumanSignalToCauseType(signal: DeliverySignal): string {
-  if (signal.source !== "human") return "human_action";
+function mapHumanSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
+  if (signal.source !== "human") return "human_resume";
   switch (signal.event.kind) {
     case "resume_requested":
       return "human_resume";

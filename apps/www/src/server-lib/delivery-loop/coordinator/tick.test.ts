@@ -48,7 +48,7 @@ function correlationId(): CorrelationId {
 
 async function injectSignal(
   workflowId: string,
-  causeType: string,
+  causeType: import("@terragon/shared/db/types").SdlcLoopCauseType,
   payload: Record<string, unknown>,
 ) {
   return appendSignalToInbox({
@@ -493,9 +493,11 @@ describe("v2 coordinator tick — integration", () => {
         stateJson: IMPLEMENTING_STATE,
       });
 
-      await injectSignal(wf.id, "totally_unknown_cause_type", {
-        foo: "bar",
-      });
+      await injectSignal(
+        wf.id,
+        "totally_unknown_cause_type" as import("@terragon/shared/db/types").SdlcLoopCauseType,
+        { foo: "bar" },
+      );
       const result = await tick(wf.id);
 
       expect(result.signalsProcessed).toBe(1);

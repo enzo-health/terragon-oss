@@ -1,4 +1,5 @@
 import type { DB } from "@terragon/shared/db";
+import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
   CiEvaluation,
@@ -134,7 +135,7 @@ export async function handleGitHubWebhook(params: {
     db: params.db,
     loopId: workflowId,
     causeType,
-    payload: signal as unknown as Record<string, unknown>,
+    payload: signal as Record<string, unknown>,
   });
 
   // Wake coordinator asynchronously
@@ -148,8 +149,8 @@ export async function handleGitHubWebhook(params: {
   }
 }
 
-function mapGitHubSignalToCauseType(signal: DeliverySignal): string {
-  if (signal.source !== "github") return "github_event";
+function mapGitHubSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
+  if (signal.source !== "github") return "github_ci_changed";
   switch (signal.event.kind) {
     case "ci_changed":
       return "github_ci_changed";
