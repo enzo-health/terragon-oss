@@ -96,6 +96,18 @@ vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
   isSdlcLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
+vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+  getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
+  runCoordinatorTick: vi.fn().mockResolvedValue({
+    transitioned: false,
+    signalsProcessed: 0,
+    workItemsScheduled: 0,
+  }),
+}));
+
 describe("routeGithubFeedbackOrSpawnThread", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -631,41 +643,53 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     );
   });
 
-  it("throws to force webhook retry when enrolled-loop follow-up enqueue fails", async () => {
+  it("suppresses direct routing and enqueues signal when enrolled loop has no loopVersion", async () => {
     vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
       id: "loop-1",
       threadId: "loop-thread-id",
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-    await expect(
-      routeGithubFeedbackOrSpawnThread({
-        userId: "user-1",
-        repoFullName: "owner/repo",
-        prNumber: 42,
-        eventType: "check_run.completed",
-        checkRunId: 99,
-        checkSummary: "CI failed",
-        failureDetails: "2 tests failed.",
-      }),
-    ).rejects.toThrow("retrying GitHub delivery");
+    const result = await routeGithubFeedbackOrSpawnThread({
+      userId: "user-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "check_run.completed",
+      checkRunId: 99,
+      checkSummary: "CI failed",
+      failureDetails: "2 tests failed.",
+    });
+    expect(result).toEqual({
+      mode: "suppressed_enrolled_loop",
+      reason: "sdlc-loop-enrolled",
+      sdlcLoopId: "loop-1",
+      threadId: "loop-thread-id",
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
-  it("throws to force webhook retry when enrolled-loop inbox tick throws", async () => {
+  it("suppresses direct routing and enqueues signal when enrolled loop has loopVersion", async () => {
     vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
       id: "loop-1",
       threadId: "loop-thread-id",
       loopVersion: 9,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-    await expect(
-      routeGithubFeedbackOrSpawnThread({
-        userId: "user-1",
-        repoFullName: "owner/repo",
-        prNumber: 42,
-        eventType: "check_run.completed",
-        checkRunId: 99,
-        checkSummary: "CI failed",
-        failureDetails: "2 tests failed.",
-      }),
-    ).rejects.toThrow("retrying GitHub delivery");
+    const result = await routeGithubFeedbackOrSpawnThread({
+      userId: "user-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "check_run.completed",
+      checkRunId: 99,
+      checkSummary: "CI failed",
+      failureDetails: "2 tests failed.",
+    });
+    expect(result).toEqual({
+      mode: "suppressed_enrolled_loop",
+      reason: "sdlc-loop-enrolled",
+      sdlcLoopId: "loop-1",
+      threadId: "loop-thread-id",
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
   it("falls back to direct routing when enrolled loop thread is not routable", async () => {
