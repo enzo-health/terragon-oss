@@ -4,6 +4,7 @@ import type {
   GitHubSignal,
   HumanSignal,
   TimerSignal,
+  BabysitSignal,
 } from "@terragon/shared/delivery-loop/domain/signals";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
 import type {
@@ -35,6 +36,8 @@ export function reduceSignalToEvent(params: {
       return reduceHumanSignal(params.signal.event, params.workflow);
     case "timer":
       return reduceTimerSignal(params.signal.event, params.workflow);
+    case "babysit":
+      return reduceBabysitSignal(params.signal.event, params.workflow);
   }
 }
 
@@ -196,6 +199,23 @@ function reduceTimerSignal(
 
     case "heartbeat_check":
       // Observability only
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Babysit signals
+// ---------------------------------------------------------------------------
+
+function reduceBabysitSignal(
+  event: BabysitSignal,
+  workflow: DeliveryWorkflow,
+): SignalReductionResult {
+  switch (event.kind) {
+    case "babysit_gates_passed":
+      if (workflow.kind === "babysitting") {
+        return { event: "babysit_passed", context: {} };
+      }
       return null;
   }
 }

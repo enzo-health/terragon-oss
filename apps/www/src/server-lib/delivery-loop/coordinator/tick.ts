@@ -49,6 +49,11 @@ export async function runCoordinatorTick(params: {
   workflowId: WorkflowId;
   correlationId: CorrelationId;
   claimToken?: string;
+  /** The loopId used to key signals in the inbox. When callers write signals
+   *  under a v1 sdlcLoop ID (e.g. daemon-event route, route-feedback), they
+   *  must pass that same ID here so the coordinator drains the correct rows.
+   *  Defaults to workflowId for pure v2 adapters that key signals by workflow. */
+  loopId?: string;
   now?: Date;
 }): Promise<CoordinatorTickResult> {
   const {
@@ -56,6 +61,7 @@ export async function runCoordinatorTick(params: {
     workflowId,
     correlationId,
     claimToken = correlationId,
+    loopId = workflowId,
     now = new Date(),
   } = params;
 
@@ -79,7 +85,7 @@ export async function runCoordinatorTick(params: {
   for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
     const signal = await claimNextUnprocessedSignal({
       db,
-      loopId: workflowId,
+      loopId,
       claimToken,
       now,
     });
@@ -358,6 +364,12 @@ function parseSignalPayload(
         source: "timer",
         event:
           payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").TimerSignal,
+      };
+    case "babysit_recheck_passed":
+      return {
+        source: "babysit",
+        event:
+          payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").BabysitSignal,
       };
 
     // -- Legacy v1 cause types written by daemon-event route & route-feedback --
