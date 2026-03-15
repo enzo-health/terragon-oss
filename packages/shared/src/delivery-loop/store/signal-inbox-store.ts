@@ -40,6 +40,7 @@ export async function appendSignalToInbox(params: {
       payload: params.payload,
       receivedAt: now,
     })
+    .onConflictDoNothing()
     .returning({ id: schema.sdlcLoopSignalInbox.id });
-  return row!;
+  return row ?? null;
 }

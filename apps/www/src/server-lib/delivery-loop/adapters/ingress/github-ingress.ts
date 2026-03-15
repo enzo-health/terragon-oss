@@ -136,6 +136,7 @@ export async function handleGitHubWebhook(params: {
     loopId: workflowId,
     causeType,
     payload: signal as Record<string, unknown>,
+    canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkSuiteId ?? params.rawEvent.headSha ?? "no-id"}`,
   });
 
   // Wake coordinator asynchronously

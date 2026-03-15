@@ -126,6 +126,7 @@ export async function runBabysitWork(params: {
               },
             },
           },
+          canonicalCauseId: `babysit:${params.payload.workflowId}:${headSha}:gates_passed`,
         });
       }
       // If gates did not pass, the periodic cron recheck handles retries.

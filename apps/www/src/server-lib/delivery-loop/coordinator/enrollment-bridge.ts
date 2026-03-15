@@ -3,7 +3,9 @@
  * a corresponding v2 delivery_workflow row. Idempotent — calling
  * multiple times for the same thread will not create duplicates.
  */
+import { desc, eq } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
+import * as schema from "@terragon/shared/db/schema";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import type { WorkflowState } from "@terragon/shared/delivery-loop/domain/workflow";
 import {
@@ -197,10 +199,18 @@ export async function ensureV2WorkflowExists(params: {
     params.headSha,
   );
 
+  // Compute next generation to avoid unique constraint violation on (threadId, generation)
+  const latest = await params.db.query.deliveryWorkflow.findFirst({
+    where: eq(schema.deliveryWorkflow.threadId, params.threadId),
+    orderBy: [desc(schema.deliveryWorkflow.generation)],
+    columns: { generation: true },
+  });
+  const nextGeneration = (latest?.generation ?? 0) + 1;
+
   const workflow = await createWorkflow({
     db: params.db,
     threadId: params.threadId,
-    generation: 1,
+    generation: nextGeneration,
     kind: v2Kind,
     stateJson,
   });

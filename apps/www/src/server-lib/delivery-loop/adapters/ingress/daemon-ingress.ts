@@ -129,6 +129,7 @@ export async function handleDaemonIngress(params: {
     loopId: workflowId,
     causeType,
     payload: signal as Record<string, unknown>,
+    canonicalCauseId: `daemon:${params.rawEvent.runId}:${params.rawEvent.status}`,
   });
 
   // Self-dispatch path: if the daemon completed and we haven't hit the

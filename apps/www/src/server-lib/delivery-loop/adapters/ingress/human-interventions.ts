@@ -81,6 +81,7 @@ export async function handleHumanAction(params: {
     loopId: params.workflowId,
     causeType,
     payload: signal as Record<string, unknown>,
+    canonicalCauseId: `human:${params.workflowId}:${params.action}:${Date.now()}`,
   });
 
   if (params.wakeCoordinator) {
