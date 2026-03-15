@@ -105,19 +105,26 @@ export async function runBabysitWork(params: {
       });
 
       if (babysitResult.allRequiredGatesPassed) {
-        // Append babysit_passed signal for the coordinator tick
+        // Append a ci_changed signal so reduceGitHubSignal transitions
+        // the babysitting workflow to babysit_passed.
         const { appendSignalToInbox } = await import(
           "@terragon/shared/delivery-loop/store/signal-inbox-store"
         );
         await appendSignalToInbox({
           db: params.db,
           loopId: params.payload.workflowId,
-          causeType: "babysit_recheck",
+          causeType: "github_ci_changed",
           payload: {
-            source: "timer",
-            event: { kind: "babysit_due" },
-            babysitPassed: true,
-            headSha,
+            source: "github",
+            event: {
+              kind: "ci_changed",
+              prNumber: 0,
+              result: {
+                passed: true,
+                requiredChecks: [],
+                failingChecks: [],
+              },
+            },
           },
         });
       }

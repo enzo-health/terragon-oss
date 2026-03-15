@@ -2,7 +2,6 @@ import type { DB } from "@terragon/shared/db";
 import {
   completeWorkItem,
   failWorkItem,
-  supersedePendingWorkItems,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { eq } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
@@ -49,15 +48,7 @@ export async function runPublicationWork(params: {
   payload: PublicationWorkPayload;
 }): Promise<void> {
   try {
-    // 1. Supersede older pending publications for the same target
-    await supersedePendingWorkItems({
-      db: params.db,
-      workflowId: params.workflowId,
-      kind: "publication",
-      excludeItemId: params.workItemId,
-    });
-
-    // 2. Load workflow to get threadId, then look up sdlcLoop
+    // 1. Load workflow to get threadId, then look up sdlcLoop
     const { getWorkflow } = await import(
       "@terragon/shared/delivery-loop/store/workflow-store"
     );
