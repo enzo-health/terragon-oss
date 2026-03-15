@@ -17,17 +17,13 @@ import {
   evaluateSdlcLoopGuardrails,
   enrollSdlcLoopForGithubPR,
   enrollSdlcLoopForThread,
-  enqueueSdlcOutboxAction,
   getActiveSdlcLoopForThread,
-  getSdlcOutboxSupersessionGroup,
   getUnresolvedBlockingCarmackReviewFindings,
   getActiveSdlcLoopForGithubPRAndUser,
   getActiveSdlcLoopForGithubPR,
   getActiveSdlcLoopsForGithubPR,
   getPreferredActiveSdlcLoopForGithubPRAndUser,
-  claimNextSdlcOutboxActionForExecution,
   clearSdlcCanonicalStatusCommentReference,
-  completeSdlcOutboxActionExecution,
   persistCarmackReviewGateResult,
   persistSdlcCanonicalCheckRunReference,
   persistSdlcCanonicalStatusCommentReference,
@@ -68,7 +64,6 @@ import {
   shouldQueueFollowUpForDeepReview,
   transitionSdlcLoopStateWithArtifact,
   transitionSdlcLoopState,
-  transitionLoopToStoppedAndCancelPendingOutbox,
   verifyPlanTaskCompletionForHead,
   isStaleNoop,
 } from "./delivery-loop";
@@ -1218,22 +1213,6 @@ describe("sdlc loop model", () => {
     expect(daemonCause.canonicalCauseId).toBe("evt-abc");
   });
 
-  it("returns canonical supersession group for each outbox action", () => {
-    expect(getSdlcOutboxSupersessionGroup("publish_status_comment")).toBe(
-      "publication_status",
-    );
-    expect(getSdlcOutboxSupersessionGroup("publish_check_summary")).toBe(
-      "publication_status",
-    );
-    expect(getSdlcOutboxSupersessionGroup("enqueue_fix_task")).toBe(
-      "fix_task_enqueue",
-    );
-    expect(getSdlcOutboxSupersessionGroup("publish_video_link")).toBe(
-      "publication_video",
-    );
-    expect(getSdlcOutboxSupersessionGroup("emit_telemetry")).toBe("telemetry");
-  });
-
   it("uses deterministic GitHub webhook delivery claim outcomes", async () => {
     const now = new Date("2026-01-01T00:00:00.000Z");
 
@@ -1451,68 +1430,6 @@ describe("sdlc loop model", () => {
       allowed: false,
       reasonCode: "max_iterations",
     });
-  });
-
-  it("atomically stops loop and cancels pending outbox rows", async () => {
-    const { user } = await createTestUser({ db });
-    const { threadId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        githubRepoFullName: "owner/repo",
-        githubPRNumber: 42,
-      },
-    });
-    const loop = await enrollSdlcLoopForGithubPR({
-      db,
-      userId: user.id,
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      threadId,
-    });
-
-    await db.insert(schema.sdlcLoopOutbox).values([
-      {
-        loopId: loop!.id,
-        transitionSeq: 1,
-        actionType: "publish_status_comment",
-        supersessionGroup: "publication_status",
-        actionKey: "status-1",
-        payload: { test: true },
-        status: "pending",
-      },
-      {
-        loopId: loop!.id,
-        transitionSeq: 2,
-        actionType: "publish_check_summary",
-        supersessionGroup: "publication_status",
-        actionKey: "summary-1",
-        payload: { test: true },
-        status: "running",
-      },
-    ]);
-
-    const result = await transitionLoopToStoppedAndCancelPendingOutbox({
-      db,
-      loopId: loop!.id,
-      stopReason: "max_iterations_reached",
-    });
-
-    expect(result.canceledOutboxCount).toBe(2);
-
-    const reloadedLoop = await db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.id, loop!.id),
-    });
-    expect(reloadedLoop?.state).toBe("stopped");
-    expect(reloadedLoop?.stopReason).toBe("max_iterations_reached");
-
-    const outboxRows = await db.query.sdlcLoopOutbox.findMany({
-      where: eq(schema.sdlcLoopOutbox.loopId, loop!.id),
-    });
-    expect(outboxRows.every((row) => row.status === "canceled")).toBe(true);
-    expect(
-      outboxRows.every((row) => row.canceledReason === "canceled_due_to_stop"),
-    ).toBe(true);
   });
 
   it("persists CI gate evaluation with deterministic required-check precedence", async () => {
@@ -2914,182 +2831,6 @@ describe("sdlc loop model", () => {
     expect(closedUnmerged.canonicalCauseId).toContain("closed:unmerged");
     expect(reopened.canonicalCauseId).toContain(":reopened");
     expect(edited.canonicalCauseId).toContain(":edited");
-  });
-
-  it("claims, retries, and completes outbox actions under loop lease", async () => {
-    const { user } = await createTestUser({ db });
-    const { threadId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        githubRepoFullName: "owner/repo",
-        githubPRNumber: 99,
-      },
-    });
-
-    const loop = await enrollSdlcLoopForGithubPR({
-      db,
-      userId: user.id,
-      repoFullName: "owner/repo",
-      prNumber: 99,
-      threadId,
-    });
-
-    await enqueueSdlcOutboxAction({
-      db,
-      loopId: loop!.id,
-      transitionSeq: 1,
-      actionType: "publish_status_comment",
-      actionKey: "status:1",
-      payload: { body: "status" },
-      now: new Date("2026-01-01T00:00:00.000Z"),
-    });
-
-    const enqueueSecond = await enqueueSdlcOutboxAction({
-      db,
-      loopId: loop!.id,
-      transitionSeq: 2,
-      actionType: "publish_check_summary",
-      actionKey: "summary:1",
-      payload: { summary: "gates" },
-      now: new Date("2026-01-01T00:00:01.000Z"),
-    });
-
-    expect(enqueueSecond.supersededOutboxCount).toBe(1);
-
-    const lease = await acquireSdlcLoopLease({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-1",
-      leaseTtlMs: 600_000,
-      now: new Date("2026-01-01T00:00:02.000Z"),
-    });
-    expect(lease.acquired).toBe(true);
-
-    const claimed = await claimNextSdlcOutboxActionForExecution({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-1",
-      leaseEpoch: lease.acquired ? lease.leaseEpoch : 0,
-      now: new Date("2026-01-01T00:00:03.000Z"),
-    });
-
-    expect(claimed?.id).toBe(enqueueSecond.outboxId);
-    expect(claimed?.attemptCount).toBe(1);
-
-    const retryResult = await completeSdlcOutboxActionExecution({
-      db,
-      outboxId: claimed!.id,
-      leaseOwner: "worker-1",
-      succeeded: false,
-      retriable: true,
-      errorClass: "infra",
-      errorCode: "github_5xx",
-      errorMessage: "GitHub temporary outage",
-      now: new Date("2026-01-01T00:00:04.000Z"),
-    });
-
-    expect(retryResult.updated).toBe(true);
-    if (retryResult.updated) {
-      expect(retryResult.status).toBe("pending");
-      expect(retryResult.retryAt).not.toBeNull();
-    }
-
-    const notReadyYet = await claimNextSdlcOutboxActionForExecution({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-1",
-      leaseEpoch: lease.acquired ? lease.leaseEpoch : 0,
-      now: new Date("2026-01-01T00:00:10.000Z"),
-    });
-    expect(notReadyYet).toBeNull();
-
-    const readyAgain = await claimNextSdlcOutboxActionForExecution({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-1",
-      leaseEpoch: lease.acquired ? lease.leaseEpoch : 0,
-      now: new Date("2026-01-01T00:00:34.000Z"),
-    });
-    expect(readyAgain?.id).toBe(enqueueSecond.outboxId);
-    expect(readyAgain?.attemptCount).toBe(2);
-
-    const completed = await completeSdlcOutboxActionExecution({
-      db,
-      outboxId: readyAgain!.id,
-      leaseOwner: "worker-1",
-      succeeded: true,
-      now: new Date("2026-01-01T00:00:35.000Z"),
-    });
-    expect(completed).toMatchObject({
-      updated: true,
-      status: "completed",
-    });
-
-    const attempts = await db.query.sdlcLoopOutboxAttempt.findMany({
-      where: eq(schema.sdlcLoopOutboxAttempt.outboxId, enqueueSecond.outboxId),
-      orderBy: [schema.sdlcLoopOutboxAttempt.attempt],
-    });
-    expect(attempts.map((attempt) => attempt.status)).toEqual([
-      "retry_scheduled",
-      "completed",
-    ]);
-  });
-
-  it("resets outbox retry debt when superseding an action via conflict update", async () => {
-    const { user } = await createTestUser({ db });
-    const { threadId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        githubRepoFullName: "owner/repo",
-        githubPRNumber: 101,
-      },
-    });
-    const loop = await enrollSdlcLoopForGithubPR({
-      db,
-      userId: user.id,
-      repoFullName: "owner/repo",
-      prNumber: 101,
-      threadId,
-    });
-
-    await db.insert(schema.sdlcLoopOutbox).values({
-      loopId: loop!.id,
-      transitionSeq: 1,
-      actionType: "publish_status_comment",
-      supersessionGroup: "publication_status",
-      actionKey: "publication:primary",
-      payload: { body: "old" },
-      status: "pending",
-      attemptCount: 3,
-      nextRetryAt: new Date("2026-01-01T00:10:00.000Z"),
-      lastErrorClass: "infra",
-      lastErrorCode: "github_5xx",
-      lastErrorMessage: "GitHub temporary outage",
-    });
-
-    const result = await enqueueSdlcOutboxAction({
-      db,
-      loopId: loop!.id,
-      transitionSeq: 2,
-      actionType: "publish_check_summary",
-      actionKey: "publication:primary",
-      payload: { body: "new" },
-      now: new Date("2026-01-01T00:20:00.000Z"),
-    });
-
-    const reloadedOutbox = await db.query.sdlcLoopOutbox.findFirst({
-      where: eq(schema.sdlcLoopOutbox.id, result.outboxId),
-    });
-
-    expect(result.supersededOutboxCount).toBe(0);
-    expect(reloadedOutbox?.attemptCount).toBe(0);
-    expect(reloadedOutbox?.status).toBe("pending");
-    expect(reloadedOutbox?.nextRetryAt).toBeNull();
-    expect(reloadedOutbox?.lastErrorClass).toBeNull();
-    expect(reloadedOutbox?.lastErrorCode).toBeNull();
-    expect(reloadedOutbox?.lastErrorMessage).toBeNull();
   });
 
   it("persists canonical GitHub publication references for loop status surfaces", async () => {

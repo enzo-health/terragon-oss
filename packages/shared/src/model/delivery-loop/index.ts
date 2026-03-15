@@ -9,7 +9,7 @@ export * from "./legacy-transitions";
 export * from "./enrollment";
 export * from "./artifacts";
 export * from "./lease";
-export * from "./outbox";
+export * from "./github-pr-references";
 export * from "./webhook-delivery";
 export * from "./guarded-state";
 export * from "./ci-gate-persistence";
