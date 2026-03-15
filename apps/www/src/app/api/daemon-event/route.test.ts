@@ -13,8 +13,6 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import {
@@ -138,14 +136,6 @@ vi.mock("@terragon/shared/model/delivery-loop", () => ({
     deliveryLoopModelMocks.markDispatchIntentCompleted,
   markDispatchIntentFailed: deliveryLoopModelMocks.markDispatchIntentFailed,
   SDLC_CAUSE_IDENTITY_VERSION: 1,
-}));
-
-vi.mock("@/server-lib/delivery-loop/publication", () => ({
-  runBestEffortSdlcPublicationCoordinator: vi.fn(),
-}));
-
-vi.mock("@/server-lib/delivery-loop/signal-inbox", () => ({
-  runBestEffortSdlcSignalInboxTick: vi.fn(),
 }));
 
 vi.mock("@/server-lib/process-follow-up-queue", () => ({
@@ -306,14 +296,6 @@ describe("daemon-event route", () => {
     vi.mocked(markDispatchIntentCompleted).mockResolvedValue(undefined);
     vi.mocked(markDispatchIntentFailed).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
-    vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
-      executed: false,
-      reason: "no_eligible_action",
-    });
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: false,
-      reason: "no_unprocessed_signal",
-    });
     vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
       processed: false,
       reason: "no_queued_messages",
@@ -645,25 +627,6 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       loopVersion: 7,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: true,
-      signalId: "signal-1",
-      causeType: "daemon_terminal",
-      runtimeAction: "feedback_follow_up_queued",
-      outboxId: null,
-      feedbackQueuedMessage: {
-        type: "user",
-        model: null,
-        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
-        parts: [{ type: "text", text: "Please address this feedback." }],
-      },
-      runtimeRouting: {
-        routed: true,
-        followUpQueued: true,
-        reason: "follow_up_queued",
-        error: null,
-      },
-    });
     vi.mocked(maybeProcessFollowUpQueue)
       .mockResolvedValueOnce({
         processed: false,
@@ -718,11 +681,6 @@ describe("daemon-event route", () => {
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
       MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
     );
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: false,
-      reason: "no_unprocessed_signal",
-    } as Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>);
-
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -790,25 +748,6 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       loopVersion: 7,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: true,
-      signalId: "signal-1",
-      causeType: "daemon_terminal",
-      runtimeAction: "feedback_follow_up_queued",
-      outboxId: null,
-      feedbackQueuedMessage: {
-        type: "user",
-        model: null,
-        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
-        parts: [{ type: "text", text: "Please address this feedback." }],
-      },
-      runtimeRouting: {
-        routed: true,
-        followUpQueued: true,
-        reason: "follow_up_queued",
-        error: null,
-      },
-    });
     // First execute call is advisory lock for claim; second call is the breaker query.
     dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
       rows: Array.from({ length: 10 }, () => ({
@@ -842,25 +781,6 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       loopVersion: 7,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: true,
-      signalId: "signal-1",
-      causeType: "daemon_terminal",
-      runtimeAction: "feedback_follow_up_queued",
-      outboxId: null,
-      feedbackQueuedMessage: {
-        type: "user",
-        model: null,
-        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
-        parts: [{ type: "text", text: "Please address this feedback." }],
-      },
-      runtimeRouting: {
-        routed: true,
-        followUpQueued: true,
-        reason: "follow_up_queued",
-        error: null,
-      },
-    });
     vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
       processed: true,
       reason: "dispatch_started_batch",
@@ -1087,8 +1007,6 @@ describe("daemon-event route", () => {
       acknowledgedSeq: 4,
     });
     expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
@@ -1110,8 +1028,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(409);
     expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("requires v2 envelopes for enrolled loops even without capability headers", async () => {
@@ -1135,8 +1051,6 @@ describe("daemon-event route", () => {
     expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("accepts enrolled-loop daemon events with v2 envelope", async () => {
@@ -1165,31 +1079,6 @@ describe("daemon-event route", () => {
     expect(dbMocks.transaction).toHaveBeenCalledTimes(1);
     expect(dbMocks.execute).toHaveBeenCalledTimes(1);
     expect(dbMocks.update).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "daemon-event:event-1:1",
-      includeRuntimeRouting: true,
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: 15,
-        manualIntentAllowed: true,
-        iterationCount: 11,
-      },
-    });
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "daemon-event:event-1:1",
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: 15,
-        manualIntentAllowed: true,
-        iterationCount: 11,
-      },
-    });
   });
 
   it("does not force implementation transition when enrolled loop has already advanced state", async () => {
@@ -1214,8 +1103,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("rolls back the claimed v2 signal when daemon handling fails so retries can process the message", async () => {
@@ -1333,8 +1220,6 @@ describe("daemon-event route", () => {
     );
     expect(getThreadChat).not.toHaveBeenCalled();
     expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("returns a retryable conflict instead of deduping when the same daemon event claim is still in progress", async () => {
@@ -1367,8 +1252,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(409);
     expect(data.error).toBe("daemon_event_claim_in_progress");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("reclaims stale unprocessed daemon-event claims so the event is replayed", async () => {
@@ -1404,8 +1287,6 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
     expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
     expect(dbMocks.update).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("deduplicates stale committed daemon-event claims without reclaiming or replaying", async () => {
@@ -1441,8 +1322,6 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
     expect(dbMocks.update).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("treats commit as idempotent success when another worker already committed the signal", async () => {
@@ -1472,8 +1351,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("deduplicates out-of-order daemon envelopes within the same run", async () => {
@@ -1516,8 +1393,6 @@ describe("daemon-event route", () => {
       expect.anything(),
       "run-1",
     );
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent claim races by event identity when insert conflicts", async () => {
@@ -1547,7 +1422,5 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(202);
     expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 });
