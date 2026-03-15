@@ -6,6 +6,7 @@ import type {
   PlanVersion,
   DispatchSubState,
   GateSubState,
+  ManualFixIssue,
   ResumableWorkflowState,
 } from "./workflow";
 import type { LoopEvent, LoopEventContext } from "./events";
@@ -164,15 +165,21 @@ export function reduceWorkflow(params: {
     };
   }
   if (event === "exhausted_retries") {
-    return {
+    const reason: ManualFixIssue = {
+      description: "Retry budget exhausted",
+      suggestedAction: "Review failures and manually fix the issue",
+    };
+    const result: WorkflowCommon & {
+      kind: "awaiting_manual_fix";
+      reason: ManualFixIssue;
+      resumableFrom: Exclude<ResumableWorkflowState, { kind: "planning" }>;
+    } = {
       ...bump(wf, now),
       kind: "awaiting_manual_fix",
-      reason: {
-        description: "Retry budget exhausted",
-        suggestedAction: "Review failures and manually fix the issue",
-      },
+      reason,
       resumableFrom: deriveResumableFrom(wf),
-    } as DeliveryWorkflow;
+    };
+    return result;
   }
 
   // State-specific transitions
@@ -263,6 +270,20 @@ function reduceImplementing(
       gate: emptyGateSubState("review"),
     };
   }
+
+  if (event === "gate_blocked") {
+    // Transient failure (daemon crash, timeout, partial) — bump fix attempt
+    // and re-enter implementing with a fresh dispatch for retry.
+    const base = bump(wf, now);
+    return {
+      ...base,
+      fixAttemptCount: wf.fixAttemptCount + 1,
+      kind: "implementing",
+      planVersion: wf.planVersion,
+      dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    };
+  }
+
   return null;
 }
 
