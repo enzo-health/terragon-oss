@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
       const MAX_V2_WORK_ITEMS = 20;
 
       for (let i = 0; i < MAX_V2_WORK_ITEMS; i++) {
-        const claimToken = `cron:scheduled-tasks:v2:${Date.now()}:${i}`;
+        const claimToken = `cron:v2:${crypto.randomUUID()}`;
         const item = await claimNextWorkItem({ db, claimToken });
         if (!item) break;
 
@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
               typeof runCoordinatorTick
             >[0]["workflowId"],
             correlationId,
-            claimToken: `cron:scheduled-tasks:v2:tick:${Date.now()}`,
+            claimToken: `cron:tick:${crypto.randomUUID()}`,
           });
           if (result.signalsProcessed > 0) {
             v2TicksCaughtUp++;

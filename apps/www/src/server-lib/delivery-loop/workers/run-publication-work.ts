@@ -13,7 +13,7 @@ import {
 } from "../publication";
 
 export type PublicationWorkPayload = {
-  target: { kind: string };
+  target: { kind: "status_comment" } | { kind: "check_run_summary" };
   workflowState: string;
 };
 

@@ -33,6 +33,10 @@ export async function runBabysitWork(params: {
     );
     const workflow = await getWorkflow({ db: params.db, workflowId });
     if (!workflow) {
+      console.warn(
+        "[babysit-worker] workflow not found, completing stale work item",
+        { workflowId, workItemId: params.workItemId },
+      );
       await completeWorkItem({
         db: params.db,
         workItemId: params.workItemId,
@@ -43,6 +47,14 @@ export async function runBabysitWork(params: {
 
     // 2. If not in babysitting state, complete work item (stale)
     if (workflow.kind !== "babysitting") {
+      console.warn(
+        "[babysit-worker] workflow not in babysitting state, completing stale work item",
+        {
+          workflowId,
+          currentState: workflow.kind,
+          workItemId: params.workItemId,
+        },
+      );
       await completeWorkItem({
         db: params.db,
         workItemId: params.workItemId,
