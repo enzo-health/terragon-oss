@@ -150,6 +150,29 @@ export async function runDispatchWork(params: {
       threadChatId: threadChat.id,
     });
 
+    // 6.5. Trigger the follow-up queue to actually launch the run.
+    // The follow-up queue handles sandbox creation, daemon messaging,
+    // and all the infrastructure needed to start an agent run.
+    try {
+      const { maybeProcessFollowUpQueue } = await import(
+        "@/server-lib/process-follow-up-queue"
+      );
+      await maybeProcessFollowUpQueue({
+        userId: loop.userId,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+      });
+    } catch (followUpErr) {
+      // Non-fatal: the cron job will pick up pending follow-ups
+      console.warn(
+        "[dispatch-worker] maybeProcessFollowUpQueue failed, cron will retry",
+        {
+          workflowId: params.payload.workflowId,
+          error: followUpErr,
+        },
+      );
+    }
+
     // 7. Complete work item — dispatch worker's job is done; the follow-up
     //    queue and ack timeout handle the rest asynchronously.
     await completeWorkItem({

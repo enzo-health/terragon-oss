@@ -35,6 +35,7 @@ export type LoopEventContext = {
   gate?: GateKind;
   hasPrLink?: boolean;
   resumeTo?: ResumableWorkflowState;
+  headSha?: string;
 };
 
 // Publication targets

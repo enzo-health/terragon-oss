@@ -425,7 +425,7 @@ function parseSignalPayload(
           kind: "ci_changed",
           prNumber,
           result: {
-            passed: checkOutcome === "success",
+            passed: checkOutcome === "success" || checkOutcome === "pass",
             requiredChecks:
               (payload.ciSnapshotCheckNames as readonly string[]) ?? [],
             failingChecks:

@@ -49,7 +49,14 @@ function reduceDaemonSignal(
   switch (event.kind) {
     case "run_completed":
       if (workflow.kind === "implementing") {
-        return { event: "implementation_completed", context: {} };
+        if (event.result.kind === "partial") {
+          // Partial completion — stay in implementing, schedule re-dispatch
+          return { event: "gate_blocked", context: {} };
+        }
+        return {
+          event: "implementation_completed",
+          context: { headSha: event.result.headSha },
+        };
       }
       return null;
 

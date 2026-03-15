@@ -254,10 +254,12 @@ function reduceImplementing(
   now: Date,
 ): DeliveryWorkflow | null {
   if (event === "implementation_completed") {
+    const headSha = (ctx.headSha ??
+      `sha-impl-${wf.version}`) as import("./workflow").GitSha;
     return {
       ...bumpWithFixReset(wf, event, ctx, now),
       kind: "gating",
-      headSha: `sha-impl-${wf.version}` as import("./workflow").GitSha,
+      headSha,
       gate: emptyGateSubState("review"),
     };
   }
