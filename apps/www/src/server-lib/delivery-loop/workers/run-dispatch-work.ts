@@ -21,11 +21,26 @@ export type DispatchWorkPayload = {
 };
 
 /**
- * Execute a dispatch work item: load the workflow, look up the sdlcLoop
- * and threadChat, create a dispatch intent, and start an ack timeout.
+ * Execute a dispatch work item — the first stage of a two-phase dispatch lifecycle.
  *
- * The actual daemon dispatch happens through the follow-up queue — the
- * worker's job is to prepare the intent and mark the work item completed.
+ * ## Dispatch lifecycle
+ *
+ * 1. **This worker** resolves the workflow/thread/loop context, then writes a
+ *    Redis dispatch intent via `createDispatchIntent` (see `dispatch-intent.ts`).
+ *    It does NOT directly create a sandbox or send a daemon message.
+ *
+ * 2. **The follow-up queue processor** (`queueFollowUp` / `processFollowUp`)
+ *    picks up the `threadChatId` associated with the intent, creates or resumes
+ *    a sandbox, and sends the actual daemon message that starts the agent run.
+ *
+ * 3. **The ack timeout** (started here via `startAckTimeout`) monitors whether
+ *    the daemon acknowledges the dispatch within a deadline. If the timeout
+ *    expires without an ack, a timer signal is appended to the signal inbox
+ *    so the coordinator can schedule a retry on the next tick.
+ *
+ * This separation keeps the dispatch worker fast and idempotent — it only
+ * touches Redis and the DB, while sandbox/daemon orchestration stays in
+ * the follow-up queue's existing infra.
  */
 export async function runDispatchWork(params: {
   db: DB;
@@ -92,7 +107,9 @@ export async function runDispatchWork(params: {
           ? "reviewing"
           : "implementing";
 
-    // 5. Create dispatch intent (Redis-backed real-time tracking)
+    // 5. Create dispatch intent in Redis. This is the handoff point — the
+    //    follow-up queue processor reads this intent to launch the sandbox
+    //    and send the daemon message (see dispatch lifecycle in docstring).
     const runId = randomUUID();
     const intentParams: CreateDispatchIntentParams = {
       loopId: loop.id,
@@ -124,7 +141,8 @@ export async function runDispatchWork(params: {
       throw intentErr;
     }
 
-    // 6. Start ack timeout (best-effort in-process timer)
+    // 6. Start ack timeout — if the daemon doesn't ack within the deadline,
+    //    a timer signal is written to the inbox so the coordinator retries.
     startAckTimeout({
       db: params.db,
       runId,
@@ -132,7 +150,8 @@ export async function runDispatchWork(params: {
       threadChatId: threadChat.id,
     });
 
-    // 7. Complete work item
+    // 7. Complete work item — dispatch worker's job is done; the follow-up
+    //    queue and ack timeout handle the rest asynchronously.
     await completeWorkItem({
       db: params.db,
       workItemId: params.workItemId,
