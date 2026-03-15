@@ -129,12 +129,6 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
-  sdlcLoopCoordinatorRouting: {
-    defaultValue: true,
-    enabledForPreview: false,
-    description:
-      "Routes delivery loop signals through the v2 coordinator (enrollment, ingress, workers, cron) instead of v1 signal inbox processing.",
-  },
   sdlcPlanReviewCard: {
     defaultValue: false,
     enabledForPreview: false,

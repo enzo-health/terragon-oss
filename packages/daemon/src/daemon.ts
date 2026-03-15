@@ -275,7 +275,6 @@ type AppServerRunContext = {
 type DaemonEventRunState = {
   runId: string;
   nextSeq: number;
-  coordinatorRoutingEnabled: boolean;
   transportMode: DaemonTransportMode;
   protocolVersion: number;
   acpServerId: string | null;
@@ -681,15 +680,12 @@ export class TerragonDaemon {
 
   private initializeDaemonEventRunStateForNewRun({
     input,
-    coordinatorRoutingEnabled,
   }: {
     input: DaemonMessageClaude;
-    coordinatorRoutingEnabled: boolean;
   }): void {
     this.daemonEventRunStates.set(input.threadChatId, {
       runId: input.runId ?? randomUUID(),
       nextSeq: 0,
-      coordinatorRoutingEnabled,
       transportMode: input.transportMode ?? "legacy",
       protocolVersion: input.protocolVersion ?? 1,
       acpServerId: input.acpServerId ?? null,
@@ -806,12 +802,8 @@ export class TerragonDaemon {
         },
       );
     }
-    const coordinatorRoutingEnabled = this.getFeatureFlag(
-      "sdlcLoopCoordinatorRouting",
-    );
     this.initializeDaemonEventRunStateForNewRun({
       input,
-      coordinatorRoutingEnabled,
     });
     if (input.transportMode === "codex-app-server") {
       if (input.agent !== "codex") {
@@ -2513,12 +2505,8 @@ export class TerragonDaemon {
     );
   }
 
-  private shouldEmitDaemonEventEnvelopeV2(threadChatId: string): boolean {
-    const runState = this.daemonEventRunStates.get(threadChatId);
-    if (runState) {
-      return runState.coordinatorRoutingEnabled;
-    }
-    return this.getFeatureFlag("sdlcLoopCoordinatorRouting");
+  private shouldEmitDaemonEventEnvelopeV2(_threadChatId: string): boolean {
+    return true;
   }
 
   private getMessageFingerprint(messages: ClaudeMessage[]): string {
@@ -2535,9 +2523,6 @@ export class TerragonDaemon {
     const created: DaemonEventRunState = {
       runId: randomUUID(),
       nextSeq: 0,
-      coordinatorRoutingEnabled: this.getFeatureFlag(
-        "sdlcLoopCoordinatorRouting",
-      ),
       transportMode: "legacy",
       protocolVersion: 1,
       acpServerId: null,

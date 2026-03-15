@@ -7,7 +7,6 @@ import {
 } from "@terragon/shared/model/delivery-loop";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { ensureV2WorkflowExists } from "./coordinator/enrollment-bridge";
 
 export function isSdlcLoopEnrollmentAllowedForThread({
@@ -89,7 +88,6 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
 
   if (enrolled) {
     await tryEnsureV2Workflow({
-      userId,
       threadId,
       sdlcLoopId: enrolled.id,
       sdlcLoopState: enrolled.state,
@@ -135,7 +133,6 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
 
   if (activeLoop) {
     await tryEnsureV2Workflow({
-      userId,
       threadId,
       sdlcLoopId: activeLoop.id,
       sdlcLoopState: activeLoop.state,
@@ -188,7 +185,6 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
 }
 
 async function tryEnsureV2Workflow(params: {
-  userId: string;
   threadId: string;
   sdlcLoopId: string;
   sdlcLoopState: string;
@@ -196,13 +192,6 @@ async function tryEnsureV2Workflow(params: {
   headSha?: string | null;
 }) {
   try {
-    const isV2Enabled = await getFeatureFlagForUser({
-      db,
-      userId: params.userId,
-      flagName: "sdlcLoopCoordinatorRouting",
-    });
-    if (!isV2Enabled) return;
-
     await ensureV2WorkflowExists({
       db,
       threadId: params.threadId,
