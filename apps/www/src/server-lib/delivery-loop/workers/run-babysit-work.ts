@@ -4,9 +4,12 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { eq, desc } from "drizzle-orm";
+import * as schema from "@terragon/shared/db/schema";
 
 export type BabysitWorkPayload = {
   workflowId: string;
+  loopId?: string;
 };
 
 /**
@@ -95,12 +98,22 @@ export async function runBabysitWork(params: {
 
     const headSha = (workflow.headSha as string) ?? null;
     if (headSha) {
+      // Resolve canonical loopId for gate evaluation
+      let loopId = params.payload.loopId;
+      if (!loopId) {
+        const loop = await params.db.query.sdlcLoop.findFirst({
+          where: eq(schema.sdlcLoop.threadId, workflow.threadId),
+          orderBy: [desc(schema.sdlcLoop.createdAt)],
+        });
+        loopId = loop?.id ?? params.payload.workflowId;
+      }
+
       const { evaluateBabysitCompletionForHead } = await import(
         "@terragon/shared/model/signal-inbox-core"
       );
       const babysitResult = await evaluateBabysitCompletionForHead({
         db: params.db,
-        loopId: params.payload.workflowId,
+        loopId,
         headSha,
       });
 
@@ -112,7 +125,7 @@ export async function runBabysitWork(params: {
         );
         await appendSignalToInbox({
           db: params.db,
-          loopId: params.payload.workflowId,
+          loopId,
           causeType: "github_ci_changed",
           payload: {
             source: "github",
@@ -126,7 +139,7 @@ export async function runBabysitWork(params: {
               },
             },
           },
-          canonicalCauseId: `babysit:${params.payload.workflowId}:${headSha}:gates_passed`,
+          canonicalCauseId: `babysit:${loopId}:${headSha}:gates_passed`,
         });
       }
       // If gates did not pass, the periodic cron recheck handles retries.

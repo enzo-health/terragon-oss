@@ -3,7 +3,7 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import {
   upsertSdlcCanonicalStatusComment,
@@ -14,6 +14,7 @@ import {
 export type PublicationWorkPayload = {
   target: { kind: "status_comment" } | { kind: "check_run_summary" };
   workflowState: string;
+  loopId?: string;
 };
 
 /** Map v2 workflow state to a human-readable status body for PR comments. */
@@ -67,9 +68,17 @@ export async function runPublicationWork(params: {
       return;
     }
 
-    const loop = await params.db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.threadId, workflow.threadId),
-    });
+    let loop;
+    if (params.payload.loopId) {
+      loop = await params.db.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.id, params.payload.loopId),
+      });
+    } else {
+      loop = await params.db.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.threadId, workflow.threadId),
+        orderBy: [desc(schema.sdlcLoop.createdAt)],
+      });
+    }
     if (!loop) {
       await failWorkItem({
         db: params.db,

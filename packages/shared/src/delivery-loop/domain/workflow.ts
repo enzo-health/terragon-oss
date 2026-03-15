@@ -62,7 +62,7 @@ export type DispatchFailure =
 
 // Review surface abstraction — decoupled from GitHub
 export type ReviewSurfaceRef =
-  | { kind: "github_pr"; prNumber: number }
+  | { kind: "github_pr"; prNumber: number | null }
   | { kind: "other"; externalId: string };
 
 // Resumable state — what to return to after human wait resolves

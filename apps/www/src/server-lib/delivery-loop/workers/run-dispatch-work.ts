@@ -16,6 +16,8 @@ import { startAckTimeout } from "../ack-lifecycle";
 export type DispatchWorkPayload = {
   executionClass: ExecutionClass;
   workflowId: string;
+  loopId?: string;
+  threadChatId?: string;
   gate?: string;
   headSha?: string;
 };
@@ -68,10 +70,18 @@ export async function runDispatchWork(params: {
       return;
     }
 
-    // 2. Look up sdlcLoop by threadId to get loopId, repoFullName
-    const loop = await params.db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.threadId, workflow.threadId),
-    });
+    // 2. Resolve loop — prefer payload.loopId, fall back to threadId lookup
+    let loop;
+    if (params.payload.loopId) {
+      loop = await params.db.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.id, params.payload.loopId),
+      });
+    } else {
+      loop = await params.db.query.sdlcLoop.findFirst({
+        where: eq(schema.sdlcLoop.threadId, workflow.threadId),
+        orderBy: [desc(schema.sdlcLoop.createdAt)],
+      });
+    }
     if (!loop) {
       await failWorkItem({
         db: params.db,
@@ -83,11 +93,18 @@ export async function runDispatchWork(params: {
       return;
     }
 
-    // 3. Look up the latest threadChat to get threadChatId
-    const threadChat = await params.db.query.threadChat.findFirst({
-      where: eq(schema.threadChat.threadId, workflow.threadId),
-      orderBy: [desc(schema.threadChat.createdAt)],
-    });
+    // 3. Resolve threadChat — prefer payload.threadChatId, fall back to latest
+    let threadChat;
+    if (params.payload.threadChatId) {
+      threadChat = await params.db.query.threadChat.findFirst({
+        where: eq(schema.threadChat.id, params.payload.threadChatId),
+      });
+    } else {
+      threadChat = await params.db.query.threadChat.findFirst({
+        where: eq(schema.threadChat.threadId, workflow.threadId),
+        orderBy: [desc(schema.threadChat.createdAt)],
+      });
+    }
     if (!threadChat) {
       await failWorkItem({
         db: params.db,

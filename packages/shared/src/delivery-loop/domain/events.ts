@@ -36,6 +36,8 @@ export type LoopEventContext = {
   hasPrLink?: boolean;
   resumeTo?: ResumableWorkflowState;
   headSha?: string;
+  runId?: string | null;
+  prNumber?: number | null;
 };
 
 // Publication targets
@@ -62,7 +64,7 @@ export type DeliveryWorkflowEvent =
       kind: "gate_evaluated";
       gate: GateKind;
       passed: boolean;
-      runId: string;
+      runId: string | null;
       headSha: GitSha;
     }
   | { kind: "review_surface_requested"; headSha: GitSha }

@@ -41,7 +41,7 @@ export function buildWorkflowEvent(params: {
         kind: "gate_evaluated",
         gate: (context.gate ?? extractGateKind(previousWorkflow)) as GateKind,
         passed: true,
-        runId: "",
+        runId: context.runId ?? null,
         headSha: extractHeadSha(previousWorkflow),
       };
 
@@ -50,14 +50,14 @@ export function buildWorkflowEvent(params: {
         kind: "gate_evaluated",
         gate: (context.gate ?? extractGateKind(previousWorkflow)) as GateKind,
         passed: false,
-        runId: "",
+        runId: context.runId ?? null,
         headSha: extractHeadSha(previousWorkflow),
       };
 
     case "pr_linked":
       return {
         kind: "review_surface_attached",
-        surface: { kind: "github_pr", prNumber: 0 },
+        surface: { kind: "github_pr", prNumber: context.prNumber ?? null },
         headSha: extractHeadSha(previousWorkflow),
       };
 
@@ -69,7 +69,7 @@ export function buildWorkflowEvent(params: {
         kind: "gate_evaluated",
         gate: "ci" as GateKind,
         passed: false,
-        runId: "",
+        runId: context.runId ?? null,
         headSha: extractHeadSha(previousWorkflow),
       };
 

@@ -116,19 +116,32 @@ export function buildInitialStateJson(
         reviewSurface: { kind: "github_pr", prNumber: 0 },
         nextCheckAt: new Date(Date.now() + 5 * 60_000).toISOString(),
       };
-    case "awaiting_manual_fix":
+    case "awaiting_manual_fix": {
+      const resumableKind = mapV1StateToResumableKind(v1BlockedFromState);
+      const resumableBase = (() => {
+        switch (resumableKind) {
+          case "implementing":
+            return { kind: "implementing" as const, dispatchId: "d-migrated-blocked-0" };
+          case "gating": {
+            const gate = resolveGateKindFromV1State(v1BlockedFromState!) ?? "review";
+            return { kind: "gating" as const, gate, headSha: headSha ?? "unknown" };
+          }
+          case "awaiting_pr":
+            return { kind: "awaiting_pr" as const, headSha: headSha ?? "unknown" };
+          case "babysitting":
+            return { kind: "babysitting" as const, headSha: headSha ?? "unknown" };
+          default:
+            return { kind: "implementing" as const, dispatchId: "d-migrated-blocked-0" };
+        }
+      })();
       return {
         reason: {
           description: "Migrated from v1 blocked state",
           suggestedAction: null,
         },
-        resumableFrom: {
-          kind: mapV1StateToResumableKind(v1BlockedFromState),
-          ...(mapV1StateToResumableKind(v1BlockedFromState) === "implementing"
-            ? { dispatchId: "d-migrated-blocked-0" }
-            : {}),
-        },
+        resumableFrom: resumableBase,
       };
+    }
     case "awaiting_plan_approval":
       return {
         planVersion: 1,

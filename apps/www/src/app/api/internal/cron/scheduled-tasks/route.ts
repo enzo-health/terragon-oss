@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
     // V2 delivery loop work item processing
     let v2WorkItemsProcessed = 0;
     let v2TicksCaughtUp = 0;
+    let v2Error: string | null = null;
     try {
       const { claimNextWorkItem } = await import(
         "@terragon/shared/delivery-loop/store/work-queue-store"
@@ -161,13 +162,15 @@ export async function GET(request: NextRequest) {
       });
     } catch (error) {
       console.error("V2 delivery loop cron processing failed", error);
+      v2Error = "v2_processing_failed";
     }
 
     return Response.json({
-      success: true,
+      success: !v2Error,
       v2WorkItemsProcessed,
       v2TicksCaughtUp,
-    });
+      ...(v2Error ? { v2Error } : {}),
+    }, { status: v2Error ? 207 : 200 });
   } catch (error) {
     console.error("Scheduled tasks cron failed:", error);
     return Response.json(
