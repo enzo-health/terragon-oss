@@ -1018,12 +1018,19 @@ export async function routeGithubFeedbackOrSpawnThread(
           threadId: activeSdlcLoop.threadId,
         });
         if (v2Workflow) {
-          await runCoordinatorTick({
-            db,
-            workflowId: v2Workflow.id as WorkflowId,
-            correlationId: leaseOwnerToken as CorrelationId,
-            claimToken: leaseOwnerToken,
-          });
+          try {
+            await runCoordinatorTick({
+              db,
+              workflowId: v2Workflow.id as WorkflowId,
+              correlationId: leaseOwnerToken as CorrelationId,
+              claimToken: leaseOwnerToken,
+            });
+          } catch (tickErr) {
+            console.error("[route-feedback] v2 coordinator tick failed", {
+              workflowId: v2Workflow.id,
+              error: tickErr,
+            });
+          }
         }
       }
       captureFeedbackRouting({

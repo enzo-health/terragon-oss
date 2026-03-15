@@ -8,10 +8,10 @@ const BATCH_SIZE = 5;
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
-  if (
-    process.env.NODE_ENV === "production" &&
-    authHeader !== `Bearer ${env.CRON_SECRET}`
-  ) {
+  if (env.CRON_SECRET && authHeader !== `Bearer ${env.CRON_SECRET}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  if (!env.CRON_SECRET && process.env.NODE_ENV === "production") {
     return new Response("Unauthorized", { status: 401 });
   }
   console.log("Scheduled tasks cron task triggered");
@@ -169,12 +169,9 @@ export async function GET(request: NextRequest) {
       v2TicksCaughtUp,
     });
   } catch (error) {
-    console.error("Error in scheduled tasks cron task:", error);
+    console.error("Scheduled tasks cron failed:", error);
     return Response.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
+      { success: false, error: "Internal server error" },
       { status: 500 },
     );
   }
