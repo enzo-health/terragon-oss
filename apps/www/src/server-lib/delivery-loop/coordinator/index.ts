@@ -1,5 +1,21 @@
-export * from "./tick";
-export * from "./reduce-signals";
-export * from "./schedule-work";
-export * from "./append-events";
-export * from "./enrollment-bridge";
+// tick.ts
+export { type CoordinatorTickResult, runCoordinatorTick } from "./tick";
+
+// reduce-signals.ts
+export {
+  type SignalReductionResult,
+  reduceSignalToEvent,
+} from "./reduce-signals";
+
+// schedule-work.ts
+export { type ScheduledWorkItem, resolveWorkItems } from "./schedule-work";
+
+// append-events.ts
+export { buildWorkflowEvent } from "./append-events";
+
+// enrollment-bridge.ts
+export {
+  mapV1StateToV2Kind,
+  buildInitialStateJson,
+  ensureV2WorkflowExists,
+} from "./enrollment-bridge";
