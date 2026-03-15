@@ -359,6 +359,129 @@ function parseSignalPayload(
         event:
           payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").TimerSignal,
       };
+
+    // -- Legacy v1 cause types written by daemon-event route & route-feedback --
+
+    case "daemon_terminal": {
+      const daemonRunStatus = payload.daemonRunStatus as string | undefined;
+      const runId =
+        (payload.runId as string) ?? (payload.eventId as string) ?? "unknown";
+      const headSha = payload.headShaAtCompletion as string | undefined;
+      const errorMessage = payload.daemonErrorMessage as string | undefined;
+
+      if (
+        daemonRunStatus === "completed" ||
+        daemonRunStatus === "plan_completed"
+      ) {
+        return {
+          source: "daemon",
+          event: {
+            kind: "run_completed",
+            runId,
+            result: {
+              kind: "success",
+              headSha: headSha ?? "",
+              summary: "",
+            },
+          },
+        };
+      }
+      if (
+        daemonRunStatus === "failed" ||
+        daemonRunStatus === "error" ||
+        daemonRunStatus === "stopped"
+      ) {
+        return {
+          source: "daemon",
+          event: {
+            kind: "run_failed",
+            runId,
+            failure: {
+              kind: "runtime_crash",
+              exitCode: null,
+              message: errorMessage ?? "Unknown error",
+            },
+          },
+        };
+      }
+      // Other statuses (e.g., "processing") — treat as progress
+      return {
+        source: "daemon",
+        event: {
+          kind: "progress_reported",
+          runId,
+          progress: { completedTasks: 0, totalTasks: 0, currentTask: null },
+        },
+      };
+    }
+
+    case "check_run.completed":
+    case "check_suite.completed": {
+      const checkOutcome = payload.checkOutcome as string | undefined;
+      const prNumber = (payload.prNumber as number) ?? 0;
+      return {
+        source: "github",
+        event: {
+          kind: "ci_changed",
+          prNumber,
+          result: {
+            passed: checkOutcome === "success",
+            requiredChecks:
+              (payload.ciSnapshotCheckNames as readonly string[]) ?? [],
+            failingChecks:
+              (payload.ciSnapshotFailingChecks as readonly string[]) ?? [],
+          },
+        },
+      };
+    }
+
+    case "pull_request_review":
+    case "pull_request_review_comment": {
+      const prNumber = (payload.prNumber as number) ?? 0;
+      const reviewState = payload.reviewState as string | undefined;
+      const unresolvedThreadCount =
+        (payload.unresolvedThreadCount as number) ?? 0;
+      return {
+        source: "github",
+        event: {
+          kind: "review_changed",
+          prNumber,
+          result: {
+            passed: reviewState === "approved" && unresolvedThreadCount === 0,
+            unresolvedThreadCount,
+            approvalCount: reviewState === "approved" ? 1 : 0,
+            requiredApprovals: 1,
+          },
+        },
+      };
+    }
+
+    case "pull_request.synchronize": {
+      const headSha = (payload.headSha as string) ?? "";
+      const prNumber = (payload.prNumber as number) ?? 0;
+      return {
+        source: "github",
+        event: {
+          kind: "pr_synchronized",
+          prNumber,
+          headSha,
+        },
+      };
+    }
+
+    case "pull_request.closed": {
+      const prNumber = (payload.prNumber as number) ?? 0;
+      const merged = (payload.merged as boolean) ?? false;
+      return {
+        source: "github",
+        event: {
+          kind: "pr_closed",
+          prNumber,
+          merged,
+        },
+      };
+    }
+
     default:
       return null;
   }
