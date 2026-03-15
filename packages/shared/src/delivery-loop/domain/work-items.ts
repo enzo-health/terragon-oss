@@ -7,7 +7,8 @@ export type WorkItemStatus =
   | "claimed"
   | "completed"
   | "failed"
-  | "dead_lettered";
+  | "dead_lettered"
+  | "superseded";
 
 export type SelectedAgent = "codex" | "claude_code";
 export type TransportMode = "self_dispatch" | "queue_fallback";

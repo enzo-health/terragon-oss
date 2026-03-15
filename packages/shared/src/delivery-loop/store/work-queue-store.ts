@@ -173,9 +173,8 @@ export async function supersedePendingWorkItems(params: {
   const result = await params.db
     .update(schema.deliveryWorkItem)
     .set({
-      status: "completed",
+      status: "superseded",
       completedAt: now,
-      lastErrorMessage: "superseded",
     })
     .where(whereClause)
     .returning({ id: schema.deliveryWorkItem.id });
