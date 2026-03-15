@@ -1,8 +1,36 @@
 import { and, eq, isNull, lte } from "drizzle-orm";
 import { DB } from "../../db";
 import * as schema from "../../db/schema";
-import type { GithubWebhookDeliveryClaimResult } from "./legacy-transitions";
-import { GITHUB_WEBHOOK_CLAIM_TTL_MS } from "./legacy-transitions";
+
+export const GITHUB_WEBHOOK_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+export type GithubWebhookDeliveryClaimOutcome =
+  | "claimed_new"
+  | "already_completed"
+  | "in_progress_fresh"
+  | "stale_stolen";
+
+export type GithubWebhookDeliveryClaimResult = {
+  outcome: GithubWebhookDeliveryClaimOutcome;
+  shouldProcess: boolean;
+};
+
+export function getGithubWebhookClaimHttpStatus(
+  outcome: GithubWebhookDeliveryClaimOutcome,
+): number {
+  switch (outcome) {
+    case "already_completed":
+      return 200;
+    case "claimed_new":
+    case "stale_stolen":
+    case "in_progress_fresh":
+      return 202;
+    default: {
+      const _exhaustive: never = outcome;
+      throw new Error(`Unhandled GitHub claim outcome: ${_exhaustive}`);
+    }
+  }
+}
 
 export async function claimGithubWebhookDelivery({
   db,
