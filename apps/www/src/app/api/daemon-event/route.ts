@@ -1463,6 +1463,7 @@ export async function POST(request: Request) {
           correlationId:
             `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
           claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+          loopId: enrolledLoop.id,
         });
         if (!tickResult.signalsProcessed) {
           console.log(

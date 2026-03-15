@@ -1024,6 +1024,7 @@ export async function routeGithubFeedbackOrSpawnThread(
               workflowId: v2Workflow.id as WorkflowId,
               correlationId: leaseOwnerToken as CorrelationId,
               claimToken: leaseOwnerToken,
+              loopId: activeSdlcLoop.id,
             });
           } catch (tickErr) {
             console.error("[route-feedback] v2 coordinator tick failed", {

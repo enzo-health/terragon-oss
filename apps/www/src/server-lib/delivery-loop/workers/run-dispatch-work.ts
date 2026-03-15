@@ -12,6 +12,10 @@ import {
   type CreateDispatchIntentParams,
 } from "../dispatch-intent";
 import { startAckTimeout } from "../ack-lifecycle";
+import {
+  createDispatchIntent as createDbDispatchIntent,
+  markDispatchIntentDispatched,
+} from "@terragon/shared/model/delivery-loop";
 
 export type DispatchWorkPayload = {
   executionClass: ExecutionClass;
@@ -158,8 +162,38 @@ export async function runDispatchWork(params: {
       throw intentErr;
     }
 
-    // 6. Start ack timeout — if the daemon doesn't ack within the deadline,
-    //    a timer signal is written to the inbox so the coordinator retries.
+    // 6. Persist durable dispatch intent in the DB so the ack timeout
+    //    handler and cron sweep can find it. The Redis intent is for
+    //    real-time tracking; the DB intent is for durable recovery.
+    try {
+      await createDbDispatchIntent(params.db, {
+        loopId: loop.id,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        runId,
+        targetPhase: targetPhase as Parameters<
+          typeof createDbDispatchIntent
+        >[1]["targetPhase"],
+        selectedAgent: "claudeCode",
+        executionClass: params.payload.executionClass as Parameters<
+          typeof createDbDispatchIntent
+        >[1]["executionClass"],
+        dispatchMechanism: "self_dispatch" as Parameters<
+          typeof createDbDispatchIntent
+        >[1]["dispatchMechanism"],
+      });
+      await markDispatchIntentDispatched(params.db, runId);
+    } catch (dbIntentErr) {
+      // Non-fatal: Redis intent + cron sweep will handle recovery
+      console.warn("[dispatch-worker] durable dispatch intent write failed", {
+        workflowId: params.payload.workflowId,
+        runId,
+        error: dbIntentErr,
+      });
+    }
+
+    // 6b. Start ack timeout — if the daemon doesn't ack within the deadline,
+    //     checks the DB dispatch intent and classifies the timeout.
     startAckTimeout({
       db: params.db,
       runId,
