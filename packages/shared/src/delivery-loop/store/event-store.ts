@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
@@ -17,19 +17,11 @@ export async function appendWorkflowEvent(params: {
   headSha?: string | null;
   previousPhaseDurationMs?: number | null;
 }) {
-  // Get next seq number for this workflow
-  const latest = await params.db.query.deliveryWorkflowEvent.findFirst({
-    where: eq(schema.deliveryWorkflowEvent.workflowId, params.workflowId),
-    orderBy: [desc(schema.deliveryWorkflowEvent.seq)],
-    columns: { seq: true },
-  });
-  const nextSeq = (latest?.seq ?? 0) + 1;
-
   const [row] = await params.db
     .insert(schema.deliveryWorkflowEvent)
     .values({
       workflowId: params.workflowId,
-      seq: nextSeq,
+      seq: sql`COALESCE((SELECT MAX(${schema.deliveryWorkflowEvent.seq}) FROM ${schema.deliveryWorkflowEvent} WHERE ${schema.deliveryWorkflowEvent.workflowId} = ${params.workflowId}), 0) + 1`,
       correlationId: params.correlationId,
       eventKind: params.eventKind,
       stateBefore: params.stateBefore,

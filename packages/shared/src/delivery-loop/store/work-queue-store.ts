@@ -25,6 +25,8 @@ export async function enqueueWorkItem(params: {
   return row!;
 }
 
+export const WORK_ITEM_CLAIM_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export async function claimNextWorkItem(params: {
   db: DB;
   kind?: string;
@@ -32,19 +34,38 @@ export async function claimNextWorkItem(params: {
   now?: Date;
 }) {
   const now = params.now ?? new Date();
+  const staleThreshold = new Date(now.getTime() - WORK_ITEM_CLAIM_TTL_MS);
 
-  const conditions = [
+  // Find items that are either pending or stale-claimed
+  const pendingConditions = [
     eq(schema.deliveryWorkItem.status, "pending"),
     lte(schema.deliveryWorkItem.scheduledAt, now),
   ];
   if (params.kind) {
-    conditions.push(eq(schema.deliveryWorkItem.kind, params.kind));
+    pendingConditions.push(eq(schema.deliveryWorkItem.kind, params.kind));
   }
 
-  const item = await params.db.query.deliveryWorkItem.findFirst({
-    where: and(...conditions),
+  // First try pending items
+  let item = await params.db.query.deliveryWorkItem.findFirst({
+    where: and(...pendingConditions),
     orderBy: [schema.deliveryWorkItem.scheduledAt],
   });
+
+  // If no pending items, look for stale claimed items
+  if (!item) {
+    const staleConditions = [
+      eq(schema.deliveryWorkItem.status, "claimed"),
+      lte(schema.deliveryWorkItem.claimedAt, staleThreshold),
+    ];
+    if (params.kind) {
+      staleConditions.push(eq(schema.deliveryWorkItem.kind, params.kind));
+    }
+    item = await params.db.query.deliveryWorkItem.findFirst({
+      where: and(...staleConditions),
+      orderBy: [schema.deliveryWorkItem.claimedAt],
+    });
+  }
+
   if (!item) return null;
 
   const [claimed] = await params.db
@@ -58,7 +79,8 @@ export async function claimNextWorkItem(params: {
     .where(
       and(
         eq(schema.deliveryWorkItem.id, item.id),
-        eq(schema.deliveryWorkItem.status, "pending"),
+        // Guard: only claim if still in the expected status
+        sql`(${schema.deliveryWorkItem.status} = 'pending' OR (${schema.deliveryWorkItem.status} = 'claimed' AND ${schema.deliveryWorkItem.claimedAt} <= ${staleThreshold}))`,
       ),
     )
     .returning();
