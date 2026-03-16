@@ -621,6 +621,7 @@ function parseSignalPayload(
     case "check_suite.completed": {
       const checkOutcome = payload.checkOutcome as string | undefined;
       const prNumber = (payload.prNumber as number) ?? 0;
+      const signalHeadSha = payload.headSha as string | undefined;
       let requiredChecks =
         (payload.ciSnapshotCheckNames as readonly string[]) ?? [];
       let failingChecks =
@@ -650,6 +651,7 @@ function parseSignalPayload(
             requiredChecks,
             failingChecks,
           },
+          ...(signalHeadSha ? { headSha: signalHeadSha } : {}),
         },
       };
     }
@@ -658,6 +660,7 @@ function parseSignalPayload(
     case "pull_request_review_comment": {
       const prNumber = (payload.prNumber as number) ?? 0;
       const reviewState = payload.reviewState as string | undefined;
+      const signalHeadSha = payload.headSha as string | undefined;
       const unresolvedThreadCount =
         (payload.unresolvedThreadCount as number) ?? 0;
       // Use real approval data from the routed payload when available.
@@ -681,6 +684,7 @@ function parseSignalPayload(
             approvalCount,
             requiredApprovals,
           },
+          ...(signalHeadSha ? { headSha: signalHeadSha } : {}),
         },
       };
     }

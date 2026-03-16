@@ -43,8 +43,20 @@ export type DaemonSignal =
   | { kind: "progress_reported"; runId: string; progress: DaemonProgress };
 
 export type GitHubSignal =
-  | { kind: "ci_changed"; prNumber: number; result: CiEvaluation }
-  | { kind: "review_changed"; prNumber: number; result: ReviewEvaluation }
+  | {
+      kind: "ci_changed";
+      prNumber: number;
+      result: CiEvaluation;
+      /** Head SHA the signal pertains to, used for stale-signal rejection. */
+      headSha?: string;
+    }
+  | {
+      kind: "review_changed";
+      prNumber: number;
+      result: ReviewEvaluation;
+      /** Head SHA the signal pertains to, used for stale-signal rejection. */
+      headSha?: string;
+    }
   | { kind: "pr_closed"; prNumber: number; merged: boolean }
   | { kind: "pr_synchronized"; prNumber: number; headSha: string };
 

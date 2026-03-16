@@ -248,26 +248,37 @@ export async function ensureV2WorkflowExists(params: {
         threadId: params.threadId,
       },
     );
-    try {
-      await updateWorkflowState({
-        db: params.db,
-        workflowId: existing.id,
-        expectedVersion: existing.version,
-        kind: "stopped",
-        stateJson: {
-          reason: {
-            kind: "generation_superseded",
-            newLoopId: params.sdlcLoopId,
-          },
+    const stopResult = await updateWorkflowState({
+      db: params.db,
+      workflowId: existing.id,
+      expectedVersion: existing.version,
+      kind: "stopped",
+      stateJson: {
+        reason: {
+          kind: "generation_superseded",
+          newLoopId: params.sdlcLoopId,
         },
+      },
+    });
+    if (!stopResult.updated) {
+      // Version conflict — re-read to see if the workflow is now terminal
+      // or was already bound to the requested loop by a concurrent caller.
+      const refreshed = await getActiveWorkflowForThread({
+        db: params.db,
+        threadId: params.threadId,
       });
-    } catch (stopErr) {
-      // Non-fatal: version conflict means another tick already moved
-      // the workflow. The new workflow creation below will proceed.
-      console.warn(
-        "[enrollment-bridge] failed to stop old workflow (may be version conflict)",
-        { existingWorkflowId: existing.id, error: stopErr },
-      );
+      if (refreshed && refreshed.sdlcLoopId === params.sdlcLoopId) {
+        return { workflowId: refreshed.id, created: false };
+      }
+      if (refreshed) {
+        // Still active and NOT bound to our loop — abort to avoid
+        // leaving two non-terminal workflows for the same thread.
+        throw new Error(
+          `[enrollment-bridge] cannot stop old workflow ${existing.id} (version conflict) and it is still active`,
+        );
+      }
+      // No active workflow found — the old one became terminal via the
+      // concurrent update. Fall through to create a new one.
     }
   }
 

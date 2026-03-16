@@ -112,6 +112,17 @@ function reduceGitHubSignal(
 ): SignalReductionResult {
   switch (event.kind) {
     case "ci_changed": {
+      // Stale-signal rejection: if the signal carries a headSha that doesn't
+      // match the workflow's current head, the signal is outdated — complete
+      // it as a no-op so it doesn't incorrectly pass/fail a newer head.
+      if (
+        event.headSha &&
+        workflow.kind === "gating" &&
+        "headSha" in workflow &&
+        workflow.headSha !== event.headSha
+      ) {
+        return null;
+      }
       // Check verdicts first if provided
       const verdict = gateVerdicts?.find((v) => v.gate === "ci");
       if (verdict) {
@@ -142,13 +153,15 @@ function reduceGitHubSignal(
           context: { gate: "ci" },
         };
       }
-      // In babysitting, the babysit worker handles aggregate gate
-      // evaluation. CI signals are consumed as no-ops here — the babysit
-      // worker already polls GitHub directly for CI status reconciliation.
-      // NOTE: Gate data (sdlcCiGateRun) is not persisted by the v2
-      // coordinator. The babysit worker's self-healing poll covers CI;
-      // review/carmack/deep gates are persisted by the checkpoint pipeline.
-      if (workflow.kind === "babysitting") return null;
+      // In babysitting, CI signals trigger a babysit recheck rather than
+      // being silently consumed. Keeping them retryable ensures the babysit
+      // worker's next aggregate evaluation incorporates the new CI data.
+      if (workflow.kind === "babysitting") {
+        return {
+          retryable: true,
+          reason: "CI signal in babysitting — awaiting babysit worker recheck",
+        };
+      }
       // In other active states (implementing, awaiting_pr, etc.), the
       // workflow hasn't reached the CI gate yet. Mark the signal
       // retryable so it stays in the inbox for when the workflow
@@ -163,6 +176,15 @@ function reduceGitHubSignal(
     }
 
     case "review_changed": {
+      // Stale-signal rejection for review signals (same logic as CI above)
+      if (
+        event.headSha &&
+        workflow.kind === "gating" &&
+        "headSha" in workflow &&
+        workflow.headSha !== event.headSha
+      ) {
+        return null;
+      }
       const verdict = gateVerdicts?.find((v) => v.gate === "review");
       if (verdict) {
         return {
@@ -176,10 +198,15 @@ function reduceGitHubSignal(
           context: { gate: "review" },
         };
       }
-      // In babysitting, review signals are consumed as no-ops — the
-      // babysit worker reads review gate state from sdlcReviewThreadGateRun
-      // which is populated by the checkpoint pipeline during implementation.
-      if (workflow.kind === "babysitting") return null;
+      // In babysitting, review signals trigger a babysit recheck so the
+      // worker re-evaluates aggregate gate state with the latest review data.
+      if (workflow.kind === "babysitting") {
+        return {
+          retryable: true,
+          reason:
+            "Review signal in babysitting — awaiting babysit worker recheck",
+        };
+      }
       // In other active states, keep the signal pending for when the
       // workflow reaches the review gate.
       if (isActiveNonTerminal(workflow.kind)) {
