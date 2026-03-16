@@ -138,6 +138,7 @@ export async function runPublicationWork(params: {
             errorCode: classified.errorCode ?? "publication_non_retriable",
             errorMessage:
               classified.message ?? "Non-retriable publication failure",
+            terminal: true,
           });
           return;
         } else {

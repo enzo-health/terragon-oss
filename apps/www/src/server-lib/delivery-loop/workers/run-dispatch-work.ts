@@ -139,7 +139,7 @@ export async function runDispatchWork(params: {
     // 5. Create dispatch intent in Redis. This is the handoff point — the
     //    follow-up queue processor reads this intent to launch the sandbox
     //    and send the daemon message (see dispatch lifecycle in docstring).
-    const runId = randomUUID();
+    let runId: string = randomUUID();
     const intentParams: CreateDispatchIntentParams = {
       loopId: loop.id,
       threadId: workflow.threadId,
@@ -157,23 +157,34 @@ export async function runDispatchWork(params: {
     try {
       await createDispatchIntent(intentParams);
     } catch (intentErr) {
-      // If an active intent already exists, a prior attempt already created
-      // the intent and may have launched the run. Completing the work item
-      // is safe — the prior attempt's ack timeout monitors liveness.
-      // Re-triggering the follow-up queue here risks launching a second
-      // parallel run for the same dispatch intent.
       if (
         intentErr instanceof Error &&
         intentErr.message.includes("active intent")
       ) {
-        await completeWorkItem({
-          db: params.db,
-          workItemId: params.workItemId,
-          claimToken: params.claimToken,
-        });
-        return;
+        // A prior attempt created the Redis intent. Check its status to
+        // decide whether to re-attempt follow-up or complete immediately.
+        const { getActiveDispatchIntent } = await import("../dispatch-intent");
+        const existingIntent = await getActiveDispatchIntent(threadChat.id);
+        const existingStatus = existingIntent?.status ?? "prepared";
+
+        if (existingStatus !== "prepared") {
+          // Intent was dispatched/completed/failed — the run was handed off.
+          // Complete the work item; the ack timeout monitors liveness.
+          await completeWorkItem({
+            db: params.db,
+            workItemId: params.workItemId,
+            claimToken: params.claimToken,
+          });
+          return;
+        }
+        // Status is "prepared" — the prior attempt created the intent but
+        // crashed before triggering the follow-up queue. Fall through to
+        // attempt follow-up processing below. Use the existing intent's
+        // runId for ack timeout tracking.
+        runId = existingIntent?.runId ?? runId;
+      } else {
+        throw intentErr;
       }
-      throw intentErr;
     }
 
     // 6. Persist durable dispatch intent in the DB so the ack timeout

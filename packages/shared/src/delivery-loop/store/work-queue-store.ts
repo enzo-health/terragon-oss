@@ -118,15 +118,21 @@ export async function failWorkItem(params: {
   errorCode?: string;
   errorMessage?: string;
   retryAt?: Date;
+  /** When true, immediately dead-letter without retry (non-retriable errors). */
+  terminal?: boolean;
   now?: Date;
 }) {
   const now = params.now ?? new Date();
 
-  // Use a raw SQL expression to conditionally dead-letter or re-queue
+  // Terminal failures bypass the retry budget and dead-letter immediately.
+  const statusExpr = params.terminal
+    ? sql`'dead_lettered'`
+    : sql`CASE WHEN ${schema.deliveryWorkItem.attemptCount} >= ${schema.deliveryWorkItem.maxAttempts} THEN 'dead_lettered' ELSE 'pending' END`;
+
   const [row] = await params.db
     .update(schema.deliveryWorkItem)
     .set({
-      status: sql`CASE WHEN ${schema.deliveryWorkItem.attemptCount} >= ${schema.deliveryWorkItem.maxAttempts} THEN 'dead_lettered' ELSE 'pending' END`,
+      status: statusExpr,
       claimToken: null,
       claimedAt: null,
       lastErrorCode: params.errorCode ?? null,

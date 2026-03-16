@@ -178,13 +178,25 @@ export async function handleDaemonIngress(params: {
 }
 
 function mapSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
-  if (signal.source !== "daemon") return "daemon_run_completed";
-  switch (signal.event.kind) {
-    case "run_completed":
+  switch (signal.source) {
+    case "daemon":
+      switch (signal.event.kind) {
+        case "run_completed":
+          return "daemon_run_completed";
+        case "run_failed":
+          return "daemon_run_failed";
+        case "progress_reported":
+          return "daemon_progress";
+      }
+      break;
+    case "human":
+      // Daemon-reported stop maps to human source; route via human_resume
+      // so the v2-shaped payload bypasses causeType mapping in tick.ts.
+      return "human_resume";
+    case "github":
+    case "timer":
+    case "babysit":
       return "daemon_run_completed";
-    case "run_failed":
-      return "daemon_run_failed";
-    case "progress_reported":
-      return "daemon_progress";
   }
+  return "daemon_run_completed";
 }
