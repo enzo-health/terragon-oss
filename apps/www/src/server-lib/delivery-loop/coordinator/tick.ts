@@ -149,11 +149,13 @@ export async function runCoordinatorTick(params: {
         // Signal is valid but incomplete (e.g., missing headSha).
         // Release the claim so it can be retried later when the data
         // becomes available, rather than consuming it permanently.
+        // Continue to process later signals — don't let a retryable signal
+        // at the head of the queue starve all subsequent valid signals.
         console.warn(
           `[coordinator] Releasing retryable signal ${signal.id}: ${parseResult.reason}`,
         );
         await releaseSignalClaim({ db, signalId: signal.id, claimToken });
-        break; // Don't process more signals — this one needs to be retried
+        continue;
       }
       const deliverySignal = parseResult;
 
@@ -198,11 +200,12 @@ export async function runCoordinatorTick(params: {
         // Reducer determined signal has incomplete data (e.g., CI signal
         // without required checks). Release claim so it stays pending for
         // the next webhook or cron catch-up instead of being consumed.
+        // Continue to process later signals to avoid head-of-line blocking.
         console.warn(
           `[coordinator] Releasing retryable signal ${signal.id}: ${reduction.reason}`,
         );
         await releaseSignalClaim({ db, signalId: signal.id, claimToken });
-        break;
+        continue;
       }
 
       // 3b. Apply the state machine transition

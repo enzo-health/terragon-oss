@@ -1184,7 +1184,15 @@ export async function POST(request: Request) {
                 >;
               }
             }
-            if (v2Workflow) {
+            // Only tick if the workflow belongs to the same loop generation.
+            // After re-enrollment, getActiveWorkflowForThread may return a
+            // new-generation workflow while enrolledLoop.id points to old
+            // signals — ticking would apply stale signals to the new workflow.
+            if (
+              v2Workflow &&
+              (!v2Workflow.sdlcLoopId ||
+                v2Workflow.sdlcLoopId === enrolledLoop.id)
+            ) {
               await runCoordinatorTick({
                 db,
                 workflowId: v2Workflow.id as WorkflowId,
@@ -1193,6 +1201,16 @@ export async function POST(request: Request) {
                 claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
                 loopId: enrolledLoop.id,
               });
+            } else if (v2Workflow) {
+              console.warn(
+                "[daemon-event] dedup tick skipped — workflow belongs to different loop generation",
+                {
+                  workflowId: v2Workflow.id,
+                  workflowLoopId: v2Workflow.sdlcLoopId,
+                  enrolledLoopId: enrolledLoop.id,
+                  threadId,
+                },
+              );
             }
             // Finalize terminal run state after a successful duplicate-event
             // tick. Without this, the run stays stuck in processing/dispatched
@@ -1524,7 +1542,10 @@ export async function POST(request: Request) {
         db,
         threadId,
       });
-      if (v2Workflow) {
+      if (
+        v2Workflow &&
+        (!v2Workflow.sdlcLoopId || v2Workflow.sdlcLoopId === enrolledLoop.id)
+      ) {
         const tickResult = await runCoordinatorTick({
           db,
           workflowId: v2Workflow.id as WorkflowId,
@@ -1546,6 +1567,22 @@ export async function POST(request: Request) {
             },
           );
         }
+      } else if (
+        v2Workflow &&
+        v2Workflow.sdlcLoopId &&
+        v2Workflow.sdlcLoopId !== enrolledLoop.id
+      ) {
+        // Workflow belongs to a different loop generation — skip ticking
+        // to prevent cross-generation signal contamination.
+        console.warn(
+          "[sdlc-loop-v2] tick skipped — workflow belongs to different loop generation",
+          {
+            workflowId: v2Workflow.id,
+            workflowLoopId: v2Workflow.sdlcLoopId,
+            enrolledLoopId: enrolledLoop.id,
+            threadId,
+          },
+        );
       } else {
         // No v2 workflow — backfill from the enrolled v1 loop so the
         // committed daemon signal gets processed on this tick.
