@@ -77,18 +77,12 @@ export function resolveWorkItems(params: {
       break;
 
     case "gating":
-      // Schedule gate runtime dispatch
-      items.push({
-        kind: "dispatch",
-        payloadJson: {
-          executionClass: "gate_runtime",
-          gate: params.newWorkflow.gate.kind,
-          workflowId: params.newWorkflow.workflowId,
-          loopId: params.loopId,
-          headSha: params.newWorkflow.headSha,
-        },
-        scheduledAt: now,
-      });
+      // No dispatch needed — gates are evaluated via webhook signals:
+      //   GitHub CI/review webhooks → signal inbox → coordinator tick
+      // The cron catch-up tick handles missed webhooks. Dispatching an
+      // agent run here would be incorrect since there's no gate-runtime
+      // executor; it would launch a normal agent session that could
+      // interfere with the gating flow.
       break;
 
     case "babysitting":

@@ -1594,16 +1594,22 @@ export async function POST(request: Request) {
     }
     if (terminalOps.length > 0) {
       const results = await Promise.allSettled(terminalOps);
-      for (const r of results) {
+      const failures = results.filter((r) => r.status === "rejected");
+      for (const r of failures) {
         if (r.status === "rejected") {
-          console.warn(
-            "[daemon-event] terminal state persistence failed (non-blocking for response)",
-            {
-              runId: runContext?.runId ?? envelopeV2?.runId,
-              error: r.reason,
-            },
-          );
+          console.warn("[daemon-event] terminal state persistence failed", {
+            runId: runContext?.runId ?? envelopeV2?.runId,
+            enrolled: !!enrolledLoop,
+            error: r.reason,
+          });
         }
+      }
+      // For non-enrolled runs, terminal persistence is the only durable
+      // write — if it fails, the daemon should retry so the run status
+      // doesn't stay stale forever. Enrolled runs are safe because the
+      // coordinator tick already committed the signal to the inbox.
+      if (failures.length > 0 && !enrolledLoop) {
+        return new Response("terminal persistence failed", { status: 500 });
       }
     }
   }

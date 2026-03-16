@@ -362,10 +362,9 @@ describe("v2 pipeline — end-to-end validation", () => {
       // 3. Verify state transitioned to gating(review)
       await assertWorkflowState(workflowId, "gating", "review");
 
-      // 4. Verify work items were scheduled
+      // 4. Verify work items were scheduled (publications only — gates are webhook-driven)
       const items = await getPendingWorkItems(workflowId);
       expect(items.length).toBeGreaterThanOrEqual(1);
-      expect(items.some((w) => w.kind === "dispatch")).toBe(true);
       expect(items.some((w) => w.kind === "publication")).toBe(true);
 
       // 5. Verify audit events
@@ -430,22 +429,22 @@ describe("v2 pipeline — end-to-end validation", () => {
         headSha: "sha-wq-test",
       });
 
-      // Verify work items exist and are pending
+      // Verify work items exist and are pending (publications for gating)
       const items = await getPendingWorkItems(workflowId);
-      const dispatchItem = items.find((w) => w.kind === "dispatch");
-      expect(dispatchItem).toBeDefined();
-      expect(dispatchItem!.status).toBe("pending");
-      expect(dispatchItem!.workflowId).toBe(workflowId);
+      const pubItem = items.find((w) => w.kind === "publication");
+      expect(pubItem).toBeDefined();
+      expect(pubItem!.status).toBe("pending");
+      expect(pubItem!.workflowId).toBe(workflowId);
 
       // Verify payload has expected shape
-      const payload = dispatchItem!.payloadJson as Record<string, unknown>;
-      expect(payload.executionClass).toBeDefined();
+      const payload = pubItem!.payloadJson as Record<string, unknown>;
+      expect(payload.workflowState).toBeDefined();
 
       // Claim and complete it
       const claimToken = `test-claim-${nanoid(6)}`;
       const claimed = await claimNextWorkItem({
         db,
-        kind: "dispatch",
+        kind: "publication",
         claimToken,
       });
       expect(claimed).toBeDefined();

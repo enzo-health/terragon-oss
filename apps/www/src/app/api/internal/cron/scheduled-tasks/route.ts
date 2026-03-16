@@ -165,6 +165,11 @@ export async function GET(request: NextRequest) {
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
 
       // Batch-load sdlcLoop IDs for all active workflows to avoid N+1 queries.
+      // Known limitation: resolves loopId by threadId (most recent active loop).
+      // During re-enrollment or multi-loop scenarios this may associate the
+      // wrong loop with a workflow generation. A direct workflow→loop mapping
+      // on the delivery_workflow row would be more robust but requires a schema
+      // change (deferred until multi-generation support is needed).
       const threadIds = activeWorkflows.map((wf) => wf.threadId);
       const loops =
         threadIds.length > 0

@@ -254,11 +254,10 @@ describe("v2 coordinator tick — integration", () => {
       expect(events[0]!.stateBefore).toBe("implementing");
       expect(events[0]!.stateAfter).toBe("gating");
 
-      // Work items: dispatch (gate_runtime) + 2 publications
+      // Work items: 2 publications (gates are webhook-driven, no dispatch)
       const workItems = await db.query.deliveryWorkItem.findMany({
         where: eq(schema.deliveryWorkItem.workflowId, wf.id),
       });
-      expect(workItems.some((w) => w.kind === "dispatch")).toBe(true);
       expect(workItems.filter((w) => w.kind === "publication").length).toBe(2);
 
       // Runtime status
@@ -631,13 +630,13 @@ describe("v2 coordinator tick — integration", () => {
       await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
 
-      expect(result.workItemsScheduled).toBeGreaterThanOrEqual(3);
+      // Gates are webhook-driven — no dispatch, only 2 publications
+      expect(result.workItemsScheduled).toBeGreaterThanOrEqual(2);
 
       const workItems = await db.query.deliveryWorkItem.findMany({
         where: eq(schema.deliveryWorkItem.workflowId, wf.id),
       });
-      // dispatch (gate_runtime) + 2 publications (status_comment, check_run_summary)
-      expect(workItems.some((w) => w.kind === "dispatch")).toBe(true);
+      // 2 publications (status_comment, check_run_summary) — no dispatch for gating
       expect(workItems.filter((w) => w.kind === "publication").length).toBe(2);
       expect(workItems.every((w) => w.status === "pending")).toBe(true);
     });
