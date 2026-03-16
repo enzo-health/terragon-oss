@@ -416,6 +416,15 @@ function reduceAwaitingPlanApproval(
   _ctx: LoopEventContext,
   now: Date,
 ): DeliveryWorkflow | null {
+  if (event === "plan_completed") {
+    const planVersion = (wf.planVersion ?? 1) as PlanVersion;
+    return {
+      ...bumpWithFixReset(wf, event, _ctx, now),
+      kind: "implementing",
+      planVersion,
+      dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    };
+  }
   if (event === "blocked_resume") {
     return {
       ...bump(wf, now),

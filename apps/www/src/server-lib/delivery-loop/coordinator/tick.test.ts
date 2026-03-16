@@ -452,6 +452,43 @@ describe("v2 coordinator tick — integration", () => {
     });
   });
 
+  describe("plan approval: awaiting_plan_approval -> implementing", () => {
+    it("awaiting_plan_approval -> implementing via plan_approved human signal", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_plan_approval",
+        stateJson: {
+          planVersion: 1,
+          resumableFrom: { kind: "planning", planVersion: 1 },
+        },
+      });
+
+      // Inject a plan_approved human signal
+      await injectSignal(wf.id, "human_resume", {
+        source: "human",
+        event: { kind: "plan_approved", artifactId: "plan-1" },
+      });
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_plan_approval");
+      expect(result.stateAfter).toBe("implementing");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("implementing");
+      const stateJson = row!.stateJson as Record<string, unknown>;
+      expect(stateJson.planVersion).toBe(1);
+      expect((stateJson.dispatch as Record<string, unknown>).kind).toBe(
+        "queued",
+      );
+
+      // Work items: dispatch should be scheduled
+      const workItems = await db.query.deliveryWorkItem.findMany({
+        where: eq(schema.deliveryWorkItem.workflowId, wf.id),
+      });
+      expect(workItems.some((w) => w.kind === "dispatch")).toBe(true);
+    });
+  });
+
   describe("manual stop", () => {
     it("implementing -> stopped via manual_stop", async () => {
       const wf = await createTestWorkflowInState({
