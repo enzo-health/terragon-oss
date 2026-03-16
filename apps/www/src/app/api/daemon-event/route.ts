@@ -943,6 +943,13 @@ export async function POST(request: Request) {
     threadId,
   });
 
+  const v2Workflow = enrolledLoop
+    ? await getActiveWorkflowForThread({ db, threadId })
+    : null;
+  const useV2Ingress = !!(
+    v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop?.id
+  );
+
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
   // status-based (idempotent), not seq-based.
@@ -1072,7 +1079,7 @@ export async function POST(request: Request) {
         );
       }
       claimedProcessingEvent = true;
-    } else if (envelopeV2) {
+    } else if (envelopeV2 && !useV2Ingress) {
       const claimResult = await claimEnrolledLoopDaemonEvent({
         loopId: enrolledLoop.id,
         threadId,
@@ -1495,7 +1502,7 @@ export async function POST(request: Request) {
   // until after the coordinator tick succeeds — if the tick fails and we
   // return 500, the run must stay non-terminal so the daemon retry
   // re-enters the main processing path (not the terminal short-circuit).
-  if (enrolledLoop && envelopeV2) {
+  if (enrolledLoop && envelopeV2 && !useV2Ingress) {
     if (claimedSignalInboxId) {
       const commitResult = await commitEnrolledLoopDaemonEventClaim({
         signalInboxId: claimedSignalInboxId,
@@ -1536,123 +1543,172 @@ export async function POST(request: Request) {
   }
 
   if (enrolledLoop && envelopeV2) {
-    try {
-      const v2Workflow = await getActiveWorkflowForThread({
-        db,
-        threadId,
-      });
-      if (v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop.id) {
-        const tickResult = await runCoordinatorTick({
-          db,
-          workflowId: v2Workflow.id as WorkflowId,
-          correlationId:
-            `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-          claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-          loopId: enrolledLoop.id,
-        });
-        if (!tickResult.signalsProcessed) {
-          console.log(
-            "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
-            {
-              userId,
-              threadId,
-              threadChatId,
-              workflowId: v2Workflow.id,
-              eventId: envelopeV2.eventId,
-              seq: envelopeV2.seq,
-            },
-          );
-        }
-      } else if (
-        v2Workflow &&
-        v2Workflow.sdlcLoopId &&
-        v2Workflow.sdlcLoopId !== enrolledLoop.id
-      ) {
-        // Workflow belongs to a different loop generation — skip ticking
-        // to prevent cross-generation signal contamination.
-        console.warn(
-          "[sdlc-loop-v2] tick skipped — workflow belongs to different loop generation",
-          {
-            workflowId: v2Workflow.id,
-            workflowLoopId: v2Workflow.sdlcLoopId,
-            enrolledLoopId: enrolledLoop.id,
-            threadId,
-          },
+    if (useV2Ingress) {
+      // V2 path: route through daemon ingress adapter
+      try {
+        const { handleDaemonIngress } = await import(
+          "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress"
         );
-      } else {
-        // No v2 workflow — backfill from the enrolled v1 loop so the
-        // committed daemon signal gets processed on this tick.
-        // Re-read the enrolled loop to capture any state changes made by
-        // handleDaemonEvent (e.g. checkpointThread fires asynchronously via
-        // waitUntil and may have transitioned the v1 loop by now).
-        // Only backfill if the current active loop matches enrolledLoop to
-        // prevent cross-generation contamination (see dedup path comment).
-        const freshLoop = await getActiveSdlcLoopForThread({
+        const ingressResult = await handleDaemonIngress({
           db,
+          rawEvent: {
+            threadId,
+            loopId: enrolledLoop.id,
+            runId: envelopeV2.runId,
+            status: daemonRunStatusFromMessages as
+              | "completed"
+              | "failed"
+              | "progress"
+              | "stopped",
+            headSha: null,
+            summary: null,
+            exitCode: null,
+            errorMessage: daemonTerminalErrorInfo?.errorMessage ?? null,
+          },
+          workflowId: v2Workflow!.id as WorkflowId,
+          consecutiveDispatches: 0,
+        });
+        if (ingressResult.selfDispatch) {
+          selfDispatchPayload =
+            ingressResult.selfDispatch as unknown as typeof selfDispatchPayload;
+        }
+      } catch (error) {
+        console.error("[sdlc-loop-v2] handleDaemonIngress failed", {
           userId,
           threadId,
+          loopId: enrolledLoop.id,
+          eventId: envelopeV2.eventId,
+          seq: envelopeV2.seq,
+          error,
         });
-        if (freshLoop && freshLoop.id !== enrolledLoop.id) {
-          console.warn(
-            "[sdlc-loop-v2] backfill skipped — active loop changed since enrollment",
-            {
-              enrolledLoopId: enrolledLoop.id,
-              currentLoopId: freshLoop.id,
-              threadId,
-              eventId: envelopeV2.eventId,
-              seq: envelopeV2.seq,
-            },
-          );
-        } else {
-          const backfillLoop = freshLoop ?? enrolledLoop;
-          console.warn(
-            "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
-            {
-              userId,
-              threadId,
-              threadChatId,
-              loopId: backfillLoop.id,
-              loopState: backfillLoop.state,
-              eventId: envelopeV2.eventId,
-              seq: envelopeV2.seq,
-            },
-          );
-          const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+        return new Response(
+          "v2 daemon ingress failed after message persistence",
+          { status: 500 },
+        );
+      }
+    } else {
+      // V1 backfill path — keep existing logic
+      try {
+        const v2WorkflowForBackfill = await getActiveWorkflowForThread({
+          db,
+          threadId,
+        });
+        if (
+          v2WorkflowForBackfill &&
+          v2WorkflowForBackfill.sdlcLoopId === enrolledLoop.id
+        ) {
+          const tickResult = await runCoordinatorTick({
             db,
-            threadId,
-            sdlcLoopId: backfillLoop.id,
-            sdlcLoopState: backfillLoop.state,
-            sdlcBlockedFromState: backfillLoop.blockedFromState,
-            headSha: backfillLoop.currentHeadSha,
-          });
-          await runCoordinatorTick({
-            db,
-            workflowId: backfilledId as WorkflowId,
+            workflowId: v2WorkflowForBackfill.id as WorkflowId,
             correlationId:
               `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
             claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
             loopId: enrolledLoop.id,
           });
+          if (!tickResult.signalsProcessed) {
+            console.log(
+              "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
+              {
+                userId,
+                threadId,
+                threadChatId,
+                workflowId: v2WorkflowForBackfill.id,
+                eventId: envelopeV2.eventId,
+                seq: envelopeV2.seq,
+              },
+            );
+          }
+        } else if (
+          v2WorkflowForBackfill &&
+          v2WorkflowForBackfill.sdlcLoopId &&
+          v2WorkflowForBackfill.sdlcLoopId !== enrolledLoop.id
+        ) {
+          // Workflow belongs to a different loop generation — skip ticking
+          // to prevent cross-generation signal contamination.
+          console.warn(
+            "[sdlc-loop-v2] tick skipped — workflow belongs to different loop generation",
+            {
+              workflowId: v2WorkflowForBackfill.id,
+              workflowLoopId: v2WorkflowForBackfill.sdlcLoopId,
+              enrolledLoopId: enrolledLoop.id,
+              threadId,
+            },
+          );
+        } else {
+          // No v2 workflow — backfill from the enrolled v1 loop so the
+          // committed daemon signal gets processed on this tick.
+          // Re-read the enrolled loop to capture any state changes made by
+          // handleDaemonEvent (e.g. checkpointThread fires asynchronously via
+          // waitUntil and may have transitioned the v1 loop by now).
+          // Only backfill if the current active loop matches enrolledLoop to
+          // prevent cross-generation contamination (see dedup path comment).
+          const freshLoop = await getActiveSdlcLoopForThread({
+            db,
+            userId,
+            threadId,
+          });
+          if (freshLoop && freshLoop.id !== enrolledLoop.id) {
+            console.warn(
+              "[sdlc-loop-v2] backfill skipped — active loop changed since enrollment",
+              {
+                enrolledLoopId: enrolledLoop.id,
+                currentLoopId: freshLoop.id,
+                threadId,
+                eventId: envelopeV2.eventId,
+                seq: envelopeV2.seq,
+              },
+            );
+          } else {
+            const backfillLoop = freshLoop ?? enrolledLoop;
+            console.warn(
+              "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
+              {
+                userId,
+                threadId,
+                threadChatId,
+                loopId: backfillLoop.id,
+                loopState: backfillLoop.state,
+                eventId: envelopeV2.eventId,
+                seq: envelopeV2.seq,
+              },
+            );
+            const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+              db,
+              threadId,
+              sdlcLoopId: backfillLoop.id,
+              sdlcLoopState: backfillLoop.state,
+              sdlcBlockedFromState: backfillLoop.blockedFromState,
+              headSha: backfillLoop.currentHeadSha,
+            });
+            await runCoordinatorTick({
+              db,
+              workflowId: backfilledId as WorkflowId,
+              correlationId:
+                `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+              claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+              loopId: enrolledLoop.id,
+            });
+          }
         }
+      } catch (error) {
+        console.error("[sdlc-loop] coordinator tick/backfill failed", {
+          userId,
+          threadId,
+          loopId: enrolledLoop.id,
+          eventId: envelopeV2.eventId,
+          seq: envelopeV2.seq,
+          error,
+        });
+        // If the committed signal has no reachable v2 workflow, returning
+        // success would orphan it. Return 500 so the daemon retries; the
+        // v1 inbox will deduplicate the signal on re-delivery.
+        return new Response(
+          "coordinator tick/backfill failed after signal commit",
+          {
+            status: 500,
+          },
+        );
       }
-    } catch (error) {
-      console.error("[sdlc-loop] coordinator tick/backfill failed", {
-        userId,
-        threadId,
-        loopId: enrolledLoop.id,
-        eventId: envelopeV2.eventId,
-        seq: envelopeV2.seq,
-        error,
-      });
-      // If the committed signal has no reachable v2 workflow, returning
-      // success would orphan it. Return 500 so the daemon retries; the
-      // v1 inbox will deduplicate the signal on re-delivery.
-      return new Response(
-        "coordinator tick/backfill failed after signal commit",
-        {
-          status: 500,
-        },
-      );
     }
   }
 
