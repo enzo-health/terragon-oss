@@ -18,6 +18,7 @@ import type { WorkflowState } from "@terragon/shared/delivery-loop/domain/workfl
 import {
   createWorkflow,
   getActiveWorkflowForThread,
+  updateWorkflowState,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
 
@@ -236,9 +237,10 @@ export async function ensureV2WorkflowExists(params: {
     }
     // Workflow exists but either has no sdlcLoopId (pre-migration) or
     // belongs to a different loop generation — don't reuse it.
-    // Fall through to create a new workflow for the current loop.
+    // Terminate the old workflow so only one non-terminal workflow exists
+    // per thread, then fall through to create a new one.
     console.warn(
-      "[enrollment-bridge] existing workflow not bound to current loop, creating new one",
+      "[enrollment-bridge] existing workflow not bound to current loop, terminating old and creating new",
       {
         existingWorkflowId: existing.id,
         existingLoopId: existing.sdlcLoopId,
@@ -246,6 +248,27 @@ export async function ensureV2WorkflowExists(params: {
         threadId: params.threadId,
       },
     );
+    try {
+      await updateWorkflowState({
+        db: params.db,
+        workflowId: existing.id,
+        expectedVersion: existing.version,
+        kind: "stopped",
+        stateJson: {
+          reason: {
+            kind: "generation_superseded",
+            newLoopId: params.sdlcLoopId,
+          },
+        },
+      });
+    } catch (stopErr) {
+      // Non-fatal: version conflict means another tick already moved
+      // the workflow. The new workflow creation below will proceed.
+      console.warn(
+        "[enrollment-bridge] failed to stop old workflow (may be version conflict)",
+        { existingWorkflowId: existing.id, error: stopErr },
+      );
+    }
   }
 
   // Create v2 workflow mirroring the current v1 state

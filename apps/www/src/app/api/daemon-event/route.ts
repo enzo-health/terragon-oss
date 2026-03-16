@@ -1177,6 +1177,7 @@ export async function POST(request: Request) {
                   sdlcLoopId: dedupLoop.id,
                   sdlcLoopState: dedupLoop.state,
                   sdlcBlockedFromState: dedupLoop.blockedFromState,
+                  headSha: dedupLoop.currentHeadSha,
                 });
                 // Reload full workflow so sdlcLoopId is available for
                 // the generation check below.
@@ -1622,6 +1623,7 @@ export async function POST(request: Request) {
             sdlcLoopId: backfillLoop.id,
             sdlcLoopState: backfillLoop.state,
             sdlcBlockedFromState: backfillLoop.blockedFromState,
+            headSha: backfillLoop.currentHeadSha,
           });
           await runCoordinatorTick({
             db,

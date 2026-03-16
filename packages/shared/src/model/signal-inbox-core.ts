@@ -14,6 +14,7 @@ import {
   isNull,
   lte,
   ne,
+  notInArray,
   or,
   sql,
 } from "drizzle-orm";
@@ -217,14 +218,18 @@ export async function claimNextUnprocessedSignal({
   claimToken,
   now,
   staleClaimMs = DEFAULT_STALE_CLAIM_MS,
+  excludeIds,
 }: {
   db: DB;
   loopId: string;
   claimToken: string;
   now: Date;
   staleClaimMs?: number;
+  /** Signal IDs to skip (e.g. retryable signals already seen this tick). */
+  excludeIds?: ReadonlySet<string>;
 }): Promise<PendingSignal | null> {
   const staleClaimCutoff = new Date(now.getTime() - staleClaimMs);
+  const excludeArray = excludeIds?.size ? [...excludeIds] : null;
   const claimableWhere = and(
     eq(schema.sdlcLoopSignalInbox.loopId, loopId),
     isNull(schema.sdlcLoopSignalInbox.processedAt),
@@ -240,6 +245,9 @@ export async function claimNextUnprocessedSignal({
         isNotNull(schema.sdlcLoopSignalInbox.committedAt),
       ),
     ),
+    ...(excludeArray
+      ? [notInArray(schema.sdlcLoopSignalInbox.id, excludeArray)]
+      : []),
   );
 
   const signal = await db.query.sdlcLoopSignalInbox.findFirst({

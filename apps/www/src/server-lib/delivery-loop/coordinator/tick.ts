@@ -117,9 +117,9 @@ export async function runCoordinatorTick(params: {
 
   // 2. Process pending signals (up to limit per tick)
   let versionConflict = false;
-  // Track signal IDs released as retryable within this tick to avoid
-  // re-claiming the same signal in a tight loop (Finding: retryable
-  // signals were re-claimed on each iteration, starving later signals).
+  // Track signal IDs released as retryable within this tick so the
+  // claim query excludes them. This allows later signals to be
+  // processed even when an earlier signal is not yet actionable.
   const retryableSignalIds = new Set<string>();
   for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
     const signal = await claimNextUnprocessedSignal({
@@ -127,13 +127,9 @@ export async function runCoordinatorTick(params: {
       loopId,
       claimToken,
       now,
+      excludeIds: retryableSignalIds.size > 0 ? retryableSignalIds : undefined,
     });
     if (!signal) break;
-    // Skip signals we already released as retryable in this tick
-    if (retryableSignalIds.has(signal.id)) {
-      await releaseSignalClaim({ db, signalId: signal.id, claimToken });
-      break; // All remaining claimable signals have been seen — stop
-    }
 
     // Wrap per-signal processing in try/catch so that a failure in one
     // signal doesn't leak the claim — the signal gets released for retry.
