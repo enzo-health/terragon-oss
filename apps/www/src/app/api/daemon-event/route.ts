@@ -937,15 +937,12 @@ export async function POST(request: Request) {
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
 
-  const enrolledLoop = await getActiveSdlcLoopForThread({
-    db,
-    userId,
-    threadId,
-  });
-
-  const v2Workflow = enrolledLoop
-    ? await getActiveWorkflowForThread({ db, threadId })
-    : null;
+  // Read v2 workflow first as primary source; fall back to v1 sdlcLoop for legacy threads.
+  // Both are fetched in parallel to avoid sequential latency.
+  const [v2Workflow, enrolledLoop] = await Promise.all([
+    getActiveWorkflowForThread({ db, threadId }),
+    getActiveSdlcLoopForThread({ db, userId, threadId }),
+  ]);
   const useV2Ingress = !!(
     v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop?.id
   );

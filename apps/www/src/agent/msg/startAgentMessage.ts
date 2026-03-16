@@ -56,6 +56,8 @@ import {
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { mapWorkflowRowToSdlcLoopState } from "@/lib/delivery-loop-status";
 import {
   getThreadContextMessageToGenerate,
   generateThreadContextResult,
@@ -585,6 +587,13 @@ export async function startAgentMessage({
               null,
             );
           }
+          // Read v2 workflow as primary state source (falls back to v1 sdlcLoop)
+          const v2Workflow = activeSdlcLoop
+            ? await getActiveWorkflowForThread({ db, threadId })
+            : null;
+          const effectiveState: SdlcLoopState | null = v2Workflow
+            ? mapWorkflowRowToSdlcLoopState(v2Workflow)
+            : (activeSdlcLoop?.state ?? null);
           let planContext: {
             planText: string;
             tasks: Array<{
@@ -593,7 +602,7 @@ export async function startAgentMessage({
               description?: string | null;
             }>;
           } | null = null;
-          if (activeSdlcLoop?.state === "implementing" && activeSdlcLoop?.id) {
+          if (effectiveState === "implementing" && activeSdlcLoop?.id) {
             try {
               const { getLatestAcceptedArtifact } = await import(
                 "@terragon/shared/model/delivery-loop/artifacts"
@@ -631,10 +640,7 @@ export async function startAgentMessage({
             }
           }
           const deliveryLoopPhasePromptPrefix =
-            buildDeliveryLoopPhasePromptPrefix(
-              activeSdlcLoop?.state ?? null,
-              planContext,
-            );
+            buildDeliveryLoopPhasePromptPrefix(effectiveState, planContext);
 
           const sanitizedPrompt = finalPrompt.replace(
             /(?:^|\s)\/compact(?=\s|$)/g,

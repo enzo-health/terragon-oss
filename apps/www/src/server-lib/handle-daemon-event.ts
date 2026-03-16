@@ -51,6 +51,8 @@ import {
   getUnresolvedBlockingDeepReviewFindings,
   getUnresolvedBlockingCarmackReviewFindings,
 } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { mapWorkflowRowToSdlcLoopState } from "@/lib/delivery-loop-status";
 import {
   formatReviewFindings,
   queueSdlcFollowUpMessage,
@@ -655,18 +657,28 @@ export async function handleDaemonEvent({
     | undefined;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
-      sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
-        db,
-        userId,
-        threadId,
-      });
+      // Read v2 workflow as primary state source, fall back to v1 sdlcLoop
+      const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+      const effectivePhase: SdlcLoopState | null = v2Workflow
+        ? mapWorkflowRowToSdlcLoopState(v2Workflow)
+        : null;
+
+      if (!effectivePhase) {
+        // No v2 workflow — fall back to v1 sdlcLoop
+        sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
+          db,
+          userId,
+          threadId,
+        });
+      }
       const activeSdlcLoop = sdlcLoopForErrorRecovery;
+      const sdlcPhase = effectivePhase ?? activeSdlcLoop?.state ?? null;
 
       const failureCategory = classifyDaemonEventError(customErrorMessage);
 
-      if (activeSdlcLoop && SDLC_AUTO_RETRY_PHASES.has(activeSdlcLoop.state)) {
+      if (sdlcPhase && SDLC_AUTO_RETRY_PHASES.has(sdlcPhase)) {
         console.log(
-          `SDLC error recovery: active loop in phase "${activeSdlcLoop.state}", failureCategory="${failureCategory}", checking for retry`,
+          `SDLC error recovery: active loop in phase "${sdlcPhase}", failureCategory="${failureCategory}", checking for retry`,
           { threadId, threadChatId: threadChat.id, failureCategory },
         );
 
@@ -724,7 +736,7 @@ export async function handleDaemonEvent({
             event: "sdlc_error_retry",
             properties: {
               threadId,
-              sdlcPhase: activeSdlcLoop.state,
+              sdlcPhase: sdlcPhase,
               failureCategory,
               retryAction: retryDecision.action,
               attempt: retryDecision.attempt,
@@ -957,9 +969,6 @@ async function handleThreadFinish({
   // and isError is still true, re-queue the actual review findings so the next agent run
   // has actionable context. Skip for v2-enrolled threads — the coordinator/workers handle
   // retry and recovery.
-  const { getActiveWorkflowForThread } = await import(
-    "@terragon/shared/delivery-loop/store/workflow-store"
-  );
   const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
   const isV2Enrolled = !!v2Workflow;
 
