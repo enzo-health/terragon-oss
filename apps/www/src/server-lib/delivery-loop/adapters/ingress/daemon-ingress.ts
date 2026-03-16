@@ -224,8 +224,7 @@ function mapSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
       }
       break;
     case "human":
-      // Daemon-reported stop maps to human source; route via human_resume
-      // so the v2-shaped payload bypasses causeType mapping in tick.ts.
+      if (signal.event.kind === "stop_requested") return "human_stop";
       return "human_resume";
     case "github":
     case "timer":
