@@ -123,6 +123,19 @@ export async function GET(request: NextRequest) {
         v2WorkItemsProcessed,
       });
 
+      // Drain legacy follow-up retry jobs (still produced by process-follow-up-queue)
+      try {
+        const { drainDueDeliveryLoopRetryJobs } = await import(
+          "@/server-lib/delivery-loop/retry-jobs"
+        );
+        const retryResult = await drainDueDeliveryLoopRetryJobs({
+          leaseOwnerTokenPrefix: "cron:retry",
+        });
+        console.log("V2 follow-up retry jobs drained", retryResult);
+      } catch (retryErr) {
+        console.error("V2 follow-up retry job drain failed", retryErr);
+      }
+
       // Coordinator tick catch-up for active workflows with pending signals
       const { listActiveWorkflowIds } = await import(
         "@terragon/shared/delivery-loop/store/workflow-store"
@@ -130,10 +143,19 @@ export async function GET(request: NextRequest) {
       const { runCoordinatorTick } = await import(
         "@/server-lib/delivery-loop/coordinator/tick"
       );
+      const { eq, desc } = await import("drizzle-orm");
+      const schemaImport = await import("@terragon/shared/db/schema");
 
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
       for (const wf of activeWorkflows) {
         try {
+          // Resolve v1 sdlcLoop ID so signals keyed under the legacy ID
+          // are drained correctly during catch-up ticks.
+          const loop = await db.query.sdlcLoop.findFirst({
+            where: eq(schemaImport.sdlcLoop.threadId, wf.threadId),
+            orderBy: [desc(schemaImport.sdlcLoop.createdAt)],
+            columns: { id: true },
+          });
           const correlationId =
             `cron:tick-catchup:${wf.id}:${Date.now()}` as Parameters<
               typeof runCoordinatorTick
@@ -145,6 +167,7 @@ export async function GET(request: NextRequest) {
             >[0]["workflowId"],
             correlationId,
             claimToken: `cron:tick:${crypto.randomUUID()}`,
+            loopId: loop?.id,
           });
           if (result.signalsProcessed > 0) {
             v2TicksCaughtUp++;
@@ -165,12 +188,15 @@ export async function GET(request: NextRequest) {
       v2Error = "v2_processing_failed";
     }
 
-    return Response.json({
-      success: !v2Error,
-      v2WorkItemsProcessed,
-      v2TicksCaughtUp,
-      ...(v2Error ? { v2Error } : {}),
-    }, { status: v2Error ? 207 : 200 });
+    return Response.json(
+      {
+        success: !v2Error,
+        v2WorkItemsProcessed,
+        v2TicksCaughtUp,
+        ...(v2Error ? { v2Error } : {}),
+      },
+      { status: v2Error ? 207 : 200 },
+    );
   } catch (error) {
     console.error("Scheduled tasks cron failed:", error);
     return Response.json(

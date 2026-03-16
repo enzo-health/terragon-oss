@@ -178,27 +178,20 @@ export async function runDispatchWork(params: {
       });
     }
 
-    // 6b. Start ack timeout — if the daemon doesn't ack within the deadline,
-    //     checks the DB dispatch intent and classifies the timeout.
-    startAckTimeout({
-      db: params.db,
-      runId,
-      loopId: loop.id,
-      threadChatId: threadChat.id,
-    });
-
-    // 6.5. Trigger the follow-up queue to actually launch the run.
-    // The follow-up queue handles sandbox creation, daemon messaging,
-    // and all the infrastructure needed to start an agent run.
+    // 6b. Trigger the follow-up queue to actually launch the run.
+    // Only arm ack timeout if the follow-up queue actually started processing,
+    // otherwise we'd create phantom dispatches that inevitably time out.
+    let followUpProcessed = false;
     try {
       const { maybeProcessFollowUpQueue } = await import(
         "@/server-lib/process-follow-up-queue"
       );
-      await maybeProcessFollowUpQueue({
+      const followUpResult = await maybeProcessFollowUpQueue({
         userId: loop.userId,
         threadId: workflow.threadId,
         threadChatId: threadChat.id,
       });
+      followUpProcessed = followUpResult.processed;
     } catch (followUpErr) {
       // Non-fatal: the cron job will pick up pending follow-ups
       console.warn(
@@ -208,6 +201,17 @@ export async function runDispatchWork(params: {
           error: followUpErr,
         },
       );
+    }
+
+    // Only start ack timeout if a run was actually launched — otherwise
+    // the timeout fires on a phantom dispatch and triggers false retries.
+    if (followUpProcessed) {
+      startAckTimeout({
+        db: params.db,
+        runId,
+        loopId: loop.id,
+        threadChatId: threadChat.id,
+      });
     }
 
     // 7. Complete work item — dispatch worker's job is done; the follow-up

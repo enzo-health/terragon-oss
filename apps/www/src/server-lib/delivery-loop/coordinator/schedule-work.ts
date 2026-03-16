@@ -39,8 +39,12 @@ export function resolveWorkItems(params: {
   // State-specific work items
   switch (params.newWorkflow.kind) {
     case "implementing":
-      // Schedule dispatch when entering implementing from a different state
-      if (params.previousWorkflow.kind !== "implementing") {
+      // Schedule dispatch when entering implementing — including self-retries
+      // (e.g. gate_blocked in implementing keeps the state but needs a new run)
+      if (
+        params.previousWorkflow.kind !== "implementing" ||
+        params.newWorkflow.version !== params.previousWorkflow.version
+      ) {
         items.push({
           kind: "dispatch",
           payloadJson: {
