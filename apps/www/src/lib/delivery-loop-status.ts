@@ -10,6 +10,10 @@ import type {
   DeliveryLoopBlockedState,
   DeliveryLoopSnapshot,
 } from "@terragon/shared/model/delivery-loop";
+import type {
+  DeliveryWorkflow,
+  GateKind,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 export type SdlcLoopStatusCheckKey =
   | "ci"
   | "review_threads"
@@ -720,4 +724,228 @@ export function buildSdlcLoopStatusChecks({
     carmackCheck,
     videoCheck,
   ];
+}
+
+// ---------------------------------------------------------------------------
+// V2 workflow -> V1 DeliveryLoopSnapshot adapter
+// ---------------------------------------------------------------------------
+
+const V2_GATE_TO_V1_STATE: Record<GateKind, DeliveryLoopSnapshot["kind"]> = {
+  review: "review_gate",
+  ci: "ci_gate",
+  ui: "ui_gate",
+};
+
+const V2_RESUMABLE_TO_V1: Record<string, DeliveryLoopBlockedState["from"]> = {
+  planning: "planning",
+  implementing: "implementing",
+  gating: "review_gate", // overridden by gate subfield when available
+  awaiting_pr: "awaiting_pr_link",
+  babysitting: "babysitting",
+};
+
+function mapResumableKindToV1(
+  resumableKind: string,
+  gate?: GateKind,
+): DeliveryLoopBlockedState["from"] {
+  if (resumableKind === "gating" && gate) {
+    return V2_GATE_TO_V1_STATE[gate] as DeliveryLoopBlockedState["from"];
+  }
+  return V2_RESUMABLE_TO_V1[resumableKind] ?? "implementing";
+}
+
+/**
+ * Maps a v2 DeliveryWorkflow aggregate to the v1 DeliveryLoopSnapshot
+ * shape consumed by the UI status builder functions.
+ */
+export function buildSnapshotFromV2Workflow(
+  workflow: DeliveryWorkflow,
+): DeliveryLoopSnapshot {
+  switch (workflow.kind) {
+    case "planning":
+      return {
+        kind: "planning",
+        selectedAgent: null,
+        nextPhaseTarget: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: null,
+        lastFailureCategory: null,
+      };
+
+    case "implementing":
+      return {
+        kind: "implementing",
+        execution: {
+          kind: "implementation",
+          selectedAgent: null,
+          dispatchStatus:
+            workflow.dispatch.kind === "queued"
+              ? "prepared"
+              : workflow.dispatch.kind === "sent"
+                ? "dispatched"
+                : workflow.dispatch.kind === "acknowledged"
+                  ? "acknowledged"
+                  : workflow.dispatch.kind === "failed"
+                    ? "failed"
+                    : null,
+          dispatchAttemptCount: 0,
+          activeRunId: null,
+          lastFailureCategory:
+            workflow.dispatch.kind === "failed"
+              ? workflow.dispatch.failure.kind
+              : null,
+        },
+      };
+
+    case "gating":
+      return {
+        kind: V2_GATE_TO_V1_STATE[workflow.gate.kind] as
+          | "review_gate"
+          | "ci_gate"
+          | "ui_gate",
+        gate: {
+          gateRunId: workflow.gate.runId,
+          lastFailureCategory:
+            workflow.gate.status === "blocked" ? "gate_blocked" : null,
+        },
+      };
+
+    case "awaiting_pr":
+      return {
+        kind: "awaiting_pr_link",
+        selectedAgent: null,
+        lastFailureCategory: null,
+      };
+
+    case "babysitting":
+      return {
+        kind: "babysitting",
+        selectedAgent: null,
+        lastFailureCategory: null,
+      };
+
+    case "awaiting_plan_approval":
+      return {
+        kind: "blocked",
+        from: "planning",
+        reason: "human_required",
+        selectedAgent: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: null,
+        activeGateRunId: null,
+        lastFailureCategory: null,
+      };
+
+    case "awaiting_manual_fix": {
+      const from = mapResumableKindToV1(
+        workflow.resumableFrom.kind,
+        "gate" in workflow.resumableFrom
+          ? (workflow.resumableFrom as { gate?: GateKind }).gate
+          : undefined,
+      );
+      return {
+        kind: "blocked",
+        from,
+        reason: "runtime_failure",
+        selectedAgent: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: null,
+        activeGateRunId: null,
+        lastFailureCategory: null,
+      };
+    }
+
+    case "awaiting_operator_action": {
+      const from = mapResumableKindToV1(
+        workflow.resumableFrom.kind,
+        "gate" in workflow.resumableFrom
+          ? (workflow.resumableFrom as { gate?: GateKind }).gate
+          : undefined,
+      );
+      return {
+        kind: "blocked",
+        from,
+        reason: "external_dependency",
+        selectedAgent: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: null,
+        activeGateRunId: null,
+        lastFailureCategory: null,
+      };
+    }
+
+    case "done":
+      return { kind: "done" };
+
+    case "stopped":
+      return { kind: "stopped" };
+
+    case "terminated":
+      return workflow.reason.kind === "pr_merged"
+        ? { kind: "terminated_pr_merged" }
+        : { kind: "terminated_pr_closed" };
+  }
+}
+
+/**
+ * Maps a v2 workflow kind to the v1 SdlcLoopState string used by the
+ * status response shape. Gating states expand to review_gate/ci_gate/ui_gate.
+ */
+export function mapV2KindToSdlcLoopState(
+  workflow: DeliveryWorkflow,
+): SdlcLoopState {
+  switch (workflow.kind) {
+    case "planning":
+      return "planning";
+    case "implementing":
+      return "implementing";
+    case "gating":
+      return V2_GATE_TO_V1_STATE[workflow.gate.kind] as SdlcLoopState;
+    case "awaiting_pr":
+      return "awaiting_pr_link";
+    case "babysitting":
+      return "babysitting";
+    case "awaiting_plan_approval":
+    case "awaiting_manual_fix":
+    case "awaiting_operator_action":
+      return "blocked";
+    case "done":
+      return "done";
+    case "stopped":
+      return "stopped";
+    case "terminated":
+      return workflow.reason.kind === "pr_merged"
+        ? "terminated_pr_merged"
+        : "terminated_pr_closed";
+  }
+}
+
+/**
+ * Maps a v2 workflow state to a human-readable stop reason, or null.
+ */
+export function getV2StopReason(workflow: DeliveryWorkflow): string | null {
+  if (workflow.kind === "stopped") {
+    return workflow.reason.kind === "user_requested"
+      ? "Stopped by user"
+      : `Superseded by workflow ${workflow.reason.newerWorkflowId}`;
+  }
+  if (workflow.kind === "terminated") {
+    switch (workflow.reason.kind) {
+      case "pr_closed":
+        return "Pull request was closed";
+      case "pr_merged":
+        return "Pull request was merged";
+      case "invariant_violation":
+        return `Invariant violation: ${workflow.reason.code}`;
+      case "retry_exhausted":
+        return `Retry budget exhausted for ${workflow.reason.subject}`;
+      case "fatal_external_failure":
+        return `Fatal failure in ${workflow.reason.system}`;
+    }
+  }
+  return null;
 }
