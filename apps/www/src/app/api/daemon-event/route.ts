@@ -1097,6 +1097,20 @@ export async function POST(request: Request) {
             { status: 409 },
           );
         }
+        // Fetch replay payload BEFORE terminalizing the dispatch intent.
+        // persistDaemonTerminalDispatchStatus marks the intent as completed/failed,
+        // but getReplayableSelfDispatch requires the destination intent to be in
+        // "prepared" or "dispatched" status. Fetching first preserves the window.
+        const cachedReplayPayload =
+          claimResult.reason === "duplicate_event"
+            ? await getReplayableSelfDispatch({
+                threadChatId,
+                sourceEventId: envelopeV2.eventId,
+                sourceSeq: envelopeV2.seq,
+                sourceRunId: envelopeV2.runId,
+              }).catch(() => null)
+            : null;
+
         // Only persist terminal dispatch status for exact duplicate_event
         // retries — NOT for out_of_order_or_duplicate_seq, where an older
         // seq's failure could overwrite a newer seq's success.
@@ -1135,24 +1149,40 @@ export async function POST(request: Request) {
               threadId,
             });
             if (!v2Workflow) {
-              // Re-read to capture any state changes from handleDaemonEvent
+              // Re-read to capture any state changes from handleDaemonEvent.
+              // Only backfill if the current active loop matches enrolledLoop
+              // to prevent cross-generation contamination: if the thread has
+              // been re-enrolled into a new loop since this event was produced,
+              // creating a workflow for the new loop and draining signals from
+              // the old one would apply stale signals to the wrong generation.
               const freshDedupLoop = await getActiveSdlcLoopForThread({
                 db,
                 userId,
                 threadId,
               });
-              const dedupLoop = freshDedupLoop ?? enrolledLoop;
-              const { workflowId: backfilledDedupId } =
-                await ensureV2WorkflowExists({
-                  db,
-                  threadId,
-                  sdlcLoopId: dedupLoop.id,
-                  sdlcLoopState: dedupLoop.state,
-                  sdlcBlockedFromState: dedupLoop.blockedFromState,
-                });
-              v2Workflow = { id: backfilledDedupId } as NonNullable<
-                Awaited<ReturnType<typeof getActiveWorkflowForThread>>
-              >;
+              if (freshDedupLoop && freshDedupLoop.id !== enrolledLoop.id) {
+                console.warn(
+                  "[daemon-event] dedup backfill skipped — active loop changed",
+                  {
+                    enrolledLoopId: enrolledLoop.id,
+                    currentLoopId: freshDedupLoop.id,
+                    threadId,
+                  },
+                );
+              } else {
+                const dedupLoop = freshDedupLoop ?? enrolledLoop;
+                const { workflowId: backfilledDedupId } =
+                  await ensureV2WorkflowExists({
+                    db,
+                    threadId,
+                    sdlcLoopId: dedupLoop.id,
+                    sdlcLoopState: dedupLoop.state,
+                    sdlcBlockedFromState: dedupLoop.blockedFromState,
+                  });
+                v2Workflow = { id: backfilledDedupId } as NonNullable<
+                  Awaited<ReturnType<typeof getActiveWorkflowForThread>>
+                >;
+              }
             }
             if (v2Workflow) {
               await runCoordinatorTick({
@@ -1207,12 +1237,6 @@ export async function POST(request: Request) {
             );
           }
         }
-        const replayedSelfDispatch = await getReplayableSelfDispatch({
-          threadChatId,
-          sourceEventId: envelopeV2.eventId,
-          sourceSeq: envelopeV2.seq,
-          sourceRunId: envelopeV2.runId,
-        });
         return jsonTerminalAckResponse(
           buildTerminalAckState(
             {
@@ -1223,7 +1247,7 @@ export async function POST(request: Request) {
               acknowledgedEventId: envelopeV2.eventId,
               acknowledgedSeq: envelopeV2.seq,
             },
-            replayedSelfDispatch,
+            cachedReplayPayload,
           ),
         );
       }
@@ -1528,39 +1552,54 @@ export async function POST(request: Request) {
         // Re-read the enrolled loop to capture any state changes made by
         // handleDaemonEvent (e.g. checkpointThread fires asynchronously via
         // waitUntil and may have transitioned the v1 loop by now).
+        // Only backfill if the current active loop matches enrolledLoop to
+        // prevent cross-generation contamination (see dedup path comment).
         const freshLoop = await getActiveSdlcLoopForThread({
           db,
           userId,
           threadId,
         });
-        const backfillLoop = freshLoop ?? enrolledLoop;
-        console.warn(
-          "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
-          {
-            userId,
+        if (freshLoop && freshLoop.id !== enrolledLoop.id) {
+          console.warn(
+            "[sdlc-loop-v2] backfill skipped — active loop changed since enrollment",
+            {
+              enrolledLoopId: enrolledLoop.id,
+              currentLoopId: freshLoop.id,
+              threadId,
+              eventId: envelopeV2.eventId,
+              seq: envelopeV2.seq,
+            },
+          );
+        } else {
+          const backfillLoop = freshLoop ?? enrolledLoop;
+          console.warn(
+            "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
+            {
+              userId,
+              threadId,
+              threadChatId,
+              loopId: backfillLoop.id,
+              loopState: backfillLoop.state,
+              eventId: envelopeV2.eventId,
+              seq: envelopeV2.seq,
+            },
+          );
+          const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+            db,
             threadId,
-            threadChatId,
-            loopId: backfillLoop.id,
-            loopState: backfillLoop.state,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-          },
-        );
-        const { workflowId: backfilledId } = await ensureV2WorkflowExists({
-          db,
-          threadId,
-          sdlcLoopId: backfillLoop.id,
-          sdlcLoopState: backfillLoop.state,
-          sdlcBlockedFromState: backfillLoop.blockedFromState,
-        });
-        await runCoordinatorTick({
-          db,
-          workflowId: backfilledId as WorkflowId,
-          correlationId:
-            `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-          claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-          loopId: enrolledLoop.id,
-        });
+            sdlcLoopId: backfillLoop.id,
+            sdlcLoopState: backfillLoop.state,
+            sdlcBlockedFromState: backfillLoop.blockedFromState,
+          });
+          await runCoordinatorTick({
+            db,
+            workflowId: backfilledId as WorkflowId,
+            correlationId:
+              `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+            claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+            loopId: enrolledLoop.id,
+          });
+        }
       }
     } catch (error) {
       console.error("[sdlc-loop] coordinator tick/backfill failed", {

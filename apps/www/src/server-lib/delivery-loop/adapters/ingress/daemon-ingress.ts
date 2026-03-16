@@ -148,13 +148,25 @@ export async function handleDaemonIngress(params: {
         : `daemon:${params.rawEvent.runId}:${params.rawEvent.status}`,
   });
 
-  // Self-dispatch path: if the daemon completed and we haven't hit the
-  // circuit breaker, run a synchronous coordinator micro-tick so the
-  // next dispatch payload can be returned in this HTTP response.
-  if (
-    isEligibleForSelfDispatch(signal) &&
-    consecutiveDispatches < MAX_CONSECUTIVE_SELF_DISPATCHES
-  ) {
+  // Self-dispatch path: if the daemon completed, run a synchronous
+  // coordinator micro-tick to consume the signal from the inbox.
+  // When under the circuit breaker limit, the tick result could
+  // carry a self-dispatch payload in the HTTP response (not yet wired).
+  // When AT the limit, we still run the tick to consume the signal —
+  // otherwise it accumulates in the inbox and cron processes it anyway,
+  // defeating the breaker. The breaker's purpose is to prevent tight
+  // HTTP-level self-dispatch loops; the work queue handles dispatch
+  // asynchronously regardless.
+  if (isEligibleForSelfDispatch(signal)) {
+    const breakerTripped =
+      consecutiveDispatches >= MAX_CONSECUTIVE_SELF_DISPATCHES;
+    if (breakerTripped) {
+      console.warn("[daemon-ingress] self-dispatch circuit breaker tripped", {
+        workflowId,
+        runId: params.rawEvent.runId,
+        consecutiveDispatches,
+      });
+    }
     try {
       const tickResult = await runCoordinatorTick({
         db: params.db,
@@ -164,7 +176,11 @@ export async function handleDaemonIngress(params: {
         loopId: inboxPartitionKey,
       });
 
-      if (tickResult.transitioned && tickResult.workItemsScheduled > 0) {
+      if (
+        !breakerTripped &&
+        tickResult.transitioned &&
+        tickResult.workItemsScheduled > 0
+      ) {
         // TODO: construct a real SdlcSelfDispatchPayload from the
         // prepared dispatch/replay state. For now, return null — the
         // cron/work-queue path handles dispatch instead.
