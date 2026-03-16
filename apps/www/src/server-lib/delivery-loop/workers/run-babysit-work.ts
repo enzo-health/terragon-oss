@@ -96,7 +96,7 @@ export async function runBabysitWork(params: {
     //      or append babysit_blocked signal
     //
 
-    const headSha = (workflow.headSha as string) ?? null;
+    const headSha = workflow.headSha ?? null;
     if (headSha) {
       // Resolve canonical loopId for gate evaluation
       let loopId = params.payload.loopId;

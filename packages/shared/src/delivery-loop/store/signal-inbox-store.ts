@@ -15,6 +15,7 @@ export {
 import { randomUUID } from "node:crypto";
 import * as schema from "../../db/schema";
 import type { DB } from "../../db";
+import type { SdlcLoopCauseType } from "../../db/types";
 
 /**
  * Append a new signal to the inbox for a given workflow/loop.
@@ -23,7 +24,7 @@ import type { DB } from "../../db";
 export async function appendSignalToInbox(params: {
   db: Pick<DB, "insert">;
   loopId: string;
-  causeType: string;
+  causeType: SdlcLoopCauseType;
   payload: Record<string, unknown>;
   canonicalCauseId?: string;
   signalHeadShaOrNull?: string | null;
@@ -34,7 +35,7 @@ export async function appendSignalToInbox(params: {
     .insert(schema.sdlcLoopSignalInbox)
     .values({
       loopId: params.loopId,
-      causeType: params.causeType as never,
+      causeType: params.causeType,
       canonicalCauseId: params.canonicalCauseId ?? randomUUID(),
       signalHeadShaOrNull: params.signalHeadShaOrNull ?? null,
       payload: params.payload,

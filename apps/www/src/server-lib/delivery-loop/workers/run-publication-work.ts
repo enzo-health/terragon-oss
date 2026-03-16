@@ -88,9 +88,13 @@ export async function runPublicationWork(params: {
       return;
     }
 
-    // 3. Only publish if the loop has a PR number
+    // 3. Only publish if the loop has a PR number.
+    //    Always publish the *current* workflow state, not the payload snapshot.
+    //    A retried work item's payload may be stale if the workflow advanced
+    //    since the item was first scheduled.
     if (typeof loop.prNumber === "number") {
-      const body = formatStatusBody(params.payload.workflowState);
+      const currentState = workflow.kind;
+      const body = formatStatusBody(currentState);
       const targetKind = params.payload.target.kind;
 
       try {
@@ -104,16 +108,15 @@ export async function runPublicationWork(params: {
               title: "Terragon Delivery Loop",
               summary: body,
               status:
-                params.payload.workflowState === "done" ||
-                params.payload.workflowState === "stopped" ||
-                params.payload.workflowState === "terminated"
+                currentState === "done" ||
+                currentState === "stopped" ||
+                currentState === "terminated"
                   ? "completed"
                   : "in_progress",
               conclusion:
-                params.payload.workflowState === "done"
+                currentState === "done"
                   ? "success"
-                  : params.payload.workflowState === "stopped" ||
-                      params.payload.workflowState === "terminated"
+                  : currentState === "stopped" || currentState === "terminated"
                     ? "cancelled"
                     : undefined,
             },
@@ -131,11 +134,19 @@ export async function runPublicationWork(params: {
       } catch (pubErr) {
         const classified = classifySdlcPublicationFailure(pubErr);
         if (!classified.retriable) {
-          // Non-retriable error — complete the work item to avoid infinite retries
           console.warn(
-            "[publication-worker] non-retriable publication error, completing work item",
+            "[publication-worker] non-retriable publication error, failing work item",
             { loopId: loop.id, errorCode: classified.errorCode },
           );
+          await failWorkItem({
+            db: params.db,
+            workItemId: params.workItemId,
+            claimToken: params.claimToken,
+            errorCode: classified.errorCode ?? "publication_non_retriable",
+            errorMessage:
+              classified.message ?? "Non-retriable publication failure",
+          });
+          return;
         } else {
           throw pubErr; // Let the outer catch handle retry
         }

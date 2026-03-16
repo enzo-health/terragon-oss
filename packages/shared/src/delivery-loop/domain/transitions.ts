@@ -435,16 +435,10 @@ function reduceAwaitingOperatorAction(
 ): DeliveryWorkflow | null {
   if (event === "blocked_resume") {
     const target = ctx.resumeTo ?? wf.resumableFrom;
-    return (
-      resumeFromState(
-        bump(wf, now),
-        target as Exclude<ResumableWorkflowState, { kind: "planning" }>,
-      ) ??
-      resumeFromPlanningState(
-        bump(wf, now),
-        target as Extract<ResumableWorkflowState, { kind: "planning" }>,
-      )
-    );
+    if (target.kind === "planning") {
+      return resumeFromPlanningState(bump(wf, now), target);
+    }
+    return resumeFromState(bump(wf, now), target);
   }
   return null;
 }

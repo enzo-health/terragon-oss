@@ -76,6 +76,7 @@ export async function runRetryWork(params: {
       claimToken: params.claimToken,
       errorCode: "retry_failed",
       errorMessage: err instanceof Error ? err.message : String(err),
+      retryAt: new Date(Date.now() + 30_000), // 30s backoff to prevent tight loops
     });
   }
 }

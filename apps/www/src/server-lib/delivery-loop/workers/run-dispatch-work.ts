@@ -204,15 +204,29 @@ export async function runDispatchWork(params: {
       );
     }
 
-    // Only start ack timeout if a run was actually launched — otherwise
-    // the timeout fires on a phantom dispatch and triggers false retries.
+    // Only start ack timeout if a run was actually launched AND this worker
+    // created the intent. When reusing an existing intent, the original
+    // attempt's ack timeout is already tracking its runId — arming a new
+    // timeout with our fresh runId would create phantom timeouts.
     if (followUpProcessed) {
-      startAckTimeout({
-        db: params.db,
-        runId,
-        loopId: loop.id,
-        threadChatId: threadChat.id,
-      });
+      if (!intentAlreadyActive) {
+        try {
+          await startAckTimeout({
+            db: params.db,
+            runId,
+            loopId: loop.id,
+            threadChatId: threadChat.id,
+          });
+        } catch (ackErr) {
+          console.warn(
+            "[dispatch-worker] startAckTimeout failed, run may lack watchdog",
+            {
+              runId,
+              error: ackErr instanceof Error ? ackErr.message : String(ackErr),
+            },
+          );
+        }
+      }
 
       // 7. Complete work item — dispatch worker's job is done; the follow-up
       //    queue and ack timeout handle the rest asynchronously.
