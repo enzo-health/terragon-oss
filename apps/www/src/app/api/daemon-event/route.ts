@@ -1171,17 +1171,19 @@ export async function POST(request: Request) {
                 );
               } else {
                 const dedupLoop = freshDedupLoop ?? enrolledLoop;
-                const { workflowId: backfilledDedupId } =
-                  await ensureV2WorkflowExists({
-                    db,
-                    threadId,
-                    sdlcLoopId: dedupLoop.id,
-                    sdlcLoopState: dedupLoop.state,
-                    sdlcBlockedFromState: dedupLoop.blockedFromState,
-                  });
-                v2Workflow = { id: backfilledDedupId } as NonNullable<
-                  Awaited<ReturnType<typeof getActiveWorkflowForThread>>
-                >;
+                await ensureV2WorkflowExists({
+                  db,
+                  threadId,
+                  sdlcLoopId: dedupLoop.id,
+                  sdlcLoopState: dedupLoop.state,
+                  sdlcBlockedFromState: dedupLoop.blockedFromState,
+                });
+                // Reload full workflow so sdlcLoopId is available for
+                // the generation check below.
+                v2Workflow = await getActiveWorkflowForThread({
+                  db,
+                  threadId,
+                });
               }
             }
             // Only tick if the workflow belongs to the same loop generation.

@@ -583,16 +583,30 @@ function parseSignalPayload(
         };
       }
       if (daemonRunStatus === "failed" || daemonRunStatus === "error") {
+        // Translate daemonErrorCategory to the domain failure kind so
+        // config_error escalates to exhausted_retries immediately
+        // instead of entering the transient retry path.
+        const errorCategory = payload.daemonErrorCategory as string | undefined;
+        const failureKind: import("@terragon/shared/delivery-loop/domain/signals").DaemonFailure["kind"] =
+          errorCategory === "provider_not_configured"
+            ? "config_error"
+            : "runtime_crash";
         return {
           source: "daemon",
           event: {
             kind: "run_failed",
             runId,
-            failure: {
-              kind: "runtime_crash",
-              exitCode: null,
-              message: errorMessage ?? "Unknown error",
-            },
+            failure:
+              failureKind === "config_error"
+                ? {
+                    kind: "config_error",
+                    message: errorMessage ?? "Unknown error",
+                  }
+                : {
+                    kind: "runtime_crash",
+                    exitCode: null,
+                    message: errorMessage ?? "Unknown error",
+                  },
           },
         };
       }

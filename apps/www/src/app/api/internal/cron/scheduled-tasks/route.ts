@@ -301,7 +301,7 @@ export async function GET(request: NextRequest) {
         v2TicksCaughtUp,
         ...(v2Error ? { v2Error } : {}),
       },
-      { status: v2Error ? 207 : 200 },
+      { status: v2Error ? 500 : 200 },
     );
   } catch (error) {
     console.error("Scheduled tasks cron failed:", error);

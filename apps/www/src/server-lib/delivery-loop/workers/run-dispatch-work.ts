@@ -253,7 +253,10 @@ export async function runDispatchWork(params: {
         threadId: workflow.threadId,
         threadChatId: threadChat.id,
       });
-      followUpProcessed = followUpResult.processed;
+      // Treat stale_cas_busy as a successful handoff — the chat is
+      // already active from a concurrent dispatch, so the run was launched.
+      followUpProcessed =
+        followUpResult.processed || followUpResult.reason === "stale_cas_busy";
     } catch (followUpErr) {
       // Non-fatal: the cron job will pick up pending follow-ups
       console.warn(
