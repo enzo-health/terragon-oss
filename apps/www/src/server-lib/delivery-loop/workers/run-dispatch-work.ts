@@ -154,10 +154,8 @@ export async function runDispatchWork(params: {
       headSha: params.payload.headSha,
     };
 
-    let freshIntent = false;
     try {
       await createDispatchIntent(intentParams);
-      freshIntent = true;
     } catch (intentErr) {
       if (
         intentErr instanceof Error &&
@@ -192,55 +190,55 @@ export async function runDispatchWork(params: {
     // 6. Persist durable dispatch intent in the DB so the ack timeout
     //    handler and cron sweep can find it. The Redis intent is for
     //    real-time tracking; the DB intent is for durable recovery.
-    if (freshIntent) {
-      try {
-        await createDbDispatchIntent(params.db, {
-          loopId: loop.id,
-          threadId: workflow.threadId,
-          threadChatId: threadChat.id,
-          runId,
-          targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-          selectedAgent: "claudeCode",
-          executionClass: params.payload.executionClass,
-          dispatchMechanism: "self_dispatch",
-        });
-        await markDispatchIntentDispatched(params.db, runId);
-      } catch (dbIntentErr) {
-        // Non-fatal: Redis intent + cron sweep will handle recovery
-        console.warn("[dispatch-worker] durable dispatch intent write failed", {
-          workflowId: params.payload.workflowId,
-          runId,
-          error: dbIntentErr,
-        });
-      }
+    //    Always attempt — on collision recovery the prior attempt may have
+    //    crashed before the DB write. createDbDispatchIntent has a unique
+    //    constraint so duplicates fail safely.
+    try {
+      await createDbDispatchIntent(params.db, {
+        loopId: loop.id,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        runId,
+        targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
+        selectedAgent: "claudeCode",
+        executionClass: params.payload.executionClass,
+        dispatchMechanism: "self_dispatch",
+      });
+      await markDispatchIntentDispatched(params.db, runId);
+    } catch (dbIntentErr) {
+      // Non-fatal: Redis intent + cron sweep will handle recovery.
+      // On collision recovery this will hit the unique constraint — expected.
+      console.warn("[dispatch-worker] durable dispatch intent write failed", {
+        workflowId: params.payload.workflowId,
+        runId,
+        error: dbIntentErr,
+      });
     }
 
     // 6b. Queue a dispatch continuation message so the follow-up queue
-    //     has something to process. Only append on fresh intents — the
-    //     collision recovery path reuses the prior attempt's message to
-    //     avoid duplicate "Continue implementing" messages on retries.
-    if (freshIntent) {
-      const dispatchMessage: DBUserMessage = {
-        type: "user",
-        model: null,
-        timestamp: new Date().toISOString(),
-        parts: [
-          {
-            type: "text",
-            text: `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`,
-          },
-        ],
-      };
-      await updateThreadChat({
-        db: params.db,
-        userId: loop.userId,
-        threadId: workflow.threadId,
-        threadChatId: threadChat.id,
-        updates: {
-          appendQueuedMessages: [dispatchMessage],
+    //     has something to process. Always attempt — on collision recovery
+    //     the prior attempt may have crashed before writing the message.
+    //     An extra queued message is benign; a missing one stalls the loop.
+    const dispatchMessage: DBUserMessage = {
+      type: "user",
+      model: null,
+      timestamp: new Date().toISOString(),
+      parts: [
+        {
+          type: "text",
+          text: `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`,
         },
-      });
-    }
+      ],
+    };
+    await updateThreadChat({
+      db: params.db,
+      userId: loop.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      updates: {
+        appendQueuedMessages: [dispatchMessage],
+      },
+    });
 
     // 6c. Trigger the follow-up queue to actually launch the run.
     // Only arm ack timeout if the follow-up queue actually started processing,

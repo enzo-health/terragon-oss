@@ -531,6 +531,10 @@ function parseSignalPayload(
         daemonRunStatus === "completed" ||
         daemonRunStatus === "plan_completed"
       ) {
+        // Refuse to emit a successful completion without a real head SHA.
+        // Downstream gates and babysit evaluation require a stable commit
+        // reference; advancing with an empty SHA strands the workflow.
+        if (!headSha) return null;
         return {
           source: "daemon",
           event: {
@@ -538,7 +542,7 @@ function parseSignalPayload(
             runId,
             result: {
               kind: "success",
-              headSha: headSha ?? "",
+              headSha,
               summary: "",
             },
           },
