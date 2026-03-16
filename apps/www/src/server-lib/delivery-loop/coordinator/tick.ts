@@ -35,6 +35,12 @@ import {
 import { reduceSignalToEvent } from "./reduce-signals";
 import { resolveWorkItems } from "./schedule-work";
 import { buildWorkflowEvent } from "./append-events";
+import {
+  extractHeadSha,
+  extractGateKind,
+  extractReviewSurface,
+  serializeWorkflowState,
+} from "./helpers";
 
 export type CoordinatorTickResult = {
   workflowId: WorkflowId;
@@ -107,6 +113,7 @@ export async function runCoordinatorTick(params: {
   let signalsProcessed = 0;
   let transitioned = false;
   let workItemsScheduled = 0;
+  let pendingAction: ReturnType<typeof derivePendingAction> = null;
 
   // 2. Process pending signals (up to limit per tick)
   let versionConflict = false;
@@ -244,8 +251,8 @@ export async function runCoordinatorTick(params: {
         ),
       );
 
-      // 4e. Update runtime status
-      const pendingAction = derivePendingAction(newWorkflow);
+      // 4e. Update runtime status (cache for reuse after the transaction)
+      pendingAction = derivePendingAction(newWorkflow);
       await upsertRuntimeStatus({
         db: tx,
         workflowId,
@@ -353,7 +360,8 @@ export async function runCoordinatorTick(params: {
     workflowId,
     state: workflow.kind,
     gate: extractGateKind(workflow),
-    pendingActionKind: derivePendingAction(workflow)?.kind ?? null,
+    pendingActionKind:
+      (pendingAction ?? derivePendingAction(workflow))?.kind ?? null,
     health: health.kind,
     lastSignalAt: signalsProcessed > 0 ? now : null,
     lastTransitionAt: transitioned ? now : null,
@@ -603,49 +611,4 @@ function hydrateWorkflow(row: WorkflowRow): DeliveryWorkflow {
     kind: row.kind as WorkflowState,
     ...stateJson,
   } as DeliveryWorkflow;
-}
-
-function serializeWorkflowState(
-  workflow: DeliveryWorkflow,
-): Record<string, unknown> {
-  // Extract state-specific fields (everything except WorkflowCommon + kind)
-  const {
-    workflowId: _wfId,
-    threadId: _tid,
-    generation: _gen,
-    version: _ver,
-    fixAttemptCount: _fac,
-    maxFixAttempts: _mfa,
-    createdAt: _ca,
-    updatedAt: _ua,
-    lastActivityAt: _laa,
-    kind: _k,
-    ...stateFields
-  } = workflow;
-  return stateFields;
-}
-
-function extractHeadSha(workflow: DeliveryWorkflow): string | null {
-  if (
-    workflow.kind === "gating" ||
-    workflow.kind === "awaiting_pr" ||
-    workflow.kind === "babysitting"
-  ) {
-    return workflow.headSha;
-  }
-  return null;
-}
-
-function extractGateKind(workflow: DeliveryWorkflow): string | null {
-  if (workflow.kind === "gating") return workflow.gate.kind;
-  return null;
-}
-
-function extractReviewSurface(
-  workflow: DeliveryWorkflow,
-): Record<string, unknown> | null {
-  if (workflow.kind === "babysitting") {
-    return workflow.reviewSurface as unknown as Record<string, unknown>;
-  }
-  return null;
 }

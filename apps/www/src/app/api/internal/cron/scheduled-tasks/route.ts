@@ -143,27 +143,37 @@ export async function GET(request: NextRequest) {
       const { runCoordinatorTick } = await import(
         "@/server-lib/delivery-loop/coordinator/tick"
       );
-      const { and, eq, desc, inArray } = await import("drizzle-orm");
+      const { and, desc, inArray } = await import("drizzle-orm");
       const schemaImport = await import("@terragon/shared/db/schema");
       const { activeSdlcLoopStateList } = await import(
         "@terragon/shared/model/delivery-loop"
       );
 
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
+
+      // Batch-load sdlcLoop IDs for all active workflows to avoid N+1 queries.
+      const threadIds = activeWorkflows.map((wf) => wf.threadId);
+      const loops =
+        threadIds.length > 0
+          ? await db.query.sdlcLoop.findMany({
+              where: and(
+                inArray(schemaImport.sdlcLoop.threadId, threadIds),
+                inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
+              ),
+              orderBy: [desc(schemaImport.sdlcLoop.createdAt)],
+              columns: { id: true, threadId: true },
+            })
+          : [];
+      // Map threadId → most recent active loop (first match, since ordered desc)
+      const loopByThread = new Map<string, string>();
+      for (const loop of loops) {
+        if (!loopByThread.has(loop.threadId)) {
+          loopByThread.set(loop.threadId, loop.id);
+        }
+      }
+
       for (const wf of activeWorkflows) {
         try {
-          // Resolve v1 sdlcLoop ID so signals keyed under the legacy ID
-          // are drained correctly during catch-up ticks. Filter to active
-          // states to avoid picking up a terminated loop from a previous
-          // generation for the same thread.
-          const loop = await db.query.sdlcLoop.findFirst({
-            where: and(
-              eq(schemaImport.sdlcLoop.threadId, wf.threadId),
-              inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
-            ),
-            orderBy: [desc(schemaImport.sdlcLoop.createdAt)],
-            columns: { id: true },
-          });
           const correlationId =
             `cron:tick-catchup:${wf.id}:${Date.now()}` as Parameters<
               typeof runCoordinatorTick
@@ -175,7 +185,7 @@ export async function GET(request: NextRequest) {
             >[0]["workflowId"],
             correlationId,
             claimToken: `cron:tick:${crypto.randomUUID()}`,
-            loopId: loop?.id,
+            loopId: loopByThread.get(wf.threadId),
           });
           if (result.signalsProcessed > 0) {
             v2TicksCaughtUp++;
