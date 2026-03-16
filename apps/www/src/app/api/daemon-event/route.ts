@@ -1124,10 +1124,23 @@ export async function POST(request: Request) {
         }
         if (claimResult.reason === "duplicate_event") {
           try {
-            const v2Workflow = await getActiveWorkflowForThread({
+            let v2Workflow = await getActiveWorkflowForThread({
               db,
               threadId,
             });
+            if (!v2Workflow) {
+              const { workflowId: backfilledDedupId } =
+                await ensureV2WorkflowExists({
+                  db,
+                  threadId,
+                  sdlcLoopId: enrolledLoop.id,
+                  sdlcLoopState: enrolledLoop.state,
+                  sdlcBlockedFromState: enrolledLoop.blockedFromState,
+                });
+              v2Workflow = { id: backfilledDedupId } as NonNullable<
+                Awaited<ReturnType<typeof getActiveWorkflowForThread>>
+              >;
+            }
             if (v2Workflow) {
               await runCoordinatorTick({
                 db,

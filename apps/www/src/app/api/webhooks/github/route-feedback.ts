@@ -25,6 +25,7 @@ import {
 } from "@/server-lib/delivery-loop/enrollment";
 import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
 import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
+import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type {
   WorkflowId,
@@ -1047,10 +1048,11 @@ export async function routeGithubFeedbackOrSpawnThread(
             threadId: activeSdlcLoop.threadId,
           };
         }
-        // No v2 workflow — fall through to direct routing so the signal
-        // isn't silently dropped. Cron only iterates active workflow rows.
+        // No v2 workflow — backfill from v1 loop so the enqueued signal
+        // gets processed immediately. Falling through to direct routing
+        // would cause duplicate delivery once the workflow appears later.
         console.warn(
-          "[route-feedback] enrolled loop has no v2 workflow, falling back to direct routing",
+          "[route-feedback] enrolled loop has no v2 workflow — backfilling",
           {
             userId,
             sdlcLoopId: activeSdlcLoop.id,
@@ -1058,6 +1060,40 @@ export async function routeGithubFeedbackOrSpawnThread(
             eventType: input.eventType,
           },
         );
+        try {
+          const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+            db,
+            threadId: activeSdlcLoop.threadId,
+            sdlcLoopId: activeSdlcLoop.id,
+            sdlcLoopState: activeSdlcLoop.state,
+            sdlcBlockedFromState: activeSdlcLoop.blockedFromState,
+          });
+          await runCoordinatorTick({
+            db,
+            workflowId: backfilledId as WorkflowId,
+            correlationId: leaseOwnerToken as CorrelationId,
+            claimToken: leaseOwnerToken,
+            loopId: activeSdlcLoop.id,
+          });
+          captureFeedbackRouting({
+            userId,
+            input,
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            threadId: activeSdlcLoop.threadId,
+          });
+          return {
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+          };
+        } catch (backfillErr) {
+          console.error("[route-feedback] v2 workflow backfill failed", {
+            sdlcLoopId: activeSdlcLoop.id,
+            error: backfillErr,
+          });
+        }
       }
     }
 
