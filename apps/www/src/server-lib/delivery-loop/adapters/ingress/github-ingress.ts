@@ -42,10 +42,25 @@ export function normalizeGitHubWebhook(
   switch (raw.action) {
     case "check_suite_completed":
     case "check_run_completed": {
+      let requiredChecks = raw.requiredChecks ?? [];
+      let failingChecks = raw.failingChecks ?? [];
+      // When the aggregate CI snapshot is unavailable (e.g., transient
+      // GitHub API failure), fall back to the triggering check's data
+      // so the reducer has enough information to act instead of marking
+      // the signal retryable and leaving the workflow stuck.
+      if (
+        requiredChecks.length === 0 &&
+        failingChecks.length === 0 &&
+        raw.checkName
+      ) {
+        requiredChecks = [raw.checkName];
+        failingChecks =
+          raw.checkConclusion !== "success" ? [raw.checkName] : [];
+      }
       const result: CiEvaluation = {
         passed: raw.checkConclusion === "success",
-        requiredChecks: raw.requiredChecks ?? [],
-        failingChecks: raw.failingChecks ?? [],
+        requiredChecks,
+        failingChecks,
       };
       return {
         source: "github",

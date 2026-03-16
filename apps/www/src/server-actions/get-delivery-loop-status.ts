@@ -647,10 +647,29 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
             const { getActiveWorkflowForThread } = await import(
               "@terragon/shared/delivery-loop/store/workflow-store"
             );
-            const workflow = await getActiveWorkflowForThread({
+            let workflow = await getActiveWorkflowForThread({
               db,
               threadId: loop.threadId,
             });
+            // Backfill v2 workflow for orphaned v1 loops so idle
+            // babysitting loops don't stay stuck after v1 removal.
+            if (!workflow) {
+              const { ensureV2WorkflowExists } = await import(
+                "@/server-lib/delivery-loop/coordinator/enrollment-bridge"
+              );
+              const result = await ensureV2WorkflowExists({
+                db,
+                threadId: loop.threadId,
+                sdlcLoopId: loop.id,
+                sdlcLoopState: loop.state,
+              });
+              if (result.created) {
+                workflow = await getActiveWorkflowForThread({
+                  db,
+                  threadId: loop.threadId,
+                });
+              }
+            }
             if (workflow) {
               const { runCoordinatorTick } = await import(
                 "@/server-lib/delivery-loop/coordinator/tick"

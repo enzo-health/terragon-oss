@@ -162,6 +162,55 @@ export async function GET(request: NextRequest) {
         "@terragon/shared/model/delivery-loop"
       );
 
+      // Backfill v2 workflows for active v1 loops that were never bridged.
+      // After v1 babysit-recheck deletion, idle loops without a v2 workflow
+      // would remain stuck since cron only ticks existing workflows.
+      try {
+        const { ensureV2WorkflowExists } = await import(
+          "@/server-lib/delivery-loop/coordinator/enrollment-bridge"
+        );
+        const { getActiveWorkflowForThread } = await import(
+          "@terragon/shared/delivery-loop/store/workflow-store"
+        );
+        const orphanedLoops = await db.query.sdlcLoop.findMany({
+          where: inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
+          columns: {
+            id: true,
+            threadId: true,
+            state: true,
+            blockedFromState: true,
+          },
+          limit: 50,
+        });
+        for (const loop of orphanedLoops) {
+          const existing = await getActiveWorkflowForThread({
+            db,
+            threadId: loop.threadId,
+          });
+          if (!existing) {
+            try {
+              await ensureV2WorkflowExists({
+                db,
+                threadId: loop.threadId,
+                sdlcLoopId: loop.id,
+                sdlcLoopState: loop.state,
+                sdlcBlockedFromState: loop.blockedFromState,
+              });
+            } catch (backfillErr) {
+              console.warn(
+                "[cron] v2 workflow backfill failed for orphaned loop",
+                { loopId: loop.id, error: backfillErr },
+              );
+            }
+          }
+        }
+      } catch (backfillBatchErr) {
+        console.warn(
+          "[cron] orphaned loop backfill batch failed",
+          backfillBatchErr,
+        );
+      }
+
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
 
       // Resolve loopId for each active workflow. Prefer the explicit

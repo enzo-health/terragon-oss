@@ -552,18 +552,11 @@ function parseSignalPayload(
         daemonRunStatus === "completed" ||
         daemonRunStatus === "plan_completed"
       ) {
-        // Without a real head SHA, downstream gates and babysit evaluation
-        // have no stable commit to evaluate. Return retryable so the signal
-        // claim is released — a later daemon delivery or cron catch-up will
-        // supply the SHA. Do NOT consume as progress_reported, because on
-        // retry the daemon route dedupes by eventId and won't refresh the
-        // stored payload, permanently losing the completion.
-        if (!headSha) {
-          return {
-            retryable: true,
-            reason: `daemon_terminal completion without headSha (runId=${runId})`,
-          };
-        }
+        // The state machine falls back to a synthetic headSha when
+        // ctx.headSha is undefined (transitions.ts:287), so daemon_terminal
+        // completions without headShaAtCompletion can still advance the
+        // workflow. Downstream gates will resolve the real SHA from the
+        // PR's head ref during evaluation.
         return {
           source: "daemon",
           event: {
@@ -571,7 +564,7 @@ function parseSignalPayload(
             runId,
             result: {
               kind: "success",
-              headSha,
+              headSha: headSha ?? `sha-unknown-${runId}`,
               summary: "",
             },
           },
