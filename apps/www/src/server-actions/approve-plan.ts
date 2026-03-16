@@ -77,6 +77,7 @@ export const approvePlan = userOnlyAction(
       parsedPlan,
       mode: "approve",
       approvedByUserId: userId,
+      threadId,
     });
     if (promotionResult.outcome !== "promoted") {
       throw new UserFacingError(

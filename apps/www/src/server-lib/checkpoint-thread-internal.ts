@@ -938,6 +938,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       parsedPlan,
       mode: "checkpoint",
+      threadId,
     });
 
     if (promotionResult.outcome === "awaiting_human_approval") {
@@ -1211,6 +1212,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       generatedBy: "system",
       status: "accepted",
+      workflowId: v2Workflow?.id,
     });
 
     const implementationTransition = await transitionSdlcLoopStateWithArtifact({
@@ -1390,6 +1392,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       generatedBy: "system",
       status: "accepted",
+      workflowId: v2Workflow?.id,
     });
     if (deepBlocked || carmackBlocked) {
       await transitionSdlcLoopState({
@@ -1538,6 +1541,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     },
     generatedBy: "system",
     status: "accepted",
+    workflowId: v2Workflow?.id,
   });
   if (uiSmokeBlocked) {
     await transitionSdlcLoopState({
@@ -1666,6 +1670,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       generatedBy: "system",
       status: "accepted",
+      workflowId: v2Workflow?.id,
     });
     const prTransition = await transitionSdlcLoopStateWithArtifact({
       db,
