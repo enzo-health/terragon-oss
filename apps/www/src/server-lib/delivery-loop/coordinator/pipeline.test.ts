@@ -875,6 +875,135 @@ describe("v2 pipeline — end-to-end validation", () => {
     });
   });
 
+  describe("planning → implementing transition", () => {
+    it("planning → implementing transition creates dispatch work item after plan_approved", async () => {
+      // 1. Enroll workflow in planning state
+      const { workflowId } = await enrollWorkflow("planning", "planning");
+
+      // 2. Simulate daemon completing its planning run
+      await appendSignalToInbox({
+        db,
+        loopId: workflowId,
+        causeType: "daemon_run_completed",
+        payload: {
+          source: "daemon",
+          event: {
+            kind: "run_completed",
+            runId: `run-${nanoid(6)}`,
+            result: {
+              kind: "success",
+              headSha: null,
+              summary: "Plan generated",
+            },
+          },
+        },
+      });
+
+      // 3. Tick — run_completed during planning returns null, so no transition
+      const tickResult1 = await tick(workflowId);
+      expect(tickResult1.transitioned).toBe(false);
+      await assertWorkflowState(workflowId, "planning");
+
+      // 4. Simulate checkpoint pipeline's plan approval (what promote-plan.ts writes)
+      await appendSignalToInbox({
+        db,
+        loopId: workflowId,
+        causeType: "human_resume",
+        payload: {
+          source: "human",
+          event: {
+            kind: "plan_approved",
+            artifactId: `art-${nanoid(6)}`,
+          },
+        },
+      });
+
+      // 5. Tick — plan_approved should transition to implementing
+      const tickResult2 = await tick(workflowId);
+      expect(tickResult2.transitioned).toBe(true);
+      await assertWorkflowState(workflowId, "implementing");
+
+      // 6. Assert dispatch work item was created with implementation_runtime
+      const items = await getPendingWorkItems(workflowId);
+      const dispatchItem = items.find((w) => w.kind === "dispatch");
+      expect(dispatchItem).toBeDefined();
+      expect((dispatchItem!.payloadJson as any).executionClass).toBe(
+        "implementation_runtime",
+      );
+    });
+
+    it("run_completed during planning does NOT advance to implementing", async () => {
+      // 1. Enroll workflow in planning
+      const { workflowId } = await enrollWorkflow("planning", "planning");
+
+      // 2. Inject run_completed daemon signal
+      await appendSignalToInbox({
+        db,
+        loopId: workflowId,
+        causeType: "daemon_run_completed",
+        payload: {
+          source: "daemon",
+          event: {
+            kind: "run_completed",
+            runId: `run-${nanoid(6)}`,
+            result: { kind: "success", headSha: null, summary: "Plan done" },
+          },
+        },
+      });
+
+      // 3. Tick
+      const result = await tick(workflowId);
+
+      // 4. Assert still in planning
+      expect(result.transitioned).toBe(false);
+      await assertWorkflowState(workflowId, "planning");
+
+      // 5. Assert NO dispatch work items were created
+      const items = await getPendingWorkItems(workflowId);
+      const dispatchItems = items.filter((w) => w.kind === "dispatch");
+      expect(dispatchItems.length).toBe(0);
+    });
+  });
+
+  describe("babysit signal handling", () => {
+    it("babysit_recheck_blocked signal is processed and transitions to implementing", async () => {
+      // 1. Create workflow directly in babysitting state
+      const wf = await createWorkflow({
+        db,
+        threadId: testThreadId,
+        generation: 1,
+        kind: "babysitting",
+        stateJson: {
+          headSha: "abc123",
+          nextCheckAt: new Date().toISOString(),
+        },
+      });
+
+      // 2. Inject babysit_gates_blocked signal
+      await appendSignalToInbox({
+        db,
+        loopId: wf.id,
+        causeType: "babysit_recheck_blocked",
+        payload: {
+          source: "babysit",
+          event: {
+            kind: "babysit_gates_blocked",
+            headSha: "abc123",
+          },
+        },
+      });
+
+      // 3. Tick
+      const result = await tick(wf.id);
+
+      // 4. Assert signal was processed
+      expect(result.signalsProcessed).toBeGreaterThan(0);
+
+      // 5. Assert workflow transitioned to implementing (babysit_blocked → retryToImplementing)
+      await assertWorkflowState(wf.id, "implementing");
+    });
+  });
+
   describe("concurrent workflow isolation", () => {
     it("signals for one workflow do not affect another", async () => {
       // Create two threads, each with its own workflow
