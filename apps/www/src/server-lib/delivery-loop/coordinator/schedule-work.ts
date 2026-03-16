@@ -54,6 +54,24 @@ export function resolveWorkItems(params: {
 
   // State-specific work items
   switch (params.newWorkflow.kind) {
+    case "planning":
+      // Schedule dispatch when (re-)entering planning — e.g. after plan
+      // approval or operator action resume. Planning uses the same daemon
+      // runtime as implementation; the daemon inspects the workflow state
+      // to determine whether to plan or implement.
+      if (params.previousWorkflow.kind !== "planning") {
+        items.push({
+          kind: "dispatch",
+          payloadJson: {
+            executionClass: "implementation_runtime",
+            workflowId: params.newWorkflow.workflowId,
+            loopId: params.loopId,
+          },
+          scheduledAt: now,
+        });
+      }
+      break;
+
     case "implementing":
       // Schedule dispatch when entering implementing — including self-retries
       // and partial completions (redispatch_requested).
@@ -77,12 +95,25 @@ export function resolveWorkItems(params: {
       break;
 
     case "gating":
-      // No dispatch needed — gates are evaluated via webhook signals:
-      //   GitHub CI/review webhooks → signal inbox → coordinator tick
-      // The cron catch-up tick handles missed webhooks. Dispatching an
-      // agent run here would be incorrect since there's no gate-runtime
-      // executor; it would launch a normal agent session that could
-      // interfere with the gating flow.
+      // CI gates are evaluated via GitHub webhooks — no dispatch needed.
+      // Review and UI gates require a daemon dispatch to run the gate
+      // evaluation logic (deep review, UI smoke test, etc.).
+      if (
+        params.newWorkflow.gate.kind !== "ci" &&
+        (params.previousWorkflow.kind !== "gating" ||
+          params.previousWorkflow.gate.kind !== params.newWorkflow.gate.kind)
+      ) {
+        items.push({
+          kind: "dispatch",
+          payloadJson: {
+            executionClass: "gate_runtime",
+            workflowId: params.newWorkflow.workflowId,
+            gate: params.newWorkflow.gate.kind,
+            loopId: params.loopId,
+          },
+          scheduledAt: now,
+        });
+      }
       break;
 
     case "babysitting":
