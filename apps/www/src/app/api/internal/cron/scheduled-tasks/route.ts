@@ -116,6 +116,19 @@ export async function GET(request: NextRequest) {
               payload: payload as Parameters<typeof runRetryWork>[0]["payload"],
             });
             break;
+          default: {
+            const { failWorkItem } = await import(
+              "@terragon/shared/delivery-loop/store/work-queue-store"
+            );
+            await failWorkItem({
+              db,
+              workItemId: item.id,
+              claimToken,
+              errorCode: "unsupported_work_kind",
+              errorMessage: `Unknown work item kind: ${item.kind}`,
+            });
+            break;
+          }
         }
         v2WorkItemsProcessed++;
       }

@@ -53,8 +53,7 @@ export function normalizeDaemonEvent(raw: DaemonEventPayload): DeliverySignal {
       };
     }
 
-    case "failed":
-    case "stopped": {
+    case "failed": {
       const failure: DaemonFailure =
         raw.exitCode != null
           ? {
@@ -70,6 +69,15 @@ export function normalizeDaemonEvent(raw: DaemonEventPayload): DeliverySignal {
       return {
         source: "daemon",
         event: { kind: "run_failed", runId: raw.runId, failure },
+      };
+    }
+
+    case "stopped": {
+      // User-initiated stop — map to human signal so the coordinator
+      // transitions to "stopped" instead of retrying implementation.
+      return {
+        source: "human",
+        event: { kind: "stop_requested", actorUserId: "daemon" },
       };
     }
 

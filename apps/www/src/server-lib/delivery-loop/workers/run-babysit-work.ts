@@ -2,6 +2,7 @@ import type { DB } from "@terragon/shared/db";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import {
   completeWorkItem,
+  enqueueWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
@@ -130,17 +131,26 @@ export async function runBabysitWork(params: {
           canonicalCauseId: `babysit:${loopId}:${headSha}:gates_passed`,
         });
       } else {
-        // Gates still failing — fail the work item with a retry so the
-        // babysitting workflow gets rechecked. Without this, the workflow
-        // would stall forever since cron only drains existing work items.
-        const retryAt = new Date(Date.now() + 5 * 60_000); // 5min backoff
-        await failWorkItem({
+        // Gates still failing — complete this work item and schedule a
+        // fresh babysit recheck. Using failWorkItem would consume the
+        // finite retry budget (~5 attempts), after which the item
+        // dead-letters and the workflow stalls. A fresh work item has its
+        // own budget and can keep rechecking indefinitely.
+        await completeWorkItem({
           db: params.db,
           workItemId: params.workItemId,
           claimToken: params.claimToken,
-          errorCode: "babysit_gates_pending",
-          errorMessage: "Babysit gates not yet passed, scheduling recheck",
-          retryAt,
+        });
+        await enqueueWorkItem({
+          db: params.db,
+          workflowId: params.payload.workflowId,
+          correlationId: `babysit-recheck:${params.payload.workflowId}:${Date.now()}`,
+          kind: "babysit",
+          payloadJson: {
+            workflowId: params.payload.workflowId,
+            loopId: params.payload.loopId,
+          } as Record<string, unknown>,
+          scheduledAt: new Date(Date.now() + 5 * 60_000), // 5min backoff
         });
         return;
       }

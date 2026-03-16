@@ -126,162 +126,203 @@ export async function runCoordinatorTick(params: {
     });
     if (!signal) break;
 
-    // 3a. Reduce signal to a LoopEvent
-    const deliverySignal = parseSignalPayload(signal.causeType, signal.payload);
-    if (!deliverySignal) {
-      // Unrecognized signal — dead-letter it
-      await deadLetterSignal({
-        db,
-        signalId: signal.id,
-        claimToken,
-        reason: `Unrecognized signal cause type: ${signal.causeType}`,
-        now,
-      });
-      signalsProcessed++;
-      continue;
-    }
-
-    const reduction = reduceSignalToEvent({
-      signal: deliverySignal,
-      workflow,
-    });
-
-    if (!reduction) {
-      // No state transition for this signal — complete it and move on
-      await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
-      signalsProcessed++;
-      continue;
-    }
-
-    // 3b. Apply the state machine transition
-    const newWorkflow = reduceWorkflow({
-      snapshot: workflow,
-      event: reduction.event,
-      context: reduction.context,
-      now,
-    });
-
-    if (!newWorkflow) {
-      // Invalid transition — log warning and skip
-      console.warn(
-        `[coordinator] Invalid transition: ${workflow.kind} + ${reduction.event} (workflow=${workflowId})`,
+    // Wrap per-signal processing in try/catch so that a failure in one
+    // signal doesn't leak the claim — the signal gets released for retry.
+    let signalCompleted = false;
+    try {
+      // 3a. Reduce signal to a LoopEvent
+      const deliverySignal = parseSignalPayload(
+        signal.causeType,
+        signal.payload,
       );
-      await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
-      signalsProcessed++;
-      continue;
-    }
-
-    // 3c. Resolve work items from the transition
-    const scheduledItems = resolveWorkItems({
-      previousWorkflow: workflow,
-      newWorkflow,
-      event: reduction.event,
-      loopId,
-      now,
-    });
-
-    // 3d. Build the audit event
-    const workflowEvent = buildWorkflowEvent({
-      previousWorkflow: workflow,
-      newWorkflow,
-      event: reduction.event,
-      context: reduction.context,
-    });
-
-    // 4. Persist everything in a single transaction
-    await db.transaction(async (tx) => {
-      // 4a. Update workflow state (optimistic concurrency)
-      const updateResult = await updateWorkflowState({
-        db: tx,
-        workflowId,
-        expectedVersion: workflow.version,
-        kind: newWorkflow.kind,
-        stateJson: serializeWorkflowState(newWorkflow),
-        fixAttemptCount: newWorkflow.fixAttemptCount,
-        headSha: extractHeadSha(newWorkflow),
-        reviewSurfaceJson: extractReviewSurface(newWorkflow),
-        now,
-      });
-
-      if (!updateResult.updated) {
-        // Version conflict — another tick updated this workflow concurrently.
-        // Break out so the current signal stays "claimed" and can be retried.
-        console.warn(
-          `[coordinator] Version conflict on workflow ${workflowId} (expected ${workflow.version}), yielding tick`,
-        );
-        versionConflict = true;
-        return; // exit transaction without persisting
+      if (!deliverySignal) {
+        // Unrecognized signal — dead-letter it
+        await deadLetterSignal({
+          db,
+          signalId: signal.id,
+          claimToken,
+          reason: `Unrecognized signal cause type: ${signal.causeType}`,
+          now,
+        });
+        signalCompleted = true;
+        signalsProcessed++;
+        continue;
       }
 
-      // 4b. Append audit event
-      await appendWorkflowEvent({
-        db: tx,
-        workflowId,
-        correlationId,
-        eventKind: workflowEvent.kind,
-        stateBefore: workflow.kind,
-        stateAfter: newWorkflow.kind,
-        gateBefore: extractGateKind(workflow),
-        gateAfter: extractGateKind(newWorkflow),
-        payloadJson: workflowEvent as unknown as Record<string, unknown>,
-        signalId: signal.id,
-        triggerSource: deliverySignal.source,
-        headSha: extractHeadSha(newWorkflow),
+      const reduction = reduceSignalToEvent({
+        signal: deliverySignal,
+        workflow,
       });
 
-      // 4c. Supersede old pending work items before inserting new ones
-      const uniqueKinds = [...new Set(scheduledItems.map((item) => item.kind))];
-      await Promise.all(
-        uniqueKinds.map((kind) =>
-          supersedePendingWorkItems({ db: tx, workflowId, kind, now }),
-        ),
-      );
+      if (!reduction) {
+        // No state transition for this signal — complete it and move on
+        await completeSignalClaim({
+          db,
+          signalId: signal.id,
+          claimToken,
+          now,
+        });
+        signalCompleted = true;
+        signalsProcessed++;
+        continue;
+      }
 
-      // 4d. Enqueue work items
-      await Promise.all(
-        scheduledItems.map((item) =>
-          enqueueWorkItem({
-            db: tx,
-            workflowId,
-            correlationId,
-            kind: item.kind,
-            payloadJson: item.payloadJson,
-            scheduledAt: item.scheduledAt,
-          }),
-        ),
-      );
-
-      // 4e. Update runtime status (cache for reuse after the transaction)
-      pendingAction = derivePendingAction(newWorkflow);
-      await upsertRuntimeStatus({
-        db: tx,
-        workflowId,
-        state: newWorkflow.kind,
-        gate: extractGateKind(newWorkflow),
-        pendingActionKind: pendingAction?.kind ?? null,
-        health: "healthy",
-        lastSignalAt: now,
-        lastTransitionAt: now,
-        fixAttemptCount: newWorkflow.fixAttemptCount,
+      // 3b. Apply the state machine transition
+      const newWorkflow = reduceWorkflow({
+        snapshot: workflow,
+        event: reduction.event,
+        context: reduction.context,
+        now,
       });
-    });
 
-    // If version conflict occurred, release the claim so the signal is
-    // immediately available for the next tick (instead of waiting for
-    // stale-claim timeout).
-    if (versionConflict) {
-      await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+      if (!newWorkflow) {
+        // Invalid transition — log warning and skip
+        console.warn(
+          `[coordinator] Invalid transition: ${workflow.kind} + ${reduction.event} (workflow=${workflowId})`,
+        );
+        await completeSignalClaim({
+          db,
+          signalId: signal.id,
+          claimToken,
+          now,
+        });
+        signalCompleted = true;
+        signalsProcessed++;
+        continue;
+      }
+
+      // 3c. Resolve work items from the transition
+      const scheduledItems = resolveWorkItems({
+        previousWorkflow: workflow,
+        newWorkflow,
+        event: reduction.event,
+        loopId,
+        now,
+      });
+
+      // 3d. Build the audit event
+      const workflowEvent = buildWorkflowEvent({
+        previousWorkflow: workflow,
+        newWorkflow,
+        event: reduction.event,
+        context: reduction.context,
+      });
+
+      // 4. Persist everything in a single transaction
+      await db.transaction(async (tx) => {
+        // 4a. Update workflow state (optimistic concurrency)
+        const updateResult = await updateWorkflowState({
+          db: tx,
+          workflowId,
+          expectedVersion: workflow.version,
+          kind: newWorkflow.kind,
+          stateJson: serializeWorkflowState(newWorkflow),
+          fixAttemptCount: newWorkflow.fixAttemptCount,
+          headSha: extractHeadSha(newWorkflow),
+          reviewSurfaceJson: extractReviewSurface(newWorkflow),
+          now,
+        });
+
+        if (!updateResult.updated) {
+          // Version conflict — another tick updated this workflow concurrently.
+          // Break out so the current signal stays "claimed" and can be retried.
+          console.warn(
+            `[coordinator] Version conflict on workflow ${workflowId} (expected ${workflow.version}), yielding tick`,
+          );
+          versionConflict = true;
+          return; // exit transaction without persisting
+        }
+
+        // 4b. Append audit event
+        await appendWorkflowEvent({
+          db: tx,
+          workflowId,
+          correlationId,
+          eventKind: workflowEvent.kind,
+          stateBefore: workflow.kind,
+          stateAfter: newWorkflow.kind,
+          gateBefore: extractGateKind(workflow),
+          gateAfter: extractGateKind(newWorkflow),
+          payloadJson: workflowEvent as unknown as Record<string, unknown>,
+          signalId: signal.id,
+          triggerSource: deliverySignal.source,
+          headSha: extractHeadSha(newWorkflow),
+        });
+
+        // 4c. Supersede old pending work items before inserting new ones
+        const uniqueKinds = [
+          ...new Set(scheduledItems.map((item) => item.kind)),
+        ];
+        await Promise.all(
+          uniqueKinds.map((kind) =>
+            supersedePendingWorkItems({ db: tx, workflowId, kind, now }),
+          ),
+        );
+
+        // 4d. Enqueue work items
+        await Promise.all(
+          scheduledItems.map((item) =>
+            enqueueWorkItem({
+              db: tx,
+              workflowId,
+              correlationId,
+              kind: item.kind,
+              payloadJson: item.payloadJson,
+              scheduledAt: item.scheduledAt,
+            }),
+          ),
+        );
+
+        // 4e. Update runtime status (cache for reuse after the transaction)
+        pendingAction = derivePendingAction(newWorkflow);
+        await upsertRuntimeStatus({
+          db: tx,
+          workflowId,
+          state: newWorkflow.kind,
+          gate: extractGateKind(newWorkflow),
+          pendingActionKind: pendingAction?.kind ?? null,
+          health: "healthy",
+          lastSignalAt: now,
+          lastTransitionAt: now,
+          fixAttemptCount: newWorkflow.fixAttemptCount,
+        });
+      });
+
+      // If version conflict occurred, release the claim so the signal is
+      // immediately available for the next tick (instead of waiting for
+      // stale-claim timeout).
+      if (versionConflict) {
+        await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        break;
+      }
+
+      // 4f. Complete the signal (outside transaction — idempotent)
+      await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
+      signalCompleted = true;
+
+      // Update in-memory workflow for next iteration
+      workflow = newWorkflow;
+      transitioned = true;
+      signalsProcessed++;
+      workItemsScheduled += scheduledItems.length;
+    } catch (signalErr) {
+      // Release claim so another tick can retry this signal instead of
+      // leaving it permanently stuck in "claimed" state.
+      if (!signalCompleted) {
+        try {
+          await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        } catch {
+          // Best-effort — stale-claim timeout will eventually release it
+        }
+      }
+      console.error(
+        `[coordinator] Error processing signal ${signal.id} for workflow ${workflowId}`,
+        signalErr,
+      );
+      // Break out of the loop — don't process more signals after a failure
+      // since our in-memory workflow state may be inconsistent.
       break;
     }
-
-    // 4f. Complete the signal (outside transaction — idempotent)
-    await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
-
-    // Update in-memory workflow for next iteration
-    workflow = newWorkflow;
-    transitioned = true;
-    signalsProcessed++;
-    workItemsScheduled += scheduledItems.length;
   }
 
   // 5. Evaluate incident conditions (skip expensive incident queries on noop ticks)
@@ -483,11 +524,14 @@ function parseSignalPayload(
           },
         };
       }
-      if (
-        daemonRunStatus === "failed" ||
-        daemonRunStatus === "error" ||
-        daemonRunStatus === "stopped"
-      ) {
+      if (daemonRunStatus === "stopped") {
+        // User-initiated stop — map to human signal for clean termination
+        return {
+          source: "human",
+          event: { kind: "stop_requested", actorUserId: "daemon" },
+        };
+      }
+      if (daemonRunStatus === "failed" || daemonRunStatus === "error") {
         return {
           source: "daemon",
           event: {
@@ -590,6 +634,14 @@ function parseSignalPayload(
  */
 type WorkflowRow = NonNullable<Awaited<ReturnType<typeof getWorkflow>>>;
 
+/** Date-typed fields that may appear in stateJson as ISO strings. */
+const DATE_FIELDS_IN_STATE = new Set([
+  "nextCheckAt",
+  "sentAt",
+  "ackDeadlineAt",
+  "completedAt",
+]);
+
 function hydrateWorkflow(row: WorkflowRow): DeliveryWorkflow {
   if (!VALID_WORKFLOW_KINDS.has(row.kind)) {
     throw new Error(
@@ -597,6 +649,15 @@ function hydrateWorkflow(row: WorkflowRow): DeliveryWorkflow {
     );
   }
   const stateJson = (row.stateJson ?? {}) as Record<string, unknown>;
+
+  // Rehydrate ISO-string dates back to Date objects so downstream
+  // comparisons (e.g. `nextCheckAt < now`) work correctly.
+  for (const key of DATE_FIELDS_IN_STATE) {
+    if (typeof stateJson[key] === "string") {
+      stateJson[key] = new Date(stateJson[key] as string);
+    }
+  }
+
   return {
     workflowId: row.id as WorkflowId,
     threadId:
