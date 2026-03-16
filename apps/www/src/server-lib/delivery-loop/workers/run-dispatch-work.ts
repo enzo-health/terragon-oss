@@ -134,6 +134,8 @@ export async function runDispatchWork(params: {
       dispatchMechanism: "self_dispatch",
       runId,
       maxRetries: 3,
+      gate: params.payload.gate,
+      headSha: params.payload.headSha,
     };
 
     let intentAlreadyActive = false;

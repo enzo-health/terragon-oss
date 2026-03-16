@@ -867,8 +867,6 @@ describe("daemon-event route", () => {
         codexPreviousResponseId: 123,
       }),
     );
-    const data = await response.json();
-
     // Invalid codexPreviousResponseId is now non-fatal to avoid rolling back
     // claimed signals after terminal side effects (which would lose the signal).
     // The handler skips codex persistence and continues to success.

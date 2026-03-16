@@ -59,7 +59,10 @@ export async function runRetryWork(params: {
       workflowId: params.payload.workflowId,
       correlationId: params.correlationId,
       kind: params.payload.kind,
-      payloadJson: params.payload.originalPayload,
+      payloadJson: {
+        ...params.payload.originalPayload,
+        retryDepth: retryDepth + 1,
+      },
       scheduledAt,
     });
 

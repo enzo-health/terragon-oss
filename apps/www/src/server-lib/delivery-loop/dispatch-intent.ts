@@ -305,6 +305,8 @@ export type CreateDispatchIntentParams = {
   dispatchMechanism: DeliveryLoopDispatchMechanism;
   runId: string;
   maxRetries: number;
+  gate?: string;
+  headSha?: string;
 };
 
 /**
@@ -348,6 +350,8 @@ export async function createDispatchIntent(
     updatedAt: now,
     lastError: null,
     lastFailureCategory: null,
+    gate: params.gate,
+    headSha: params.headSha,
     selfDispatchReplay: {
       kind: "none",
     },

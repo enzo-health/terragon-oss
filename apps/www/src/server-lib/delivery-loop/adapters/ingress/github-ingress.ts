@@ -22,6 +22,8 @@ export type GitHubWebhookPayload = {
   unresolvedThreadCount?: number;
   approvalCount?: number;
   requiredApprovals?: number;
+  // Review identity
+  reviewId?: string;
   // Sync signals
   headSha?: string;
   // Merge signals
@@ -136,7 +138,7 @@ export async function handleGitHubWebhook(params: {
     loopId: workflowId,
     causeType,
     payload: signal as Record<string, unknown>,
-    canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkSuiteId ?? params.rawEvent.headSha ?? "no-id"}`,
+    canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkSuiteId ?? params.rawEvent.reviewId ?? params.rawEvent.headSha ?? "no-id"}`,
   });
 
   // Wake coordinator asynchronously

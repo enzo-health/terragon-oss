@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   if (!env.CRON_SECRET || authHeader !== `Bearer ${env.CRON_SECRET}`) {
     // In development without CRON_SECRET, allow access for local testing
-    if (process.env.NODE_ENV !== "development") {
+    if (process.env.NODE_ENV !== "development" || env.CRON_SECRET) {
       return new Response("Unauthorized", { status: 401 });
     }
   }
