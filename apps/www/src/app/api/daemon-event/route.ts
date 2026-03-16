@@ -1134,6 +1134,7 @@ export async function POST(request: Request) {
                 correlationId:
                   `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
                 claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
+                loopId: enrolledLoop.id,
               });
             }
           } catch (error) {
@@ -1478,6 +1479,21 @@ export async function POST(request: Request) {
             },
           );
         }
+      } else {
+        // No v2 workflow for this enrolled loop — committed daemon signal
+        // will remain unprocessed until a workflow is created or the
+        // enrollment bridge runs. Log a warning for observability.
+        console.warn(
+          "[sdlc-loop-v2] daemon event has no v2 workflow — signal committed but unprocessable",
+          {
+            userId,
+            threadId,
+            threadChatId,
+            loopId: enrolledLoop.id,
+            eventId: envelopeV2.eventId,
+            seq: envelopeV2.seq,
+          },
+        );
       }
     } catch (error) {
       console.error("[sdlc-loop] best-effort coordinator tick failed", {

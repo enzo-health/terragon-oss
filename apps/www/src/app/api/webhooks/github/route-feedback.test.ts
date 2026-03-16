@@ -97,7 +97,7 @@ vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
 }));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
-  getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
+  getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
 }));
 
 vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({

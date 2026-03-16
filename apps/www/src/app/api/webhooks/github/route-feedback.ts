@@ -1032,21 +1032,33 @@ export async function routeGithubFeedbackOrSpawnThread(
               error: tickErr,
             });
           }
+          // Signal enqueued + coordinator ticked — suppress direct routing
+          captureFeedbackRouting({
+            userId,
+            input,
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            threadId: activeSdlcLoop.threadId,
+          });
+          return {
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+          };
         }
+        // No v2 workflow — fall through to direct routing so the signal
+        // isn't silently dropped. Cron only iterates active workflow rows.
+        console.warn(
+          "[route-feedback] enrolled loop has no v2 workflow, falling back to direct routing",
+          {
+            userId,
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+            eventType: input.eventType,
+          },
+        );
       }
-      captureFeedbackRouting({
-        userId,
-        input,
-        mode: "suppressed_enrolled_loop",
-        reason: "sdlc-loop-enrolled",
-        threadId: activeSdlcLoop.threadId,
-      });
-      return {
-        mode: "suppressed_enrolled_loop",
-        reason: "sdlc-loop-enrolled",
-        sdlcLoopId: activeSdlcLoop.id,
-        threadId: activeSdlcLoop.threadId,
-      };
     }
 
     console.warn(
