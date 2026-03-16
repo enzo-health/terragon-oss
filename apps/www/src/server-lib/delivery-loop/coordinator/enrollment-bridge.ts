@@ -254,6 +254,7 @@ export async function ensureV2WorkflowExists(params: {
       generation: nextGeneration,
       kind: v2Kind,
       stateJson,
+      sdlcLoopId: params.sdlcLoopId,
     });
 
     // When backfilling into babysitting, enqueue an initial babysit work

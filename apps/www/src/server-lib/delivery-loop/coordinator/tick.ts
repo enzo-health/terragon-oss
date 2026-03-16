@@ -131,11 +131,8 @@ export async function runCoordinatorTick(params: {
     let signalCompleted = false;
     try {
       // 3a. Reduce signal to a LoopEvent
-      const deliverySignal = parseSignalPayload(
-        signal.causeType,
-        signal.payload,
-      );
-      if (!deliverySignal) {
+      const parseResult = parseSignalPayload(signal.causeType, signal.payload);
+      if (!parseResult) {
         // Unrecognized signal — dead-letter it
         await deadLetterSignal({
           db,
@@ -148,6 +145,17 @@ export async function runCoordinatorTick(params: {
         signalsProcessed++;
         continue;
       }
+      if ("retryable" in parseResult) {
+        // Signal is valid but incomplete (e.g., missing headSha).
+        // Release the claim so it can be retried later when the data
+        // becomes available, rather than consuming it permanently.
+        console.warn(
+          `[coordinator] Releasing retryable signal ${signal.id}: ${parseResult.reason}`,
+        );
+        await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        break; // Don't process more signals — this one needs to be retried
+      }
+      const deliverySignal = parseResult;
 
       // Wrap reduction in try/catch so malformed payloads (poison pills)
       // get dead-lettered instead of released for infinite retry.
@@ -453,12 +461,15 @@ export async function runCoordinatorTick(params: {
 
 type SignalCauseType = string;
 
+type ParseResult =
+  | import("@terragon/shared/delivery-loop/domain/signals").DeliverySignal
+  | { retryable: true; reason: string }
+  | null;
+
 function parseSignalPayload(
   causeType: SignalCauseType,
   payload: Record<string, unknown> | null,
-):
-  | import("@terragon/shared/delivery-loop/domain/signals").DeliverySignal
-  | null {
+): ParseResult {
   if (!payload) return null;
 
   // Map the v1 cause types to v2 DeliverySignal shape.
@@ -532,22 +543,15 @@ function parseSignalPayload(
         daemonRunStatus === "plan_completed"
       ) {
         // Without a real head SHA, downstream gates and babysit evaluation
-        // have no stable commit to evaluate. Emit a progress signal so the
-        // inbox entry is consumed without a state transition (not dead-
-        // lettered, which would wedge the workflow). The daemon will send
-        // another completion with headSha, or the cron catch-up will retry.
+        // have no stable commit to evaluate. Return retryable so the signal
+        // claim is released — a later daemon delivery or cron catch-up will
+        // supply the SHA. Do NOT consume as progress_reported, because on
+        // retry the daemon route dedupes by eventId and won't refresh the
+        // stored payload, permanently losing the completion.
         if (!headSha) {
           return {
-            source: "daemon",
-            event: {
-              kind: "progress_reported",
-              runId,
-              progress: {
-                completedTasks: 0,
-                totalTasks: 0,
-                currentTask: null,
-              },
-            },
+            retryable: true,
+            reason: `daemon_terminal completion without headSha (runId=${runId})`,
           };
         }
         return {

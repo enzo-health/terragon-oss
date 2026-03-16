@@ -2081,6 +2081,7 @@ export const deliveryWorkflow = pgTable(
     stateJson: jsonb("state_json").notNull(),
     fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
     maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
+    sdlcLoopId: text("sdlc_loop_id"),
     headSha: text("head_sha"),
     reviewSurfaceJson: jsonb("review_surface_json"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),

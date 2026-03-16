@@ -123,10 +123,15 @@ function reduceGitHubSignal(
       // Use the aggregate CI snapshot: only pass when failingChecks is
       // empty AND there are required checks. A single passing check_run
       // must not advance the gate while other required checks are pending.
+      // If no required-check data is available (snapshot unavailable or
+      // transient GitHub API failure), return null — stay in gating and
+      // wait for a real signal rather than pushing into a false fix loop.
       if (workflow.kind === "gating" && workflow.gate.kind === "ci") {
-        const aggregatePassed =
-          event.result.failingChecks.length === 0 &&
-          event.result.requiredChecks.length > 0;
+        if (event.result.requiredChecks.length === 0) {
+          // No check data — cannot determine pass/fail. Stay in gating.
+          return null;
+        }
+        const aggregatePassed = event.result.failingChecks.length === 0;
         return {
           event: aggregatePassed ? "gate_passed" : "gate_blocked",
           context: { gate: "ci" },

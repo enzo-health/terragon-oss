@@ -164,13 +164,14 @@ export async function GET(request: NextRequest) {
 
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
 
-      // Batch-load sdlcLoop IDs for all active workflows to avoid N+1 queries.
-      // Known limitation: resolves loopId by threadId (most recent active loop).
-      // During re-enrollment or multi-loop scenarios this may associate the
-      // wrong loop with a workflow generation. A direct workflow→loop mapping
-      // on the delivery_workflow row would be more robust but requires a schema
-      // change (deferred until multi-generation support is needed).
-      const threadIds = activeWorkflows.map((wf) => wf.threadId);
+      // Resolve loopId for each active workflow. Prefer the explicit
+      // sdlcLoopId column persisted at enrollment time. Fall back to the
+      // threadId-based heuristic (most recent active loop) for workflows
+      // created before the column was added.
+      const workflowsMissingLoopId = activeWorkflows.filter(
+        (wf) => !wf.sdlcLoopId,
+      );
+      const threadIds = workflowsMissingLoopId.map((wf) => wf.threadId);
       const loops =
         threadIds.length > 0
           ? await db.query.sdlcLoop.findMany({
@@ -203,7 +204,7 @@ export async function GET(request: NextRequest) {
             >[0]["workflowId"],
             correlationId,
             claimToken: `cron:tick:${crypto.randomUUID()}`,
-            loopId: loopByThread.get(wf.threadId),
+            loopId: wf.sdlcLoopId ?? loopByThread.get(wf.threadId),
           });
           if (result.signalsProcessed > 0) {
             v2TicksCaughtUp++;
