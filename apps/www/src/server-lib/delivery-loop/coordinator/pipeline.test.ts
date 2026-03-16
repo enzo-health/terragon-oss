@@ -83,15 +83,20 @@ async function tick(workflowId: string) {
   });
 }
 
+/** Stable loop ID per test — derived from testThreadId so it's unique per test
+ *  but consistent across calls within the same test (needed for idempotency). */
+const stableLoopId = () => `sdlc-${testThreadId}`;
+
 /** Create a workflow via the enrollment bridge (same path as production). */
 async function enrollWorkflow(
   kind: string = "implementing",
   sdlcState: string = "implementing",
+  sdlcLoopId: string = stableLoopId(),
 ) {
   const result = await ensureV2WorkflowExists({
     db,
     threadId: testThreadId,
-    sdlcLoopId: `sdlc-${nanoid(6)}`,
+    sdlcLoopId,
     sdlcLoopState: sdlcState as Parameters<
       typeof ensureV2WorkflowExists
     >[0]["sdlcLoopState"],
