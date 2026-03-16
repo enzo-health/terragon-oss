@@ -68,7 +68,7 @@ export type ReviewSurfaceRef =
 // Resumable state — what to return to after human wait resolves
 export type ResumableWorkflowState =
   | { kind: "planning"; planVersion: PlanVersion | null }
-  | { kind: "implementing"; dispatchId: DispatchId }
+  | { kind: "implementing"; dispatchId: DispatchId; planVersion: PlanVersion }
   | { kind: "gating"; gate: GateKind; headSha: GitSha }
   | { kind: "awaiting_pr"; headSha: GitSha }
   | { kind: "babysitting"; headSha: GitSha };

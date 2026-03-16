@@ -127,7 +127,7 @@ function resumeFromState(
       return {
         ...base,
         kind: "implementing",
-        planVersion: 1 as PlanVersion,
+        planVersion: resumable.planVersion,
         dispatch: {
           kind: "queued",
           dispatchId: resumable.dispatchId,
@@ -234,6 +234,7 @@ function deriveResumableFrom(
       return {
         kind: "implementing",
         dispatchId: wf.dispatch.dispatchId,
+        planVersion: wf.planVersion,
       };
     case "gating":
       return {
@@ -251,6 +252,9 @@ function deriveResumableFrom(
         kind: "implementing",
         dispatchId:
           `d-fallback-${wf.version}` as import("./workflow").DispatchId,
+        planVersion: ("planVersion" in wf && wf.planVersion != null
+          ? wf.planVersion
+          : 1) as PlanVersion,
       };
   }
 }
@@ -338,7 +342,7 @@ function reduceGating(
         ...bumpWithFixReset(wf, event, ctx, now),
         kind: "babysitting",
         headSha: wf.headSha,
-        reviewSurface: { kind: "github_pr", prNumber: 0 },
+        reviewSurface: { kind: "github_pr", prNumber: ctx.prNumber ?? 0 },
         nextCheckAt: new Date(now.getTime() + 5 * 60_000),
       };
     }
@@ -367,7 +371,7 @@ function reduceAwaitingPr(
       ...bumpWithFixReset(wf, event, ctx, now),
       kind: "babysitting",
       headSha: wf.headSha,
-      reviewSurface: { kind: "github_pr", prNumber: 0 },
+      reviewSurface: { kind: "github_pr", prNumber: ctx.prNumber ?? 0 },
       nextCheckAt: new Date(now.getTime() + 5 * 60_000),
     };
   }
