@@ -303,12 +303,17 @@ export async function ensureV2WorkflowExists(params: {
     return { workflowId: workflow.id, created: true };
   } catch (err) {
     // Race: a concurrent caller may have inserted between our check and insert.
-    // Re-query — if a workflow now exists, return it; otherwise rethrow.
+    // Re-query — if a workflow now exists AND belongs to the same loop
+    // generation, return it. Otherwise rethrow to avoid cross-generation
+    // contamination where callers tick the wrong workflow.
     const raceWinner = await getActiveWorkflowForThread({
       db: params.db,
       threadId: params.threadId,
     });
-    if (raceWinner) {
+    if (
+      raceWinner &&
+      (!raceWinner.sdlcLoopId || raceWinner.sdlcLoopId === params.sdlcLoopId)
+    ) {
       return { workflowId: raceWinner.id, created: false };
     }
     throw err;

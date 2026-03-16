@@ -166,21 +166,45 @@ export async function runBabysitWork(params: {
           }
 
           if (githubCiPassed) {
-            // GitHub says CI passes but DB disagrees — emit babysit
-            // domain signal so aggregate re-evaluation picks it up.
-            await appendSignalToInbox({
-              db: params.db,
-              loopId,
-              causeType: "babysit_recheck_passed",
-              payload: {
-                source: "babysit",
-                event: {
-                  kind: "babysit_gates_passed",
-                  headSha,
+            // GitHub says CI passes but DB disagrees. Check whether
+            // non-CI gates (review threads, deep review, carmack) are
+            // also clear before emitting babysit_gates_passed.
+            const nonCiGatesClear =
+              babysitResult.unresolvedReviewThreads === 0 &&
+              babysitResult.unresolvedDeepBlockers === 0 &&
+              babysitResult.unresolvedCarmackBlockers === 0;
+
+            if (nonCiGatesClear) {
+              await appendSignalToInbox({
+                db: params.db,
+                loopId,
+                causeType: "babysit_recheck_passed",
+                payload: {
+                  source: "babysit",
+                  event: {
+                    kind: "babysit_gates_passed",
+                    headSha,
+                  },
                 },
-              },
-              canonicalCauseId: `babysit:${loopId}:${headSha}:ci_reconciled:${Date.now()}`,
-            });
+                canonicalCauseId: `babysit:${loopId}:${headSha}:ci_reconciled:${Date.now()}`,
+              });
+            } else {
+              // CI reconciled but other gates still blocking — reschedule
+              await appendSignalToInbox({
+                db: params.db,
+                loopId,
+                causeType: "babysit_recheck_blocked",
+                payload: {
+                  source: "babysit",
+                  event: {
+                    kind: "babysit_gates_blocked",
+                    headSha,
+                    blockers: [],
+                  },
+                },
+                canonicalCauseId: `babysit:${loopId}:${headSha}:ci_reconciled_but_blocked:${Date.now()}`,
+              });
+            }
           } else {
             // CI genuinely failing — emit babysit_gates_blocked so the
             // coordinator transitions babysitting → implementing.

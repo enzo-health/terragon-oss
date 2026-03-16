@@ -201,13 +201,16 @@ async function transitionPlanningArtifactToImplementing(params: {
       canonicalCauseId: `plan-promoted:${params.loopId}:${params.artifactId}`,
     });
   } catch (bridgeErr) {
-    // Non-fatal: the cron tick catch-up will process the v1 state
-    // change and advance the v2 workflow eventually.
-    console.warn("[promote-plan] v2 signal bridge failed", {
+    // The v1 state has already transitioned to implementing, so if the
+    // v2 bridge signal write fails the v2 workflow stays in planning
+    // and later daemon run_completed signals get ignored. Rethrow so
+    // callers can surface the failure or retry.
+    console.error("[promote-plan] v2 signal bridge failed — rethrowing", {
       loopId: params.loopId,
       artifactId: params.artifactId,
       error: bridgeErr,
     });
+    throw bridgeErr;
   }
 
   return {

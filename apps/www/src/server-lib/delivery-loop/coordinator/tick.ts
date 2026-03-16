@@ -117,6 +117,10 @@ export async function runCoordinatorTick(params: {
 
   // 2. Process pending signals (up to limit per tick)
   let versionConflict = false;
+  // Track signal IDs released as retryable within this tick to avoid
+  // re-claiming the same signal in a tight loop (Finding: retryable
+  // signals were re-claimed on each iteration, starving later signals).
+  const retryableSignalIds = new Set<string>();
   for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
     const signal = await claimNextUnprocessedSignal({
       db,
@@ -125,6 +129,11 @@ export async function runCoordinatorTick(params: {
       now,
     });
     if (!signal) break;
+    // Skip signals we already released as retryable in this tick
+    if (retryableSignalIds.has(signal.id)) {
+      await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+      break; // All remaining claimable signals have been seen — stop
+    }
 
     // Wrap per-signal processing in try/catch so that a failure in one
     // signal doesn't leak the claim — the signal gets released for retry.
@@ -146,15 +155,11 @@ export async function runCoordinatorTick(params: {
         continue;
       }
       if ("retryable" in parseResult) {
-        // Signal is valid but incomplete (e.g., missing headSha).
-        // Release the claim so it can be retried later when the data
-        // becomes available, rather than consuming it permanently.
-        // Continue to process later signals — don't let a retryable signal
-        // at the head of the queue starve all subsequent valid signals.
         console.warn(
           `[coordinator] Releasing retryable signal ${signal.id}: ${parseResult.reason}`,
         );
         await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        retryableSignalIds.add(signal.id);
         continue;
       }
       const deliverySignal = parseResult;
@@ -197,14 +202,11 @@ export async function runCoordinatorTick(params: {
         continue;
       }
       if ("retryable" in reduction) {
-        // Reducer determined signal has incomplete data (e.g., CI signal
-        // without required checks). Release claim so it stays pending for
-        // the next webhook or cron catch-up instead of being consumed.
-        // Continue to process later signals to avoid head-of-line blocking.
         console.warn(
           `[coordinator] Releasing retryable signal ${signal.id}: ${reduction.reason}`,
         );
         await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        retryableSignalIds.add(signal.id);
         continue;
       }
 
