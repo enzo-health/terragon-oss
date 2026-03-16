@@ -829,6 +829,16 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   prType: "draft" | "ready";
   diffOutput: string | null;
 }) {
+  // V2-enrolled threads skip the v1 checkpoint pipeline entirely.
+  // The v2 coordinator and workers handle state transitions.
+  const { getActiveWorkflowForThread } = await import(
+    "@terragon/shared/delivery-loop/store/workflow-store"
+  );
+  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+  if (v2Workflow) {
+    return true;
+  }
+
   const activeLoop = await getActiveSdlcLoopForThread({
     db,
     userId,
