@@ -1018,7 +1018,11 @@ export async function routeGithubFeedbackOrSpawnThread(
           db,
           threadId: activeSdlcLoop.threadId,
         });
-        if (v2Workflow) {
+        if (
+          v2Workflow &&
+          (!v2Workflow.sdlcLoopId ||
+            v2Workflow.sdlcLoopId === activeSdlcLoop.id)
+        ) {
           try {
             await runCoordinatorTick({
               db,
@@ -1041,6 +1045,29 @@ export async function routeGithubFeedbackOrSpawnThread(
             reason: "sdlc-loop-enrolled",
             threadId: activeSdlcLoop.threadId,
           });
+          return {
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+          };
+        } else if (
+          v2Workflow &&
+          v2Workflow.sdlcLoopId &&
+          v2Workflow.sdlcLoopId !== activeSdlcLoop.id
+        ) {
+          // Workflow belongs to a different loop generation — skip ticking
+          // to prevent cross-generation signal contamination. Still suppress
+          // direct routing since the signal is already in the inbox.
+          console.warn(
+            "[route-feedback] tick skipped — workflow belongs to different loop generation",
+            {
+              workflowId: v2Workflow.id,
+              workflowLoopId: v2Workflow.sdlcLoopId,
+              activeSdlcLoopId: activeSdlcLoop.id,
+              threadId: activeSdlcLoop.threadId,
+            },
+          );
           return {
             mode: "suppressed_enrolled_loop",
             reason: "sdlc-loop-enrolled",

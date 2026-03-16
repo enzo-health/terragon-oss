@@ -82,13 +82,16 @@ export function normalizeGitHubWebhook(
       ) {
         return null;
       }
+      const approvalCount = raw.approvalCount ?? 0;
+      const requiredApprovals = raw.requiredApprovals ?? 1;
       const result: ReviewEvaluation = {
         passed:
           raw.reviewState === "approved" &&
-          (raw.unresolvedThreadCount ?? 0) === 0,
+          (raw.unresolvedThreadCount ?? 0) === 0 &&
+          approvalCount >= requiredApprovals,
         unresolvedThreadCount: raw.unresolvedThreadCount ?? 0,
-        approvalCount: raw.approvalCount ?? 0,
-        requiredApprovals: raw.requiredApprovals ?? 1,
+        approvalCount,
+        requiredApprovals,
       };
       return {
         source: "github",

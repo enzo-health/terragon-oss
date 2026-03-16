@@ -609,6 +609,25 @@ function parseSignalPayload(
     case "check_suite.completed": {
       const checkOutcome = payload.checkOutcome as string | undefined;
       const prNumber = (payload.prNumber as number) ?? 0;
+      let requiredChecks =
+        (payload.ciSnapshotCheckNames as readonly string[]) ?? [];
+      let failingChecks =
+        (payload.ciSnapshotFailingChecks as readonly string[]) ?? [];
+      // Fallback: when aggregate CI snapshot is unavailable (transient
+      // GitHub API failure), synthesize from the triggering check's data
+      // so the reducer can act rather than returning retryable indefinitely.
+      const checkName = payload.checkName as string | undefined;
+      if (
+        requiredChecks.length === 0 &&
+        failingChecks.length === 0 &&
+        checkName
+      ) {
+        requiredChecks = [checkName];
+        failingChecks =
+          checkOutcome !== "success" && checkOutcome !== "pass"
+            ? [checkName]
+            : [];
+      }
       return {
         source: "github",
         event: {
@@ -616,10 +635,8 @@ function parseSignalPayload(
           prNumber,
           result: {
             passed: checkOutcome === "success" || checkOutcome === "pass",
-            requiredChecks:
-              (payload.ciSnapshotCheckNames as readonly string[]) ?? [],
-            failingChecks:
-              (payload.ciSnapshotFailingChecks as readonly string[]) ?? [],
+            requiredChecks,
+            failingChecks,
           },
         },
       };
