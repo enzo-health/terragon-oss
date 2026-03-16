@@ -8,6 +8,7 @@ import {
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
 import { ensureV2WorkflowExists } from "./coordinator/enrollment-bridge";
+import { enrollV2Workflow } from "./coordinator/v2-enrollment";
 
 export function isSdlcLoopEnrollmentAllowedForThread({
   sourceType,
@@ -77,6 +78,43 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
   initialState?: "planning" | "implementing";
 }) {
+  // V2-native enrollment is the primary path: creates v2 workflow directly
+  // in planning state and a v1 sdlcLoop compat shim in one shot.
+  try {
+    const { sdlcLoopId } = await enrollV2Workflow({
+      db,
+      threadId,
+      userId,
+      repoFullName,
+      planApprovalPolicy,
+    });
+
+    // Return the v1 sdlcLoop record for callers that still need it
+    const activeLoop = await getActiveSdlcLoopForThread({
+      db,
+      userId,
+      threadId,
+    });
+    if (activeLoop) {
+      return activeLoop;
+    }
+
+    // Shouldn't happen — enrollV2Workflow creates the sdlcLoop compat shim
+    console.warn(
+      "[delivery-loop enrollment] v2 enrollment succeeded but no active v1 loop found",
+      { threadId, sdlcLoopId },
+    );
+  } catch (err) {
+    console.warn(
+      "[delivery-loop enrollment] v2-native enrollment failed, falling back to v1 bridge",
+      {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+  }
+
+  // Fallback: v1 enrollment with v2 bridge
   const enrolled = await enrollSdlcLoopForThread({
     db,
     userId,
