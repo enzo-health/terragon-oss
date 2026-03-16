@@ -1,4 +1,4 @@
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
@@ -36,37 +36,17 @@ export async function claimNextWorkItem(params: {
   const now = params.now ?? new Date();
   const staleThreshold = new Date(now.getTime() - WORK_ITEM_CLAIM_TTL_MS);
 
-  // Find items that are either pending or stale-claimed
-  const pendingConditions = [
-    eq(schema.deliveryWorkItem.status, "pending"),
-    lte(schema.deliveryWorkItem.scheduledAt, now),
-  ];
-  if (params.kind) {
-    pendingConditions.push(eq(schema.deliveryWorkItem.kind, params.kind));
-  }
+  // Atomic UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)
+  // eliminates the TOCTOU race between SELECT and UPDATE.
+  const t = schema.deliveryWorkItem;
 
-  // First try pending items
-  let item = await params.db.query.deliveryWorkItem.findFirst({
-    where: and(...pendingConditions),
-    orderBy: [schema.deliveryWorkItem.scheduledAt],
-  });
+  const pendingCond = params.kind
+    ? sql`(${t.status} = 'pending' AND ${t.scheduledAt} <= ${now} AND ${t.kind} = ${params.kind})`
+    : sql`(${t.status} = 'pending' AND ${t.scheduledAt} <= ${now})`;
 
-  // If no pending items, look for stale claimed items
-  if (!item) {
-    const staleConditions = [
-      eq(schema.deliveryWorkItem.status, "claimed"),
-      lte(schema.deliveryWorkItem.claimedAt, staleThreshold),
-    ];
-    if (params.kind) {
-      staleConditions.push(eq(schema.deliveryWorkItem.kind, params.kind));
-    }
-    item = await params.db.query.deliveryWorkItem.findFirst({
-      where: and(...staleConditions),
-      orderBy: [schema.deliveryWorkItem.claimedAt],
-    });
-  }
-
-  if (!item) return null;
+  const staleCond = params.kind
+    ? sql`(${t.status} = 'claimed' AND ${t.claimedAt} <= ${staleThreshold} AND ${t.kind} = ${params.kind})`
+    : sql`(${t.status} = 'claimed' AND ${t.claimedAt} <= ${staleThreshold})`;
 
   const [claimed] = await params.db
     .update(schema.deliveryWorkItem)
@@ -77,11 +57,15 @@ export async function claimNextWorkItem(params: {
       attemptCount: sql`${schema.deliveryWorkItem.attemptCount} + 1`,
     })
     .where(
-      and(
-        eq(schema.deliveryWorkItem.id, item.id),
-        // Guard: only claim if still in the expected status
-        sql`(${schema.deliveryWorkItem.status} = 'pending' OR (${schema.deliveryWorkItem.status} = 'claimed' AND ${schema.deliveryWorkItem.claimedAt} <= ${staleThreshold}))`,
-      ),
+      sql`${t.id} = (
+        SELECT ${t.id} FROM ${t}
+        WHERE ${pendingCond} OR ${staleCond}
+        ORDER BY
+          CASE WHEN ${t.status} = 'pending' THEN 0 ELSE 1 END,
+          ${t.scheduledAt} ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )`,
     )
     .returning();
 
