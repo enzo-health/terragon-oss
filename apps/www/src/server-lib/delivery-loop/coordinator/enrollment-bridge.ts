@@ -222,6 +222,9 @@ export async function ensureV2WorkflowExists(params: {
   sdlcLoopState: SdlcLoopState;
   sdlcBlockedFromState?: SdlcLoopState | null;
   headSha?: string | null;
+  userId?: string;
+  repoFullName?: string;
+  planApprovalPolicy?: string;
 }): Promise<{ workflowId: string; created: boolean }> {
   // Check if v2 workflow already exists for this thread AND matches the
   // requested loop. After re-enrollment, an old-generation workflow may
@@ -306,6 +309,9 @@ export async function ensureV2WorkflowExists(params: {
       kind: v2Kind,
       stateJson,
       sdlcLoopId: params.sdlcLoopId,
+      repoFullName: params.repoFullName ?? "",
+      userId: params.userId ?? "",
+      planApprovalPolicy: params.planApprovalPolicy ?? "auto",
     });
 
     // When backfilling into babysitting, enqueue an initial babysit work

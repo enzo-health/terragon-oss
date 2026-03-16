@@ -9,6 +9,7 @@ import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
 import { ensureV2WorkflowExists } from "./coordinator/enrollment-bridge";
 import { enrollV2Workflow } from "./coordinator/v2-enrollment";
+import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 export function isSdlcLoopEnrollmentAllowedForThread({
   sourceType,
@@ -70,6 +71,7 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   repoFullName,
   threadId,
   planApprovalPolicy,
+  initialState,
 }: {
   userId: string;
   repoFullName: string;
@@ -155,7 +157,7 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
 }) {
   // V2-native enrollment is the primary path (same as thread enrollment)
   try {
-    await enrollV2Workflow({
+    const v2Result = await enrollV2Workflow({
       db,
       threadId,
       userId,
@@ -169,6 +171,13 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
       userId,
       repoFullName,
       threadId,
+      prNumber,
+    });
+
+    // Update the v2 workflow with the PR number
+    await updateWorkflowPR({
+      db,
+      workflowId: v2Result.workflowId,
       prNumber,
     });
 
@@ -273,6 +282,9 @@ async function tryEnsureV2Workflow(params: {
   sdlcLoopState: string;
   sdlcBlockedFromState?: string | null;
   headSha?: string | null;
+  userId?: string;
+  repoFullName?: string;
+  planApprovalPolicy?: string;
 }) {
   try {
     await ensureV2WorkflowExists({
@@ -286,6 +298,9 @@ async function tryEnsureV2Workflow(params: {
         typeof ensureV2WorkflowExists
       >[0]["sdlcBlockedFromState"],
       headSha: params.headSha,
+      userId: params.userId,
+      repoFullName: params.repoFullName,
+      planApprovalPolicy: params.planApprovalPolicy,
     });
   } catch (err) {
     console.error("[delivery-loop enrollment] v2 workflow bridge failed", {

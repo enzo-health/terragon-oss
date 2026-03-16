@@ -77,6 +77,9 @@ export async function enrollV2Workflow(params: {
       kind: "planning",
       stateJson: { planVersion: null },
       sdlcLoopId: sdlcLoop.id,
+      repoFullName: params.repoFullName,
+      userId: params.userId,
+      planApprovalPolicy: params.planApprovalPolicy ?? "auto",
     });
 
     return { workflowId: workflow.id, sdlcLoopId: sdlcLoop.id };
