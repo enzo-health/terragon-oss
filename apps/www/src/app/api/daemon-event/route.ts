@@ -1097,7 +1097,13 @@ export async function POST(request: Request) {
             { status: 409 },
           );
         }
-        if (daemonRunStatusFromMessages !== "processing") {
+        // Only persist terminal dispatch status for exact duplicate_event
+        // retries — NOT for out_of_order_or_duplicate_seq, where an older
+        // seq's failure could overwrite a newer seq's success.
+        if (
+          claimResult.reason === "duplicate_event" &&
+          daemonRunStatusFromMessages !== "processing"
+        ) {
           try {
             await persistDaemonTerminalDispatchStatus({
               loopId: enrolledLoop.id,

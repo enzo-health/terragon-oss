@@ -149,10 +149,30 @@ export async function runCoordinatorTick(params: {
         continue;
       }
 
-      const reduction = reduceSignalToEvent({
-        signal: deliverySignal,
-        workflow,
-      });
+      // Wrap reduction in try/catch so malformed payloads (poison pills)
+      // get dead-lettered instead of released for infinite retry.
+      let reduction: ReturnType<typeof reduceSignalToEvent>;
+      try {
+        reduction = reduceSignalToEvent({
+          signal: deliverySignal,
+          workflow,
+        });
+      } catch (reductionErr) {
+        console.warn(
+          `[coordinator] Poison-pill signal ${signal.id}: reduction threw`,
+          { causeType: signal.causeType, error: reductionErr },
+        );
+        await deadLetterSignal({
+          db,
+          signalId: signal.id,
+          claimToken,
+          reason: `Signal reduction error: ${reductionErr instanceof Error ? reductionErr.message : String(reductionErr)}`,
+          now,
+        });
+        signalCompleted = true;
+        signalsProcessed++;
+        continue;
+      }
 
       if (!reduction) {
         // No state transition for this signal — complete it and move on

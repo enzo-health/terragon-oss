@@ -1317,19 +1317,10 @@ describe("daemon-event route", () => {
     expect(data.reason).toBe("out_of_order_or_duplicate_seq");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
-    expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
-      "di_loop-1_run-1",
-      "chat-1",
-      {
-        status: "completed",
-        lastError: null,
-        lastFailureCategory: null,
-      },
-    );
-    expect(markDispatchIntentCompleted).toHaveBeenCalledWith(
-      expect.anything(),
-      "run-1",
-    );
+    // Out-of-order seqs must NOT persist terminal status — an older seq's
+    // failure could overwrite a newer seq's success.
+    expect(dispatchIntentMocks.updateDispatchIntent).not.toHaveBeenCalled();
+    expect(markDispatchIntentCompleted).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent claim races by event identity when insert conflicts", async () => {
