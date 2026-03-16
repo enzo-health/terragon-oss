@@ -738,7 +738,8 @@ export type SdlcLoopCauseType =
   | "human_stop"
   | "human_mark_done"
   | "babysit_recheck"
-  | "babysit_recheck_passed";
+  | "babysit_recheck_passed"
+  | "babysit_recheck_blocked";
 
 export type SdlcLoopOutboxActionType =
   | "publish_status_comment"
