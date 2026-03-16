@@ -183,34 +183,51 @@ async function transitionPlanningArtifactToImplementing(params: {
   // coordinator tick can advance the v2 workflow from planning →
   // implementing. The v1 checkpoint pipeline validated the plan;
   // this signal is the handoff to v2.
-  try {
-    const { appendSignalToInbox } = await import(
-      "@terragon/shared/delivery-loop/store/signal-inbox-store"
-    );
-    await appendSignalToInbox({
-      db: params.db,
-      loopId: params.loopId,
-      causeType: "human_resume",
-      payload: {
-        source: "human",
-        event: {
-          kind: "plan_approved",
-          artifactId: params.artifactId,
+  // Retry once since canonicalCauseId makes this idempotent via onConflictDoNothing.
+  const { appendSignalToInbox } = await import(
+    "@terragon/shared/delivery-loop/store/signal-inbox-store"
+  );
+  let signalWritten = false;
+  for (let attempt = 0; attempt < 2 && !signalWritten; attempt++) {
+    try {
+      await appendSignalToInbox({
+        db: params.db,
+        loopId: params.loopId,
+        causeType: "human_resume",
+        payload: {
+          source: "human",
+          event: {
+            kind: "plan_approved",
+            artifactId: params.artifactId,
+          },
         },
-      },
-      canonicalCauseId: `plan-promoted:${params.loopId}:${params.artifactId}`,
-    });
-  } catch (bridgeErr) {
-    // The v1 state has already transitioned to implementing, so if the
-    // v2 bridge signal write fails the v2 workflow stays in planning
-    // and later daemon run_completed signals get ignored. Rethrow so
-    // callers can surface the failure or retry.
-    console.error("[promote-plan] v2 signal bridge failed — rethrowing", {
-      loopId: params.loopId,
-      artifactId: params.artifactId,
-      error: bridgeErr,
-    });
-    throw bridgeErr;
+        canonicalCauseId: `plan-promoted:${params.loopId}:${params.artifactId}`,
+      });
+      signalWritten = true;
+    } catch (signalErr) {
+      if (attempt === 0) {
+        console.warn("[promote-plan] v2 signal write failed, retrying once", {
+          loopId: params.loopId,
+          artifactId: params.artifactId,
+          error:
+            signalErr instanceof Error ? signalErr.message : String(signalErr),
+        });
+        await new Promise((r) => setTimeout(r, 200));
+      } else {
+        console.error(
+          "[promote-plan] v2 signal write failed after retry — v1/v2 state may diverge",
+          {
+            loopId: params.loopId,
+            artifactId: params.artifactId,
+            error:
+              signalErr instanceof Error
+                ? signalErr.message
+                : String(signalErr),
+          },
+        );
+        throw signalErr;
+      }
+    }
   }
 
   return {
