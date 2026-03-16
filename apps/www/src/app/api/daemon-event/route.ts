@@ -1101,15 +1101,15 @@ export async function POST(request: Request) {
         // persistDaemonTerminalDispatchStatus marks the intent as completed/failed,
         // but getReplayableSelfDispatch requires the destination intent to be in
         // "prepared" or "dispatched" status. Fetching first preserves the window.
-        const cachedReplayPayload =
-          claimResult.reason === "duplicate_event"
-            ? await getReplayableSelfDispatch({
-                threadChatId,
-                sourceEventId: envelopeV2.eventId,
-                sourceSeq: envelopeV2.seq,
-                sourceRunId: envelopeV2.runId,
-              }).catch(() => null)
-            : null;
+        // Fetch for BOTH duplicate reasons so out-of-order retries can still
+        // continue inline via self-dispatch; only terminal dispatch-status
+        // persistence is restricted to exact duplicate_event below.
+        const cachedReplayPayload = await getReplayableSelfDispatch({
+          threadChatId,
+          sourceEventId: envelopeV2.eventId,
+          sourceSeq: envelopeV2.seq,
+          sourceRunId: envelopeV2.runId,
+        }).catch(() => null);
 
         // Only persist terminal dispatch status for exact duplicate_event
         // retries — NOT for out_of_order_or_duplicate_seq, where an older

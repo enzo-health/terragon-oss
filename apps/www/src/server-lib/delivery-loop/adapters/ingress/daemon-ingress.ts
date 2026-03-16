@@ -140,12 +140,21 @@ export async function handleDaemonIngress(params: {
     causeType,
     payload: signal as Record<string, unknown>,
     // Progress events include a timestamp so later updates aren't deduplicated
-    // against earlier ones. Terminal/completed events use just runId:status
-    // for proper idempotency on daemon retries.
+    // against earlier ones. Terminal/completed events use runId:status:resultKind
+    // for proper idempotency on daemon retries. The resultKind suffix is critical:
+    // partial completions (remainingTasks > 0) and final success completions
+    // share the same raw status "completed", but must produce distinct inbox rows
+    // so the final success signal isn't dropped by ON CONFLICT DO NOTHING.
     canonicalCauseId:
       params.rawEvent.status === "progress"
         ? `daemon:${params.rawEvent.runId}:progress:${Date.now()}`
-        : `daemon:${params.rawEvent.runId}:${params.rawEvent.status}`,
+        : `daemon:${params.rawEvent.runId}:${params.rawEvent.status}:${
+            params.rawEvent.status === "completed" &&
+            params.rawEvent.remainingTasks != null &&
+            params.rawEvent.remainingTasks > 0
+              ? "partial"
+              : "terminal"
+          }`,
   });
 
   // Self-dispatch path: if the daemon completed, run a synchronous
