@@ -51,6 +51,10 @@ function reduceDaemonSignal(
 ): SignalReductionResult {
   switch (event.kind) {
     case "run_completed":
+      if (workflow.kind === "planning") {
+        // Daemon completed a planning run — advance to implementing
+        return { event: "plan_completed", context: {} };
+      }
       if (workflow.kind === "implementing") {
         if (event.result.kind === "partial") {
           // Partial completion — stay in implementing, schedule re-dispatch

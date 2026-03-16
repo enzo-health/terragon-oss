@@ -212,15 +212,28 @@ export async function runDispatchWork(params: {
         loopId: loop.id,
         threadChatId: threadChat.id,
       });
-    }
 
-    // 7. Complete work item — dispatch worker's job is done; the follow-up
-    //    queue and ack timeout handle the rest asynchronously.
-    await completeWorkItem({
-      db: params.db,
-      workItemId: params.workItemId,
-      claimToken: params.claimToken,
-    });
+      // 7. Complete work item — dispatch worker's job is done; the follow-up
+      //    queue and ack timeout handle the rest asynchronously.
+      await completeWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+      });
+    } else {
+      // Follow-up queue didn't launch a run — fail the work item so it
+      // gets retried. Otherwise the workflow stays in implementing/gating
+      // with no daemon run ever started.
+      const retryAt = new Date(Date.now() + 15_000); // 15s backoff
+      await failWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+        errorCode: "follow_up_not_processed",
+        errorMessage: "Follow-up queue did not start a run",
+        retryAt,
+      });
+    }
   } catch (err) {
     const retryAt = new Date(Date.now() + 30_000); // 30s backoff
     await failWorkItem({

@@ -652,6 +652,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
                   workflow.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
                 correlationId:
                   `babysit-recheck:${loop.id}:${Date.now()}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
+                loopId: loop.id,
               });
             }
           } catch (error) {
