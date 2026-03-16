@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
@@ -16,6 +16,8 @@ export async function upsertRuntimeStatus(params: {
   fixAttemptCount?: number | null;
   openIncidentCount?: number | null;
 }) {
+  const t = schema.deliveryLoopRuntimeStatus;
+
   const values = {
     workflowId: params.workflowId,
     state: params.state,
@@ -30,19 +32,33 @@ export async function upsertRuntimeStatus(params: {
     openIncidentCount: params.openIncidentCount ?? null,
   };
 
+  // For timestamp fields, preserve the existing DB value when the caller
+  // passes null/undefined (noop ticks). Only overwrite when a real Date
+  // is provided. Uses COALESCE(new_value, existing_value) so that:
+  //   Date → writes the new Date
+  //   null → keeps whatever's already in the row
   await params.db
-    .insert(schema.deliveryLoopRuntimeStatus)
+    .insert(t)
     .values(values)
     .onConflictDoUpdate({
-      target: schema.deliveryLoopRuntimeStatus.workflowId,
+      target: t.workflowId,
       set: {
         state: params.state,
         gate: values.gate,
         pendingActionKind: values.pendingActionKind,
         health: params.health,
-        lastSignalAt: values.lastSignalAt,
-        lastTransitionAt: values.lastTransitionAt,
-        lastDispatchAt: values.lastDispatchAt,
+        lastSignalAt:
+          params.lastSignalAt != null
+            ? params.lastSignalAt
+            : sql`COALESCE(${t.lastSignalAt}, NULL)`,
+        lastTransitionAt:
+          params.lastTransitionAt != null
+            ? params.lastTransitionAt
+            : sql`COALESCE(${t.lastTransitionAt}, NULL)`,
+        lastDispatchAt:
+          params.lastDispatchAt != null
+            ? params.lastDispatchAt
+            : sql`COALESCE(${t.lastDispatchAt}, NULL)`,
         oldestUnprocessedSignalAgeMs: values.oldestUnprocessedSignalAgeMs,
         fixAttemptCount: values.fixAttemptCount,
         openIncidentCount: values.openIncidentCount,

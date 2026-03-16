@@ -154,82 +154,75 @@ export async function runDispatchWork(params: {
       headSha: params.payload.headSha,
     };
 
-    let intentAlreadyActive = false;
     try {
       await createDispatchIntent(intentParams);
     } catch (intentErr) {
-      // If an active intent already exists (e.g. retry after follow_up_not_processed),
-      // skip creating a new one but still proceed to trigger the follow-up queue.
-      // Completing early here would leave the workflow stuck with no run launched.
+      // If an active intent already exists, a prior attempt already created
+      // the intent and may have launched the run. Completing the work item
+      // is safe — the prior attempt's ack timeout monitors liveness.
+      // Re-triggering the follow-up queue here risks launching a second
+      // parallel run for the same dispatch intent.
       if (
         intentErr instanceof Error &&
         intentErr.message.includes("active intent")
       ) {
-        intentAlreadyActive = true;
-      } else {
-        throw intentErr;
+        await completeWorkItem({
+          db: params.db,
+          workItemId: params.workItemId,
+          claimToken: params.claimToken,
+        });
+        return;
       }
+      throw intentErr;
     }
 
     // 6. Persist durable dispatch intent in the DB so the ack timeout
     //    handler and cron sweep can find it. The Redis intent is for
     //    real-time tracking; the DB intent is for durable recovery.
-    //    Skip if we're reusing an already-active intent from a prior attempt.
-    if (!intentAlreadyActive) {
-      try {
-        await createDbDispatchIntent(params.db, {
-          loopId: loop.id,
-          threadId: workflow.threadId,
-          threadChatId: threadChat.id,
-          runId,
-          targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-          selectedAgent: "claudeCode",
-          executionClass: params.payload.executionClass,
-          dispatchMechanism: "self_dispatch",
-        });
-        await markDispatchIntentDispatched(params.db, runId);
-      } catch (dbIntentErr) {
-        // Non-fatal: Redis intent + cron sweep will handle recovery
-        console.warn("[dispatch-worker] durable dispatch intent write failed", {
-          workflowId: params.payload.workflowId,
-          runId,
-          error: dbIntentErr,
-        });
-      }
+    try {
+      await createDbDispatchIntent(params.db, {
+        loopId: loop.id,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        runId,
+        targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
+        selectedAgent: "claudeCode",
+        executionClass: params.payload.executionClass,
+        dispatchMechanism: "self_dispatch",
+      });
+      await markDispatchIntentDispatched(params.db, runId);
+    } catch (dbIntentErr) {
+      // Non-fatal: Redis intent + cron sweep will handle recovery
+      console.warn("[dispatch-worker] durable dispatch intent write failed", {
+        workflowId: params.payload.workflowId,
+        runId,
+        error: dbIntentErr,
+      });
     }
 
     // 6b. Queue a dispatch continuation message so the follow-up queue
     //     has something to process. Without this, maybeProcessFollowUpQueue
     //     sees an empty queuedMessages array and returns no_queued_messages.
-    //     On retries (intentAlreadyActive), re-check whether the message
-    //     exists — a crash between intent creation and message append would
-    //     leave the queue empty, causing retries to loop forever.
-    const needsQueuedMessage =
-      !intentAlreadyActive ||
-      !threadChat.queuedMessages ||
-      threadChat.queuedMessages.length === 0;
-    if (needsQueuedMessage) {
-      const dispatchMessage: DBUserMessage = {
-        type: "user",
-        model: null,
-        timestamp: new Date().toISOString(),
-        parts: [
-          {
-            type: "text",
-            text: `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`,
-          },
-        ],
-      };
-      await updateThreadChat({
-        db: params.db,
-        userId: loop.userId,
-        threadId: workflow.threadId,
-        threadChatId: threadChat.id,
-        updates: {
-          appendQueuedMessages: [dispatchMessage],
+    const dispatchMessage: DBUserMessage = {
+      type: "user",
+      model: null,
+      timestamp: new Date().toISOString(),
+      parts: [
+        {
+          type: "text",
+          text: `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`,
         },
-      });
-    }
+      ],
+    };
+    await updateThreadChat({
+      db: params.db,
+      userId: loop.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      updates: {
+        appendQueuedMessages: [dispatchMessage],
+      },
+    });
 
     // 6c. Trigger the follow-up queue to actually launch the run.
     // Only arm ack timeout if the follow-up queue actually started processing,
@@ -256,25 +249,12 @@ export async function runDispatchWork(params: {
       );
     }
 
-    // Arm ack watchdog whenever a run was actually launched. When reusing
-    // an existing intent, read its runId so the timeout tracks the right run.
+    // Arm ack watchdog whenever a run was actually launched.
     if (followUpProcessed) {
-      let ackRunId: string = runId;
-      if (intentAlreadyActive) {
-        try {
-          const { getActiveDispatchIntent } = await import(
-            "../dispatch-intent"
-          );
-          const activeIntent = await getActiveDispatchIntent(threadChat.id);
-          if (activeIntent) ackRunId = activeIntent.runId;
-        } catch {
-          // Fall through — arm with our runId as best-effort
-        }
-      }
       try {
         await startAckTimeout({
           db: params.db,
-          runId: ackRunId,
+          runId,
           loopId: loop.id,
           threadChatId: threadChat.id,
         });
@@ -282,7 +262,7 @@ export async function runDispatchWork(params: {
         console.warn(
           "[dispatch-worker] startAckTimeout failed, run may lack watchdog",
           {
-            runId: ackRunId,
+            runId,
             error: ackErr instanceof Error ? ackErr.message : String(ackErr),
           },
         );
