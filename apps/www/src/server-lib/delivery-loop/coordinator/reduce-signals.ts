@@ -65,6 +65,10 @@ function reduceDaemonSignal(
           // without incrementing fixAttemptCount (normal multi-pass).
           return { event: "redispatch_requested", context: {} };
         }
+        // The daemon only emits run_completed after the checkpoint pipeline
+        // (deep review, carmack review, quality check, UI smoke) has passed.
+        // Internal gates are pre-conditions enforced by checkpoint-thread-
+        // internal.ts, not post-conditions for the v2 coordinator.
         return {
           event: "implementation_completed",
           context: { headSha: event.result.headSha },

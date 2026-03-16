@@ -139,7 +139,13 @@ export async function handleDaemonIngress(params: {
     loopId: inboxPartitionKey,
     causeType,
     payload: signal as Record<string, unknown>,
-    canonicalCauseId: `daemon:${params.rawEvent.runId}:${params.rawEvent.status}`,
+    // Progress events include a timestamp so later updates aren't deduplicated
+    // against earlier ones. Terminal/completed events use just runId:status
+    // for proper idempotency on daemon retries.
+    canonicalCauseId:
+      params.rawEvent.status === "progress"
+        ? `daemon:${params.rawEvent.runId}:progress:${Date.now()}`
+        : `daemon:${params.rawEvent.runId}:${params.rawEvent.status}`,
   });
 
   // Self-dispatch path: if the daemon completed and we haven't hit the

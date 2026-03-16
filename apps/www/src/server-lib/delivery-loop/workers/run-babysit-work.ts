@@ -131,26 +131,49 @@ export async function runBabysitWork(params: {
           canonicalCauseId: `babysit:${loopId}:${headSha}:gates_passed`,
         });
       } else {
-        // Gates still failing — complete this work item and schedule a
-        // fresh babysit recheck. Using failWorkItem would consume the
-        // finite retry budget (~5 attempts), after which the item
-        // dead-letters and the workflow stalls. A fresh work item has its
-        // own budget and can keep rechecking indefinitely.
+        // Gates still failing — determine whether to reschedule or block.
+        // If CI is actively failing, append a blocking signal so the
+        // coordinator can transition back to implementing for a fix.
+        // If CI passes but review threads are unresolved, reschedule a
+        // recheck since reviews may resolve without code changes.
+        if (!babysitResult.requiredCiPassed) {
+          // CI failing — needs code fix. Append babysit_blocked signal
+          // so the coordinator transitions to implementing.
+          await appendSignalToInbox({
+            db: params.db,
+            loopId,
+            causeType: "babysit_recheck_passed",
+            payload: {
+              source: "github",
+              event: {
+                kind: "ci_changed",
+                result: { passed: false, checkSuites: [] },
+              },
+            },
+            canonicalCauseId: `babysit:${loopId}:${headSha}:ci_blocked:${Date.now()}`,
+          });
+        } else {
+          // CI passes but other gates pending (review threads, deep/carmack
+          // review). Schedule a fresh recheck — these may resolve without
+          // code changes (reviewer approves, threads resolved, etc.).
+          await enqueueWorkItem({
+            db: params.db,
+            workflowId: params.payload.workflowId,
+            correlationId: `babysit-recheck:${params.payload.workflowId}:${Date.now()}`,
+            kind: "babysit",
+            payloadJson: {
+              workflowId: params.payload.workflowId,
+              loopId: params.payload.loopId,
+            } as Record<string, unknown>,
+            scheduledAt: new Date(Date.now() + 5 * 60_000), // 5min backoff
+          });
+        }
+        // Complete the current work item regardless — either a signal
+        // was appended or a fresh recheck was scheduled.
         await completeWorkItem({
           db: params.db,
           workItemId: params.workItemId,
           claimToken: params.claimToken,
-        });
-        await enqueueWorkItem({
-          db: params.db,
-          workflowId: params.payload.workflowId,
-          correlationId: `babysit-recheck:${params.payload.workflowId}:${Date.now()}`,
-          kind: "babysit",
-          payloadJson: {
-            workflowId: params.payload.workflowId,
-            loopId: params.payload.loopId,
-          } as Record<string, unknown>,
-          scheduledAt: new Date(Date.now() + 5 * 60_000), // 5min backoff
         });
         return;
       }
