@@ -869,8 +869,10 @@ describe("daemon-event route", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("invalid_codex_previous_response_id");
+    // Invalid codexPreviousResponseId is now non-fatal to avoid rolling back
+    // claimed signals after terminal side effects (which would lose the signal).
+    // The handler skips codex persistence and continues to success.
+    expect(response.status).toBe(200);
     expect(dbMocks.update).not.toHaveBeenCalled();
   });
 

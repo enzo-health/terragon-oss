@@ -130,8 +130,21 @@ export async function runBabysitWork(params: {
           },
           canonicalCauseId: `babysit:${loopId}:${headSha}:gates_passed`,
         });
+      } else {
+        // Gates still failing — fail the work item with a retry so the
+        // babysitting workflow gets rechecked. Without this, the workflow
+        // would stall forever since cron only drains existing work items.
+        const retryAt = new Date(Date.now() + 5 * 60_000); // 5min backoff
+        await failWorkItem({
+          db: params.db,
+          workItemId: params.workItemId,
+          claimToken: params.claimToken,
+          errorCode: "babysit_gates_pending",
+          errorMessage: "Babysit gates not yet passed, scheduling recheck",
+          retryAt,
+        });
+        return;
       }
-      // If gates did not pass, the periodic cron recheck handles retries.
     }
 
     // 4. Complete work item

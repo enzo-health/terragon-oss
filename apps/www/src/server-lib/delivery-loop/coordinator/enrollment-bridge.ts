@@ -120,18 +120,37 @@ export function buildInitialStateJson(
       const resumableKind = mapV1StateToResumableKind(v1BlockedFromState);
       const resumableBase = (() => {
         switch (resumableKind) {
+          case "planning":
+            return { kind: "planning" as const, planVersion: null };
           case "implementing":
-            return { kind: "implementing" as const, dispatchId: "d-migrated-blocked-0" };
+            return {
+              kind: "implementing" as const,
+              dispatchId: "d-migrated-blocked-0",
+            };
           case "gating": {
-            const gate = resolveGateKindFromV1State(v1BlockedFromState!) ?? "review";
-            return { kind: "gating" as const, gate, headSha: headSha ?? "unknown" };
+            const gate =
+              resolveGateKindFromV1State(v1BlockedFromState!) ?? "review";
+            return {
+              kind: "gating" as const,
+              gate,
+              headSha: headSha ?? "unknown",
+            };
           }
           case "awaiting_pr":
-            return { kind: "awaiting_pr" as const, headSha: headSha ?? "unknown" };
+            return {
+              kind: "awaiting_pr" as const,
+              headSha: headSha ?? "unknown",
+            };
           case "babysitting":
-            return { kind: "babysitting" as const, headSha: headSha ?? "unknown" };
+            return {
+              kind: "babysitting" as const,
+              headSha: headSha ?? "unknown",
+            };
           default:
-            return { kind: "implementing" as const, dispatchId: "d-migrated-blocked-0" };
+            return {
+              kind: "implementing" as const,
+              dispatchId: "d-migrated-blocked-0",
+            };
         }
       })();
       return {

@@ -11,6 +11,7 @@ export function resolveWorkItems(params: {
   previousWorkflow: DeliveryWorkflow;
   newWorkflow: DeliveryWorkflow;
   event: LoopEvent;
+  loopId?: string;
   now?: Date;
 }): ScheduledWorkItem[] {
   const items: ScheduledWorkItem[] = [];
@@ -50,6 +51,7 @@ export function resolveWorkItems(params: {
           payloadJson: {
             executionClass: "implementation_runtime",
             workflowId: params.newWorkflow.workflowId,
+            loopId: params.loopId,
           },
           scheduledAt: now,
         });
@@ -64,6 +66,7 @@ export function resolveWorkItems(params: {
           executionClass: "gate_runtime",
           gate: params.newWorkflow.gate.kind,
           workflowId: params.newWorkflow.workflowId,
+          loopId: params.loopId,
           headSha: params.newWorkflow.headSha,
         },
         scheduledAt: now,
@@ -74,7 +77,10 @@ export function resolveWorkItems(params: {
       // Schedule babysit recheck
       items.push({
         kind: "babysit",
-        payloadJson: { workflowId: params.newWorkflow.workflowId },
+        payloadJson: {
+          workflowId: params.newWorkflow.workflowId,
+          loopId: params.loopId,
+        },
         scheduledAt: params.newWorkflow.nextCheckAt,
       });
       break;

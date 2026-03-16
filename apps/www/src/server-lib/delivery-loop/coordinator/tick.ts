@@ -168,6 +168,7 @@ export async function runCoordinatorTick(params: {
       previousWorkflow: workflow,
       newWorkflow,
       event: reduction.event,
+      loopId,
       now,
     });
 

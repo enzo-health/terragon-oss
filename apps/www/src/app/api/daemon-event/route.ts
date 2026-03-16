@@ -1347,48 +1347,49 @@ export async function POST(request: Request) {
       json.codexPreviousResponseId !== null &&
       typeof json.codexPreviousResponseId !== "string"
     ) {
-      await rollbackClaimedSignal({
-        reason: "invalid_codex_previous_response_id",
-        error: json.codexPreviousResponseId,
-      });
-      return Response.json(
+      // Invalid type — skip codex persistence but do NOT rollback claimed
+      // signal. Rolling back after terminal side effects would permanently
+      // lose the daemon completion signal for enrolled loops.
+      console.warn(
+        "[daemon-event] invalid codexPreviousResponseId type, skipping persistence",
         {
-          success: false,
-          error: "invalid_codex_previous_response_id",
+          userId,
+          threadId,
+          threadChatId,
+          codexPreviousResponseId: json.codexPreviousResponseId,
         },
-        { status: 400 },
       );
-    }
-
-    const shouldPersistCodexPreviousResponseId =
-      transportMode === "codex-app-server" ||
-      json.codexPreviousResponseId === null;
-    if (shouldPersistCodexPreviousResponseId) {
-      try {
-        await db
-          .update(schema.threadChat)
-          .set({
-            codexPreviousResponseId: json.codexPreviousResponseId,
-          })
-          .where(
-            and(
-              eq(schema.threadChat.userId, userId),
-              eq(schema.threadChat.threadId, threadId),
-              eq(schema.threadChat.id, threadChatId),
-            ),
+    } else {
+      const shouldPersistCodexPreviousResponseId =
+        transportMode === "codex-app-server" ||
+        json.codexPreviousResponseId === null;
+      if (shouldPersistCodexPreviousResponseId) {
+        try {
+          await db
+            .update(schema.threadChat)
+            .set({
+              codexPreviousResponseId: json.codexPreviousResponseId,
+            })
+            .where(
+              and(
+                eq(schema.threadChat.userId, userId),
+                eq(schema.threadChat.threadId, threadId),
+                eq(schema.threadChat.id, threadChatId),
+              ),
+            );
+        } catch (error) {
+          console.error(
+            "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
+            {
+              userId,
+              threadId,
+              threadChatId,
+              transportMode,
+              codexPreviousResponseId: json.codexPreviousResponseId,
+              error,
+            },
           );
-      } catch (error) {
-        console.error(
-          "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
-          {
-            userId,
-            threadId,
-            threadChatId,
-            transportMode,
-            codexPreviousResponseId: json.codexPreviousResponseId,
-            error,
-          },
-        );
+        }
       }
     }
   }
