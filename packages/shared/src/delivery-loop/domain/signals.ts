@@ -52,7 +52,8 @@ export type HumanSignal =
   | { kind: "resume_requested"; actorUserId: string }
   | { kind: "bypass_requested"; actorUserId: string; target: GateKind }
   | { kind: "stop_requested"; actorUserId: string }
-  | { kind: "mark_done_requested"; actorUserId: string };
+  | { kind: "mark_done_requested"; actorUserId: string }
+  | { kind: "plan_approved"; artifactId: string };
 
 export type TimerSignal =
   | { kind: "dispatch_ack_expired"; dispatchId: DispatchId }

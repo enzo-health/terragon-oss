@@ -18,6 +18,7 @@ import type { DaemonFailure } from "./signals";
 export type LoopEvent =
   | "plan_completed"
   | "implementation_completed"
+  | "redispatch_requested"
   | "gate_passed"
   | "gate_blocked"
   | "pr_linked"

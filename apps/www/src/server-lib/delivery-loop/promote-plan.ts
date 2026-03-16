@@ -179,6 +179,37 @@ async function transitionPlanningArtifactToImplementing(params: {
     };
   }
 
+  // Bridge: write a plan_completed signal to the v2 inbox so the
+  // coordinator tick can advance the v2 workflow from planning →
+  // implementing. The v1 checkpoint pipeline validated the plan;
+  // this signal is the handoff to v2.
+  try {
+    const { appendSignalToInbox } = await import(
+      "@terragon/shared/delivery-loop/store/signal-inbox-store"
+    );
+    await appendSignalToInbox({
+      db: params.db,
+      loopId: params.loopId,
+      causeType: "human_resume",
+      payload: {
+        source: "human",
+        event: {
+          kind: "plan_approved",
+          artifactId: params.artifactId,
+        },
+      },
+      canonicalCauseId: `plan-promoted:${params.loopId}:${params.artifactId}`,
+    });
+  } catch (bridgeErr) {
+    // Non-fatal: the cron tick catch-up will process the v1 state
+    // change and advance the v2 workflow eventually.
+    console.warn("[promote-plan] v2 signal bridge failed", {
+      loopId: params.loopId,
+      artifactId: params.artifactId,
+      error: bridgeErr,
+    });
+  }
+
   return {
     outcome: "promoted",
     artifactId: params.artifactId,

@@ -52,13 +52,18 @@ function reduceDaemonSignal(
   switch (event.kind) {
     case "run_completed":
       if (workflow.kind === "planning") {
-        // Daemon completed a planning run — advance to implementing
-        return { event: "plan_completed", context: {} };
+        // Daemon finished a planning run. Plan validation/promotion is
+        // handled by the v1 checkpoint pipeline (promote-plan.ts) which
+        // bridges into v2 via v1 loop state transition. Do NOT auto-advance
+        // the v2 workflow here — the plan may not have parsed or may
+        // require human approval.
+        return null;
       }
       if (workflow.kind === "implementing") {
         if (event.result.kind === "partial") {
-          // Partial completion — stay in implementing, schedule re-dispatch
-          return { event: "gate_blocked", context: {} };
+          // Partial completion — stay in implementing for re-dispatch
+          // without incrementing fixAttemptCount (normal multi-pass).
+          return { event: "redispatch_requested", context: {} };
         }
         return {
           event: "implementation_completed",
@@ -173,6 +178,8 @@ function reduceHumanSignal(
       return { event: "manual_stop", context: {} };
     case "mark_done_requested":
       return { event: "mark_done", context: {} };
+    case "plan_approved":
+      return { event: "plan_completed", context: {} };
   }
 }
 

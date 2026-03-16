@@ -294,6 +294,18 @@ function reduceImplementing(
     };
   }
 
+  if (event === "redispatch_requested") {
+    // Partial completion — stay in implementing for re-dispatch without
+    // incrementing fixAttemptCount (this is normal multi-pass, not failure).
+    const base = bump(wf, now);
+    return {
+      ...base,
+      kind: "implementing",
+      planVersion: wf.planVersion,
+      dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    };
+  }
+
   if (event === "gate_blocked") {
     return retryToImplementing(wf, now);
   }

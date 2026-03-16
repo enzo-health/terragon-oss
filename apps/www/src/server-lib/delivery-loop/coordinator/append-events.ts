@@ -36,6 +36,15 @@ export function buildWorkflowEvent(params: {
             : ("unknown" as GitSha),
       };
 
+    case "redispatch_requested":
+      return {
+        kind: "dispatch_enqueued",
+        dispatchId:
+          newWorkflow.kind === "implementing"
+            ? newWorkflow.dispatch.dispatchId
+            : (`d-redispatch-${newWorkflow.version}` as import("@terragon/shared/delivery-loop/domain/workflow").DispatchId),
+      };
+
     case "gate_passed":
       return {
         kind: "gate_evaluated",

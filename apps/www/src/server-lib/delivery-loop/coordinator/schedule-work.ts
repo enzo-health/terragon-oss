@@ -56,7 +56,10 @@ export function resolveWorkItems(params: {
   switch (params.newWorkflow.kind) {
     case "implementing":
       // Schedule dispatch when entering implementing — including self-retries
-      // (e.g. gate_blocked in implementing keeps the state but needs a new run)
+      // and partial completions (redispatch_requested).
+      // Note: threadChatId is intentionally omitted — the dispatch worker
+      // resolves the correct chat at execution time since the active chat
+      // may change between scheduling and dispatch (multi-chat threads).
       if (
         params.previousWorkflow.kind !== "implementing" ||
         params.newWorkflow.version !== params.previousWorkflow.version
