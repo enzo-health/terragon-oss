@@ -236,21 +236,15 @@ describe("handleAppMention", () => {
       commentGitHubAccountId: githubAccountId,
     });
 
-    const enrolledLoop = await db.query.sdlcLoop.findFirst({
-      where: (loop, { and, eq }) =>
-        and(
-          eq(loop.userId, user.id),
-          eq(loop.repoFullName, isolatedPr.repoFullName),
-          eq(loop.prNumber, isolatedPr.number),
-        ),
+    // V2 workflow should be created (no v1 sdlcLoop)
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: (wf, { eq }) => eq(wf.threadId, mentionThread.threadId),
     });
 
-    expect(enrolledLoop).toMatchObject({
-      userId: user.id,
-      repoFullName: isolatedPr.repoFullName,
-      prNumber: isolatedPr.number,
+    expect(workflow).toMatchObject({
       threadId: mentionThread.threadId,
-      state: "planning",
+      kind: "planning",
+      prNumber: isolatedPr.number,
     });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({

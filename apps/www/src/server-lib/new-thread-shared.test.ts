@@ -5,7 +5,7 @@ import { createTestUser } from "@terragon/shared/model/test-helpers";
 import { User, DBUserMessage } from "@terragon/shared";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
 import { getThread } from "@terragon/shared/model/threads";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {
@@ -60,7 +60,7 @@ describe("createNewThread", () => {
       expect(thread!.branchName).toBe("feature/test-branch");
     });
 
-    it("enrolls SDLC loop immediately for opted-in web threads and applies human-required plan policy", async () => {
+    it("enrolls v2 workflow immediately for opted-in web threads and applies human-required plan policy", async () => {
       await mockWaitUntil();
       const { threadId } = await createNewThread({
         userId: user.id,
@@ -76,17 +76,15 @@ describe("createNewThread", () => {
       });
       await waitUntilResolved();
 
-      const loop = await getActiveSdlcLoopForThread({
-        db,
-        userId: user.id,
-        threadId,
-      });
-      expect(loop).toBeDefined();
-      expect(loop?.state).toBe("planning");
-      expect(loop?.planApprovalPolicy).toBe("human_required");
+      const workflow = await getActiveWorkflowForThread({ db, threadId });
+      expect(workflow).toBeDefined();
+      expect(workflow?.kind).toBe("planning");
+      expect(workflow?.planApprovalPolicy).toBe("human_required");
+      // No v1 sdlcLoop should be created
+      expect(workflow?.sdlcLoopId).toBeNull();
     });
 
-    it("auto-enrolls SDLC loop for automation threads without explicit opt-in", async () => {
+    it("auto-enrolls v2 workflow for automation threads without explicit opt-in", async () => {
       await mockWaitUntil();
       const { threadId } = await createNewThread({
         userId: user.id,
@@ -97,14 +95,12 @@ describe("createNewThread", () => {
       });
       await waitUntilResolved();
 
-      const loop = await getActiveSdlcLoopForThread({
-        db,
-        userId: user.id,
-        threadId,
-      });
-      expect(loop).toBeDefined();
-      expect(loop?.state).toBe("planning");
-      expect(loop?.planApprovalPolicy).toBe("auto");
+      const workflow = await getActiveWorkflowForThread({ db, threadId });
+      expect(workflow).toBeDefined();
+      expect(workflow?.kind).toBe("planning");
+      expect(workflow?.planApprovalPolicy).toBe("auto");
+      // No v1 sdlcLoop should be created
+      expect(workflow?.sdlcLoopId).toBeNull();
     });
   });
 });
