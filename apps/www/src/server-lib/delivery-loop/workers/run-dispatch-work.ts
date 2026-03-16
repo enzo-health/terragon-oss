@@ -75,6 +75,17 @@ export async function runDispatchWork(params: {
       return;
     }
 
+    // Guard: workflow moved to a non-dispatchable state between enqueue and execution
+    const DISPATCHABLE_KINDS = new Set(["planning", "implementing", "gating"]);
+    if (!DISPATCHABLE_KINDS.has(workflow.kind)) {
+      await completeWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+      });
+      return;
+    }
+
     // 2 & 3. Resolve loop + threadChat in parallel (both depend on threadId only)
     const [loop, threadChat] = await Promise.all([
       params.payload.loopId
@@ -135,6 +146,25 @@ export async function runDispatchWork(params: {
       workflow.kind === "gating"
         ? (`${params.payload.gate ?? "review"}_gate` as const)
         : "implementing";
+
+    // Guard: stale gate dispatch — payload gate no longer matches current workflow gate
+    const stateJson = workflow.stateJson as Record<string, unknown> | null;
+    const currentGateKind =
+      stateJson && typeof stateJson === "object"
+        ? (stateJson as { gate?: { kind?: string } }).gate?.kind
+        : undefined;
+    if (
+      workflow.kind === "gating" &&
+      params.payload.gate &&
+      currentGateKind !== params.payload.gate
+    ) {
+      await completeWorkItem({
+        db: params.db,
+        workItemId: params.workItemId,
+        claimToken: params.claimToken,
+      });
+      return;
+    }
 
     // 5. Create dispatch intent in Redis. This is the handoff point — the
     //    follow-up queue processor reads this intent to launch the sandbox
