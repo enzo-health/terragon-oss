@@ -132,11 +132,9 @@ export async function runDispatchWork(params: {
 
     // 4. Determine target phase from workflow state
     const targetPhase =
-      workflow.kind === "planning"
-        ? "planning"
-        : workflow.kind === "gating"
-          ? "reviewing"
-          : "implementing";
+      workflow.kind === "gating"
+        ? (`${params.payload.gate ?? "review"}_gate` as const)
+        : "implementing";
 
     // 5. Create dispatch intent in Redis. This is the handoff point — the
     //    follow-up queue processor reads this intent to launch the sandbox
@@ -213,7 +211,7 @@ export async function runDispatchWork(params: {
         parts: [
           {
             type: "text",
-            text: `Continue ${targetPhase === "planning" ? "planning" : targetPhase === "reviewing" ? "reviewing" : "implementing"}.`,
+            text: `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`,
           },
         ],
       };

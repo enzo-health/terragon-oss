@@ -31,6 +31,7 @@ export function resolveWorkItems(params: {
       payloadJson: {
         target: { kind: "status_comment" },
         workflowState: params.newWorkflow.kind,
+        ...(params.loopId ? { loopId: params.loopId } : {}),
         ...(params.newWorkflow.kind === "gating"
           ? { gate: params.newWorkflow.gate.kind }
           : {}),
@@ -42,6 +43,7 @@ export function resolveWorkItems(params: {
       payloadJson: {
         target: { kind: "check_run_summary" },
         workflowState: params.newWorkflow.kind,
+        ...(params.loopId ? { loopId: params.loopId } : {}),
         ...(params.newWorkflow.kind === "gating"
           ? { gate: params.newWorkflow.gate.kind }
           : {}),
