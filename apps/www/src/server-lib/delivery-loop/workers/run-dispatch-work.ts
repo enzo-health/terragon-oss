@@ -219,6 +219,37 @@ export async function runDispatchWork(params: {
     //     has something to process. Always attempt — on collision recovery
     //     the prior attempt may have crashed before writing the message.
     //     An extra queued message is benign; a missing one stalls the loop.
+    let continuationText = `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`;
+
+    // For implementing dispatches, include plan context so the daemon knows what to implement
+    if (targetPhase === "implementing" && loop) {
+      try {
+        const { getLatestAcceptedArtifact } = await import(
+          "@terragon/shared/model/delivery-loop/artifacts"
+        );
+        const artifact = await getLatestAcceptedArtifact({
+          db: params.db,
+          loopId: loop.id,
+          phase: "planning",
+          includeApprovedForPlanning: true,
+        });
+        if (artifact?.payload) {
+          const payload = artifact.payload as { planText?: string };
+          if (payload.planText) {
+            continuationText = `Continue implementing the approved plan.\n\nFor reference, here is the approved plan:\n${payload.planText}`;
+          }
+        }
+      } catch (err) {
+        console.warn(
+          "[dispatch-worker] failed to load plan artifact for continuation message",
+          {
+            loopId: loop.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+    }
+
     const dispatchMessage: DBUserMessage = {
       type: "user",
       model: null,
@@ -226,7 +257,7 @@ export async function runDispatchWork(params: {
       parts: [
         {
           type: "text",
-          text: `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`,
+          text: continuationText,
         },
       ],
     };

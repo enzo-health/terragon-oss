@@ -585,8 +585,56 @@ export async function startAgentMessage({
               null,
             );
           }
+          let planContext: {
+            planText: string;
+            tasks: Array<{
+              stableTaskId: string;
+              title: string;
+              description?: string | null;
+            }>;
+          } | null = null;
+          if (activeSdlcLoop?.state === "implementing" && activeSdlcLoop?.id) {
+            try {
+              const { getLatestAcceptedArtifact } = await import(
+                "@terragon/shared/model/delivery-loop/artifacts"
+              );
+              const artifact = await getLatestAcceptedArtifact({
+                db,
+                loopId: activeSdlcLoop.id,
+                phase: "planning",
+                includeApprovedForPlanning: true,
+              });
+              if (artifact?.payload) {
+                const payload = artifact.payload as {
+                  planText?: string;
+                  tasks?: Array<{
+                    stableTaskId: string;
+                    title: string;
+                    description?: string | null;
+                  }>;
+                };
+                if (payload.planText) {
+                  planContext = {
+                    planText: payload.planText,
+                    tasks: payload.tasks ?? [],
+                  };
+                }
+              }
+            } catch (err) {
+              console.warn(
+                "[startAgentMessage] failed to load plan artifact for implementing phase",
+                {
+                  loopId: activeSdlcLoop.id,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              );
+            }
+          }
           const deliveryLoopPhasePromptPrefix =
-            buildDeliveryLoopPhasePromptPrefix(activeSdlcLoop?.state ?? null);
+            buildDeliveryLoopPhasePromptPrefix(
+              activeSdlcLoop?.state ?? null,
+              planContext,
+            );
 
           const sanitizedPrompt = finalPrompt.replace(
             /(?:^|\s)\/compact(?=\s|$)/g,
@@ -756,6 +804,14 @@ async function preparePromptForModel({
 
 function buildDeliveryLoopPhasePromptPrefix(
   state: SdlcLoopState | null,
+  planContext?: {
+    planText: string;
+    tasks: Array<{
+      stableTaskId: string;
+      title: string;
+      description?: string | null;
+    }>;
+  } | null,
 ): string | null {
   if (!state) {
     return null;
@@ -778,29 +834,44 @@ function buildDeliveryLoopPhasePromptPrefix(
         "Required: tasks[] with at least one task. Each task needs title.",
         "Do not edit files, run mutating commands, or open/update a PR.",
       ].join("\n");
-    case "implementing":
-      return [
-        "Delivery Loop phase: implementing.",
+    case "implementing": {
+      const lines: string[] = ["Delivery Loop phase: implementing."];
+      if (planContext?.planText) {
+        lines.push("", "## Approved Plan", "", planContext.planText);
+        if (planContext.tasks?.length) {
+          lines.push("", "## Tasks");
+          for (const task of planContext.tasks) {
+            lines.push(
+              `- [${task.stableTaskId}] ${task.title}${task.description ? `: ${task.description}` : ""}`,
+            );
+          }
+        }
+        lines.push("");
+      }
+      lines.push(
         "Implement the approved plan with concrete code changes.",
         "When you complete a plan task, call the MarkImplementingTasksComplete tool with the task's stableTaskId and status.",
         "After completing all tasks, call MarkImplementingTasksComplete with all completed task IDs.",
         "",
-        ...(env.SKIP_LOCAL_QUALITY_CHECKS
-          ? [
-              "Local lint/typecheck/test checks are temporarily skipped in this environment.",
-              "Rely on required GitHub CI checks before merge.",
-            ]
-          : [
-              "Before marking all tasks complete, you MUST verify:",
-              "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
-              "2. Linting passes (run the project's lint command if available)",
-              "3. Type checking passes (run the project's typecheck command if available)",
-              "4. Tests pass (run targeted tests for affected package(s)/files; avoid full monorepo test runs unless explicitly required by the task or requested by the user)",
-              "Fix any failures before marking tasks complete.",
-            ]),
-        "",
-        "Do not skip directly to PR babysitting in this phase.",
-      ].join("\n");
+      );
+      if (env.SKIP_LOCAL_QUALITY_CHECKS) {
+        lines.push(
+          "Local lint/typecheck/test checks are temporarily skipped in this environment.",
+          "Rely on required GitHub CI checks before merge.",
+        );
+      } else {
+        lines.push(
+          "Before marking all tasks complete, you MUST verify:",
+          "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
+          "2. Linting passes (run the project's lint command if available)",
+          "3. Type checking passes (run the project's typecheck command if available)",
+          "4. Tests pass (run targeted tests for affected package(s)/files; avoid full monorepo test runs unless explicitly required by the task or requested by the user)",
+          "Fix any failures before marking tasks complete.",
+        );
+      }
+      lines.push("", "Do not skip directly to PR babysitting in this phase.");
+      return lines.join("\n");
+    }
     case "review_gate":
       return [
         "Delivery Loop phase: review_gate.",
