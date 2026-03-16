@@ -1,10 +1,12 @@
 import type { DB } from "@terragon/shared/db";
+import type { DBUserMessage } from "@terragon/shared/db/db-message";
 import type { ExecutionClass } from "@terragon/shared/delivery-loop/domain/workflow";
 import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { updateThreadChat } from "@terragon/shared/model/threads";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import { randomUUID } from "node:crypto";
@@ -181,7 +183,31 @@ export async function runDispatchWork(params: {
         });
       }
 
-    // 6b. Trigger the follow-up queue to actually launch the run.
+    // 6b. Queue a dispatch continuation message so the follow-up queue
+    //     has something to process. Without this, maybeProcessFollowUpQueue
+    //     sees an empty queuedMessages array and returns no_queued_messages.
+    const dispatchMessage: DBUserMessage = {
+      type: "user",
+      model: null,
+      timestamp: new Date().toISOString(),
+      parts: [
+        {
+          type: "text",
+          text: `Continue ${targetPhase === "planning" ? "planning" : targetPhase === "reviewing" ? "reviewing" : "implementing"}.`,
+        },
+      ],
+    };
+    await updateThreadChat({
+      db: params.db,
+      userId: loop.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      updates: {
+        appendQueuedMessages: [dispatchMessage],
+      },
+    });
+
+    // 6c. Trigger the follow-up queue to actually launch the run.
     // Only arm ack timeout if the follow-up queue actually started processing,
     // otherwise we'd create phantom dispatches that inevitably time out.
     let followUpProcessed = false;

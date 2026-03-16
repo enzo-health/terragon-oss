@@ -1129,13 +1129,20 @@ export async function POST(request: Request) {
               threadId,
             });
             if (!v2Workflow) {
+              // Re-read to capture any state changes from handleDaemonEvent
+              const freshDedupLoop = await getActiveSdlcLoopForThread({
+                db,
+                userId,
+                threadId,
+              });
+              const dedupLoop = freshDedupLoop ?? enrolledLoop;
               const { workflowId: backfilledDedupId } =
                 await ensureV2WorkflowExists({
                   db,
                   threadId,
-                  sdlcLoopId: enrolledLoop.id,
-                  sdlcLoopState: enrolledLoop.state,
-                  sdlcBlockedFromState: enrolledLoop.blockedFromState,
+                  sdlcLoopId: dedupLoop.id,
+                  sdlcLoopState: dedupLoop.state,
+                  sdlcBlockedFromState: dedupLoop.blockedFromState,
                 });
               v2Workflow = { id: backfilledDedupId } as NonNullable<
                 Awaited<ReturnType<typeof getActiveWorkflowForThread>>
@@ -1475,13 +1482,23 @@ export async function POST(request: Request) {
       } else {
         // No v2 workflow — backfill from the enrolled v1 loop so the
         // committed daemon signal gets processed on this tick.
+        // Re-read the enrolled loop to capture any state changes made by
+        // handleDaemonEvent (e.g. checkpointThread fires asynchronously via
+        // waitUntil and may have transitioned the v1 loop by now).
+        const freshLoop = await getActiveSdlcLoopForThread({
+          db,
+          userId,
+          threadId,
+        });
+        const backfillLoop = freshLoop ?? enrolledLoop;
         console.warn(
           "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
           {
             userId,
             threadId,
             threadChatId,
-            loopId: enrolledLoop.id,
+            loopId: backfillLoop.id,
+            loopState: backfillLoop.state,
             eventId: envelopeV2.eventId,
             seq: envelopeV2.seq,
           },
@@ -1489,9 +1506,9 @@ export async function POST(request: Request) {
         const { workflowId: backfilledId } = await ensureV2WorkflowExists({
           db,
           threadId,
-          sdlcLoopId: enrolledLoop.id,
-          sdlcLoopState: enrolledLoop.state,
-          sdlcBlockedFromState: enrolledLoop.blockedFromState,
+          sdlcLoopId: backfillLoop.id,
+          sdlcLoopState: backfillLoop.state,
+          sdlcBlockedFromState: backfillLoop.blockedFromState,
         });
         await runCoordinatorTick({
           db,

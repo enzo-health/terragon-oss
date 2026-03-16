@@ -143,16 +143,24 @@ export async function GET(request: NextRequest) {
       const { runCoordinatorTick } = await import(
         "@/server-lib/delivery-loop/coordinator/tick"
       );
-      const { eq, desc } = await import("drizzle-orm");
+      const { and, eq, desc, inArray } = await import("drizzle-orm");
       const schemaImport = await import("@terragon/shared/db/schema");
+      const { activeSdlcLoopStateList } = await import(
+        "@terragon/shared/model/delivery-loop"
+      );
 
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
       for (const wf of activeWorkflows) {
         try {
           // Resolve v1 sdlcLoop ID so signals keyed under the legacy ID
-          // are drained correctly during catch-up ticks.
+          // are drained correctly during catch-up ticks. Filter to active
+          // states to avoid picking up a terminated loop from a previous
+          // generation for the same thread.
           const loop = await db.query.sdlcLoop.findFirst({
-            where: eq(schemaImport.sdlcLoop.threadId, wf.threadId),
+            where: and(
+              eq(schemaImport.sdlcLoop.threadId, wf.threadId),
+              inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
+            ),
             orderBy: [desc(schemaImport.sdlcLoop.createdAt)],
             columns: { id: true },
           });
