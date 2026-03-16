@@ -75,7 +75,11 @@ export type HumanSignal =
   | { kind: "plan_approved"; artifactId: string };
 
 export type TimerSignal =
-  | { kind: "dispatch_ack_expired"; dispatchId: DispatchId }
+  | {
+      kind: "dispatch_ack_expired";
+      dispatchId: DispatchId;
+      consecutiveFailures?: number;
+    }
   | { kind: "babysit_due" }
   | { kind: "heartbeat_check" };
 

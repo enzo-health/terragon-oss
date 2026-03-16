@@ -306,32 +306,7 @@ function inferReviewThreadsStatusFromLoopState(
   }
 }
 
-function inferDeepReviewStatusFromLoopState(
-  snapshot: DeliveryLoopSnapshot,
-): SdlcLoopStatusCheckStatus {
-  const loopState = getEffectiveLoopStateForChecks(snapshot);
-  switch (loopState) {
-    case "planning":
-    case "implementing":
-      return "not_started";
-    case "review_gate":
-      return "pending";
-    case "ci_gate":
-    case "ui_gate":
-    case "awaiting_pr_link":
-    case "babysitting":
-    case "done":
-    case "terminated_pr_merged":
-      return "passed";
-    case "terminated_pr_closed":
-    case "stopped":
-      return "degraded";
-    default:
-      return "pending";
-  }
-}
-
-function inferCarmackStatusFromLoopState(
+function inferReviewGateStatusFromLoopState(
   snapshot: DeliveryLoopSnapshot,
 ): SdlcLoopStatusCheckStatus {
   const loopState = getEffectiveLoopStateForChecks(snapshot);
@@ -535,8 +510,9 @@ export function buildSdlcLoopStatusChecks({
   const reviewThreadsFallbackStatus =
     inferReviewThreadsStatusFromLoopState(loopSnapshot);
   const deepReviewFallbackStatus =
-    inferDeepReviewStatusFromLoopState(loopSnapshot);
-  const carmackFallbackStatus = inferCarmackStatusFromLoopState(loopSnapshot);
+    inferReviewGateStatusFromLoopState(loopSnapshot);
+  const carmackFallbackStatus =
+    inferReviewGateStatusFromLoopState(loopSnapshot);
 
   const ciCheck: SdlcLoopStatusCheck = !currentHeadSha
     ? {
@@ -773,43 +749,68 @@ export function buildSnapshotFromV2Workflow(
         lastFailureCategory: null,
       };
 
-    case "implementing":
+    case "implementing": {
+      const dispatch = (workflow as Record<string, unknown>).dispatch as
+        | { kind?: string; failure?: { kind?: string } }
+        | null
+        | undefined;
       return {
         kind: "implementing",
         execution: {
           kind: "implementation",
           selectedAgent: null,
-          dispatchStatus:
-            workflow.dispatch.kind === "queued"
+          dispatchStatus: dispatch
+            ? dispatch.kind === "queued"
               ? "prepared"
-              : workflow.dispatch.kind === "sent"
+              : dispatch.kind === "sent"
                 ? "dispatched"
-                : workflow.dispatch.kind === "acknowledged"
+                : dispatch.kind === "acknowledged"
                   ? "acknowledged"
-                  : workflow.dispatch.kind === "failed"
+                  : dispatch.kind === "failed"
                     ? "failed"
-                    : null,
+                    : null
+            : null,
           dispatchAttemptCount: 0,
           activeRunId: null,
           lastFailureCategory:
-            workflow.dispatch.kind === "failed"
-              ? workflow.dispatch.failure.kind
+            dispatch?.kind === "failed"
+              ? (dispatch.failure?.kind ?? null)
               : null,
         },
       };
+    }
 
-    case "gating":
+    case "gating": {
+      const gate = (workflow as Record<string, unknown>).gate as
+        | { kind?: GateKind; runId?: string; status?: string }
+        | null
+        | undefined;
+      if (!gate?.kind) {
+        // Malformed stateJson — fall back to implementing snapshot
+        return {
+          kind: "implementing",
+          execution: {
+            kind: "implementation",
+            selectedAgent: null,
+            dispatchStatus: null,
+            dispatchAttemptCount: 0,
+            activeRunId: null,
+            lastFailureCategory: null,
+          },
+        };
+      }
       return {
-        kind: V2_GATE_TO_V1_STATE[workflow.gate.kind] as
+        kind: V2_GATE_TO_V1_STATE[gate.kind] as
           | "review_gate"
           | "ci_gate"
           | "ui_gate",
         gate: {
-          gateRunId: workflow.gate.runId,
+          gateRunId: gate.runId ?? null,
           lastFailureCategory:
-            workflow.gate.status === "blocked" ? "gate_blocked" : null,
+            gate.status === "blocked" ? "gate_blocked" : null,
         },
       };
+    }
 
     case "awaiting_pr":
       return {
@@ -839,12 +840,13 @@ export function buildSnapshotFromV2Workflow(
       };
 
     case "awaiting_manual_fix": {
-      const from = mapResumableKindToV1(
-        workflow.resumableFrom.kind,
-        "gate" in workflow.resumableFrom
-          ? (workflow.resumableFrom as { gate?: GateKind }).gate
-          : undefined,
-      );
+      const resumable = (workflow as Record<string, unknown>).resumableFrom as
+        | { kind?: string; gate?: GateKind }
+        | null
+        | undefined;
+      const from = resumable?.kind
+        ? mapResumableKindToV1(resumable.kind, resumable.gate)
+        : "implementing";
       return {
         kind: "blocked",
         from,
@@ -859,12 +861,13 @@ export function buildSnapshotFromV2Workflow(
     }
 
     case "awaiting_operator_action": {
-      const from = mapResumableKindToV1(
-        workflow.resumableFrom.kind,
-        "gate" in workflow.resumableFrom
-          ? (workflow.resumableFrom as { gate?: GateKind }).gate
-          : undefined,
-      );
+      const resumable = (workflow as Record<string, unknown>).resumableFrom as
+        | { kind?: string; gate?: GateKind }
+        | null
+        | undefined;
+      const from = resumable?.kind
+        ? mapResumableKindToV1(resumable.kind, resumable.gate)
+        : "implementing";
       return {
         kind: "blocked",
         from,
@@ -884,10 +887,15 @@ export function buildSnapshotFromV2Workflow(
     case "stopped":
       return { kind: "stopped" };
 
-    case "terminated":
-      return workflow.reason.kind === "pr_merged"
+    case "terminated": {
+      const reason = (workflow as Record<string, unknown>).reason as
+        | { kind?: string }
+        | null
+        | undefined;
+      return reason?.kind === "pr_merged"
         ? { kind: "terminated_pr_merged" }
         : { kind: "terminated_pr_closed" };
+    }
   }
 }
 
@@ -903,8 +911,15 @@ export function mapV2KindToSdlcLoopState(
       return "planning";
     case "implementing":
       return "implementing";
-    case "gating":
-      return V2_GATE_TO_V1_STATE[workflow.gate.kind] as SdlcLoopState;
+    case "gating": {
+      const gate = (workflow as Record<string, unknown>).gate as
+        | { kind?: GateKind }
+        | null
+        | undefined;
+      return gate?.kind
+        ? (V2_GATE_TO_V1_STATE[gate.kind] as SdlcLoopState)
+        : "implementing";
+    }
     case "awaiting_pr":
       return "awaiting_pr_link";
     case "babysitting":
@@ -917,10 +932,15 @@ export function mapV2KindToSdlcLoopState(
       return "done";
     case "stopped":
       return "stopped";
-    case "terminated":
-      return workflow.reason.kind === "pr_merged"
+    case "terminated": {
+      const reason = (workflow as Record<string, unknown>).reason as
+        | { kind?: string }
+        | null
+        | undefined;
+      return reason?.kind === "pr_merged"
         ? "terminated_pr_merged"
         : "terminated_pr_closed";
+    }
   }
 }
 
@@ -929,22 +949,34 @@ export function mapV2KindToSdlcLoopState(
  */
 export function getV2StopReason(workflow: DeliveryWorkflow): string | null {
   if (workflow.kind === "stopped") {
-    return workflow.reason.kind === "user_requested"
+    const reason = (workflow as Record<string, unknown>).reason as
+      | { kind?: string; newerWorkflowId?: string }
+      | null
+      | undefined;
+    if (!reason?.kind) return "Stopped";
+    return reason.kind === "user_requested"
       ? "Stopped by user"
-      : `Superseded by workflow ${workflow.reason.newerWorkflowId}`;
+      : `Superseded by workflow ${reason.newerWorkflowId ?? "unknown"}`;
   }
   if (workflow.kind === "terminated") {
-    switch (workflow.reason.kind) {
+    const reason = (workflow as Record<string, unknown>).reason as
+      | { kind?: string; code?: string; subject?: string; system?: string }
+      | null
+      | undefined;
+    if (!reason?.kind) return "Terminated";
+    switch (reason.kind) {
       case "pr_closed":
         return "Pull request was closed";
       case "pr_merged":
         return "Pull request was merged";
       case "invariant_violation":
-        return `Invariant violation: ${workflow.reason.code}`;
+        return `Invariant violation: ${reason.code ?? "unknown"}`;
       case "retry_exhausted":
-        return `Retry budget exhausted for ${workflow.reason.subject}`;
+        return `Retry budget exhausted for ${reason.subject ?? "unknown"}`;
       case "fatal_external_failure":
-        return `Fatal failure in ${workflow.reason.system}`;
+        return `Fatal failure in ${reason.system ?? "unknown"}`;
+      default:
+        return "Terminated";
     }
   }
   return null;

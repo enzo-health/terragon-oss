@@ -26,6 +26,8 @@ import {
 } from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
+import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
+import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 import { waitUntil } from "@vercel/functions";
@@ -782,9 +784,6 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
             });
             if (!acquired) return;
 
-            const { getActiveWorkflowForThread } = await import(
-              "@terragon/shared/delivery-loop/store/workflow-store"
-            );
             let workflow = await getActiveWorkflowForThread({
               db,
               threadId: loop.threadId,
@@ -792,9 +791,6 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
             // Backfill v2 workflow for orphaned v1 loops so idle
             // babysitting loops don't stay stuck after v1 removal.
             if (!workflow) {
-              const { ensureV2WorkflowExists } = await import(
-                "@/server-lib/delivery-loop/coordinator/enrollment-bridge"
-              );
               // Skip backfill if headSha is unavailable — creating
               // a workflow with "unknown" SHA causes the babysit
               // worker to evaluate a synthetic commit.
@@ -818,9 +814,6 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
             // A null sdlcLoopId (pre-migration) or mismatched ID means
             // the workflow may consume signals from the wrong loop.
             if (workflow && workflow.sdlcLoopId === loop.id) {
-              const { runCoordinatorTick } = await import(
-                "@/server-lib/delivery-loop/coordinator/tick"
-              );
               await runCoordinatorTick({
                 db,
                 workflowId:
