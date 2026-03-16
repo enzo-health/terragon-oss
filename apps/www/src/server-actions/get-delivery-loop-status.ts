@@ -657,11 +657,17 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
               const { ensureV2WorkflowExists } = await import(
                 "@/server-lib/delivery-loop/coordinator/enrollment-bridge"
               );
+              // Skip backfill if headSha is unavailable — creating
+              // a workflow with "unknown" SHA causes the babysit
+              // worker to evaluate a synthetic commit.
+              if (!loop.currentHeadSha) return;
               const result = await ensureV2WorkflowExists({
                 db,
                 threadId: loop.threadId,
                 sdlcLoopId: loop.id,
                 sdlcLoopState: loop.state,
+                sdlcBlockedFromState: loop.blockedFromState,
+                headSha: loop.currentHeadSha,
               });
               if (result.created) {
                 workflow = await getActiveWorkflowForThread({

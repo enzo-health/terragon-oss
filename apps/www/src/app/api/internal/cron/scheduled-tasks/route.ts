@@ -187,7 +187,12 @@ export async function GET(request: NextRequest) {
             db,
             threadId: loop.threadId,
           });
-          if (!existing) {
+          // Only backfill if no workflow exists OR the active workflow
+          // belongs to a different loop generation (cross-gen mismatch).
+          const needsBackfill =
+            !existing ||
+            (existing.sdlcLoopId != null && existing.sdlcLoopId !== loop.id);
+          if (needsBackfill) {
             try {
               await ensureV2WorkflowExists({
                 db,

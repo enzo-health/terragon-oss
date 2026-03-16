@@ -1088,6 +1088,9 @@ export async function routeGithubFeedbackOrSpawnThread(
               "[route-feedback] generation mismatch backfill failed",
               { activeSdlcLoopId: activeSdlcLoop.id, error: mismatchErr },
             );
+            // Rethrow so the caller sees the failure instead of silently
+            // returning suppressed while the signal is stranded.
+            throw mismatchErr;
           }
           return {
             mode: "suppressed_enrolled_loop",

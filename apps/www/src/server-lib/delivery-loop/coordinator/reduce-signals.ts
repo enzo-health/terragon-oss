@@ -144,6 +144,17 @@ function reduceGitHubSignal(
       }
       // In babysitting, raw GitHub signals are suppressed — only the
       // babysit worker's aggregate evaluation produces transitions.
+      if (workflow.kind === "babysitting") return null;
+      // In other active states (implementing, awaiting_pr, etc.), the
+      // workflow hasn't reached the CI gate yet. Mark the signal
+      // retryable so it stays in the inbox for when the workflow
+      // transitions to the matching gating substate.
+      if (isActiveNonTerminal(workflow.kind)) {
+        return {
+          retryable: true,
+          reason: `CI signal received while workflow is ${workflow.kind}, not in CI gate`,
+        };
+      }
       return null;
     }
 
@@ -163,6 +174,15 @@ function reduceGitHubSignal(
       }
       // In babysitting, raw GitHub signals are suppressed — only the
       // babysit worker's aggregate evaluation produces transitions.
+      if (workflow.kind === "babysitting") return null;
+      // In other active states, keep the signal pending for when the
+      // workflow reaches the review gate.
+      if (isActiveNonTerminal(workflow.kind)) {
+        return {
+          retryable: true,
+          reason: `Review signal received while workflow is ${workflow.kind}, not in review gate`,
+        };
+      }
       return null;
     }
 
@@ -256,4 +276,22 @@ function reduceBabysitSignal(
       }
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const ACTIVE_NON_TERMINAL_KINDS = new Set([
+  "planning",
+  "implementing",
+  "gating",
+  "awaiting_pr",
+  "awaiting_plan_approval",
+  "awaiting_manual_fix",
+  "babysitting",
+]);
+
+function isActiveNonTerminal(kind: string): boolean {
+  return ACTIVE_NON_TERMINAL_KINDS.has(kind);
 }
