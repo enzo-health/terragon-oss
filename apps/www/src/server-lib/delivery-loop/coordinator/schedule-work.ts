@@ -17,13 +17,23 @@ export function resolveWorkItems(params: {
   const items: ScheduledWorkItem[] = [];
   const now = params.now ?? new Date();
 
-  // Always schedule status publication on state change
-  if (params.previousWorkflow.kind !== params.newWorkflow.kind) {
+  // Schedule status publication when externally visible state changes:
+  // top-level kind change OR gate sub-state change (review→ci→ui).
+  const externallyChanged =
+    params.previousWorkflow.kind !== params.newWorkflow.kind ||
+    (params.previousWorkflow.kind === "gating" &&
+      params.newWorkflow.kind === "gating" &&
+      params.previousWorkflow.gate.kind !== params.newWorkflow.gate.kind);
+
+  if (externallyChanged) {
     items.push({
       kind: "publication",
       payloadJson: {
         target: { kind: "status_comment" },
         workflowState: params.newWorkflow.kind,
+        ...(params.newWorkflow.kind === "gating"
+          ? { gate: params.newWorkflow.gate.kind }
+          : {}),
       },
       scheduledAt: now,
     });
@@ -32,6 +42,9 @@ export function resolveWorkItems(params: {
       payloadJson: {
         target: { kind: "check_run_summary" },
         workflowState: params.newWorkflow.kind,
+        ...(params.newWorkflow.kind === "gating"
+          ? { gate: params.newWorkflow.gate.kind }
+          : {}),
       },
       scheduledAt: now,
     });

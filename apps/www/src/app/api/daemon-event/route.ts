@@ -1158,6 +1158,26 @@ export async function POST(request: Request) {
                 loopId: enrolledLoop.id,
               });
             }
+            // Finalize terminal run state after a successful duplicate-event
+            // tick. Without this, the run stays stuck in processing/dispatched
+            // when the initial delivery fails and the retry enters this path.
+            if (runContext && daemonRunStatusFromMessages !== "processing") {
+              await updateAgentRunContext({
+                db,
+                userId,
+                runId: runContext.runId,
+                updates: { status: daemonRunStatusFromMessages },
+              }).catch((error) => {
+                console.warn(
+                  "[daemon-event] dedupe terminal run status update failed",
+                  {
+                    runId: runContext.runId,
+                    status: daemonRunStatusFromMessages,
+                    error,
+                  },
+                );
+              });
+            }
           } catch (error) {
             console.error(
               "[sdlc-loop] duplicate daemon event dedupe tick failed — FULL ERROR:",
@@ -1543,51 +1563,49 @@ export async function POST(request: Request) {
   // Now that the coordinator tick succeeded, finalize the terminal run status.
   // This was deferred from the postHandleOps block so that a tick failure
   // keeps the run non-terminal and allows daemon retries to re-enter the
-  // main processing path.
-  if (runContext && resolvedStatus !== "processing") {
-    updateAgentRunContext({
-      db,
-      userId,
-      runId: runContext.runId,
-      updates: { status: resolvedStatus },
-    }).catch((error) => {
-      console.warn("[daemon-event] deferred terminal status update failed", {
-        runId: runContext.runId,
-        resolvedStatus,
-        error,
-      });
-    });
-  }
-
-  // Persist terminal dispatch status AFTER the coordinator tick succeeded.
-  // This is intentionally deferred: if the tick failed and returned 500,
-  // the run must stay non-terminal so the daemon retry re-enters the
-  // main processing path instead of hitting the terminal short-circuit.
-  if (
-    enrolledLoop &&
-    envelopeV2 &&
-    daemonRunStatusFromMessages !== "processing"
-  ) {
-    persistDaemonTerminalDispatchStatus({
-      loopId: enrolledLoop.id,
-      threadChatId,
-      runId: envelopeV2.runId,
-      daemonRunStatus: daemonRunStatusFromMessages,
-      daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-      daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-    }).catch((error) => {
-      console.warn(
-        "[delivery-loop] failed to persist terminal dispatch intent status",
-        {
+  // main processing path. Both writes are awaited to prevent silent drops.
+  {
+    const terminalOps: Array<Promise<unknown>> = [];
+    if (runContext && resolvedStatus !== "processing") {
+      terminalOps.push(
+        updateAgentRunContext({
+          db,
+          userId,
+          runId: runContext.runId,
+          updates: { status: resolvedStatus },
+        }),
+      );
+    }
+    if (
+      enrolledLoop &&
+      envelopeV2 &&
+      daemonRunStatusFromMessages !== "processing"
+    ) {
+      terminalOps.push(
+        persistDaemonTerminalDispatchStatus({
           loopId: enrolledLoop.id,
-          threadId,
           threadChatId,
           runId: envelopeV2.runId,
           daemonRunStatus: daemonRunStatusFromMessages,
-          error,
-        },
+          daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+          daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+        }),
       );
-    });
+    }
+    if (terminalOps.length > 0) {
+      const results = await Promise.allSettled(terminalOps);
+      for (const r of results) {
+        if (r.status === "rejected") {
+          console.warn(
+            "[daemon-event] terminal state persistence failed (non-blocking for response)",
+            {
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              error: r.reason,
+            },
+          );
+        }
+      }
+    }
   }
 
   return jsonTerminalAckResponse(

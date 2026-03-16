@@ -7,7 +7,7 @@ import {
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { updateThreadChat } from "@terragon/shared/model/threads";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, ne, desc } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import { randomUUID } from "node:crypto";
 import {
@@ -19,6 +19,7 @@ import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
 } from "@terragon/shared/model/delivery-loop";
+import { stringifyError } from "./resolve-loop";
 
 export type DispatchWorkPayload = {
   executionClass: ExecutionClass;
@@ -88,10 +89,25 @@ export async function runDispatchWork(params: {
         ? params.db.query.threadChat.findFirst({
             where: eq(schema.threadChat.id, params.payload.threadChatId),
           })
-        : params.db.query.threadChat.findFirst({
-            where: eq(schema.threadChat.threadId, workflow.threadId),
-            orderBy: [desc(schema.threadChat.createdAt)],
-          }),
+        : // Prefer an active (non-complete) chat for this thread so we
+          // dispatch into the right chat on multi-chat threads. Falls back
+          // to most-recent if all chats are complete.
+          params.db.query.threadChat
+            .findFirst({
+              where: and(
+                eq(schema.threadChat.threadId, workflow.threadId),
+                ne(schema.threadChat.status, "complete"),
+              ),
+              orderBy: [desc(schema.threadChat.createdAt)],
+            })
+            .then(
+              (active) =>
+                active ??
+                params.db.query.threadChat.findFirst({
+                  where: eq(schema.threadChat.threadId, workflow.threadId),
+                  orderBy: [desc(schema.threadChat.createdAt)],
+                }),
+            ),
     ]);
     if (!loop) {
       await failWorkItem({
@@ -161,7 +177,7 @@ export async function runDispatchWork(params: {
     //    handler and cron sweep can find it. The Redis intent is for
     //    real-time tracking; the DB intent is for durable recovery.
     //    Skip if we're reusing an already-active intent from a prior attempt.
-    if (!intentAlreadyActive)
+    if (!intentAlreadyActive) {
       try {
         await createDbDispatchIntent(params.db, {
           loopId: loop.id,
@@ -182,30 +198,35 @@ export async function runDispatchWork(params: {
           error: dbIntentErr,
         });
       }
+    }
 
     // 6b. Queue a dispatch continuation message so the follow-up queue
     //     has something to process. Without this, maybeProcessFollowUpQueue
     //     sees an empty queuedMessages array and returns no_queued_messages.
-    const dispatchMessage: DBUserMessage = {
-      type: "user",
-      model: null,
-      timestamp: new Date().toISOString(),
-      parts: [
-        {
-          type: "text",
-          text: `Continue ${targetPhase === "planning" ? "planning" : targetPhase === "reviewing" ? "reviewing" : "implementing"}.`,
+    //     Only queue on fresh intents — retries (intentAlreadyActive) already
+    //     have a queued message from the original attempt.
+    if (!intentAlreadyActive) {
+      const dispatchMessage: DBUserMessage = {
+        type: "user",
+        model: null,
+        timestamp: new Date().toISOString(),
+        parts: [
+          {
+            type: "text",
+            text: `Continue ${targetPhase === "planning" ? "planning" : targetPhase === "reviewing" ? "reviewing" : "implementing"}.`,
+          },
+        ],
+      };
+      await updateThreadChat({
+        db: params.db,
+        userId: loop.userId,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        updates: {
+          appendQueuedMessages: [dispatchMessage],
         },
-      ],
-    };
-    await updateThreadChat({
-      db: params.db,
-      userId: loop.userId,
-      threadId: workflow.threadId,
-      threadChatId: threadChat.id,
-      updates: {
-        appendQueuedMessages: [dispatchMessage],
-      },
-    });
+      });
+    }
 
     // 6c. Trigger the follow-up queue to actually launch the run.
     // Only arm ack timeout if the follow-up queue actually started processing,
@@ -284,7 +305,7 @@ export async function runDispatchWork(params: {
       workItemId: params.workItemId,
       claimToken: params.claimToken,
       errorCode: "dispatch_failed",
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: stringifyError(err),
       retryAt,
     });
   }
