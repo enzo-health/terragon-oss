@@ -176,7 +176,11 @@ export async function runBabysitWork(params: {
                 source: "github",
                 event: {
                   kind: "ci_changed",
-                  result: { passed: true, checkSuites: [] },
+                  result: {
+                    passed: true,
+                    requiredChecks: [],
+                    failingChecks: [],
+                  },
                 },
               },
               canonicalCauseId: `babysit:${loopId}:${headSha}:ci_reconciled:${Date.now()}`,
@@ -192,7 +196,11 @@ export async function runBabysitWork(params: {
                 source: "github",
                 event: {
                   kind: "ci_changed",
-                  result: { passed: false, checkSuites: [] },
+                  result: {
+                    passed: false,
+                    requiredChecks: [],
+                    failingChecks: [],
+                  },
                 },
               },
               canonicalCauseId: `babysit:${loopId}:${headSha}:ci_blocked:${Date.now()}`,

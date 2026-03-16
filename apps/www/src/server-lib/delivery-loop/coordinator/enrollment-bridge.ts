@@ -19,6 +19,7 @@ import {
   createWorkflow,
   getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
 
 // ---------------------------------------------------------------------------
 // V1 → V2 state mapping
@@ -254,6 +255,34 @@ export async function ensureV2WorkflowExists(params: {
       kind: v2Kind,
       stateJson,
     });
+
+    // When backfilling into babysitting, enqueue an initial babysit work
+    // item so the babysit worker performs aggregate gate evaluation. Without
+    // this, raw GitHub signals are suppressed in babysitting and no worker
+    // would be scheduled to check gate status.
+    if (v2Kind === "babysitting") {
+      try {
+        await enqueueWorkItem({
+          db: params.db,
+          workflowId: workflow.id,
+          correlationId: `babysit-backfill:${workflow.id}:${Date.now()}`,
+          kind: "babysit",
+          payloadJson: {
+            workflowId: workflow.id,
+            loopId: params.sdlcLoopId,
+          } as Record<string, unknown>,
+          scheduledAt: new Date(),
+        });
+      } catch (enqueueErr) {
+        // Non-fatal — the next coordinator tick or webhook will eventually
+        // schedule a babysit work item via resolveWorkItems.
+        console.warn(
+          "[enrollment-bridge] failed to enqueue initial babysit work item",
+          { workflowId: workflow.id, error: enqueueErr },
+        );
+      }
+    }
+
     return { workflowId: workflow.id, created: true };
   } catch (err) {
     // Race: a concurrent caller may have inserted between our check and insert.
