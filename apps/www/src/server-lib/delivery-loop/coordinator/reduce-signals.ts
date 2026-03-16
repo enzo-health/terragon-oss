@@ -146,6 +146,12 @@ function reduceGitHubSignal(
           context: { gate: "review" },
         };
       }
+      if (workflow.kind === "babysitting") {
+        return {
+          event: event.result.passed ? "babysit_passed" : "babysit_blocked",
+          context: {},
+        };
+      }
       return null;
     }
 

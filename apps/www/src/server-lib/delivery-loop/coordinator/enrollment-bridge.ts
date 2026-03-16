@@ -2,6 +2,13 @@
  * Enrollment bridge: when a new v1 sdlcLoop is enrolled, also create
  * a corresponding v2 delivery_workflow row. Idempotent — calling
  * multiple times for the same thread will not create duplicates.
+ *
+ * Design note: v2 workflows are resolved by threadId (one active per
+ * thread), not by v1 sdlcLoopId. This is intentional — the system
+ * supports only one active workflow per thread. If a thread is
+ * re-enrolled with a new loop, the old workflow should be terminated
+ * first. A direct loop↔workflow mapping table is deferred until
+ * multi-generation support is needed.
  */
 import { desc, eq } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";

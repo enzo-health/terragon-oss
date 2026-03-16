@@ -201,9 +201,14 @@ export async function runDispatchWork(params: {
     // 6b. Queue a dispatch continuation message so the follow-up queue
     //     has something to process. Without this, maybeProcessFollowUpQueue
     //     sees an empty queuedMessages array and returns no_queued_messages.
-    //     Only queue on fresh intents — retries (intentAlreadyActive) already
-    //     have a queued message from the original attempt.
-    if (!intentAlreadyActive) {
+    //     On retries (intentAlreadyActive), re-check whether the message
+    //     exists — a crash between intent creation and message append would
+    //     leave the queue empty, causing retries to loop forever.
+    const needsQueuedMessage =
+      !intentAlreadyActive ||
+      !threadChat.queuedMessages ||
+      threadChat.queuedMessages.length === 0;
+    if (needsQueuedMessage) {
       const dispatchMessage: DBUserMessage = {
         type: "user",
         model: null,
