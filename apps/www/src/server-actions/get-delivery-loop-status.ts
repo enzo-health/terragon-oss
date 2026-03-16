@@ -627,7 +627,8 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
     };
 
     // Fire-and-forget: if the loop is babysitting, trigger a background
-    // v2 coordinator tick to process any pending signals.
+    // v2 coordinator tick to process any pending signals. Debounced via
+    // Redis SET NX to avoid stampeding on polling UI.
     if (
       loop.state === "babysitting" &&
       activeSdlcLoopStateSet.has(loop.state)
@@ -635,6 +636,14 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       waitUntil(
         (async () => {
           try {
+            const { redis } = await import("@/lib/redis");
+            const debounceKey = `babysit-tick-debounce:${loop.id}`;
+            const acquired = await redis.set(debounceKey, "1", {
+              nx: true,
+              ex: 30,
+            });
+            if (!acquired) return;
+
             const { getActiveWorkflowForThread } = await import(
               "@terragon/shared/delivery-loop/store/workflow-store"
             );

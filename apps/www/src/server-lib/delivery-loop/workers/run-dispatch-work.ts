@@ -251,28 +251,36 @@ export async function runDispatchWork(params: {
       );
     }
 
-    // Only start ack timeout if a run was actually launched AND this worker
-    // created the intent. When reusing an existing intent, the original
-    // attempt's ack timeout is already tracking its runId — arming a new
-    // timeout with our fresh runId would create phantom timeouts.
+    // Arm ack watchdog whenever a run was actually launched. When reusing
+    // an existing intent, read its runId so the timeout tracks the right run.
     if (followUpProcessed) {
-      if (!intentAlreadyActive) {
+      let ackRunId: string = runId;
+      if (intentAlreadyActive) {
         try {
-          await startAckTimeout({
-            db: params.db,
-            runId,
-            loopId: loop.id,
-            threadChatId: threadChat.id,
-          });
-        } catch (ackErr) {
-          console.warn(
-            "[dispatch-worker] startAckTimeout failed, run may lack watchdog",
-            {
-              runId,
-              error: ackErr instanceof Error ? ackErr.message : String(ackErr),
-            },
+          const { getActiveDispatchIntent } = await import(
+            "../dispatch-intent"
           );
+          const activeIntent = await getActiveDispatchIntent(threadChat.id);
+          if (activeIntent) ackRunId = activeIntent.runId;
+        } catch {
+          // Fall through — arm with our runId as best-effort
         }
+      }
+      try {
+        await startAckTimeout({
+          db: params.db,
+          runId: ackRunId,
+          loopId: loop.id,
+          threadChatId: threadChat.id,
+        });
+      } catch (ackErr) {
+        console.warn(
+          "[dispatch-worker] startAckTimeout failed, run may lack watchdog",
+          {
+            runId: ackRunId,
+            error: ackErr instanceof Error ? ackErr.message : String(ackErr),
+          },
+        );
       }
 
       // 7. Complete work item — dispatch worker's job is done; the follow-up

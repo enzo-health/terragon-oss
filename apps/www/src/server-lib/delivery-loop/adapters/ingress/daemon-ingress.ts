@@ -151,12 +151,10 @@ export async function handleDaemonIngress(params: {
       });
 
       if (tickResult.transitioned && tickResult.workItemsScheduled > 0) {
-        return {
-          selfDispatch: {
-            workflowId,
-            correlationId: tickResult.correlationId,
-          },
-        };
+        // TODO: construct a real SdlcSelfDispatchPayload from the
+        // prepared dispatch/replay state. For now, return null — the
+        // cron/work-queue path handles dispatch instead.
+        return { selfDispatch: null };
       }
     } catch (err) {
       // Self-dispatch is best-effort; the async coordinator will pick it up
