@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte, or, sql } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
@@ -36,36 +36,51 @@ export async function claimNextWorkItem(params: {
   const now = params.now ?? new Date();
   const staleThreshold = new Date(now.getTime() - WORK_ITEM_CLAIM_TTL_MS);
 
-  // Atomic UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)
-  // eliminates the TOCTOU race between SELECT and UPDATE.
   const t = schema.deliveryWorkItem;
 
-  const pendingCond = params.kind
-    ? sql`(${t.status} = 'pending' AND ${t.scheduledAt} <= ${now} AND ${t.kind} = ${params.kind})`
-    : sql`(${t.status} = 'pending' AND ${t.scheduledAt} <= ${now})`;
+  // Build conditions for pending and stale-claimed items
+  const pendingCond = [
+    eq(t.status, "pending"),
+    lte(t.scheduledAt, now),
+    ...(params.kind ? [eq(t.kind, params.kind)] : []),
+  ];
+  const staleCond = [
+    eq(t.status, "claimed"),
+    lte(t.claimedAt, staleThreshold),
+    ...(params.kind ? [eq(t.kind, params.kind)] : []),
+  ];
 
-  const staleCond = params.kind
-    ? sql`(${t.status} = 'claimed' AND ${t.claimedAt} <= ${staleThreshold} AND ${t.kind} = ${params.kind})`
-    : sql`(${t.status} = 'claimed' AND ${t.claimedAt} <= ${staleThreshold})`;
+  // SELECT ... FOR UPDATE SKIP LOCKED prevents concurrent workers from
+  // claiming the same row. The row-level lock is held until commit.
+  const [item] = await params.db
+    .select({ id: t.id })
+    .from(t)
+    .where(or(and(...pendingCond), and(...staleCond)))
+    .orderBy(
+      sql`CASE WHEN ${t.status} = 'pending' THEN 0 ELSE 1 END`,
+      t.scheduledAt,
+    )
+    .limit(1)
+    .for("update", { skipLocked: true });
+
+  if (!item) return null;
 
   const [claimed] = await params.db
-    .update(schema.deliveryWorkItem)
+    .update(t)
     .set({
       status: "claimed",
       claimedAt: now,
       claimToken: params.claimToken,
-      attemptCount: sql`${schema.deliveryWorkItem.attemptCount} + 1`,
+      attemptCount: sql`${t.attemptCount} + 1`,
     })
     .where(
-      sql`${t.id} = (
-        SELECT ${t.id} FROM ${t}
-        WHERE ${pendingCond} OR ${staleCond}
-        ORDER BY
-          CASE WHEN ${t.status} = 'pending' THEN 0 ELSE 1 END,
-          ${t.scheduledAt} ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )`,
+      and(
+        eq(t.id, item.id),
+        or(
+          eq(t.status, "pending"),
+          and(eq(t.status, "claimed"), lte(t.claimedAt, staleThreshold)),
+        ),
+      ),
     )
     .returning();
 
