@@ -5,6 +5,7 @@ import {
   getLatestAcceptedArtifact,
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { SdlcPlanTaskCompletionEvidence } from "@terragon/shared/db/types";
 
 export async function POST(request: Request) {
@@ -37,22 +38,32 @@ export async function POST(request: Request) {
     );
   }
 
-  const enrolledLoop = await getActiveSdlcLoopForThread({
-    db,
-    userId: authContext.userId,
-    threadId,
-  });
+  // ── V2 fast-path: prefer delivery_workflow ──
+  let loopId: string | null = null;
+  const v2Row = await getActiveWorkflowForThread({ db, threadId });
+  if (v2Row?.sdlcLoopId) {
+    loopId = v2Row.sdlcLoopId;
+  }
 
-  if (!enrolledLoop) {
-    return Response.json(
-      { success: false, error: "no_active_loop" },
-      { status: 404 },
-    );
+  // ── V1 fallback ──
+  if (!loopId) {
+    const enrolledLoop = await getActiveSdlcLoopForThread({
+      db,
+      userId: authContext.userId,
+      threadId,
+    });
+    if (!enrolledLoop) {
+      return Response.json(
+        { success: false, error: "no_active_loop" },
+        { status: 404 },
+      );
+    }
+    loopId = enrolledLoop.id;
   }
 
   const acceptedPlanArtifact = await getLatestAcceptedArtifact({
     db,
-    loopId: enrolledLoop.id,
+    loopId,
     phase: "planning",
     includeApprovedForPlanning: true,
   });
@@ -66,7 +77,7 @@ export async function POST(request: Request) {
 
   const result = await markPlanTasksCompletedByAgent({
     db,
-    loopId: enrolledLoop.id,
+    loopId,
     artifactId: acceptedPlanArtifact.id,
     completions: completedTasks.map((t) => ({
       stableTaskId: t.stableTaskId,

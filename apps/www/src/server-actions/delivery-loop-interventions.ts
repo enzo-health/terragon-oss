@@ -12,6 +12,11 @@ import {
   getActiveSdlcLoopForThread,
   resolveBlockedResumeTarget,
 } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
+import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
+import type { CorrelationId } from "@terragon/shared/delivery-loop/domain/workflow";
 import { type DB } from "@terragon/shared/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 
@@ -119,6 +124,69 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       threadChatId,
     }: { threadId: string; threadChatId: string | null },
   ) {
+    // ── V2 fast-path: route as a v2 human signal ──
+    const v2Row = await getActiveWorkflowForThread({ db, threadId });
+    if (v2Row && v2Row.sdlcLoopId) {
+      const blockedKinds = new Set([
+        "awaiting_plan_approval",
+        "awaiting_manual_fix",
+        "awaiting_operator_action",
+      ]);
+      if (!blockedKinds.has(v2Row.kind)) {
+        throw new UserFacingError(
+          "Delivery Loop is not blocked on human feedback",
+        );
+      }
+      await handleHumanAction({
+        db,
+        action: "resume",
+        actorUserId: userId,
+        workflowId: v2Row.id as WorkflowId,
+        inboxPartitionKey: v2Row.sdlcLoopId,
+        wakeCoordinator: async (wfId) => {
+          await runCoordinatorTick({
+            db,
+            workflowId: wfId,
+            correlationId:
+              `human-resume:${wfId}:${Date.now()}` as CorrelationId,
+            loopId: v2Row.sdlcLoopId!,
+          });
+        },
+      });
+
+      // Also transition v1 loop for compat (best-effort)
+      try {
+        await db.transaction(async (tx) => {
+          await transitionBlockedLoopToResumeTarget({
+            tx,
+            loopId: v2Row.sdlcLoopId!,
+          });
+        });
+      } catch {
+        // v1 loop may not be in blocked state; non-fatal
+      }
+
+      if (threadChatId) {
+        try {
+          await queueFollowUpInternal({
+            userId,
+            threadId,
+            threadChatId,
+            source: "www",
+            appendOrReplace: "append",
+            messages: [buildResumeFollowUpMessage("implementing")],
+          });
+        } catch (error) {
+          console.warn(
+            "[delivery-loop-interventions] failed to enqueue resume follow-up",
+            { threadId, error },
+          );
+        }
+      }
+      return;
+    }
+
+    // ── V1 fallback ──
     const activeLoop = await getActiveSdlcLoopForThread({
       db,
       userId,
@@ -192,6 +260,69 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
       threadChatId,
     }: { threadId: string; threadChatId: string | null },
   ) {
+    // ── V2 fast-path: route as a v2 human bypass signal ──
+    const v2Row = await getActiveWorkflowForThread({ db, threadId });
+    if (v2Row && v2Row.sdlcLoopId) {
+      const bypassableKinds = new Set([
+        "implementing",
+        "gating",
+        "awaiting_manual_fix",
+        "awaiting_operator_action",
+      ]);
+      if (!bypassableKinds.has(v2Row.kind)) {
+        throw new UserFacingError(
+          "Delivery Loop bypass is only available while implementing or blocked",
+        );
+      }
+
+      // Determine gate target from v2 state
+      const stateJson = v2Row.stateJson as Record<string, unknown> | null;
+      const gate =
+        v2Row.kind === "gating" && stateJson
+          ? (((stateJson as { gate?: { kind?: string } }).gate?.kind as
+              | import("@terragon/shared/delivery-loop/domain/workflow").GateKind
+              | undefined) ?? "ci")
+          : "ci";
+
+      await handleHumanAction({
+        db,
+        action: "bypass",
+        actorUserId: userId,
+        workflowId: v2Row.id as WorkflowId,
+        inboxPartitionKey: v2Row.sdlcLoopId,
+        gate,
+        wakeCoordinator: async (wfId) => {
+          await runCoordinatorTick({
+            db,
+            workflowId: wfId,
+            correlationId:
+              `human-bypass:${wfId}:${Date.now()}` as CorrelationId,
+            loopId: v2Row.sdlcLoopId!,
+          });
+        },
+      });
+
+      if (threadChatId) {
+        try {
+          await queueFollowUpInternal({
+            userId,
+            threadId,
+            threadChatId,
+            source: "www",
+            appendOrReplace: "append",
+            messages: [buildBypassFollowUpMessage()],
+          });
+        } catch (error) {
+          console.warn(
+            "[delivery-loop-interventions] failed to enqueue bypass follow-up",
+            { threadId, error },
+          );
+        }
+      }
+      return;
+    }
+
+    // ── V1 fallback ──
     const activeLoop = await getActiveSdlcLoopForThread({
       db,
       userId,

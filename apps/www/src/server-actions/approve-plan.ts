@@ -7,6 +7,7 @@ import { getThreadChat } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
@@ -32,20 +33,59 @@ export const approvePlan = userOnlyAction(
     if (!threadChat) {
       throw new UserFacingError("Task not found");
     }
-    const activeLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId,
-      threadId,
-    });
-    if (!activeLoop) {
-      throw new UserFacingError(
-        "No active Delivery Loop found for this thread",
-      );
-    }
-    if (activeLoop.state !== "planning") {
-      throw new UserFacingError(
-        "Plan can only be approved while the Delivery Loop is in planning phase",
-      );
+
+    // ── V2 fast-path: prefer delivery_workflow ──
+    const v2Row = await getActiveWorkflowForThread({ db, threadId });
+    let loopId: string;
+    let loopVersion: number;
+    let planApprovalPolicy: "auto" | "human_required";
+
+    if (v2Row && v2Row.sdlcLoopId) {
+      // Validate v2 state — plan approval only valid in planning or awaiting_plan_approval
+      if (
+        v2Row.kind !== "planning" &&
+        v2Row.kind !== "awaiting_plan_approval"
+      ) {
+        throw new UserFacingError(
+          "Plan can only be approved while the Delivery Loop is in planning phase",
+        );
+      }
+      // Fetch the associated v1 loop for artifact operations
+      const { eq } = await import("drizzle-orm");
+      const sdlcLoopSchema = await import("@terragon/shared/db/schema");
+      const loop = await db.query.sdlcLoop.findFirst({
+        where: eq(sdlcLoopSchema.sdlcLoop.id, v2Row.sdlcLoopId),
+      });
+      if (!loop) {
+        throw new UserFacingError(
+          "No active Delivery Loop found for this thread",
+        );
+      }
+      loopId = loop.id;
+      loopVersion = loop.loopVersion;
+      planApprovalPolicy = v2Row.planApprovalPolicy as
+        | "auto"
+        | "human_required";
+    } else {
+      // ── V1 fallback ──
+      const activeLoop = await getActiveSdlcLoopForThread({
+        db,
+        userId,
+        threadId,
+      });
+      if (!activeLoop) {
+        throw new UserFacingError(
+          "No active Delivery Loop found for this thread",
+        );
+      }
+      if (activeLoop.state !== "planning") {
+        throw new UserFacingError(
+          "Plan can only be approved while the Delivery Loop is in planning phase",
+        );
+      }
+      loopId = activeLoop.id;
+      loopVersion = activeLoop.loopVersion;
+      planApprovalPolicy = activeLoop.planApprovalPolicy;
     }
 
     const extracted = extractLatestPlanText(threadChat.messages ?? []);
@@ -70,9 +110,9 @@ export const approvePlan = userOnlyAction(
     const promotionResult = await promotePlanToImplementing({
       db,
       loop: {
-        id: activeLoop.id,
-        loopVersion: activeLoop.loopVersion,
-        planApprovalPolicy: activeLoop.planApprovalPolicy,
+        id: loopId,
+        loopVersion,
+        planApprovalPolicy,
       },
       parsedPlan,
       mode: "approve",
