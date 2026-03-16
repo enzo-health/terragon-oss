@@ -52,13 +52,11 @@ function reduceDaemonSignal(
   switch (event.kind) {
     case "run_completed":
       if (workflow.kind === "planning") {
-        // Planning completion: the daemon finished extracting a plan.
-        // Emit plan_completed so the coordinator can advance to
-        // awaiting_plan_approval or implementing.
-        return {
-          event: "plan_completed",
-          context: { headSha: event.result.headSha },
-        };
+        // Planning run finished — do NOT emit plan_completed here.
+        // The v1 checkpoint pipeline validates the plan, creates the
+        // artifact, and bridges to v2 via plan_approved signal.
+        // Emitting plan_completed here would race ahead of artifact creation.
+        return null;
       }
       if (workflow.kind === "implementing") {
         if (event.result.kind === "partial") {
