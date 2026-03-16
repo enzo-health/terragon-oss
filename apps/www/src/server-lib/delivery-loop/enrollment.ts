@@ -70,12 +70,12 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   repoFullName,
   threadId,
   planApprovalPolicy,
-  initialState,
 }: {
   userId: string;
   repoFullName: string;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  /** @deprecated v2 always starts in planning — this is only used by the v1 fallback path */
   initialState?: "planning" | "implementing";
 }) {
   // V2-native enrollment is the primary path: creates v2 workflow directly
@@ -108,7 +108,7 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
     );
     return null;
   } catch (err) {
-    console.warn(
+    console.error(
       "[delivery-loop enrollment] v2-native enrollment failed, falling back to v1 bridge",
       {
         threadId,
@@ -146,22 +146,64 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   prNumber,
   threadId,
   planApprovalPolicy,
-  initialState,
 }: {
   userId: string;
   repoFullName: string;
   prNumber: number;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
-  initialState?: "planning" | "implementing";
 }) {
+  // V2-native enrollment is the primary path (same as thread enrollment)
+  try {
+    await enrollV2Workflow({
+      db,
+      threadId,
+      userId,
+      repoFullName,
+      planApprovalPolicy,
+    });
+
+    // Link PR to the sdlcLoop compat shim created by enrollV2Workflow
+    await linkSdlcLoopToGithubPRForThread({
+      db,
+      userId,
+      repoFullName,
+      threadId,
+      prNumber,
+    });
+
+    const activeLoop = await getPreferredActiveSdlcLoopForGithubPRAndUser({
+      db,
+      userId,
+      repoFullName,
+      prNumber,
+    });
+    if (activeLoop) {
+      return activeLoop;
+    }
+
+    console.warn(
+      "[delivery-loop enrollment] v2 PR enrollment succeeded but no active loop found",
+      { threadId, userId, repoFullName, prNumber },
+    );
+    return null;
+  } catch (err) {
+    console.error(
+      "[delivery-loop enrollment] v2-native PR enrollment failed, falling back to v1 bridge",
+      {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+  }
+
+  // Fallback: v1 enrollment with v2 bridge
   const enrolled = await enrollSdlcLoopForThread({
     db,
     userId,
     repoFullName,
     threadId,
     planApprovalPolicy,
-    initialState,
   });
   const linked = await linkSdlcLoopToGithubPRForThread({
     db,
