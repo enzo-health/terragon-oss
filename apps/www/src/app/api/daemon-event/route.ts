@@ -1394,43 +1394,17 @@ export async function POST(request: Request) {
     }
   }
 
-  // Signal commit and dispatch status persistence are independent — run
-  // them concurrently. The dispatch status is best-effort (errors are
-  // warnings), while the signal commit is required before the inbox tick.
+  // Commit the signal claim first. Dispatch status persistence is deferred
+  // until after the coordinator tick succeeds — if the tick fails and we
+  // return 500, the run must stay non-terminal so the daemon retry
+  // re-enters the main processing path (not the terminal short-circuit).
   if (enrolledLoop && envelopeV2) {
-    const dispatchStatusPromise =
-      daemonRunStatusFromMessages !== "processing"
-        ? persistDaemonTerminalDispatchStatus({
-            loopId: enrolledLoop.id,
-            threadChatId,
-            runId: envelopeV2.runId,
-            daemonRunStatus: daemonRunStatusFromMessages,
-            daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-            daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-          }).catch((error) => {
-            console.warn(
-              "[delivery-loop] failed to persist terminal dispatch intent status",
-              {
-                loopId: enrolledLoop.id,
-                threadId,
-                threadChatId,
-                runId: envelopeV2.runId,
-                daemonRunStatus: daemonRunStatusFromMessages,
-                error,
-              },
-            );
-          })
-        : null;
-
     if (claimedSignalInboxId) {
-      const [commitResult] = await Promise.all([
-        commitEnrolledLoopDaemonEventClaim({
-          signalInboxId: claimedSignalInboxId,
-          loopId: enrolledLoop.id,
-          eventId: envelopeV2.eventId,
-        }),
-        dispatchStatusPromise,
-      ]);
+      const commitResult = await commitEnrolledLoopDaemonEventClaim({
+        signalInboxId: claimedSignalInboxId,
+        loopId: enrolledLoop.id,
+        eventId: envelopeV2.eventId,
+      });
       if (!commitResult.committed) {
         console.error(
           "[sdlc-loop] failed to mark daemon signal claim as committed",
@@ -1461,8 +1435,6 @@ export async function POST(request: Request) {
           },
         );
       }
-    } else if (dispatchStatusPromise) {
-      await dispatchStatusPromise;
     }
   }
 
@@ -1543,6 +1515,37 @@ export async function POST(request: Request) {
         },
       );
     }
+  }
+
+  // Persist terminal dispatch status AFTER the coordinator tick succeeded.
+  // This is intentionally deferred: if the tick failed and returned 500,
+  // the run must stay non-terminal so the daemon retry re-enters the
+  // main processing path instead of hitting the terminal short-circuit.
+  if (
+    enrolledLoop &&
+    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    persistDaemonTerminalDispatchStatus({
+      loopId: enrolledLoop.id,
+      threadChatId,
+      runId: envelopeV2.runId,
+      daemonRunStatus: daemonRunStatusFromMessages,
+      daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+      daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+    }).catch((error) => {
+      console.warn(
+        "[delivery-loop] failed to persist terminal dispatch intent status",
+        {
+          loopId: enrolledLoop.id,
+          threadId,
+          threadChatId,
+          runId: envelopeV2.runId,
+          daemonRunStatus: daemonRunStatusFromMessages,
+          error,
+        },
+      );
+    });
   }
 
   return jsonTerminalAckResponse(

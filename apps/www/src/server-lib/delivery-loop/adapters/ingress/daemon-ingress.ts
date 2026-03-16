@@ -108,10 +108,15 @@ function isEligibleForSelfDispatch(signal: DeliverySignal): boolean {
 export async function handleDaemonIngress(params: {
   db: DB;
   rawEvent: DaemonEventPayload;
+  /** The v2 workflow ID — distinct from rawEvent.loopId (v1 sdlcLoop ID). */
+  workflowId: WorkflowId;
   consecutiveDispatches?: number;
 }): Promise<DaemonEventResponse> {
   const signal = normalizeDaemonEvent(params.rawEvent);
-  const workflowId = params.rawEvent.loopId as WorkflowId;
+  const { workflowId } = params;
+  // The signal inbox is keyed by v1 loopId for backwards compatibility
+  // with the shared sdlcLoopSignalInbox table.
+  const inboxPartitionKey = params.rawEvent.loopId;
   const consecutiveDispatches = params.consecutiveDispatches ?? 0;
 
   // Append signal to inbox via v2 store
@@ -119,14 +124,11 @@ export async function handleDaemonIngress(params: {
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
   );
 
-  // The signal-inbox-store re-exports from signal-inbox-core which uses
-  // the existing sdlcLoopSignalInbox table. For v2, we serialize the
-  // DeliverySignal directly into the payload column.
   const causeType = mapSignalToCauseType(signal);
 
   await appendSignalToInbox({
     db: params.db,
-    loopId: workflowId,
+    loopId: inboxPartitionKey,
     causeType,
     payload: signal as Record<string, unknown>,
     canonicalCauseId: `daemon:${params.rawEvent.runId}:${params.rawEvent.status}`,
@@ -145,6 +147,7 @@ export async function handleDaemonIngress(params: {
         workflowId,
         correlationId:
           `self-dispatch:${params.rawEvent.runId}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
+        loopId: inboxPartitionKey,
       });
 
       if (tickResult.transitioned && tickResult.workItemsScheduled > 0) {

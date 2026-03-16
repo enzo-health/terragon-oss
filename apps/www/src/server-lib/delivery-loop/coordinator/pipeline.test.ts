@@ -107,6 +107,8 @@ async function injectDaemonEvent(
   return handleDaemonIngress({
     db,
     rawEvent: { ...payload, loopId: workflowId, threadId: testThreadId },
+    workflowId:
+      workflowId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
   });
 }
 
@@ -728,6 +730,8 @@ describe("v2 pipeline — end-to-end validation", () => {
           headSha: "sha-sd",
           summary: "done",
         },
+        workflowId:
+          workflowId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
         consecutiveDispatches: 0,
       });
 
@@ -748,6 +752,8 @@ describe("v2 pipeline — end-to-end validation", () => {
           status: "completed",
           headSha: "sha-cb",
         },
+        workflowId:
+          workflowId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
         consecutiveDispatches: 7, // at the MAX_CONSECUTIVE_SELF_DISPATCHES limit
       });
 
@@ -767,6 +773,8 @@ describe("v2 pipeline — end-to-end validation", () => {
           exitCode: 1,
           errorMessage: "crash",
         },
+        workflowId:
+          workflowId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
       });
 
       expect(response.selfDispatch).toBeNull();

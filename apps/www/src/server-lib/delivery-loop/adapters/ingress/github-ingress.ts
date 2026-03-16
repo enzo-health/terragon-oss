@@ -22,8 +22,10 @@ export type GitHubWebhookPayload = {
   unresolvedThreadCount?: number;
   approvalCount?: number;
   requiredApprovals?: number;
-  // Review identity
+  // Per-event identity for deduplication
   reviewId?: string;
+  checkRunId?: string;
+  commentId?: string;
   // Sync signals
   headSha?: string;
   // Merge signals
@@ -55,12 +57,32 @@ export function normalizeGitHubWebhook(
       };
     }
 
-    case "pull_request_review":
-    case "pull_request_review_thread": {
+    case "pull_request_review": {
       const result: ReviewEvaluation = {
         passed:
           raw.reviewState === "approved" &&
           (raw.unresolvedThreadCount ?? 0) === 0,
+        unresolvedThreadCount: raw.unresolvedThreadCount ?? 0,
+        approvalCount: raw.approvalCount ?? 0,
+        requiredApprovals: raw.requiredApprovals ?? 1,
+      };
+      return {
+        source: "github",
+        event: {
+          kind: "review_changed",
+          prNumber: raw.prNumber,
+          result,
+        },
+      };
+    }
+
+    case "pull_request_review_thread": {
+      // Thread events don't carry reviewState, so derive pass/fail from
+      // thread resolution and approval counts alone.
+      const result: ReviewEvaluation = {
+        passed:
+          (raw.unresolvedThreadCount ?? 0) === 0 &&
+          (raw.approvalCount ?? 0) >= (raw.requiredApprovals ?? 1),
         unresolvedThreadCount: raw.unresolvedThreadCount ?? 0,
         approvalCount: raw.approvalCount ?? 0,
         requiredApprovals: raw.requiredApprovals ?? 1,
@@ -138,7 +160,7 @@ export async function handleGitHubWebhook(params: {
     loopId: workflowId,
     causeType,
     payload: signal as Record<string, unknown>,
-    canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkSuiteId ?? params.rawEvent.reviewId ?? params.rawEvent.headSha ?? "no-id"}`,
+    canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkRunId ?? params.rawEvent.checkSuiteId ?? params.rawEvent.reviewId ?? params.rawEvent.commentId ?? params.rawEvent.headSha ?? "no-id"}`,
   });
 
   // Wake coordinator asynchronously
