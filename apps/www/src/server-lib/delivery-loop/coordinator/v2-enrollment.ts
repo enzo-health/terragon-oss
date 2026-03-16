@@ -106,6 +106,23 @@ export async function enrollV2Workflow(params: {
         });
         winnerLoopId = activeLoop?.id ?? "";
       }
+
+      // Terminate the orphan sdlcLoop created by this (losing) caller
+      try {
+        await params.db
+          .update(schema.sdlcLoop)
+          .set({ state: "stopped", updatedAt: new Date() })
+          .where(eq(schema.sdlcLoop.id, sdlcLoop.id));
+      } catch (cleanupErr) {
+        console.warn("[v2-enrollment] failed to cleanup orphan sdlcLoop", {
+          orphanLoopId: sdlcLoop.id,
+          error:
+            cleanupErr instanceof Error
+              ? cleanupErr.message
+              : String(cleanupErr),
+        });
+      }
+
       return {
         workflowId: raceWinner.id,
         sdlcLoopId: winnerLoopId,
