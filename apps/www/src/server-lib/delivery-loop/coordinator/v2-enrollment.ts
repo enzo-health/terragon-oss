@@ -5,7 +5,7 @@
  *
  * Idempotent: if a workflow already exists for the thread, returns it.
  */
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
@@ -13,7 +13,10 @@ import {
   createWorkflow,
   getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { enrollSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import {
+  activeSdlcLoopStateList,
+  enrollSdlcLoopForThread,
+} from "@terragon/shared/model/delivery-loop";
 
 // ---------------------------------------------------------------------------
 // V2-native enrollment
@@ -85,9 +88,27 @@ export async function enrollV2Workflow(params: {
       threadId: params.threadId,
     });
     if (raceWinner) {
+      let winnerLoopId = raceWinner.sdlcLoopId;
+      if (!winnerLoopId) {
+        // Winner's sdlcLoopId is null — re-query for the active sdlcLoop
+        // linked to this thread instead of returning the loser's orphan id
+        console.warn(
+          `[v2-enrollment] race winner workflow ${raceWinner.id} has null sdlcLoopId; ` +
+            `loser's orphan sdlcLoop ${sdlcLoop.id} will NOT be returned. Re-querying.`,
+        );
+        const activeLoop = await params.db.query.sdlcLoop.findFirst({
+          where: and(
+            eq(schema.sdlcLoop.threadId, params.threadId),
+            inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
+          ),
+          orderBy: [desc(schema.sdlcLoop.updatedAt)],
+          columns: { id: true },
+        });
+        winnerLoopId = activeLoop?.id ?? "";
+      }
       return {
         workflowId: raceWinner.id,
-        sdlcLoopId: raceWinner.sdlcLoopId ?? sdlcLoop.id,
+        sdlcLoopId: winnerLoopId,
       };
     }
     throw err;
