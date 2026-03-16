@@ -89,6 +89,29 @@ function defaultQueuedDispatch(wf: DeliveryWorkflow): DispatchSubState {
   };
 }
 
+/**
+ * Shared helper: re-enter implementing for a fix attempt.
+ * Increments fixAttemptCount, preserves planVersion when available
+ * on the source state (implementing carries it; gating/babysitting don't).
+ */
+function retryToImplementing(
+  wf: DeliveryWorkflow,
+  now: Date,
+): DeliveryWorkflow {
+  const base = bump(wf, now);
+  const planVersion =
+    "planVersion" in wf && wf.planVersion != null
+      ? wf.planVersion
+      : (1 as PlanVersion);
+  return {
+    ...base,
+    fixAttemptCount: wf.fixAttemptCount + 1,
+    kind: "implementing",
+    planVersion,
+    dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Resumable state helpers
 // ---------------------------------------------------------------------------
@@ -272,16 +295,7 @@ function reduceImplementing(
   }
 
   if (event === "gate_blocked") {
-    // Transient failure (daemon crash, timeout, partial) — bump fix attempt
-    // and re-enter implementing with a fresh dispatch for retry.
-    const base = bump(wf, now);
-    return {
-      ...base,
-      fixAttemptCount: wf.fixAttemptCount + 1,
-      kind: "implementing",
-      planVersion: wf.planVersion,
-      dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
-    };
+    return retryToImplementing(wf, now);
   }
 
   return null;
@@ -324,15 +338,7 @@ function reduceGating(
   }
 
   if (event === "gate_blocked") {
-    // Gate blocked -> back to implementing for fix attempt
-    const base = bump(wf, now);
-    return {
-      ...base,
-      fixAttemptCount: wf.fixAttemptCount + 1,
-      kind: "implementing",
-      planVersion: 1 as PlanVersion,
-      dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
-    };
+    return retryToImplementing(wf, now);
   }
 
   return null;
@@ -379,15 +385,7 @@ function reduceBabysitting(
     };
   }
   if (event === "babysit_blocked") {
-    // Back to implementing for fix attempt
-    const base = bump(wf, now);
-    return {
-      ...base,
-      fixAttemptCount: wf.fixAttemptCount + 1,
-      kind: "implementing",
-      planVersion: 1 as PlanVersion,
-      dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
-    };
+    return retryToImplementing(wf, now);
   }
   if (event === "mark_done") {
     return {

@@ -4,6 +4,9 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { appendSignalToInbox } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
+import { evaluateBabysitCompletionForHead } from "@terragon/shared/model/signal-inbox-core";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 
@@ -31,9 +34,6 @@ export async function runBabysitWork(params: {
     const workflowId = params.payload.workflowId as WorkflowId;
 
     // 1. Load workflow
-    const { getWorkflow } = await import(
-      "@terragon/shared/delivery-loop/store/workflow-store"
-    );
     const workflow = await getWorkflow({ db: params.db, workflowId });
     if (!workflow) {
       console.warn(
@@ -108,9 +108,6 @@ export async function runBabysitWork(params: {
         loopId = loop?.id ?? params.payload.workflowId;
       }
 
-      const { evaluateBabysitCompletionForHead } = await import(
-        "@terragon/shared/model/signal-inbox-core"
-      );
       const babysitResult = await evaluateBabysitCompletionForHead({
         db: params.db,
         loopId,
@@ -120,9 +117,6 @@ export async function runBabysitWork(params: {
       if (babysitResult.allRequiredGatesPassed) {
         // Append a babysit_recheck_passed signal so reduceBabysitSignal
         // transitions the babysitting workflow to babysit_passed.
-        const { appendSignalToInbox } = await import(
-          "@terragon/shared/delivery-loop/store/signal-inbox-store"
-        );
         await appendSignalToInbox({
           db: params.db,
           loopId,

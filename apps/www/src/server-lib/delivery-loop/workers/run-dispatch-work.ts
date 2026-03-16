@@ -4,6 +4,7 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import { randomUUID } from "node:crypto";
@@ -56,9 +57,6 @@ export async function runDispatchWork(params: {
 }): Promise<void> {
   try {
     // 1. Load workflow from workflow-store
-    const { getWorkflow } = await import(
-      "@terragon/shared/delivery-loop/store/workflow-store"
-    );
     const workflow = await getWorkflow({
       db: params.db,
       workflowId: params.payload.workflowId,
@@ -74,18 +72,25 @@ export async function runDispatchWork(params: {
       return;
     }
 
-    // 2. Resolve loop — prefer payload.loopId, fall back to threadId lookup
-    let loop;
-    if (params.payload.loopId) {
-      loop = await params.db.query.sdlcLoop.findFirst({
-        where: eq(schema.sdlcLoop.id, params.payload.loopId),
-      });
-    } else {
-      loop = await params.db.query.sdlcLoop.findFirst({
-        where: eq(schema.sdlcLoop.threadId, workflow.threadId),
-        orderBy: [desc(schema.sdlcLoop.createdAt)],
-      });
-    }
+    // 2 & 3. Resolve loop + threadChat in parallel (both depend on threadId only)
+    const [loop, threadChat] = await Promise.all([
+      params.payload.loopId
+        ? params.db.query.sdlcLoop.findFirst({
+            where: eq(schema.sdlcLoop.id, params.payload.loopId),
+          })
+        : params.db.query.sdlcLoop.findFirst({
+            where: eq(schema.sdlcLoop.threadId, workflow.threadId),
+            orderBy: [desc(schema.sdlcLoop.createdAt)],
+          }),
+      params.payload.threadChatId
+        ? params.db.query.threadChat.findFirst({
+            where: eq(schema.threadChat.id, params.payload.threadChatId),
+          })
+        : params.db.query.threadChat.findFirst({
+            where: eq(schema.threadChat.threadId, workflow.threadId),
+            orderBy: [desc(schema.threadChat.createdAt)],
+          }),
+    ]);
     if (!loop) {
       await failWorkItem({
         db: params.db,
@@ -95,19 +100,6 @@ export async function runDispatchWork(params: {
         errorMessage: `No sdlcLoop found for threadId ${workflow.threadId}`,
       });
       return;
-    }
-
-    // 3. Resolve threadChat — prefer payload.threadChatId, fall back to latest
-    let threadChat;
-    if (params.payload.threadChatId) {
-      threadChat = await params.db.query.threadChat.findFirst({
-        where: eq(schema.threadChat.id, params.payload.threadChatId),
-      });
-    } else {
-      threadChat = await params.db.query.threadChat.findFirst({
-        where: eq(schema.threadChat.threadId, workflow.threadId),
-        orderBy: [desc(schema.threadChat.createdAt)],
-      });
     }
     if (!threadChat) {
       await failWorkItem({
@@ -171,16 +163,10 @@ export async function runDispatchWork(params: {
         threadId: workflow.threadId,
         threadChatId: threadChat.id,
         runId,
-        targetPhase: targetPhase as Parameters<
-          typeof createDbDispatchIntent
-        >[1]["targetPhase"],
+        targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
         selectedAgent: "claudeCode",
-        executionClass: params.payload.executionClass as Parameters<
-          typeof createDbDispatchIntent
-        >[1]["executionClass"],
-        dispatchMechanism: "self_dispatch" as Parameters<
-          typeof createDbDispatchIntent
-        >[1]["dispatchMechanism"],
+        executionClass: params.payload.executionClass,
+        dispatchMechanism: "self_dispatch",
       });
       await markDispatchIntentDispatched(params.db, runId);
     } catch (dbIntentErr) {

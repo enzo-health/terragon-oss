@@ -226,53 +226,61 @@ export async function runCoordinatorTick(params: {
     workItemsScheduled += scheduledItems.length;
   }
 
-  // 5. Evaluate incident conditions
+  // 5. Evaluate incident conditions (skip expensive incident queries on noop ticks)
   let incidentsEvaluated = false;
-  const phaseDurationMs = now.getTime() - workflow.updatedAt.getTime();
-  const openIncidents = await getOpenIncidents({ db, workflowId });
+  let openIncidents: Awaited<ReturnType<typeof getOpenIncidents>> = [];
+  let incidentCheck: ReturnType<typeof shouldOpenIncident> = null;
 
-  const incidentCheck = shouldOpenIncident({
-    workflow,
-    phaseDurationMs,
-    fixAttemptCount: workflow.fixAttemptCount,
-    maxFixAttempts: workflow.maxFixAttempts,
-    unprocessedSignalCount: 0, // post-processing, signals are drained
-    dlqSignalCount: 0,
-  });
+  if (signalsProcessed > 0 || transitioned) {
+    const phaseDurationMs = now.getTime() - workflow.updatedAt.getTime();
+    openIncidents = await getOpenIncidents({ db, workflowId });
 
-  if (incidentCheck) {
-    const alreadyOpen = openIncidents.some(
-      (i) => i.incidentType === incidentCheck.incidentType,
-    );
-    if (!alreadyOpen) {
-      await openIncident({
-        db,
-        workflowId,
-        incidentType: incidentCheck.incidentType,
-        severity: incidentCheck.severity,
-        detail: incidentCheck.detail,
-        now,
-      });
+    incidentCheck = shouldOpenIncident({
+      workflow,
+      phaseDurationMs,
+      fixAttemptCount: workflow.fixAttemptCount,
+      maxFixAttempts: workflow.maxFixAttempts,
+      unprocessedSignalCount: 0, // post-processing, signals are drained
+      dlqSignalCount: 0,
+    });
+
+    if (incidentCheck) {
+      const alreadyOpen = openIncidents.some(
+        (i) => i.incidentType === incidentCheck!.incidentType,
+      );
+      if (!alreadyOpen) {
+        await openIncident({
+          db,
+          workflowId,
+          incidentType: incidentCheck.incidentType,
+          severity: incidentCheck.severity,
+          detail: incidentCheck.detail,
+          now,
+        });
+      }
+      incidentsEvaluated = true;
     }
-    incidentsEvaluated = true;
   }
 
-  // Update runtime health after incident evaluation
-  const health = deriveHealth({
-    workflow,
-    oldestUnprocessedSignalAge: 0,
-    openIncidents: openIncidents.map((i) => ({
-      id: i.id,
-      workflowId: workflowId,
-      incidentType: i.incidentType,
-      severity: i.severity as "warning" | "critical",
-      status: i.status as "open" | "acknowledged" | "resolved",
-      detail: i.detail ?? "",
-      openedAt: i.openedAt ?? now,
-      resolvedAt: i.resolvedAt ?? null,
-    })),
-    now,
-  });
+  // Update runtime status (always — tests and dashboards expect it)
+  const health =
+    signalsProcessed > 0 || transitioned
+      ? deriveHealth({
+          workflow,
+          oldestUnprocessedSignalAge: 0,
+          openIncidents: openIncidents.map((i) => ({
+            id: i.id,
+            workflowId: workflowId,
+            incidentType: i.incidentType,
+            severity: i.severity as "warning" | "critical",
+            status: i.status as "open" | "acknowledged" | "resolved",
+            detail: i.detail ?? "",
+            openedAt: i.openedAt ?? now,
+            resolvedAt: i.resolvedAt ?? null,
+          })),
+          now,
+        })
+      : { kind: "healthy" as const };
 
   await upsertRuntimeStatus({
     db,
@@ -287,7 +295,7 @@ export async function runCoordinatorTick(params: {
     openIncidentCount:
       openIncidents.length +
       (incidentCheck &&
-      !openIncidents.some((i) => i.incidentType === incidentCheck.incidentType)
+      !openIncidents.some((i) => i.incidentType === incidentCheck!.incidentType)
         ? 1
         : 0),
   });

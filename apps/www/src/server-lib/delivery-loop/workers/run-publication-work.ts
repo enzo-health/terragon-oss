@@ -3,6 +3,7 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import {
@@ -50,9 +51,6 @@ export async function runPublicationWork(params: {
 }): Promise<void> {
   try {
     // 1. Load workflow to get threadId, then look up sdlcLoop
-    const { getWorkflow } = await import(
-      "@terragon/shared/delivery-loop/store/workflow-store"
-    );
     const workflow = await getWorkflow({
       db: params.db,
       workflowId: params.workflowId,
