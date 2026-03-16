@@ -60,10 +60,9 @@ export type TimerSignal =
   | { kind: "babysit_due" }
   | { kind: "heartbeat_check" };
 
-export type BabysitSignal = {
-  kind: "babysit_gates_passed";
-  headSha: string;
-};
+export type BabysitSignal =
+  | { kind: "babysit_gates_passed"; headSha: string }
+  | { kind: "babysit_gates_blocked"; headSha: string };
 
 export type DeliverySignal =
   | { source: "daemon"; event: DaemonSignal }

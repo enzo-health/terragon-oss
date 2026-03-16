@@ -166,41 +166,33 @@ export async function runBabysitWork(params: {
           }
 
           if (githubCiPassed) {
-            // GitHub says CI passes but DB disagrees — emit ci_changed(passed)
-            // to reconcile. The coordinator tick will process this signal.
+            // GitHub says CI passes but DB disagrees — emit babysit
+            // domain signal so aggregate re-evaluation picks it up.
             await appendSignalToInbox({
               db: params.db,
               loopId,
               causeType: "babysit_recheck_passed",
               payload: {
-                source: "github",
+                source: "babysit",
                 event: {
-                  kind: "ci_changed",
-                  result: {
-                    passed: true,
-                    requiredChecks: [],
-                    failingChecks: [],
-                  },
+                  kind: "babysit_gates_passed",
+                  headSha,
                 },
               },
               canonicalCauseId: `babysit:${loopId}:${headSha}:ci_reconciled:${Date.now()}`,
             });
           } else {
-            // CI genuinely failing — append babysit_blocked signal
-            // so the coordinator transitions to implementing.
+            // CI genuinely failing — emit babysit_gates_blocked so the
+            // coordinator transitions babysitting → implementing.
             await appendSignalToInbox({
               db: params.db,
               loopId,
-              causeType: "babysit_recheck_passed",
+              causeType: "babysit_recheck_blocked",
               payload: {
-                source: "github",
+                source: "babysit",
                 event: {
-                  kind: "ci_changed",
-                  result: {
-                    passed: false,
-                    requiredChecks: [],
-                    failingChecks: [],
-                  },
+                  kind: "babysit_gates_blocked",
+                  headSha,
                 },
               },
               canonicalCauseId: `babysit:${loopId}:${headSha}:ci_blocked:${Date.now()}`,

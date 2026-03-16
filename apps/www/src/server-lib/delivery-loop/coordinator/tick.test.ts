@@ -333,6 +333,25 @@ describe("v2 coordinator tick — integration", () => {
       const row = await getWorkflow({ db, workflowId: wf.id });
       expect(row!.kind).toBe("done");
     });
+
+    it("babysitting -> implementing via babysit_gates_blocked", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "babysitting",
+        stateJson: BABYSITTING_STATE,
+      });
+
+      await injectSignal(wf.id, "babysit_recheck_blocked", {
+        source: "babysit",
+        event: { kind: "babysit_gates_blocked", headSha: "abc123" },
+      });
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("implementing");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("implementing");
+    });
   });
 
   describe("gate blocked -> fix cycle -> retry", () => {

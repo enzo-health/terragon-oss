@@ -240,5 +240,10 @@ function reduceBabysitSignal(
         return { event: "babysit_passed", context: {} };
       }
       return null;
+    case "babysit_gates_blocked":
+      if (workflow.kind === "babysitting") {
+        return { event: "babysit_blocked", context: {} };
+      }
+      return null;
   }
 }
