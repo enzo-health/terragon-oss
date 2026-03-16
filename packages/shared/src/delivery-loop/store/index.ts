@@ -36,15 +36,6 @@ export {
   supersedePendingWorkItems,
 } from "./work-queue-store";
 
-// lease-store.ts
-export {
-  acquireLease,
-  releaseLease,
-  refreshLease,
-  type LeaseAcquireResult,
-  type LeaseRefreshResult,
-} from "./lease-store";
-
 // incident-store.ts
 export {
   openIncident,

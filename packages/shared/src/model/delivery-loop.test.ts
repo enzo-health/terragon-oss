@@ -5,7 +5,6 @@ import * as schema from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { createTestThread, createTestUser } from "./test-helpers";
 import {
-  acquireSdlcLoopLease,
   buildDeliveryLoopCompanionFields,
   buildDeliveryLoopSnapshot,
   buildSdlcCanonicalCause,
@@ -33,7 +32,6 @@ import {
   persistDeepReviewGateResult,
   persistSdlcReviewThreadGateEvaluation,
   releaseGithubWebhookDeliveryClaim,
-  releaseSdlcLoopLease,
   linkSdlcLoopToGithubPRForThread,
   markPlanTasksCompletedByAgent,
   mapSdlcTransitionEventToDeliveryLoopTransition,
@@ -1321,70 +1319,6 @@ describe("sdlc loop model", () => {
       outcome: "stale_stolen",
       shouldProcess: true,
     });
-  });
-
-  it("serializes loop lease ownership with deterministic steal semantics", async () => {
-    const { user } = await createTestUser({ db });
-    const { threadId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        githubRepoFullName: "owner/repo",
-        githubPRNumber: 42,
-      },
-    });
-    const loop = await enrollSdlcLoopForGithubPR({
-      db,
-      userId: user.id,
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      threadId,
-    });
-    await db
-      .update(schema.sdlcLoop)
-      .set({ state: "review_gate" })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
-
-    const first = await acquireSdlcLoopLease({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-a",
-      leaseTtlMs: 60_000,
-      now: new Date("2026-01-01T00:00:00.000Z"),
-    });
-    expect(first.acquired).toBe(true);
-
-    const second = await acquireSdlcLoopLease({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-b",
-      leaseTtlMs: 60_000,
-      now: new Date("2026-01-01T00:00:30.000Z"),
-    });
-    expect(second).toMatchObject({
-      acquired: false,
-      reason: "held_by_other",
-      leaseOwner: "worker-a",
-    });
-
-    const stolen = await acquireSdlcLoopLease({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-b",
-      leaseTtlMs: 60_000,
-      now: new Date("2026-01-01T00:02:00.000Z"),
-    });
-    expect(stolen).toMatchObject({
-      acquired: true,
-      leaseOwner: "worker-b",
-    });
-
-    const released = await releaseSdlcLoopLease({
-      db,
-      loopId: loop!.id,
-      leaseOwner: "worker-b",
-    });
-    expect(released).toBe(true);
   });
 
   it("evaluates guardrails in deterministic precedence order", () => {

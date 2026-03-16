@@ -112,15 +112,6 @@ export {
   transitionSdlcLoopStateWithArtifact,
 } from "./artifacts";
 
-// lease.ts
-export {
-  type SdlcLoopLeaseAcquireResult,
-  acquireSdlcLoopLease,
-  type SdlcLoopLeaseRefreshResult,
-  refreshSdlcLoopLease,
-  releaseSdlcLoopLease,
-} from "./lease";
-
 // github-pr-references.ts
 export {
   type SdlcOutboxErrorClass,
