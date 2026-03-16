@@ -100,6 +100,7 @@ async function enrollWorkflow(
     sdlcLoopState: sdlcState as Parameters<
       typeof ensureV2WorkflowExists
     >[0]["sdlcLoopState"],
+    userId: testUserId,
   });
   return result;
 }
@@ -384,6 +385,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf = await createWorkflow({
         db,
         threadId: testThreadId,
+        userId: testUserId,
         generation: 1,
         kind: "gating",
         stateJson: {
@@ -609,6 +611,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf = await createWorkflow({
         db,
         threadId: testThreadId,
+        userId: testUserId,
         generation: 1,
         kind: "implementing",
         stateJson: {
@@ -793,6 +796,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf = await createWorkflow({
         db,
         threadId: testThreadId,
+        userId: testUserId,
         generation: 1,
         kind: "implementing",
         stateJson: {
@@ -832,6 +836,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf = await createWorkflow({
         db,
         threadId: testThreadId,
+        userId: testUserId,
         generation: 1,
         kind: "gating",
         stateJson: {
@@ -971,6 +976,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf = await createWorkflow({
         db,
         threadId: testThreadId,
+        userId: testUserId,
         generation: 1,
         kind: "babysitting",
         stateJson: {
@@ -1015,6 +1021,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf1 = await createWorkflow({
         db,
         threadId: testThreadId,
+        userId: testUserId,
         generation: 1,
         kind: "implementing",
         stateJson: {
@@ -1030,6 +1037,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const wf2 = await createWorkflow({
         db,
         threadId: threadId2,
+        userId: testUserId,
         generation: 1,
         kind: "implementing",
         stateJson: {

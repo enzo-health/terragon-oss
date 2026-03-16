@@ -25,6 +25,7 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
+let testUserId: string;
 let testThreadId: string;
 
 async function createTestWorkflowInState(params: {
@@ -39,6 +40,7 @@ async function createTestWorkflowInState(params: {
     kind: params.kind,
     stateJson: params.stateJson ?? {},
     maxFixAttempts: params.maxFixAttempts,
+    userId: testUserId,
   });
 }
 
@@ -218,6 +220,7 @@ const BABYSITTING_STATE = {
 beforeEach(async () => {
   const { user } = await createTestUser({ db });
   const { threadId } = await createTestThread({ db, userId: user.id });
+  testUserId = user.id;
   testThreadId = threadId;
 });
 
