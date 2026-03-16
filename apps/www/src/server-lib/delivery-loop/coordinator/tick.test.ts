@@ -313,14 +313,18 @@ describe("v2 coordinator tick — integration", () => {
       expect(result.stateAfter).toBe("awaiting_pr");
     });
 
-    it("babysitting -> done via babysit_passed (ci_changed)", async () => {
+    it("babysitting -> done via babysit_gates_passed", async () => {
       const wf = await createTestWorkflowInState({
         kind: "babysitting",
         stateJson: BABYSITTING_STATE,
       });
 
-      // ci_changed with passed=true in babysitting state maps to babysit_passed
-      await ciPassed(wf.id);
+      // Only the babysit worker's aggregate evaluation produces transitions.
+      // Raw GitHub ci_changed/review_changed signals are suppressed in babysitting.
+      await injectSignal(wf.id, "babysit_recheck_passed", {
+        source: "babysit",
+        event: { kind: "babysit_gates_passed", headSha: "abc123" },
+      });
       const result = await tick(wf.id);
 
       expect(result.transitioned).toBe(true);

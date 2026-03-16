@@ -531,10 +531,25 @@ function parseSignalPayload(
         daemonRunStatus === "completed" ||
         daemonRunStatus === "plan_completed"
       ) {
-        // Refuse to emit a successful completion without a real head SHA.
-        // Downstream gates and babysit evaluation require a stable commit
-        // reference; advancing with an empty SHA strands the workflow.
-        if (!headSha) return null;
+        // Without a real head SHA, downstream gates and babysit evaluation
+        // have no stable commit to evaluate. Emit a progress signal so the
+        // inbox entry is consumed without a state transition (not dead-
+        // lettered, which would wedge the workflow). The daemon will send
+        // another completion with headSha, or the cron catch-up will retry.
+        if (!headSha) {
+          return {
+            source: "daemon",
+            event: {
+              kind: "progress_reported",
+              runId,
+              progress: {
+                completedTasks: 0,
+                totalTasks: 0,
+                currentTask: null,
+              },
+            },
+          };
+        }
         return {
           source: "daemon",
           event: {

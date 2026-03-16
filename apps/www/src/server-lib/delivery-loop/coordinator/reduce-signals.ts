@@ -120,19 +120,20 @@ function reduceGitHubSignal(
           context: { gate: "ci" },
         };
       }
-      // Fall back to signal payload
+      // Use the aggregate CI snapshot: only pass when failingChecks is
+      // empty AND there are required checks. A single passing check_run
+      // must not advance the gate while other required checks are pending.
       if (workflow.kind === "gating" && workflow.gate.kind === "ci") {
+        const aggregatePassed =
+          event.result.failingChecks.length === 0 &&
+          event.result.requiredChecks.length > 0;
         return {
-          event: event.result.passed ? "gate_passed" : "gate_blocked",
+          event: aggregatePassed ? "gate_passed" : "gate_blocked",
           context: { gate: "ci" },
         };
       }
-      if (workflow.kind === "babysitting") {
-        return {
-          event: event.result.passed ? "babysit_passed" : "babysit_blocked",
-          context: {},
-        };
-      }
+      // In babysitting, raw GitHub signals are suppressed — only the
+      // babysit worker's aggregate evaluation produces transitions.
       return null;
     }
 
@@ -150,12 +151,8 @@ function reduceGitHubSignal(
           context: { gate: "review" },
         };
       }
-      if (workflow.kind === "babysitting") {
-        return {
-          event: event.result.passed ? "babysit_passed" : "babysit_blocked",
-          context: {},
-        };
-      }
+      // In babysitting, raw GitHub signals are suppressed — only the
+      // babysit worker's aggregate evaluation produces transitions.
       return null;
     }
 
