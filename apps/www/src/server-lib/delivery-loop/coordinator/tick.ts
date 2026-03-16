@@ -3,6 +3,7 @@ import type {
   WorkflowId,
   CorrelationId,
   DeliveryWorkflow,
+  WorkflowState,
 } from "@terragon/shared/delivery-loop/domain/workflow";
 import { reduceWorkflow } from "@terragon/shared/delivery-loop/domain/transitions";
 import { derivePendingAction } from "@terragon/shared/delivery-loop/domain/transitions";
@@ -20,7 +21,10 @@ import {
   completeSignalClaim,
   deadLetterSignal,
 } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
-import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import {
+  enqueueWorkItem,
+  supersedePendingWorkItems,
+} from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { upsertRuntimeStatus } from "@terragon/shared/delivery-loop/store/runtime-status-store";
 import {
   openIncident,
@@ -43,6 +47,28 @@ export type CoordinatorTickResult = {
 };
 
 const MAX_SIGNALS_PER_TICK = 10;
+
+const VALID_WORKFLOW_KINDS: ReadonlySet<string> = new Set<WorkflowState>([
+  "planning",
+  "implementing",
+  "gating",
+  "awaiting_pr",
+  "babysitting",
+  "awaiting_plan_approval",
+  "awaiting_manual_fix",
+  "awaiting_operator_action",
+  "done",
+  "stopped",
+  "terminated",
+]);
+
+const VALID_SIGNAL_SOURCES: ReadonlySet<string> = new Set([
+  "daemon",
+  "github",
+  "human",
+  "timer",
+  "babysit",
+]);
 
 export async function runCoordinatorTick(params: {
   db: DB;
@@ -82,6 +108,7 @@ export async function runCoordinatorTick(params: {
   let workItemsScheduled = 0;
 
   // 2. Process pending signals (up to limit per tick)
+  let versionConflict = false;
   for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
     const signal = await claimNextUnprocessedSignal({
       db,
@@ -168,9 +195,13 @@ export async function runCoordinatorTick(params: {
       });
 
       if (!updateResult.updated) {
-        throw new Error(
-          `Version conflict on workflow ${workflowId} (expected ${workflow.version})`,
+        // Version conflict — another tick updated this workflow concurrently.
+        // Break out so the current signal stays "claimed" and can be retried.
+        console.warn(
+          `[coordinator] Version conflict on workflow ${workflowId} (expected ${workflow.version}), yielding tick`,
         );
+        versionConflict = true;
+        return; // exit transaction without persisting
       }
 
       // 4b. Append audit event
@@ -189,7 +220,18 @@ export async function runCoordinatorTick(params: {
         headSha: extractHeadSha(newWorkflow),
       });
 
-      // 4c. Enqueue work items
+      // 4c. Supersede old pending work items before inserting new ones
+      const uniqueKinds = [...new Set(scheduledItems.map((item) => item.kind))];
+      for (const kind of uniqueKinds) {
+        await supersedePendingWorkItems({
+          db: tx,
+          workflowId,
+          kind,
+          now,
+        });
+      }
+
+      // 4d. Enqueue work items
       for (const item of scheduledItems) {
         await enqueueWorkItem({
           db: tx,
@@ -201,7 +243,7 @@ export async function runCoordinatorTick(params: {
         });
       }
 
-      // 4d. Update runtime status
+      // 4e. Update runtime status
       const pendingAction = derivePendingAction(newWorkflow);
       await upsertRuntimeStatus({
         db: tx,
@@ -216,7 +258,11 @@ export async function runCoordinatorTick(params: {
       });
     });
 
-    // 4e. Complete the signal (outside transaction — idempotent)
+    // If version conflict occurred, break out of the signal loop
+    // without completing the signal claim (so it can be retried)
+    if (versionConflict) break;
+
+    // 4f. Complete the signal (outside transaction — idempotent)
     await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
 
     // Update in-memory workflow for next iteration
@@ -333,6 +379,9 @@ function parseSignalPayload(
   const event = payload.event as Record<string, unknown> | undefined;
 
   if (source && event) {
+    // Validate source is a known value and event has a kind field
+    if (!VALID_SIGNAL_SOURCES.has(source)) return null;
+    if (typeof event.kind !== "string") return null;
     // Already in v2 shape
     return payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").DeliverySignal;
   }
@@ -511,21 +560,27 @@ function parseSignalPayload(
  * Hydrate a DB row into the domain DeliveryWorkflow aggregate.
  * The DB stores kind + stateJson; we merge them into the discriminated union.
  */
-function hydrateWorkflow(row: Record<string, unknown>): DeliveryWorkflow {
+type WorkflowRow = NonNullable<Awaited<ReturnType<typeof getWorkflow>>>;
+
+function hydrateWorkflow(row: WorkflowRow): DeliveryWorkflow {
+  if (!VALID_WORKFLOW_KINDS.has(row.kind)) {
+    throw new Error(
+      `Invalid workflow kind "${row.kind}" for workflow ${row.id}`,
+    );
+  }
   const stateJson = (row.stateJson ?? {}) as Record<string, unknown>;
   return {
-    workflowId:
-      row.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
+    workflowId: row.id as WorkflowId,
     threadId:
       row.threadId as import("@terragon/shared/delivery-loop/domain/workflow").ThreadId,
-    generation: (row.generation as number) ?? 1,
-    version: (row.version as number) ?? 0,
-    fixAttemptCount: (row.fixAttemptCount as number) ?? 0,
-    maxFixAttempts: (row.maxFixAttempts as number) ?? 6,
-    createdAt: row.createdAt as Date,
-    updatedAt: row.updatedAt as Date,
-    lastActivityAt: (row.lastActivityAt as Date) ?? null,
-    kind: row.kind as string,
+    generation: row.generation,
+    version: row.version,
+    fixAttemptCount: row.fixAttemptCount,
+    maxFixAttempts: row.maxFixAttempts,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastActivityAt: row.lastActivityAt ?? null,
+    kind: row.kind as WorkflowState,
     ...stateJson,
   } as DeliveryWorkflow;
 }
