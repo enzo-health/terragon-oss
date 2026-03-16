@@ -533,6 +533,7 @@ function parseSignalPayload(
         event:
           payload as unknown as import("@terragon/shared/delivery-loop/domain/signals").TimerSignal,
       };
+    case "babysit_recheck_blocked":
     case "babysit_recheck_passed":
       return {
         source: "babysit",

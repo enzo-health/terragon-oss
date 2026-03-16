@@ -835,8 +835,8 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     "@terragon/shared/delivery-loop/store/workflow-store"
   );
   const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-  if (v2Workflow) {
-    return true;
+  if (v2Workflow && v2Workflow.kind !== "planning") {
+    return true; // v2 coordinator handles non-planning transitions
   }
 
   const activeLoop = await getActiveSdlcLoopForThread({
