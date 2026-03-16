@@ -92,6 +92,10 @@ function reduceDaemonSignal(
             return { event: "exhausted_retries", context: {} };
         }
       }
+      if (workflow.kind === "gating") {
+        // Gate runtime dispatch crashed — send back to implementing for a fix cycle
+        return { event: "gate_blocked", context: {} };
+      }
       return null;
 
     case "progress_reported":
