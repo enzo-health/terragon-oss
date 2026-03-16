@@ -1563,6 +1563,33 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     loopVersion: loopVersionForGateRun,
     now: new Date(),
   });
+
+  // Bridge: emit v2 gate_passed(ui) signal so the coordinator tick
+  // advances the v2 workflow out of gating.ui. Without this, the v2
+  // workflow has no signal producer for the UI gate result.
+  if (uiTransition === "updated") {
+    try {
+      const { appendSignalToInbox } = await import(
+        "@terragon/shared/delivery-loop/store/signal-inbox-store"
+      );
+      await appendSignalToInbox({
+        db,
+        loopId: loopAfterCiGate.id,
+        causeType: "human_bypass",
+        payload: {
+          source: "human",
+          event: { kind: "bypass_requested", target: "ui" },
+        },
+        canonicalCauseId: `ui-smoke-passed:${loopAfterCiGate.id}:${headSha}`,
+      });
+    } catch (bridgeErr) {
+      console.warn("[checkpoint] v2 ui gate_passed bridge failed", {
+        loopId: loopAfterCiGate.id,
+        error: bridgeErr,
+      });
+    }
+  }
+
   if (uiTransition !== "updated") {
     await queueSdlcFollowUpMessage({
       userId,
@@ -1630,7 +1657,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       generatedBy: "system",
       status: "accepted",
     });
-    await transitionSdlcLoopStateWithArtifact({
+    const prTransition = await transitionSdlcLoopStateWithArtifact({
       db,
       loopId: linkedLoop.id,
       artifactId: prArtifact.id,
@@ -1639,6 +1666,36 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       loopVersion: loopVersionForGateRun,
       now: new Date(),
     });
+
+    // Bridge: emit v2 pr_synchronized signal so the coordinator tick
+    // advances the v2 workflow from awaiting_pr → babysitting.
+    // The reducer maps pr_synchronized → pr_linked when in awaiting_pr.
+    if (prTransition === "updated") {
+      try {
+        const { appendSignalToInbox } = await import(
+          "@terragon/shared/delivery-loop/store/signal-inbox-store"
+        );
+        await appendSignalToInbox({
+          db,
+          loopId: linkedLoop.id,
+          causeType: "github_pr_synchronized",
+          payload: {
+            source: "github",
+            event: {
+              kind: "pr_synchronized",
+              prNumber,
+              headSha: headSha ?? "",
+            },
+          },
+          canonicalCauseId: `pr-linked:${linkedLoop.id}:${prNumber}`,
+        });
+      } catch (bridgeErr) {
+        console.warn("[checkpoint] v2 pr_linked bridge failed", {
+          loopId: linkedLoop.id,
+          error: bridgeErr,
+        });
+      }
+    }
   }
 
   return true;

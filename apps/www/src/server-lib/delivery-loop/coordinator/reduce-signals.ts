@@ -166,7 +166,12 @@ function reduceGitHubSignal(
       };
 
     case "pr_synchronized":
-      // No state transition — head SHA update only
+      // When the workflow is waiting for a PR link, treat a synchronized
+      // event as the signal that the PR was just linked.
+      if (workflow.kind === "awaiting_pr") {
+        return { event: "pr_linked", context: { prNumber: event.prNumber } };
+      }
+      // Otherwise — head SHA update only, no state transition
       return null;
   }
 }

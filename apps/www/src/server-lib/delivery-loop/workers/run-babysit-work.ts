@@ -132,26 +132,72 @@ export async function runBabysitWork(params: {
         });
       } else {
         // Gates still failing — determine whether to reschedule or block.
-        // If CI is actively failing, append a blocking signal so the
-        // coordinator can transition back to implementing for a fix.
-        // If CI passes but review threads are unresolved, reschedule a
-        // recheck since reviews may resolve without code changes.
+        // If CI is actively failing, poll GitHub to self-heal from missed
+        // webhooks before deciding to block or reschedule.
         if (!babysitResult.requiredCiPassed) {
-          // CI failing — needs code fix. Append babysit_blocked signal
-          // so the coordinator transitions to implementing.
-          await appendSignalToInbox({
-            db: params.db,
-            loopId,
-            causeType: "babysit_recheck_passed",
-            payload: {
-              source: "github",
-              event: {
-                kind: "ci_changed",
-                result: { passed: false, checkSuites: [] },
+          // Poll GitHub for the latest CI status — the DB gate row may be
+          // stale if a webhook was missed. This is the self-healing path.
+          let githubCiPassed = false;
+          try {
+            const loop = await resolveLoopForWorker({
+              db: params.db,
+              loopId,
+              threadId: workflow.threadId,
+            });
+            if (loop?.repoFullName) {
+              const { fetchCiSignalSnapshotForHeadSha } = await import(
+                "@/app/api/webhooks/github/handlers"
+              );
+              const snapshot = await fetchCiSignalSnapshotForHeadSha({
+                repoFullName: loop.repoFullName,
+                headSha,
+              });
+              if (snapshot?.complete && snapshot.failingChecks.length === 0) {
+                githubCiPassed = true;
+              }
+            }
+          } catch (pollErr) {
+            // Non-fatal — fall through to the DB-based verdict
+            console.warn("[babysit-worker] GitHub CI poll failed", {
+              loopId,
+              headSha,
+              error: pollErr,
+            });
+          }
+
+          if (githubCiPassed) {
+            // GitHub says CI passes but DB disagrees — emit ci_changed(passed)
+            // to reconcile. The coordinator tick will process this signal.
+            await appendSignalToInbox({
+              db: params.db,
+              loopId,
+              causeType: "babysit_recheck_passed",
+              payload: {
+                source: "github",
+                event: {
+                  kind: "ci_changed",
+                  result: { passed: true, checkSuites: [] },
+                },
               },
-            },
-            canonicalCauseId: `babysit:${loopId}:${headSha}:ci_blocked:${Date.now()}`,
-          });
+              canonicalCauseId: `babysit:${loopId}:${headSha}:ci_reconciled:${Date.now()}`,
+            });
+          } else {
+            // CI genuinely failing — append babysit_blocked signal
+            // so the coordinator transitions to implementing.
+            await appendSignalToInbox({
+              db: params.db,
+              loopId,
+              causeType: "babysit_recheck_passed",
+              payload: {
+                source: "github",
+                event: {
+                  kind: "ci_changed",
+                  result: { passed: false, checkSuites: [] },
+                },
+              },
+              canonicalCauseId: `babysit:${loopId}:${headSha}:ci_blocked:${Date.now()}`,
+            });
+          }
         } else {
           // CI passes but other gates pending (review threads, deep/carmack
           // review). Schedule a fresh recheck — these may resolve without

@@ -191,7 +191,7 @@ async function syncSdlcLoopStateForPullRequestLifecycle({
   }
 }
 
-type CiSignalSnapshot = {
+export type CiSignalSnapshot = {
   checkNames: string[];
   failingChecks: string[];
   complete: boolean;
@@ -237,7 +237,7 @@ function buildCiSignalSnapshotFromCheckRuns(
   };
 }
 
-async function fetchCiSignalSnapshotForHeadSha({
+export async function fetchCiSignalSnapshotForHeadSha({
   repoFullName,
   headSha,
 }: {
