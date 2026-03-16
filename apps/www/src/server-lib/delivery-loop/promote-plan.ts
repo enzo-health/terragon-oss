@@ -225,7 +225,7 @@ async function transitionPlanningArtifactToImplementing(params: {
                 : String(signalErr),
           },
         );
-        throw signalErr;
+        // v1 transition already committed — v2 coordinator will re-sync via cron/babysit
       }
     }
   }
