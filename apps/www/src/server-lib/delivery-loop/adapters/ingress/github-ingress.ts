@@ -133,6 +133,8 @@ export function normalizeGitHubWebhook(
 export async function handleGitHubWebhook(params: {
   db: DB;
   rawEvent: GitHubWebhookPayload;
+  /** V1 sdlcLoop ID used as inbox partition key. Must match the key cron uses to drain. */
+  inboxPartitionKey: string;
   lookupWorkflowByPr: (params: {
     db: DB;
     prNumber: number;
@@ -157,7 +159,7 @@ export async function handleGitHubWebhook(params: {
   const causeType = mapGitHubSignalToCauseType(signal);
   await appendSignalToInbox({
     db: params.db,
-    loopId: workflowId,
+    loopId: params.inboxPartitionKey,
     causeType,
     payload: signal as Record<string, unknown>,
     canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkRunId ?? params.rawEvent.checkSuiteId ?? params.rawEvent.reviewId ?? params.rawEvent.commentId ?? params.rawEvent.headSha ?? "no-id"}`,

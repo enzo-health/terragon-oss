@@ -1311,6 +1311,10 @@ export async function POST(request: Request) {
       );
     }
     if (runContext) {
+      // Only update resolvedSessionId here. Terminal status (completed/
+      // failed/stopped) is deferred until after the coordinator tick
+      // succeeds — if the tick fails and we return 500, the run must
+      // stay non-terminal so the daemon retry re-enters the main path.
       postHandleOps.push(
         updateAgentRunContext({
           db,
@@ -1318,7 +1322,9 @@ export async function POST(request: Request) {
           runId: runContext.runId,
           updates: {
             resolvedSessionId,
-            status: resolvedStatus,
+            ...(resolvedStatus === "processing"
+              ? { status: "processing" as const }
+              : {}),
           },
         }),
       );
@@ -1515,6 +1521,25 @@ export async function POST(request: Request) {
         },
       );
     }
+  }
+
+  // Now that the coordinator tick succeeded, finalize the terminal run status.
+  // This was deferred from the postHandleOps block so that a tick failure
+  // keeps the run non-terminal and allows daemon retries to re-enter the
+  // main processing path.
+  if (runContext && resolvedStatus !== "processing") {
+    updateAgentRunContext({
+      db,
+      userId,
+      runId: runContext.runId,
+      updates: { status: resolvedStatus },
+    }).catch((error) => {
+      console.warn("[daemon-event] deferred terminal status update failed", {
+        runId: runContext.runId,
+        resolvedStatus,
+        error,
+      });
+    });
   }
 
   // Persist terminal dispatch status AFTER the coordinator tick succeeded.

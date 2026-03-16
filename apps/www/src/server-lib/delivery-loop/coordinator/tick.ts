@@ -314,6 +314,21 @@ export async function runCoordinatorTick(params: {
     }
   }
 
+  // Skip runtime status on version conflict — the winning tick wrote
+  // the authoritative state; our stale snapshot would overwrite it.
+  if (versionConflict) {
+    return {
+      workflowId,
+      correlationId,
+      signalsProcessed,
+      transitioned,
+      stateBefore,
+      stateAfter: workflow.kind,
+      workItemsScheduled,
+      incidentsEvaluated: false,
+    };
+  }
+
   // Update runtime status (always — tests and dashboards expect it)
   const health =
     signalsProcessed > 0 || transitioned

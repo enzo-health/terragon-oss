@@ -62,6 +62,8 @@ export async function handleHumanAction(params: {
   action: HumanAction;
   actorUserId: string;
   workflowId: WorkflowId;
+  /** V1 sdlcLoop ID used as inbox partition key. Must match the key cron uses to drain. */
+  inboxPartitionKey: string;
   gate?: GateKind;
   wakeCoordinator?: (workflowId: WorkflowId) => Promise<void>;
 }): Promise<void> {
@@ -78,7 +80,7 @@ export async function handleHumanAction(params: {
   const causeType = mapHumanSignalToCauseType(signal);
   await appendSignalToInbox({
     db: params.db,
-    loopId: params.workflowId,
+    loopId: params.inboxPartitionKey,
     causeType,
     payload: signal as Record<string, unknown>,
     canonicalCauseId: `human:${params.workflowId}:${params.action}:${Date.now()}`,
