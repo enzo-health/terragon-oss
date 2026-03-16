@@ -224,26 +224,25 @@ export async function runCoordinatorTick(params: {
 
       // 4c. Supersede old pending work items before inserting new ones
       const uniqueKinds = [...new Set(scheduledItems.map((item) => item.kind))];
-      for (const kind of uniqueKinds) {
-        await supersedePendingWorkItems({
-          db: tx,
-          workflowId,
-          kind,
-          now,
-        });
-      }
+      await Promise.all(
+        uniqueKinds.map((kind) =>
+          supersedePendingWorkItems({ db: tx, workflowId, kind, now }),
+        ),
+      );
 
       // 4d. Enqueue work items
-      for (const item of scheduledItems) {
-        await enqueueWorkItem({
-          db: tx,
-          workflowId,
-          correlationId,
-          kind: item.kind,
-          payloadJson: item.payloadJson,
-          scheduledAt: item.scheduledAt,
-        });
-      }
+      await Promise.all(
+        scheduledItems.map((item) =>
+          enqueueWorkItem({
+            db: tx,
+            workflowId,
+            correlationId,
+            kind: item.kind,
+            payloadJson: item.payloadJson,
+            scheduledAt: item.scheduledAt,
+          }),
+        ),
+      );
 
       // 4e. Update runtime status
       const pendingAction = derivePendingAction(newWorkflow);

@@ -4,8 +4,7 @@ import {
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { eq, desc } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
+import { resolveLoopForWorker, stringifyError } from "./resolve-loop";
 import {
   upsertSdlcCanonicalStatusComment,
   upsertSdlcCanonicalCheckSummary,
@@ -66,17 +65,11 @@ export async function runPublicationWork(params: {
       return;
     }
 
-    let loop;
-    if (params.payload.loopId) {
-      loop = await params.db.query.sdlcLoop.findFirst({
-        where: eq(schema.sdlcLoop.id, params.payload.loopId),
-      });
-    } else {
-      loop = await params.db.query.sdlcLoop.findFirst({
-        where: eq(schema.sdlcLoop.threadId, workflow.threadId),
-        orderBy: [desc(schema.sdlcLoop.createdAt)],
-      });
-    }
+    const loop = await resolveLoopForWorker({
+      db: params.db,
+      loopId: params.payload.loopId,
+      threadId: workflow.threadId,
+    });
     if (!loop) {
       await failWorkItem({
         db: params.db,
@@ -166,7 +159,7 @@ export async function runPublicationWork(params: {
       workItemId: params.workItemId,
       claimToken: params.claimToken,
       errorCode: "publication_failed",
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: stringifyError(err),
       retryAt,
     });
   }

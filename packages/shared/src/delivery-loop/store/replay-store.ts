@@ -13,13 +13,22 @@ export async function buildWorkflowReplay(params: {
 }): Promise<ReplayEntry[]> {
   const { db, workflowId } = params;
 
-  const entries: ReplayEntry[] = [];
+  const [events, workItems, incidents] = await Promise.all([
+    db.query.deliveryWorkflowEvent.findMany({
+      where: eq(schema.deliveryWorkflowEvent.workflowId, workflowId),
+      orderBy: [schema.deliveryWorkflowEvent.seq],
+    }),
+    db.query.deliveryWorkItem.findMany({
+      where: eq(schema.deliveryWorkItem.workflowId, workflowId),
+      orderBy: [schema.deliveryWorkItem.scheduledAt],
+    }),
+    db.query.deliveryLoopIncident.findMany({
+      where: eq(schema.deliveryLoopIncident.workflowId, workflowId),
+      orderBy: [schema.deliveryLoopIncident.openedAt],
+    }),
+  ]);
 
-  // Query workflow events
-  const events = await db.query.deliveryWorkflowEvent.findMany({
-    where: eq(schema.deliveryWorkflowEvent.workflowId, workflowId),
-    orderBy: [schema.deliveryWorkflowEvent.seq],
-  });
+  const entries: ReplayEntry[] = [];
   for (const e of events) {
     entries.push({
       timestamp: e.occurredAt,
@@ -28,12 +37,6 @@ export async function buildWorkflowReplay(params: {
       detail: e as unknown as Record<string, unknown>,
     });
   }
-
-  // Query work items
-  const workItems = await db.query.deliveryWorkItem.findMany({
-    where: eq(schema.deliveryWorkItem.workflowId, workflowId),
-    orderBy: [schema.deliveryWorkItem.scheduledAt],
-  });
   for (const w of workItems) {
     entries.push({
       timestamp: w.scheduledAt,
@@ -42,12 +45,6 @@ export async function buildWorkflowReplay(params: {
       detail: w as unknown as Record<string, unknown>,
     });
   }
-
-  // Query incidents
-  const incidents = await db.query.deliveryLoopIncident.findMany({
-    where: eq(schema.deliveryLoopIncident.workflowId, workflowId),
-    orderBy: [schema.deliveryLoopIncident.openedAt],
-  });
   for (const i of incidents) {
     entries.push({
       timestamp: i.openedAt,

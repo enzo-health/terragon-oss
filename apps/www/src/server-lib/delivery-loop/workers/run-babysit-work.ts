@@ -7,8 +7,7 @@ import {
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendSignalToInbox } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
 import { evaluateBabysitCompletionForHead } from "@terragon/shared/model/signal-inbox-core";
-import { eq, desc } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
+import { resolveLoopForWorker, stringifyError } from "./resolve-loop";
 
 export type BabysitWorkPayload = {
   workflowId: string;
@@ -101,9 +100,9 @@ export async function runBabysitWork(params: {
       // Resolve canonical loopId for gate evaluation
       let loopId = params.payload.loopId;
       if (!loopId) {
-        const loop = await params.db.query.sdlcLoop.findFirst({
-          where: eq(schema.sdlcLoop.threadId, workflow.threadId),
-          orderBy: [desc(schema.sdlcLoop.createdAt)],
+        const loop = await resolveLoopForWorker({
+          db: params.db,
+          threadId: workflow.threadId,
         });
         loopId = loop?.id ?? params.payload.workflowId;
       }
@@ -160,7 +159,7 @@ export async function runBabysitWork(params: {
       workItemId: params.workItemId,
       claimToken: params.claimToken,
       errorCode: "babysit_failed",
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: stringifyError(err),
       retryAt,
     });
   }

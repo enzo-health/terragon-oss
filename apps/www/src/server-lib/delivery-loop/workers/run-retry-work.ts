@@ -4,6 +4,7 @@ import {
   completeWorkItem,
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import { stringifyError } from "./resolve-loop";
 
 export type RetryWorkPayload = {
   kind: string;
@@ -78,7 +79,7 @@ export async function runRetryWork(params: {
       workItemId: params.workItemId,
       claimToken: params.claimToken,
       errorCode: "retry_failed",
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: stringifyError(err),
       retryAt: new Date(Date.now() + 30_000), // 30s backoff to prevent tight loops
     });
   }
