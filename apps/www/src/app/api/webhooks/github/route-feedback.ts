@@ -1056,18 +1056,39 @@ export async function routeGithubFeedbackOrSpawnThread(
           v2Workflow.sdlcLoopId &&
           v2Workflow.sdlcLoopId !== activeSdlcLoop.id
         ) {
-          // Workflow belongs to a different loop generation — skip ticking
-          // to prevent cross-generation signal contamination. Still suppress
-          // direct routing since the signal is already in the inbox.
+          // Workflow belongs to a different loop generation — don't tick
+          // the old workflow with new signals. Instead, backfill a new
+          // workflow for the current loop so the signal has a consumer.
           console.warn(
-            "[route-feedback] tick skipped — workflow belongs to different loop generation",
+            "[route-feedback] workflow generation mismatch — backfilling for current loop",
             {
-              workflowId: v2Workflow.id,
-              workflowLoopId: v2Workflow.sdlcLoopId,
+              oldWorkflowId: v2Workflow.id,
+              oldLoopId: v2Workflow.sdlcLoopId,
               activeSdlcLoopId: activeSdlcLoop.id,
               threadId: activeSdlcLoop.threadId,
             },
           );
+          try {
+            const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+              db,
+              threadId: activeSdlcLoop.threadId,
+              sdlcLoopId: activeSdlcLoop.id,
+              sdlcLoopState: activeSdlcLoop.state,
+              sdlcBlockedFromState: activeSdlcLoop.blockedFromState,
+            });
+            await runCoordinatorTick({
+              db,
+              workflowId: backfilledId as WorkflowId,
+              correlationId: leaseOwnerToken as CorrelationId,
+              claimToken: leaseOwnerToken,
+              loopId: activeSdlcLoop.id,
+            });
+          } catch (mismatchErr) {
+            console.error(
+              "[route-feedback] generation mismatch backfill failed",
+              { activeSdlcLoopId: activeSdlcLoop.id, error: mismatchErr },
+            );
+          }
           return {
             mode: "suppressed_enrolled_loop",
             reason: "sdlc-loop-enrolled",

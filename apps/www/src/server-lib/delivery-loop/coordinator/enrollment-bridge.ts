@@ -222,13 +222,29 @@ export async function ensureV2WorkflowExists(params: {
   sdlcBlockedFromState?: SdlcLoopState | null;
   headSha?: string | null;
 }): Promise<{ workflowId: string; created: boolean }> {
-  // Check if v2 workflow already exists for this thread
+  // Check if v2 workflow already exists for this thread AND matches the
+  // requested loop. After re-enrollment, an old-generation workflow may
+  // still be active — returning it would pair new-loop signals with the
+  // old workflow, causing cross-generation state corruption.
   const existing = await getActiveWorkflowForThread({
     db: params.db,
     threadId: params.threadId,
   });
   if (existing) {
-    return { workflowId: existing.id, created: false };
+    if (!existing.sdlcLoopId || existing.sdlcLoopId === params.sdlcLoopId) {
+      return { workflowId: existing.id, created: false };
+    }
+    // Active workflow belongs to a different loop — don't reuse it.
+    // Fall through to create a new workflow for the current loop.
+    console.warn(
+      "[enrollment-bridge] existing workflow belongs to different loop, creating new one",
+      {
+        existingWorkflowId: existing.id,
+        existingLoopId: existing.sdlcLoopId,
+        requestedLoopId: params.sdlcLoopId,
+        threadId: params.threadId,
+      },
+    );
   }
 
   // Create v2 workflow mirroring the current v1 state

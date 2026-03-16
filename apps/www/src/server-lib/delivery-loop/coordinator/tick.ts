@@ -648,16 +648,26 @@ function parseSignalPayload(
       const reviewState = payload.reviewState as string | undefined;
       const unresolvedThreadCount =
         (payload.unresolvedThreadCount as number) ?? 0;
+      // Use real approval data from the routed payload when available.
+      // Legacy signals from route-feedback may not carry these fields,
+      // so fall back to heuristic: single approved review = 1 approval.
+      const approvalCount =
+        (payload.approvalCount as number) ??
+        (reviewState === "approved" ? 1 : 0);
+      const requiredApprovals = (payload.requiredApprovals as number) ?? 1;
       return {
         source: "github",
         event: {
           kind: "review_changed",
           prNumber,
           result: {
-            passed: reviewState === "approved" && unresolvedThreadCount === 0,
+            passed:
+              reviewState === "approved" &&
+              unresolvedThreadCount === 0 &&
+              approvalCount >= requiredApprovals,
             unresolvedThreadCount,
-            approvalCount: reviewState === "approved" ? 1 : 0,
-            requiredApprovals: 1,
+            approvalCount,
+            requiredApprovals,
           },
         },
       };

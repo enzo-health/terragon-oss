@@ -145,9 +145,12 @@ export async function handleDaemonIngress(params: {
     // partial completions (remainingTasks > 0) and final success completions
     // share the same raw status "completed", but must produce distinct inbox rows
     // so the final success signal isn't dropped by ON CONFLICT DO NOTHING.
+    // Progress events use a stable identity derived from the task snapshot
+    // so network retries of the same progress update deduplicate, while
+    // genuinely new progress updates (different task counts) still append.
     canonicalCauseId:
       params.rawEvent.status === "progress"
-        ? `daemon:${params.rawEvent.runId}:progress:${Date.now()}`
+        ? `daemon:${params.rawEvent.runId}:progress:${params.rawEvent.completedTasks ?? 0}:${params.rawEvent.totalTasks ?? 0}:${params.rawEvent.currentTask ?? "none"}`
         : `daemon:${params.rawEvent.runId}:${params.rawEvent.status}:${
             params.rawEvent.status === "completed" &&
             params.rawEvent.remainingTasks != null &&
