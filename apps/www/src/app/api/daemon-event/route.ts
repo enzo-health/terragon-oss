@@ -29,6 +29,7 @@ import {
 } from "@terragon/shared/model/agent-run-context";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
+import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type {
   WorkflowId,
@@ -1480,11 +1481,10 @@ export async function POST(request: Request) {
           );
         }
       } else {
-        // No v2 workflow for this enrolled loop — committed daemon signal
-        // will remain unprocessed until a workflow is created or the
-        // enrollment bridge runs. Log a warning for observability.
+        // No v2 workflow — backfill from the enrolled v1 loop so the
+        // committed daemon signal gets processed on this tick.
         console.warn(
-          "[sdlc-loop-v2] daemon event has no v2 workflow — signal committed but unprocessable",
+          "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
           {
             userId,
             threadId,
@@ -1494,6 +1494,21 @@ export async function POST(request: Request) {
             seq: envelopeV2.seq,
           },
         );
+        const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+          db,
+          threadId,
+          sdlcLoopId: enrolledLoop.id,
+          sdlcLoopState: enrolledLoop.state,
+          sdlcBlockedFromState: enrolledLoop.blockedFromState,
+        });
+        await runCoordinatorTick({
+          db,
+          workflowId: backfilledId as WorkflowId,
+          correlationId:
+            `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
+          claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
+          loopId: enrolledLoop.id,
+        });
       }
     } catch (error) {
       console.error("[sdlc-loop] best-effort coordinator tick failed", {

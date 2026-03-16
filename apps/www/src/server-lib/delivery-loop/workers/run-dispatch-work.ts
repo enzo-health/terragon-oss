@@ -136,47 +136,48 @@ export async function runDispatchWork(params: {
       maxRetries: 3,
     };
 
+    let intentAlreadyActive = false;
     try {
       await createDispatchIntent(intentParams);
     } catch (intentErr) {
-      // If an active intent already exists, that's OK — don't fail the work item
+      // If an active intent already exists (e.g. retry after follow_up_not_processed),
+      // skip creating a new one but still proceed to trigger the follow-up queue.
+      // Completing early here would leave the workflow stuck with no run launched.
       if (
         intentErr instanceof Error &&
         intentErr.message.includes("active intent")
       ) {
-        await completeWorkItem({
-          db: params.db,
-          workItemId: params.workItemId,
-          claimToken: params.claimToken,
-        });
-        return;
+        intentAlreadyActive = true;
+      } else {
+        throw intentErr;
       }
-      throw intentErr;
     }
 
     // 6. Persist durable dispatch intent in the DB so the ack timeout
     //    handler and cron sweep can find it. The Redis intent is for
     //    real-time tracking; the DB intent is for durable recovery.
-    try {
-      await createDbDispatchIntent(params.db, {
-        loopId: loop.id,
-        threadId: workflow.threadId,
-        threadChatId: threadChat.id,
-        runId,
-        targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-        selectedAgent: "claudeCode",
-        executionClass: params.payload.executionClass,
-        dispatchMechanism: "self_dispatch",
-      });
-      await markDispatchIntentDispatched(params.db, runId);
-    } catch (dbIntentErr) {
-      // Non-fatal: Redis intent + cron sweep will handle recovery
-      console.warn("[dispatch-worker] durable dispatch intent write failed", {
-        workflowId: params.payload.workflowId,
-        runId,
-        error: dbIntentErr,
-      });
-    }
+    //    Skip if we're reusing an already-active intent from a prior attempt.
+    if (!intentAlreadyActive)
+      try {
+        await createDbDispatchIntent(params.db, {
+          loopId: loop.id,
+          threadId: workflow.threadId,
+          threadChatId: threadChat.id,
+          runId,
+          targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
+          selectedAgent: "claudeCode",
+          executionClass: params.payload.executionClass,
+          dispatchMechanism: "self_dispatch",
+        });
+        await markDispatchIntentDispatched(params.db, runId);
+      } catch (dbIntentErr) {
+        // Non-fatal: Redis intent + cron sweep will handle recovery
+        console.warn("[dispatch-worker] durable dispatch intent write failed", {
+          workflowId: params.payload.workflowId,
+          runId,
+          error: dbIntentErr,
+        });
+      }
 
     // 6b. Trigger the follow-up queue to actually launch the run.
     // Only arm ack timeout if the follow-up queue actually started processing,
