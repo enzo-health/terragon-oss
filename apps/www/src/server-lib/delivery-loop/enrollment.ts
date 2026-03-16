@@ -99,11 +99,14 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
       return activeLoop;
     }
 
-    // Shouldn't happen — enrollV2Workflow creates the sdlcLoop compat shim
+    // Shouldn't happen — enrollV2Workflow creates the sdlcLoop compat shim.
+    // Return null rather than falling through to the v1 fallback which
+    // would create a duplicate sdlcLoop record.
     console.warn(
       "[delivery-loop enrollment] v2 enrollment succeeded but no active v1 loop found",
       { threadId, sdlcLoopId },
     );
+    return null;
   } catch (err) {
     console.warn(
       "[delivery-loop enrollment] v2-native enrollment failed, falling back to v1 bridge",

@@ -52,12 +52,13 @@ function reduceDaemonSignal(
   switch (event.kind) {
     case "run_completed":
       if (workflow.kind === "planning") {
-        // Daemon finished a planning run. Plan validation/promotion is
-        // handled by the v1 checkpoint pipeline (promote-plan.ts) which
-        // bridges into v2 via v1 loop state transition. Do NOT auto-advance
-        // the v2 workflow here — the plan may not have parsed or may
-        // require human approval.
-        return null;
+        // Planning completion: the daemon finished extracting a plan.
+        // Emit plan_completed so the coordinator can advance to
+        // awaiting_plan_approval or implementing.
+        return {
+          event: "plan_completed",
+          context: { headSha: event.result.headSha },
+        };
       }
       if (workflow.kind === "implementing") {
         if (event.result.kind === "partial") {
@@ -97,6 +98,15 @@ function reduceDaemonSignal(
 
     case "progress_reported":
       // No state transition — observability only
+      return null;
+
+    case "gate_completed":
+      if (workflow.kind === "gating") {
+        return {
+          event: event.passed ? "gate_passed" : "gate_blocked",
+          context: { gate: event.gate, headSha: event.headSha },
+        };
+      }
       return null;
   }
 }

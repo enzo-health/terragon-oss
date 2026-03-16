@@ -955,8 +955,15 @@ async function handleThreadFinish({
 
   // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
   // and isError is still true, re-queue the actual review findings so the next agent run
-  // has actionable context.
-  if (isError && !isRateLimited) {
+  // has actionable context. Skip for v2-enrolled threads — the coordinator/workers handle
+  // retry and recovery.
+  const { getActiveWorkflowForThread } = await import(
+    "@terragon/shared/delivery-loop/store/workflow-store"
+  );
+  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+  const isV2Enrolled = !!v2Workflow;
+
+  if (isError && !isRateLimited && !isV2Enrolled) {
     try {
       const activeSdlcLoop = await getActiveSdlcLoopForThread({
         db,

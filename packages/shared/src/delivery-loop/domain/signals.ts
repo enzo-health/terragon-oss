@@ -40,7 +40,14 @@ export type ReviewEvaluation = {
 export type DaemonSignal =
   | { kind: "run_completed"; runId: string; result: DaemonCompletionResult }
   | { kind: "run_failed"; runId: string; failure: DaemonFailure }
-  | { kind: "progress_reported"; runId: string; progress: DaemonProgress };
+  | { kind: "progress_reported"; runId: string; progress: DaemonProgress }
+  | {
+      kind: "gate_completed";
+      runId: string;
+      gate: GateKind;
+      passed: boolean;
+      headSha: string;
+    };
 
 export type GitHubSignal =
   | {

@@ -1454,6 +1454,9 @@ export const sdlcPhaseArtifact = pgTable(
     loopId: text("loop_id")
       .notNull()
       .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    workflowId: text("workflow_id").references(() => deliveryWorkflow.id, {
+      onDelete: "set null",
+    }),
     phase: text("phase").$type<SdlcPhase>().notNull(),
     artifactType: text("artifact_type").$type<SdlcArtifactType>().notNull(),
     headSha: text("head_sha"),
@@ -1505,6 +1508,7 @@ export const sdlcPhaseArtifact = pgTable(
       table.phase,
       table.createdAt,
     ),
+    index("sdlc_phase_artifact_workflow_id_index").on(table.workflowId),
   ],
 );
 
