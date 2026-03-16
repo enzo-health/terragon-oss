@@ -194,6 +194,16 @@ export async function runCoordinatorTick(params: {
         signalsProcessed++;
         continue;
       }
+      if ("retryable" in reduction) {
+        // Reducer determined signal has incomplete data (e.g., CI signal
+        // without required checks). Release claim so it stays pending for
+        // the next webhook or cron catch-up instead of being consumed.
+        console.warn(
+          `[coordinator] Releasing retryable signal ${signal.id}: ${reduction.reason}`,
+        );
+        await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        break;
+      }
 
       // 3b. Apply the state machine transition
       const newWorkflow = reduceWorkflow({

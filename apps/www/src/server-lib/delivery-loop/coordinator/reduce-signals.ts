@@ -13,10 +13,10 @@ import type {
   GateVerdict,
 } from "@terragon/shared/delivery-loop/domain/events";
 
-export type SignalReductionResult = {
-  event: LoopEvent;
-  context: LoopEventContext;
-} | null;
+export type SignalReductionResult =
+  | { event: LoopEvent; context: LoopEventContext }
+  | { retryable: true; reason: string }
+  | null;
 
 export function reduceSignalToEvent(params: {
   signal: DeliverySignal;
@@ -128,8 +128,13 @@ function reduceGitHubSignal(
       // wait for a real signal rather than pushing into a false fix loop.
       if (workflow.kind === "gating" && workflow.gate.kind === "ci") {
         if (event.result.requiredChecks.length === 0) {
-          // No check data — cannot determine pass/fail. Stay in gating.
-          return null;
+          // No check data — cannot determine pass/fail. Mark retryable so
+          // the signal stays pending for the next webhook or cron catch-up
+          // instead of being consumed as a no-op.
+          return {
+            retryable: true,
+            reason: "CI signal has no required checks data",
+          };
         }
         const aggregatePassed = event.result.failingChecks.length === 0;
         return {

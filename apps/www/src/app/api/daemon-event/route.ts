@@ -1333,6 +1333,9 @@ export async function POST(request: Request) {
   const resolvedStatus = daemonRunStatusFromMessages;
 
   // Processing event commit and run context update are independent — batch them.
+  // Best-effort: if these fail, the signal claim commit and coordinator tick
+  // must still proceed. A failure here previously stranded the claim in
+  // "claimed" state until stale-claim timeout, blocking daemon retries.
   {
     const postHandleOps: Array<Promise<unknown>> = [];
     if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
@@ -1363,7 +1366,21 @@ export async function POST(request: Request) {
       );
     }
     if (postHandleOps.length > 0) {
-      await Promise.all(postHandleOps);
+      try {
+        await Promise.all(postHandleOps);
+      } catch (postHandleErr) {
+        // Non-fatal — processing event commit and resolvedSessionId are
+        // bookkeeping, not critical path. Log and continue to claim commit
+        // + coordinator tick so the daemon retry doesn't hit stale claim.
+        console.warn(
+          "[daemon-event] postHandleOps best-effort failure, continuing",
+          {
+            userId,
+            threadId,
+            error: postHandleErr,
+          },
+        );
+      }
     }
   }
 

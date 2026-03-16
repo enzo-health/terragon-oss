@@ -58,6 +58,15 @@ export function normalizeGitHubWebhook(
     }
 
     case "pull_request_review": {
+      // Only actionable review states produce signals. COMMENTED and
+      // DISMISSED reviews don't indicate pass/fail — emitting them as
+      // passed=false would falsely push the workflow back to implementing.
+      if (
+        raw.reviewState !== "approved" &&
+        raw.reviewState !== "changes_requested"
+      ) {
+        return null;
+      }
       const result: ReviewEvaluation = {
         passed:
           raw.reviewState === "approved" &&
