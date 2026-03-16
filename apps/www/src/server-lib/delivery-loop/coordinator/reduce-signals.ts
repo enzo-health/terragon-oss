@@ -142,8 +142,12 @@ function reduceGitHubSignal(
           context: { gate: "ci" },
         };
       }
-      // In babysitting, raw GitHub signals are suppressed — only the
-      // babysit worker's aggregate evaluation produces transitions.
+      // In babysitting, the babysit worker handles aggregate gate
+      // evaluation. CI signals are consumed as no-ops here — the babysit
+      // worker already polls GitHub directly for CI status reconciliation.
+      // NOTE: Gate data (sdlcCiGateRun) is not persisted by the v2
+      // coordinator. The babysit worker's self-healing poll covers CI;
+      // review/carmack/deep gates are persisted by the checkpoint pipeline.
       if (workflow.kind === "babysitting") return null;
       // In other active states (implementing, awaiting_pr, etc.), the
       // workflow hasn't reached the CI gate yet. Mark the signal
@@ -172,8 +176,9 @@ function reduceGitHubSignal(
           context: { gate: "review" },
         };
       }
-      // In babysitting, raw GitHub signals are suppressed — only the
-      // babysit worker's aggregate evaluation produces transitions.
+      // In babysitting, review signals are consumed as no-ops — the
+      // babysit worker reads review gate state from sdlcReviewThreadGateRun
+      // which is populated by the checkpoint pipeline during implementation.
       if (workflow.kind === "babysitting") return null;
       // In other active states, keep the signal pending for when the
       // workflow reaches the review gate.

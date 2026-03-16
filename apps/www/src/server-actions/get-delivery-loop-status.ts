@@ -676,7 +676,10 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
                 });
               }
             }
-            if (workflow) {
+            // Only tick if the workflow belongs to this loop generation.
+            // A null sdlcLoopId (pre-migration) or mismatched ID means
+            // the workflow may consume signals from the wrong loop.
+            if (workflow && workflow.sdlcLoopId === loop.id) {
               const { runCoordinatorTick } = await import(
                 "@/server-lib/delivery-loop/coordinator/tick"
               );

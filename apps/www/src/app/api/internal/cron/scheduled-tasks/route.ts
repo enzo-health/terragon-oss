@@ -179,6 +179,7 @@ export async function GET(request: NextRequest) {
             threadId: true,
             state: true,
             blockedFromState: true,
+            currentHeadSha: true,
           },
           limit: 50,
         });
@@ -193,6 +194,19 @@ export async function GET(request: NextRequest) {
             !existing ||
             (existing.sdlcLoopId != null && existing.sdlcLoopId !== loop.id);
           if (needsBackfill) {
+            // Skip head-dependent states when headSha is unavailable —
+            // creating a workflow with "unknown" SHA causes workers to
+            // evaluate gate state for a synthetic commit.
+            const headDependentStates = new Set([
+              "babysitting",
+              "review_gate",
+              "ci_gate",
+              "ui_gate",
+              "awaiting_pr_link",
+            ]);
+            if (headDependentStates.has(loop.state) && !loop.currentHeadSha) {
+              continue;
+            }
             try {
               await ensureV2WorkflowExists({
                 db,
@@ -200,6 +214,7 @@ export async function GET(request: NextRequest) {
                 sdlcLoopId: loop.id,
                 sdlcLoopState: loop.state,
                 sdlcBlockedFromState: loop.blockedFromState,
+                headSha: loop.currentHeadSha,
               });
             } catch (backfillErr) {
               console.warn(

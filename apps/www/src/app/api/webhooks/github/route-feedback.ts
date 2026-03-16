@@ -1018,11 +1018,7 @@ export async function routeGithubFeedbackOrSpawnThread(
           db,
           threadId: activeSdlcLoop.threadId,
         });
-        if (
-          v2Workflow &&
-          (!v2Workflow.sdlcLoopId ||
-            v2Workflow.sdlcLoopId === activeSdlcLoop.id)
-        ) {
+        if (v2Workflow && v2Workflow.sdlcLoopId === activeSdlcLoop.id) {
           try {
             await runCoordinatorTick({
               db,

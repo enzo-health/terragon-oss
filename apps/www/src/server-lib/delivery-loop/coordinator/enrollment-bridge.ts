@@ -231,13 +231,14 @@ export async function ensureV2WorkflowExists(params: {
     threadId: params.threadId,
   });
   if (existing) {
-    if (!existing.sdlcLoopId || existing.sdlcLoopId === params.sdlcLoopId) {
+    if (existing.sdlcLoopId === params.sdlcLoopId) {
       return { workflowId: existing.id, created: false };
     }
-    // Active workflow belongs to a different loop — don't reuse it.
+    // Workflow exists but either has no sdlcLoopId (pre-migration) or
+    // belongs to a different loop generation — don't reuse it.
     // Fall through to create a new workflow for the current loop.
     console.warn(
-      "[enrollment-bridge] existing workflow belongs to different loop, creating new one",
+      "[enrollment-bridge] existing workflow not bound to current loop, creating new one",
       {
         existingWorkflowId: existing.id,
         existingLoopId: existing.sdlcLoopId,
@@ -310,10 +311,7 @@ export async function ensureV2WorkflowExists(params: {
       db: params.db,
       threadId: params.threadId,
     });
-    if (
-      raceWinner &&
-      (!raceWinner.sdlcLoopId || raceWinner.sdlcLoopId === params.sdlcLoopId)
-    ) {
+    if (raceWinner && raceWinner.sdlcLoopId === params.sdlcLoopId) {
       return { workflowId: raceWinner.id, created: false };
     }
     throw err;

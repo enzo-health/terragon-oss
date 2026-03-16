@@ -1188,11 +1188,7 @@ export async function POST(request: Request) {
             // After re-enrollment, getActiveWorkflowForThread may return a
             // new-generation workflow while enrolledLoop.id points to old
             // signals — ticking would apply stale signals to the new workflow.
-            if (
-              v2Workflow &&
-              (!v2Workflow.sdlcLoopId ||
-                v2Workflow.sdlcLoopId === enrolledLoop.id)
-            ) {
+            if (v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop.id) {
               await runCoordinatorTick({
                 db,
                 workflowId: v2Workflow.id as WorkflowId,
@@ -1542,10 +1538,7 @@ export async function POST(request: Request) {
         db,
         threadId,
       });
-      if (
-        v2Workflow &&
-        (!v2Workflow.sdlcLoopId || v2Workflow.sdlcLoopId === enrolledLoop.id)
-      ) {
+      if (v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop.id) {
         const tickResult = await runCoordinatorTick({
           db,
           workflowId: v2Workflow.id as WorkflowId,
