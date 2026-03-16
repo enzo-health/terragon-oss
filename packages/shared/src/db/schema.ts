@@ -2086,6 +2086,15 @@ export const deliveryWorkflow = pgTable(
     fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
     maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
     sdlcLoopId: text("sdlc_loop_id"),
+    repoFullName: text("repo_full_name").notNull().default(""),
+    prNumber: integer("pr_number"),
+    userId: text("user_id")
+      .notNull()
+      .default("")
+      .references(() => user.id, { onDelete: "cascade" }),
+    planApprovalPolicy: text("plan_approval_policy").notNull().default("auto"),
+    currentHeadSha: text("current_head_sha"),
+    blockedReason: text("blocked_reason"),
     headSha: text("head_sha"),
     reviewSurfaceJson: jsonb("review_surface_json"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
@@ -2102,6 +2111,7 @@ export const deliveryWorkflow = pgTable(
     ),
     index("delivery_workflow_kind_index").on(table.kind),
     index("delivery_workflow_thread_id_index").on(table.threadId),
+    index("delivery_workflow_user_id_index").on(table.userId),
   ],
 );
 

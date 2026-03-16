@@ -46,6 +46,12 @@ export async function createWorkflow(params: {
   stateJson: Record<string, unknown>;
   maxFixAttempts?: number;
   sdlcLoopId?: string;
+  repoFullName?: string;
+  prNumber?: number | null;
+  userId?: string;
+  planApprovalPolicy?: string;
+  currentHeadSha?: string | null;
+  blockedReason?: string | null;
 }) {
   const [row] = await params.db
     .insert(schema.deliveryWorkflow)
@@ -56,6 +62,12 @@ export async function createWorkflow(params: {
       stateJson: params.stateJson,
       maxFixAttempts: params.maxFixAttempts ?? 6,
       sdlcLoopId: params.sdlcLoopId ?? null,
+      repoFullName: params.repoFullName ?? "",
+      prNumber: params.prNumber ?? null,
+      userId: params.userId ?? "",
+      planApprovalPolicy: params.planApprovalPolicy ?? "auto",
+      currentHeadSha: params.currentHeadSha ?? null,
+      blockedReason: params.blockedReason ?? null,
     })
     .returning();
   return row!;
@@ -106,4 +118,66 @@ export async function updateWorkflowState(params: {
     return { updated: true, newVersion: result[0].version };
   }
   return { updated: false, reason: "version_conflict" };
+}
+
+export async function getActiveWorkflowForGithubPR(params: {
+  db: Pick<DB, "query">;
+  repoFullName: string;
+  prNumber: number;
+}) {
+  return params.db.query.deliveryWorkflow.findMany({
+    where: and(
+      eq(schema.deliveryWorkflow.repoFullName, params.repoFullName),
+      eq(schema.deliveryWorkflow.prNumber, params.prNumber),
+      notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
+    ),
+  });
+}
+
+export async function getActiveWorkflowsForRepo(params: {
+  db: Pick<DB, "query">;
+  repoFullName: string;
+}) {
+  return params.db.query.deliveryWorkflow.findMany({
+    where: and(
+      eq(schema.deliveryWorkflow.repoFullName, params.repoFullName),
+      notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
+    ),
+  });
+}
+
+export async function updateWorkflowPR(params: {
+  db: Pick<DB, "update">;
+  workflowId: string;
+  prNumber: number;
+  now?: Date;
+}): Promise<boolean> {
+  const now = params.now ?? new Date();
+  const result = await params.db
+    .update(schema.deliveryWorkflow)
+    .set({
+      prNumber: params.prNumber,
+      updatedAt: now,
+    })
+    .where(eq(schema.deliveryWorkflow.id, params.workflowId))
+    .returning({ id: schema.deliveryWorkflow.id });
+  return result.length > 0;
+}
+
+export async function updateWorkflowHeadSha(params: {
+  db: Pick<DB, "update">;
+  workflowId: string;
+  currentHeadSha: string;
+  now?: Date;
+}): Promise<boolean> {
+  const now = params.now ?? new Date();
+  const result = await params.db
+    .update(schema.deliveryWorkflow)
+    .set({
+      currentHeadSha: params.currentHeadSha,
+      updatedAt: now,
+    })
+    .where(eq(schema.deliveryWorkflow.id, params.workflowId))
+    .returning({ id: schema.deliveryWorkflow.id });
+  return result.length > 0;
 }
