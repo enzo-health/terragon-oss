@@ -19,6 +19,7 @@ import { appendWorkflowEvent } from "@terragon/shared/delivery-loop/store/event-
 import {
   claimNextUnprocessedSignal,
   completeSignalClaim,
+  releaseSignalClaim,
   deadLetterSignal,
 } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
 import {
@@ -259,9 +260,13 @@ export async function runCoordinatorTick(params: {
       });
     });
 
-    // If version conflict occurred, break out of the signal loop
-    // without completing the signal claim (so it can be retried)
-    if (versionConflict) break;
+    // If version conflict occurred, release the claim so the signal is
+    // immediately available for the next tick (instead of waiting for
+    // stale-claim timeout).
+    if (versionConflict) {
+      await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+      break;
+    }
 
     // 4f. Complete the signal (outside transaction — idempotent)
     await completeSignalClaim({ db, signalId: signal.id, claimToken, now });

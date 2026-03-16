@@ -239,13 +239,25 @@ export async function ensureV2WorkflowExists(params: {
   });
   const nextGeneration = (latest?.generation ?? 0) + 1;
 
-  const workflow = await createWorkflow({
-    db: params.db,
-    threadId: params.threadId,
-    generation: nextGeneration,
-    kind: v2Kind,
-    stateJson,
-  });
-
-  return { workflowId: workflow.id, created: true };
+  try {
+    const workflow = await createWorkflow({
+      db: params.db,
+      threadId: params.threadId,
+      generation: nextGeneration,
+      kind: v2Kind,
+      stateJson,
+    });
+    return { workflowId: workflow.id, created: true };
+  } catch (err) {
+    // Race: a concurrent caller may have inserted between our check and insert.
+    // Re-query — if a workflow now exists, return it; otherwise rethrow.
+    const raceWinner = await getActiveWorkflowForThread({
+      db: params.db,
+      threadId: params.threadId,
+    });
+    if (raceWinner) {
+      return { workflowId: raceWinner.id, created: false };
+    }
+    throw err;
+  }
 }

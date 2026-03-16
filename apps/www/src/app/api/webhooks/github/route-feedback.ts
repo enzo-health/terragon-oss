@@ -1089,26 +1089,18 @@ export async function routeGithubFeedbackOrSpawnThread(
             threadId: activeSdlcLoop.threadId,
           };
         } catch (backfillErr) {
-          console.error("[route-feedback] v2 workflow backfill failed", {
-            sdlcLoopId: activeSdlcLoop.id,
-            error: backfillErr,
-          });
-          // Signal is already enqueued in the inbox — returning here prevents
-          // duplicate delivery via direct routing. The coordinator tick will
-          // pick up the signal once the workflow is eventually backfilled.
-          captureFeedbackRouting({
-            userId,
-            input,
-            mode: "suppressed_enrolled_loop",
-            reason: "sdlc-loop-enrolled",
-            threadId: activeSdlcLoop.threadId,
-          });
-          return {
-            mode: "suppressed_enrolled_loop",
-            reason: "sdlc-loop-enrolled",
-            sdlcLoopId: activeSdlcLoop.id,
-            threadId: activeSdlcLoop.threadId,
-          };
+          // Signal is already in the inbox but no v2 workflow exists for
+          // cron to discover. Rethrow so the webhook delivery retries —
+          // appendSignalToInbox uses ON CONFLICT DO NOTHING, so the retry
+          // is safe and gives the backfill another chance.
+          console.error(
+            "[route-feedback] v2 workflow backfill failed, rethrowing for webhook retry",
+            {
+              sdlcLoopId: activeSdlcLoop.id,
+              error: backfillErr,
+            },
+          );
+          throw backfillErr;
         }
       }
     }

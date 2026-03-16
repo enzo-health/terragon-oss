@@ -1525,7 +1525,7 @@ export async function POST(request: Request) {
         });
       }
     } catch (error) {
-      console.error("[sdlc-loop] best-effort coordinator tick failed", {
+      console.error("[sdlc-loop] coordinator tick/backfill failed", {
         userId,
         threadId,
         loopId: enrolledLoop.id,
@@ -1533,6 +1533,15 @@ export async function POST(request: Request) {
         seq: envelopeV2.seq,
         error,
       });
+      // If the committed signal has no reachable v2 workflow, returning
+      // success would orphan it. Return 500 so the daemon retries; the
+      // v1 inbox will deduplicate the signal on re-delivery.
+      return new Response(
+        "coordinator tick/backfill failed after signal commit",
+        {
+          status: 500,
+        },
+      );
     }
   }
 
