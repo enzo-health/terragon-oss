@@ -956,14 +956,20 @@ export async function POST(request: Request) {
     getActiveSdlcLoopForThread({ db, userId, threadId }),
   ]);
   const useV2Ingress = !!(
-    v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop?.id
+    v2Workflow && v2Workflow.sdlcLoopId === (enrolledLoop?.id ?? null)
   );
+
+  // For pure v2 workflows (no v1 sdlcLoop), use the workflow ID as the
+  // effective loop ID for Redis key namespacing and signal inbox partitioning.
+  const effectiveLoopId = enrolledLoop?.id ?? v2Workflow?.id ?? null;
+  const hasDeliveryLoop = !!(enrolledLoop || v2Workflow);
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
   // status-based (idempotent), not seq-based.
   if (
-    enrolledLoop &&
+    hasDeliveryLoop &&
+    effectiveLoopId &&
     envelopeV2 &&
     runContext &&
     (runContext.status === "pending" || runContext.status === "dispatched")
@@ -972,12 +978,12 @@ export async function POST(request: Request) {
       await handleAckReceived({
         db,
         runId: envelopeV2.runId,
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         threadChatId,
       });
     } catch (ackError) {
       console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         threadId,
         threadChatId,
         runId: envelopeV2.runId,
@@ -1036,14 +1042,14 @@ export async function POST(request: Request) {
     }
   };
 
-  if (enrolledLoop) {
+  if (hasDeliveryLoop) {
     if (!envelopeV2) {
       console.error(
         "[sdlc-loop] rejecting daemon event for enrolled loop without v2 envelope",
         {
           userId,
           threadId,
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
           daemonVersionHeader,
           daemonCapabilitiesHeader,
           payloadVersion: json.payloadVersion ?? null,
@@ -1053,7 +1059,7 @@ export async function POST(request: Request) {
         {
           success: false,
           error: "enrolled_loop_requires_v2_envelope",
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
         },
         { status: 409 },
       );
@@ -1061,7 +1067,7 @@ export async function POST(request: Request) {
 
     if (envelopeV2 && daemonRunStatusFromMessages === "processing") {
       const processingClaimResult = await claimEnrolledLoopProcessingEvent({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         envelope: envelopeV2,
       });
       if (!processingClaimResult.claimed) {
@@ -1070,7 +1076,7 @@ export async function POST(request: Request) {
             {
               success: false,
               error: "daemon_event_claim_in_progress",
-              loopId: enrolledLoop.id,
+              loopId: effectiveLoopId!,
             },
             { status: 409 },
           );
@@ -1080,7 +1086,7 @@ export async function POST(request: Request) {
             success: true,
             deduplicated: true,
             reason: processingClaimResult.reason,
-            loopId: enrolledLoop.id,
+            loopId: effectiveLoopId!,
             acknowledgedEventId: envelopeV2.eventId,
             acknowledgedSeq: envelopeV2.seq,
           },
@@ -1090,7 +1096,7 @@ export async function POST(request: Request) {
       claimedProcessingEvent = true;
     } else if (envelopeV2 && !useV2Ingress) {
       const claimResult = await claimEnrolledLoopDaemonEvent({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         threadId,
         threadChatId,
         envelope: envelopeV2,
@@ -1108,7 +1114,7 @@ export async function POST(request: Request) {
             {
               success: false,
               error: "daemon_event_claim_in_progress",
-              loopId: enrolledLoop.id,
+              loopId: effectiveLoopId!,
             },
             { status: 409 },
           );
@@ -1136,7 +1142,7 @@ export async function POST(request: Request) {
         ) {
           try {
             await persistDaemonTerminalDispatchStatus({
-              loopId: enrolledLoop.id,
+              loopId: effectiveLoopId!,
               threadChatId,
               runId: envelopeV2.runId,
               daemonRunStatus: daemonRunStatusFromMessages,
@@ -1147,7 +1153,7 @@ export async function POST(request: Request) {
             console.warn(
               "[delivery-loop] failed to persist terminal dispatch intent status on dedupe",
               {
-                loopId: enrolledLoop.id,
+                loopId: effectiveLoopId!,
                 threadId,
                 threadChatId,
                 runId: envelopeV2.runId,
@@ -1176,17 +1182,17 @@ export async function POST(request: Request) {
                 userId,
                 threadId,
               });
-              if (freshDedupLoop && freshDedupLoop.id !== enrolledLoop.id) {
+              if (freshDedupLoop && freshDedupLoop.id !== enrolledLoop!.id) {
                 console.warn(
                   "[daemon-event] dedup backfill skipped — active loop changed",
                   {
-                    enrolledLoopId: enrolledLoop.id,
+                    enrolledLoopId: enrolledLoop!.id,
                     currentLoopId: freshDedupLoop.id,
                     threadId,
                   },
                 );
               } else {
-                const dedupLoop = freshDedupLoop ?? enrolledLoop;
+                const dedupLoop = freshDedupLoop ?? enrolledLoop!;
                 await ensureV2WorkflowExists({
                   db,
                   threadId,
@@ -1209,14 +1215,14 @@ export async function POST(request: Request) {
             // After re-enrollment, getActiveWorkflowForThread may return a
             // new-generation workflow while enrolledLoop.id points to old
             // signals — ticking would apply stale signals to the new workflow.
-            if (v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop.id) {
+            if (v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop?.id) {
               await runCoordinatorTick({
                 db,
                 workflowId: v2Workflow.id as WorkflowId,
                 correlationId:
                   `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
                 claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-                loopId: enrolledLoop.id,
+                loopId: effectiveLoopId!,
               });
             } else if (v2Workflow) {
               console.warn(
@@ -1224,7 +1230,7 @@ export async function POST(request: Request) {
                 {
                   workflowId: v2Workflow.id,
                   workflowLoopId: v2Workflow.sdlcLoopId,
-                  enrolledLoopId: enrolledLoop.id,
+                  enrolledLoopId: effectiveLoopId!,
                   threadId,
                 },
               );
@@ -1259,7 +1265,7 @@ export async function POST(request: Request) {
               {
                 userId,
                 threadId,
-                loopId: enrolledLoop.id,
+                loopId: effectiveLoopId!,
                 eventId: envelopeV2.eventId,
                 seq: envelopeV2.seq,
                 reason: claimResult.reason,
@@ -1278,7 +1284,7 @@ export async function POST(request: Request) {
               status: 202,
               deduplicated: true,
               reason: claimResult.reason,
-              loopId: enrolledLoop.id,
+              loopId: effectiveLoopId!,
               acknowledgedEventId: envelopeV2.eventId,
               acknowledgedSeq: envelopeV2.seq,
             },
@@ -1351,9 +1357,9 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    if (hasDeliveryLoop && envelopeV2 && claimedProcessingEvent) {
       await rollbackEnrolledLoopProcessingEventClaim({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         envelope: envelopeV2,
       });
     }
@@ -1375,9 +1381,9 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    if (hasDeliveryLoop && envelopeV2 && claimedProcessingEvent) {
       await rollbackEnrolledLoopProcessingEventClaim({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         envelope: envelopeV2,
       });
     }
@@ -1397,10 +1403,10 @@ export async function POST(request: Request) {
   // "claimed" state until stale-claim timeout, blocking daemon retries.
   {
     const postHandleOps: Array<Promise<unknown>> = [];
-    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    if (hasDeliveryLoop && envelopeV2 && claimedProcessingEvent) {
       postHandleOps.push(
         commitEnrolledLoopProcessingEvent({
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
           envelope: envelopeV2,
         }),
       );
@@ -1553,7 +1559,7 @@ export async function POST(request: Request) {
     }
   }
 
-  if (enrolledLoop && envelopeV2) {
+  if (hasDeliveryLoop && envelopeV2) {
     if (useV2Ingress) {
       // V2 path: route through daemon ingress adapter
       try {
@@ -1564,7 +1570,7 @@ export async function POST(request: Request) {
           db,
           rawEvent: {
             threadId,
-            loopId: enrolledLoop.id,
+            loopId: effectiveLoopId!,
             runId: envelopeV2.runId,
             status: daemonRunStatusFromMessages as
               | "completed"
@@ -1587,7 +1593,7 @@ export async function POST(request: Request) {
         console.error("[sdlc-loop-v2] handleDaemonIngress failed", {
           userId,
           threadId,
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
           eventId: envelopeV2.eventId,
           seq: envelopeV2.seq,
           error,
@@ -1606,7 +1612,7 @@ export async function POST(request: Request) {
         });
         if (
           v2WorkflowForBackfill &&
-          v2WorkflowForBackfill.sdlcLoopId === enrolledLoop.id
+          v2WorkflowForBackfill.sdlcLoopId === enrolledLoop?.id
         ) {
           const tickResult = await runCoordinatorTick({
             db,
@@ -1614,7 +1620,7 @@ export async function POST(request: Request) {
             correlationId:
               `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
             claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-            loopId: enrolledLoop.id,
+            loopId: effectiveLoopId!,
           });
           if (!tickResult.signalsProcessed) {
             console.log(
@@ -1632,7 +1638,7 @@ export async function POST(request: Request) {
         } else if (
           v2WorkflowForBackfill &&
           v2WorkflowForBackfill.sdlcLoopId &&
-          v2WorkflowForBackfill.sdlcLoopId !== enrolledLoop.id
+          v2WorkflowForBackfill.sdlcLoopId !== enrolledLoop!.id
         ) {
           // Workflow belongs to a different loop generation — skip ticking
           // to prevent cross-generation signal contamination.
@@ -1641,7 +1647,7 @@ export async function POST(request: Request) {
             {
               workflowId: v2WorkflowForBackfill.id,
               workflowLoopId: v2WorkflowForBackfill.sdlcLoopId,
-              enrolledLoopId: enrolledLoop.id,
+              enrolledLoopId: enrolledLoop!.id,
               threadId,
             },
           );
@@ -1658,11 +1664,11 @@ export async function POST(request: Request) {
             userId,
             threadId,
           });
-          if (freshLoop && freshLoop.id !== enrolledLoop.id) {
+          if (freshLoop && freshLoop.id !== enrolledLoop!.id) {
             console.warn(
               "[sdlc-loop-v2] backfill skipped — active loop changed since enrollment",
               {
-                enrolledLoopId: enrolledLoop.id,
+                enrolledLoopId: enrolledLoop!.id,
                 currentLoopId: freshLoop.id,
                 threadId,
                 eventId: envelopeV2.eventId,
@@ -1670,7 +1676,7 @@ export async function POST(request: Request) {
               },
             );
           } else {
-            const backfillLoop = freshLoop ?? enrolledLoop;
+            const backfillLoop = freshLoop ?? enrolledLoop!;
             console.warn(
               "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
               {
@@ -1699,7 +1705,7 @@ export async function POST(request: Request) {
               correlationId:
                 `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
               claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-              loopId: enrolledLoop.id,
+              loopId: effectiveLoopId!,
             });
           }
         }
@@ -1707,7 +1713,7 @@ export async function POST(request: Request) {
         console.error("[sdlc-loop] coordinator tick/backfill failed", {
           userId,
           threadId,
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
           eventId: envelopeV2.eventId,
           seq: envelopeV2.seq,
           error,
@@ -1742,13 +1748,14 @@ export async function POST(request: Request) {
       );
     }
     if (
-      enrolledLoop &&
+      hasDeliveryLoop &&
+      effectiveLoopId &&
       envelopeV2 &&
       daemonRunStatusFromMessages !== "processing"
     ) {
       terminalOps.push(
         persistDaemonTerminalDispatchStatus({
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
           threadChatId,
           runId: envelopeV2.runId,
           daemonRunStatus: daemonRunStatusFromMessages,
