@@ -43,11 +43,6 @@ import {
   normalizeGitHubWebhook,
   type GitHubWebhookPayload,
 } from "../adapters/ingress/github-ingress";
-import {
-  ensureV2WorkflowExists,
-  buildInitialStateJson,
-  mapV1StateToV2Kind,
-} from "./enrollment-bridge";
 import type {
   WorkflowId,
   CorrelationId,
@@ -83,27 +78,31 @@ async function tick(workflowId: string) {
   });
 }
 
-/** Stable loop ID per test — derived from testThreadId so it's unique per test
- *  but consistent across calls within the same test (needed for idempotency). */
-const stableLoopId = () => `sdlc-${testThreadId}`;
-
-/** Create a workflow via the enrollment bridge (same path as production). */
-async function enrollWorkflow(
-  kind: string = "implementing",
-  sdlcState: string = "implementing",
-  sdlcLoopId: string = stableLoopId(),
-) {
-  const result = await ensureV2WorkflowExists({
+/** Create a workflow directly via createWorkflow (v2 enrollment path). */
+async function enrollWorkflow(kind: string = "implementing") {
+  const stateJson =
+    kind === "implementing"
+      ? {
+          planVersion: 1,
+          dispatch: {
+            kind: "queued",
+            dispatchId: `d-test-${nanoid(6)}`,
+            executionClass: "implementation_runtime",
+          },
+        }
+      : kind === "planning"
+        ? { planVersion: null }
+        : {};
+  const workflow = await createWorkflow({
     db,
     threadId: testThreadId,
-    sdlcLoopId,
-    sdlcLoopState: sdlcState as Parameters<
-      typeof ensureV2WorkflowExists
-    >[0]["sdlcLoopState"],
     userId: testUserId,
+    generation: 1,
+    kind: kind as any,
+    stateJson,
     repoFullName: "test-org/test-repo",
   });
-  return result;
+  return { workflowId: workflow.id, created: true };
 }
 
 /** Inject a signal via daemon ingress adapter (same path as production). */
@@ -178,60 +177,6 @@ async function assertWorkflowState(
 // ---------------------------------------------------------------------------
 
 describe("v2 pipeline — end-to-end validation", () => {
-  describe("enrollment bridge", () => {
-    it("creates a workflow via enrollment bridge", async () => {
-      const result = await enrollWorkflow("implementing");
-
-      expect(result.created).toBe(true);
-      expect(result.workflowId).toBeDefined();
-
-      const wf = await getWorkflow({ db, workflowId: result.workflowId });
-      expect(wf).toBeDefined();
-      expect(wf!.kind).toBe("implementing");
-      expect(wf!.threadId).toBe(testThreadId);
-    });
-
-    it("enrollment is idempotent — second call returns existing", async () => {
-      const first = await enrollWorkflow("implementing");
-      const second = await enrollWorkflow("implementing");
-
-      expect(second.created).toBe(false);
-      expect(second.workflowId).toBe(first.workflowId);
-    });
-
-    it("maps all v1 states correctly", () => {
-      const mappings: [string, string][] = [
-        ["planning", "planning"],
-        ["implementing", "implementing"],
-        ["review_gate", "gating"],
-        ["ci_gate", "gating"],
-        ["ui_gate", "gating"],
-        ["awaiting_pr_link", "awaiting_pr"],
-        ["babysitting", "babysitting"],
-        ["blocked", "awaiting_manual_fix"],
-        ["done", "done"],
-        ["stopped", "stopped"],
-        ["terminated_pr_closed", "terminated"],
-        ["terminated_pr_merged", "terminated"],
-      ];
-
-      for (const [v1State, expectedV2Kind] of mappings) {
-        expect(mapV1StateToV2Kind(v1State as any)).toBe(expectedV2Kind);
-      }
-    });
-
-    it("builds correct gate stateJson for v1 gate states", () => {
-      const reviewState = buildInitialStateJson("review_gate");
-      expect((reviewState.gate as any).kind).toBe("review");
-
-      const ciState = buildInitialStateJson("ci_gate");
-      expect((ciState.gate as any).kind).toBe("ci");
-
-      const uiState = buildInitialStateJson("ui_gate");
-      expect((uiState.gate as any).kind).toBe("ui");
-    });
-  });
-
   describe("daemon ingress adapter", () => {
     it("normalizes daemon completed event to correct signal shape", () => {
       const signal = normalizeDaemonEvent({
@@ -884,7 +829,7 @@ describe("v2 pipeline — end-to-end validation", () => {
   describe("planning → implementing transition", () => {
     it("planning → implementing transition creates dispatch work item after plan_approved", async () => {
       // 1. Enroll workflow in planning state
-      const { workflowId } = await enrollWorkflow("planning", "planning");
+      const { workflowId } = await enrollWorkflow("planning");
 
       // 2. Simulate daemon completing its planning run
       await appendSignalToInbox({
@@ -940,7 +885,7 @@ describe("v2 pipeline — end-to-end validation", () => {
 
     it("run_completed during planning does NOT advance to implementing", async () => {
       // 1. Enroll workflow in planning
-      const { workflowId } = await enrollWorkflow("planning", "planning");
+      const { workflowId } = await enrollWorkflow("planning");
 
       // 2. Inject run_completed daemon signal
       await appendSignalToInbox({

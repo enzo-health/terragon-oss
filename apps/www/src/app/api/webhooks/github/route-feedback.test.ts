@@ -94,12 +94,6 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
 }));
 
-vi.mock("@/server-lib/delivery-loop/coordinator/enrollment-bridge", () => ({
-  ensureV2WorkflowExists: vi
-    .fn()
-    .mockResolvedValue({ workflowId: "wf-backfilled", created: true }),
-}));
-
 vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
   runCoordinatorTick: vi.fn().mockResolvedValue({
     transitioned: false,
