@@ -35,13 +35,13 @@ vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({
 
 // ─── import SUT after mocks ───────────────────────────────────
 
-import { promotePlanToImplementing } from "./promote-plan";
+import { promotePlanToImplementing, type PlanSpecSource } from "./promote-plan";
 
 // ─── helpers ──────────────────────────────────────────────────
 
 const makeParsedPlan = (
-  overrides?: Partial<ParsedPlanSpec> & { source?: string },
-): ParsedPlanSpec & { source?: string } => ({
+  overrides?: Partial<ParsedPlanSpec> & { source?: PlanSpecSource },
+): ParsedPlanSpec & { source?: PlanSpecSource } => ({
   planText: "Implement feature X",
   tasks: [
     {
@@ -814,7 +814,9 @@ describe("promotePlanToImplementing", () => {
       await promotePlanToImplementing({
         db: fakeDb,
         loop: makeLoop({ planApprovalPolicy: "human_required" }),
-        parsedPlan: makeParsedPlan({ source: "unknown_source" }),
+        parsedPlan: makeParsedPlan({
+          source: "unknown_source" as PlanSpecSource,
+        }),
         mode: "checkpoint",
       });
 

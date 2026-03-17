@@ -18,7 +18,11 @@ type PlanningLoopContext = {
 };
 
 type PromotePlanMode = "checkpoint" | "approve";
-type PlanSpecSource = "exit_plan_mode" | "write_tool" | "agent_text" | "system";
+export type PlanSpecSource =
+  | "exit_plan_mode"
+  | "write_tool"
+  | "agent_text"
+  | "system";
 
 export type PromotePlanToImplementingResult =
   | {
