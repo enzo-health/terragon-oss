@@ -11,10 +11,6 @@ import {
   createTestUser,
   createTestGitHubPR,
 } from "@terragon/shared/model/test-helpers";
-import {
-  getActiveSdlcLoopsForGithubPR,
-  transitionActiveSdlcLoopsForGithubPREvent,
-} from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 import * as schema from "@terragon/shared/db/schema";
 import { eq } from "drizzle-orm";
@@ -31,17 +27,6 @@ vi.mock("./route-feedback", () => ({
     mode: "reused_existing",
   }),
 }));
-
-vi.mock("@terragon/shared/model/delivery-loop", async () => {
-  const actual = await vi.importActual<
-    typeof import("@terragon/shared/model/delivery-loop")
-  >("@terragon/shared/model/delivery-loop");
-  return {
-    ...actual,
-    getActiveSdlcLoopsForGithubPR: vi.fn(),
-    transitionActiveSdlcLoopsForGithubPREvent: vi.fn(),
-  };
-});
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", async () => {
   const actual = await vi.importActual<
@@ -122,12 +107,7 @@ describe("GitHub webhook route", () => {
     vi.mocked(getOctokitForApp).mockResolvedValue(
       undefined as unknown as Awaited<ReturnType<typeof getOctokitForApp>>,
     );
-    vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValue([]);
     vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValue([]);
-    vi.mocked(transitionActiveSdlcLoopsForGithubPREvent).mockResolvedValue({
-      totalLoops: 0,
-      updatedCount: 0,
-    });
   });
 
   describe("webhook validation", () => {
@@ -293,24 +273,6 @@ describe("GitHub webhook route", () => {
       vi.mocked(updateGitHubPR).mockRejectedValue(new Error("Database error"));
       const response = await POST(request);
       const data = await response.json();
-      expect(response.status).toBe(500);
-      expect(data.error).toBe("Internal server error");
-    });
-
-    it("returns 500 when pull_request.synchronize lifecycle sync fails", async () => {
-      const body = createPullRequestBody({
-        action: "synchronize",
-        repoFullName: "owner/repo",
-        prNumber: 123,
-      });
-      const request = await createMockRequest(body);
-      vi.mocked(
-        transitionActiveSdlcLoopsForGithubPREvent,
-      ).mockRejectedValueOnce(new Error("transition sync failed"));
-
-      const response = await POST(request);
-      const data = await response.json();
-
       expect(response.status).toBe(500);
       expect(data.error).toBe("Internal server error");
     });
