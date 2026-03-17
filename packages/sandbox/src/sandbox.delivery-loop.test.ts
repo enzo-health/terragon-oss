@@ -4,7 +4,7 @@ import { sendMessage } from "./daemon";
 import type { ISandboxSession, CreateSandboxOptions } from "./types";
 import { getOrCreateSandbox } from "./sandbox";
 import { createServer, type IncomingMessage, type Server } from "http";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import net from "net";
@@ -12,11 +12,8 @@ import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-// Read local Codex auth
-const codexAuthContents = readFileSync(
-  join(homedir(), ".codex", "auth.json"),
-  "utf-8",
-);
+// Populated in beforeAll; null when ~/.codex/auth.json is absent
+let codexAuthContents: string | null = null;
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -126,6 +123,16 @@ describe("delivery loop (codex + local auth)", () => {
   let port: number;
 
   beforeAll(async () => {
+    const authPath = join(homedir(), ".codex", "auth.json");
+    if (existsSync(authPath)) {
+      try {
+        codexAuthContents = readFileSync(authPath, "utf-8");
+      } catch {
+        codexAuthContents = null;
+      }
+    }
+    if (!codexAuthContents) return;
+
     port = await getFreePort();
     ({ server, events } = startEventServer(port));
 
@@ -147,6 +154,10 @@ describe("delivery loop (codex + local auth)", () => {
   });
 
   it("daemon should receive a codex message and POST events back to the test server", async () => {
+    if (!codexAuthContents) {
+      console.log("Skipping: ~/.codex/auth.json not found");
+      return;
+    }
     const threadId = "delivery-loop-thread-id";
     const threadChatId = "delivery-loop-chat-id";
 
