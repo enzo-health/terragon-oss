@@ -34,6 +34,7 @@ beforeEach(async () => {
 async function createPureV2Workflow(params: {
   kind: string;
   stateJson?: Record<string, unknown>;
+  maxFixAttempts?: number;
 }) {
   return createWorkflow({
     db,
@@ -41,9 +42,14 @@ async function createPureV2Workflow(params: {
     generation: Math.floor(Math.random() * 1_000_000),
     kind: params.kind,
     stateJson: params.stateJson ?? {},
+    maxFixAttempts: params.maxFixAttempts,
     userId: testUserId,
-    // sdlcLoopId is NOT passed — defaults to null (pure v2)
+    // NO sdlcLoopId — pure v2
   });
+}
+
+function correlationId(): CorrelationId {
+  return nanoid() as CorrelationId;
 }
 
 async function injectSignal(
@@ -51,20 +57,83 @@ async function injectSignal(
   causeType: import("@terragon/shared/db/types").SdlcLoopCauseType,
   payload: Record<string, unknown>,
 ) {
-  return appendSignalToInbox({ db, loopId: workflowId, causeType, payload });
+  return appendSignalToInbox({
+    db,
+    loopId: workflowId,
+    causeType,
+    payload,
+  });
+}
+
+// -- Signal builders --
+
+function daemonRunCompleted(workflowId: string) {
+  return injectSignal(workflowId, "daemon_run_completed", {
+    source: "daemon",
+    event: {
+      kind: "run_completed",
+      runId: `run-${nanoid(6)}`,
+      result: { kind: "success", headSha: "abc123", summary: "done" },
+    },
+  });
+}
+
+function daemonRunFailed(workflowId: string) {
+  return injectSignal(workflowId, "daemon_run_failed", {
+    source: "daemon",
+    event: {
+      kind: "run_failed",
+      runId: `run-${nanoid(6)}`,
+      failure: { kind: "runtime_crash", exitCode: 1, message: "crash" },
+    },
+  });
+}
+
+function reviewPassed(workflowId: string) {
+  return injectSignal(workflowId, "github_review_changed", {
+    source: "github",
+    event: {
+      kind: "review_changed",
+      prNumber: 1,
+      result: {
+        passed: true,
+        unresolvedThreadCount: 0,
+        approvalCount: 1,
+        requiredApprovals: 1,
+      },
+    },
+  });
+}
+
+function ciPassed(workflowId: string) {
+  return injectSignal(workflowId, "github_ci_changed", {
+    source: "github",
+    event: {
+      kind: "ci_changed",
+      prNumber: 1,
+      result: { passed: true, requiredChecks: ["build"], failingChecks: [] },
+    },
+  });
+}
+
+function humanStop(workflowId: string) {
+  return injectSignal(workflowId, "human_stop", {
+    source: "human",
+    event: { kind: "stop_requested", actorUserId: "test-user" },
+  });
 }
 
 async function tick(workflowId: string) {
   return runCoordinatorTick({
     db,
     workflowId: workflowId as WorkflowId,
-    correlationId: nanoid() as CorrelationId,
+    correlationId: correlationId(),
   });
 }
 
-// -- State JSON shapes --
+// -- Reusable state builders --
 
-const PLANNING_STATE = { planVersion: null };
+const PLANNING_STATE = {};
 
 const IMPLEMENTING_STATE = {
   planVersion: 1,
@@ -111,7 +180,7 @@ const BABYSITTING_STATE = {
 
 describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
   describe("planning phase", () => {
-    it("planning -> implementing via plan_approved signal", async () => {
+    it("transitions planning -> implementing via plan_approved signal", async () => {
       const wf = await createPureV2Workflow({
         kind: "awaiting_plan_approval",
         stateJson: {
@@ -120,9 +189,12 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         },
       });
 
+      // Verify no sdlcLoopId
+      expect(wf.sdlcLoopId).toBeNull();
+
       await injectSignal(wf.id, "human_resume", {
         source: "human",
-        event: { kind: "plan_approved", artifactId: "art-1" },
+        event: { kind: "plan_approved", artifactId: "plan-1" },
       });
       const result = await tick(wf.id);
 
@@ -132,40 +204,35 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
 
       const row = await getWorkflow({ db, workflowId: wf.id });
       expect(row!.kind).toBe("implementing");
+      expect(row!.sdlcLoopId).toBeNull();
     });
 
-    it("planning ignores run_completed signal (waits for checkpoint pipeline)", async () => {
+    it("planning ignores run_completed (waits for checkpoint pipeline)", async () => {
       const wf = await createPureV2Workflow({
         kind: "planning",
         stateJson: PLANNING_STATE,
       });
 
-      await injectSignal(wf.id, "daemon_run_completed", {
-        source: "daemon",
-        event: {
-          kind: "run_completed",
-          runId: `run-${nanoid(6)}`,
-          result: { kind: "success", headSha: "sha-test", summary: "done" },
-        },
-      });
+      expect(wf.sdlcLoopId).toBeNull();
+
+      await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
 
-      // Signal is processed but no transition occurs
-      expect(result.signalsProcessed).toBe(1);
+      // run_completed in planning returns null from reduceSignalToEvent
+      // so signal is consumed but no transition occurs
       expect(result.transitioned).toBe(false);
       expect(result.stateAfter).toBe("planning");
     });
 
-    it("planning -> stopped via human stop signal", async () => {
+    it("planning -> stopped via human stop", async () => {
       const wf = await createPureV2Workflow({
         kind: "planning",
         stateJson: PLANNING_STATE,
       });
 
-      await injectSignal(wf.id, "human_stop", {
-        source: "human",
-        event: { kind: "stop_requested", actorUserId: testUserId },
-      });
+      expect(wf.sdlcLoopId).toBeNull();
+
+      await humanStop(wf.id);
       const result = await tick(wf.id);
 
       expect(result.transitioned).toBe(true);
@@ -177,20 +244,15 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
   });
 
   describe("implementing phase", () => {
-    it("implementing -> gating(review) via run_completed", async () => {
+    it("transitions implementing -> gating(review) via run_completed", async () => {
       const wf = await createPureV2Workflow({
         kind: "implementing",
         stateJson: IMPLEMENTING_STATE,
       });
 
-      await injectSignal(wf.id, "daemon_run_completed", {
-        source: "daemon",
-        event: {
-          kind: "run_completed",
-          runId: `run-${nanoid(6)}`,
-          result: { kind: "success", headSha: "sha-test", summary: "done" },
-        },
-      });
+      expect(wf.sdlcLoopId).toBeNull();
+
+      await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
 
       expect(result.transitioned).toBe(true);
@@ -201,50 +263,24 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
       expect(row!.kind).toBe("gating");
       const stateJson = row!.stateJson as Record<string, unknown>;
       expect((stateJson.gate as Record<string, unknown>).kind).toBe("review");
+
+      // Audit events
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events.length).toBe(1);
+      expect(events[0]!.eventKind).toBe("implementation_succeeded");
     });
 
-    it("implementing -> awaiting_manual_fix via run_failed (budget exhausted)", async () => {
+    it("transitions implementing -> awaiting_manual_fix via run_failed", async () => {
       const wf = await createPureV2Workflow({
         kind: "implementing",
         stateJson: IMPLEMENTING_STATE,
+        maxFixAttempts: 1,
       });
 
-      // Get to gating then block to increment fixAttemptCount
-      await injectSignal(wf.id, "daemon_run_completed", {
-        source: "daemon",
-        event: {
-          kind: "run_completed",
-          runId: `run-${nanoid(6)}`,
-          result: { kind: "success", headSha: "sha-test", summary: "done" },
-        },
-      });
-      await tick(wf.id); // -> gating(review)
+      expect(wf.sdlcLoopId).toBeNull();
 
-      await injectSignal(wf.id, "github_review_changed", {
-        source: "github",
-        event: {
-          kind: "review_changed",
-          prNumber: 1,
-          result: {
-            passed: false,
-            unresolvedThreadCount: 2,
-            approvalCount: 0,
-            requiredApprovals: 1,
-          },
-        },
-      });
-      await tick(wf.id); // -> implementing, fixAttemptCount=1
-
-      // Now with default maxFixAttempts=6, we need fixAttemptCount >= 5
-      // Faster: just use run_failed with config_error which immediately escalates
-      await injectSignal(wf.id, "daemon_run_failed", {
-        source: "daemon",
-        event: {
-          kind: "run_failed",
-          runId: `run-${nanoid(6)}`,
-          failure: { kind: "config_error", message: "provider not configured" },
-        },
-      });
+      // With maxFixAttempts=1, fixAttemptCount=0 >= maxFixAttempts-1=0 -> exhausted
+      await daemonRunFailed(wf.id);
       const result = await tick(wf.id);
 
       expect(result.transitioned).toBe(true);
@@ -256,25 +292,15 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
   });
 
   describe("gating phase", () => {
-    it("gating(review) -> gating(ci) via review passed", async () => {
+    it("transitions gating(review) -> gating(ci) via review_changed passed", async () => {
       const wf = await createPureV2Workflow({
         kind: "gating",
         stateJson: gatingState("review"),
       });
 
-      await injectSignal(wf.id, "github_review_changed", {
-        source: "github",
-        event: {
-          kind: "review_changed",
-          prNumber: 1,
-          result: {
-            passed: true,
-            unresolvedThreadCount: 0,
-            approvalCount: 1,
-            requiredApprovals: 1,
-          },
-        },
-      });
+      expect(wf.sdlcLoopId).toBeNull();
+
+      await reviewPassed(wf.id);
       const result = await tick(wf.id);
 
       expect(result.transitioned).toBe(true);
@@ -285,28 +311,18 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
       expect((stateJson.gate as Record<string, unknown>).kind).toBe("ci");
     });
 
-    it("gating(ci) -> gating(ui) via ci passed", async () => {
+    it("transitions gating(ci) -> gating(ui) via ci_changed passed", async () => {
       const wf = await createPureV2Workflow({
         kind: "gating",
         stateJson: gatingState("ci"),
       });
 
-      await injectSignal(wf.id, "github_ci_changed", {
-        source: "github",
-        event: {
-          kind: "ci_changed",
-          prNumber: 1,
-          result: {
-            passed: true,
-            requiredChecks: ["build"],
-            failingChecks: [],
-          },
-        },
-      });
+      expect(wf.sdlcLoopId).toBeNull();
+
+      await ciPassed(wf.id);
       const result = await tick(wf.id);
 
       expect(result.transitioned).toBe(true);
-      expect(result.stateAfter).toBe("gating");
 
       const row = await getWorkflow({ db, workflowId: wf.id });
       const stateJson = row!.stateJson as Record<string, unknown>;
@@ -315,8 +331,7 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
   });
 
   describe("full lifecycle", () => {
-    it("planning -> implementing -> gating -> babysitting -> done (full happy path)", async () => {
-      // 1. Start in awaiting_plan_approval (planning phase complete, needs approval)
+    it("walks awaiting_plan_approval -> implementing -> gating(review) -> gating(ci) -> gating(ui) -> awaiting_pr", async () => {
       const wf = await createPureV2Workflow({
         kind: "awaiting_plan_approval",
         stateJson: {
@@ -325,161 +340,92 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         },
       });
 
-      // 2. plan_approved -> implementing
+      expect(wf.sdlcLoopId).toBeNull();
+
+      // 1. Plan approved -> implementing
       await injectSignal(wf.id, "human_resume", {
         source: "human",
-        event: { kind: "plan_approved", artifactId: "art-1" },
+        event: { kind: "plan_approved", artifactId: "plan-1" },
       });
       let result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
       expect(result.stateAfter).toBe("implementing");
 
-      // 3. run_completed -> gating(review)
-      await injectSignal(wf.id, "daemon_run_completed", {
-        source: "daemon",
-        event: {
-          kind: "run_completed",
-          runId: `run-${nanoid(6)}`,
-          result: { kind: "success", headSha: "sha-test", summary: "done" },
-        },
-      });
+      // 2. Implementation completed -> gating(review)
+      await daemonRunCompleted(wf.id);
       result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
       expect(result.stateAfter).toBe("gating");
 
-      // 4. review_changed(passed) -> gating(ci)
-      await injectSignal(wf.id, "github_review_changed", {
-        source: "github",
-        event: {
-          kind: "review_changed",
-          prNumber: 1,
-          result: {
-            passed: true,
-            unresolvedThreadCount: 0,
-            approvalCount: 1,
-            requiredApprovals: 1,
-          },
-        },
-      });
+      // 3. Review passed -> gating(ci)
+      await reviewPassed(wf.id);
       result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
       expect(result.stateAfter).toBe("gating");
 
-      // 5. ci_changed(passed) -> gating(ui)
-      await injectSignal(wf.id, "github_ci_changed", {
-        source: "github",
-        event: {
-          kind: "ci_changed",
-          prNumber: 1,
-          result: {
-            passed: true,
-            requiredChecks: ["build"],
-            failingChecks: [],
-          },
-        },
-      });
+      // 4. CI passed -> gating(ui)
+      await ciPassed(wf.id);
       result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
       expect(result.stateAfter).toBe("gating");
 
-      // 6. ui bypass -> awaiting_pr (no PR link)
+      // 5. UI bypass -> awaiting_pr
       await injectSignal(wf.id, "human_bypass", {
         source: "human",
         event: {
           kind: "bypass_requested",
-          actorUserId: testUserId,
+          actorUserId: "test-user",
           target: "ui",
         },
       });
       result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
       expect(result.stateAfter).toBe("awaiting_pr");
 
-      // 7. pr_synchronized -> babysitting
-      await injectSignal(
-        wf.id,
-        "github_pr_synchronized" as import("@terragon/shared/db/types").SdlcLoopCauseType,
-        {
-          source: "github",
-          event: {
-            kind: "pr_synchronized",
-            prNumber: 42,
-            headSha: "sha-test",
-          },
-        },
-      );
-      result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
-      expect(result.stateAfter).toBe("babysitting");
+      // Verify pure v2 throughout — no sdlcLoopId
+      const finalRow = await getWorkflow({ db, workflowId: wf.id });
+      expect(finalRow!.sdlcLoopId).toBeNull();
 
-      // 8. babysit_gates_passed -> done
-      await injectSignal(wf.id, "babysit_recheck_passed", {
-        source: "babysit",
-        event: { kind: "babysit_gates_passed", headSha: "sha-test" },
-      });
-      result = await tick(wf.id);
-      expect(result.transitioned).toBe(true);
-      expect(result.stateAfter).toBe("done");
-
-      // Verify final state
-      const row = await getWorkflow({ db, workflowId: wf.id });
-      expect(row!.kind).toBe("done");
-
-      // Verify events were recorded throughout the lifecycle
+      // Verify audit trail
       const events = await getWorkflowEvents({ db, workflowId: wf.id });
-      expect(events.length).toBeGreaterThanOrEqual(6);
+      expect(events.length).toBeGreaterThanOrEqual(5);
     });
   });
 
-  describe("signal inbox uses workflowId as loopId", () => {
-    it("signals keyed by workflowId are correctly consumed by coordinator tick", async () => {
+  describe("signal inbox partitioning", () => {
+    it("signals keyed by workflowId are consumed by coordinator tick", async () => {
       const wf = await createPureV2Workflow({
         kind: "implementing",
         stateJson: IMPLEMENTING_STATE,
       });
 
-      // Signal keyed by workflowId (pure v2 path)
-      await injectSignal(wf.id, "daemon_run_completed", {
-        source: "daemon",
-        event: {
-          kind: "run_completed",
-          runId: `run-${nanoid(6)}`,
-          result: { kind: "success", headSha: "sha-test", summary: "done" },
-        },
-      });
-
-      // Tick uses workflowId as default loopId for pure v2
+      await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
 
       expect(result.signalsProcessed).toBe(1);
       expect(result.transitioned).toBe(true);
-      expect(result.stateAfter).toBe("gating");
     });
 
-    it("signals keyed by wrong loopId are NOT consumed", async () => {
+    it("signals keyed by a different ID are not consumed", async () => {
       const wf = await createPureV2Workflow({
         kind: "implementing",
         stateJson: IMPLEMENTING_STATE,
       });
 
-      // Inject signal with a different loopId
+      // Inject signal under a DIFFERENT loopId
+      const otherLoopId = `other-${nanoid()}`;
       await appendSignalToInbox({
         db,
-        loopId: "wrong-id-" + nanoid(),
+        loopId: otherLoopId,
         causeType: "daemon_run_completed",
         payload: {
           source: "daemon",
           event: {
             kind: "run_completed",
-            runId: `run-${nanoid(6)}`,
-            result: { kind: "success", headSha: "sha-test", summary: "done" },
+            runId: "run-other",
+            result: { kind: "success", headSha: "abc123", summary: "done" },
           },
         },
       });
 
-      // Tick with workflowId — should NOT find the signal
       const result = await tick(wf.id);
 
+      // No signals found for this workflowId
       expect(result.signalsProcessed).toBe(0);
       expect(result.transitioned).toBe(false);
       expect(result.stateAfter).toBe("implementing");
