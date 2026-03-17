@@ -101,6 +101,7 @@ async function enrollWorkflow(
       typeof ensureV2WorkflowExists
     >[0]["sdlcLoopState"],
     userId: testUserId,
+    repoFullName: "test-org/test-repo",
   });
   return result;
 }

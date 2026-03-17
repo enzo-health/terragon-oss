@@ -1057,6 +1057,8 @@ export async function routeGithubFeedbackOrSpawnThread(
               sdlcLoopState: activeSdlcLoop.state,
               sdlcBlockedFromState: activeSdlcLoop.blockedFromState,
               headSha: activeSdlcLoop.currentHeadSha,
+              userId,
+              repoFullName: input.repoFullName,
             });
             await runCoordinatorTick({
               db,
@@ -1101,6 +1103,8 @@ export async function routeGithubFeedbackOrSpawnThread(
             sdlcLoopState: activeSdlcLoop.state,
             sdlcBlockedFromState: activeSdlcLoop.blockedFromState,
             headSha: activeSdlcLoop.currentHeadSha,
+            userId,
+            repoFullName: input.repoFullName,
           });
           await runCoordinatorTick({
             db,

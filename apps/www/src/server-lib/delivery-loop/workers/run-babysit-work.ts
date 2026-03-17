@@ -105,7 +105,22 @@ export async function runBabysitWork(params: {
           db: params.db,
           threadId: workflow.threadId,
         });
-        loopId = loop?.id ?? params.payload.workflowId;
+        if (!loop?.id) {
+          console.warn(
+            "[babysit-worker] cannot resolve loopId for signal inbox, failing work item",
+            { workflowId, workItemId: params.workItemId },
+          );
+          await failWorkItem({
+            db: params.db,
+            workItemId: params.workItemId,
+            claimToken: params.claimToken,
+            errorCode: "babysit_failed",
+            errorMessage: "cannot resolve loopId for signal inbox",
+            retryAt: new Date(Date.now() + 60_000),
+          });
+          return;
+        }
+        loopId = loop.id;
       }
 
       const babysitResult = await evaluateBabysitCompletionForHead({

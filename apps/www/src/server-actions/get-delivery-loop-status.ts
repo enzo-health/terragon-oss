@@ -802,6 +802,8 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
                 sdlcLoopState: loop.state,
                 sdlcBlockedFromState: loop.blockedFromState,
                 headSha: loop.currentHeadSha,
+                userId,
+                repoFullName: loop.repoFullName,
               });
               if (result.created) {
                 workflow = await getActiveWorkflowForThread({

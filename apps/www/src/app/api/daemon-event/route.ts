@@ -1182,6 +1182,8 @@ export async function POST(request: Request) {
                   sdlcLoopState: dedupLoop.state,
                   sdlcBlockedFromState: dedupLoop.blockedFromState,
                   headSha: dedupLoop.currentHeadSha,
+                  userId,
+                  repoFullName: dedupLoop.repoFullName,
                 });
                 // Reload full workflow so sdlcLoopId is available for
                 // the generation check below.
@@ -1676,6 +1678,8 @@ export async function POST(request: Request) {
               sdlcLoopState: backfillLoop.state,
               sdlcBlockedFromState: backfillLoop.blockedFromState,
               headSha: backfillLoop.currentHeadSha,
+              userId,
+              repoFullName: backfillLoop.repoFullName,
             });
             await runCoordinatorTick({
               db,

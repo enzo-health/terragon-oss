@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     let v2TicksCaughtUp = 0;
     let v2Error: string | null = null;
     try {
-      const { claimNextWorkItem } = await import(
+      const { claimNextWorkItem, failWorkItem } = await import(
         "@terragon/shared/delivery-loop/store/work-queue-store"
       );
       const { runDispatchWork } = await import(
@@ -75,62 +75,84 @@ export async function GET(request: NextRequest) {
 
         const payload = item.payloadJson as Record<string, unknown>;
 
-        switch (item.kind) {
-          case "dispatch":
-            await runDispatchWork({
-              db,
-              workItemId: item.id,
-              claimToken,
-              payload: payload as Parameters<
-                typeof runDispatchWork
-              >[0]["payload"],
-            });
-            break;
-          case "publication":
-            await runPublicationWork({
-              db,
-              workItemId: item.id,
-              claimToken,
-              workflowId: item.workflowId,
-              payload: payload as Parameters<
-                typeof runPublicationWork
-              >[0]["payload"],
-            });
-            break;
-          case "babysit":
-            await runBabysitWork({
-              db,
-              workItemId: item.id,
-              claimToken,
-              payload: payload as Parameters<
-                typeof runBabysitWork
-              >[0]["payload"],
-            });
-            break;
-          case "retry":
-            await runRetryWork({
-              db,
-              workItemId: item.id,
-              claimToken,
-              correlationId: item.correlationId,
-              payload: payload as Parameters<typeof runRetryWork>[0]["payload"],
-            });
-            break;
-          default: {
-            const { failWorkItem } = await import(
-              "@terragon/shared/delivery-loop/store/work-queue-store"
-            );
+        try {
+          switch (item.kind) {
+            case "dispatch":
+              await runDispatchWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                payload: payload as Parameters<
+                  typeof runDispatchWork
+                >[0]["payload"],
+              });
+              break;
+            case "publication":
+              await runPublicationWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                workflowId: item.workflowId,
+                payload: payload as Parameters<
+                  typeof runPublicationWork
+                >[0]["payload"],
+              });
+              break;
+            case "babysit":
+              await runBabysitWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                payload: payload as Parameters<
+                  typeof runBabysitWork
+                >[0]["payload"],
+              });
+              break;
+            case "retry":
+              await runRetryWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                correlationId: item.correlationId,
+                payload: payload as Parameters<
+                  typeof runRetryWork
+                >[0]["payload"],
+              });
+              break;
+            default: {
+              await failWorkItem({
+                db,
+                workItemId: item.id,
+                claimToken,
+                errorCode: "unsupported_work_kind",
+                errorMessage: `Unknown work item kind: ${item.kind}`,
+              });
+              break;
+            }
+          }
+          v2WorkItemsProcessed++;
+        } catch (itemErr) {
+          console.error(
+            `V2 work item processing failed for item ${item.id} (kind: ${item.kind})`,
+            itemErr,
+          );
+          try {
             await failWorkItem({
               db,
               workItemId: item.id,
               claimToken,
-              errorCode: "unsupported_work_kind",
-              errorMessage: `Unknown work item kind: ${item.kind}`,
+              errorCode: "work_item_handler_threw",
+              errorMessage:
+                itemErr instanceof Error ? itemErr.message : String(itemErr),
             });
-            break;
+          } catch (failErr) {
+            console.error(
+              `Failed to mark work item ${item.id} as failed`,
+              failErr,
+            );
           }
+          continue;
         }
-        v2WorkItemsProcessed++;
       }
       console.log("V2 delivery loop work items processed", {
         v2WorkItemsProcessed,
@@ -177,6 +199,8 @@ export async function GET(request: NextRequest) {
           columns: {
             id: true,
             threadId: true,
+            userId: true,
+            repoFullName: true,
             state: true,
             blockedFromState: true,
             currentHeadSha: true,
@@ -215,6 +239,8 @@ export async function GET(request: NextRequest) {
                 sdlcLoopState: loop.state,
                 sdlcBlockedFromState: loop.blockedFromState,
                 headSha: loop.currentHeadSha,
+                userId: loop.userId,
+                repoFullName: loop.repoFullName,
               });
             } catch (backfillErr) {
               console.warn(

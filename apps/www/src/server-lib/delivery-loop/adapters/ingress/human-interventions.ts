@@ -65,6 +65,8 @@ export async function handleHumanAction(params: {
   /** V1 sdlcLoop ID used as inbox partition key. Must match the key cron uses to drain. */
   inboxPartitionKey: string;
   gate?: GateKind;
+  /** Optional request-scoped idempotency key. When provided, duplicate calls with the same key are deduplicated. Falls back to a random UUID. */
+  idempotencyKey?: string;
   wakeCoordinator?: (workflowId: WorkflowId) => Promise<void>;
 }): Promise<void> {
   const signal = normalizeHumanAction({
@@ -83,7 +85,7 @@ export async function handleHumanAction(params: {
     loopId: params.inboxPartitionKey,
     causeType,
     payload: signal as Record<string, unknown>,
-    canonicalCauseId: `human:${params.workflowId}:${params.action}:${Date.now()}`,
+    canonicalCauseId: `human:${params.workflowId}:${params.action}:${params.idempotencyKey ?? crypto.randomUUID()}`,
   });
 
   if (params.wakeCoordinator) {

@@ -93,7 +93,7 @@ function getCreateSandboxOptions(
     agent: "codex",
     agentCredentials: {
       type: "json-file",
-      contents: codexAuthContents,
+      contents: codexAuthContents!,
     },
     environmentVariables: [],
     generateBranchName: async () => null,
