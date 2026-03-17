@@ -10,10 +10,7 @@
 import type { EvalSignal, EvalGateEvent } from "../types";
 import type { SharedModules, DB } from "./shared-loader";
 import type { SeededState } from "./seed";
-import type {
-  SdlcLoopCauseType,
-  SdlcLoopState,
-} from "@terragon/shared/db/types";
+import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -381,21 +378,6 @@ async function processSignal({
 
   // ── daemon_terminal ──
   if (causeType === "daemon_terminal") {
-    // Run gate evaluation (for daemon_terminal this just returns true)
-    await shared.persistGateEvaluationForSignal({
-      db,
-      loop: {
-        id: seeded.loopId,
-        loopVersion,
-        currentHeadSha: loopBefore.currentHeadSha,
-        state: previousState as SdlcLoopState,
-        blockedFromState:
-          (loopBefore.blockedFromState as SdlcLoopState) ?? null,
-      },
-      signal: claimed,
-      now,
-    });
-
     const daemonRunStatus = getPayloadText(signal.payload, "daemonRunStatus");
 
     if (daemonRunStatus === "stopped") {
@@ -582,19 +564,6 @@ async function processSignal({
     causeType === "check_run.completed" ||
     causeType === "check_suite.completed"
   ) {
-    await shared.persistGateEvaluationForSignal({
-      db,
-      loop: {
-        id: seeded.loopId,
-        loopVersion,
-        currentHeadSha: loopBefore.currentHeadSha,
-        state: previousState as SdlcLoopState,
-        blockedFromState:
-          (loopBefore.blockedFromState as SdlcLoopState) ?? null,
-      },
-      signal: claimed,
-      now,
-    });
     return;
   }
 
@@ -603,20 +572,6 @@ async function processSignal({
     causeType === "pull_request_review" ||
     causeType === "pull_request_review_comment"
   ) {
-    await shared.persistGateEvaluationForSignal({
-      db,
-      loop: {
-        id: seeded.loopId,
-        loopVersion,
-        currentHeadSha: loopBefore.currentHeadSha,
-        state: previousState as SdlcLoopState,
-        blockedFromState:
-          (loopBefore.blockedFromState as SdlcLoopState) ?? null,
-      },
-      signal: claimed,
-      now,
-    });
-
     // If this signal references a headSha with unreplayed gate events,
     // replay them — covers the case where a daemon_terminal for this
     // headSha was not captured in the fixture.

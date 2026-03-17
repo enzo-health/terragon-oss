@@ -33,7 +33,6 @@ export async function loadSharedModules() {
   const {
     claimNextUnprocessedSignal,
     completeSignalClaim,
-    persistGateEvaluationForSignal,
     evaluateBabysitCompletionForHead,
   } = await import("@terragon/shared/model/signal-inbox-core");
 
@@ -66,7 +65,6 @@ export async function loadSharedModules() {
     buildSdlcCanonicalCause,
     claimNextUnprocessedSignal,
     completeSignalClaim,
-    persistGateEvaluationForSignal,
     evaluateBabysitCompletionForHead,
   };
 }
