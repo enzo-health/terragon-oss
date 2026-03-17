@@ -25,13 +25,9 @@ import {
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
 import {
-  ensureSdlcLoopEnrollmentForThreadIfEnabled,
+  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
-import {
-  linkSdlcLoopToGithubPRForThread,
-  transitionSdlcLoopState,
-} from "@terragon/shared/model/delivery-loop";
 
 export async function openPullRequestForThread({
   threadId,
@@ -77,45 +73,24 @@ export async function openPullRequestForThread({
   });
   const maybeLinkThreadLoopToPr = async ({
     prNumber,
-    headSha,
   }: {
     prNumber: number;
-    headSha?: string | null | undefined;
   }) => {
     if (!sdlcLoopOptIn) {
-      return null;
+      return;
     }
     try {
       const planApprovalPolicy =
         thread.sourceMetadata?.type === "www"
           ? (thread.sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
           : "auto";
-      await ensureSdlcLoopEnrollmentForThreadIfEnabled({
-        userId,
-        repoFullName: thread.githubRepoFullName,
-        threadId,
-        planApprovalPolicy,
-      });
-      const linkedLoop = await linkSdlcLoopToGithubPRForThread({
-        db,
+      await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
         userId,
         repoFullName: thread.githubRepoFullName,
         threadId,
         prNumber,
-        ...(typeof headSha === "string" && headSha.trim().length > 0
-          ? { currentHeadSha: headSha.trim() }
-          : {}),
+        planApprovalPolicy,
       });
-      if (!linkedLoop) {
-        return null;
-      }
-      await transitionSdlcLoopState({
-        db,
-        loopId: linkedLoop.id,
-        transitionEvent: "pr_linked",
-        now: new Date(),
-      });
-      return linkedLoop;
     } catch (error) {
       console.warn(
         "[openPullRequestForThread] failed to link thread loop to PR",
@@ -127,7 +102,6 @@ export async function openPullRequestForThread({
           error,
         },
       );
-      return null;
     }
   };
   // Make sure we're not on the main branch
@@ -201,7 +175,6 @@ export async function openPullRequestForThread({
     ]);
     await maybeLinkThreadLoopToPr({
       prNumber: existingPr.number,
-      headSha: existingPr.head?.sha,
     });
     await updatePullRequestForThread({
       threadId,
@@ -276,7 +249,6 @@ export async function openPullRequestForThread({
   ]);
   await maybeLinkThreadLoopToPr({
     prNumber: pr.data.number,
-    headSha: pr.data.head?.sha,
   });
 }
 
