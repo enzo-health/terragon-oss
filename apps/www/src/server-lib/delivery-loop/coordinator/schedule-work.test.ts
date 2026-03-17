@@ -9,7 +9,6 @@ import type {
   DispatchId,
   GateSubState,
 } from "@terragon/shared/delivery-loop/domain/workflow";
-import type { LoopEvent } from "@terragon/shared/delivery-loop/domain/events";
 
 // ---------------------------------------------------------------------------
 // Helpers

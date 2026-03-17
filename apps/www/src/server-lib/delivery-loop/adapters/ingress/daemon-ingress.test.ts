@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DaemonEventPayload } from "./daemon-ingress";
 import { normalizeDaemonEvent, handleDaemonIngress } from "./daemon-ingress";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
-import type { DeliverySignal } from "@terragon/shared/delivery-loop/domain/signals";
 
 // ── mocks ──────────────────────────────────────────────────────────────
 vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({

@@ -21,7 +21,14 @@ import type {
   GateSubState,
   ReviewSurfaceRef,
 } from "@terragon/shared/delivery-loop/domain/workflow";
-import type { DeliverySignal } from "@terragon/shared/delivery-loop/domain/signals";
+import type {
+  DeliverySignal,
+  DaemonSignal,
+  GitHubSignal,
+  HumanSignal,
+  TimerSignal,
+  BabysitSignal,
+} from "@terragon/shared/delivery-loop/domain/signals";
 import type { GateVerdict } from "@terragon/shared/delivery-loop/domain/events";
 
 // ---------------------------------------------------------------------------
@@ -151,39 +158,23 @@ function awaitingManualFix(): DeliveryWorkflow {
 }
 
 // Helpers for signal construction
-function daemonSignal(
-  event: DeliverySignal extends { source: "daemon"; event: infer E }
-    ? E
-    : never,
-): DeliverySignal {
+function daemonSignal(event: DaemonSignal): DeliverySignal {
   return { source: "daemon", event };
 }
 
-function githubSignal(
-  event: DeliverySignal extends { source: "github"; event: infer E }
-    ? E
-    : never,
-): DeliverySignal {
+function githubSignal(event: GitHubSignal): DeliverySignal {
   return { source: "github", event };
 }
 
-function humanSignal(
-  event: DeliverySignal extends { source: "human"; event: infer E } ? E : never,
-): DeliverySignal {
+function humanSignal(event: HumanSignal): DeliverySignal {
   return { source: "human", event };
 }
 
-function timerSignal(
-  event: DeliverySignal extends { source: "timer"; event: infer E } ? E : never,
-): DeliverySignal {
+function timerSignal(event: TimerSignal): DeliverySignal {
   return { source: "timer", event };
 }
 
-function babysitSignal(
-  event: DeliverySignal extends { source: "babysit"; event: infer E }
-    ? E
-    : never,
-): DeliverySignal {
+function babysitSignal(event: BabysitSignal): DeliverySignal {
   return { source: "babysit", event };
 }
 
