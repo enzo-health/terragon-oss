@@ -21,6 +21,8 @@ import {
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getThreadChat } from "@terragon/shared/model/threads";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { handleDaemonIngress } from "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -190,6 +192,37 @@ vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
     signalsProcessed: 0,
     workItemsScheduled: 0,
   }),
+}));
+
+const redisMocks = vi.hoisted(() => {
+  const pipelineSet = vi.fn();
+  const pipelineDel = vi.fn();
+  const pipelineExec = vi.fn().mockResolvedValue([]);
+  return {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    del: vi.fn().mockResolvedValue(1),
+    pipeline: vi.fn(() => ({
+      set: pipelineSet,
+      del: pipelineDel,
+      exec: pipelineExec,
+    })),
+    pipelineSet,
+    pipelineDel,
+    pipelineExec,
+  };
+});
+
+vi.mock("@/lib/redis", () => ({
+  redis: redisMocks,
+}));
+
+vi.mock("@/server-lib/delivery-loop/ack-lifecycle", () => ({
+  handleAckReceived: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/server-lib/delivery-loop/adapters/ingress/daemon-ingress", () => ({
+  handleDaemonIngress: vi.fn().mockResolvedValue({ selfDispatch: null }),
 }));
 
 function createDaemonRequest(
@@ -1350,5 +1383,280 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(202);
     expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  describe("pure v2 workflow (no v1 sdlcLoop)", () => {
+    const PURE_V2_WORKFLOW = {
+      id: "wf-pure-v2",
+      threadId: "thread-1",
+      sdlcLoopId: null,
+      kind: "planning",
+      generation: 1,
+    };
+
+    it("routes pure v2 terminal event through handleDaemonIngress", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-1",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+      expect(handleDaemonIngress).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          rawEvent: expect.objectContaining({
+            loopId: "wf-pure-v2",
+            runId: "run-1",
+          }),
+        }),
+      );
+    });
+
+    it("sets useV2Ingress=true and skips v1 signal inbox", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-2",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // v2 ingress was invoked
+      expect(handleDaemonIngress).toHaveBeenCalledTimes(1);
+      // v1 signal inbox claim was NOT called (no insert into sdlcLoopSignalInbox)
+      expect(dbMocks.signalInboxFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("processes ACK for pending dispatch intent", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "pending",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "system",
+              subtype: "init",
+              session_id: "session-1",
+              tools: [],
+              mcp_servers: [],
+            },
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-ack",
+          runId: "run-1",
+          seq: 0,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // ACK lifecycle was triggered (handleAckReceived is mocked at module level)
+      const { handleAckReceived } = await import(
+        "@/server-lib/delivery-loop/ack-lifecycle"
+      );
+      expect(handleAckReceived).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          loopId: "wf-pure-v2",
+          threadChatId: "chat-1",
+        }),
+      );
+    });
+
+    it("handles processing event claims via Redis", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+      // Redis claim succeeds
+      redisMocks.get.mockResolvedValue(null);
+      redisMocks.set.mockResolvedValue("OK");
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: {
+                id: "msg-1",
+                type: "message",
+                role: "assistant",
+                content: [{ type: "text", text: "working..." }],
+                model: "claude-sonnet-4-20250514",
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 10, output_tokens: 5 },
+              },
+              session_id: "session-1",
+            },
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-processing",
+          runId: "run-1",
+          seq: 1,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // Redis was used for the processing event claim (not DB signal inbox)
+      expect(redisMocks.set).toHaveBeenCalled();
+    });
+
+    it("persists terminal dispatch status on completion", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+      vi.mocked(handleDaemonIngress).mockResolvedValue({
+        selfDispatch: null,
+      } as any);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // persistDaemonTerminalDispatchStatus calls updateDispatchIntent and markDispatchIntentCompleted
+      expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
+        expect.stringContaining("wf-pure-v2"),
+        "chat-1",
+        expect.objectContaining({ status: "completed" }),
+      );
+      expect(markDispatchIntentCompleted).toHaveBeenCalled();
+    });
+
+    it("rejects pure v2 daemon event without v2 envelope", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+
+      const response = await POST(
+        createDaemonRequest(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messages: [createSuccessResultMessage()],
+            timezone: "UTC",
+          },
+          {},
+          { autoCapabilities: false },
+        ),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
+    it("bridged workflow (v1+v2) uses v1 loopId in ingress call", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+        id: "wf-bridged",
+        threadId: "thread-1",
+        sdlcLoopId: "loop-1",
+        kind: "planning",
+        generation: 1,
+      } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+        id: "loop-1",
+        threadId: "thread-1",
+      } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-bridged-1",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(handleDaemonIngress).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: "wf-bridged",
+          rawEvent: expect.objectContaining({
+            loopId: "loop-1",
+          }),
+        }),
+      );
+    });
   });
 });
