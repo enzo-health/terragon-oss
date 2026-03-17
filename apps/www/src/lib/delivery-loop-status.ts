@@ -945,51 +945,6 @@ export function mapV2KindToSdlcLoopState(
 }
 
 /**
- * Maps a v2 workflow DB row's kind + stateJson to a v1 SdlcLoopState.
- * Unlike mapV2KindToSdlcLoopState, this works directly with the DB row
- * shape (kind: string, stateJson: unknown) without requiring hydration.
- */
-export function mapWorkflowRowToSdlcLoopState(row: {
-  kind: string;
-  stateJson: unknown;
-}): SdlcLoopState {
-  switch (row.kind) {
-    case "planning":
-      return "planning";
-    case "implementing":
-      return "implementing";
-    case "gating": {
-      const state = row.stateJson as Record<string, unknown> | null;
-      const gate = state?.gate as { kind?: GateKind } | null | undefined;
-      return gate?.kind
-        ? (V2_GATE_TO_V1_STATE[gate.kind] as SdlcLoopState)
-        : "implementing";
-    }
-    case "awaiting_pr":
-      return "awaiting_pr_link";
-    case "babysitting":
-      return "babysitting";
-    case "awaiting_plan_approval":
-    case "awaiting_manual_fix":
-    case "awaiting_operator_action":
-      return "blocked";
-    case "done":
-      return "done";
-    case "stopped":
-      return "stopped";
-    case "terminated": {
-      const state = row.stateJson as Record<string, unknown> | null;
-      const reason = state?.reason as { kind?: string } | null | undefined;
-      return reason?.kind === "pr_merged"
-        ? "terminated_pr_merged"
-        : "terminated_pr_closed";
-    }
-    default:
-      return "implementing";
-  }
-}
-
-/**
  * Maps a v2 workflow state to a human-readable stop reason, or null.
  */
 export function getV2StopReason(workflow: DeliveryWorkflow): string | null {
