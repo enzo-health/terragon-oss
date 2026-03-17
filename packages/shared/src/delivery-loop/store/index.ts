@@ -56,3 +56,19 @@ export {
   clearWorkflowStatusCommentReference,
   persistWorkflowCheckRunReference,
 } from "./workflow-github-refs";
+
+// artifact-store.ts
+export {
+  getLatestAcceptedArtifact,
+  createPlanArtifact,
+  approvePlanArtifact,
+  replacePlanTasksForArtifact,
+  markPlanTasksCompletedByAgent,
+  verifyPlanTaskCompletionForHead,
+  createImplementationArtifact,
+  createReviewBundleArtifact,
+  createUiSmokeArtifact,
+  createPrLinkArtifact,
+  createBabysitEvaluationArtifact,
+  getArtifactsForWorkflow,
+} from "./artifact-store";
