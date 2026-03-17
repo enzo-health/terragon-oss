@@ -6,7 +6,11 @@ import type {
   TimerSignal,
   BabysitSignal,
 } from "@terragon/shared/delivery-loop/domain/signals";
-import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
+import type {
+  DeliveryWorkflow,
+  GateKind,
+} from "@terragon/shared/delivery-loop/domain/workflow";
+import { isActiveState } from "@terragon/shared/delivery-loop/domain/workflow";
 import type {
   LoopEvent,
   LoopEventContext,
@@ -123,112 +127,44 @@ function reduceGitHubSignal(
   gateVerdicts?: GateVerdict[],
 ): SignalReductionResult {
   switch (event.kind) {
-    case "ci_changed": {
-      // Stale-signal rejection: if the signal carries a headSha that doesn't
-      // match the workflow's current head, the signal is outdated — complete
-      // it as a no-op so it doesn't incorrectly pass/fail a newer head.
-      if (
-        event.headSha &&
-        workflow.kind === "gating" &&
-        "headSha" in workflow &&
-        workflow.headSha !== event.headSha
-      ) {
-        return null;
-      }
-      // Check verdicts first if provided
-      const verdict = gateVerdicts?.find((v) => v.gate === "ci");
-      if (verdict) {
-        return {
-          event: verdict.passed ? "gate_passed" : "gate_blocked",
-          context: { gate: "ci" },
-        };
-      }
-      // Use the aggregate CI snapshot: only pass when failingChecks is
-      // empty AND there are required checks. A single passing check_run
-      // must not advance the gate while other required checks are pending.
-      // If no required-check data is available (snapshot unavailable or
-      // transient GitHub API failure), return null — stay in gating and
-      // wait for a real signal rather than pushing into a false fix loop.
-      if (workflow.kind === "gating" && workflow.gate.kind === "ci") {
-        if (event.result.requiredChecks.length === 0) {
-          // No check data — cannot determine pass/fail. Mark retryable so
-          // the signal stays pending for the next webhook or cron catch-up
-          // instead of being consumed as a no-op.
+    case "ci_changed":
+      return reduceGateSignal({
+        gate: "ci",
+        headSha: event.headSha,
+        workflow,
+        gateVerdicts,
+        evaluateInGate: () => {
+          // Use the aggregate CI snapshot: only pass when failingChecks is
+          // empty AND there are required checks. A single passing check_run
+          // must not advance the gate while other required checks are pending.
+          if (event.result.requiredChecks.length === 0) {
+            // No check data — cannot determine pass/fail. Mark retryable so
+            // the signal stays pending for the next webhook or cron catch-up
+            // instead of being consumed as a no-op.
+            return {
+              retryable: true,
+              reason: "CI signal has no required checks data",
+            };
+          }
+          const aggregatePassed = event.result.failingChecks.length === 0;
           return {
-            retryable: true,
-            reason: "CI signal has no required checks data",
+            event: aggregatePassed ? "gate_passed" : "gate_blocked",
+            context: { gate: "ci" },
           };
-        }
-        const aggregatePassed = event.result.failingChecks.length === 0;
-        return {
-          event: aggregatePassed ? "gate_passed" : "gate_blocked",
-          context: { gate: "ci" },
-        };
-      }
-      // In babysitting, CI signals trigger a babysit recheck rather than
-      // being silently consumed. Keeping them retryable ensures the babysit
-      // worker's next aggregate evaluation incorporates the new CI data.
-      if (workflow.kind === "babysitting") {
-        return {
-          retryable: true,
-          reason: "CI signal in babysitting — awaiting babysit worker recheck",
-        };
-      }
-      // In other active states (implementing, awaiting_pr, etc.), the
-      // workflow hasn't reached the CI gate yet. Mark the signal
-      // retryable so it stays in the inbox for when the workflow
-      // transitions to the matching gating substate.
-      if (isActiveNonTerminal(workflow.kind)) {
-        return {
-          retryable: true,
-          reason: `CI signal received while workflow is ${workflow.kind}, not in CI gate`,
-        };
-      }
-      return null;
-    }
+        },
+      });
 
-    case "review_changed": {
-      // Stale-signal rejection for review signals (same logic as CI above)
-      if (
-        event.headSha &&
-        workflow.kind === "gating" &&
-        "headSha" in workflow &&
-        workflow.headSha !== event.headSha
-      ) {
-        return null;
-      }
-      const verdict = gateVerdicts?.find((v) => v.gate === "review");
-      if (verdict) {
-        return {
-          event: verdict.passed ? "gate_passed" : "gate_blocked",
-          context: { gate: "review" },
-        };
-      }
-      if (workflow.kind === "gating" && workflow.gate.kind === "review") {
-        return {
+    case "review_changed":
+      return reduceGateSignal({
+        gate: "review",
+        headSha: event.headSha,
+        workflow,
+        gateVerdicts,
+        evaluateInGate: () => ({
           event: event.result.passed ? "gate_passed" : "gate_blocked",
           context: { gate: "review" },
-        };
-      }
-      // In babysitting, review signals trigger a babysit recheck so the
-      // worker re-evaluates aggregate gate state with the latest review data.
-      if (workflow.kind === "babysitting") {
-        return {
-          retryable: true,
-          reason:
-            "Review signal in babysitting — awaiting babysit worker recheck",
-        };
-      }
-      // In other active states, keep the signal pending for when the
-      // workflow reaches the review gate.
-      if (isActiveNonTerminal(workflow.kind)) {
-        return {
-          retryable: true,
-          reason: `Review signal received while workflow is ${workflow.kind}, not in review gate`,
-        };
-      }
-      return null;
-    }
+        }),
+      });
 
     case "pr_closed":
       return {
@@ -329,19 +265,65 @@ function reduceBabysitSignal(
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Shared gate signal handler
 // ---------------------------------------------------------------------------
 
-const ACTIVE_NON_TERMINAL_KINDS = new Set([
-  "planning",
-  "implementing",
-  "gating",
-  "awaiting_pr",
-  "awaiting_plan_approval",
-  "awaiting_manual_fix",
-  "babysitting",
-]);
+/**
+ * Common logic for ci_changed / review_changed signals:
+ * stale-signal rejection → verdict check → gate-specific evaluation →
+ * babysitting deferral → active-state deferral.
+ */
+function reduceGateSignal(params: {
+  gate: GateKind;
+  headSha: string | undefined;
+  workflow: DeliveryWorkflow;
+  gateVerdicts?: GateVerdict[];
+  /** Gate-specific pass/fail evaluation when the workflow is in the matching gate. */
+  evaluateInGate: () => SignalReductionResult;
+}): SignalReductionResult {
+  const { gate, headSha, workflow, gateVerdicts, evaluateInGate } = params;
 
-function isActiveNonTerminal(kind: string): boolean {
-  return ACTIVE_NON_TERMINAL_KINDS.has(kind);
+  // Stale-signal rejection: if the signal carries a headSha that doesn't
+  // match the workflow's current head, the signal is outdated.
+  if (
+    headSha &&
+    workflow.kind === "gating" &&
+    "headSha" in workflow &&
+    workflow.headSha !== headSha
+  ) {
+    return null;
+  }
+
+  // Check pre-computed verdicts first
+  const verdict = gateVerdicts?.find((v) => v.gate === gate);
+  if (verdict) {
+    return {
+      event: verdict.passed ? "gate_passed" : "gate_blocked",
+      context: { gate },
+    };
+  }
+
+  // Gate-specific evaluation when in the matching gating substate
+  if (workflow.kind === "gating" && workflow.gate.kind === gate) {
+    return evaluateInGate();
+  }
+
+  // In babysitting, gate signals trigger a babysit recheck
+  if (workflow.kind === "babysitting") {
+    return {
+      retryable: true,
+      reason: `${gate} signal in babysitting — awaiting babysit worker recheck`,
+    };
+  }
+
+  // In other active states, keep the signal pending for when the
+  // workflow reaches the matching gate.
+  if (isActiveState(workflow.kind)) {
+    return {
+      retryable: true,
+      reason: `${gate} signal received while workflow is ${workflow.kind}, not in ${gate} gate`,
+    };
+  }
+
+  return null;
 }

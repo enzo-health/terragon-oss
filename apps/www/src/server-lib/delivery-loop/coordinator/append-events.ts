@@ -3,6 +3,10 @@ import type {
   GateKind,
   GitSha,
 } from "@terragon/shared/delivery-loop/domain/workflow";
+import {
+  extractHeadSha as extractHeadShaOrNull,
+  extractGateKind as extractGateKindOrNull,
+} from "./helpers";
 import type {
   LoopEvent,
   LoopEventContext,
@@ -163,17 +167,9 @@ function buildResumeEvent(params: {
 }
 
 function extractGateKind(workflow: DeliveryWorkflow): GateKind {
-  if (workflow.kind === "gating") return workflow.gate.kind;
-  return "ci"; // safe fallback
+  return extractGateKindOrNull(workflow) ?? ("ci" as GateKind);
 }
 
 function extractHeadSha(workflow: DeliveryWorkflow): GitSha {
-  if (
-    workflow.kind === "gating" ||
-    workflow.kind === "awaiting_pr" ||
-    workflow.kind === "babysitting"
-  ) {
-    return workflow.headSha;
-  }
-  return "unknown" as GitSha;
+  return extractHeadShaOrNull(workflow) ?? ("unknown" as GitSha);
 }
