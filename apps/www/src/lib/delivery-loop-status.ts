@@ -9,7 +9,7 @@ import type {
 import type {
   DeliveryLoopBlockedState,
   DeliveryLoopSnapshot,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/domain/snapshot-types";
 import type {
   DeliveryWorkflow,
   GateKind,
