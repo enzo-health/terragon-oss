@@ -34,7 +34,7 @@ export const approvePlan = userOnlyAction(
     }
 
     const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row?.sdlcLoopId) {
+    if (!v2Row) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",
       );
@@ -47,20 +47,8 @@ export const approvePlan = userOnlyAction(
       );
     }
 
-    // Fetch the associated sdlcLoop for artifact operations
-    const { eq } = await import("drizzle-orm");
-    const sdlcLoopSchema = await import("@terragon/shared/db/schema");
-    const loop = await db.query.sdlcLoop.findFirst({
-      where: eq(sdlcLoopSchema.sdlcLoop.id, v2Row.sdlcLoopId),
-    });
-    if (!loop) {
-      throw new UserFacingError(
-        "No active Delivery Loop found for this thread",
-      );
-    }
-
-    const loopId = loop.id;
-    const loopVersion = loop.loopVersion;
+    const loopId = v2Row.id;
+    const loopVersion = v2Row.version;
     const planApprovalPolicy = v2Row.planApprovalPolicy as
       | "auto"
       | "human_required";

@@ -1,9 +1,9 @@
 import type { DB } from "@terragon/shared/db";
 import type {
-  DeliveryLoopDispatchablePhase,
-  DeliveryLoopDispatchStatus,
-  DeliveryLoopSelectedAgent,
-} from "@terragon/shared/model/delivery-loop";
+  DispatchablePhase,
+  DispatchIntentStatus,
+  SelectedAgent,
+} from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 
 /**
@@ -12,7 +12,7 @@ import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop
  */
 export type PreparedRun = {
   runId: string;
-  agent: DeliveryLoopSelectedAgent;
+  agent: SelectedAgent;
   executionClass: "implementation_runtime";
   dispatchIntentId: string;
   sessionId: string | null;
@@ -37,7 +37,7 @@ export type RunStatus =
 export type NormalizedRunUpdate = {
   runId: string;
   runStatus: RunStatus;
-  dispatchStatus: DeliveryLoopDispatchStatus;
+  dispatchStatus: DispatchIntentStatus;
   firstEventAt: Date | null;
   completedAt: Date | null;
   terminalErrorCategory: DeliveryLoopFailureCategory | null;
@@ -60,7 +60,7 @@ export type DeliveryLoopDispatchInput = {
   loopId: string;
   prompt: string;
   model: string;
-  targetPhase: DeliveryLoopDispatchablePhase;
+  targetPhase: DispatchablePhase;
   dispatchMechanism: "self_dispatch" | "queue_fallback";
 };
 
@@ -85,7 +85,7 @@ export type DeliveryLoopDaemonEvent = {
  * in a uniform way.
  */
 export interface ImplementationRuntimeAdapter {
-  readonly agent: DeliveryLoopSelectedAgent;
+  readonly agent: SelectedAgent;
 
   /**
    * Resume the sandbox, ensure the daemon is healthy, create a runId,

@@ -54,7 +54,7 @@ import {
   completeGithubWebhookDelivery,
   getGithubWebhookClaimHttpStatus,
   releaseGithubWebhookDeliveryClaim,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/webhook-delivery-store";
 import { db } from "@/lib/db";
 
 export async function POST(request: NextRequest) {

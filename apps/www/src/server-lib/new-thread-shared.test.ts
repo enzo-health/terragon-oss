@@ -80,8 +80,6 @@ describe("createNewThread", () => {
       expect(workflow).toBeDefined();
       expect(workflow?.kind).toBe("planning");
       expect(workflow?.planApprovalPolicy).toBe("human_required");
-      // No v1 sdlcLoop should be created
-      expect(workflow?.sdlcLoopId).toBeNull();
     });
 
     it("auto-enrolls v2 workflow for automation threads without explicit opt-in", async () => {
@@ -99,8 +97,6 @@ describe("createNewThread", () => {
       expect(workflow).toBeDefined();
       expect(workflow?.kind).toBe("planning");
       expect(workflow?.planApprovalPolicy).toBe("auto");
-      // No v1 sdlcLoop should be created
-      expect(workflow?.sdlcLoopId).toBeNull();
     });
   });
 });

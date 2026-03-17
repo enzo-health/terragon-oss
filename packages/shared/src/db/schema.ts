@@ -1339,9 +1339,116 @@ export const agentProviderCredentials = pgTable(
 
 // v1 sdlcLoop table REMOVED — see delivery_workflow for v2
 
-// v1 sdlcPhaseArtifact table REMOVED
+export const sdlcPhaseArtifact = pgTable(
+  "sdlc_phase_artifact",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    loopId: text("loop_id").notNull(),
+    workflowId: text("workflow_id").references(() => deliveryWorkflow.id, {
+      onDelete: "set null",
+    }),
+    phase: text("phase").$type<SdlcPhase>().notNull(),
+    artifactType: text("artifact_type").$type<SdlcArtifactType>().notNull(),
+    headSha: text("head_sha"),
+    loopVersion: integer("loop_version").notNull(),
+    status: text("status")
+      .$type<SdlcArtifactStatus>()
+      .notNull()
+      .default("generated"),
+    generatedBy: text("generated_by")
+      .$type<SdlcArtifactGeneratedBy>()
+      .notNull()
+      .default("system"),
+    approvedByUserId: text("approved_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at", { mode: "date" }),
+    payload: jsonb("payload")
+      .$type<
+        | SdlcPlanSpecPayload
+        | SdlcImplementationSnapshotPayload
+        | SdlcReviewBundlePayload
+        | SdlcUiSmokePayload
+        | SdlcPrLinkPayload
+        | SdlcBabysitEvaluationPayload
+        | Record<string, unknown>
+      >()
+      .notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("sdlc_phase_artifact_loop_phase_created_index").on(
+      table.loopId,
+      table.phase,
+      table.createdAt,
+    ),
+    index("sdlc_phase_artifact_loop_phase_status_created_index").on(
+      table.loopId,
+      table.phase,
+      table.status,
+      table.createdAt,
+    ),
+    index("sdlc_phase_artifact_loop_head_phase_created_index").on(
+      table.loopId,
+      table.headSha,
+      table.phase,
+      table.createdAt,
+    ),
+    index("sdlc_phase_artifact_workflow_id_index").on(table.workflowId),
+  ],
+);
 
-// v1 sdlcPlanTask table REMOVED
+export const sdlcPlanTask = pgTable(
+  "sdlc_plan_task",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => sdlcPhaseArtifact.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
+    stableTaskId: text("stable_task_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    acceptance: jsonb("acceptance")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    status: text("status")
+      .$type<SdlcPlanTaskStatus>()
+      .notNull()
+      .default("todo"),
+    completedAt: timestamp("completed_at", { mode: "date" }),
+    completedBy: text("completed_by").$type<SdlcPlanTaskCompletedBy>(),
+    completionEvidence: jsonb("completion_evidence").$type<
+      Record<string, unknown>
+    >(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("sdlc_plan_task_artifact_stable_task_unique").on(
+      table.artifactId,
+      table.stableTaskId,
+    ),
+    index("sdlc_plan_task_loop_status_index").on(table.loopId, table.status),
+    index("sdlc_plan_task_loop_artifact_status_index").on(
+      table.loopId,
+      table.artifactId,
+      table.status,
+    ),
+  ],
+);
 // v1 sdlcLoopLease table REMOVED
 
 export const sdlcLoopSignalInbox = pgTable(

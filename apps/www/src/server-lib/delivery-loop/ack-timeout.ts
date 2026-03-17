@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { getStalledDispatchIntents } from "@terragon/shared/model/delivery-loop";
+import { getStalledDispatchIntents } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { handleAckTimeout, DEFAULT_ACK_TIMEOUT_MS } from "./ack-lifecycle";
 
 // ---------------------------------------------------------------------------

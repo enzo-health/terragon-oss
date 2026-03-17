@@ -3,7 +3,7 @@ import {
   markDispatchIntentAcknowledged,
   markDispatchIntentFailed,
   getDispatchIntentByRunId,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import {
   updateDispatchIntent,
   buildDispatchIntentId,

@@ -4,11 +4,10 @@ import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   createDispatchIntent as createDurableDispatchIntent,
-  getActiveSdlcLoopForThread,
   markDispatchIntentCompleted,
   markDispatchIntentDispatched,
   markDispatchIntentFailed,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
@@ -111,7 +110,6 @@ const dispatchIntentMocks = vi.hoisted(() => ({
 
 const deliveryLoopModelMocks = vi.hoisted(() => ({
   createDispatchIntent: vi.fn(),
-  getActiveSdlcLoopForThread: vi.fn(),
   markDispatchIntentDispatched: vi.fn(),
   markDispatchIntentCompleted: vi.fn(),
   markDispatchIntentFailed: vi.fn(),
@@ -129,15 +127,13 @@ vi.mock("@/lib/db", () => ({
   db: dbMocks.db,
 }));
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
+vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
   createDispatchIntent: deliveryLoopModelMocks.createDispatchIntent,
-  getActiveSdlcLoopForThread: deliveryLoopModelMocks.getActiveSdlcLoopForThread,
   markDispatchIntentDispatched:
     deliveryLoopModelMocks.markDispatchIntentDispatched,
   markDispatchIntentCompleted:
     deliveryLoopModelMocks.markDispatchIntentCompleted,
   markDispatchIntentFailed: deliveryLoopModelMocks.markDispatchIntentFailed,
-  SDLC_CAUSE_IDENTITY_VERSION: 1,
 }));
 
 vi.mock("@/server-lib/process-follow-up-queue", () => ({
@@ -333,7 +329,6 @@ describe("daemon-event route", () => {
       updatedAt: new Date(),
     } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
     vi.mocked(createDurableDispatchIntent).mockResolvedValue(
       "durable-dispatch-intent-1",
     );
@@ -378,11 +373,6 @@ describe("daemon-event route", () => {
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope when daemon advertises v2 capability", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest(
         {
@@ -405,11 +395,6 @@ describe("daemon-event route", () => {
   });
 
   it("rejects enrolled-loop daemon events with malformed v2 envelope when daemon advertises v2 capability", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest(
         {
@@ -670,11 +655,6 @@ describe("daemon-event route", () => {
   // logic was removed; v2 handles dispatch via work items.
 
   it("replays self-dispatch on duplicate terminal acknowledgements", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.insertReturning.mockResolvedValue([]);
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
       MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
@@ -704,11 +684,6 @@ describe("daemon-event route", () => {
   });
 
   it("replays self-dispatch on out-of-order terminal acknowledgements", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ maxSeq: 3 }]);
@@ -741,11 +716,6 @@ describe("daemon-event route", () => {
   });
 
   it("blocks auto-dispatch when consecutive completed runs exceed threshold", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     // First execute call is advisory lock for claim; second call is the breaker query.
     dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
       rows: Array.from({ length: 10 }, () => ({
@@ -938,12 +908,6 @@ describe("daemon-event route", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any);
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      state: "planning",
-      loopVersion: 11,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.updateSet.mockImplementationOnce(() => {
       throw new Error("db write failed");
     });
@@ -974,11 +938,6 @@ describe("daemon-event route", () => {
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -995,11 +954,6 @@ describe("daemon-event route", () => {
   });
 
   it("requires v2 envelopes for enrolled loops even without capability headers", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1018,13 +972,6 @@ describe("daemon-event route", () => {
   });
 
   it("accepts enrolled-loop daemon events with v2 envelope", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      state: "planning",
-      loopVersion: 11,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1046,13 +993,6 @@ describe("daemon-event route", () => {
   });
 
   it("does not force implementation transition when enrolled loop has already advanced state", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      state: "blocked",
-      loopVersion: 11,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1070,10 +1010,6 @@ describe("daemon-event route", () => {
   });
 
   it("rolls back the claimed v2 signal when daemon handling fails so retries can process the message", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     vi.mocked(handleDaemonEvent)
       .mockResolvedValueOnce({
         success: false,
@@ -1137,10 +1073,6 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates repeated daemon envelopes by event identity", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere.mockResolvedValueOnce([
       {
         id: "signal-existing",
@@ -1187,10 +1119,6 @@ describe("daemon-event route", () => {
   });
 
   it("returns a retryable conflict instead of deduping when the same daemon event claim is still in progress", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere.mockResolvedValueOnce([
       {
         id: "signal-in-progress",
@@ -1219,10 +1147,6 @@ describe("daemon-event route", () => {
   });
 
   it("reclaims stale unprocessed daemon-event claims so the event is replayed", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere.mockResolvedValueOnce([
       {
         id: "signal-stale",
@@ -1254,10 +1178,6 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates stale committed daemon-event claims without reclaiming or replaying", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere.mockResolvedValueOnce([
       {
         id: "signal-committed",
@@ -1289,10 +1209,6 @@ describe("daemon-event route", () => {
   });
 
   it("treats commit as idempotent success when another worker already committed the signal", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.updateReturning.mockResolvedValueOnce([]);
     dbMocks.signalInboxFindFirst.mockResolvedValueOnce({
       id: "signal-1",
@@ -1318,10 +1234,6 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates out-of-order daemon envelopes within the same run", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ maxSeq: 4 }]);
@@ -1351,10 +1263,6 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates concurrent claim races by event identity when insert conflicts", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.selectWhere
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ maxSeq: null }]);
@@ -1379,11 +1287,10 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  describe("pure v2 workflow (no v1 sdlcLoop)", () => {
+  describe("pure v2 workflow", () => {
     const PURE_V2_WORKFLOW = {
       id: "wf-pure-v2",
       threadId: "thread-1",
-      sdlcLoopId: null,
       kind: "planning",
       generation: 1,
     };
@@ -1394,7 +1301,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
 
       const response = await POST(
         createDaemonRequest({
@@ -1428,7 +1334,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
 
       const response = await POST(
         createDaemonRequest({
@@ -1456,7 +1361,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
       vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
         runId: "run-1",
         userId: "user-1",
@@ -1517,7 +1421,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
       // Redis claim succeeds
       redisMocks.get.mockResolvedValue(null);
       redisMocks.set.mockResolvedValue("OK");
@@ -1561,7 +1464,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
       vi.mocked(handleDaemonIngress).mockResolvedValue({
         selfDispatch: null,
       } as any);
@@ -1595,7 +1497,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
 
       const response = await POST(
         createDaemonRequest(
@@ -1616,41 +1517,6 @@ describe("daemon-event route", () => {
       expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
-    it("bridged workflow (v1+v2) uses v1 loopId in ingress call", async () => {
-      vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
-        id: "wf-bridged",
-        threadId: "thread-1",
-        sdlcLoopId: "loop-1",
-        kind: "planning",
-        generation: 1,
-      } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
-      vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-        id: "loop-1",
-        threadId: "thread-1",
-      } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
-      const response = await POST(
-        createDaemonRequest({
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
-          timezone: "UTC",
-          payloadVersion: 2,
-          eventId: "event-bridged-1",
-          runId: "run-1",
-          seq: 10,
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      expect(handleDaemonIngress).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workflowId: "wf-bridged",
-          rawEvent: expect.objectContaining({
-            loopId: "loop-1",
-          }),
-        }),
-      );
-    });
+    // v1 bridged workflow test removed — sdlcLoop table no longer exists
   });
 });

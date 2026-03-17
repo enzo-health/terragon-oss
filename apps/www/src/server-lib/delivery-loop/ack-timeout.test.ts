@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockGetStalledDispatchIntents = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
+vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
   getStalledDispatchIntents: mockGetStalledDispatchIntents,
 }));
 

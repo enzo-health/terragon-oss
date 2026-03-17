@@ -1,11 +1,13 @@
-import {
-  type DeliveryLoopDispatchablePhase,
-  DeliveryLoopDispatchIntent,
-  DeliveryLoopDispatchMechanism,
-  DeliveryLoopDispatchStatus,
-  DeliveryLoopExecutionClass,
-  DeliveryLoopSelectedAgent,
-} from "@terragon/shared/model/delivery-loop";
+import type {
+  DispatchablePhase,
+  DispatchIntent,
+  DispatchIntentStatus,
+  SelectedAgent,
+} from "@terragon/shared/delivery-loop/domain/dispatch-types";
+import type {
+  DispatchMechanism,
+  ExecutionClass,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import type { SdlcSelfDispatchPayload } from "@terragon/daemon/shared";
 import { redis } from "@/lib/redis";
@@ -23,12 +25,14 @@ const ACTIVE_TTL_SECONDS = 60 * 60;
 const SELF_DISPATCH_REPLAY_TTL_SECONDS = 60 * 60 * 24;
 
 /** Statuses that represent a finished intent (safe to overwrite). */
-const TERMINAL_DISPATCH_STATUSES = new Set<DeliveryLoopDispatchStatus>([
+const TERMINAL_DISPATCH_STATUSES = new Set<DispatchIntentStatus>([
   "completed",
   "failed",
 ]);
-const REPLAY_ELIGIBLE_DESTINATION_STATUSES =
-  new Set<DeliveryLoopDispatchStatus>(["prepared", "dispatched"]);
+const REPLAY_ELIGIBLE_DESTINATION_STATUSES = new Set<DispatchIntentStatus>([
+  "prepared",
+  "dispatched",
+]);
 
 /** Short TTL for completed intents — 5 minutes for post-completion inspection. */
 const COMPLETED_TTL_SECONDS = 5 * 60;
@@ -45,7 +49,7 @@ export type SelfDispatchReplayState =
       payload: SdlcSelfDispatchPayload;
     };
 
-export type RealtimeDispatchIntent = DeliveryLoopDispatchIntent & {
+export type RealtimeDispatchIntent = DispatchIntent & {
   selfDispatchReplay: SelfDispatchReplayState;
 };
 
@@ -272,16 +276,14 @@ function deserializeIntent(
     loopId: raw.loopId ?? "",
     threadId: raw.threadId ?? "",
     threadChatId: raw.threadChatId ?? "",
-    targetPhase: (raw.targetPhase ??
-      "implementing") as DeliveryLoopDispatchablePhase,
-    selectedAgent: (raw.selectedAgent ??
-      "claudeCode") as DeliveryLoopSelectedAgent,
+    targetPhase: (raw.targetPhase ?? "implementing") as DispatchablePhase,
+    selectedAgent: (raw.selectedAgent ?? "claudeCode") as SelectedAgent,
     executionClass: (raw.executionClass ??
-      "implementation_runtime") as DeliveryLoopExecutionClass,
+      "implementation_runtime") as ExecutionClass,
     dispatchMechanism: (raw.dispatchMechanism ??
-      "self_dispatch") as DeliveryLoopDispatchMechanism,
+      "self_dispatch") as DispatchMechanism,
     runId: raw.runId ?? "",
-    status: (raw.status ?? "prepared") as DeliveryLoopDispatchStatus,
+    status: (raw.status ?? "prepared") as DispatchIntentStatus,
     retryCount: Number(raw.retryCount ?? 0),
     maxRetries: Number(raw.maxRetries ?? 0),
     createdAt: new Date(raw.createdAt ?? 0),
@@ -303,10 +305,10 @@ export type CreateDispatchIntentParams = {
   loopId: string;
   threadId: string;
   threadChatId: string;
-  targetPhase: DeliveryLoopDispatchablePhase;
-  selectedAgent: DeliveryLoopSelectedAgent;
-  executionClass: DeliveryLoopExecutionClass;
-  dispatchMechanism: DeliveryLoopDispatchMechanism;
+  targetPhase: DispatchablePhase;
+  selectedAgent: SelectedAgent;
+  executionClass: ExecutionClass;
+  dispatchMechanism: DispatchMechanism;
   runId: string;
   maxRetries: number;
   gate?: string;
@@ -326,9 +328,7 @@ export async function createDispatchIntent(
   const existingStatus = await redis.hget<string>(key, "status");
   if (
     existingStatus &&
-    !TERMINAL_DISPATCH_STATUSES.has(
-      existingStatus as DeliveryLoopDispatchStatus,
-    )
+    !TERMINAL_DISPATCH_STATUSES.has(existingStatus as DispatchIntentStatus)
   ) {
     const existingId = await redis.hget<string>(key, "id");
     throw new Error(
@@ -375,7 +375,7 @@ export async function updateDispatchIntent(
   threadChatId: string,
   updates: Partial<
     Pick<
-      DeliveryLoopDispatchIntent,
+      DispatchIntent,
       "status" | "retryCount" | "lastError" | "lastFailureCategory"
     >
   >,

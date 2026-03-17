@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import {
   getLatestAcceptedArtifact,
   markPlanTasksCompletedByAgent,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/artifact-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { SdlcPlanTaskCompletionEvidence } from "@terragon/shared/db/types";
 

@@ -5,87 +5,23 @@ import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { DBUserMessage } from "@terragon/shared";
-import * as schema from "@terragon/shared/db/schema";
-import {
-  coerceDeliveryLoopResumableState,
-  resolveBlockedResumeTarget,
-} from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
 import type { CorrelationId } from "@terragon/shared/delivery-loop/domain/workflow";
-import { type DB } from "@terragon/shared/db";
-import { and, eq } from "drizzle-orm";
 
-async function transitionBlockedLoopToResumeTarget({
-  tx,
-  loopId,
-}: {
-  tx: Pick<DB, "query" | "update">;
-  loopId: string;
-}): Promise<ReturnType<typeof resolveBlockedResumeTarget>> {
-  const blockedLoop = await tx.query.sdlcLoop.findFirst({
-    where: and(
-      eq(schema.sdlcLoop.id, loopId),
-      eq(schema.sdlcLoop.state, "blocked"),
-    ),
-    columns: {
-      blockedFromState: true,
-    },
-  });
-  if (!blockedLoop) {
-    throw new UserFacingError(
-      "Failed to transition Delivery Loop from blocked to its resume phase",
-    );
-  }
-
-  const resumeTarget = resolveBlockedResumeTarget(
-    coerceDeliveryLoopResumableState(blockedLoop.blockedFromState),
-  );
-  const now = new Date();
-  const [updated] = await tx
-    .update(schema.sdlcLoop)
-    .set({
-      state: resumeTarget,
-      blockedFromState: null,
-      fixAttemptCount: 0,
-      phaseEnteredAt: now,
-      updatedAt: now,
-    })
-    .where(
-      and(eq(schema.sdlcLoop.id, loopId), eq(schema.sdlcLoop.state, "blocked")),
-    )
-    .returning({ id: schema.sdlcLoop.id });
-  if (!updated) {
-    throw new UserFacingError(
-      "Failed to transition Delivery Loop from blocked to its resume phase",
-    );
-  }
-  return resumeTarget;
-}
-
-function buildResumeFollowUpMessage(
-  resumeTarget: ReturnType<typeof resolveBlockedResumeTarget>,
-): DBUserMessage {
-  const textByPhase: Record<
-    ReturnType<typeof resolveBlockedResumeTarget>,
-    string
-  > = {
-    planning: "Resume planning and continue with the Delivery Loop.",
-    implementing: "Resume implementation and continue with the Delivery Loop.",
-    review_gate: "Resume the review gate and continue with the Delivery Loop.",
-    ci_gate: "Resume the CI gate and continue with the Delivery Loop.",
-    ui_gate: "Resume UI testing and continue with the Delivery Loop.",
-    awaiting_pr_link: "Resume PR linking and continue with the Delivery Loop.",
-    babysitting: "Resume PR babysitting and continue with the Delivery Loop.",
-  };
-
+function buildResumeFollowUpMessage(): DBUserMessage {
   return {
     type: "user",
     model: null,
     permissionMode: "allowAll",
-    parts: [{ type: "text", text: textByPhase[resumeTarget] }],
+    parts: [
+      {
+        type: "text",
+        text: "Resume implementation and continue with the Delivery Loop.",
+      },
+    ],
   };
 }
 
@@ -112,7 +48,7 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
     }: { threadId: string; threadChatId: string | null },
   ) {
     const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row?.sdlcLoopId) {
+    if (!v2Row) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",
       );
@@ -133,28 +69,15 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       action: "resume",
       actorUserId: userId,
       workflowId: v2Row.id as WorkflowId,
-      inboxPartitionKey: v2Row.sdlcLoopId,
+      inboxPartitionKey: v2Row.id,
       wakeCoordinator: async (wfId) => {
         await runCoordinatorTick({
           db,
           workflowId: wfId,
           correlationId: `human-resume:${wfId}:${Date.now()}` as CorrelationId,
-          loopId: v2Row.sdlcLoopId!,
         });
       },
     });
-
-    // Also transition v1 loop for compat (best-effort)
-    try {
-      await db.transaction(async (tx) => {
-        await transitionBlockedLoopToResumeTarget({
-          tx,
-          loopId: v2Row.sdlcLoopId!,
-        });
-      });
-    } catch {
-      // v1 loop may not be in blocked state; non-fatal
-    }
 
     if (threadChatId) {
       try {
@@ -164,7 +87,7 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
           threadChatId,
           source: "www",
           appendOrReplace: "append",
-          messages: [buildResumeFollowUpMessage("implementing")],
+          messages: [buildResumeFollowUpMessage()],
         });
       } catch (error) {
         console.warn(
@@ -186,7 +109,7 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
     }: { threadId: string; threadChatId: string | null },
   ) {
     const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row?.sdlcLoopId) {
+    if (!v2Row) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",
       );
@@ -218,14 +141,13 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
       action: "bypass",
       actorUserId: userId,
       workflowId: v2Row.id as WorkflowId,
-      inboxPartitionKey: v2Row.sdlcLoopId,
+      inboxPartitionKey: v2Row.id,
       gate,
       wakeCoordinator: async (wfId) => {
         await runCoordinatorTick({
           db,
           workflowId: wfId,
           correlationId: `human-bypass:${wfId}:${Date.now()}` as CorrelationId,
-          loopId: v2Row.sdlcLoopId!,
         });
       },
     });

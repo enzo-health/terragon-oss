@@ -590,11 +590,11 @@ export async function startAgentMessage({
               description?: string | null;
             }>;
           } | null = null;
-          const effectiveLoopId = v2Workflow?.sdlcLoopId;
+          const effectiveLoopId = v2Workflow?.id;
           if (v2Workflow?.kind === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
-                "@terragon/shared/model/delivery-loop/artifacts"
+                "@terragon/shared/delivery-loop/store/artifact-store"
               );
               const artifact = await getLatestAcceptedArtifact({
                 db,

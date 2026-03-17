@@ -26,7 +26,7 @@ export async function enrollV2Workflow(params: {
   repoFullName: string;
   generation?: number;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
-}): Promise<{ workflowId: string; sdlcLoopId: string | null }> {
+}): Promise<{ workflowId: string; sdlcLoopId: null }> {
   // 1. Idempotency: if a v2 workflow already exists for this thread, return it
   const existing = await getActiveWorkflowForThread({
     db: params.db,
@@ -35,7 +35,7 @@ export async function enrollV2Workflow(params: {
   if (existing) {
     return {
       workflowId: existing.id,
-      sdlcLoopId: existing.sdlcLoopId ?? null,
+      sdlcLoopId: null,
     };
   }
 
@@ -86,7 +86,7 @@ export async function enrollV2Workflow(params: {
     if (raceWinner) {
       return {
         workflowId: raceWinner.id,
-        sdlcLoopId: raceWinner.sdlcLoopId ?? null,
+        sdlcLoopId: null,
       };
     }
     throw err;

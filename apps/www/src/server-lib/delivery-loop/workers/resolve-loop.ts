@@ -1,44 +1,36 @@
 import type { DB } from "@terragon/shared/db";
-import { eq, desc } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import {
+  getActiveWorkflowForThread,
+  getWorkflow,
+} from "@terragon/shared/delivery-loop/store/workflow-store";
 
 /**
- * Resolve the sdlcLoop for a work item. Uses the explicit loopId from
- * the payload when available. When looking up by threadId, tries the
- * v2 workflow first (to get the authoritative sdlcLoopId) then falls
- * back to the most recent v1 sdlcLoop row.
+ * Resolve loop-like metadata for a work item from the v2 workflow.
+ * Returns `{ id, repoFullName }` so callers can key signals and
+ * poll GitHub CI without touching the legacy sdlcLoop table.
+ *
+ * When `loopId` is provided it is returned as-is (the caller already
+ * resolved the canonical id). Otherwise the active workflow for the
+ * thread is looked up.
  */
 export async function resolveLoopForWorker(params: {
   db: DB;
   loopId?: string;
   threadId: string;
-}) {
+}): Promise<{ id: string; repoFullName: string } | null> {
   if (params.loopId) {
-    return params.db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.id, params.loopId),
-    });
+    const wf = await getWorkflow({ db: params.db, workflowId: params.loopId });
+    return wf
+      ? { id: wf.id, repoFullName: wf.repoFullName ?? "" }
+      : { id: params.loopId, repoFullName: "" };
   }
 
-  // V2-primary: use the active workflow's sdlcLoopId for a precise lookup
-  const v2Workflow = await getActiveWorkflowForThread({
+  const wf = await getActiveWorkflowForThread({
     db: params.db,
     threadId: params.threadId,
   });
-  if (v2Workflow?.sdlcLoopId) {
-    const loop = await params.db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.id, v2Workflow.sdlcLoopId),
-    });
-    if (loop) {
-      return loop;
-    }
-  }
-
-  // V1 fallback: most recent loop for the thread
-  return params.db.query.sdlcLoop.findFirst({
-    where: eq(schema.sdlcLoop.threadId, params.threadId),
-    orderBy: [desc(schema.sdlcLoop.createdAt)],
-  });
+  if (!wf) return null;
+  return { id: wf.id, repoFullName: wf.repoFullName ?? "" };
 }
 
 /** Stringify an error for logging / work item failure messages. */

@@ -19,10 +19,26 @@ import type {
   SdlcPlanTaskCompletionEvidence,
   SdlcPhaseArtifact,
 } from "../../db/types";
-import {
-  isIncompletePlanTaskStatus,
-  isNonBlockingTerminalPlanTaskStatus,
-} from "../../model/delivery-loop/state-constants";
+const sdlcPlanTaskIncompleteStatusSet = new Set<SdlcPlanTaskStatus>([
+  "todo",
+  "in_progress",
+  "blocked",
+]);
+
+const sdlcPlanTaskNonBlockingTerminalStatusSet = new Set<SdlcPlanTaskStatus>([
+  "done",
+  "skipped",
+]);
+
+function isIncompletePlanTaskStatus(status: SdlcPlanTaskStatus): boolean {
+  return sdlcPlanTaskIncompleteStatusSet.has(status);
+}
+
+function isNonBlockingTerminalPlanTaskStatus(
+  status: SdlcPlanTaskStatus,
+): boolean {
+  return sdlcPlanTaskNonBlockingTerminalStatusSet.has(status);
+}
 
 type SdlcArtifactPayload =
   | SdlcPlanSpecPayload

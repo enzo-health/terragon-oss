@@ -7,7 +7,7 @@ import {
   markDispatchIntentAcknowledged,
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import type {
   DeliveryLoopDaemonEvent,
   DeliveryLoopDispatchInput,

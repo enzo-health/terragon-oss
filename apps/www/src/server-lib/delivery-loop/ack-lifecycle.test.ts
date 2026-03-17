@@ -4,7 +4,7 @@ const mockMarkDispatchIntentAcknowledged = vi.hoisted(() => vi.fn());
 const mockMarkDispatchIntentFailed = vi.hoisted(() => vi.fn());
 const mockGetDispatchIntentByRunId = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
+vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
   markDispatchIntentAcknowledged: mockMarkDispatchIntentAcknowledged,
   markDispatchIntentFailed: mockMarkDispatchIntentFailed,
   getDispatchIntentByRunId: mockGetDispatchIntentByRunId,

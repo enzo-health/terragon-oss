@@ -1,6 +1,6 @@
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { type SdlcOutboxErrorClass } from "@terragon/shared/model/delivery-loop";
+import { type SdlcOutboxErrorClass } from "@terragon/shared/delivery-loop/store/outbox-types";
 import {
   persistWorkflowStatusCommentReference,
   clearWorkflowStatusCommentReference,

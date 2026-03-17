@@ -10,20 +10,11 @@ const mockTransitionSdlcLoopStateWithArtifact = vi.hoisted(() => vi.fn());
 const mockGetActiveWorkflowForThread = vi.hoisted(() => vi.fn());
 const mockAppendSignalToInbox = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/model/delivery-loop", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@terragon/shared/model/delivery-loop")
-    >();
-  return {
-    ...actual,
-    createPlanArtifactForLoop: mockCreatePlanArtifactForLoop,
-    approvePlanArtifactForLoop: mockApprovePlanArtifactForLoop,
-    replacePlanTasksForArtifact: mockReplacePlanTasksForArtifact,
-    transitionSdlcLoopStateWithArtifact:
-      mockTransitionSdlcLoopStateWithArtifact,
-  };
-});
+vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
+  createPlanArtifact: mockCreatePlanArtifactForLoop,
+  approvePlanArtifact: mockApprovePlanArtifactForLoop,
+  replacePlanTasksForArtifact: mockReplacePlanTasksForArtifact,
+}));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: mockGetActiveWorkflowForThread,
@@ -375,15 +366,6 @@ describe("promotePlanToImplementing", () => {
         }),
       );
 
-      expect(mockTransitionSdlcLoopStateWithArtifact).toHaveBeenCalledWith(
-        expect.objectContaining({
-          loopId: "loop-1",
-          artifactId: "art-1",
-          expectedPhase: "planning",
-          transitionEvent: "plan_completed",
-        }),
-      );
-
       expect(mockAppendSignalToInbox).toHaveBeenCalledWith(
         expect.objectContaining({
           loopId: "loop-1",
@@ -424,8 +406,7 @@ describe("promotePlanToImplementing", () => {
         expect.objectContaining({ status: "generated" }),
       );
 
-      // No transition, no signal
-      expect(mockTransitionSdlcLoopStateWithArtifact).not.toHaveBeenCalled();
+      // No signal for human_required (waits for explicit approval)
       expect(mockAppendSignalToInbox).not.toHaveBeenCalled();
 
       expect(result).toEqual({

@@ -86,6 +86,7 @@ describe("enrollV2Workflow", () => {
     });
 
     expect(result.workflowId).toBeTruthy();
+    // sdlcLoopId is always null — v1 sdlcLoop table no longer exists
     expect(result.sdlcLoopId).toBeNull();
   });
 });

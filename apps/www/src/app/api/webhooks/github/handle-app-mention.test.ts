@@ -24,7 +24,7 @@ import { getDiffContextStr } from "./utils";
 import { createAutomation } from "@terragon/shared/model/automations";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { redis } from "@/lib/redis";
-import { enrollSdlcLoopForGithubPR } from "@terragon/shared/model/delivery-loop";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import * as threadModel from "@terragon/shared/model/threads";
 
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -63,7 +63,7 @@ describe("handleAppMention", () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.sdlcLoop);
+    await db.delete(schema.deliveryWorkflow);
 
     // Clear Redis batch keys to ensure test isolation
     const keys = await redis.keys("thread-batch:*");
@@ -173,12 +173,15 @@ describe("handleAppMention", () => {
   });
 
   it("routes to enrolled SDLC loop thread and suppresses sibling thread creation", async () => {
-    await enrollSdlcLoopForGithubPR({
+    await createWorkflow({
       db,
-      userId: user.id,
+      threadId: threadIdWithPR,
+      generation: 1,
+      kind: "planning",
+      stateJson: {},
       repoFullName: pr.repoFullName,
       prNumber: pr.number,
-      threadId: threadIdWithPR,
+      userId: user.id,
     });
 
     await handleAppMention({
@@ -286,16 +289,16 @@ describe("handleAppMention", () => {
       commentGitHubAccountId: githubAccountId,
     });
 
-    const enrolledLoop = await db.query.sdlcLoop.findFirst({
-      where: (loop, { and, eq }) =>
+    const enrolledWorkflow = await db.query.deliveryWorkflow.findFirst({
+      where: (wf, { and, eq }) =>
         and(
-          eq(loop.userId, user.id),
-          eq(loop.repoFullName, isolatedPr.repoFullName),
-          eq(loop.prNumber, isolatedPr.number),
+          eq(wf.userId, user.id),
+          eq(wf.repoFullName, isolatedPr.repoFullName),
+          eq(wf.prNumber, isolatedPr.number),
         ),
     });
 
-    expect(enrolledLoop).toBeUndefined();
+    expect(enrolledWorkflow).toBeUndefined();
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: optedOutThread.threadId,
@@ -330,12 +333,15 @@ describe("handleAppMention", () => {
       },
     });
 
-    await enrollSdlcLoopForGithubPR({
+    await createWorkflow({
       db,
-      userId: user.id,
+      threadId: isolatedThread.threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: {},
       repoFullName: isolatedPr.repoFullName,
       prNumber: isolatedPr.number,
-      threadId: isolatedThread.threadId,
+      userId: user.id,
     });
     const getThreadSpy = vi
       .spyOn(threadModel, "getThread")

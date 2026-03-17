@@ -22,12 +22,8 @@ import {
   PullRequestTriggerConfig,
   IssueTriggerConfig,
 } from "@terragon/shared/automations";
-import {
-  transitionActiveSdlcLoopsForGithubPREvent,
-  activeSdlcLoopStateList,
-} from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { and, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
+import { and, eq, isNotNull, notInArray } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import {
   runPullRequestAutomation,
@@ -142,53 +138,6 @@ function deriveUnresolvedThreadCountFromReviewState(
   }
 
   return null;
-}
-
-async function syncSdlcLoopStateForPullRequestLifecycle({
-  repoFullName,
-  prNumber,
-  action,
-  merged,
-}: {
-  repoFullName: string;
-  prNumber: number;
-  action: string;
-  merged?: boolean;
-}) {
-  const transitionEvent =
-    action === "closed"
-      ? merged
-        ? "pr_merged"
-        : "pr_closed_unmerged"
-      : action === "opened" ||
-          action === "ready_for_review" ||
-          action === "reopened" ||
-          action === "synchronize" ||
-          action === "edited"
-        ? "pr_linked"
-        : null;
-
-  if (!transitionEvent) {
-    return;
-  }
-
-  const transitionResult = await transitionActiveSdlcLoopsForGithubPREvent({
-    db,
-    repoFullName,
-    prNumber,
-    transitionEvent,
-  });
-
-  if (transitionResult.totalLoops > 0) {
-    console.log("[github webhook] SDLC loop lifecycle transition applied", {
-      repoFullName,
-      prNumber,
-      action,
-      merged: merged ?? null,
-      transitionEvent,
-      ...transitionResult,
-    });
-  }
 }
 
 export type CiSignalSnapshot = {
@@ -508,12 +457,6 @@ export async function handlePullRequestStatusChange(
       prNumber,
       createIfNotFound: false,
     });
-    await syncSdlcLoopStateForPullRequestLifecycle({
-      repoFullName: repoName,
-      prNumber,
-      action: event.action,
-      merged: event.pull_request.merged ?? undefined,
-    });
     console.log(`Successfully updated PR #${prNumber} status in ${repoName}`);
     return;
   } catch (error) {
@@ -531,13 +474,6 @@ export async function handlePullRequestUpdated(
     `Pull request updated: ${event.action} for PR #${prNumber} in ${repoFullName}`,
   );
   try {
-    await syncSdlcLoopStateForPullRequestLifecycle({
-      repoFullName,
-      prNumber,
-      action: event.action,
-      merged: event.pull_request.merged ?? undefined,
-    });
-
     // Get all pull request automations for this repository
     const automations = await getPullRequestAutomationsForRepo({
       db,
@@ -1010,35 +946,26 @@ async function resolvePrNumbersFromSha({
       }
     })(),
     (async (): Promise<number[]> => {
-      const [loops, workflows] = await Promise.all([
-        db.query.sdlcLoop.findMany({
-          where: and(
-            eq(schema.sdlcLoop.repoFullName, repoFullName),
-            eq(schema.sdlcLoop.currentHeadSha, headSha),
-            inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
-            isNotNull(schema.sdlcLoop.prNumber),
-          ),
-          columns: { prNumber: true },
-        }),
-        db.query.deliveryWorkflow.findMany({
-          where: and(
-            eq(schema.deliveryWorkflow.repoFullName, repoFullName),
-            eq(schema.deliveryWorkflow.currentHeadSha, headSha),
-            notInArray(schema.deliveryWorkflow.kind, [
-              "done",
-              "stopped",
-              "terminated",
-            ]),
-            isNotNull(schema.deliveryWorkflow.prNumber),
-          ),
-          columns: { prNumber: true },
-        }),
-      ]);
-      const allPrNumbers = [
-        ...loops.map((l) => l.prNumber),
-        ...workflows.map((w) => w.prNumber),
+      const workflows = await db.query.deliveryWorkflow.findMany({
+        where: and(
+          eq(schema.deliveryWorkflow.repoFullName, repoFullName),
+          eq(schema.deliveryWorkflow.currentHeadSha, headSha),
+          notInArray(schema.deliveryWorkflow.kind, [
+            "done",
+            "stopped",
+            "terminated",
+          ]),
+          isNotNull(schema.deliveryWorkflow.prNumber),
+        ),
+        columns: { prNumber: true },
+      });
+      return [
+        ...new Set(
+          workflows
+            .map((w) => w.prNumber)
+            .filter((n): n is number => n !== null),
+        ),
       ];
-      return [...new Set(allPrNumbers.filter((n): n is number => n !== null))];
     })(),
   ]);
 

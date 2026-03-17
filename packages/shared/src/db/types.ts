@@ -54,6 +54,11 @@ export type SdlcLoopSignalInbox =
   typeof schema.sdlcLoopSignalInbox.$inferSelect;
 export type SdlcLoopSignalInboxInsert =
   typeof schema.sdlcLoopSignalInbox.$inferInsert;
+export type SdlcPhaseArtifact = typeof schema.sdlcPhaseArtifact.$inferSelect;
+export type SdlcPhaseArtifactInsert =
+  typeof schema.sdlcPhaseArtifact.$inferInsert;
+export type SdlcPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
+export type SdlcPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =

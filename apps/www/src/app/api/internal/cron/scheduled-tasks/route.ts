@@ -178,40 +178,8 @@ export async function GET(request: NextRequest) {
       const { runCoordinatorTick } = await import(
         "@/server-lib/delivery-loop/coordinator/tick"
       );
-      const { and, desc, inArray } = await import("drizzle-orm");
-      const schemaImport = await import("@terragon/shared/db/schema");
-      const { activeSdlcLoopStateList } = await import(
-        "@terragon/shared/model/delivery-loop"
-      );
 
       const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
-
-      // Resolve loopId for each active workflow. Prefer the explicit
-      // sdlcLoopId column persisted at enrollment time. Fall back to the
-      // threadId-based heuristic (most recent active loop) for workflows
-      // created before the column was added.
-      const workflowsMissingLoopId = activeWorkflows.filter(
-        (wf) => !wf.sdlcLoopId,
-      );
-      const threadIds = workflowsMissingLoopId.map((wf) => wf.threadId);
-      const loops =
-        threadIds.length > 0
-          ? await db.query.sdlcLoop.findMany({
-              where: and(
-                inArray(schemaImport.sdlcLoop.threadId, threadIds),
-                inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
-              ),
-              orderBy: [desc(schemaImport.sdlcLoop.createdAt)],
-              columns: { id: true, threadId: true },
-            })
-          : [];
-      // Map threadId → most recent active loop (first match, since ordered desc)
-      const loopByThread = new Map<string, string>();
-      for (const loop of loops) {
-        if (!loopByThread.has(loop.threadId)) {
-          loopByThread.set(loop.threadId, loop.id);
-        }
-      }
 
       for (const wf of activeWorkflows) {
         try {
@@ -226,7 +194,7 @@ export async function GET(request: NextRequest) {
             >[0]["workflowId"],
             correlationId,
             claimToken: `cron:tick:${crypto.randomUUID()}`,
-            loopId: wf.sdlcLoopId ?? loopByThread.get(wf.threadId),
+            loopId: wf.id,
           });
           if (result.signalsProcessed > 0) {
             v2TicksCaughtUp++;

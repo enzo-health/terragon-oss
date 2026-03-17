@@ -29,7 +29,7 @@ vi.mock("../dispatch-intent", () => ({
   getActiveDispatchIntent: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
+vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
   createDispatchIntent: mockCreateDbDispatchIntent,
   markDispatchIntentDispatched: mockMarkDispatchIntentDispatched,
 }));
@@ -46,7 +46,7 @@ vi.mock("@/server-lib/process-follow-up-queue", () => ({
   maybeProcessFollowUpQueue: mockMaybeProcessFollowUpQueue,
 }));
 
-vi.mock("@terragon/shared/model/delivery-loop/artifacts", () => ({
+vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
   getLatestAcceptedArtifact: mockGetLatestAcceptedArtifact,
 }));
 

@@ -15,7 +15,6 @@ import {
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
-import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
 
 const { postHogCapture, signalInboxInsertReturning, dbInsert } = vi.hoisted(
   () => {
@@ -227,12 +226,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([
       { id: "thread-1", userId: "user-1", archived: false },
     ]);
-    const canonical = buildSdlcCanonicalCause({
-      causeType: "check_run.completed",
-      deliveryId: "delivery-dedup-1",
-      checkRunId: "777",
-    });
-    const marker = `<!-- terragon-github-feedback-delivery:${canonical.canonicalCauseId} -->`;
+    const marker = `<!-- terragon-github-feedback-delivery:delivery-dedup-1:777 -->`;
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
       threadChats: [
