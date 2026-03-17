@@ -168,12 +168,6 @@ function gatingState(gate: "review" | "ci" | "ui") {
   return { headSha: "sha-test", gate: snapshots[gate] };
 }
 
-const BABYSITTING_STATE = {
-  headSha: "sha-test",
-  reviewSurface: { kind: "github_pr", prNumber: 1 },
-  nextCheckAt: new Date(Date.now() + 300_000).toISOString(),
-};
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
