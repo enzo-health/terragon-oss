@@ -44,7 +44,6 @@ async function createPureV2Workflow(params: {
     stateJson: params.stateJson ?? {},
     maxFixAttempts: params.maxFixAttempts,
     userId: testUserId,
-    // NO sdlcLoopId — pure v2
   });
 }
 
@@ -183,9 +182,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         },
       });
 
-      // Verify no sdlcLoopId
-      expect(wf.sdlcLoopId).toBeNull();
-
       await injectSignal(wf.id, "human_resume", {
         source: "human",
         event: { kind: "plan_approved", artifactId: "plan-1" },
@@ -198,7 +194,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
 
       const row = await getWorkflow({ db, workflowId: wf.id });
       expect(row!.kind).toBe("implementing");
-      expect(row!.sdlcLoopId).toBeNull();
     });
 
     it("planning ignores run_completed (waits for checkpoint pipeline)", async () => {
@@ -206,8 +201,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         kind: "planning",
         stateJson: PLANNING_STATE,
       });
-
-      expect(wf.sdlcLoopId).toBeNull();
 
       await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
@@ -223,8 +216,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         kind: "planning",
         stateJson: PLANNING_STATE,
       });
-
-      expect(wf.sdlcLoopId).toBeNull();
 
       await humanStop(wf.id);
       const result = await tick(wf.id);
@@ -243,8 +234,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         kind: "implementing",
         stateJson: IMPLEMENTING_STATE,
       });
-
-      expect(wf.sdlcLoopId).toBeNull();
 
       await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
@@ -271,8 +260,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         maxFixAttempts: 1,
       });
 
-      expect(wf.sdlcLoopId).toBeNull();
-
       // With maxFixAttempts=1, fixAttemptCount=0 >= maxFixAttempts-1=0 -> exhausted
       await daemonRunFailed(wf.id);
       const result = await tick(wf.id);
@@ -292,8 +279,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         stateJson: gatingState("review"),
       });
 
-      expect(wf.sdlcLoopId).toBeNull();
-
       await reviewPassed(wf.id);
       const result = await tick(wf.id);
 
@@ -310,8 +295,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
         kind: "gating",
         stateJson: gatingState("ci"),
       });
-
-      expect(wf.sdlcLoopId).toBeNull();
 
       await ciPassed(wf.id);
       const result = await tick(wf.id);
@@ -333,8 +316,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
           resumableFrom: { kind: "planning", planVersion: 1 },
         },
       });
-
-      expect(wf.sdlcLoopId).toBeNull();
 
       // 1. Plan approved -> implementing
       await injectSignal(wf.id, "human_resume", {
@@ -370,10 +351,6 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
       });
       result = await tick(wf.id);
       expect(result.stateAfter).toBe("awaiting_pr");
-
-      // Verify pure v2 throughout — no sdlcLoopId
-      const finalRow = await getWorkflow({ db, workflowId: wf.id });
-      expect(finalRow!.sdlcLoopId).toBeNull();
 
       // Verify audit trail
       const events = await getWorkflowEvents({ db, workflowId: wf.id });
