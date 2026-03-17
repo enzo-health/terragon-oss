@@ -580,17 +580,15 @@ export async function startAgentMessage({
               );
             }
           }
-          if (sdlcEligibleForThread && !activeSdlcLoop) {
+          // Read v2 workflow as primary state source (falls back to v1 sdlcLoop)
+          const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+          if (sdlcEligibleForThread && !activeSdlcLoop && !v2Workflow) {
             throw new ThreadError(
               "unknown-error",
               "Delivery Loop enrollment missing for eligible thread",
               null,
             );
           }
-          // Read v2 workflow as primary state source (falls back to v1 sdlcLoop)
-          const v2Workflow = activeSdlcLoop
-            ? await getActiveWorkflowForThread({ db, threadId })
-            : null;
           const effectiveState: SdlcLoopState | null = v2Workflow
             ? mapWorkflowRowToSdlcLoopState(v2Workflow)
             : (activeSdlcLoop?.state ?? null);
@@ -602,14 +600,15 @@ export async function startAgentMessage({
               description?: string | null;
             }>;
           } | null = null;
-          if (effectiveState === "implementing" && activeSdlcLoop?.id) {
+          const effectiveLoopId = activeSdlcLoop?.id ?? v2Workflow?.sdlcLoopId;
+          if (effectiveState === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
                 "@terragon/shared/model/delivery-loop/artifacts"
               );
               const artifact = await getLatestAcceptedArtifact({
                 db,
-                loopId: activeSdlcLoop.id,
+                loopId: effectiveLoopId,
                 phase: "planning",
                 includeApprovedForPlanning: true,
               });
@@ -633,7 +632,7 @@ export async function startAgentMessage({
               console.warn(
                 "[startAgentMessage] failed to load plan artifact for implementing phase",
                 {
-                  loopId: activeSdlcLoop.id,
+                  loopId: effectiveLoopId,
                   error: err instanceof Error ? err.message : String(err),
                 },
               );
