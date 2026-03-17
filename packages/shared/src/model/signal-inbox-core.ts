@@ -3,7 +3,7 @@
  * apps/www/src/server-lib/delivery-loop/signal-inbox.ts so that both the
  * production orchestrator and the E2E test can share the same code.
  *
- * ZERO Next.js dependencies — only drizzle-orm, schema, and delivery-loop.
+ * ZERO Next.js dependencies — only drizzle-orm and schema.
  */
 
 import {
@@ -20,14 +20,7 @@ import {
 } from "drizzle-orm";
 import type { DB } from "../db";
 import * as schema from "../db/schema";
-import type { SdlcLoopCauseType, SdlcLoopState } from "../db/types";
-import {
-  buildPersistedDeliveryLoopSnapshot,
-  getEffectiveDeliveryLoopPhase,
-  persistSdlcCiGateEvaluation,
-  persistSdlcReviewThreadGateEvaluation,
-  type DeliveryLoopSnapshot,
-} from "./delivery-loop";
+import type { SdlcLoopCauseType } from "../db/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,11 +47,6 @@ export type SignalPolicy = {
   isFeedbackSignal: boolean;
   allowRoutingWithoutPrLink: boolean;
   suppressPlanningRuntimeRouting: boolean;
-};
-
-export type PersistedLoopPhaseContext = {
-  snapshot: DeliveryLoopSnapshot;
-  effectivePhase: ReturnType<typeof getEffectiveDeliveryLoopPhase>;
 };
 
 // ---------------------------------------------------------------------------
@@ -138,24 +126,6 @@ export function classifySignalPolicy(
     isFeedbackSignal,
     allowRoutingWithoutPrLink: causeType === "daemon_terminal",
     suppressPlanningRuntimeRouting: isFeedbackSignal,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Loop phase context
-// ---------------------------------------------------------------------------
-
-export function buildPersistedLoopPhaseContext(params: {
-  state: SdlcLoopState;
-  blockedFromState?: SdlcLoopState | null;
-}): PersistedLoopPhaseContext {
-  const snapshot = buildPersistedDeliveryLoopSnapshot({
-    state: params.state,
-    blockedFromState: params.blockedFromState,
-  });
-  return {
-    snapshot,
-    effectivePhase: getEffectiveDeliveryLoopPhase(snapshot),
   };
 }
 
@@ -490,283 +460,9 @@ export async function evaluateBabysitCompletionForHead({
 }
 
 // ---------------------------------------------------------------------------
-// Gate persistence (orchestrates CI + review gate evaluation for a signal)
+// Gate persistence — REMOVED
+// persistGateEvaluationForSignal was removed with the v1 sdlcLoop table drop.
 // ---------------------------------------------------------------------------
-
-export async function persistGateEvaluationForSignal({
-  db,
-  loop,
-  signal,
-  now,
-}: {
-  db: DB;
-  loop: {
-    id: string;
-    loopVersion: number;
-    currentHeadSha: string | null;
-    state: SdlcLoopState;
-    blockedFromState: SdlcLoopState | null;
-  };
-  signal: PendingSignal;
-  now: Date;
-}): Promise<boolean> {
-  const { effectivePhase: effectiveLoopPhase } = buildPersistedLoopPhaseContext(
-    {
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
-    },
-  );
-
-  if (signal.causeType === "daemon_terminal") {
-    const daemonRunStatus = getPayloadText(signal.payload, "daemonRunStatus");
-    if (daemonRunStatus === "stopped") {
-      return false;
-    }
-    return true;
-  }
-
-  if (
-    signal.causeType !== "check_run.completed" &&
-    signal.causeType !== "check_suite.completed" &&
-    signal.causeType !== "pull_request_review" &&
-    signal.causeType !== "pull_request_review_comment"
-  ) {
-    return false;
-  }
-
-  const headSha =
-    getPayloadText(signal.payload, "headSha") ?? loop.currentHeadSha;
-  if (!headSha) {
-    console.warn(
-      "[sdlc-loop] skipping gate evaluation due to missing head sha",
-      {
-        loopId: loop.id,
-        signalId: signal.id,
-        causeType: signal.causeType,
-      },
-    );
-    return false;
-  }
-
-  const loopVersion =
-    typeof loop.loopVersion === "number" && Number.isFinite(loop.loopVersion)
-      ? Math.max(loop.loopVersion, 0)
-      : 0;
-
-  if (
-    signal.causeType === "check_run.completed" ||
-    signal.causeType === "check_suite.completed"
-  ) {
-    const ciSnapshotSource = getPayloadText(signal.payload, "ciSnapshotSource");
-    const ciSnapshotComplete = signal.payload?.ciSnapshotComplete === true;
-    const ciSnapshotCheckNames = getPayloadStringArray(
-      signal.payload,
-      "ciSnapshotCheckNames",
-    );
-    const ciSnapshotFailingChecks = (
-      getPayloadStringArray(signal.payload, "ciSnapshotFailingChecks") ?? []
-    ).filter((checkName) => ciSnapshotCheckNames?.includes(checkName));
-
-    const checkOutcome = getPayloadText(signal.payload, "checkOutcome");
-    if (checkOutcome !== "pass" && checkOutcome !== "fail") {
-      console.warn(
-        "[sdlc-loop] skipping CI gate evaluation due to missing check outcome",
-        {
-          loopId: loop.id,
-          signalId: signal.id,
-          causeType: signal.causeType,
-        },
-      );
-      return false;
-    }
-
-    if (checkOutcome === "pass") {
-      if (
-        ciSnapshotSource !== "github_check_runs" ||
-        !ciSnapshotComplete ||
-        !ciSnapshotCheckNames
-      ) {
-        console.warn(
-          "[sdlc-loop] skipping CI gate optimistic pass without trusted complete snapshot",
-          {
-            loopId: loop.id,
-            signalId: signal.id,
-            causeType: signal.causeType,
-            ciSnapshotSource,
-            ciSnapshotComplete,
-            ciSnapshotCheckCount: ciSnapshotCheckNames?.length ?? null,
-          },
-        );
-        return false;
-      }
-
-      const priorRequiredChecks = await getPriorCiRequiredChecksForHead({
-        db,
-        loopId: loop.id,
-        headSha,
-      });
-      if (!priorRequiredChecks) {
-        console.warn(
-          "[sdlc-loop] skipping CI gate optimistic pass without prior required-check baseline",
-          {
-            loopId: loop.id,
-            signalId: signal.id,
-            causeType: signal.causeType,
-            headSha,
-          },
-        );
-        return false;
-      }
-      const missingRequiredChecks = priorRequiredChecks.filter(
-        (check) => !ciSnapshotCheckNames.includes(check),
-      );
-      if (missingRequiredChecks.length > 0) {
-        console.warn(
-          "[sdlc-loop] skipping CI gate optimistic pass due to incomplete required-check coverage",
-          {
-            loopId: loop.id,
-            signalId: signal.id,
-            causeType: signal.causeType,
-            headSha,
-            missingRequiredChecks,
-            ciSnapshotCheckCount: ciSnapshotCheckNames.length,
-          },
-        );
-        return false;
-      }
-
-      const evaluation = await persistSdlcCiGateEvaluation({
-        db,
-        loopId: loop.id,
-        headSha,
-        loopVersion,
-        triggerEventType: signal.causeType,
-        capabilityState: "supported",
-        allowlistChecks: priorRequiredChecks,
-        failingChecks: ciSnapshotFailingChecks,
-        provenance: {
-          source: "signal_inbox_ci_snapshot",
-          signalId: signal.id,
-          canonicalCauseId: signal.canonicalCauseId,
-        },
-        now,
-      });
-      return evaluation.shouldQueueFollowUp;
-    }
-
-    if (
-      ciSnapshotSource === "github_check_runs" &&
-      ciSnapshotComplete &&
-      ciSnapshotCheckNames
-    ) {
-      const evaluation = await persistSdlcCiGateEvaluation({
-        db,
-        loopId: loop.id,
-        headSha,
-        loopVersion,
-        triggerEventType: signal.causeType,
-        capabilityState: "supported",
-        allowlistChecks: ciSnapshotCheckNames,
-        failingChecks: ciSnapshotFailingChecks,
-        provenance: {
-          source: "signal_inbox_ci_snapshot",
-          signalId: signal.id,
-          canonicalCauseId: signal.canonicalCauseId,
-        },
-        now,
-      });
-      return (
-        evaluation.shouldQueueFollowUp || effectiveLoopPhase !== "babysitting"
-      );
-    }
-
-    const requiredCheck = buildCiRequiredCheckFromSignalPayload(signal.payload);
-    if (!requiredCheck) {
-      console.warn(
-        "[sdlc-loop] skipping CI gate evaluation due to missing check identity",
-        {
-          loopId: loop.id,
-          signalId: signal.id,
-          causeType: signal.causeType,
-        },
-      );
-      return checkOutcome === "fail";
-    }
-
-    const evaluation = await persistSdlcCiGateEvaluation({
-      db,
-      loopId: loop.id,
-      headSha,
-      loopVersion,
-      triggerEventType: signal.causeType,
-      capabilityState: "supported",
-      allowlistChecks: [requiredCheck],
-      failingChecks: [requiredCheck],
-      provenance: {
-        source: "signal_inbox",
-        signalId: signal.id,
-        canonicalCauseId: signal.canonicalCauseId,
-      },
-      now,
-    });
-    return (
-      evaluation.shouldQueueFollowUp || effectiveLoopPhase !== "babysitting"
-    );
-  }
-
-  const unresolvedThreadCount = deriveReviewUnresolvedThreadCount({
-    signal,
-    payload: signal.payload,
-  });
-  if (unresolvedThreadCount === null) {
-    console.warn(
-      "[sdlc-loop] skipping review gate evaluation due to missing unresolved thread signal",
-      {
-        loopId: loop.id,
-        signalId: signal.id,
-        causeType: signal.causeType,
-      },
-    );
-    return false;
-  }
-
-  if (unresolvedThreadCount === 0) {
-    const unresolvedThreadCountSource = getPayloadText(
-      signal.payload,
-      "unresolvedThreadCountSource",
-    );
-    if (unresolvedThreadCountSource !== "github_graphql") {
-      console.warn(
-        "[sdlc-loop] skipping review gate optimistic pass without authoritative unresolved-thread source",
-        {
-          loopId: loop.id,
-          signalId: signal.id,
-          causeType: signal.causeType,
-          unresolvedThreadCountSource,
-        },
-      );
-      return false;
-    }
-  }
-
-  const evaluation = await persistSdlcReviewThreadGateEvaluation({
-    db,
-    loopId: loop.id,
-    headSha,
-    loopVersion,
-    triggerEventType:
-      signal.causeType === "pull_request_review"
-        ? "pull_request_review.submitted"
-        : "pull_request_review_comment.created",
-    evaluationSource: "webhook",
-    unresolvedThreadCount,
-    now,
-  });
-  return (
-    evaluation.shouldQueueFollowUp ||
-    (unresolvedThreadCount > 0 && effectiveLoopPhase !== "babysitting")
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Dead Letter Queue

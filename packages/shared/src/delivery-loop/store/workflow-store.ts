@@ -32,7 +32,7 @@ export async function listActiveWorkflowIds(params: {
 }) {
   const rows = await params.db.query.deliveryWorkflow.findMany({
     where: notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
-    columns: { id: true, threadId: true, sdlcLoopId: true },
+    columns: { id: true, threadId: true },
     limit: params.limit ?? 50,
   });
   return rows;
@@ -45,7 +45,6 @@ export async function createWorkflow(params: {
   kind: string;
   stateJson: Record<string, unknown>;
   maxFixAttempts?: number;
-  sdlcLoopId?: string;
   repoFullName?: string;
   prNumber?: number | null;
   userId?: string;
@@ -61,7 +60,6 @@ export async function createWorkflow(params: {
       kind: params.kind,
       stateJson: params.stateJson,
       maxFixAttempts: params.maxFixAttempts ?? 6,
-      sdlcLoopId: params.sdlcLoopId ?? null,
       repoFullName: params.repoFullName ?? "",
       prNumber: params.prNumber ?? null,
       userId: params.userId ?? "",

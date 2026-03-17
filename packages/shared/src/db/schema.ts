@@ -49,32 +49,25 @@ import {
   SdlcDeepReviewSeverity,
   SdlcDeepReviewStatus,
   SdlcLoopCauseType,
-  SdlcLoopOutboxActionType,
-  SdlcLoopOutboxStatus,
-  SdlcLoopOutboxSupersessionGroup,
   SdlcLoopState,
+  SdlcParityTargetClass,
+  SdlcReviewThreadEvaluationSource,
+  SdlcReviewThreadGateStatus,
+  DispatchIntentStatus,
+  DispatchIntentExecutionClass,
+  DispatchIntentDispatchMechanism,
   SdlcPhase,
   SdlcArtifactType,
   SdlcArtifactStatus,
   SdlcArtifactGeneratedBy,
-  SdlcPlanTaskStatus,
-  SdlcPlanTaskCompletedBy,
-  SdlcPlanApprovalPolicy,
   SdlcPlanSpecPayload,
   SdlcImplementationSnapshotPayload,
   SdlcReviewBundlePayload,
   SdlcUiSmokePayload,
   SdlcPrLinkPayload,
   SdlcBabysitEvaluationPayload,
-  SdlcOutboxAttemptStatus,
-  SdlcParityTargetClass,
-  SdlcReviewThreadEvaluationSource,
-  SdlcReviewThreadGateStatus,
-  SdlcVideoCaptureStatus,
-  SdlcVideoFailureClass,
-  DispatchIntentStatus,
-  DispatchIntentExecutionClass,
-  DispatchIntentDispatchMechanism,
+  SdlcPlanTaskStatus,
+  SdlcPlanTaskCompletedBy,
 } from "./types";
 import {
   AutomationAction,
@@ -1344,244 +1337,12 @@ export const agentProviderCredentials = pgTable(
   ],
 );
 
-export const sdlcLoop = pgTable(
-  "sdlc_loop",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    repoFullName: text("repo_full_name").notNull(),
-    prNumber: integer("pr_number"),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    state: text("state").$type<SdlcLoopState>().notNull().default("planning"),
-    currentHeadSha: text("current_head_sha"),
-    loopVersion: integer("loop_version").notNull().default(0),
-    fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
-    maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
-    planApprovalPolicy: text("plan_approval_policy")
-      .$type<SdlcPlanApprovalPolicy>()
-      .notNull()
-      .default("auto"),
-    activePlanArtifactId: text("active_plan_artifact_id").references(
-      (): AnyPgColumn => sdlcPhaseArtifact.id,
-      { onDelete: "set null" },
-    ),
-    activeImplementationArtifactId: text(
-      "active_implementation_artifact_id",
-    ).references((): AnyPgColumn => sdlcPhaseArtifact.id, {
-      onDelete: "set null",
-    }),
-    activeReviewArtifactId: text("active_review_artifact_id").references(
-      (): AnyPgColumn => sdlcPhaseArtifact.id,
-      { onDelete: "set null" },
-    ),
-    activeUiArtifactId: text("active_ui_artifact_id").references(
-      (): AnyPgColumn => sdlcPhaseArtifact.id,
-      { onDelete: "set null" },
-    ),
-    activeBabysitArtifactId: text("active_babysit_artifact_id").references(
-      (): AnyPgColumn => sdlcPhaseArtifact.id,
-      { onDelete: "set null" },
-    ),
-    stopReason: text("stop_reason"),
-    canonicalStatusCommentId: text("canonical_status_comment_id"),
-    canonicalStatusCommentNodeId: text("canonical_status_comment_node_id"),
-    canonicalStatusCommentUpdatedAt: timestamp(
-      "canonical_status_comment_updated_at",
-      {
-        mode: "date",
-      },
-    ),
-    canonicalCheckRunId: bigint("canonical_check_run_id", { mode: "number" }),
-    canonicalCheckRunUpdatedAt: timestamp("canonical_check_run_updated_at", {
-      mode: "date",
-    }),
-    videoCaptureStatus: text("video_capture_status")
-      .$type<SdlcVideoCaptureStatus>()
-      .notNull()
-      .default("not_started"),
-    latestVideoArtifactR2Key: text("latest_video_artifact_r2_key"),
-    latestVideoArtifactMimeType: text("latest_video_artifact_mime_type"),
-    latestVideoArtifactBytes: integer("latest_video_artifact_bytes"),
-    latestVideoCapturedAt: timestamp("latest_video_captured_at", {
-      mode: "date",
-    }),
-    latestVideoFailureClass: text(
-      "latest_video_failure_class",
-    ).$type<SdlcVideoFailureClass>(),
-    latestVideoFailureCode: text("latest_video_failure_code"),
-    latestVideoFailureMessage: text("latest_video_failure_message"),
-    latestVideoFailedAt: timestamp("latest_video_failed_at", { mode: "date" }),
-    blockedFromState: text("blocked_from_state").$type<SdlcLoopState>(),
-    phaseEnteredAt: timestamp("phase_entered_at", { mode: "date" }),
-    enrolledAt: timestamp("enrolled_at", { mode: "date" })
-      .notNull()
-      .defaultNow(),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("sdlc_loop_thread_unique").on(table.threadId),
-    index("sdlc_loop_repo_pr_state_index").on(
-      table.repoFullName,
-      table.prNumber,
-      table.state,
-    ),
-    index("sdlc_loop_user_repo_pr_state_index").on(
-      table.userId,
-      table.repoFullName,
-      table.prNumber,
-      table.state,
-    ),
-    index("sdlc_loop_user_index").on(table.userId),
-  ],
-);
+// v1 sdlcLoop table REMOVED — see delivery_workflow for v2
 
-export const sdlcPhaseArtifact = pgTable(
-  "sdlc_phase_artifact",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
-    workflowId: text("workflow_id").references(() => deliveryWorkflow.id, {
-      onDelete: "set null",
-    }),
-    phase: text("phase").$type<SdlcPhase>().notNull(),
-    artifactType: text("artifact_type").$type<SdlcArtifactType>().notNull(),
-    headSha: text("head_sha"),
-    loopVersion: integer("loop_version").notNull(),
-    status: text("status")
-      .$type<SdlcArtifactStatus>()
-      .notNull()
-      .default("generated"),
-    generatedBy: text("generated_by")
-      .$type<SdlcArtifactGeneratedBy>()
-      .notNull()
-      .default("system"),
-    approvedByUserId: text("approved_by_user_id").references(() => user.id, {
-      onDelete: "set null",
-    }),
-    approvedAt: timestamp("approved_at", { mode: "date" }),
-    payload: jsonb("payload")
-      .$type<
-        | SdlcPlanSpecPayload
-        | SdlcImplementationSnapshotPayload
-        | SdlcReviewBundlePayload
-        | SdlcUiSmokePayload
-        | SdlcPrLinkPayload
-        | SdlcBabysitEvaluationPayload
-        | Record<string, unknown>
-      >()
-      .notNull(),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    index("sdlc_phase_artifact_loop_phase_created_index").on(
-      table.loopId,
-      table.phase,
-      table.createdAt,
-    ),
-    index("sdlc_phase_artifact_loop_phase_status_created_index").on(
-      table.loopId,
-      table.phase,
-      table.status,
-      table.createdAt,
-    ),
-    index("sdlc_phase_artifact_loop_head_phase_created_index").on(
-      table.loopId,
-      table.headSha,
-      table.phase,
-      table.createdAt,
-    ),
-    index("sdlc_phase_artifact_workflow_id_index").on(table.workflowId),
-  ],
-);
+// v1 sdlcPhaseArtifact table REMOVED
 
-export const sdlcPlanTask = pgTable(
-  "sdlc_plan_task",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    artifactId: text("artifact_id")
-      .notNull()
-      .references(() => sdlcPhaseArtifact.id, { onDelete: "cascade" }),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
-    stableTaskId: text("stable_task_id").notNull(),
-    title: text("title").notNull(),
-    description: text("description"),
-    acceptance: jsonb("acceptance")
-      .$type<string[]>()
-      .notNull()
-      .default(sql`'[]'::jsonb`),
-    status: text("status")
-      .$type<SdlcPlanTaskStatus>()
-      .notNull()
-      .default("todo"),
-    completedAt: timestamp("completed_at", { mode: "date" }),
-    completedBy: text("completed_by").$type<SdlcPlanTaskCompletedBy>(),
-    completionEvidence: jsonb("completion_evidence").$type<
-      Record<string, unknown>
-    >(),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("sdlc_plan_task_artifact_stable_task_unique").on(
-      table.artifactId,
-      table.stableTaskId,
-    ),
-    index("sdlc_plan_task_loop_status_index").on(table.loopId, table.status),
-    index("sdlc_plan_task_loop_artifact_status_index").on(
-      table.loopId,
-      table.artifactId,
-      table.status,
-    ),
-  ],
-);
-
-export const sdlcLoopLease = pgTable(
-  "sdlc_loop_lease",
-  {
-    loopId: text("loop_id")
-      .primaryKey()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
-    leaseOwner: text("lease_owner"),
-    leaseEpoch: integer("lease_epoch").notNull().default(0),
-    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date" }),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    index("sdlc_loop_lease_owner_expires_index").on(
-      table.leaseOwner,
-      table.leaseExpiresAt,
-    ),
-  ],
-);
+// v1 sdlcPlanTask table REMOVED
+// v1 sdlcLoopLease table REMOVED
 
 export const sdlcLoopSignalInbox = pgTable(
   "sdlc_loop_signal_inbox",
@@ -1642,101 +1403,8 @@ export const sdlcLoopSignalInbox = pgTable(
   ],
 );
 
-export const sdlcLoopOutbox = pgTable(
-  "sdlc_loop_outbox",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
-    transitionSeq: bigint("transition_seq", { mode: "number" }).notNull(),
-    actionType: text("action_type").$type<SdlcLoopOutboxActionType>().notNull(),
-    supersessionGroup: text("supersession_group")
-      .$type<SdlcLoopOutboxSupersessionGroup>()
-      .notNull(),
-    actionKey: text("action_key").notNull(),
-    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-    status: text("status")
-      .$type<SdlcLoopOutboxStatus>()
-      .notNull()
-      .default("pending"),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    nextRetryAt: timestamp("next_retry_at", { mode: "date" }),
-    supersededByOutboxId: text("superseded_by_outbox_id"),
-    canceledReason: text("canceled_reason"),
-    claimedBy: text("claimed_by"),
-    claimedAt: timestamp("claimed_at", { mode: "date" }),
-    completedAt: timestamp("completed_at", { mode: "date" }),
-    lastErrorClass: text("last_error_class"),
-    lastErrorCode: text("last_error_code"),
-    lastErrorMessage: text("last_error_message"),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("sdlc_loop_outbox_loop_action_key_unique").on(
-      table.loopId,
-      table.actionKey,
-    ),
-    index("sdlc_loop_outbox_loop_status_transition_index").on(
-      table.loopId,
-      table.status,
-      table.transitionSeq,
-    ),
-    index("sdlc_loop_outbox_loop_group_transition_index").on(
-      table.loopId,
-      table.supersessionGroup,
-      table.transitionSeq,
-    ),
-    index("sdlc_loop_outbox_loop_status_retry_index").on(
-      table.loopId,
-      table.status,
-      table.nextRetryAt,
-    ),
-  ],
-);
-
-export const sdlcLoopOutboxAttempt = pgTable(
-  "sdlc_loop_outbox_attempt",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    outboxId: text("outbox_id")
-      .notNull()
-      .references(() => sdlcLoopOutbox.id, { onDelete: "cascade" }),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
-    actionType: text("action_type").$type<SdlcLoopOutboxActionType>().notNull(),
-    attempt: integer("attempt").notNull(),
-    status: text("status").$type<SdlcOutboxAttemptStatus>().notNull(),
-    errorClass: text("error_class"),
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
-    retryAt: timestamp("retry_at", { mode: "date" }),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("sdlc_loop_outbox_attempt_outbox_attempt_unique").on(
-      table.outboxId,
-      table.attempt,
-    ),
-    index("sdlc_loop_outbox_attempt_loop_created_index").on(
-      table.loopId,
-      table.createdAt,
-    ),
-    index("sdlc_loop_outbox_attempt_status_retry_index").on(
-      table.status,
-      table.retryAt,
-    ),
-  ],
-);
+// v1 sdlcLoopOutbox table REMOVED
+// v1 sdlcLoopOutboxAttempt table REMOVED
 
 export const sdlcDeepReviewRun = pgTable(
   "sdlc_deep_review_run",
@@ -1744,9 +1412,7 @@ export const sdlcDeepReviewRun = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
     status: text("status")
@@ -1787,9 +1453,7 @@ export const sdlcDeepReviewFinding = pgTable(
     reviewRunId: text("review_run_id")
       .notNull()
       .references(() => sdlcDeepReviewRun.id, { onDelete: "cascade" }),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     stableFindingId: text("stable_finding_id").notNull(),
     title: text("title").notNull(),
@@ -1828,9 +1492,7 @@ export const sdlcCarmackReviewRun = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
     status: text("status")
@@ -1871,9 +1533,7 @@ export const sdlcCarmackReviewFinding = pgTable(
     reviewRunId: text("review_run_id")
       .notNull()
       .references(() => sdlcCarmackReviewRun.id, { onDelete: "cascade" }),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     stableFindingId: text("stable_finding_id").notNull(),
     title: text("title").notNull(),
@@ -1912,9 +1572,7 @@ export const sdlcCiGateRun = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
     status: text("status").$type<SdlcCiGateStatus>().notNull(),
@@ -1967,9 +1625,7 @@ export const sdlcReviewThreadGateRun = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
     status: text("status").$type<SdlcReviewThreadGateStatus>().notNull(),
@@ -2085,7 +1741,6 @@ export const deliveryWorkflow = pgTable(
     stateJson: jsonb("state_json").notNull(),
     fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
     maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
-    sdlcLoopId: text("sdlc_loop_id"),
     repoFullName: text("repo_full_name").notNull().default(""),
     prNumber: integer("pr_number"),
     userId: text("user_id")
@@ -2262,9 +1917,7 @@ export const deliveryLoopDispatchIntent = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    loopId: text("loop_id")
-      .notNull()
-      .references(() => sdlcLoop.id, { onDelete: "cascade" }),
+    loopId: text("loop_id").notNull(),
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),

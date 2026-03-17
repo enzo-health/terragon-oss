@@ -50,25 +50,10 @@ export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
-export type SdlcLoop = typeof schema.sdlcLoop.$inferSelect;
-export type SdlcLoopInsert = typeof schema.sdlcLoop.$inferInsert;
-export type SdlcPhaseArtifact = typeof schema.sdlcPhaseArtifact.$inferSelect;
-export type SdlcPhaseArtifactInsert =
-  typeof schema.sdlcPhaseArtifact.$inferInsert;
-export type SdlcPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
-export type SdlcPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
-export type SdlcLoopLease = typeof schema.sdlcLoopLease.$inferSelect;
-export type SdlcLoopLeaseInsert = typeof schema.sdlcLoopLease.$inferInsert;
 export type SdlcLoopSignalInbox =
   typeof schema.sdlcLoopSignalInbox.$inferSelect;
 export type SdlcLoopSignalInboxInsert =
   typeof schema.sdlcLoopSignalInbox.$inferInsert;
-export type SdlcLoopOutbox = typeof schema.sdlcLoopOutbox.$inferSelect;
-export type SdlcLoopOutboxInsert = typeof schema.sdlcLoopOutbox.$inferInsert;
-export type SdlcLoopOutboxAttempt =
-  typeof schema.sdlcLoopOutboxAttempt.$inferSelect;
-export type SdlcLoopOutboxAttemptInsert =
-  typeof schema.sdlcLoopOutboxAttempt.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =

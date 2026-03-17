@@ -82,43 +82,15 @@ export {
   buildSdlcCanonicalCause,
 } from "./canonical-cause";
 
-// enrollment.ts
+// guarded-state.ts (pure types and utilities only; DB functions removed with sdlcLoop table)
 export {
-  getActiveSdlcLoopForGithubPRAndUser,
-  getActiveSdlcLoopsForGithubPR,
-  getPreferredActiveSdlcLoopForGithubPRAndUser,
-  getActiveSdlcLoopForGithubPR,
-  transitionActiveSdlcLoopsForGithubPREvent,
-  enrollSdlcLoopForGithubPR,
-  enrollSdlcLoopForThread,
-  linkSdlcLoopToGithubPRForThread,
-  getActiveSdlcLoopForThread,
-} from "./enrollment";
-
-// artifacts.ts
-export {
-  getLatestAcceptedArtifact,
-  createPlanArtifactForLoop,
-  approvePlanArtifactForLoop,
-  replacePlanTasksForArtifact,
-  markPlanTasksCompletedByAgent,
-  verifyPlanTaskCompletionForHead,
-  createImplementationArtifactForHead,
-  createReviewBundleArtifactForHead,
-  createUiSmokeArtifactForHead,
-  createPrLinkArtifact,
-  createBabysitEvaluationArtifactForHead,
-  type SdlcTransitionWithArtifactOutcome,
-  transitionSdlcLoopStateWithArtifact,
-} from "./artifacts";
-
-// github-pr-references.ts
-export {
-  type SdlcOutboxErrorClass,
-  persistSdlcCanonicalStatusCommentReference,
-  clearSdlcCanonicalStatusCommentReference,
-  persistSdlcCanonicalCheckRunReference,
-} from "./github-pr-references";
+  type StaleNoopReason,
+  type SdlcGateLoopUpdateOutcome,
+  isStaleNoop,
+  fixAttemptIncrementEvents,
+  normalizeCheckNames,
+  resolveRequiredCheckSource,
+} from "./guarded-state";
 
 // webhook-delivery.ts
 export {
@@ -130,61 +102,6 @@ export {
   completeGithubWebhookDelivery,
   releaseGithubWebhookDeliveryClaim,
 } from "./webhook-delivery";
-
-// guarded-state.ts
-export {
-  type StaleNoopReason,
-  type SdlcGateLoopUpdateOutcome,
-  isStaleNoop,
-  fixAttemptIncrementEvents,
-  persistGuardedGateLoopState,
-  transitionSdlcLoopState,
-  normalizeCheckNames,
-  resolveRequiredCheckSource,
-} from "./guarded-state";
-
-// ci-gate-persistence.ts
-export {
-  type PersistSdlcCiGateEvaluationResult,
-  toCiGateVerdict,
-  persistSdlcCiGateEvaluation,
-} from "./ci-gate-persistence";
-
-// review-thread-gate-persistence.ts
-export {
-  type PersistSdlcReviewThreadGateResult,
-  toReviewThreadGateVerdict,
-  persistSdlcReviewThreadGateEvaluation,
-} from "./review-thread-gate-persistence";
-
-// review-gate-persistence.ts
-export {
-  reviewFindingSchema,
-  reviewGateOutputSchema,
-  type ReviewGateOutput,
-  type PersistReviewGateResult,
-  type DeepReviewGateOutput,
-  type CarmackReviewGateOutput,
-  type PersistDeepReviewGateResult,
-  type PersistCarmackReviewGateResult,
-  toReviewGateVerdict,
-  deepReviewFindingSchema,
-  deepReviewGateOutputSchema,
-  carmackReviewFindingSchema,
-  carmackReviewGateOutputSchema,
-  parseReviewGateOutput,
-  parseDeepReviewGateOutput,
-  parseCarmackReviewGateOutput,
-  persistDeepReviewGateResult,
-  getUnresolvedBlockingDeepReviewFindings,
-  resolveDeepReviewFinding,
-  shouldQueueFollowUpForDeepReview,
-  persistCarmackReviewGateResult,
-  getUnresolvedBlockingCarmackReviewFindings,
-  resolveCarmackReviewFinding,
-  shouldQueueFollowUpForCarmackReview,
-  canRunCarmackReviewForHeadSha,
-} from "./review-gate-persistence";
 
 // dispatch-intent.ts
 export {
