@@ -52,7 +52,6 @@ import {
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import {
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
-  getActiveSdlcLoopForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
@@ -548,11 +547,8 @@ export async function startAgentMessage({
             sourceType: thread?.sourceType ?? null,
             sourceMetadata: thread?.sourceMetadata ?? null,
           });
-          let activeSdlcLoop = await getActiveSdlcLoopForThreadIfEnabled({
-            userId,
-            threadId,
-          });
-          if (sdlcEligibleForThread && !activeSdlcLoop) {
+          let v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+          if (sdlcEligibleForThread && !v2Workflow) {
             try {
               const planApprovalPolicy =
                 thread?.sourceMetadata?.type === "www"
@@ -564,10 +560,7 @@ export async function startAgentMessage({
                 threadId,
                 planApprovalPolicy,
               });
-              activeSdlcLoop = await getActiveSdlcLoopForThreadIfEnabled({
-                userId,
-                threadId,
-              });
+              v2Workflow = await getActiveWorkflowForThread({ db, threadId });
             } catch (error) {
               console.warn(
                 "[startAgentMessage] failed to self-heal Delivery Loop enrollment",
@@ -580,9 +573,7 @@ export async function startAgentMessage({
               );
             }
           }
-          // Read v2 workflow as primary state source (falls back to v1 sdlcLoop)
-          const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-          if (sdlcEligibleForThread && !activeSdlcLoop && !v2Workflow) {
+          if (sdlcEligibleForThread && !v2Workflow) {
             throw new ThreadError(
               "unknown-error",
               "Delivery Loop enrollment missing for eligible thread",
@@ -591,7 +582,7 @@ export async function startAgentMessage({
           }
           const effectiveState: SdlcLoopState | null = v2Workflow
             ? mapWorkflowRowToSdlcLoopState(v2Workflow)
-            : (activeSdlcLoop?.state ?? null);
+            : null;
           let planContext: {
             planText: string;
             tasks: Array<{
@@ -600,7 +591,7 @@ export async function startAgentMessage({
               description?: string | null;
             }>;
           } | null = null;
-          const effectiveLoopId = activeSdlcLoop?.id ?? v2Workflow?.sdlcLoopId;
+          const effectiveLoopId = v2Workflow?.sdlcLoopId;
           if (effectiveState === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
@@ -662,7 +653,7 @@ export async function startAgentMessage({
           const runId = randomUUID();
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
-          const effectivePermissionMode = activeSdlcLoop
+          const effectivePermissionMode = v2Workflow
             ? "allowAll"
             : rawPermissionMode;
           const implementationDispatch = resolveImplementationRuntimeAdapter(

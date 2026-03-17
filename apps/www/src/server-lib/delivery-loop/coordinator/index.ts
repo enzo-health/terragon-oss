@@ -12,10 +12,3 @@ export { type ScheduledWorkItem, resolveWorkItems } from "./schedule-work";
 
 // append-events.ts
 export { buildWorkflowEvent } from "./append-events";
-
-// enrollment-bridge.ts
-export {
-  mapV1StateToV2Kind,
-  buildInitialStateJson,
-  ensureV2WorkflowExists,
-} from "./enrollment-bridge";

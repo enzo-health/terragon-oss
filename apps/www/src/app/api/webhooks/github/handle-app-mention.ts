@@ -34,9 +34,9 @@ import { getThread, getThreadChat } from "@terragon/shared/model/threads";
 import { modelToAgent } from "@terragon/agent/utils";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  getActiveSdlcLoopForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
+import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({
@@ -526,17 +526,18 @@ async function triggerTasksForUser({
     };
 
     if (issueOrPrType === "pull_request") {
-      const activeSdlcLoop = await getActiveSdlcLoopForGithubPRIfEnabled({
-        userId,
+      const activeWorkflows = await getActiveWorkflowForGithubPR({
+        db,
         repoFullName,
         prNumber: issueOrPrNumber,
       });
+      const activeWorkflow = activeWorkflows[0];
 
-      if (activeSdlcLoop) {
+      if (activeWorkflow) {
         const enrolledThread = await getThread({
           db,
           userId,
-          threadId: activeSdlcLoop.threadId,
+          threadId: activeWorkflow.threadId,
         });
         let enrolledThreadChat: ReturnType<typeof getPrimaryThreadChat> | null =
           null;
@@ -550,7 +551,7 @@ async function triggerTasksForUser({
 
         if (enrolledThreadChat) {
           await queueOrCreateThreadForGitHubMention({
-            threadIdOrNull: activeSdlcLoop.threadId,
+            threadIdOrNull: activeWorkflow.threadId,
             threadChatIdOrNull: enrolledThreadChat.id,
             forcedAgent: enrolledThreadChat.agent,
             threadSourceType: enrolledThread?.sourceType ?? null,
@@ -565,8 +566,8 @@ async function triggerTasksForUser({
             userId,
             repoFullName,
             issueOrPrNumber,
-            sdlcLoopId: activeSdlcLoop.id,
-            sdlcLoopThreadId: activeSdlcLoop.threadId,
+            workflowId: activeWorkflow.id,
+            workflowThreadId: activeWorkflow.threadId,
             hasThread: !!enrolledThread,
           },
         );
