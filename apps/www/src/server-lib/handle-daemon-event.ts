@@ -47,22 +47,9 @@ import {
   updateAgentSession,
 } from "./linear-agent-activity";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import {
-  getActiveSdlcLoopForThread,
-  getUnresolvedBlockingDeepReviewFindings,
-  getUnresolvedBlockingCarmackReviewFindings,
-} from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { mapWorkflowRowToSdlcLoopState } from "@/lib/delivery-loop-status";
-import {
-  formatReviewFindings,
-  queueSdlcFollowUpMessage,
-} from "@/server-lib/checkpoint-thread-internal";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
-import type {
-  ThreadSourceMetadata,
-  SdlcLoopState,
-} from "@terragon/shared/db/types";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { redis } from "@/lib/redis";
 import {
@@ -71,12 +58,10 @@ import {
 } from "@/server-lib/delivery-loop/retry-policy";
 import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
 
-/** SDLC phases eligible for auto-retry on generic agent error. */
-const SDLC_AUTO_RETRY_PHASES: ReadonlySet<SdlcLoopState> = new Set([
+/** V2 workflow states eligible for auto-retry on generic agent error. */
+const SDLC_AUTO_RETRY_PHASES: ReadonlySet<string> = new Set([
   "implementing",
-  "review_gate",
-  "ci_gate",
-  "ui_gate",
+  "gating",
   "babysitting",
 ]);
 
@@ -664,29 +649,10 @@ export async function handleDaemonEvent({
   }
 
   // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
-  // This variable is hoisted so the follow-up recovery block below can reuse it
-  // without a duplicate DB call.
-  let sdlcLoopForErrorRecovery:
-    | Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>
-    | undefined;
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
-      // Read v2 workflow as primary state source, fall back to v1 sdlcLoop
       const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-      const effectivePhase: SdlcLoopState | null = v2Workflow
-        ? mapWorkflowRowToSdlcLoopState(v2Workflow)
-        : null;
-
-      if (!effectivePhase) {
-        // No v2 workflow — fall back to v1 sdlcLoop
-        sdlcLoopForErrorRecovery = await getActiveSdlcLoopForThread({
-          db,
-          userId,
-          threadId,
-        });
-      }
-      const activeSdlcLoop = sdlcLoopForErrorRecovery;
-      const sdlcPhase = effectivePhase ?? activeSdlcLoop?.state ?? null;
+      const sdlcPhase = v2Workflow?.kind ?? null;
 
       const failureCategory = classifyDaemonEventError(customErrorMessage);
 
@@ -978,90 +944,6 @@ async function handleThreadFinish({
   }
 
   let shouldProcessFollowUpQueue = !isRateLimited && !isError;
-
-  // Second-chance recovery: when the auto-retry above is exhausted (alreadyRetried=true)
-  // and isError is still true, re-queue the actual review findings so the next agent run
-  // has actionable context. Skip for v2-enrolled threads — the coordinator/workers handle
-  // retry and recovery.
-  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-  const isV2Enrolled = !!v2Workflow;
-
-  if (isError && !isRateLimited && !isV2Enrolled) {
-    try {
-      const activeSdlcLoop = await getActiveSdlcLoopForThread({
-        db,
-        userId,
-        threadId,
-      });
-      if (activeSdlcLoop && activeSdlcLoop.state === "implementing") {
-        if (!activeSdlcLoop.currentHeadSha) {
-          console.warn(
-            "Delivery Loop error recovery: loop is implementing but currentHeadSha is null, skipping finding re-queue",
-            { threadId, loopId: activeSdlcLoop.id },
-          );
-        } else {
-          const [deepFindings, carmackFindings] = await Promise.all([
-            getUnresolvedBlockingDeepReviewFindings({
-              db,
-              loopId: activeSdlcLoop.id,
-              headSha: activeSdlcLoop.currentHeadSha,
-            }),
-            getUnresolvedBlockingCarmackReviewFindings({
-              db,
-              loopId: activeSdlcLoop.id,
-              headSha: activeSdlcLoop.currentHeadSha,
-            }),
-          ]);
-
-          const details = [
-            formatReviewFindings({
-              label: "Deep review blocking findings",
-              findings: deepFindings.map((f) => ({
-                ...f,
-                severity: f.severity ?? "high",
-              })),
-            }),
-            formatReviewFindings({
-              label: "Carmack review blocking findings",
-              findings: carmackFindings.map((f) => ({
-                ...f,
-                severity: f.severity ?? "high",
-              })),
-            }),
-          ].filter((s): s is string => Boolean(s));
-
-          if (details.length > 0) {
-            // queueSdlcFollowUpMessage calls queueFollowUpInternal which
-            // already triggers maybeProcessFollowUpQueue when the thread
-            // is in error/done state, so we don't need to set
-            // shouldProcessFollowUpQueue here.
-            await queueSdlcFollowUpMessage({
-              userId,
-              threadId,
-              threadChatId,
-              heading:
-                "Delivery Loop review phase blocked. The previous agent run crashed. Fix all blocking Deep/Carmack findings, then signal phaseComplete: true again.",
-              details,
-            });
-
-            console.log(
-              "Delivery Loop error recovery: re-queued review findings for crashed implementing agent",
-              {
-                threadId,
-                deepCount: deepFindings.length,
-                carmackCount: carmackFindings.length,
-              },
-            );
-          }
-        }
-      }
-    } catch (sdlcQueueError) {
-      console.error(
-        "Delivery Loop follow-up queue recovery failed, falling through to normal error path",
-        { threadId, error: sdlcQueueError },
-      );
-    }
-  }
 
   if (shouldProcessFollowUpQueue) {
     const threadChat = await getThreadChat({
