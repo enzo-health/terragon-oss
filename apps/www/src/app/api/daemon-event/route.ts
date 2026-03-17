@@ -13,7 +13,7 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import {
   buildDispatchIntentId,
@@ -655,13 +655,11 @@ export async function POST(request: Request) {
 
   const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
   const effectiveLoopId = v2Workflow?.id ?? null;
-  const hasDeliveryLoop = !!v2Workflow;
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
   // status-based (idempotent), not seq-based.
   if (
-    hasDeliveryLoop &&
     effectiveLoopId &&
     envelopeV2 &&
     runContext &&
@@ -687,7 +685,7 @@ export async function POST(request: Request) {
 
   let claimedProcessingEvent = false;
 
-  if (hasDeliveryLoop) {
+  if (effectiveLoopId) {
     if (!envelopeV2) {
       console.error(
         "[sdlc-loop] rejecting daemon event for enrolled loop without v2 envelope",
@@ -803,7 +801,7 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (hasDeliveryLoop && envelopeV2 && claimedProcessingEvent) {
+    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
       await rollbackEnrolledLoopProcessingEventClaim({
         loopId: effectiveLoopId!,
         envelope: envelopeV2,
@@ -823,7 +821,7 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (hasDeliveryLoop && envelopeV2 && claimedProcessingEvent) {
+    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
       await rollbackEnrolledLoopProcessingEventClaim({
         loopId: effectiveLoopId!,
         envelope: envelopeV2,
@@ -841,7 +839,7 @@ export async function POST(request: Request) {
   // "claimed" state until stale-claim timeout, blocking daemon retries.
   {
     const postHandleOps: Array<Promise<unknown>> = [];
-    if (hasDeliveryLoop && envelopeV2 && claimedProcessingEvent) {
+    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
       postHandleOps.push(
         commitEnrolledLoopProcessingEvent({
           loopId: effectiveLoopId!,
@@ -953,7 +951,7 @@ export async function POST(request: Request) {
     }
   }
 
-  if (hasDeliveryLoop && envelopeV2) {
+  if (effectiveLoopId && envelopeV2) {
     // Route through daemon ingress adapter
     try {
       const { handleDaemonIngress } = await import(
@@ -975,7 +973,7 @@ export async function POST(request: Request) {
           exitCode: null,
           errorMessage: daemonTerminalErrorInfo?.errorMessage ?? null,
         },
-        workflowId: v2Workflow!.id as WorkflowId,
+        workflowId: effectiveLoopId! as WorkflowId,
         consecutiveDispatches: 0,
       });
       if (ingressResult.selfDispatch) {
@@ -1015,7 +1013,6 @@ export async function POST(request: Request) {
       );
     }
     if (
-      hasDeliveryLoop &&
       effectiveLoopId &&
       envelopeV2 &&
       daemonRunStatusFromMessages !== "processing"
@@ -1042,7 +1039,7 @@ export async function POST(request: Request) {
           // and ack timeout will eventually reconcile.
           console.warn("[daemon-event] terminal state persistence failed", {
             runId: runContext?.runId ?? envelopeV2?.runId,
-            enrolled: hasDeliveryLoop,
+            enrolled: !!effectiveLoopId,
             error: r.reason,
           });
         }
