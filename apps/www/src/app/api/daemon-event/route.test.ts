@@ -19,7 +19,6 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
-import { getThreadChat } from "@terragon/shared/model/threads";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { handleDaemonIngress } from "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress";
 
