@@ -86,54 +86,32 @@ export async function runDispatchWork(params: {
       return;
     }
 
-    // 2 & 3. Resolve loop + threadChat in parallel (both depend on threadId only)
-    const [loop, threadChat] = await Promise.all([
-      params.payload.loopId
-        ? params.db.query.sdlcLoop.findFirst({
-            where: eq(schema.sdlcLoop.id, params.payload.loopId),
-          })
-        : params.db.query.sdlcLoop.findFirst({
-            where: eq(schema.sdlcLoop.threadId, workflow.threadId),
-            orderBy: [desc(schema.sdlcLoop.createdAt)],
-          }),
-      params.payload.threadChatId
-        ? params.db.query.threadChat.findFirst({
-            where: eq(schema.threadChat.id, params.payload.threadChatId),
-          })
-        : // Prefer an active (non-complete) chat for this thread so we
-          // dispatch into the right chat on multi-chat threads. Falls back
-          // to most-recent if all chats are complete.
-          params.db.query.threadChat
-            .findFirst({
-              where: and(
-                eq(schema.threadChat.threadId, workflow.threadId),
-                ne(schema.threadChat.status, "complete"),
-              ),
-              orderBy: [desc(schema.threadChat.createdAt)],
-            })
-            .then(
-              (active) =>
-                active ??
-                params.db.query.threadChat.findFirst({
-                  where: eq(schema.threadChat.threadId, workflow.threadId),
-                  orderBy: [desc(schema.threadChat.createdAt)],
-                }),
+    // 2. Resolve threadChat
+    const threadChat = await (params.payload.threadChatId
+      ? params.db.query.threadChat.findFirst({
+          where: eq(schema.threadChat.id, params.payload.threadChatId),
+        })
+      : // Prefer an active (non-complete) chat for this thread so we
+        // dispatch into the right chat on multi-chat threads. Falls back
+        // to most-recent if all chats are complete.
+        params.db.query.threadChat
+          .findFirst({
+            where: and(
+              eq(schema.threadChat.threadId, workflow.threadId),
+              ne(schema.threadChat.status, "complete"),
             ),
-    ]);
-    // For pure v2 workflows (no v1 sdlcLoop row), fall back to workflow-derived values.
-    // Bridged workflows (both v1 + v2) continue to use the loop row as before.
-    if (!loop && !workflow.id) {
-      await failWorkItem({
-        db: params.db,
-        workItemId: params.workItemId,
-        claimToken: params.claimToken,
-        errorCode: "loop_not_found",
-        errorMessage: `No sdlcLoop found for threadId ${workflow.threadId}`,
-      });
-      return;
-    }
-    const effectiveLoopId = loop?.id ?? workflow.id;
-    const effectiveUserId = loop?.userId ?? workflow.userId;
+            orderBy: [desc(schema.threadChat.createdAt)],
+          })
+          .then(
+            (active) =>
+              active ??
+              params.db.query.threadChat.findFirst({
+                where: eq(schema.threadChat.threadId, workflow.threadId),
+                orderBy: [desc(schema.threadChat.createdAt)],
+              }),
+          ));
+    const effectiveLoopId = workflow.id;
+    const effectiveUserId = workflow.userId;
     if (!threadChat) {
       await failWorkItem({
         db: params.db,
