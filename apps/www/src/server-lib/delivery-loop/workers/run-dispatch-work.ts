@@ -18,13 +18,12 @@ import { startAckTimeout } from "../ack-lifecycle";
 import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { stringifyError } from "./resolve-loop";
 
 export type DispatchWorkPayload = {
   executionClass: ExecutionClass;
   workflowId: string;
-  loopId?: string;
   threadChatId?: string;
   gate?: string;
   headSha?: string;
@@ -237,7 +236,7 @@ export async function runDispatchWork(params: {
     if (targetPhase === "implementing") {
       try {
         const { getLatestAcceptedArtifact } = await import(
-          "@terragon/shared/model/delivery-loop/artifacts"
+          "@terragon/shared/delivery-loop/store/artifact-store"
         );
         const artifact = await getLatestAcceptedArtifact({
           db: params.db,

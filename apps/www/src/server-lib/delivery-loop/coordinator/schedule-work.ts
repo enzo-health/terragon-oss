@@ -65,7 +65,6 @@ export function resolveWorkItems(params: {
           payloadJson: {
             executionClass: "implementation_runtime",
             workflowId: params.newWorkflow.workflowId,
-            loopId: params.loopId,
           },
           scheduledAt: now,
         });
@@ -87,7 +86,6 @@ export function resolveWorkItems(params: {
           payloadJson: {
             executionClass: "implementation_runtime",
             workflowId: params.newWorkflow.workflowId,
-            loopId: params.loopId,
           },
           scheduledAt: now,
         });
@@ -109,7 +107,6 @@ export function resolveWorkItems(params: {
             executionClass: "gate_runtime",
             workflowId: params.newWorkflow.workflowId,
             gate: params.newWorkflow.gate.kind,
-            loopId: params.loopId,
           },
           scheduledAt: now,
         });
