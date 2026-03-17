@@ -53,9 +53,6 @@ vi.mock("@terragon/shared/model/delivery-loop/artifacts", () => ({
 // Mock the DB query layer
 const mockDb = vi.hoisted(() => ({
   query: {
-    sdlcLoop: {
-      findFirst: vi.fn(),
-    },
     threadChat: {
       findFirst: vi.fn(),
     },
@@ -110,7 +107,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("runDispatchWork", () => {
-  it("succeeds for pure v2 workflow when no v1 sdlcLoop exists", async () => {
+  it("succeeds for pure v2 workflow", async () => {
     mockGetWorkflow.mockResolvedValue({
       id: "wf-v2",
       threadId: "thread-1",
@@ -118,9 +115,6 @@ describe("runDispatchWork", () => {
       kind: "implementing",
       stateJson: {},
     });
-    // No v1 loop
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue(undefined);
-    // Valid threadChat
     mockDb.query.threadChat.findFirst.mockResolvedValue({
       id: "tc-1",
       threadId: "thread-1",
@@ -128,11 +122,6 @@ describe("runDispatchWork", () => {
     });
 
     await runDispatchWork(baseParams({ workflowId: "wf-v2" }));
-
-    // Should NOT fail with loop_not_found
-    expect(mockFailWorkItem).not.toHaveBeenCalledWith(
-      expect.objectContaining({ errorCode: "loop_not_found" }),
-    );
 
     // Should create dispatch intent using workflow.id as effectiveLoopId
     expect(mockCreateDispatchIntent).toHaveBeenCalledWith(
@@ -147,38 +136,7 @@ describe("runDispatchWork", () => {
     expect(mockCompleteWorkItem).toHaveBeenCalled();
   });
 
-  it("uses loop.id as effectiveLoopId when v1 sdlcLoop exists (bridged)", async () => {
-    mockGetWorkflow.mockResolvedValue({
-      id: "wf-bridged",
-      threadId: "thread-1",
-      userId: "user-wf",
-      kind: "implementing",
-      stateJson: {},
-      sdlcLoopId: "loop-1",
-    });
-    // v1 loop exists
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue({
-      id: "loop-1",
-      userId: "user-loop",
-      threadId: "thread-1",
-    });
-    mockDb.query.threadChat.findFirst.mockResolvedValue({
-      id: "tc-1",
-      threadId: "thread-1",
-      status: "active",
-    });
-
-    await runDispatchWork(baseParams({ workflowId: "wf-bridged" }));
-
-    // Dispatch intent should use loop.id, not workflow.id
-    expect(mockCreateDispatchIntent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loopId: "loop-1",
-      }),
-    );
-  });
-
-  it("uses workflow.userId when no v1 loop (pure v2)", async () => {
+  it("uses workflow.userId for updateThreadChat", async () => {
     mockGetWorkflow.mockResolvedValue({
       id: "wf-pure",
       threadId: "thread-1",
@@ -186,7 +144,6 @@ describe("runDispatchWork", () => {
       kind: "implementing",
       stateJson: {},
     });
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue(undefined);
     mockDb.query.threadChat.findFirst.mockResolvedValue({
       id: "tc-1",
       threadId: "thread-1",
@@ -195,39 +152,9 @@ describe("runDispatchWork", () => {
 
     await runDispatchWork(baseParams({ workflowId: "wf-pure" }));
 
-    // updateThreadChat should be called with workflow.userId
     expect(mockUpdateThreadChat).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-v2",
-      }),
-    );
-  });
-
-  it("uses loop.userId when v1 loop exists (bridged)", async () => {
-    mockGetWorkflow.mockResolvedValue({
-      id: "wf-bridged",
-      threadId: "thread-1",
-      userId: "user-wf",
-      kind: "implementing",
-      stateJson: {},
-    });
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue({
-      id: "loop-1",
-      userId: "user-loop",
-      threadId: "thread-1",
-    });
-    mockDb.query.threadChat.findFirst.mockResolvedValue({
-      id: "tc-1",
-      threadId: "thread-1",
-      status: "active",
-    });
-
-    await runDispatchWork(baseParams({ workflowId: "wf-bridged" }));
-
-    // Should use loop.userId, not workflow.userId
-    expect(mockUpdateThreadChat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user-loop",
       }),
     );
   });
@@ -268,7 +195,6 @@ describe("runDispatchWork", () => {
       kind: "implementing",
       stateJson: {},
     });
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue(undefined);
     mockDb.query.threadChat.findFirst.mockResolvedValue(undefined);
 
     await runDispatchWork(baseParams());
@@ -288,7 +214,6 @@ describe("runDispatchWork", () => {
       kind: "implementing",
       stateJson: {},
     });
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue(undefined);
     mockDb.query.threadChat.findFirst.mockResolvedValue({
       id: "tc-1",
       threadId: "thread-1",
@@ -316,7 +241,6 @@ describe("runDispatchWork", () => {
       kind: "implementing",
       stateJson: {},
     });
-    mockDb.query.sdlcLoop.findFirst.mockResolvedValue(undefined);
     mockDb.query.threadChat.findFirst.mockResolvedValue({
       id: "tc-1",
       threadId: "thread-1",
