@@ -326,6 +326,12 @@ async function assembleLoopStatusData(params: {
   loop: typeof schema.sdlcLoop.$inferSelect;
   loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
   currentHeadSha: string | null;
+  workflowCanonicalRefs?: {
+    canonicalStatusCommentId: string | null;
+    canonicalCheckRunId: number | null;
+    repoFullName: string;
+    prNumber: number | null;
+  };
 }): Promise<{
   ciRun: SdlcCiGateRun | null;
   reviewThreadRun: SdlcReviewThreadGateRun | null;
@@ -538,10 +544,19 @@ async function assembleLoopStatusData(params: {
     videoFailureMessage: loop.latestVideoFailureMessage ?? null,
   });
 
+  // Prefer v2 workflow canonical references when available
+  const refs = params.workflowCanonicalRefs;
+  const linkRepoFullName = refs?.repoFullName ?? loop.repoFullName;
+  const linkPrNumber = refs?.prNumber ?? loop.prNumber;
+  const canonicalStatusCommentId =
+    refs?.canonicalStatusCommentId ?? loop.canonicalStatusCommentId;
+  const canonicalCheckRunId =
+    refs?.canonicalCheckRunId ?? loop.canonicalCheckRunId;
+
   const pullRequestUrl =
-    loop.prNumber === null
+    linkPrNumber === null
       ? null
-      : `https://github.com/${loop.repoFullName}/pull/${loop.prNumber}`;
+      : `https://github.com/${linkRepoFullName}/pull/${linkPrNumber}`;
 
   return {
     ciRun,
@@ -553,12 +568,12 @@ async function assembleLoopStatusData(params: {
     links: {
       pullRequestUrl,
       statusCommentUrl:
-        pullRequestUrl && loop.canonicalStatusCommentId
-          ? `${pullRequestUrl}#issuecomment-${loop.canonicalStatusCommentId}`
+        pullRequestUrl && canonicalStatusCommentId
+          ? `${pullRequestUrl}#issuecomment-${canonicalStatusCommentId}`
           : null,
       checkRunUrl:
-        pullRequestUrl && loop.canonicalCheckRunId
-          ? `https://github.com/${loop.repoFullName}/runs/${loop.canonicalCheckRunId}?check_suite_focus=true`
+        pullRequestUrl && canonicalCheckRunId
+          ? `https://github.com/${linkRepoFullName}/runs/${canonicalCheckRunId}?check_suite_focus=true`
           : null,
     },
     artifacts: {
@@ -610,9 +625,12 @@ async function assembleLoopStatusData(params: {
  */
 async function buildStatusFromV2Workflow(params: {
   workflow: DeliveryWorkflow;
+  workflowRow: NonNullable<
+    Awaited<ReturnType<typeof getActiveWorkflowForThread>>
+  >;
   loop: typeof schema.sdlcLoop.$inferSelect;
 }): Promise<SdlcLoopStatus> {
-  const { workflow, loop } = params;
+  const { workflow, workflowRow, loop } = params;
 
   const loopSnapshot = buildSnapshotFromV2Workflow(workflow);
   const v2State = mapV2KindToSdlcLoopState(workflow);
@@ -627,6 +645,12 @@ async function buildStatusFromV2Workflow(params: {
     loop,
     loopSnapshot,
     currentHeadSha,
+    workflowCanonicalRefs: {
+      canonicalStatusCommentId: workflowRow.canonicalStatusCommentId ?? null,
+      canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
+      repoFullName: workflowRow.repoFullName,
+      prNumber: workflowRow.prNumber ?? null,
+    },
   });
 
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
@@ -707,7 +731,11 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       return null;
     }
 
-    const response = await buildStatusFromV2Workflow({ workflow, loop });
+    const response = await buildStatusFromV2Workflow({
+      workflow,
+      workflowRow: v2Row,
+      loop,
+    });
     return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },

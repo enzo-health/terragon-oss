@@ -49,3 +49,10 @@ export { upsertRuntimeStatus, getRuntimeStatus } from "./runtime-status-store";
 
 // replay-store.ts
 export { buildWorkflowReplay } from "./replay-store";
+
+// workflow-github-refs.ts
+export {
+  persistWorkflowStatusCommentReference,
+  clearWorkflowStatusCommentReference,
+  persistWorkflowCheckRunReference,
+} from "./workflow-github-refs";

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getOctokitForApp } from "@/lib/github";
 import {
-  clearSdlcCanonicalStatusCommentReference,
-  persistSdlcCanonicalCheckRunReference,
-  persistSdlcCanonicalStatusCommentReference,
-} from "@terragon/shared/model/delivery-loop";
+  persistWorkflowStatusCommentReference,
+  clearWorkflowStatusCommentReference,
+  persistWorkflowCheckRunReference,
+} from "@terragon/shared/delivery-loop/store/workflow-github-refs";
 
 vi.mock("@/lib/github", () => ({
   getOctokitForApp: vi.fn(),
@@ -15,24 +15,17 @@ vi.mock("@terragon/env/next-public", () => ({
   publicAppUrl: vi.fn(() => "https://terragon.example"),
 }));
 
-vi.mock("@terragon/shared/model/delivery-loop", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@terragon/shared/model/delivery-loop")
-    >();
-  return {
-    ...actual,
-    persistSdlcCanonicalStatusCommentReference: vi.fn(),
-    clearSdlcCanonicalStatusCommentReference: vi.fn(),
-    persistSdlcCanonicalCheckRunReference: vi.fn(),
-  };
-});
+vi.mock("@terragon/shared/delivery-loop/store/workflow-github-refs", () => ({
+  persistWorkflowStatusCommentReference: vi.fn(),
+  clearWorkflowStatusCommentReference: vi.fn(),
+  persistWorkflowCheckRunReference: vi.fn(),
+}));
 
-const makeDb = (loop: Record<string, unknown>) =>
+const makeDb = (workflow: Record<string, unknown>) =>
   ({
     query: {
-      sdlcLoop: {
-        findFirst: vi.fn().mockResolvedValue(loop),
+      deliveryWorkflow: {
+        findFirst: vi.fn().mockResolvedValue(workflow),
       },
     },
   }) as any;
@@ -62,8 +55,8 @@ describe("sdlc publication", () => {
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
 
     const result = await publicationModule.upsertSdlcCanonicalStatusComment({
-      db: makeDb({ id: "loop-1", canonicalStatusCommentId: "123" }),
-      loopId: "loop-1",
+      db: makeDb({ id: "wf-1", canonicalStatusCommentId: "123" }),
+      workflowId: "wf-1",
       repoFullName: "owner/repo",
       prNumber: 1,
       body: "updated",
@@ -71,9 +64,9 @@ describe("sdlc publication", () => {
 
     expect(octokit.rest.issues.updateComment).toHaveBeenCalledTimes(1);
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
-    expect(persistSdlcCanonicalStatusCommentReference).toHaveBeenCalledWith(
+    expect(persistWorkflowStatusCommentReference).toHaveBeenCalledWith(
       expect.objectContaining({
-        loopId: "loop-1",
+        workflowId: "wf-1",
         commentId: "123",
       }),
     );
@@ -95,15 +88,15 @@ describe("sdlc publication", () => {
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
 
     const result = await publicationModule.upsertSdlcCanonicalStatusComment({
-      db: makeDb({ id: "loop-2", canonicalStatusCommentId: "456" }),
-      loopId: "loop-2",
+      db: makeDb({ id: "wf-2", canonicalStatusCommentId: "456" }),
+      workflowId: "wf-2",
       repoFullName: "owner/repo",
       prNumber: 2,
       body: "recreated",
     });
 
-    expect(clearSdlcCanonicalStatusCommentReference).toHaveBeenCalledWith(
-      expect.objectContaining({ loopId: "loop-2" }),
+    expect(clearWorkflowStatusCommentReference).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: "wf-2" }),
     );
     expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
     expect(result.wasCreated).toBe(true);
@@ -111,8 +104,8 @@ describe("sdlc publication", () => {
   });
 
   it("reconciles canonical status comment before create to avoid duplicate side effects after DB persistence failure", async () => {
-    const loopId = "loop-status-reconcile";
-    const marker = `<!-- terragon-sdlc-loop-status-comment:${loopId} -->`;
+    const workflowId = "wf-status-reconcile";
+    const marker = `<!-- terragon-sdlc-loop-status-comment:${workflowId} -->`;
     const octokit = {
       rest: {
         issues: {
@@ -132,14 +125,14 @@ describe("sdlc publication", () => {
       },
     };
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
-    vi.mocked(persistSdlcCanonicalStatusCommentReference)
+    vi.mocked(persistWorkflowStatusCommentReference)
       .mockRejectedValueOnce(new Error("transient db failure"))
       .mockResolvedValue(undefined);
 
     await expect(
       publicationModule.upsertSdlcCanonicalStatusComment({
-        db: makeDb({ id: loopId, canonicalStatusCommentId: null }),
-        loopId,
+        db: makeDb({ id: workflowId, canonicalStatusCommentId: null }),
+        workflowId,
         repoFullName: "owner/repo",
         prNumber: 5,
         body: "status body",
@@ -147,8 +140,8 @@ describe("sdlc publication", () => {
     ).rejects.toThrow("transient db failure");
 
     const recovered = await publicationModule.upsertSdlcCanonicalStatusComment({
-      db: makeDb({ id: loopId, canonicalStatusCommentId: null }),
-      loopId,
+      db: makeDb({ id: workflowId, canonicalStatusCommentId: null }),
+      workflowId,
       repoFullName: "owner/repo",
       prNumber: 5,
       body: "status body",
@@ -177,8 +170,12 @@ describe("sdlc publication", () => {
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
 
     await publicationModule.upsertSdlcCanonicalCheckSummary({
-      db: makeDb({ id: "loop-3", canonicalCheckRunId: 321 }),
-      loopId: "loop-3",
+      db: makeDb({
+        id: "wf-3",
+        threadId: "thread-3",
+        canonicalCheckRunId: 321,
+      }),
+      workflowId: "wf-3",
       payload: {
         repoFullName: "owner/repo",
         prNumber: 3,
@@ -186,26 +183,26 @@ describe("sdlc publication", () => {
         summary: "All gates passed",
         status: "completed",
         conclusion: "success",
-        artifactR2Key: "videos/loop-3.mp4",
+        artifactR2Key: "videos/wf-3.mp4",
       },
     });
 
     expect(octokit.rest.checks.update).toHaveBeenCalledWith(
       expect.objectContaining({
         check_run_id: 321,
-        external_id: "terragon-sdlc-loop-check-run:loop-3",
+        external_id: "terragon-sdlc-loop-check-run:wf-3",
         output: expect.objectContaining({
           summary: expect.stringContaining("https://terragon.example/task/"),
         }),
       }),
     );
-    expect(persistSdlcCanonicalCheckRunReference).toHaveBeenCalledWith(
-      expect.objectContaining({ loopId: "loop-3", checkRunId: 321 }),
+    expect(persistWorkflowCheckRunReference).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: "wf-3", checkRunId: 321 }),
     );
   });
 
   it("reconciles canonical check run before create to avoid duplicate side effects after DB persistence failure", async () => {
-    const loopId = "loop-check-reconcile";
+    const workflowId = "wf-check-reconcile";
     const octokit = {
       rest: {
         checks: {
@@ -223,7 +220,7 @@ describe("sdlc publication", () => {
                 check_runs: [
                   {
                     id: 601,
-                    external_id: `terragon-sdlc-loop-check-run:${loopId}`,
+                    external_id: `terragon-sdlc-loop-check-run:${workflowId}`,
                   },
                 ],
               },
@@ -239,18 +236,18 @@ describe("sdlc publication", () => {
       },
     };
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
-    vi.mocked(persistSdlcCanonicalCheckRunReference)
+    vi.mocked(persistWorkflowCheckRunReference)
       .mockRejectedValueOnce(new Error("transient db failure"))
       .mockResolvedValue(undefined);
 
     await expect(
       publicationModule.upsertSdlcCanonicalCheckSummary({
         db: makeDb({
-          id: loopId,
+          id: workflowId,
           threadId: "thread-9",
           canonicalCheckRunId: null,
         }),
-        loopId,
+        workflowId,
         payload: {
           repoFullName: "owner/repo",
           prNumber: 9,
@@ -264,11 +261,11 @@ describe("sdlc publication", () => {
 
     const recovered = await publicationModule.upsertSdlcCanonicalCheckSummary({
       db: makeDb({
-        id: loopId,
+        id: workflowId,
         threadId: "thread-9",
         canonicalCheckRunId: null,
       }),
-      loopId,
+      workflowId,
       payload: {
         repoFullName: "owner/repo",
         prNumber: 9,

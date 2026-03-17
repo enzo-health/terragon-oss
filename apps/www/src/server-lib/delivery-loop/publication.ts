@@ -1,11 +1,11 @@
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { publicAppUrl } from "@terragon/env/next-public";
+import { type SdlcOutboxErrorClass } from "@terragon/shared/model/delivery-loop";
 import {
-  clearSdlcCanonicalStatusCommentReference,
-  persistSdlcCanonicalCheckRunReference,
-  persistSdlcCanonicalStatusCommentReference,
-  type SdlcOutboxErrorClass,
-} from "@terragon/shared/model/delivery-loop";
+  persistWorkflowStatusCommentReference,
+  clearWorkflowStatusCommentReference,
+  persistWorkflowCheckRunReference,
+} from "@terragon/shared/delivery-loop/store/workflow-github-refs";
 import type { DB } from "@terragon/shared/db";
 import { eq } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
@@ -170,30 +170,35 @@ async function findReconciledCanonicalCheckRun({
 
 export async function upsertSdlcCanonicalStatusComment({
   db,
-  loopId,
+  workflowId,
   repoFullName,
   prNumber,
   body,
 }: {
   db: DB;
-  loopId: string;
+  workflowId: string;
   repoFullName: string;
   prNumber: number;
   body: string;
 }) {
-  const loop = await db.query.sdlcLoop.findFirst({
-    where: eq(schema.sdlcLoop.id, loopId),
+  const workflow = await db.query.deliveryWorkflow.findFirst({
+    where: eq(schema.deliveryWorkflow.id, workflowId),
   });
 
-  if (!loop) {
-    throw new Error(`Delivery Loop not found: ${loopId}`);
+  if (!workflow) {
+    throw new Error(`Delivery Workflow not found: ${workflowId}`);
   }
 
   const [owner, repo] = parseRepoFullName(repoFullName);
   const octokit = await getOctokitForApp({ owner, repo });
-  const canonicalBody = appendSdlcStatusCommentMarker({ body, loopId });
+  const canonicalBody = appendSdlcStatusCommentMarker({
+    body,
+    loopId: workflowId,
+  });
 
-  const existingCommentId = parseGitHubNumericId(loop.canonicalStatusCommentId);
+  const existingCommentId = parseGitHubNumericId(
+    workflow.canonicalStatusCommentId,
+  );
   if (existingCommentId) {
     try {
       const updatedComment = await octokit.rest.issues.updateComment({
@@ -203,9 +208,9 @@ export async function upsertSdlcCanonicalStatusComment({
         body: canonicalBody,
       });
 
-      await persistSdlcCanonicalStatusCommentReference({
+      await persistWorkflowStatusCommentReference({
         db,
-        loopId,
+        workflowId,
         commentId: String(updatedComment.data.id),
         commentNodeId: updatedComment.data.node_id,
       });
@@ -220,7 +225,7 @@ export async function upsertSdlcCanonicalStatusComment({
         throw error;
       }
 
-      await clearSdlcCanonicalStatusCommentReference({ db, loopId });
+      await clearWorkflowStatusCommentReference({ db, workflowId });
     }
   }
 
@@ -229,7 +234,7 @@ export async function upsertSdlcCanonicalStatusComment({
     owner,
     repo,
     prNumber,
-    loopId,
+    loopId: workflowId,
   });
   if (reconciledComment) {
     const refreshedComment = await octokit.rest.issues.updateComment({
@@ -239,9 +244,9 @@ export async function upsertSdlcCanonicalStatusComment({
       body: canonicalBody,
     });
 
-    await persistSdlcCanonicalStatusCommentReference({
+    await persistWorkflowStatusCommentReference({
       db,
-      loopId,
+      workflowId,
       commentId: String(refreshedComment.data.id),
       commentNodeId: refreshedComment.data.node_id,
     });
@@ -260,9 +265,9 @@ export async function upsertSdlcCanonicalStatusComment({
     body: canonicalBody,
   });
 
-  await persistSdlcCanonicalStatusCommentReference({
+  await persistWorkflowStatusCommentReference({
     db,
-    loopId,
+    workflowId,
     commentId: String(createdComment.data.id),
     commentNodeId: createdComment.data.node_id,
   });
@@ -276,39 +281,39 @@ export async function upsertSdlcCanonicalStatusComment({
 
 export async function upsertSdlcCanonicalCheckSummary({
   db,
-  loopId,
+  workflowId,
   payload,
 }: {
   db: DB;
-  loopId: string;
+  workflowId: string;
   payload: z.infer<typeof CHECK_SUMMARY_PAYLOAD_SCHEMA>;
 }) {
-  const loop = await db.query.sdlcLoop.findFirst({
-    where: eq(schema.sdlcLoop.id, loopId),
+  const workflow = await db.query.deliveryWorkflow.findFirst({
+    where: eq(schema.deliveryWorkflow.id, workflowId),
   });
 
-  if (!loop) {
-    throw new Error(`Delivery Loop not found: ${loopId}`);
+  if (!workflow) {
+    throw new Error(`Delivery Workflow not found: ${workflowId}`);
   }
 
   const [owner, repo] = parseRepoFullName(payload.repoFullName);
   const octokit = await getOctokitForApp({ owner, repo });
-  const checkRunExternalId = getSdlcCheckRunExternalId(loopId);
+  const checkRunExternalId = getSdlcCheckRunExternalId(workflowId);
 
   const artifactLink = await buildReviewerSafeVideoArtifactLink(
     payload.artifactR2Key,
-    loop.threadId,
+    workflow.threadId,
   );
   const summaryWithArtifactLink = artifactLink
     ? `${payload.summary}\n\n---\n${artifactLink}`
     : payload.summary;
 
-  if (loop.canonicalCheckRunId) {
+  if (workflow.canonicalCheckRunId) {
     try {
       await octokit.rest.checks.update({
         owner,
         repo,
-        check_run_id: loop.canonicalCheckRunId,
+        check_run_id: workflow.canonicalCheckRunId,
         external_id: checkRunExternalId,
         status: payload.status,
         conclusion: payload.conclusion,
@@ -319,14 +324,14 @@ export async function upsertSdlcCanonicalCheckSummary({
         },
       });
 
-      await persistSdlcCanonicalCheckRunReference({
+      await persistWorkflowCheckRunReference({
         db,
-        loopId,
-        checkRunId: loop.canonicalCheckRunId,
+        workflowId,
+        checkRunId: workflow.canonicalCheckRunId,
       });
 
       return {
-        checkRunId: loop.canonicalCheckRunId,
+        checkRunId: workflow.canonicalCheckRunId,
         wasCreated: false,
       };
     } catch (error) {
@@ -348,7 +353,7 @@ export async function upsertSdlcCanonicalCheckSummary({
     owner,
     repo,
     headSha,
-    loopId,
+    loopId: workflowId,
     checkName: payload.title,
   });
   if (reconciledCheckRun) {
@@ -366,9 +371,9 @@ export async function upsertSdlcCanonicalCheckSummary({
       },
     });
 
-    await persistSdlcCanonicalCheckRunReference({
+    await persistWorkflowCheckRunReference({
       db,
-      loopId,
+      workflowId,
       checkRunId: refreshedCheckRun.data.id,
     });
 
@@ -393,9 +398,9 @@ export async function upsertSdlcCanonicalCheckSummary({
     },
   });
 
-  await persistSdlcCanonicalCheckRunReference({
+  await persistWorkflowCheckRunReference({
     db,
-    loopId,
+    workflowId,
     checkRunId: checkRun.data.id,
   });
 

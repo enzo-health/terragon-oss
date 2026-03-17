@@ -2102,6 +2102,16 @@ export const deliveryWorkflow = pgTable(
       .notNull()
       .defaultNow()
       .$onUpdate(() => new Date()),
+    canonicalStatusCommentId: text("canonical_status_comment_id"),
+    canonicalStatusCommentNodeId: text("canonical_status_comment_node_id"),
+    canonicalStatusCommentUpdatedAt: timestamp(
+      "canonical_status_comment_updated_at",
+      { withTimezone: true },
+    ),
+    canonicalCheckRunId: bigint("canonical_check_run_id", { mode: "number" }),
+    canonicalCheckRunUpdatedAt: timestamp("canonical_check_run_updated_at", {
+      withTimezone: true,
+    }),
     lastActivityAt: timestamp("last_activity_at", { mode: "date" }),
   },
   (table) => [
