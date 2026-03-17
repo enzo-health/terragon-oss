@@ -11,8 +11,6 @@ import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
-  getActiveSdlcLoopForThread,
-  SDLC_CAUSE_IDENTITY_VERSION,
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
   type DeliveryLoopFailureCategory,
@@ -27,14 +25,9 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { and, eq, isNull, sql } from "drizzle-orm";
-import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
-import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
+import { and, eq } from "drizzle-orm";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import type {
-  WorkflowId,
-  CorrelationId,
-} from "@terragon/shared/delivery-loop/domain/workflow";
+import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import { redis } from "@/lib/redis";
 
 type DaemonEventEnvelopeV2 = {
@@ -44,30 +37,6 @@ type DaemonEventEnvelopeV2 = {
   seq: number;
 };
 
-type DaemonEventClaimResult =
-  | {
-      claimed: true;
-      signalInboxId: string;
-    }
-  | {
-      claimed: false;
-      reason:
-        | "claim_in_progress"
-        | "duplicate_event"
-        | "out_of_order_or_duplicate_seq";
-    };
-
-type DaemonEventCommitResult =
-  | {
-      committed: true;
-      state: "committed_now" | "already_committed_or_processed";
-    }
-  | {
-      committed: false;
-      state: "claim_lost";
-    };
-
-const DAEMON_EVENT_CLAIM_STALE_MS = 5 * 60 * 1000;
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 
@@ -435,271 +404,6 @@ function hasRequiredThreadChatIdForNonLegacyPayload(
   );
 }
 
-async function claimEnrolledLoopDaemonEvent({
-  loopId,
-  threadId,
-  threadChatId,
-  envelope,
-  daemonRunStatus,
-  daemonErrorMessage,
-  daemonErrorCategory,
-  headShaAtCompletion,
-}: {
-  loopId: string;
-  threadId: string;
-  threadChatId: string;
-  envelope: DaemonEventEnvelopeV2;
-  daemonRunStatus: "processing" | "completed" | "failed" | "stopped";
-  daemonErrorMessage: string | null;
-  daemonErrorCategory: DaemonTerminalErrorCategory;
-  headShaAtCompletion: string | null;
-}): Promise<DaemonEventClaimResult> {
-  return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${loopId}), hashtext(${envelope.runId}))`,
-    );
-
-    const existingSignal = await tx
-      .select({
-        id: schema.sdlcLoopSignalInbox.id,
-        receivedAt: schema.sdlcLoopSignalInbox.receivedAt,
-        committedAt: schema.sdlcLoopSignalInbox.committedAt,
-        processedAt: schema.sdlcLoopSignalInbox.processedAt,
-      })
-      .from(schema.sdlcLoopSignalInbox)
-      .where(
-        and(
-          eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-          eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-          eq(schema.sdlcLoopSignalInbox.canonicalCauseId, envelope.eventId),
-          eq(
-            schema.sdlcLoopSignalInbox.causeIdentityVersion,
-            SDLC_CAUSE_IDENTITY_VERSION,
-          ),
-        ),
-      );
-
-    if (existingSignal.length > 0) {
-      const existing = existingSignal[0]!;
-      if (existing.processedAt || existing.committedAt) {
-        return {
-          claimed: false,
-          reason: "duplicate_event",
-        };
-      }
-
-      const claimAgeMs = Math.max(
-        0,
-        Date.now() - existing.receivedAt.getTime(),
-      );
-      if (claimAgeMs < DAEMON_EVENT_CLAIM_STALE_MS) {
-        return {
-          claimed: false,
-          reason: "claim_in_progress",
-        };
-      }
-
-      // Recovery path: stale unprocessed claims are reclaimed so the daemon
-      // event can be safely replayed and committed by the current worker.
-      const staleReclaim = await tx
-        .delete(schema.sdlcLoopSignalInbox)
-        .where(
-          and(
-            eq(schema.sdlcLoopSignalInbox.id, existing.id),
-            eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-            eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-            eq(schema.sdlcLoopSignalInbox.canonicalCauseId, envelope.eventId),
-            eq(
-              schema.sdlcLoopSignalInbox.causeIdentityVersion,
-              SDLC_CAUSE_IDENTITY_VERSION,
-            ),
-            isNull(schema.sdlcLoopSignalInbox.committedAt),
-            isNull(schema.sdlcLoopSignalInbox.processedAt),
-          ),
-        )
-        .returning({ id: schema.sdlcLoopSignalInbox.id });
-      if (staleReclaim.length > 0) {
-        console.warn(
-          "[sdlc-loop] reclaimed stale daemon signal claim for replay",
-          {
-            loopId,
-            threadId,
-            eventId: envelope.eventId,
-            seq: envelope.seq,
-            claimAgeMs,
-          },
-        );
-      } else {
-        return {
-          claimed: false,
-          reason: "claim_in_progress",
-        };
-      }
-    }
-
-    const [sequenceState] = await tx
-      .select({
-        maxSeq: sql<
-          number | null
-        >`max(((${schema.sdlcLoopSignalInbox.payload} ->> 'seq')::bigint))`,
-      })
-      .from(schema.sdlcLoopSignalInbox)
-      .where(
-        and(
-          eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-          eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-          sql`${schema.sdlcLoopSignalInbox.payload} ->> 'runId' = ${envelope.runId}`,
-        ),
-      );
-
-    const maxSeq =
-      sequenceState?.maxSeq == null ? null : Number(sequenceState.maxSeq);
-    if (maxSeq !== null && Number.isFinite(maxSeq) && envelope.seq <= maxSeq) {
-      return {
-        claimed: false,
-        reason: "out_of_order_or_duplicate_seq",
-      };
-    }
-
-    if (daemonRunStatus === "processing") {
-      return {
-        claimed: false,
-        reason: "duplicate_event",
-      };
-    }
-
-    const inserted = await tx
-      .insert(schema.sdlcLoopSignalInbox)
-      .values({
-        loopId,
-        causeType: "daemon_terminal",
-        canonicalCauseId: envelope.eventId,
-        signalHeadShaOrNull: null,
-        causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
-        payload: {
-          eventType: "daemon_terminal",
-          payloadVersion: envelope.payloadVersion,
-          eventId: envelope.eventId,
-          runId: envelope.runId,
-          seq: envelope.seq,
-          threadId,
-          threadChatId,
-          daemonRunStatus,
-          daemonErrorMessage,
-          daemonErrorCategory,
-          ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
-        },
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.sdlcLoopSignalInbox.id });
-
-    if (inserted.length > 0) {
-      return {
-        claimed: true,
-        signalInboxId: inserted[0]!.id,
-      };
-    }
-
-    return {
-      claimed: false,
-      reason: "duplicate_event",
-    };
-  });
-}
-
-async function rollbackEnrolledLoopDaemonEventClaim({
-  signalInboxId,
-  loopId,
-  eventId,
-}: {
-  signalInboxId: string;
-  loopId: string;
-  eventId: string;
-}): Promise<boolean> {
-  const rolledBack = await db
-    .delete(schema.sdlcLoopSignalInbox)
-    .where(
-      and(
-        eq(schema.sdlcLoopSignalInbox.id, signalInboxId),
-        eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        eq(schema.sdlcLoopSignalInbox.canonicalCauseId, eventId),
-        eq(
-          schema.sdlcLoopSignalInbox.causeIdentityVersion,
-          SDLC_CAUSE_IDENTITY_VERSION,
-        ),
-        isNull(schema.sdlcLoopSignalInbox.committedAt),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
-      ),
-    )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
-  return rolledBack.length > 0;
-}
-
-async function commitEnrolledLoopDaemonEventClaim({
-  signalInboxId,
-  loopId,
-  eventId,
-}: {
-  signalInboxId: string;
-  loopId: string;
-  eventId: string;
-}): Promise<DaemonEventCommitResult> {
-  const committedAt = new Date();
-  const committed = await db
-    .update(schema.sdlcLoopSignalInbox)
-    .set({ committedAt })
-    .where(
-      and(
-        eq(schema.sdlcLoopSignalInbox.id, signalInboxId),
-        eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        eq(schema.sdlcLoopSignalInbox.canonicalCauseId, eventId),
-        eq(
-          schema.sdlcLoopSignalInbox.causeIdentityVersion,
-          SDLC_CAUSE_IDENTITY_VERSION,
-        ),
-        isNull(schema.sdlcLoopSignalInbox.committedAt),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
-      ),
-    )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
-  if (committed.length > 0) {
-    return {
-      committed: true,
-      state: "committed_now",
-    };
-  }
-
-  const existing = await db.query.sdlcLoopSignalInbox.findFirst({
-    where: and(
-      eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-      eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-      eq(schema.sdlcLoopSignalInbox.canonicalCauseId, eventId),
-      eq(
-        schema.sdlcLoopSignalInbox.causeIdentityVersion,
-        SDLC_CAUSE_IDENTITY_VERSION,
-      ),
-    ),
-    columns: {
-      id: true,
-      committedAt: true,
-      processedAt: true,
-    },
-  });
-  if (existing?.committedAt || existing?.processedAt) {
-    return {
-      committed: true,
-      state: "already_committed_or_processed",
-    };
-  }
-
-  return {
-    committed: false,
-    state: "claim_lost",
-  };
-}
-
 export async function POST(request: Request) {
   const json: DaemonEventAPIBody = await request.json();
   const daemonVersionHeader =
@@ -949,20 +653,9 @@ export async function POST(request: Request) {
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
 
-  // Read v2 workflow first as primary source; fall back to v1 sdlcLoop for legacy threads.
-  // Both are fetched in parallel to avoid sequential latency.
-  const [v2Workflow, enrolledLoop] = await Promise.all([
-    getActiveWorkflowForThread({ db, threadId }),
-    getActiveSdlcLoopForThread({ db, userId, threadId }),
-  ]);
-  const useV2Ingress = !!(
-    v2Workflow && v2Workflow.sdlcLoopId === (enrolledLoop?.id ?? null)
-  );
-
-  // For pure v2 workflows (no v1 sdlcLoop), use the workflow ID as the
-  // effective loop ID for Redis key namespacing and signal inbox partitioning.
-  const effectiveLoopId = enrolledLoop?.id ?? v2Workflow?.id ?? null;
-  const hasDeliveryLoop = !!(enrolledLoop || v2Workflow);
+  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+  const effectiveLoopId = v2Workflow?.id ?? null;
+  const hasDeliveryLoop = !!v2Workflow;
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
@@ -992,55 +685,7 @@ export async function POST(request: Request) {
     }
   }
 
-  let claimedSignalInboxId: string | null = null;
   let claimedProcessingEvent = false;
-
-  const rollbackClaimedSignal = async ({
-    reason,
-    error,
-  }: {
-    reason: string;
-    error?: unknown;
-  }) => {
-    if (!enrolledLoop || !envelopeV2 || !claimedSignalInboxId) {
-      return;
-    }
-    try {
-      const rolledBack = await rollbackEnrolledLoopDaemonEventClaim({
-        signalInboxId: claimedSignalInboxId,
-        loopId: enrolledLoop.id,
-        eventId: envelopeV2.eventId,
-      });
-      if (!rolledBack) {
-        console.warn(
-          "[sdlc-loop] failed to rollback daemon signal claim after downstream failure",
-          {
-            userId,
-            threadId,
-            loopId: enrolledLoop.id,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-            reason,
-            error,
-          },
-        );
-      }
-    } catch (rollbackError) {
-      console.error(
-        "[sdlc-loop] daemon signal claim rollback threw after downstream failure",
-        {
-          userId,
-          threadId,
-          loopId: enrolledLoop.id,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          reason,
-          error,
-          rollbackError,
-        },
-      );
-    }
-  };
 
   if (hasDeliveryLoop) {
     if (!envelopeV2) {
@@ -1094,205 +739,6 @@ export async function POST(request: Request) {
         );
       }
       claimedProcessingEvent = true;
-    } else if (envelopeV2 && !useV2Ingress) {
-      const claimResult = await claimEnrolledLoopDaemonEvent({
-        loopId: effectiveLoopId!,
-        threadId,
-        threadChatId,
-        envelope: envelopeV2,
-        daemonRunStatus: daemonRunStatusFromMessages,
-        daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-        daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-        headShaAtCompletion:
-          typeof json.headShaAtCompletion === "string"
-            ? json.headShaAtCompletion
-            : null,
-      });
-      if (!claimResult.claimed) {
-        if (claimResult.reason === "claim_in_progress") {
-          return Response.json(
-            {
-              success: false,
-              error: "daemon_event_claim_in_progress",
-              loopId: effectiveLoopId!,
-            },
-            { status: 409 },
-          );
-        }
-        // Fetch replay payload BEFORE terminalizing the dispatch intent.
-        // persistDaemonTerminalDispatchStatus marks the intent as completed/failed,
-        // but getReplayableSelfDispatch requires the destination intent to be in
-        // "prepared" or "dispatched" status. Fetching first preserves the window.
-        // Fetch for BOTH duplicate reasons so out-of-order retries can still
-        // continue inline via self-dispatch; only terminal dispatch-status
-        // persistence is restricted to exact duplicate_event below.
-        const cachedReplayPayload = await getReplayableSelfDispatch({
-          threadChatId,
-          sourceEventId: envelopeV2.eventId,
-          sourceSeq: envelopeV2.seq,
-          sourceRunId: envelopeV2.runId,
-        }).catch(() => null);
-
-        // Only persist terminal dispatch status for exact duplicate_event
-        // retries — NOT for out_of_order_or_duplicate_seq, where an older
-        // seq's failure could overwrite a newer seq's success.
-        if (
-          claimResult.reason === "duplicate_event" &&
-          daemonRunStatusFromMessages !== "processing"
-        ) {
-          try {
-            await persistDaemonTerminalDispatchStatus({
-              loopId: effectiveLoopId!,
-              threadChatId,
-              runId: envelopeV2.runId,
-              daemonRunStatus: daemonRunStatusFromMessages,
-              daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-              daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-            });
-          } catch (error) {
-            console.warn(
-              "[delivery-loop] failed to persist terminal dispatch intent status on dedupe",
-              {
-                loopId: effectiveLoopId!,
-                threadId,
-                threadChatId,
-                runId: envelopeV2.runId,
-                daemonRunStatus: daemonRunStatusFromMessages,
-                reason: claimResult.reason,
-                error,
-              },
-            );
-          }
-        }
-        if (claimResult.reason === "duplicate_event") {
-          try {
-            let v2Workflow = await getActiveWorkflowForThread({
-              db,
-              threadId,
-            });
-            if (!v2Workflow) {
-              // Re-read to capture any state changes from handleDaemonEvent.
-              // Only backfill if the current active loop matches enrolledLoop
-              // to prevent cross-generation contamination: if the thread has
-              // been re-enrolled into a new loop since this event was produced,
-              // creating a workflow for the new loop and draining signals from
-              // the old one would apply stale signals to the wrong generation.
-              const freshDedupLoop = await getActiveSdlcLoopForThread({
-                db,
-                userId,
-                threadId,
-              });
-              if (freshDedupLoop && freshDedupLoop.id !== enrolledLoop!.id) {
-                console.warn(
-                  "[daemon-event] dedup backfill skipped — active loop changed",
-                  {
-                    enrolledLoopId: enrolledLoop!.id,
-                    currentLoopId: freshDedupLoop.id,
-                    threadId,
-                  },
-                );
-              } else {
-                const dedupLoop = freshDedupLoop ?? enrolledLoop!;
-                await ensureV2WorkflowExists({
-                  db,
-                  threadId,
-                  sdlcLoopId: dedupLoop.id,
-                  sdlcLoopState: dedupLoop.state,
-                  sdlcBlockedFromState: dedupLoop.blockedFromState,
-                  headSha: dedupLoop.currentHeadSha,
-                  userId,
-                  repoFullName: dedupLoop.repoFullName,
-                });
-                // Reload full workflow so sdlcLoopId is available for
-                // the generation check below.
-                v2Workflow = await getActiveWorkflowForThread({
-                  db,
-                  threadId,
-                });
-              }
-            }
-            // Only tick if the workflow belongs to the same loop generation.
-            // After re-enrollment, getActiveWorkflowForThread may return a
-            // new-generation workflow while enrolledLoop.id points to old
-            // signals — ticking would apply stale signals to the new workflow.
-            if (v2Workflow && v2Workflow.sdlcLoopId === enrolledLoop?.id) {
-              await runCoordinatorTick({
-                db,
-                workflowId: v2Workflow.id as WorkflowId,
-                correlationId:
-                  `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-                claimToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-                loopId: effectiveLoopId!,
-              });
-            } else if (v2Workflow) {
-              console.warn(
-                "[daemon-event] dedup tick skipped — workflow belongs to different loop generation",
-                {
-                  workflowId: v2Workflow.id,
-                  workflowLoopId: v2Workflow.sdlcLoopId,
-                  enrolledLoopId: effectiveLoopId!,
-                  threadId,
-                },
-              );
-            }
-            // Finalize terminal run state after a successful duplicate-event
-            // tick. Without this, the run stays stuck in processing/dispatched
-            // when the initial delivery fails and the retry enters this path.
-            if (runContext && daemonRunStatusFromMessages !== "processing") {
-              await updateAgentRunContext({
-                db,
-                userId,
-                runId: runContext.runId,
-                updates: { status: daemonRunStatusFromMessages },
-              }).catch((error) => {
-                console.warn(
-                  "[daemon-event] dedupe terminal run status update failed",
-                  {
-                    runId: runContext.runId,
-                    status: daemonRunStatusFromMessages,
-                    error,
-                  },
-                );
-              });
-            }
-          } catch (error) {
-            console.error(
-              "[sdlc-loop] duplicate daemon event dedupe tick failed — FULL ERROR:",
-              error,
-            );
-            console.error(
-              "[sdlc-loop] duplicate daemon event dedupe tick failed",
-              {
-                userId,
-                threadId,
-                loopId: effectiveLoopId!,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-                reason: claimResult.reason,
-                error,
-              },
-            );
-            return new Response(
-              "failed to process deduplicated daemon event signal",
-              { status: 500 },
-            );
-          }
-        }
-        return jsonTerminalAckResponse(
-          buildTerminalAckState(
-            {
-              status: 202,
-              deduplicated: true,
-              reason: claimResult.reason,
-              loopId: effectiveLoopId!,
-              acknowledgedEventId: envelopeV2.eventId,
-              acknowledgedSeq: envelopeV2.seq,
-            },
-            cachedReplayPayload,
-          ),
-        );
-      }
-      claimedSignalInboxId = claimResult.signalInboxId;
     }
   }
 
@@ -1363,10 +809,6 @@ export async function POST(request: Request) {
         envelope: envelopeV2,
       });
     }
-    await rollbackClaimedSignal({
-      reason: "handle_daemon_event_threw",
-      error,
-    });
     throw error;
   }
 
@@ -1387,10 +829,6 @@ export async function POST(request: Request) {
         envelope: envelopeV2,
       });
     }
-    await rollbackClaimedSignal({
-      reason: "handle_daemon_event_failed",
-      error: result.error,
-    });
     return new Response(result.error, { status: result.status || 500 });
   }
 
@@ -1515,219 +953,48 @@ export async function POST(request: Request) {
     }
   }
 
-  // Commit the signal claim first. Dispatch status persistence is deferred
-  // until after the coordinator tick succeeds — if the tick fails and we
-  // return 500, the run must stay non-terminal so the daemon retry
-  // re-enters the main processing path (not the terminal short-circuit).
-  if (enrolledLoop && envelopeV2 && !useV2Ingress) {
-    if (claimedSignalInboxId) {
-      const commitResult = await commitEnrolledLoopDaemonEventClaim({
-        signalInboxId: claimedSignalInboxId,
-        loopId: enrolledLoop.id,
-        eventId: envelopeV2.eventId,
-      });
-      if (!commitResult.committed) {
-        console.error(
-          "[sdlc-loop] failed to mark daemon signal claim as committed",
-          {
-            userId,
-            threadId,
-            loopId: enrolledLoop.id,
-            signalInboxId: claimedSignalInboxId,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-            commitState: commitResult.state,
-          },
-        );
-        return new Response("failed to commit daemon event claim", {
-          status: 500,
-        });
-      }
-      if (commitResult.state === "already_committed_or_processed") {
-        console.warn(
-          "[sdlc-loop] daemon signal claim already committed or processed before commit step",
-          {
-            userId,
-            threadId,
-            loopId: enrolledLoop.id,
-            signalInboxId: claimedSignalInboxId,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-          },
-        );
-      }
-    }
-  }
-
   if (hasDeliveryLoop && envelopeV2) {
-    if (useV2Ingress) {
-      // V2 path: route through daemon ingress adapter
-      try {
-        const { handleDaemonIngress } = await import(
-          "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress"
-        );
-        const ingressResult = await handleDaemonIngress({
-          db,
-          rawEvent: {
-            threadId,
-            loopId: effectiveLoopId!,
-            runId: envelopeV2.runId,
-            status: daemonRunStatusFromMessages as
-              | "completed"
-              | "failed"
-              | "progress"
-              | "stopped",
-            headSha: null,
-            summary: null,
-            exitCode: null,
-            errorMessage: daemonTerminalErrorInfo?.errorMessage ?? null,
-          },
-          workflowId: v2Workflow!.id as WorkflowId,
-          consecutiveDispatches: 0,
-        });
-        if (ingressResult.selfDispatch) {
-          selfDispatchPayload =
-            ingressResult.selfDispatch as unknown as typeof selfDispatchPayload;
-        }
-      } catch (error) {
-        console.error("[sdlc-loop-v2] handleDaemonIngress failed", {
-          userId,
+    // Route through daemon ingress adapter
+    try {
+      const { handleDaemonIngress } = await import(
+        "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress"
+      );
+      const ingressResult = await handleDaemonIngress({
+        db,
+        rawEvent: {
           threadId,
           loopId: effectiveLoopId!,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          error,
-        });
-        return new Response(
-          "v2 daemon ingress failed after message persistence",
-          { status: 500 },
-        );
+          runId: envelopeV2.runId,
+          status: daemonRunStatusFromMessages as
+            | "completed"
+            | "failed"
+            | "progress"
+            | "stopped",
+          headSha: null,
+          summary: null,
+          exitCode: null,
+          errorMessage: daemonTerminalErrorInfo?.errorMessage ?? null,
+        },
+        workflowId: v2Workflow!.id as WorkflowId,
+        consecutiveDispatches: 0,
+      });
+      if (ingressResult.selfDispatch) {
+        selfDispatchPayload =
+          ingressResult.selfDispatch as unknown as typeof selfDispatchPayload;
       }
-    } else {
-      // V1 backfill path — keep existing logic
-      try {
-        const v2WorkflowForBackfill = await getActiveWorkflowForThread({
-          db,
-          threadId,
-        });
-        if (
-          v2WorkflowForBackfill &&
-          v2WorkflowForBackfill.sdlcLoopId === enrolledLoop?.id
-        ) {
-          const tickResult = await runCoordinatorTick({
-            db,
-            workflowId: v2WorkflowForBackfill.id as WorkflowId,
-            correlationId:
-              `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-            claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-            loopId: effectiveLoopId!,
-          });
-          if (!tickResult.signalsProcessed) {
-            console.log(
-              "[sdlc-loop-v2] daemon event coordinator tick processed no signals",
-              {
-                userId,
-                threadId,
-                threadChatId,
-                workflowId: v2WorkflowForBackfill.id,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-              },
-            );
-          }
-        } else if (
-          v2WorkflowForBackfill &&
-          v2WorkflowForBackfill.sdlcLoopId &&
-          v2WorkflowForBackfill.sdlcLoopId !== enrolledLoop!.id
-        ) {
-          // Workflow belongs to a different loop generation — skip ticking
-          // to prevent cross-generation signal contamination.
-          console.warn(
-            "[sdlc-loop-v2] tick skipped — workflow belongs to different loop generation",
-            {
-              workflowId: v2WorkflowForBackfill.id,
-              workflowLoopId: v2WorkflowForBackfill.sdlcLoopId,
-              enrolledLoopId: enrolledLoop!.id,
-              threadId,
-            },
-          );
-        } else {
-          // No v2 workflow — backfill from the enrolled v1 loop so the
-          // committed daemon signal gets processed on this tick.
-          // Re-read the enrolled loop to capture any state changes made by
-          // handleDaemonEvent (e.g. checkpointThread fires asynchronously via
-          // waitUntil and may have transitioned the v1 loop by now).
-          // Only backfill if the current active loop matches enrolledLoop to
-          // prevent cross-generation contamination (see dedup path comment).
-          const freshLoop = await getActiveSdlcLoopForThread({
-            db,
-            userId,
-            threadId,
-          });
-          if (freshLoop && freshLoop.id !== enrolledLoop!.id) {
-            console.warn(
-              "[sdlc-loop-v2] backfill skipped — active loop changed since enrollment",
-              {
-                enrolledLoopId: enrolledLoop!.id,
-                currentLoopId: freshLoop.id,
-                threadId,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-              },
-            );
-          } else {
-            const backfillLoop = freshLoop ?? enrolledLoop!;
-            console.warn(
-              "[sdlc-loop-v2] daemon event has no v2 workflow — backfilling from v1 loop",
-              {
-                userId,
-                threadId,
-                threadChatId,
-                loopId: backfillLoop.id,
-                loopState: backfillLoop.state,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-              },
-            );
-            const { workflowId: backfilledId } = await ensureV2WorkflowExists({
-              db,
-              threadId,
-              sdlcLoopId: backfillLoop.id,
-              sdlcLoopState: backfillLoop.state,
-              sdlcBlockedFromState: backfillLoop.blockedFromState,
-              headSha: backfillLoop.currentHeadSha,
-              userId,
-              repoFullName: backfillLoop.repoFullName,
-            });
-            await runCoordinatorTick({
-              db,
-              workflowId: backfilledId as WorkflowId,
-              correlationId:
-                `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}` as CorrelationId,
-              claimToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-              loopId: effectiveLoopId!,
-            });
-          }
-        }
-      } catch (error) {
-        console.error("[sdlc-loop] coordinator tick/backfill failed", {
-          userId,
-          threadId,
-          loopId: effectiveLoopId!,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          error,
-        });
-        // If the committed signal has no reachable v2 workflow, returning
-        // success would orphan it. Return 500 so the daemon retries; the
-        // v1 inbox will deduplicate the signal on re-delivery.
-        return new Response(
-          "coordinator tick/backfill failed after signal commit",
-          {
-            status: 500,
-          },
-        );
-      }
+    } catch (error) {
+      console.error("[sdlc-loop-v2] handleDaemonIngress failed", {
+        userId,
+        threadId,
+        loopId: effectiveLoopId!,
+        eventId: envelopeV2.eventId,
+        seq: envelopeV2.seq,
+        error,
+      });
+      return new Response(
+        "v2 daemon ingress failed after message persistence",
+        { status: 500 },
+      );
     }
   }
 
@@ -1775,7 +1042,7 @@ export async function POST(request: Request) {
           // and ack timeout will eventually reconcile.
           console.warn("[daemon-event] terminal state persistence failed", {
             runId: runContext?.runId ?? envelopeV2?.runId,
-            enrolled: !!enrolledLoop,
+            enrolled: hasDeliveryLoop,
             error: r.reason,
           });
         }
