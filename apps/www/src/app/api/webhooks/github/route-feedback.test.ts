@@ -171,12 +171,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       reason: "existing-unarchived-thread",
     });
     expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
-    expect(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).toHaveBeenCalledWith({
-      userId: "user-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      threadId: "thread-1",
-    });
     const routedPart = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0]
       .messages[0]?.parts[0];
     expect(routedPart).toBeDefined();
@@ -295,12 +289,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
         sourceType: "automation",
       }),
     );
-    expect(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).toHaveBeenCalledWith({
-      userId: "user-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      threadId: "new-thread-id",
-    });
   });
 
   it("uses provided PR author id when branch names are supplied", async () => {

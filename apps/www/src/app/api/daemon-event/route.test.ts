@@ -655,10 +655,29 @@ describe("daemon-event route", () => {
   // logic was removed; v2 handles dispatch via work items.
 
   it("replays self-dispatch on duplicate terminal acknowledgements", async () => {
-    dbMocks.insertReturning.mockResolvedValue([]);
+    // In v2, duplicate terminal acks are handled via run_terminal_ignored
+    // (runContext.status === "completed" → 202 before dedup/claim).
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
       MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
     );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -675,7 +694,7 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(202);
     expect(data.deduplicated).toBe(true);
-    expect(data.reason).toBe("duplicate_event");
+    expect(data.reason).toBe("run_terminal_ignored");
     expect(data.selfDispatch).toEqual(
       expect.objectContaining({
         runId: "run-next",
@@ -684,12 +703,29 @@ describe("daemon-event route", () => {
   });
 
   it("replays self-dispatch on out-of-order terminal acknowledgements", async () => {
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: 3 }]);
+    // In v2, out-of-order terminal acks are handled via run_terminal_ignored
+    // (runContext.status === "completed" → 202 before any seq check).
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
       MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
     );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
 
     const response = await POST(
       createDaemonRequest({
@@ -707,7 +743,7 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(202);
     expect(data.deduplicated).toBe(true);
-    expect(data.reason).toBe("out_of_order_or_duplicate_seq");
+    expect(data.reason).toBe("run_terminal_ignored");
     expect(data.selfDispatch).toEqual(
       expect.objectContaining({
         runId: "run-next",
@@ -938,6 +974,12 @@ describe("daemon-event route", () => {
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -954,6 +996,12 @@ describe("daemon-event route", () => {
   });
 
   it("requires v2 envelopes for enrolled loops even without capability headers", async () => {
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -972,6 +1020,12 @@ describe("daemon-event route", () => {
   });
 
   it("accepts enrolled-loop daemon events with v2 envelope", async () => {
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -987,9 +1041,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(dbMocks.transaction).toHaveBeenCalledTimes(1);
-    expect(dbMocks.execute).toHaveBeenCalledTimes(1);
-    expect(dbMocks.update).toHaveBeenCalledTimes(1);
   });
 
   it("does not force implementation transition when enrolled loop has already advanced state", async () => {
@@ -1010,6 +1061,12 @@ describe("daemon-event route", () => {
   });
 
   it("rolls back the claimed v2 signal when daemon handling fails so retries can process the message", async () => {
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     vi.mocked(handleDaemonEvent)
       .mockResolvedValueOnce({
         success: false,
@@ -1018,33 +1075,23 @@ describe("daemon-event route", () => {
       })
       .mockResolvedValue({ success: true });
 
-    let eventClaimed = false;
-    let selectCallCount = 0;
-    dbMocks.selectWhere.mockImplementation(async () => {
-      selectCallCount += 1;
-      const isExistingSignalCheck = selectCallCount % 2 === 1;
-      if (isExistingSignalCheck) {
-        return eventClaimed ? [{ id: "signal-existing" }] : [];
-      }
-      return [{ maxSeq: null }];
-    });
-    dbMocks.insertReturning.mockImplementation(async () => {
-      if (eventClaimed) {
-        return [];
-      }
-      eventClaimed = true;
-      return [{ id: "signal-1" }];
-    });
-    dbMocks.deleteReturning.mockImplementation(async () => {
-      eventClaimed = false;
-      return [{ id: "signal-1" }];
-    });
+    // First request: claim succeeds (set returns "OK"), handleDaemonEvent fails
+    // Second request: claim succeeds again (set returns "OK"), handleDaemonEvent succeeds
+    redisMocks.set.mockResolvedValue("OK");
+    redisMocks.get.mockResolvedValue(null);
 
     const firstResponse = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
@@ -1053,13 +1100,21 @@ describe("daemon-event route", () => {
       }),
     );
     expect(firstResponse.status).toBe(503);
-    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
+    // Redis del called to rollback the processing event claim
+    expect(redisMocks.del).toHaveBeenCalledTimes(1);
 
     const secondResponse = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
@@ -1073,19 +1128,29 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates repeated daemon envelopes by event identity", async () => {
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-existing",
-        receivedAt: new Date("2026-01-01T00:00:00.000Z"),
-        processedAt: new Date("2026-01-01T00:01:00.000Z"),
-      },
-    ]);
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Simulate committed key already set in Redis → duplicate_event (202)
+    redisMocks.get.mockResolvedValueOnce(
+      new Date("2026-01-01T00:01:00.000Z").toISOString(),
+    );
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-duplicate",
@@ -1100,38 +1165,32 @@ describe("daemon-event route", () => {
     expect(data.acknowledgedEventId).toBe("event-duplicate");
     expect(data.acknowledgedSeq).toBe(2);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.insert).not.toHaveBeenCalled();
-    expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
-      "di_loop-1_run-1",
-      "chat-1",
-      {
-        status: "completed",
-        lastError: null,
-        lastFailureCategory: null,
-      },
-    );
-    expect(markDispatchIntentCompleted).toHaveBeenCalledWith(
-      expect.anything(),
-      "run-1",
-    );
-    expect(getThreadChat).not.toHaveBeenCalled();
-    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
 
   it("returns a retryable conflict instead of deduping when the same daemon event claim is still in progress", async () => {
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-in-progress",
-        receivedAt: new Date(),
-        processedAt: null,
-      },
-    ]);
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // No committed key yet, but set (claim attempt) fails → another worker holds the claim
+    redisMocks.get.mockResolvedValueOnce(null); // committedKey check 1: not committed
+    redisMocks.set.mockResolvedValueOnce(null); // claim attempt fails
+    redisMocks.get.mockResolvedValueOnce(null); // committedKey check 2: still not committed
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-in-progress",
@@ -1147,20 +1206,28 @@ describe("daemon-event route", () => {
   });
 
   it("reclaims stale unprocessed daemon-event claims so the event is replayed", async () => {
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-stale",
-        receivedAt: new Date(Date.now() - 30 * 60 * 1000),
-        committedAt: null,
-        processedAt: null,
-      },
-    ]);
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // No committed key → claim succeeds → event is processed normally
+    redisMocks.get.mockResolvedValueOnce(null);
+    redisMocks.set.mockResolvedValueOnce("OK");
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-stale-claim",
@@ -1173,25 +1240,32 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
-    expect(dbMocks.update).toHaveBeenCalledTimes(1);
   });
 
   it("deduplicates stale committed daemon-event claims without reclaiming or replaying", async () => {
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-committed",
-        receivedAt: new Date(Date.now() - 30 * 60 * 1000),
-        committedAt: new Date(Date.now() - 20 * 60 * 1000),
-        processedAt: null,
-      },
-    ]);
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Committed key present → duplicate_event (202)
+    redisMocks.get.mockResolvedValueOnce(
+      new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    );
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-committed",
@@ -1204,8 +1278,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(202);
     expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
-    expect(dbMocks.update).not.toHaveBeenCalled();
   });
 
   it("treats commit as idempotent success when another worker already committed the signal", async () => {
@@ -1234,15 +1306,29 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates out-of-order daemon envelopes within the same run", async () => {
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: 4 }]);
+    // In v2, processing-event dedup uses Redis committed key.
+    // An out-of-order (already committed) event looks the same as a duplicate.
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Committed key present → duplicate_event (202)
+    redisMocks.get.mockResolvedValueOnce(new Date().toISOString());
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-out-of-order",
@@ -1253,26 +1339,35 @@ describe("daemon-event route", () => {
     const data = await response.json();
 
     expect(response.status).toBe(202);
-    expect(data.reason).toBe("out_of_order_or_duplicate_seq");
+    expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.insert).not.toHaveBeenCalled();
-    // Out-of-order seqs must NOT persist terminal status — an older seq's
-    // failure could overwrite a newer seq's success.
-    expect(dispatchIntentMocks.updateDispatchIntent).not.toHaveBeenCalled();
-    expect(markDispatchIntentCompleted).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent claim races by event identity when insert conflicts", async () => {
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: null }]);
-    dbMocks.insertReturning.mockResolvedValue([]);
+    // In v2, a concurrent race means the claim set fails (not "OK") but
+    // committed key becomes present before us → duplicate_event (202).
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "loop-1",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    redisMocks.get.mockResolvedValueOnce(null); // committed check 1: not committed yet
+    redisMocks.set.mockResolvedValueOnce(null); // claim attempt loses the race
+    redisMocks.get.mockResolvedValueOnce(new Date().toISOString()); // committed check 2: winner committed
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-raced",

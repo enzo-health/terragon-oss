@@ -680,22 +680,9 @@ describe("promotePlanToImplementing", () => {
       expect(result.outcome).toBe("promoted");
     });
 
-    it("does not write signal when transition is blocked", async () => {
-      const artifact = makeArtifact({ id: "art-blocked", status: "accepted" });
-      mockCreatePlanArtifactForLoop.mockResolvedValue(artifact);
-      mockReplacePlanTasksForArtifact.mockResolvedValue(undefined);
-      mockTransitionSdlcLoopStateWithArtifact.mockResolvedValue("stale_noop");
-
-      const result = await promotePlanToImplementing({
-        db: fakeDb,
-        loop: makeLoop({ planApprovalPolicy: "auto" }),
-        parsedPlan: makeParsedPlan(),
-        mode: "checkpoint",
-      });
-
-      expect(mockAppendSignalToInbox).not.toHaveBeenCalled();
-      expect(result.outcome).toBe("promotion_blocked");
-    });
+    // "promotion_blocked" outcome removed in v2: transitionSdlcLoopStateWithArtifact
+    // no longer exists; transitionPlanningArtifactToImplementing always writes the
+    // signal unconditionally. Blocking is handled at the coordinator-tick level.
   });
 
   describe("v2 workflow lookup", () => {

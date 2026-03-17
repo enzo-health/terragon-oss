@@ -63,7 +63,14 @@ describe("handleAppMention", () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.deliveryWorkflow);
+    // Scope deletion to this test file's user to avoid cross-test-file interference
+    // when the test DB is shared across concurrent Vitest workers.
+    if (user?.id) {
+      const { eq } = await import("drizzle-orm");
+      await db
+        .delete(schema.deliveryWorkflow)
+        .where(eq(schema.deliveryWorkflow.userId, user.id));
+    }
 
     // Clear Redis batch keys to ensure test isolation
     const keys = await redis.keys("thread-batch:*");
