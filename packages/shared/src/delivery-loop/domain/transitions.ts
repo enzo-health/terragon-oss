@@ -278,6 +278,16 @@ function reducePlanning(
       dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
     };
   }
+  if (event === "gate_blocked") {
+    // Ack timeout or transient failure during planning dispatch — stay in
+    // planning but bump version so schedule-work sees the change and
+    // re-enqueues a dispatch work item.
+    return {
+      ...bump(wf, now),
+      kind: "planning",
+      planVersion: wf.planVersion,
+    };
+  }
   return null;
 }
 

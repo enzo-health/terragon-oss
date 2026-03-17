@@ -59,7 +59,11 @@ export function resolveWorkItems(params: {
       // approval or operator action resume. Planning uses the same daemon
       // runtime as implementation; the daemon inspects the workflow state
       // to determine whether to plan or implement.
-      if (params.previousWorkflow.kind !== "planning") {
+      // Also re-dispatch on version bump within planning (ack timeout retry).
+      if (
+        params.previousWorkflow.kind !== "planning" ||
+        params.newWorkflow.version !== params.previousWorkflow.version
+      ) {
         items.push({
           kind: "dispatch",
           payloadJson: {

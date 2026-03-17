@@ -729,7 +729,10 @@ export type SdlcLoopCauseType =
   | "human_mark_done"
   | "babysit_recheck"
   | "babysit_recheck_passed"
-  | "babysit_recheck_blocked";
+  | "babysit_recheck_blocked"
+  | "timer_dispatch_ack_expired"
+  | "timer_babysit_due"
+  | "timer_heartbeat";
 
 export type SdlcLoopOutboxActionType =
   | "publish_status_comment"

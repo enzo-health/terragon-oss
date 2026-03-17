@@ -220,13 +220,11 @@ function reduceTimerSignal(
       // separate inline limit based on consecutive ack failures.
       const MAX_DISPATCH_ACK_RETRIES = 5;
       const ackFailures = event.consecutiveFailures ?? 1;
-      if (
-        workflow.kind === "implementing" &&
-        ackFailures >= MAX_DISPATCH_ACK_RETRIES
-      ) {
+      if (ackFailures >= MAX_DISPATCH_ACK_RETRIES) {
         return { event: "exhausted_retries", context: {} };
       }
-      // Re-enter implementing for retry (gate_blocked triggers re-dispatch)
+      // gate_blocked re-triggers dispatch in implementing/gating; for
+      // planning it bumps the version so schedule-work re-enqueues dispatch.
       return { event: "gate_blocked", context: {} };
     }
 

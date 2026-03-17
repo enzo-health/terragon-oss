@@ -939,7 +939,7 @@ describe("reduceSignalToEvent", () => {
         expectEvent(result, "exhausted_retries");
       });
 
-      it("high consecutive failures but not implementing → gate_blocked", () => {
+      it("high consecutive failures in gating → exhausted_retries", () => {
         const result = reduce(
           timerSignal({
             kind: "dispatch_ack_expired",
@@ -948,7 +948,7 @@ describe("reduceSignalToEvent", () => {
           }),
           gating("ci"),
         );
-        expectEvent(result, "gate_blocked");
+        expectEvent(result, "exhausted_retries");
       });
     });
 

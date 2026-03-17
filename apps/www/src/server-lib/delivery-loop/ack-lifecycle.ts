@@ -183,25 +183,37 @@ export function startAckTimeout({
         timeoutMs,
       });
 
-      if (outcome.shouldRetry && userId && threadId) {
+      if (outcome.shouldRetry) {
         try {
-          const { scheduleFollowUpRetryJob } = await import("./retry-jobs");
-          await scheduleFollowUpRetryJob({
-            userId,
-            threadId,
-            threadChatId,
-            dispatchAttempt: outcome.attempt,
-            runAt: new Date(Date.now() + 5000),
+          const { appendSignalToInbox } = await import(
+            "@terragon/shared/delivery-loop/store/signal-inbox-store"
+          );
+          const { runCoordinatorTick } = await import("./coordinator/tick");
+          await appendSignalToInbox({
+            db,
+            loopId,
+            causeType: "timer_dispatch_ack_expired",
+            payload: {
+              kind: "dispatch_ack_expired",
+              consecutiveFailures: outcome.attempt,
+            },
+            canonicalCauseId: `ack-timeout-${runId}`,
+          });
+          await runCoordinatorTick({
+            db,
+            workflowId:
+              loopId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
+            correlationId:
+              `ack-timeout-timer-${runId}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
+            loopId,
           });
         } catch (retryErr) {
-          console.error(
-            "[ack-lifecycle] failed to schedule retry after ack timeout",
-            {
-              runId,
-              threadChatId,
-              error: retryErr,
-            },
-          );
+          console.error("[ack-lifecycle] failed to signal ack-expired retry", {
+            runId,
+            loopId,
+            threadChatId,
+            error: retryErr,
+          });
         }
       } else if (!outcome.shouldRetry) {
         console.warn(
