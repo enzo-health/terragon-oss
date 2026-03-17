@@ -8,11 +8,11 @@ const BATCH_SIZE = 5;
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
-  if (
-    process.env.NODE_ENV === "production" &&
-    authHeader !== `Bearer ${env.CRON_SECRET}`
-  ) {
-    return new Response("Unauthorized", { status: 401 });
+  if (!env.CRON_SECRET || authHeader !== `Bearer ${env.CRON_SECRET}`) {
+    // In development without CRON_SECRET, allow access for local testing
+    if (process.env.NODE_ENV !== "development" || env.CRON_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
   }
   console.log("Scheduled tasks cron task triggered");
   try {
@@ -45,54 +45,294 @@ export async function GET(request: NextRequest) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    const { drainDueSdlcSignalInboxActions } = await import(
-      "@/server-lib/delivery-loop/signal-inbox"
-    );
-    const sdlcSignalInboxDrain = await drainDueSdlcSignalInboxActions({
-      db,
-      leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
-    });
-    console.log(
-      "Delivery Loop signal inbox durable drain completed",
-      sdlcSignalInboxDrain,
-    );
+    // V2 delivery loop work item processing
+    let v2WorkItemsProcessed = 0;
+    let v2TicksCaughtUp = 0;
+    let v2Error: string | null = null;
+    try {
+      const { claimNextWorkItem, failWorkItem } = await import(
+        "@terragon/shared/delivery-loop/store/work-queue-store"
+      );
+      const { runDispatchWork } = await import(
+        "@/server-lib/delivery-loop/workers/run-dispatch-work"
+      );
+      const { runPublicationWork } = await import(
+        "@/server-lib/delivery-loop/workers/run-publication-work"
+      );
+      const { runBabysitWork } = await import(
+        "@/server-lib/delivery-loop/workers/run-babysit-work"
+      );
+      const { runRetryWork } = await import(
+        "@/server-lib/delivery-loop/workers/run-retry-work"
+      );
 
-    const { drainDueSdlcPublicationOutboxActions } = await import(
-      "@/server-lib/delivery-loop/publication"
-    );
-    const sdlcPublicationDrain = await drainDueSdlcPublicationOutboxActions({
-      db,
-      leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
-    });
-    console.log(
-      "Delivery Loop publication durable drain completed",
-      sdlcPublicationDrain,
-    );
+      const MAX_V2_WORK_ITEMS = 20;
 
-    const { drainDueDeliveryLoopRetryJobs } = await import(
-      "@/server-lib/delivery-loop/retry-jobs"
-    );
-    const deliveryLoopRetryDrain = await drainDueDeliveryLoopRetryJobs({
-      leaseOwnerTokenPrefix: "internal-cron:scheduled-tasks",
-    });
-    console.log(
-      "Delivery Loop retry job durable drain completed",
-      deliveryLoopRetryDrain,
-    );
+      for (let i = 0; i < MAX_V2_WORK_ITEMS; i++) {
+        const claimToken = `cron:v2:${crypto.randomUUID()}`;
+        const item = await claimNextWorkItem({ db, claimToken });
+        if (!item) break;
 
-    return Response.json({
-      success: true,
-      sdlcSignalInboxDrain,
-      sdlcPublicationDrain,
-      deliveryLoopRetryDrain,
-    });
-  } catch (error) {
-    console.error("Error in scheduled tasks cron task:", error);
+        const payload = item.payloadJson as Record<string, unknown>;
+
+        try {
+          switch (item.kind) {
+            case "dispatch":
+              await runDispatchWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                payload: payload as Parameters<
+                  typeof runDispatchWork
+                >[0]["payload"],
+              });
+              break;
+            case "publication":
+              await runPublicationWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                workflowId: item.workflowId,
+                payload: payload as Parameters<
+                  typeof runPublicationWork
+                >[0]["payload"],
+              });
+              break;
+            case "babysit":
+              await runBabysitWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                payload: payload as Parameters<
+                  typeof runBabysitWork
+                >[0]["payload"],
+              });
+              break;
+            case "retry":
+              await runRetryWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                correlationId: item.correlationId,
+                payload: payload as Parameters<
+                  typeof runRetryWork
+                >[0]["payload"],
+              });
+              break;
+            default: {
+              await failWorkItem({
+                db,
+                workItemId: item.id,
+                claimToken,
+                errorCode: "unsupported_work_kind",
+                errorMessage: `Unknown work item kind: ${item.kind}`,
+              });
+              break;
+            }
+          }
+          v2WorkItemsProcessed++;
+        } catch (itemErr) {
+          console.error(
+            `V2 work item processing failed for item ${item.id} (kind: ${item.kind})`,
+            itemErr,
+          );
+          try {
+            await failWorkItem({
+              db,
+              workItemId: item.id,
+              claimToken,
+              errorCode: "work_item_handler_threw",
+              errorMessage:
+                itemErr instanceof Error ? itemErr.message : String(itemErr),
+            });
+          } catch (failErr) {
+            console.error(
+              `Failed to mark work item ${item.id} as failed`,
+              failErr,
+            );
+          }
+          continue;
+        }
+      }
+      console.log("V2 delivery loop work items processed", {
+        v2WorkItemsProcessed,
+      });
+
+      // Drain legacy follow-up retry jobs (still produced by process-follow-up-queue)
+      try {
+        const { drainDueDeliveryLoopRetryJobs } = await import(
+          "@/server-lib/delivery-loop/retry-jobs"
+        );
+        const retryResult = await drainDueDeliveryLoopRetryJobs({
+          leaseOwnerTokenPrefix: "cron:retry",
+        });
+        console.log("V2 follow-up retry jobs drained", retryResult);
+      } catch (retryErr) {
+        console.error("V2 follow-up retry job drain failed", retryErr);
+      }
+
+      // Coordinator tick catch-up for active workflows with pending signals
+      const { listActiveWorkflowIds } = await import(
+        "@terragon/shared/delivery-loop/store/workflow-store"
+      );
+      const { runCoordinatorTick } = await import(
+        "@/server-lib/delivery-loop/coordinator/tick"
+      );
+      const { and, desc, inArray } = await import("drizzle-orm");
+      const schemaImport = await import("@terragon/shared/db/schema");
+      const { activeSdlcLoopStateList } = await import(
+        "@terragon/shared/model/delivery-loop"
+      );
+
+      // Backfill v2 workflows for active v1 loops that were never bridged.
+      // After v1 babysit-recheck deletion, idle loops without a v2 workflow
+      // would remain stuck since cron only ticks existing workflows.
+      try {
+        const { ensureV2WorkflowExists } = await import(
+          "@/server-lib/delivery-loop/coordinator/enrollment-bridge"
+        );
+        const { getActiveWorkflowForThread } = await import(
+          "@terragon/shared/delivery-loop/store/workflow-store"
+        );
+        const orphanedLoops = await db.query.sdlcLoop.findMany({
+          where: inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
+          columns: {
+            id: true,
+            threadId: true,
+            userId: true,
+            repoFullName: true,
+            state: true,
+            blockedFromState: true,
+            currentHeadSha: true,
+          },
+          limit: 50,
+        });
+        for (const loop of orphanedLoops) {
+          const existing = await getActiveWorkflowForThread({
+            db,
+            threadId: loop.threadId,
+          });
+          // Only backfill if no workflow exists OR the active workflow
+          // belongs to a different loop generation (cross-gen mismatch).
+          const needsBackfill =
+            !existing ||
+            (existing.sdlcLoopId != null && existing.sdlcLoopId !== loop.id);
+          if (needsBackfill) {
+            // Skip head-dependent states when headSha is unavailable —
+            // creating a workflow with "unknown" SHA causes workers to
+            // evaluate gate state for a synthetic commit.
+            const headDependentStates = new Set([
+              "babysitting",
+              "review_gate",
+              "ci_gate",
+              "ui_gate",
+              "awaiting_pr_link",
+            ]);
+            if (headDependentStates.has(loop.state) && !loop.currentHeadSha) {
+              continue;
+            }
+            try {
+              await ensureV2WorkflowExists({
+                db,
+                threadId: loop.threadId,
+                sdlcLoopId: loop.id,
+                sdlcLoopState: loop.state,
+                sdlcBlockedFromState: loop.blockedFromState,
+                headSha: loop.currentHeadSha,
+                userId: loop.userId,
+                repoFullName: loop.repoFullName,
+              });
+            } catch (backfillErr) {
+              console.warn(
+                "[cron] v2 workflow backfill failed for orphaned loop",
+                { loopId: loop.id, error: backfillErr },
+              );
+            }
+          }
+        }
+      } catch (backfillBatchErr) {
+        console.warn(
+          "[cron] orphaned loop backfill batch failed",
+          backfillBatchErr,
+        );
+      }
+
+      const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
+
+      // Resolve loopId for each active workflow. Prefer the explicit
+      // sdlcLoopId column persisted at enrollment time. Fall back to the
+      // threadId-based heuristic (most recent active loop) for workflows
+      // created before the column was added.
+      const workflowsMissingLoopId = activeWorkflows.filter(
+        (wf) => !wf.sdlcLoopId,
+      );
+      const threadIds = workflowsMissingLoopId.map((wf) => wf.threadId);
+      const loops =
+        threadIds.length > 0
+          ? await db.query.sdlcLoop.findMany({
+              where: and(
+                inArray(schemaImport.sdlcLoop.threadId, threadIds),
+                inArray(schemaImport.sdlcLoop.state, activeSdlcLoopStateList),
+              ),
+              orderBy: [desc(schemaImport.sdlcLoop.createdAt)],
+              columns: { id: true, threadId: true },
+            })
+          : [];
+      // Map threadId → most recent active loop (first match, since ordered desc)
+      const loopByThread = new Map<string, string>();
+      for (const loop of loops) {
+        if (!loopByThread.has(loop.threadId)) {
+          loopByThread.set(loop.threadId, loop.id);
+        }
+      }
+
+      for (const wf of activeWorkflows) {
+        try {
+          const correlationId =
+            `cron:tick-catchup:${wf.id}:${Date.now()}` as Parameters<
+              typeof runCoordinatorTick
+            >[0]["correlationId"];
+          const result = await runCoordinatorTick({
+            db,
+            workflowId: wf.id as Parameters<
+              typeof runCoordinatorTick
+            >[0]["workflowId"],
+            correlationId,
+            claimToken: `cron:tick:${crypto.randomUUID()}`,
+            loopId: wf.sdlcLoopId ?? loopByThread.get(wf.threadId),
+          });
+          if (result.signalsProcessed > 0) {
+            v2TicksCaughtUp++;
+          }
+        } catch (tickErr) {
+          console.error(
+            `V2 coordinator tick catch-up failed for workflow ${wf.id}`,
+            tickErr,
+          );
+        }
+      }
+      console.log("V2 coordinator tick catch-up completed", {
+        activeWorkflows: activeWorkflows.length,
+        v2TicksCaughtUp,
+      });
+    } catch (error) {
+      console.error("V2 delivery loop cron processing failed", error);
+      v2Error = "v2_processing_failed";
+    }
+
     return Response.json(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        success: !v2Error,
+        v2WorkItemsProcessed,
+        v2TicksCaughtUp,
+        ...(v2Error ? { v2Error } : {}),
       },
+      { status: v2Error ? 500 : 200 },
+    );
+  } catch (error) {
+    console.error("Scheduled tasks cron failed:", error);
+    return Response.json(
+      { success: false, error: "Internal server error" },
       { status: 500 },
     );
   }

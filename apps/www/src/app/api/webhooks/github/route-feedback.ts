@@ -24,11 +24,13 @@ import {
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
-import {
-  SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
-  runBestEffortSdlcSignalInboxTick,
-} from "@/server-lib/delivery-loop/signal-inbox";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
+import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
+import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import type {
+  WorkflowId,
+  CorrelationId,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 
 export type FeedbackRoutingMode =
   | "reused_existing"
@@ -518,22 +520,7 @@ type CanonicalFeedbackSignal = ReturnType<typeof buildSdlcCanonicalCause> & {
   payload: Record<string, unknown>;
 };
 
-class EnrolledLoopSignalInboxRetryError extends Error {}
 class RetryableOwnerResolutionError extends Error {}
-
-function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
-  const iterationCount =
-    typeof loopVersion === "number" && Number.isFinite(loopVersion)
-      ? Math.max(loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: false,
-    cooldownUntil: null,
-    maxIterations: null,
-    manualIntentAllowed: true,
-    iterationCount,
-  };
-}
 
 function buildIdentityValueOrFallback({
   identityValue,
@@ -562,19 +549,6 @@ function buildDeliveryIdOrFallback({
     return deliveryId.trim();
   }
   return `no-delivery:${fallbackScope}`;
-}
-
-const REVIEW_FEEDBACK_EVENT_TYPES = new Set([
-  "pull_request_review.submitted",
-  "pull_request_review_comment.created",
-]);
-
-function resolveEnrollmentInitialState(
-  eventType: string,
-): "planning" | "implementing" {
-  return REVIEW_FEEDBACK_EVENT_TYPES.has(eventType)
-    ? "implementing"
-    : "planning";
 }
 
 function buildFeedbackDeliveryMarker(
@@ -896,7 +870,6 @@ export async function routeGithubFeedbackOrSpawnThread(
               repoFullName: input.repoFullName,
               prNumber: input.prNumber,
               threadId: fallbackThread.id,
-              initialState: resolveEnrollmentInitialState(input.eventType),
             });
           } catch (error) {
             console.warn(
@@ -966,7 +939,6 @@ export async function routeGithubFeedbackOrSpawnThread(
         repoFullName: input.repoFullName,
         prNumber: input.prNumber,
         threadId,
-        initialState: resolveEnrollmentInitialState(input.eventType),
       });
     } catch (error) {
       console.warn(
@@ -996,9 +968,6 @@ export async function routeGithubFeedbackOrSpawnThread(
     const enrolledThreadChatId = getPrimaryThreadChatIdOrNull(enrolledThread);
 
     if (enrolledThreadChatId) {
-      const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-        activeSdlcLoop.loopVersion,
-      );
       const signalOutcome = await enqueueCanonicalSignalForEnrolledLoop({
         loopId: activeSdlcLoop.id,
         input,
@@ -1030,75 +999,148 @@ export async function routeGithubFeedbackOrSpawnThread(
 
       if (signalOutcome !== "unsupported") {
         const leaseOwnerToken = `github-feedback:${input.eventType}:${input.deliveryId ?? "no-delivery"}:${input.prNumber}`;
-        try {
-          const signalInboxTickResult = await runBestEffortSdlcSignalInboxTick({
-            db,
-            loopId: activeSdlcLoop.id,
-            leaseOwnerToken,
-            guardrailRuntime,
+        const v2Workflow = await getActiveWorkflowForThread({
+          db,
+          threadId: activeSdlcLoop.threadId,
+        });
+        if (v2Workflow && v2Workflow.sdlcLoopId === activeSdlcLoop.id) {
+          try {
+            await runCoordinatorTick({
+              db,
+              workflowId: v2Workflow.id as WorkflowId,
+              correlationId: leaseOwnerToken as CorrelationId,
+              claimToken: leaseOwnerToken,
+              loopId: activeSdlcLoop.id,
+            });
+          } catch (tickErr) {
+            console.error("[route-feedback] v2 coordinator tick failed", {
+              workflowId: v2Workflow.id,
+              error: tickErr,
+            });
+          }
+          // Signal enqueued + coordinator ticked — suppress direct routing
+          captureFeedbackRouting({
+            userId,
+            input,
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            threadId: activeSdlcLoop.threadId,
           });
-          if (
-            !signalInboxTickResult.processed &&
-            signalInboxTickResult.reason ===
-              SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED
-          ) {
-            throw new EnrolledLoopSignalInboxRetryError(
-              `Failed to enqueue enrolled-loop feedback follow-up for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
+          return {
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+          };
+        } else if (
+          v2Workflow &&
+          v2Workflow.sdlcLoopId &&
+          v2Workflow.sdlcLoopId !== activeSdlcLoop.id
+        ) {
+          // Workflow belongs to a different loop generation — don't tick
+          // the old workflow with new signals. Instead, backfill a new
+          // workflow for the current loop so the signal has a consumer.
+          console.warn(
+            "[route-feedback] workflow generation mismatch — backfilling for current loop",
+            {
+              oldWorkflowId: v2Workflow.id,
+              oldLoopId: v2Workflow.sdlcLoopId,
+              activeSdlcLoopId: activeSdlcLoop.id,
+              threadId: activeSdlcLoop.threadId,
+            },
+          );
+          try {
+            const { workflowId: backfilledId } = await ensureV2WorkflowExists({
+              db,
+              threadId: activeSdlcLoop.threadId,
+              sdlcLoopId: activeSdlcLoop.id,
+              sdlcLoopState: activeSdlcLoop.state,
+              sdlcBlockedFromState: activeSdlcLoop.blockedFromState,
+              headSha: activeSdlcLoop.currentHeadSha,
+              userId,
+              repoFullName: input.repoFullName,
+            });
+            await runCoordinatorTick({
+              db,
+              workflowId: backfilledId as WorkflowId,
+              correlationId: leaseOwnerToken as CorrelationId,
+              claimToken: leaseOwnerToken,
+              loopId: activeSdlcLoop.id,
+            });
+          } catch (mismatchErr) {
+            console.error(
+              "[route-feedback] generation mismatch backfill failed",
+              { activeSdlcLoopId: activeSdlcLoop.id, error: mismatchErr },
             );
+            // Rethrow so the caller sees the failure instead of silently
+            // returning suppressed while the signal is stranded.
+            throw mismatchErr;
           }
-        } catch (error) {
-          if (error instanceof EnrolledLoopSignalInboxRetryError) {
-            throw error;
-          }
-          console.error(
-            "[github feedback routing] SDLC signal inbox tick failed after feedback enqueue",
-            {
-              userId,
-              repoFullName: input.repoFullName,
-              prNumber: input.prNumber,
-              eventType: input.eventType,
-              loopId: activeSdlcLoop.id,
-              error,
-            },
-          );
-          throw new EnrolledLoopSignalInboxRetryError(
-            `Failed to process enrolled-loop signal inbox tick for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
-          );
+          return {
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+          };
         }
+        // No v2 workflow — backfill from v1 loop so the enqueued signal
+        // gets processed immediately. Falling through to direct routing
+        // would cause duplicate delivery once the workflow appears later.
+        console.warn(
+          "[route-feedback] enrolled loop has no v2 workflow — backfilling",
+          {
+            userId,
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+            eventType: input.eventType,
+          },
+        );
         try {
-          await runBestEffortSdlcPublicationCoordinator({
+          const { workflowId: backfilledId } = await ensureV2WorkflowExists({
             db,
-            loopId: activeSdlcLoop.id,
-            leaseOwnerToken,
-            guardrailRuntime,
+            threadId: activeSdlcLoop.threadId,
+            sdlcLoopId: activeSdlcLoop.id,
+            sdlcLoopState: activeSdlcLoop.state,
+            sdlcBlockedFromState: activeSdlcLoop.blockedFromState,
+            headSha: activeSdlcLoop.currentHeadSha,
+            userId,
+            repoFullName: input.repoFullName,
           });
-        } catch (error) {
+          await runCoordinatorTick({
+            db,
+            workflowId: backfilledId as WorkflowId,
+            correlationId: leaseOwnerToken as CorrelationId,
+            claimToken: leaseOwnerToken,
+            loopId: activeSdlcLoop.id,
+          });
+          captureFeedbackRouting({
+            userId,
+            input,
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            threadId: activeSdlcLoop.threadId,
+          });
+          return {
+            mode: "suppressed_enrolled_loop",
+            reason: "sdlc-loop-enrolled",
+            sdlcLoopId: activeSdlcLoop.id,
+            threadId: activeSdlcLoop.threadId,
+          };
+        } catch (backfillErr) {
+          // Signal is already in the inbox but no v2 workflow exists for
+          // cron to discover. Rethrow so the webhook delivery retries —
+          // appendSignalToInbox uses ON CONFLICT DO NOTHING, so the retry
+          // is safe and gives the backfill another chance.
           console.error(
-            "[github feedback routing] SDLC publication coordinator failed after feedback enqueue",
+            "[route-feedback] v2 workflow backfill failed, rethrowing for webhook retry",
             {
-              userId,
-              repoFullName: input.repoFullName,
-              prNumber: input.prNumber,
-              eventType: input.eventType,
-              loopId: activeSdlcLoop.id,
-              error,
+              sdlcLoopId: activeSdlcLoop.id,
+              error: backfillErr,
             },
           );
+          throw backfillErr;
         }
       }
-      captureFeedbackRouting({
-        userId,
-        input,
-        mode: "suppressed_enrolled_loop",
-        reason: "sdlc-loop-enrolled",
-        threadId: activeSdlcLoop.threadId,
-      });
-      return {
-        mode: "suppressed_enrolled_loop",
-        reason: "sdlc-loop-enrolled",
-        sdlcLoopId: activeSdlcLoop.id,
-        threadId: activeSdlcLoop.threadId,
-      };
     }
 
     console.warn(

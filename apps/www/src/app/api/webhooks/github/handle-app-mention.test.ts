@@ -173,13 +173,6 @@ describe("handleAppMention", () => {
   });
 
   it("routes to enrolled SDLC loop thread and suppresses sibling thread creation", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
-
     await enrollSdlcLoopForGithubPR({
       db,
       userId: user.id,
@@ -209,12 +202,6 @@ describe("handleAppMention", () => {
   });
 
   it("enrolls an existing PR thread into SDLC loop when coordinator routing is enabled", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
     await updateUserSettings({
       db,
       userId: user.id,
@@ -249,21 +236,15 @@ describe("handleAppMention", () => {
       commentGitHubAccountId: githubAccountId,
     });
 
-    const enrolledLoop = await db.query.sdlcLoop.findFirst({
-      where: (loop, { and, eq }) =>
-        and(
-          eq(loop.userId, user.id),
-          eq(loop.repoFullName, isolatedPr.repoFullName),
-          eq(loop.prNumber, isolatedPr.number),
-        ),
+    // V2 workflow should be created (no v1 sdlcLoop)
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: (wf, { eq }) => eq(wf.threadId, mentionThread.threadId),
     });
 
-    expect(enrolledLoop).toMatchObject({
-      userId: user.id,
-      repoFullName: isolatedPr.repoFullName,
-      prNumber: isolatedPr.number,
+    expect(workflow).toMatchObject({
       threadId: mentionThread.threadId,
-      state: "planning",
+      kind: "planning",
+      prNumber: isolatedPr.number,
     });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -275,12 +256,6 @@ describe("handleAppMention", () => {
   });
 
   it("does not enroll an opted-out dashboard thread when reusing single-thread mention routing", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
     await updateUserSettings({
       db,
       userId: user.id,
@@ -331,12 +306,6 @@ describe("handleAppMention", () => {
   });
 
   it("falls back to standard routing when enrolled loop thread is not routable", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
     await setFeatureFlagOverrideForTest({
       db,
       userId: user.id,

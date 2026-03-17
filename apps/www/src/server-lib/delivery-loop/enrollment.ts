@@ -1,12 +1,12 @@
 import { db } from "@/lib/db";
 import {
-  enrollSdlcLoopForThread,
   getActiveSdlcLoopForThread,
   getPreferredActiveSdlcLoopForGithubPRAndUser,
-  linkSdlcLoopToGithubPRForThread,
 } from "@terragon/shared/model/delivery-loop";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
+import { enrollV2Workflow } from "./coordinator/v2-enrollment";
+import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 export function isSdlcLoopEnrollmentAllowedForThread({
   sourceType,
@@ -68,22 +68,36 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   repoFullName,
   threadId,
   planApprovalPolicy,
-  initialState,
 }: {
   userId: string;
   repoFullName: string;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  /** @deprecated v2 always starts in planning — ignored */
   initialState?: "planning" | "implementing";
 }) {
-  return await enrollSdlcLoopForThread({
+  // V2-only enrollment: no v1 sdlcLoop is created
+  const { sdlcLoopId } = await enrollV2Workflow({
     db,
+    threadId,
     userId,
     repoFullName,
-    threadId,
     planApprovalPolicy,
-    initialState,
   });
+
+  // For legacy threads that were enrolled with a v1 sdlcLoop, return it
+  if (sdlcLoopId) {
+    const activeLoop = await getActiveSdlcLoopForThread({
+      db,
+      userId,
+      threadId,
+    });
+    if (activeLoop) {
+      return activeLoop;
+    }
+  }
+
+  return null;
 }
 
 export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
@@ -92,69 +106,40 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   prNumber,
   threadId,
   planApprovalPolicy,
-  initialState,
 }: {
   userId: string;
   repoFullName: string;
   prNumber: number;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
-  initialState?: "planning" | "implementing";
 }) {
-  const enrolled = await enrollSdlcLoopForThread({
+  // V2-only enrollment with PR number set directly on workflow
+  const v2Result = await enrollV2Workflow({
     db,
+    threadId,
     userId,
     repoFullName,
-    threadId,
     planApprovalPolicy,
-    initialState,
   });
-  const linked = await linkSdlcLoopToGithubPRForThread({
+
+  // Update the v2 workflow with the PR number
+  await updateWorkflowPR({
     db,
-    userId,
-    repoFullName,
-    threadId,
+    workflowId: v2Result.workflowId,
     prNumber,
   });
-  const activeLoop = linked ?? enrolled;
-  if (
-    activeLoop &&
-    [
-      "planning",
-      "implementing",
-      "review_gate",
-      "ci_gate",
-      "ui_gate",
-      "babysitting",
-      "blocked",
-    ].includes(activeLoop.state)
-  ) {
-    return activeLoop;
-  }
 
-  const refreshedActiveLoop =
-    await getPreferredActiveSdlcLoopForGithubPRAndUser({
+  // For legacy threads that were enrolled with a v1 sdlcLoop, return it
+  if (v2Result.sdlcLoopId) {
+    const activeLoop = await getPreferredActiveSdlcLoopForGithubPRAndUser({
       db,
       userId,
       repoFullName,
       prNumber,
     });
-  if (refreshedActiveLoop) {
-    return refreshedActiveLoop;
-  }
-
-  if (activeLoop) {
-    console.warn(
-      "[delivery-loop enrollment] enrollment did not yield an active loop; returning null",
-      {
-        userId,
-        repoFullName,
-        prNumber,
-        threadId,
-        enrollmentId: activeLoop.id,
-        enrollmentState: activeLoop.state,
-      },
-    );
+    if (activeLoop) {
+      return activeLoop;
+    }
   }
 
   return null;

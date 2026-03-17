@@ -19,7 +19,6 @@ export const DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH =
 // TODO sawyer: we don't want to depend on shared so mirror the ones we need here.
 export type FeatureFlags = {
   mcpPermissionPrompt?: boolean;
-  sdlcLoopCoordinatorRouting?: boolean;
 };
 
 export const DaemonTransportModeSchema = z.enum([

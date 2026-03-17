@@ -587,7 +587,10 @@ async function transitionImplementationGateBlocked({
     transitionEvent: "implementation_gate_blocked",
     blockedFromState: "implementing",
   });
-  if (outcome === "stale_noop" || outcome === "terminal_noop") {
+  if (
+    (typeof outcome === "object" && "staleReason" in outcome) ||
+    outcome === "terminal_noop"
+  ) {
     return true;
   }
   const refreshedLoop = await getActiveSdlcLoopForThread({
@@ -826,6 +829,16 @@ async function maybeRunStrictSdlcCheckpointPipeline({
   prType: "draft" | "ready";
   diffOutput: string | null;
 }) {
+  // V2-enrolled threads skip the v1 checkpoint pipeline entirely.
+  // The v2 coordinator and workers handle state transitions.
+  const { getActiveWorkflowForThread } = await import(
+    "@terragon/shared/delivery-loop/store/workflow-store"
+  );
+  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+  if (v2Workflow && v2Workflow.kind !== "planning") {
+    return true; // v2 coordinator handles non-planning transitions
+  }
+
   const activeLoop = await getActiveSdlcLoopForThread({
     db,
     userId,
@@ -925,6 +938,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       parsedPlan,
       mode: "checkpoint",
+      threadId,
     });
 
     if (promotionResult.outcome === "awaiting_human_approval") {
@@ -1198,6 +1212,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       generatedBy: "system",
       status: "accepted",
+      workflowId: v2Workflow?.id,
     });
 
     const implementationTransition = await transitionSdlcLoopStateWithArtifact({
@@ -1377,6 +1392,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       generatedBy: "system",
       status: "accepted",
+      workflowId: v2Workflow?.id,
     });
     if (deepBlocked || carmackBlocked) {
       await transitionSdlcLoopState({
@@ -1525,6 +1541,7 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     },
     generatedBy: "system",
     status: "accepted",
+    workflowId: v2Workflow?.id,
   });
   if (uiSmokeBlocked) {
     await transitionSdlcLoopState({
@@ -1560,6 +1577,33 @@ async function maybeRunStrictSdlcCheckpointPipeline({
     loopVersion: loopVersionForGateRun,
     now: new Date(),
   });
+
+  // Bridge: emit v2 gate_passed(ui) signal so the coordinator tick
+  // advances the v2 workflow out of gating.ui. Without this, the v2
+  // workflow has no signal producer for the UI gate result.
+  if (uiTransition === "updated") {
+    try {
+      const { appendSignalToInbox } = await import(
+        "@terragon/shared/delivery-loop/store/signal-inbox-store"
+      );
+      await appendSignalToInbox({
+        db,
+        loopId: loopAfterCiGate.id,
+        causeType: "human_bypass",
+        payload: {
+          source: "human",
+          event: { kind: "bypass_requested", target: "ui" },
+        },
+        canonicalCauseId: `ui-smoke-passed:${loopAfterCiGate.id}:${headSha}`,
+      });
+    } catch (bridgeErr) {
+      console.warn("[checkpoint] v2 ui gate_passed bridge failed", {
+        loopId: loopAfterCiGate.id,
+        error: bridgeErr,
+      });
+    }
+  }
+
   if (uiTransition !== "updated") {
     await queueSdlcFollowUpMessage({
       userId,
@@ -1626,8 +1670,9 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       },
       generatedBy: "system",
       status: "accepted",
+      workflowId: v2Workflow?.id,
     });
-    await transitionSdlcLoopStateWithArtifact({
+    const prTransition = await transitionSdlcLoopStateWithArtifact({
       db,
       loopId: linkedLoop.id,
       artifactId: prArtifact.id,
@@ -1636,6 +1681,36 @@ async function maybeRunStrictSdlcCheckpointPipeline({
       loopVersion: loopVersionForGateRun,
       now: new Date(),
     });
+
+    // Bridge: emit v2 pr_synchronized signal so the coordinator tick
+    // advances the v2 workflow from awaiting_pr → babysitting.
+    // The reducer maps pr_synchronized → pr_linked when in awaiting_pr.
+    if (prTransition === "updated") {
+      try {
+        const { appendSignalToInbox } = await import(
+          "@terragon/shared/delivery-loop/store/signal-inbox-store"
+        );
+        await appendSignalToInbox({
+          db,
+          loopId: linkedLoop.id,
+          causeType: "github_pr_synchronized",
+          payload: {
+            source: "github",
+            event: {
+              kind: "pr_synchronized",
+              prNumber,
+              headSha: headSha ?? "",
+            },
+          },
+          canonicalCauseId: `pr-linked:${linkedLoop.id}:${prNumber}`,
+        });
+      } catch (bridgeErr) {
+        console.warn("[checkpoint] v2 pr_linked bridge failed", {
+          loopId: linkedLoop.id,
+          error: bridgeErr,
+        });
+      }
+    }
   }
 
   return true;

@@ -81,6 +81,26 @@ export type DeliveryLoopDispatchIntentRow =
   typeof schema.deliveryLoopDispatchIntent.$inferSelect;
 export type DeliveryLoopDispatchIntentInsert =
   typeof schema.deliveryLoopDispatchIntent.$inferInsert;
+
+// Delivery Loop v2 tables
+export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
+export type DeliveryWorkflowInsert =
+  typeof schema.deliveryWorkflow.$inferInsert;
+export type DeliveryWorkflowEventRow =
+  typeof schema.deliveryWorkflowEvent.$inferSelect;
+export type DeliveryWorkflowEventInsert =
+  typeof schema.deliveryWorkflowEvent.$inferInsert;
+export type DeliveryWorkItemRow = typeof schema.deliveryWorkItem.$inferSelect;
+export type DeliveryWorkItemInsert =
+  typeof schema.deliveryWorkItem.$inferInsert;
+export type DeliveryLoopIncidentRow =
+  typeof schema.deliveryLoopIncident.$inferSelect;
+export type DeliveryLoopIncidentInsert =
+  typeof schema.deliveryLoopIncident.$inferInsert;
+export type DeliveryLoopRuntimeStatusRow =
+  typeof schema.deliveryLoopRuntimeStatus.$inferSelect;
+export type DeliveryLoopRuntimeStatusInsert =
+  typeof schema.deliveryLoopRuntimeStatus.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;
@@ -704,7 +724,22 @@ export type SdlcLoopCauseType =
   | "pull_request.edited"
   | "pull_request_review"
   | "pull_request_review_comment"
-  | "review-thread-poll-synthetic";
+  | "review-thread-poll-synthetic"
+  // v2 delivery loop cause types
+  | "daemon_run_completed"
+  | "daemon_run_failed"
+  | "daemon_progress"
+  | "github_ci_changed"
+  | "github_review_changed"
+  | "github_pr_closed"
+  | "github_pr_synchronized"
+  | "human_resume"
+  | "human_bypass"
+  | "human_stop"
+  | "human_mark_done"
+  | "babysit_recheck"
+  | "babysit_recheck_passed"
+  | "babysit_recheck_blocked";
 
 export type SdlcLoopOutboxActionType =
   | "publish_status_comment"

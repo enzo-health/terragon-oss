@@ -15,6 +15,7 @@ import {
   getActiveSdlcLoopsForGithubPR,
   transitionActiveSdlcLoopsForGithubPREvent,
 } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 import * as schema from "@terragon/shared/db/schema";
 import { eq } from "drizzle-orm";
 import { env } from "@terragon/env/apps-www";
@@ -39,6 +40,16 @@ vi.mock("@terragon/shared/model/delivery-loop", async () => {
     ...actual,
     getActiveSdlcLoopsForGithubPR: vi.fn(),
     transitionActiveSdlcLoopsForGithubPREvent: vi.fn(),
+  };
+});
+
+vi.mock("@terragon/shared/delivery-loop/store/workflow-store", async () => {
+  const actual = await vi.importActual<
+    typeof import("@terragon/shared/delivery-loop/store/workflow-store")
+  >("@terragon/shared/delivery-loop/store/workflow-store");
+  return {
+    ...actual,
+    getActiveWorkflowForGithubPR: vi.fn(),
   };
 });
 
@@ -112,6 +123,7 @@ describe("GitHub webhook route", () => {
       undefined as unknown as Awaited<ReturnType<typeof getOctokitForApp>>,
     );
     vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValue([]);
+    vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValue([]);
     vi.mocked(transitionActiveSdlcLoopsForGithubPREvent).mockResolvedValue({
       totalLoops: 0,
       updatedCount: 0,
@@ -804,10 +816,10 @@ describe("GitHub webhook route", () => {
 
     it("fans out review feedback routing to each enrolled loop user on the PR", async () => {
       const githubPR = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
-        { id: "loop-1", userId: "loop-user-a" },
-        { id: "loop-2", userId: "loop-user-b" },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
+        { id: "wf-1", userId: "loop-user-a" },
+        { id: "wf-2", userId: "loop-user-b" },
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const request = await createMockRequest(
         createValidPullRequestReviewBody({
           repoFullName: githubPR.repoFullName,
@@ -1269,10 +1281,10 @@ describe("GitHub webhook route", () => {
 
     it("fans out review-comment feedback routing to each enrolled loop user on the PR", async () => {
       const githubPR = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
-        { id: "loop-1", userId: "loop-user-a" },
-        { id: "loop-2", userId: "loop-user-b" },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
+        { id: "wf-1", userId: "loop-user-a" },
+        { id: "wf-2", userId: "loop-user-b" },
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const request = await createMockRequest(
         createValidPullRequestReviewCommentBody({
           repoFullName: githubPR.repoFullName,
@@ -1499,12 +1511,12 @@ describe("GitHub webhook route", () => {
 
     it("routes successful check runs only when an SDLC loop is enrolled", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-id",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-run-success-enrolled";
       const body = createCheckRunBody({
         repoFullName: pr.repoFullName,
@@ -1539,12 +1551,12 @@ describe("GitHub webhook route", () => {
 
     it("attaches trusted CI snapshot metadata for successful check runs", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-id",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       vi.mocked(getOctokitForApp).mockResolvedValueOnce({
         rest: {
           checks: {
@@ -1597,12 +1609,12 @@ describe("GitHub webhook route", () => {
 
     it("skips CI snapshot metadata when check-runs response is truncated", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-id",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       vi.mocked(getOctokitForApp).mockResolvedValueOnce({
         rest: {
           checks: {
@@ -1654,12 +1666,12 @@ describe("GitHub webhook route", () => {
 
     it("hydrates CI snapshot metadata across paginated check-runs responses", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-id",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const listForRef = vi
         .fn()
         .mockResolvedValueOnce({
@@ -1731,16 +1743,16 @@ describe("GitHub webhook route", () => {
 
     it("routes successful check runs to each enrolled loop user", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-a",
         },
         {
-          id: "loop-2",
+          id: "wf-2",
           userId: "loop-user-b",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-run-success-multi-loop";
       const request = await createMockRequest(
         createCheckRunBody({
@@ -1995,12 +2007,12 @@ describe("GitHub webhook route", () => {
 
     it("routes successful check suites only when an SDLC loop is enrolled", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-id",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-suite-success-enrolled";
       const body = createCheckSuiteBody({
         repoFullName: pr.repoFullName,
@@ -2035,16 +2047,16 @@ describe("GitHub webhook route", () => {
 
     it("routes successful check suites to each enrolled loop user", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveSdlcLoopsForGithubPR).mockResolvedValueOnce([
+      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
         {
-          id: "loop-1",
+          id: "wf-1",
           userId: "loop-user-a",
         },
         {
-          id: "loop-2",
+          id: "wf-2",
           userId: "loop-user-b",
         },
-      ] as Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>);
+      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-suite-success-multi-loop";
       const request = await createMockRequest(
         createCheckSuiteBody({

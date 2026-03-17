@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { DB } from "../../db";
 import * as schema from "../../db/schema";
 import type {
@@ -5,6 +6,8 @@ import type {
   SdlcCiGateStatus,
   SdlcCiRequiredCheckSource,
 } from "../../db/types";
+import type { GateVerdict } from "../../delivery-loop/domain/events";
+import type { GitSha } from "../../delivery-loop/domain/workflow";
 import type { SdlcGateLoopUpdateOutcome } from "./guarded-state";
 import {
   persistGuardedGateLoopState,
@@ -23,6 +26,23 @@ export type PersistSdlcCiGateEvaluationResult = {
   loopUpdateOutcome: SdlcGateLoopUpdateOutcome;
 };
 
+/** Convert a CI gate persistence result to a v2 GateVerdict */
+export function toCiGateVerdict(
+  result: PersistSdlcCiGateEvaluationResult,
+  headSha: string,
+  loopVersion: number,
+): GateVerdict {
+  return {
+    gate: "ci",
+    passed: result.gatePassed,
+    event: result.gatePassed ? "gate_passed" : "gate_blocked",
+    runId: result.runId,
+    headSha: headSha as GitSha,
+    loopVersion,
+    findingCount: result.failingRequiredChecks.length,
+  };
+}
+
 export async function persistSdlcCiGateEvaluation({
   db,
   loopId,
@@ -36,6 +56,7 @@ export async function persistSdlcCiGateEvaluation({
   failingChecks = [],
   provenance,
   normalizationVersion = 1,
+  idempotencyKey,
   now = new Date(),
 }: {
   db: DB;
@@ -50,9 +71,28 @@ export async function persistSdlcCiGateEvaluation({
   failingChecks?: string[];
   provenance?: Record<string, unknown>;
   normalizationVersion?: number;
+  idempotencyKey?: string;
   now?: Date;
 }): Promise<PersistSdlcCiGateEvaluationResult> {
   return await db.transaction(async (tx) => {
+    if (idempotencyKey) {
+      const existing = await tx.query.sdlcCiGateRun.findFirst({
+        where: eq(schema.sdlcCiGateRun.idempotencyKey, idempotencyKey),
+      });
+      if (existing) {
+        return {
+          runId: existing.id,
+          status: existing.status,
+          gatePassed: existing.gatePassed,
+          requiredCheckSource: existing.requiredCheckSource,
+          requiredChecks: existing.requiredChecks ?? [],
+          failingRequiredChecks: existing.failingRequiredChecks ?? [],
+          shouldQueueFollowUp: false,
+          loopUpdateOutcome: "updated",
+        };
+      }
+    }
+
     const normalizedRuleset = normalizeCheckNames(rulesetChecks);
     const normalizedBranchProtection = normalizeCheckNames(
       branchProtectionChecks,
@@ -99,6 +139,7 @@ export async function persistSdlcCiGateEvaluation({
         errorCode: hasCapabilityError
           ? `ci_capability_${capabilityState}`
           : null,
+        idempotencyKey: idempotencyKey ?? null,
         createdAt: now,
         updatedAt: now,
       })
@@ -119,6 +160,7 @@ export async function persistSdlcCiGateEvaluation({
           errorCode: hasCapabilityError
             ? `ci_capability_${capabilityState}`
             : null,
+          idempotencyKey: idempotencyKey ?? null,
           updatedAt: now,
         },
       })

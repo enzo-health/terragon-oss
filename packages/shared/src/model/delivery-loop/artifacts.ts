@@ -17,6 +17,7 @@ import type {
   SdlcPlanTaskStatus,
   SdlcPlanTaskCompletedBy,
   SdlcPlanTaskCompletionEvidence,
+  SdlcPhaseArtifact,
 } from "../../db/types";
 import type { DeliveryLoopResumableState } from "./types";
 import type { SdlcLoopTransitionEvent } from "./state-constants";
@@ -106,6 +107,7 @@ export async function createPlanArtifactForLoop({
   payload,
   generatedBy = "agent",
   status = "generated",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -114,6 +116,7 @@ export async function createPlanArtifactForLoop({
   payload: SdlcPlanSpecPayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
@@ -146,6 +149,7 @@ export async function createPlanArtifactForLoop({
         status,
         generatedBy,
         payload,
+        workflowId: workflowId ?? null,
         createdAt: now,
         updatedAt: now,
       })
@@ -422,6 +426,7 @@ async function createHeadScopedArtifact({
   payload,
   generatedBy = "system",
   status = "accepted",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -433,6 +438,7 @@ async function createHeadScopedArtifact({
   payload: SdlcArtifactPayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
@@ -466,6 +472,7 @@ async function createHeadScopedArtifact({
         status,
         generatedBy,
         payload,
+        workflowId: workflowId ?? null,
         createdAt: now,
         updatedAt: now,
       })
@@ -497,6 +504,7 @@ export async function createImplementationArtifactForHead({
   payload,
   generatedBy = "system",
   status = "accepted",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -506,6 +514,7 @@ export async function createImplementationArtifactForHead({
   payload: SdlcImplementationSnapshotPayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await createHeadScopedArtifact({
@@ -518,6 +527,7 @@ export async function createImplementationArtifactForHead({
     payload,
     generatedBy,
     status,
+    workflowId,
     now,
   });
 }
@@ -530,6 +540,7 @@ export async function createReviewBundleArtifactForHead({
   payload,
   generatedBy = "system",
   status = "accepted",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -539,6 +550,7 @@ export async function createReviewBundleArtifactForHead({
   payload: SdlcReviewBundlePayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await createHeadScopedArtifact({
@@ -551,6 +563,7 @@ export async function createReviewBundleArtifactForHead({
     payload,
     generatedBy,
     status,
+    workflowId,
     now,
   });
 }
@@ -563,6 +576,7 @@ export async function createUiSmokeArtifactForHead({
   payload,
   generatedBy = "system",
   status = "accepted",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -572,6 +586,7 @@ export async function createUiSmokeArtifactForHead({
   payload: SdlcUiSmokePayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await createHeadScopedArtifact({
@@ -584,6 +599,7 @@ export async function createUiSmokeArtifactForHead({
     payload,
     generatedBy,
     status,
+    workflowId,
     now,
   });
 }
@@ -595,6 +611,7 @@ export async function createPrLinkArtifact({
   payload,
   generatedBy = "system",
   status = "accepted",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -603,6 +620,7 @@ export async function createPrLinkArtifact({
   payload: SdlcPrLinkPayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
@@ -635,6 +653,7 @@ export async function createPrLinkArtifact({
         status,
         generatedBy,
         payload,
+        workflowId: workflowId ?? null,
         createdAt: now,
         updatedAt: now,
       })
@@ -655,6 +674,7 @@ export async function createBabysitEvaluationArtifactForHead({
   payload,
   generatedBy = "system",
   status = "accepted",
+  workflowId,
   now = new Date(),
 }: {
   db: DB;
@@ -664,6 +684,7 @@ export async function createBabysitEvaluationArtifactForHead({
   payload: SdlcBabysitEvaluationPayload;
   generatedBy?: SdlcArtifactGeneratedBy;
   status?: SdlcArtifactStatus;
+  workflowId?: string | null;
   now?: Date;
 }) {
   return await createHeadScopedArtifact({
@@ -676,6 +697,7 @@ export async function createBabysitEvaluationArtifactForHead({
     payload,
     generatedBy,
     status,
+    workflowId,
     now,
   });
 }
@@ -779,4 +801,24 @@ export async function transitionSdlcLoopStateWithArtifact({
 
     return transitionResult;
   });
+}
+
+export async function getArtifactsForWorkflow(params: {
+  db: DB;
+  workflowId: string;
+  phase?: string;
+  status?: string;
+}): Promise<SdlcPhaseArtifact[]> {
+  const conditions = [
+    eq(schema.sdlcPhaseArtifact.workflowId, params.workflowId),
+  ];
+  if (params.phase)
+    conditions.push(eq(schema.sdlcPhaseArtifact.phase, params.phase as any));
+  if (params.status)
+    conditions.push(eq(schema.sdlcPhaseArtifact.status, params.status as any));
+  return params.db
+    .select()
+    .from(schema.sdlcPhaseArtifact)
+    .where(and(...conditions))
+    .orderBy(desc(schema.sdlcPhaseArtifact.createdAt));
 }

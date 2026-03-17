@@ -23,11 +23,11 @@ import {
   IssueTriggerConfig,
 } from "@terragon/shared/automations";
 import {
-  getActiveSdlcLoopsForGithubPR,
   transitionActiveSdlcLoopsForGithubPREvent,
   activeSdlcLoopStateList,
 } from "@terragon/shared/model/delivery-loop";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { and, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import {
   runPullRequestAutomation,
@@ -105,7 +105,7 @@ function getRouteUserIdsForReviewSignal({
 }
 
 function getUniqueUserIdsFromActiveLoops(
-  activeLoops: Awaited<ReturnType<typeof getActiveSdlcLoopsForGithubPR>>,
+  activeLoops: Array<{ userId: string }>,
 ): string[] {
   const seenUserIds = new Set<string>();
   const routeUserIds: string[] = [];
@@ -191,7 +191,7 @@ async function syncSdlcLoopStateForPullRequestLifecycle({
   }
 }
 
-type CiSignalSnapshot = {
+export type CiSignalSnapshot = {
   checkNames: string[];
   failingChecks: string[];
   complete: boolean;
@@ -237,7 +237,7 @@ function buildCiSignalSnapshotFromCheckRuns(
   };
 }
 
-async function fetchCiSignalSnapshotForHeadSha({
+export async function fetchCiSignalSnapshotForHeadSha({
   repoFullName,
   headSha,
 }: {
@@ -740,12 +740,13 @@ export async function handlePullRequestReviewCommentEvent(
     const commentUsername = event.comment.user.login;
     const commentUserId = event.comment.user.id;
     const isMention = isAppMentioned(commentBody);
-    const activeLoops = await getActiveSdlcLoopsForGithubPR({
+    const activeWorkflows = await getActiveWorkflowForGithubPR({
       db,
       repoFullName,
       prNumber,
     });
-    const enrolledLoopUserIds = getUniqueUserIdsFromActiveLoops(activeLoops);
+    const enrolledLoopUserIds =
+      getUniqueUserIdsFromActiveLoops(activeWorkflows);
     const shouldSkipFeedbackRoutingForMention =
       isMention && enrolledLoopUserIds.length === 0;
     const routeUserIds = shouldSkipFeedbackRoutingForMention
@@ -778,7 +779,7 @@ export async function handlePullRequestReviewCommentEvent(
               console.log("GitHub feedback routed from review comment", {
                 repoFullName,
                 prNumber,
-                enrolledLoopCount: activeLoops.length,
+                enrolledWorkflowCount: activeWorkflows.length,
                 enrolledLoopUserCount: enrolledLoopUserIds.length,
                 routeUserId: routeUserId ?? null,
                 ...feedbackRoutingResult,
@@ -884,12 +885,13 @@ export async function handlePullRequestReviewEvent(
           ? "review_state_heuristic"
           : undefined;
 
-    const activeLoops = await getActiveSdlcLoopsForGithubPR({
+    const activeWorkflows = await getActiveWorkflowForGithubPR({
       db,
       repoFullName,
       prNumber,
     });
-    const enrolledLoopUserIds = getUniqueUserIdsFromActiveLoops(activeLoops);
+    const enrolledLoopUserIds =
+      getUniqueUserIdsFromActiveLoops(activeWorkflows);
     const shouldSkipFeedbackRoutingForMention =
       isMention && enrolledLoopUserIds.length === 0;
     const routeUserIds = shouldSkipFeedbackRoutingForMention
@@ -929,7 +931,7 @@ export async function handlePullRequestReviewEvent(
                 unresolvedThreadCount: unresolvedThreadCount ?? null,
                 unresolvedThreadCountSource:
                   unresolvedThreadCountSource ?? null,
-                enrolledLoopCount: activeLoops.length,
+                enrolledWorkflowCount: activeWorkflows.length,
                 enrolledLoopUserCount: enrolledLoopUserIds.length,
                 routeUserId: routeUserId ?? null,
                 ...feedbackRoutingResult,
@@ -1008,18 +1010,35 @@ async function resolvePrNumbersFromSha({
       }
     })(),
     (async (): Promise<number[]> => {
-      const loops = await db.query.sdlcLoop.findMany({
-        where: and(
-          eq(schema.sdlcLoop.repoFullName, repoFullName),
-          eq(schema.sdlcLoop.currentHeadSha, headSha),
-          inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
-          isNotNull(schema.sdlcLoop.prNumber),
-        ),
-        columns: { prNumber: true },
-      });
-      return loops
-        .map((l) => l.prNumber)
-        .filter((n): n is number => n !== null);
+      const [loops, workflows] = await Promise.all([
+        db.query.sdlcLoop.findMany({
+          where: and(
+            eq(schema.sdlcLoop.repoFullName, repoFullName),
+            eq(schema.sdlcLoop.currentHeadSha, headSha),
+            inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
+            isNotNull(schema.sdlcLoop.prNumber),
+          ),
+          columns: { prNumber: true },
+        }),
+        db.query.deliveryWorkflow.findMany({
+          where: and(
+            eq(schema.deliveryWorkflow.repoFullName, repoFullName),
+            eq(schema.deliveryWorkflow.currentHeadSha, headSha),
+            notInArray(schema.deliveryWorkflow.kind, [
+              "done",
+              "stopped",
+              "terminated",
+            ]),
+            isNotNull(schema.deliveryWorkflow.prNumber),
+          ),
+          columns: { prNumber: true },
+        }),
+      ]);
+      const allPrNumbers = [
+        ...loops.map((l) => l.prNumber),
+        ...workflows.map((w) => w.prNumber),
+      ];
+      return [...new Set(allPrNumbers.filter((n): n is number => n !== null))];
     })(),
   ]);
 
@@ -1077,13 +1096,13 @@ export async function handleCheckRunEvent(
 
         await Promise.all(
           prNumbers.map(async (prNumber) => {
-            const activeLoops = await getActiveSdlcLoopsForGithubPR({
+            const activeWorkflows = await getActiveWorkflowForGithubPR({
               db,
               repoFullName,
               prNumber,
             });
             const enrolledLoopUserIds =
-              getUniqueUserIdsFromActiveLoops(activeLoops);
+              getUniqueUserIdsFromActiveLoops(activeWorkflows);
             const routeUserIds = getRouteUserIdsForCheckSignal({
               enrolledLoopUserIds,
               signalOutcome,
@@ -1122,7 +1141,7 @@ export async function handleCheckRunEvent(
                   checkRunId: checkRun.id,
                   conclusion: checkRun.conclusion,
                   signalOutcome,
-                  enrolledLoopCount: activeLoops.length,
+                  enrolledWorkflowCount: activeWorkflows.length,
                   enrolledLoopUserCount: enrolledLoopUserIds.length,
                   ciSnapshotComplete: ciSnapshot?.complete ?? null,
                   ciSnapshotFailingChecksCount:
@@ -1200,13 +1219,13 @@ export async function handleCheckSuiteEvent(
 
         await Promise.all(
           prNumbers.map(async (prNumber) => {
-            const activeLoops = await getActiveSdlcLoopsForGithubPR({
+            const activeWorkflows = await getActiveWorkflowForGithubPR({
               db,
               repoFullName,
               prNumber,
             });
             const enrolledLoopUserIds =
-              getUniqueUserIdsFromActiveLoops(activeLoops);
+              getUniqueUserIdsFromActiveLoops(activeWorkflows);
             const routeUserIds = getRouteUserIdsForCheckSignal({
               enrolledLoopUserIds,
               signalOutcome,
@@ -1244,7 +1263,7 @@ export async function handleCheckSuiteEvent(
                   checkSuiteId: checkSuite.id,
                   conclusion: checkSuite.conclusion,
                   signalOutcome,
-                  enrolledLoopCount: activeLoops.length,
+                  enrolledWorkflowCount: activeWorkflows.length,
                   enrolledLoopUserCount: enrolledLoopUserIds.length,
                   ciSnapshotComplete: ciSnapshot?.complete ?? null,
                   ciSnapshotFailingChecksCount:

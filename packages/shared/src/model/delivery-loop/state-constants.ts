@@ -118,6 +118,8 @@ export type DeliveryLoopDispatchIntent = {
   updatedAt: Date;
   lastError: string | null;
   lastFailureCategory: DeliveryLoopFailureCategory | null;
+  gate?: string;
+  headSha?: string;
 };
 
 export type SdlcLoopTransitionEvent =

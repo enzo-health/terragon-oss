@@ -8,6 +8,7 @@ import {
   transitionSdlcLoopStateWithArtifact,
   type SdlcTransitionWithArtifactOutcome,
 } from "@terragon/shared/model/delivery-loop";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { ParsedPlanSpec } from "./parse-plan-spec";
 
 type PlanningLoopContext = {
@@ -179,6 +180,57 @@ async function transitionPlanningArtifactToImplementing(params: {
     };
   }
 
+  // Bridge: write a plan_completed signal to the v2 inbox so the
+  // coordinator tick can advance the v2 workflow from planning →
+  // implementing. The v1 checkpoint pipeline validated the plan;
+  // this signal is the handoff to v2.
+  // Retry once since canonicalCauseId makes this idempotent via onConflictDoNothing.
+  const { appendSignalToInbox } = await import(
+    "@terragon/shared/delivery-loop/store/signal-inbox-store"
+  );
+  let signalWritten = false;
+  for (let attempt = 0; attempt < 2 && !signalWritten; attempt++) {
+    try {
+      await appendSignalToInbox({
+        db: params.db,
+        loopId: params.loopId,
+        causeType: "human_resume",
+        payload: {
+          source: "human",
+          event: {
+            kind: "plan_approved",
+            artifactId: params.artifactId,
+          },
+        },
+        canonicalCauseId: `plan-promoted:${params.loopId}:${params.artifactId}`,
+      });
+      signalWritten = true;
+    } catch (signalErr) {
+      if (attempt === 0) {
+        console.warn("[promote-plan] v2 signal write failed, retrying once", {
+          loopId: params.loopId,
+          artifactId: params.artifactId,
+          error:
+            signalErr instanceof Error ? signalErr.message : String(signalErr),
+        });
+        await new Promise((r) => setTimeout(r, 200));
+      } else {
+        console.error(
+          "[promote-plan] v2 signal write failed after retry — v1/v2 state may diverge",
+          {
+            loopId: params.loopId,
+            artifactId: params.artifactId,
+            error:
+              signalErr instanceof Error
+                ? signalErr.message
+                : String(signalErr),
+          },
+        );
+        // v1 transition already committed — v2 coordinator will re-sync via cron/babysit
+      }
+    }
+  }
+
   return {
     outcome: "promoted",
     artifactId: params.artifactId,
@@ -192,6 +244,7 @@ async function createPlanningArtifactFromParsedPlan(params: {
   loopVersion: number;
   parsedPlan: ParsedPlanSpec & { source?: PlanSpecSource };
   status: "generated" | "accepted";
+  workflowId?: string | null;
 }) {
   const planArtifact = await createPlanArtifactForLoop({
     db: params.db,
@@ -199,6 +252,7 @@ async function createPlanningArtifactFromParsedPlan(params: {
     loopVersion: params.loopVersion,
     status: params.status,
     generatedBy: "agent",
+    workflowId: params.workflowId,
     payload: {
       planText: params.parsedPlan.planText,
       tasks: params.parsedPlan.tasks,
@@ -312,7 +366,16 @@ export async function promotePlanToImplementing(params: {
   parsedPlan: ParsedPlanSpec & { source?: PlanSpecSource };
   mode: PromotePlanMode;
   approvedByUserId?: string;
+  threadId?: string;
 }): Promise<PromotePlanToImplementingResult> {
+  const v2Workflow = params.threadId
+    ? await getActiveWorkflowForThread({
+        db: params.db,
+        threadId: params.threadId,
+      })
+    : null;
+  const workflowId = v2Workflow?.id ?? null;
+
   if (params.mode === "checkpoint") {
     const loopVersion = nextLoopVersion(params.loop.loopVersion);
     const artifactStatus =
@@ -325,6 +388,7 @@ export async function promotePlanToImplementing(params: {
       loopVersion,
       parsedPlan: params.parsedPlan,
       status: artifactStatus,
+      workflowId,
     });
 
     if (params.loop.planApprovalPolicy === "human_required") {
@@ -360,6 +424,7 @@ export async function promotePlanToImplementing(params: {
         loopVersion: nextLoopVersion(params.loop.loopVersion),
         parsedPlan: params.parsedPlan,
         status: "generated",
+        workflowId,
       });
       artifact = created;
     }
@@ -425,6 +490,7 @@ export async function promotePlanToImplementing(params: {
     loopVersion,
     parsedPlan: params.parsedPlan,
     status: "accepted",
+    workflowId,
   });
 
   return await transitionPlanningArtifactToImplementing({

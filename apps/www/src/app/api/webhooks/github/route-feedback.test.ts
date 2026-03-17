@@ -17,8 +17,6 @@ import {
 } from "@/server-lib/delivery-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
 import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 
 const {
   postHogCapture,
@@ -98,14 +96,22 @@ vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
   isSdlcLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
-vi.mock("@/server-lib/delivery-loop/signal-inbox", () => ({
-  SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED:
-    "feedback_follow_up_enqueue_failed",
-  runBestEffortSdlcSignalInboxTick: vi.fn(),
+vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+  getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
 }));
 
-vi.mock("@/server-lib/delivery-loop/publication", () => ({
-  runBestEffortSdlcPublicationCoordinator: vi.fn(),
+vi.mock("@/server-lib/delivery-loop/coordinator/enrollment-bridge", () => ({
+  ensureV2WorkflowExists: vi
+    .fn()
+    .mockResolvedValue({ workflowId: "wf-backfilled", created: true }),
+}));
+
+vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
+  runCoordinatorTick: vi.fn().mockResolvedValue({
+    transitioned: false,
+    signalsProcessed: 0,
+    workItemsScheduled: 0,
+  }),
 }));
 
 describe("routeGithubFeedbackOrSpawnThread", () => {
@@ -132,14 +138,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       null,
     );
     vi.mocked(isSdlcLoopEnrollmentAllowedForThread).mockReturnValue(true);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: false,
-      reason: "no_unprocessed_signal",
-    });
-    vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
-      executed: false,
-      reason: "no_eligible_action",
-    });
     vi.mocked(maybeBatchThreads).mockImplementation(
       async ({ createNewThread }) => {
         const created = await createNewThread();
@@ -194,7 +192,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       repoFullName: "owner/repo",
       prNumber: 42,
       threadId: "thread-1",
-      initialState: "implementing",
     });
     const routedPart = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0]
       .messages[0]?.parts[0];
@@ -324,7 +321,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       repoFullName: "owner/repo",
       prNumber: 42,
       threadId: "new-thread-id",
-      initialState: "planning",
     });
   });
 
@@ -601,30 +597,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
         }),
       }),
     );
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "github-feedback:check_run.completed:no-delivery:42",
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: null,
-        manualIntentAllowed: true,
-        iterationCount: 7,
-      },
-    });
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "github-feedback:check_run.completed:no-delivery:42",
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: null,
-        manualIntentAllowed: true,
-        iterationCount: 7,
-      },
-    });
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
@@ -673,78 +645,55 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
         }),
       }),
     );
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "github-feedback:check_suite.completed:no-delivery:42",
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: null,
-        manualIntentAllowed: true,
-        iterationCount: 5,
-      },
-    });
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "github-feedback:check_suite.completed:no-delivery:42",
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: null,
-        manualIntentAllowed: true,
-        iterationCount: 5,
-      },
-    });
   });
 
-  it("throws to force webhook retry when enrolled-loop follow-up enqueue fails", async () => {
+  it("suppresses direct routing and enqueues signal when enrolled loop has no loopVersion", async () => {
     vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
       id: "loop-1",
       threadId: "loop-thread-id",
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValueOnce({
-      processed: false,
-      reason: "feedback_follow_up_enqueue_failed",
+    const result = await routeGithubFeedbackOrSpawnThread({
+      userId: "user-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "check_run.completed",
+      checkRunId: 99,
+      checkSummary: "CI failed",
+      failureDetails: "2 tests failed.",
     });
-
-    await expect(
-      routeGithubFeedbackOrSpawnThread({
-        userId: "user-1",
-        repoFullName: "owner/repo",
-        prNumber: 42,
-        eventType: "check_run.completed",
-        checkRunId: 99,
-        checkSummary: "CI failed",
-        failureDetails: "2 tests failed.",
-      }),
-    ).rejects.toThrow("retrying GitHub delivery");
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      mode: "suppressed_enrolled_loop",
+      reason: "sdlc-loop-enrolled",
+      sdlcLoopId: "loop-1",
+      threadId: "loop-thread-id",
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
-  it("throws to force webhook retry when enrolled-loop inbox tick throws", async () => {
+  it("suppresses direct routing and enqueues signal when enrolled loop has loopVersion", async () => {
     vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
       id: "loop-1",
       threadId: "loop-thread-id",
       loopVersion: 9,
     } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockRejectedValueOnce(
-      new Error("temporary inbox outage"),
-    );
-
-    await expect(
-      routeGithubFeedbackOrSpawnThread({
-        userId: "user-1",
-        repoFullName: "owner/repo",
-        prNumber: 42,
-        eventType: "check_run.completed",
-        checkRunId: 99,
-        checkSummary: "CI failed",
-        failureDetails: "2 tests failed.",
-      }),
-    ).rejects.toThrow("retrying GitHub delivery");
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
+    const result = await routeGithubFeedbackOrSpawnThread({
+      userId: "user-1",
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "check_run.completed",
+      checkRunId: 99,
+      checkSummary: "CI failed",
+      failureDetails: "2 tests failed.",
+    });
+    expect(result).toEqual({
+      mode: "suppressed_enrolled_loop",
+      reason: "sdlc-loop-enrolled",
+      sdlcLoopId: "loop-1",
+      threadId: "loop-thread-id",
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
   it("falls back to direct routing when enrolled loop thread is not routable", async () => {
@@ -777,8 +726,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       reason: "existing-unarchived-thread",
     });
     expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
 

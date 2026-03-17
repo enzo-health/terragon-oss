@@ -107,6 +107,8 @@ function serializeIntent(
     updatedAt: intent.updatedAt.toISOString(),
     lastError: intent.lastError ?? "",
     lastFailureCategory: intent.lastFailureCategory ?? "",
+    gate: intent.gate ?? "",
+    headSha: intent.headSha ?? "",
   };
 
   if (intent.selfDispatchReplay.kind === "none") {
@@ -287,6 +289,8 @@ function deserializeIntent(
     lastError: raw.lastError || null,
     lastFailureCategory:
       (raw.lastFailureCategory as DeliveryLoopFailureCategory) || null,
+    gate: raw.gate || undefined,
+    headSha: raw.headSha || undefined,
     selfDispatchReplay: deserializeSelfDispatchReplayState(raw),
   };
 }
@@ -305,6 +309,8 @@ export type CreateDispatchIntentParams = {
   dispatchMechanism: DeliveryLoopDispatchMechanism;
   runId: string;
   maxRetries: number;
+  gate?: string;
+  headSha?: string;
 };
 
 /**
@@ -348,6 +354,8 @@ export async function createDispatchIntent(
     updatedAt: now,
     lastError: null,
     lastFailureCategory: null,
+    gate: params.gate,
+    headSha: params.headSha,
     selfDispatchReplay: {
       kind: "none",
     },

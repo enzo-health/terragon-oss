@@ -1061,9 +1061,7 @@ describe("daemon", () => {
   it("emits v2 daemon envelopes with stable runId and monotonic seq when coordinator routing is enabled", async () => {
     const inputMessage: DaemonMessageClaude = {
       ...TEST_INPUT_MESSAGE,
-      featureFlags: {
-        sdlcLoopCoordinatorRouting: true,
-      },
+      featureFlags: {},
     };
 
     await daemon.start();
@@ -1116,9 +1114,7 @@ describe("daemon", () => {
 
     const inputMessage: DaemonMessageClaude = {
       ...TEST_INPUT_MESSAGE,
-      featureFlags: {
-        sdlcLoopCoordinatorRouting: true,
-      },
+      featureFlags: {},
     };
 
     await daemon.start();
@@ -1145,28 +1141,25 @@ describe("daemon", () => {
     expect(firstPayload.eventId).toBe(secondPayload.eventId);
   });
 
-  it("keeps coordinator routing behavior pinned to the run snapshot even when other runs update feature flags", async () => {
+  it("emits v2 envelopes for all concurrent threads", async () => {
     await daemon.start();
 
     await writeToUnixSocket({
       unixSocketPath: runtime.unixSocketPath,
       dataStr: JSON.stringify({
         ...TEST_INPUT_MESSAGE,
-        threadId: "THREAD_WITH_V2",
-        threadChatId: "CHAT_WITH_V2",
-        token: "TOKEN_WITH_V2",
-        featureFlags: {
-          sdlcLoopCoordinatorRouting: true,
-        },
+        threadId: "THREAD_A",
+        threadChatId: "CHAT_A",
+        token: "TOKEN_A",
       } satisfies DaemonMessageClaude),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
 
-    const chatWithV2Stdout =
+    const chatAStdout =
       spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
-    expect(chatWithV2Stdout).toBeTypeOf("function");
+    expect(chatAStdout).toBeTypeOf("function");
 
-    chatWithV2Stdout?.(
+    chatAStdout?.(
       JSON.stringify({
         role: "assistant",
         content: "THREAD_A_MESSAGE_1",
@@ -1179,27 +1172,24 @@ describe("daemon", () => {
       dataStr: JSON.stringify({
         ...TEST_INPUT_MESSAGE,
         prompt: "second thread",
-        threadId: "THREAD_NO_V2",
-        threadChatId: "CHAT_NO_V2",
-        token: "TOKEN_NO_V2",
-        featureFlags: {
-          sdlcLoopCoordinatorRouting: false,
-        },
+        threadId: "THREAD_B",
+        threadChatId: "CHAT_B",
+        token: "TOKEN_B",
       } satisfies DaemonMessageClaude),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
 
-    chatWithV2Stdout?.(
+    chatAStdout?.(
       JSON.stringify({
         role: "assistant",
         content: "THREAD_A_MESSAGE_2",
       }),
     );
 
-    const chatWithoutV2Stdout =
+    const chatBStdout =
       spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
-    expect(chatWithoutV2Stdout).toBeTypeOf("function");
-    chatWithoutV2Stdout?.(
+    expect(chatBStdout).toBeTypeOf("function");
+    chatBStdout?.(
       JSON.stringify({
         role: "assistant",
         content: "THREAD_B_MESSAGE_1",
@@ -1207,21 +1197,21 @@ describe("daemon", () => {
     );
     await sleep(30);
 
-    const chatWithV2Payloads = serverPostMock.mock.calls
+    const chatAPayloads = serverPostMock.mock.calls
       .map((call) => call[0])
-      .filter((payload) => payload.threadChatId === "CHAT_WITH_V2");
-    expect(chatWithV2Payloads).toHaveLength(2);
-    expect(chatWithV2Payloads[0]?.payloadVersion).toBe(2);
-    expect(chatWithV2Payloads[1]?.payloadVersion).toBe(2);
-    expect(chatWithV2Payloads[0]?.runId).toBe(chatWithV2Payloads[1]?.runId);
-    expect(chatWithV2Payloads[0]?.seq).toBe(0);
-    expect(chatWithV2Payloads[1]?.seq).toBe(1);
+      .filter((payload) => payload.threadChatId === "CHAT_A");
+    expect(chatAPayloads).toHaveLength(2);
+    expect(chatAPayloads[0]?.payloadVersion).toBe(2);
+    expect(chatAPayloads[1]?.payloadVersion).toBe(2);
+    expect(chatAPayloads[0]?.runId).toBe(chatAPayloads[1]?.runId);
+    expect(chatAPayloads[0]?.seq).toBe(0);
+    expect(chatAPayloads[1]?.seq).toBe(1);
 
-    const chatWithoutV2Payloads = serverPostMock.mock.calls
+    const chatBPayloads = serverPostMock.mock.calls
       .map((call) => call[0])
-      .filter((payload) => payload.threadChatId === "CHAT_NO_V2");
-    expect(chatWithoutV2Payloads).toHaveLength(1);
-    expect(chatWithoutV2Payloads[0]?.payloadVersion).toBeUndefined();
+      .filter((payload) => payload.threadChatId === "CHAT_B");
+    expect(chatBPayloads).toHaveLength(1);
+    expect(chatBPayloads[0]?.payloadVersion).toBe(2);
   });
 
   it("sets Anthropic proxy environment variables when using built-in credits", async () => {
@@ -1591,9 +1581,7 @@ describe("daemon", () => {
       unixSocketPath: runtime.unixSocketPath,
       dataStr: JSON.stringify({
         ...TEST_INPUT_MESSAGE,
-        featureFlags: {
-          sdlcLoopCoordinatorRouting: true,
-        },
+        featureFlags: {},
       } satisfies DaemonMessageClaude),
     });
     await sleep();
@@ -1636,9 +1624,7 @@ describe("daemon", () => {
       unixSocketPath: runtime.unixSocketPath,
       dataStr: JSON.stringify({
         ...TEST_INPUT_MESSAGE,
-        featureFlags: {
-          sdlcLoopCoordinatorRouting: true,
-        },
+        featureFlags: {},
       } satisfies DaemonMessageClaude),
     });
     await sleep();
@@ -1703,9 +1689,7 @@ describe("daemon", () => {
 
     const v2InputMessage: DaemonMessageClaude = {
       ...TEST_INPUT_MESSAGE,
-      featureFlags: {
-        sdlcLoopCoordinatorRouting: true,
-      },
+      featureFlags: {},
     };
 
     await daemon.start();
@@ -1751,9 +1735,7 @@ describe("daemon", () => {
       unixSocketPath: runtime.unixSocketPath,
       dataStr: JSON.stringify({
         ...TEST_INPUT_MESSAGE,
-        featureFlags: {
-          sdlcLoopCoordinatorRouting: true,
-        },
+        featureFlags: {},
       } satisfies DaemonMessageClaude),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
@@ -1779,9 +1761,7 @@ describe("daemon", () => {
       unixSocketPath: runtime.unixSocketPath,
       dataStr: JSON.stringify({
         ...TEST_INPUT_MESSAGE,
-        featureFlags: {
-          sdlcLoopCoordinatorRouting: true,
-        },
+        featureFlags: {},
       } satisfies DaemonMessageClaude),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);

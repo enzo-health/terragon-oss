@@ -2,66 +2,88 @@
 // Barrel — re-export every module in the delivery-loop directory.
 // ────────────────────────────────────────────────────────────────
 
-export * from "./types";
-export * from "./state-machine";
-export * from "./state-constants";
-export * from "./legacy-transitions";
-export * from "./enrollment";
-export * from "./artifacts";
-export * from "./lease";
-export * from "./outbox";
-export * from "./video-capture";
-export * from "./parity-metrics";
-export * from "./webhook-delivery";
-export * from "./guarded-state";
-export * from "./ci-gate-persistence";
-export * from "./review-thread-gate-persistence";
-export * from "./review-gate-persistence";
-export * from "./dispatch-intent";
+// types.ts
+export {
+  type DeliveryLoopState,
+  type SdlcLoopState,
+  type DeliveryLoopSelectedAgent,
+  type DeliveryLoopDispatchablePhase,
+  type DeliveryLoopResumableState,
+  type DeliveryLoopDispatchStatus,
+  type DeliveryLoopBlockedReasonCategory,
+  type DeliveryLoopImplementationExecution,
+  type DeliveryLoopGateExecution,
+  type DeliveryLoopBlockedState,
+  type DeliveryLoopSnapshot,
+  type DeliveryLoopCompanionFields,
+  deliveryLoopCompanionFieldDefaults,
+  assertNever,
+  normalizeBlockedReasonCategory,
+  resolveBlockedResumeTarget,
+  coerceDeliveryLoopResumableState,
+  createPlanningSnapshot,
+  createImplementingSnapshot,
+  createReviewGateSnapshot,
+  createCiGateSnapshot,
+  createUiGateSnapshot,
+  createAwaitingPrLinkSnapshot,
+  createBabysittingSnapshot,
+  createBlockedSnapshot,
+  createDoneSnapshot,
+  createStoppedSnapshot,
+  createTerminatedPrClosedSnapshot,
+  createTerminatedPrMergedSnapshot,
+  buildDeliveryLoopSnapshot,
+  buildDeliveryLoopCompanionFields,
+  buildPersistedDeliveryLoopSnapshot,
+  DELIVERY_LOOP_CANONICAL_STATES,
+  DELIVERY_LOOP_CANONICAL_STATE_SET,
+  legacyStateMapping,
+} from "./types";
 
-// ────────────────────────────────────────────────────────────────
-// Delivery Loop aliases — new canonical names for Sdlc-prefixed exports.
-// Consumers should migrate to these names over time.
-// ────────────────────────────────────────────────────────────────
+// state-machine.ts
+export {
+  getEffectiveDeliveryLoopPhase,
+  reducePersistedDeliveryLoopState,
+  type DeliveryLoopTransitionEvent,
+  type DeliveryLoopTransitionResult,
+  mapSdlcTransitionEventToDeliveryLoopTransition,
+  resolveDeliveryLoopNextState,
+  reduceDeliveryLoopSnapshot,
+} from "./state-machine";
 
-// Type aliases
-// DeliveryLoopTransitionEvent is a canonical type exported from state-machine.
-import type {
-  SdlcCanonicalCauseInput,
-  SdlcCanonicalCause,
-} from "./legacy-transitions";
-import type { SdlcGuardrailReasonCode } from "./state-constants";
-import type { SdlcTransitionWithArtifactOutcome } from "./artifacts";
-import type { SdlcLoopLeaseAcquireResult } from "./lease";
-import type { SdlcOutboxErrorClass } from "./outbox";
-import type { SdlcParityBucketStats } from "./parity-metrics";
-import type { SdlcGateLoopUpdateOutcome } from "./guarded-state";
-
-export type DeliveryLoopCanonicalCauseInput = SdlcCanonicalCauseInput;
-export type DeliveryLoopCanonicalCause = SdlcCanonicalCause;
-export type DeliveryLoopGuardrailReasonCode = SdlcGuardrailReasonCode;
-export type DeliveryLoopTransitionWithArtifactOutcome =
-  SdlcTransitionWithArtifactOutcome;
-export type DeliveryLoopLeaseAcquireResult = SdlcLoopLeaseAcquireResult;
-export type DeliveryLoopOutboxErrorClass = SdlcOutboxErrorClass;
-export type DeliveryLoopParityBucketStats = SdlcParityBucketStats;
-export type DeliveryLoopGateUpdateOutcome = SdlcGateLoopUpdateOutcome;
-
-// Constant aliases
-import { SDLC_CAUSE_IDENTITY_VERSION } from "./legacy-transitions";
-export const DELIVERY_LOOP_CAUSE_IDENTITY_VERSION = SDLC_CAUSE_IDENTITY_VERSION;
-
-// Function aliases
-import {
+// state-constants.ts
+export {
+  activeSdlcLoopStateList,
+  activeSdlcLoopStateSet,
+  terminalSdlcLoopStateList,
+  terminalSdlcLoopStateSet,
+  type DeliveryLoopFailureCategory,
+  type DeliveryLoopRetryAction,
+  DELIVERY_LOOP_FAILURE_ACTION_TABLE,
+  type DeliveryLoopExecutionClass,
+  type DeliveryLoopDispatchMechanism,
+  type DeliveryLoopDispatchIntent,
+  type SdlcLoopTransitionEvent,
+  isIncompletePlanTaskStatus,
+  isNonBlockingTerminalPlanTaskStatus,
+  type SdlcLoopArtifactPointerField,
+  phaseToLoopPointerColumn,
   isSdlcLoopTerminalState,
+  type SdlcGuardrailReasonCode,
   evaluateSdlcLoopGuardrails,
 } from "./state-constants";
-import {
-  resolveSdlcLoopNextState,
-  getSdlcOutboxSupersessionGroup,
+
+// canonical-cause.ts
+export {
+  SDLC_CAUSE_IDENTITY_VERSION,
+  type SdlcCanonicalCauseInput,
+  type SdlcCanonicalCause,
   buildSdlcCanonicalCause,
-} from "./legacy-transitions";
-import {
+} from "./canonical-cause";
+
+// enrollment.ts
+export {
   getActiveSdlcLoopForGithubPRAndUser,
   getActiveSdlcLoopsForGithubPR,
   getPreferredActiveSdlcLoopForGithubPRAndUser,
@@ -72,43 +94,109 @@ import {
   linkSdlcLoopToGithubPRForThread,
   getActiveSdlcLoopForThread,
 } from "./enrollment";
-import { transitionSdlcLoopStateWithArtifact } from "./artifacts";
-import { acquireSdlcLoopLease, releaseSdlcLoopLease } from "./lease";
-import {
-  enqueueSdlcOutboxAction,
-  claimNextSdlcOutboxActionForExecution,
-  completeSdlcOutboxActionExecution,
-} from "./outbox";
-import { transitionSdlcLoopState } from "./guarded-state";
-import { evaluateSdlcParitySlo } from "./parity-metrics";
 
-export const isDeliveryLoopTerminalState = isSdlcLoopTerminalState;
-export const resolveLegacySdlcLoopNextState = resolveSdlcLoopNextState;
-export const getDeliveryLoopOutboxSupersessionGroup =
-  getSdlcOutboxSupersessionGroup;
-export const buildDeliveryLoopCanonicalCause = buildSdlcCanonicalCause;
-export const evaluateDeliveryLoopGuardrails = evaluateSdlcLoopGuardrails;
-export const getActiveDeliveryLoopForGithubPRAndUser =
-  getActiveSdlcLoopForGithubPRAndUser;
-export const getActiveDeliveryLoopsForGithubPR = getActiveSdlcLoopsForGithubPR;
-export const getPreferredActiveDeliveryLoopForGithubPRAndUser =
-  getPreferredActiveSdlcLoopForGithubPRAndUser;
-export const getActiveDeliveryLoopForGithubPR = getActiveSdlcLoopForGithubPR;
-export const transitionActiveDeliveryLoopsForGithubPREvent =
-  transitionActiveSdlcLoopsForGithubPREvent;
-export const enrollDeliveryLoopForGithubPR = enrollSdlcLoopForGithubPR;
-export const enrollDeliveryLoopForThread = enrollSdlcLoopForThread;
-export const linkDeliveryLoopToGithubPRForThread =
-  linkSdlcLoopToGithubPRForThread;
-export const getActiveDeliveryLoopForThread = getActiveSdlcLoopForThread;
-export const transitionDeliveryLoopStateWithArtifact =
-  transitionSdlcLoopStateWithArtifact;
-export const acquireDeliveryLoopLease = acquireSdlcLoopLease;
-export const releaseDeliveryLoopLease = releaseSdlcLoopLease;
-export const enqueueDeliveryLoopOutboxAction = enqueueSdlcOutboxAction;
-export const claimNextDeliveryLoopOutboxActionForExecution =
-  claimNextSdlcOutboxActionForExecution;
-export const completeDeliveryLoopOutboxActionExecution =
-  completeSdlcOutboxActionExecution;
-export const transitionDeliveryLoopState = transitionSdlcLoopState;
-export const evaluateDeliveryLoopParitySlo = evaluateSdlcParitySlo;
+// artifacts.ts
+export {
+  getLatestAcceptedArtifact,
+  createPlanArtifactForLoop,
+  approvePlanArtifactForLoop,
+  replacePlanTasksForArtifact,
+  markPlanTasksCompletedByAgent,
+  verifyPlanTaskCompletionForHead,
+  createImplementationArtifactForHead,
+  createReviewBundleArtifactForHead,
+  createUiSmokeArtifactForHead,
+  createPrLinkArtifact,
+  createBabysitEvaluationArtifactForHead,
+  type SdlcTransitionWithArtifactOutcome,
+  transitionSdlcLoopStateWithArtifact,
+} from "./artifacts";
+
+// github-pr-references.ts
+export {
+  type SdlcOutboxErrorClass,
+  persistSdlcCanonicalStatusCommentReference,
+  clearSdlcCanonicalStatusCommentReference,
+  persistSdlcCanonicalCheckRunReference,
+} from "./github-pr-references";
+
+// webhook-delivery.ts
+export {
+  GITHUB_WEBHOOK_CLAIM_TTL_MS,
+  type GithubWebhookDeliveryClaimOutcome,
+  type GithubWebhookDeliveryClaimResult,
+  getGithubWebhookClaimHttpStatus,
+  claimGithubWebhookDelivery,
+  completeGithubWebhookDelivery,
+  releaseGithubWebhookDeliveryClaim,
+} from "./webhook-delivery";
+
+// guarded-state.ts
+export {
+  type StaleNoopReason,
+  type SdlcGateLoopUpdateOutcome,
+  isStaleNoop,
+  fixAttemptIncrementEvents,
+  persistGuardedGateLoopState,
+  transitionSdlcLoopState,
+  normalizeCheckNames,
+  resolveRequiredCheckSource,
+} from "./guarded-state";
+
+// ci-gate-persistence.ts
+export {
+  type PersistSdlcCiGateEvaluationResult,
+  toCiGateVerdict,
+  persistSdlcCiGateEvaluation,
+} from "./ci-gate-persistence";
+
+// review-thread-gate-persistence.ts
+export {
+  type PersistSdlcReviewThreadGateResult,
+  toReviewThreadGateVerdict,
+  persistSdlcReviewThreadGateEvaluation,
+} from "./review-thread-gate-persistence";
+
+// review-gate-persistence.ts
+export {
+  reviewFindingSchema,
+  reviewGateOutputSchema,
+  type ReviewGateOutput,
+  type PersistReviewGateResult,
+  type DeepReviewGateOutput,
+  type CarmackReviewGateOutput,
+  type PersistDeepReviewGateResult,
+  type PersistCarmackReviewGateResult,
+  toReviewGateVerdict,
+  deepReviewFindingSchema,
+  deepReviewGateOutputSchema,
+  carmackReviewFindingSchema,
+  carmackReviewGateOutputSchema,
+  parseReviewGateOutput,
+  parseDeepReviewGateOutput,
+  parseCarmackReviewGateOutput,
+  persistDeepReviewGateResult,
+  getUnresolvedBlockingDeepReviewFindings,
+  resolveDeepReviewFinding,
+  shouldQueueFollowUpForDeepReview,
+  persistCarmackReviewGateResult,
+  getUnresolvedBlockingCarmackReviewFindings,
+  resolveCarmackReviewFinding,
+  shouldQueueFollowUpForCarmackReview,
+  canRunCarmackReviewForHeadSha,
+} from "./review-gate-persistence";
+
+// dispatch-intent.ts
+export {
+  type CreateDispatchIntentInput,
+  toDispatchIntentStatus,
+  fromDispatchIntentStatus,
+  createDispatchIntent,
+  markDispatchIntentDispatched,
+  markDispatchIntentAcknowledged,
+  markDispatchIntentCompleted,
+  markDispatchIntentFailed,
+  getLatestDispatchIntentForLoop,
+  getDispatchIntentByRunId,
+  getStalledDispatchIntents,
+} from "./dispatch-intent";

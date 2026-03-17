@@ -85,6 +85,7 @@ vi.mock("@/server-lib/internal-request", () => ({
           {
             "Content-Type": "application/json",
             "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+            authorization: `Bearer ${env.CRON_SECRET}`,
           },
         ),
       );
