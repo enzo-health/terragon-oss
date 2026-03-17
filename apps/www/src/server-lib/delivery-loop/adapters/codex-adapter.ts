@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DB } from "@terragon/shared/db";
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
+import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import {
   createDispatchIntent,
   markDispatchIntentDispatched,

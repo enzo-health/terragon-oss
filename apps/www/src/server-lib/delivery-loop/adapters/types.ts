@@ -2,9 +2,9 @@ import type { DB } from "@terragon/shared/db";
 import type {
   DeliveryLoopDispatchablePhase,
   DeliveryLoopDispatchStatus,
-  DeliveryLoopFailureCategory,
   DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
+import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 
 /**
  * A fully prepared run ready for dispatch. Created by

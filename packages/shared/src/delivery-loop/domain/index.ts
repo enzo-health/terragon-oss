@@ -96,3 +96,10 @@ export { generateCorrelationId } from "./correlation";
 
 // logging.ts
 export { type DeliveryLoopLogContext, buildLogContext } from "./logging";
+
+// failure.ts
+export {
+  type DeliveryLoopFailureCategory,
+  type DeliveryLoopRetryAction,
+  DELIVERY_LOOP_FAILURE_ACTION_TABLE,
+} from "./failure";

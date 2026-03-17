@@ -4,9 +4,9 @@ import {
   DeliveryLoopDispatchMechanism,
   DeliveryLoopDispatchStatus,
   DeliveryLoopExecutionClass,
-  DeliveryLoopFailureCategory,
   DeliveryLoopSelectedAgent,
 } from "@terragon/shared/model/delivery-loop";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import type { SdlcSelfDispatchPayload } from "@terragon/daemon/shared";
 import { redis } from "@/lib/redis";
 
