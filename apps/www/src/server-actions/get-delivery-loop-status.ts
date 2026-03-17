@@ -19,18 +19,14 @@ import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
-  activeSdlcLoopStateSet,
   buildPersistedDeliveryLoopSnapshot,
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
 } from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
-import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
-import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
-import { waitUntil } from "@vercel/functions";
 
 type SdlcCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
 type SdlcReviewThreadGateRun =
@@ -694,147 +690,24 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       }
     }
 
-    // ── V2 fast-path: prefer delivery_workflow if one exists ──
     const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (v2Row) {
-      const workflow = hydrateV2Workflow(v2Row);
-      if (workflow && v2Row.sdlcLoopId) {
-        const loop = await db.query.sdlcLoop.findFirst({
-          where: eq(schema.sdlcLoop.id, v2Row.sdlcLoopId),
-        });
-        if (loop) {
-          const response = await buildStatusFromV2Workflow({ workflow, loop });
-          return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
-        }
-      }
+    if (!v2Row?.sdlcLoopId) {
+      return null;
     }
 
-    // ── V1 fallback: read from sdlcLoop tables ──
-    const threadLoops = await db.query.sdlcLoop.findMany({
-      where: eq(schema.sdlcLoop.threadId, threadId),
-      orderBy: [desc(schema.sdlcLoop.updatedAt), desc(schema.sdlcLoop.id)],
-      limit: 20,
+    const workflow = hydrateV2Workflow(v2Row);
+    if (!workflow) {
+      return null;
+    }
+
+    const loop = await db.query.sdlcLoop.findFirst({
+      where: eq(schema.sdlcLoop.id, v2Row.sdlcLoopId),
     });
-    const loop =
-      threadLoops.find((candidate) =>
-        activeSdlcLoopStateSet.has(candidate.state),
-      ) ??
-      threadLoops[0] ??
-      null;
     if (!loop) {
       return null;
     }
 
-    const currentHeadSha = loop.currentHeadSha ?? null;
-
-    const loopSnapshot = buildPersistedDeliveryLoopSnapshot({
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
-    });
-
-    const assembled = await assembleLoopStatusData({
-      loop,
-      loopSnapshot,
-      currentHeadSha,
-    });
-
-    const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-    const explanation =
-      loop.state === "stopped" && loop.stopReason
-        ? `${stateSummary.explanation} Reason: ${loop.stopReason}.`
-        : stateSummary.explanation;
-
-    const response: SdlcLoopStatus = {
-      loopId: loop.id,
-      state: loop.state as SdlcLoopState,
-      planApprovalPolicy: loop.planApprovalPolicy,
-      stateLabel: stateSummary.stateLabel,
-      explanation,
-      progressPercent: stateSummary.progressPercent,
-      actions: buildDeliveryLoopActions({
-        loopState: loop.state,
-        loopSnapshot,
-        planApprovalPolicy: loop.planApprovalPolicy,
-        planningArtifactStatus:
-          assembled.artifacts.planningArtifact?.status ?? null,
-      }),
-      phases: assembled.phases,
-      checks: assembled.checks,
-      needsAttention: assembled.needsAttention,
-      links: assembled.links,
-      artifacts: assembled.artifacts,
-      updatedAtIso: loop.updatedAt.toISOString(),
-    };
-
-    // Fire-and-forget: if the loop is babysitting, trigger a background
-    // v2 coordinator tick to process any pending signals. Debounced via
-    // Redis SET NX to avoid stampeding on polling UI.
-    if (
-      loop.state === "babysitting" &&
-      activeSdlcLoopStateSet.has(loop.state)
-    ) {
-      waitUntil(
-        (async () => {
-          try {
-            const { redis } = await import("@/lib/redis");
-            const debounceKey = `babysit-tick-debounce:${loop.id}`;
-            const acquired = await redis.set(debounceKey, "1", {
-              nx: true,
-              ex: 30,
-            });
-            if (!acquired) return;
-
-            let workflow = await getActiveWorkflowForThread({
-              db,
-              threadId: loop.threadId,
-            });
-            // Backfill v2 workflow for orphaned v1 loops so idle
-            // babysitting loops don't stay stuck after v1 removal.
-            if (!workflow) {
-              // Skip backfill if headSha is unavailable — creating
-              // a workflow with "unknown" SHA causes the babysit
-              // worker to evaluate a synthetic commit.
-              if (!loop.currentHeadSha) return;
-              const result = await ensureV2WorkflowExists({
-                db,
-                threadId: loop.threadId,
-                sdlcLoopId: loop.id,
-                sdlcLoopState: loop.state,
-                sdlcBlockedFromState: loop.blockedFromState,
-                headSha: loop.currentHeadSha,
-                userId,
-                repoFullName: loop.repoFullName,
-              });
-              if (result.created) {
-                workflow = await getActiveWorkflowForThread({
-                  db,
-                  threadId: loop.threadId,
-                });
-              }
-            }
-            // Only tick if the workflow belongs to this loop generation.
-            // A null sdlcLoopId (pre-migration) or mismatched ID means
-            // the workflow may consume signals from the wrong loop.
-            if (workflow && workflow.sdlcLoopId === loop.id) {
-              await runCoordinatorTick({
-                db,
-                workflowId:
-                  workflow.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
-                correlationId:
-                  `babysit-recheck:${loop.id}:${Date.now()}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
-                loopId: loop.id,
-              });
-            }
-          } catch (error) {
-            console.warn("[babysit-recheck] background v2 tick failed", {
-              loopId: loop.id,
-              error,
-            });
-          }
-        })(),
-      );
-    }
-
+    const response = await buildStatusFromV2Workflow({ workflow, loop });
     return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },
