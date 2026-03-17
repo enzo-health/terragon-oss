@@ -16,7 +16,7 @@ import { evaluateRetryDecision, resetRetryCounter } from "./retry-policy";
 // ---------------------------------------------------------------------------
 
 /** Default timeout before a dispatched intent is considered timed out. */
-export const DEFAULT_ACK_TIMEOUT_MS = 30_000; // 30 seconds
+export const DEFAULT_ACK_TIMEOUT_MS = 90_000; // 90 seconds — allows Docker cold starts
 
 // ---------------------------------------------------------------------------
 // handleAckReceived
@@ -157,12 +157,16 @@ export function startAckTimeout({
   runId,
   loopId,
   threadChatId,
+  userId,
+  threadId,
   timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
 }: {
   db: DB;
   runId: string;
   loopId: string;
   threadChatId: string;
+  userId?: string;
+  threadId?: string;
   timeoutMs?: number;
 }): () => void {
   const timer = setTimeout(async () => {
@@ -172,7 +176,43 @@ export function startAckTimeout({
       if (!intent) return;
       if (intent.status !== "dispatched") return; // Already acked/failed/completed
 
-      await handleAckTimeout({ db, runId, threadChatId, timeoutMs });
+      const outcome = await handleAckTimeout({
+        db,
+        runId,
+        threadChatId,
+        timeoutMs,
+      });
+
+      if (outcome.shouldRetry && userId && threadId) {
+        try {
+          const { scheduleFollowUpRetryJob } = await import("./retry-jobs");
+          await scheduleFollowUpRetryJob({
+            userId,
+            threadId,
+            threadChatId,
+            dispatchAttempt: outcome.attempt,
+            runAt: new Date(Date.now() + 5000),
+          });
+        } catch (retryErr) {
+          console.error(
+            "[ack-lifecycle] failed to schedule retry after ack timeout",
+            {
+              runId,
+              threadChatId,
+              error: retryErr,
+            },
+          );
+        }
+      } else if (!outcome.shouldRetry) {
+        console.warn(
+          "[ack-lifecycle] ack timeout retry budget exhausted, no retry scheduled",
+          {
+            runId,
+            threadChatId,
+            attempt: outcome.attempt,
+          },
+        );
+      }
     } catch (error) {
       console.error("[ack-lifecycle] startAckTimeout handler failed", {
         runId,

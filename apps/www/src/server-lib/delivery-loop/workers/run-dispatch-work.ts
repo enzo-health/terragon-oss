@@ -318,6 +318,8 @@ export async function runDispatchWork(params: {
           runId,
           loopId: effectiveLoopId,
           threadChatId: threadChat.id,
+          userId: effectiveUserId,
+          threadId: workflow.threadId,
         });
       } catch (ackErr) {
         console.warn(

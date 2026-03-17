@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getStalledDispatchIntents } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { handleAckTimeout, DEFAULT_ACK_TIMEOUT_MS } from "./ack-lifecycle";
+import { scheduleFollowUpRetryJob } from "./retry-jobs";
 
 // ---------------------------------------------------------------------------
 // Ack timeout sweep
@@ -46,14 +47,41 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
       ),
     );
 
-    for (const result of results) {
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j]!;
+      const intent = batch[j]!;
       if (result.status === "fulfilled") {
         processedCount++;
         if (result.value.shouldRetry) {
           retriedCount++;
+          try {
+            await scheduleFollowUpRetryJob({
+              userId: intent.userId,
+              threadId: intent.threadId,
+              threadChatId: intent.threadChatId,
+              dispatchAttempt: result.value.attempt,
+              runAt: new Date(Date.now() + 5000),
+            });
+          } catch (retryErr) {
+            console.error("[ack-timeout] failed to schedule retry job", {
+              runId: intent.runId,
+              threadChatId: intent.threadChatId,
+              error: retryErr,
+            });
+          }
+        } else {
+          console.warn(
+            "[ack-timeout] retry budget exhausted, no retry scheduled",
+            {
+              runId: intent.runId,
+              threadChatId: intent.threadChatId,
+              attempt: result.value.attempt,
+            },
+          );
         }
       } else {
         console.error("[ack-timeout] failed to process stalled intent", {
+          runId: intent.runId,
           error: result.reason,
         });
       }

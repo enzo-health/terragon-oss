@@ -212,6 +212,9 @@ export async function getDispatchIntentByRunId(db: DB, runId: string) {
  * Find dispatch intents stuck in "dispatched" status for longer than the
  * given timeout. These are dispatches where the daemon never sent its first
  * event back (ack). Used by the ack-timeout cron to detect and fail them.
+ *
+ * Joins with `thread` to include `userId` so callers can schedule retries
+ * without an extra DB lookup.
  */
 export async function getStalledDispatchIntents(
   db: DB,
@@ -219,9 +222,34 @@ export async function getStalledDispatchIntents(
   limit = 50,
 ) {
   const cutoff = new Date(Date.now() - timeoutMs);
-  return db
-    .select()
+  const rows = await db
+    .select({
+      id: schema.deliveryLoopDispatchIntent.id,
+      loopId: schema.deliveryLoopDispatchIntent.loopId,
+      threadId: schema.deliveryLoopDispatchIntent.threadId,
+      threadChatId: schema.deliveryLoopDispatchIntent.threadChatId,
+      runId: schema.deliveryLoopDispatchIntent.runId,
+      targetPhase: schema.deliveryLoopDispatchIntent.targetPhase,
+      selectedAgent: schema.deliveryLoopDispatchIntent.selectedAgent,
+      executionClass: schema.deliveryLoopDispatchIntent.executionClass,
+      dispatchMechanism: schema.deliveryLoopDispatchIntent.dispatchMechanism,
+      status: schema.deliveryLoopDispatchIntent.status,
+      retryCount: schema.deliveryLoopDispatchIntent.retryCount,
+      failureCategory: schema.deliveryLoopDispatchIntent.failureCategory,
+      failureMessage: schema.deliveryLoopDispatchIntent.failureMessage,
+      dispatchedAt: schema.deliveryLoopDispatchIntent.dispatchedAt,
+      acknowledgedAt: schema.deliveryLoopDispatchIntent.acknowledgedAt,
+      completedAt: schema.deliveryLoopDispatchIntent.completedAt,
+      failedAt: schema.deliveryLoopDispatchIntent.failedAt,
+      createdAt: schema.deliveryLoopDispatchIntent.createdAt,
+      updatedAt: schema.deliveryLoopDispatchIntent.updatedAt,
+      userId: schema.thread.userId,
+    })
     .from(schema.deliveryLoopDispatchIntent)
+    .innerJoin(
+      schema.thread,
+      eq(schema.deliveryLoopDispatchIntent.threadId, schema.thread.id),
+    )
     .where(
       and(
         eq(schema.deliveryLoopDispatchIntent.status, "dispatched"),
@@ -230,4 +258,5 @@ export async function getStalledDispatchIntents(
     )
     .orderBy(schema.deliveryLoopDispatchIntent.dispatchedAt)
     .limit(limit);
+  return rows;
 }
