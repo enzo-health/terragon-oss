@@ -4,6 +4,7 @@
  *
  * Idempotent: if a workflow already exists for the thread, returns it.
  */
+import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -12,6 +13,7 @@ import {
   createWorkflow,
   getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
 
 // ---------------------------------------------------------------------------
 // V2-native enrollment
@@ -59,6 +61,18 @@ export async function enrollV2Workflow(params: {
       repoFullName: params.repoFullName,
       userId: params.userId,
       planApprovalPolicy: params.planApprovalPolicy ?? "auto",
+    });
+
+    await enqueueWorkItem({
+      db: params.db,
+      workflowId: workflow.id,
+      correlationId: randomUUID(),
+      kind: "dispatch",
+      payloadJson: {
+        executionClass: "implementation_runtime",
+        workflowId: workflow.id,
+        bootstrap: true,
+      },
     });
 
     return { workflowId: workflow.id, sdlcLoopId: null };
