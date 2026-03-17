@@ -120,7 +120,9 @@ export async function runDispatchWork(params: {
                 }),
             ),
     ]);
-    if (!loop) {
+    // For pure v2 workflows (no v1 sdlcLoop row), fall back to workflow-derived values.
+    // Bridged workflows (both v1 + v2) continue to use the loop row as before.
+    if (!loop && !workflow.id) {
       await failWorkItem({
         db: params.db,
         workItemId: params.workItemId,
@@ -130,6 +132,8 @@ export async function runDispatchWork(params: {
       });
       return;
     }
+    const effectiveLoopId = loop?.id ?? workflow.id;
+    const effectiveUserId = loop?.userId ?? workflow.userId;
     if (!threadChat) {
       await failWorkItem({
         db: params.db,
@@ -171,7 +175,7 @@ export async function runDispatchWork(params: {
     //    and send the daemon message (see dispatch lifecycle in docstring).
     let runId: string = randomUUID();
     const intentParams: CreateDispatchIntentParams = {
-      loopId: loop.id,
+      loopId: effectiveLoopId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
@@ -225,7 +229,7 @@ export async function runDispatchWork(params: {
     //    constraint so duplicates fail safely.
     try {
       await createDbDispatchIntent(params.db, {
-        loopId: loop.id,
+        loopId: effectiveLoopId,
         threadId: workflow.threadId,
         threadChatId: threadChat.id,
         runId,
@@ -252,14 +256,14 @@ export async function runDispatchWork(params: {
     let continuationText = `Continue ${targetPhase === "implementing" ? "implementing" : "gate check"}.`;
 
     // For implementing dispatches, include plan context so the daemon knows what to implement
-    if (targetPhase === "implementing" && loop) {
+    if (targetPhase === "implementing") {
       try {
         const { getLatestAcceptedArtifact } = await import(
           "@terragon/shared/model/delivery-loop/artifacts"
         );
         const artifact = await getLatestAcceptedArtifact({
           db: params.db,
-          loopId: loop.id,
+          loopId: effectiveLoopId,
           phase: "planning",
           includeApprovedForPlanning: true,
         });
@@ -273,7 +277,7 @@ export async function runDispatchWork(params: {
         console.warn(
           "[dispatch-worker] failed to load plan artifact for continuation message",
           {
-            loopId: loop.id,
+            loopId: effectiveLoopId,
             error: err instanceof Error ? err.message : String(err),
           },
         );
@@ -293,7 +297,7 @@ export async function runDispatchWork(params: {
     };
     await updateThreadChat({
       db: params.db,
-      userId: loop.userId,
+      userId: effectiveUserId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       updates: {
@@ -310,7 +314,7 @@ export async function runDispatchWork(params: {
         "@/server-lib/process-follow-up-queue"
       );
       const followUpResult = await maybeProcessFollowUpQueue({
-        userId: loop.userId,
+        userId: effectiveUserId,
         threadId: workflow.threadId,
         threadChatId: threadChat.id,
       });
@@ -335,7 +339,7 @@ export async function runDispatchWork(params: {
         await startAckTimeout({
           db: params.db,
           runId,
-          loopId: loop.id,
+          loopId: effectiveLoopId,
           threadChatId: threadChat.id,
         });
       } catch (ackErr) {
