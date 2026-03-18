@@ -218,72 +218,89 @@ function parseOutboxPayload(rawPayload: unknown): OutboxPayloadV3 | null {
   }
 
   const record = parsed as Record<string, unknown>;
-  if (typeof record.kind !== "string") {
+  if (
+    "payload" in record &&
+    typeof record.payload !== "undefined" &&
+    !("kind" in record)
+  ) {
+    parsed = record.payload;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
     return null;
   }
 
-  if (record.kind === "signal") {
+  const payloadRecord = parsed as Record<string, unknown>;
+  if (typeof payloadRecord.kind !== "string") {
+    return null;
+  }
+
+  if (payloadRecord.kind === "signal") {
     if (
-      typeof record.source !== "string" ||
-      !isDeliverySignalSource(record.source)
+      typeof payloadRecord.source !== "string" ||
+      !isDeliverySignalSource(payloadRecord.source)
     ) {
       return null;
     }
     if (
-      typeof record.journalId !== "string" ||
-      typeof record.workflowId !== "string" ||
-      typeof record.eventType !== "string"
+      typeof payloadRecord.journalId !== "string" ||
+      typeof payloadRecord.workflowId !== "string" ||
+      typeof payloadRecord.eventType !== "string"
     ) {
       return null;
     }
 
     return {
       kind: "signal",
-      journalId: record.journalId,
-      workflowId: record.workflowId,
-      eventType: record.eventType,
-      source: record.source,
+      journalId: payloadRecord.journalId,
+      workflowId: payloadRecord.workflowId,
+      eventType: payloadRecord.eventType,
+      source: payloadRecord.source,
     };
   }
 
-  if (record.kind === "effect") {
+  if (payloadRecord.kind === "effect") {
     const effectKind =
-      typeof record.effectKind === "string" ? record.effectKind : null;
+      typeof payloadRecord.effectKind === "string"
+        ? payloadRecord.effectKind
+        : null;
     if (!isDeliveryEffectKind(effectKind)) {
       return null;
     }
     if (
-      typeof record.effectId !== "string" ||
-      typeof record.workflowId !== "string" ||
-      typeof record.effectKind !== "string"
+      typeof payloadRecord.effectId !== "string" ||
+      typeof payloadRecord.workflowId !== "string" ||
+      typeof payloadRecord.effectKind !== "string"
     ) {
       return null;
     }
     return {
       kind: "effect",
-      effectId: record.effectId,
-      workflowId: record.workflowId,
+      effectId: payloadRecord.effectId,
+      workflowId: payloadRecord.workflowId,
       effectKind,
     };
   }
 
-  if (record.kind === "timer") {
+  if (payloadRecord.kind === "timer") {
     const timerKind =
-      typeof record.timerKind === "string" ? record.timerKind : null;
+      typeof payloadRecord.timerKind === "string"
+        ? payloadRecord.timerKind
+        : null;
     if (!isDeliveryTimerKind(timerKind)) {
       return null;
     }
     if (
-      typeof record.timerId !== "string" ||
-      typeof record.workflowId !== "string" ||
-      typeof record.timerKind !== "string"
+      typeof payloadRecord.timerId !== "string" ||
+      typeof payloadRecord.workflowId !== "string" ||
+      typeof payloadRecord.timerKind !== "string"
     ) {
       return null;
     }
     return {
       kind: "timer",
-      timerId: record.timerId,
-      workflowId: record.workflowId,
+      timerId: payloadRecord.timerId,
+      workflowId: payloadRecord.workflowId,
       timerKind,
     };
   }
@@ -556,7 +573,7 @@ async function applySignalMessage(params: {
     db: params.db,
     workflowId: params.message.workflowId,
     source: journal.source,
-    idempotencyKey: journal.idempotencyKey,
+    idempotencyKey: params.message.idempotencyKey,
     event,
   });
 }

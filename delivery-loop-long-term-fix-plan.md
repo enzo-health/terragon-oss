@@ -157,8 +157,21 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Failures are diagnosable via event/effect logs.
 - **Validation**:
   - `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/*.test.ts`
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Added `apps/www/src/server-lib/delivery-loop/v3/durable-delivery.test.ts` with deterministic integration coverage for:
+    - duplicate ingress dedupe at journal/outbox level (idempotent journal insert + outbox dedupe key) and exactly-once transition semantics in durable logs.
+    - relay writeback failure simulation with retry, ensuring recovery and no duplicate Redis stream publish via relay-level idempotent `XADD`.
+    - worker crash simulation with stale claim reclaim and deterministic replay; recovery verifies no duplicate journal/effect writes.
+  - Assertions now explicitly read `delivery_loop_journal_v3`, `delivery_effect_ledger_v3`, `delivery_workflow_head_v3`, and `delivery_outbox_v3` rows to guarantee recoverability is diagnosable via durable event/effect records.
+  - Covered failure/recovery patterns now include:
+    - duplicate ingress/outbox rows,
+    - relay markPublished miss retries,
+    - relay publish retries via stale lease reclaim,
+    - worker crash + claim reclaim replay.
+  - Validation:
+    - `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/*.test.ts` (5 files, 23 tests passing in this implementation).
+  - Updated task status in this plan to completed.
 
 ## Sprint 2: Coordinator Rewrite on v3 Scaffolding
 

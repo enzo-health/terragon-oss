@@ -1,0 +1,420 @@
+import { and, eq } from "drizzle-orm";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { nanoid } from "nanoid/non-secure";
+import { addMilliseconds } from "date-fns";
+import { db } from "@/lib/db";
+import { redis } from "@/lib/redis";
+import * as schema from "@terragon/shared/db/schema";
+import {
+  createTestThread,
+  createTestUser,
+} from "@terragon/shared/model/test-helpers";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { appendJournalEventV3, enqueueOutboxRecordV3 } from "./store";
+import { buildSignalJournalContractV3 } from "./contracts";
+import * as relay from "./relay";
+import * as store from "./store";
+import { drainOutboxV3Worker } from "./worker";
+
+const TEST_STREAM_KEY_PREFIX = "dl3:test:v3-durable:stream";
+const TEST_DEDUPE_KEY_PREFIX = "dl3:test:v3-durable:dedupe";
+const TEST_RELAY_GROUP_PREFIX = "dl3:test:v3-durable:relay";
+
+function createRunKeys() {
+  const runId = nanoid();
+  return {
+    streamKey: `${TEST_STREAM_KEY_PREFIX}:${runId}`,
+    dedupeIndexKey: `${TEST_DEDUPE_KEY_PREFIX}:${runId}`,
+    relayOwnerPrefix: `${TEST_RELAY_GROUP_PREFIX}:${runId}`,
+    workerGroupName: `dl3:test:v3-durable-group:${runId}`,
+    workerAttemptsHash: `${TEST_STREAM_KEY_PREFIX}:${runId}:attempts`,
+    workerProcessedHash: `${TEST_STREAM_KEY_PREFIX}:${runId}:processed`,
+    workerHeartbeat: `${TEST_STREAM_KEY_PREFIX}:${runId}:heartbeat`,
+    workerDlqStream: `${TEST_STREAM_KEY_PREFIX}:${runId}:dlq`,
+  };
+}
+
+async function createWorkflowFixture(): Promise<string> {
+  const { user } = await createTestUser({ db });
+  const { threadId } = await createTestThread({ db, userId: user.id });
+  const workflow = await createWorkflow({
+    db,
+    threadId,
+    generation: 1,
+    userId: user.id,
+    kind: "planning",
+    stateJson: { state: "planning" },
+  });
+  return workflow.id;
+}
+
+async function createBootstrapJournal(params: {
+  workflowId: string;
+  idempotencyKey: string;
+}): Promise<string> {
+  const contract = buildSignalJournalContractV3({
+    workflowId: params.workflowId,
+    source: "daemon",
+    idempotencyKey: params.idempotencyKey,
+    event: { type: "bootstrap" },
+    occurredAt: new Date("2026-03-18T10:00:00.000Z"),
+  });
+
+  const result = await appendJournalEventV3({
+    db,
+    workflowId: contract.workflowId,
+    source: contract.source,
+    eventType: contract.eventType,
+    idempotencyKey: contract.idempotencyKey,
+    payloadJson: contract.payload,
+    occurredAt: contract.occurredAt,
+  });
+
+  if (result.inserted) {
+    if (!result.id) {
+      throw new Error("Signal journal insert returned no id");
+    }
+    return result.id;
+  }
+
+  const existing = await db.query.deliveryLoopJournalV3.findFirst({
+    where: and(
+      eq(schema.deliveryLoopJournalV3.workflowId, params.workflowId),
+      eq(schema.deliveryLoopJournalV3.source, "daemon"),
+      eq(schema.deliveryLoopJournalV3.idempotencyKey, params.idempotencyKey),
+    ),
+  });
+
+  if (!existing) {
+    throw new Error(
+      "Expected existing signal journal row after idempotent insert",
+    );
+  }
+
+  return existing.id;
+}
+
+async function createSignalOutboxRecord(params: {
+  workflowId: string;
+  journalId: string;
+  keyPrefix: string;
+}): Promise<string> {
+  const dedupeKey = `${params.keyPrefix}:dedupe`;
+  const result = await enqueueOutboxRecordV3({
+    db,
+    outbox: {
+      workflowId: params.workflowId,
+      topic: "signal",
+      dedupeKey,
+      idempotencyKey: `${params.keyPrefix}:idem`,
+      availableAt: new Date("2026-03-18T10:00:00.000Z"),
+      maxAttempts: 4,
+      payload: {
+        kind: "signal",
+        journalId: params.journalId,
+        workflowId: params.workflowId,
+        eventType: "bootstrap",
+        source: "daemon",
+      },
+    },
+  });
+
+  if (result.inserted && result.id) {
+    return result.id;
+  }
+
+  const existing = await db.query.deliveryOutboxV3.findFirst({
+    where: eq(schema.deliveryOutboxV3.dedupeKey, dedupeKey),
+  });
+  if (!existing) {
+    throw new Error("Expected existing outbox row after idempotent insert");
+  }
+  return existing.id;
+}
+
+async function getOutboxRow(outboxId: string) {
+  const row = await db.query.deliveryOutboxV3.findFirst({
+    where: eq(schema.deliveryOutboxV3.id, outboxId),
+  });
+  if (!row) {
+    throw new Error("Outbox row not found");
+  }
+  return row;
+}
+
+beforeEach(async () => {
+  const redisKeys = await redis.keys("dl3:test:v3-durable*");
+  if (redisKeys.length > 0) {
+    await redis.del(...redisKeys);
+  }
+});
+
+describe("v3 durable delivery loop", () => {
+  it("deduplicates duplicate ingress rows and journals while still advancing once", async () => {
+    const keys = createRunKeys();
+    const workflowId = await createWorkflowFixture();
+    const keyPrefix = `durable-${nanoid()}`;
+    const idempotencyKey = `${keyPrefix}:journal`;
+
+    const journalId = await createBootstrapJournal({
+      workflowId,
+      idempotencyKey,
+    });
+    await createBootstrapJournal({ workflowId, idempotencyKey });
+
+    const outboxId = await createSignalOutboxRecord({
+      workflowId,
+      journalId,
+      keyPrefix,
+    });
+    const duplicateOutbox = await createSignalOutboxRecord({
+      workflowId,
+      journalId,
+      keyPrefix,
+    });
+    expect(duplicateOutbox).toBe(outboxId);
+
+    const relayResult = await relay.drainOutboxV3Relay({
+      db,
+      maxItems: 10,
+      leaseOwnerPrefix: keys.relayOwnerPrefix,
+      streamKey: keys.streamKey,
+      dedupeIndexKey: keys.dedupeIndexKey,
+    });
+
+    expect(relayResult).toEqual({
+      processed: 1,
+      published: 1,
+      failed: 0,
+    });
+
+    const workerResult = await drainOutboxV3Worker({
+      db,
+      streamKey: keys.streamKey,
+      groupName: keys.workerGroupName,
+      consumerName: "worker-dedup-1",
+      maxItems: 5,
+      readBatchSize: 1,
+      blockMs: 100,
+      staleClaimMs: 0,
+      attemptsHashKey: keys.workerAttemptsHash,
+      processedHashKey: keys.workerProcessedHash,
+      deadLetterStreamKey: keys.workerDlqStream,
+      heartbeatKey: keys.workerHeartbeat,
+    });
+
+    expect(workerResult).toEqual({
+      processed: 1,
+      acknowledged: 1,
+      deadLettered: 0,
+      retried: 0,
+    });
+
+    const workflowHead = await db.query.deliveryWorkflowHeadV3.findFirst({
+      where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
+    });
+    expect(workflowHead).not.toBeNull();
+    if (!workflowHead) {
+      throw new Error("Expected workflow head after worker progression");
+    }
+    expect(workflowHead.state).toBe("implementing");
+    expect(workflowHead.version).toBe(1);
+
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(journalRows).toHaveLength(2);
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    expect(effectRows).toHaveLength(1);
+    const [effectRow] = effectRows;
+    expect(effectRow).toBeDefined();
+    if (!effectRow) {
+      throw new Error("Expected effect row after worker progression");
+    }
+    expect(effectRow.effectKind).toBe("dispatch_implementing");
+  });
+
+  it("retries a relay markPublished miss and recovers without duplicate stream messages", async () => {
+    const keys = createRunKeys();
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const keyPrefix = `durable-relay-${nanoid()}`;
+    const journalId = await createBootstrapJournal({
+      workflowId,
+      idempotencyKey: `${keyPrefix}:journal`,
+    });
+    const outboxId = await createSignalOutboxRecord({
+      workflowId,
+      journalId,
+      keyPrefix,
+    });
+
+    const markPublishedSpy = vi
+      .spyOn(store, "markOutboxPublishedV3")
+      .mockResolvedValue(false);
+
+    try {
+      const firstRelayResult = await relay.drainOutboxV3Relay({
+        db,
+        maxItems: 1,
+        leaseOwnerPrefix: keys.relayOwnerPrefix,
+        streamKey: keys.streamKey,
+        dedupeIndexKey: keys.dedupeIndexKey,
+        now,
+      });
+
+      expect(firstRelayResult).toEqual({
+        processed: 1,
+        published: 0,
+        failed: 1,
+      });
+
+      const failedOutbox = await getOutboxRow(outboxId);
+      expect(failedOutbox.status).toBe("pending");
+      expect(failedOutbox.lastErrorCode).toBe("outbox_relay_failed");
+      expect(failedOutbox.attemptCount).toBe(1);
+
+      markPublishedSpy.mockRestore();
+
+      const secondRelayResult = await relay.drainOutboxV3Relay({
+        db,
+        maxItems: 1,
+        leaseOwnerPrefix: keys.relayOwnerPrefix,
+        streamKey: keys.streamKey,
+        dedupeIndexKey: keys.dedupeIndexKey,
+        now: addMilliseconds(now, 1_250),
+      });
+
+      expect(secondRelayResult).toEqual({
+        processed: 1,
+        published: 1,
+        failed: 0,
+      });
+
+      const recoveredOutbox = await getOutboxRow(outboxId);
+      expect(recoveredOutbox.status).toBe("published");
+      expect(recoveredOutbox.relayMessageId).not.toBeNull();
+      expect(await redis.xlen(keys.streamKey)).toBe(1);
+    } finally {
+      if (markPublishedSpy.mockRestore) {
+        markPublishedSpy.mockRestore();
+      }
+    }
+
+    const relayJournalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(relayJournalRows).toHaveLength(1);
+  });
+
+  it("recovers a worker after a crash without duplicating journal/effect work", async () => {
+    const keys = createRunKeys();
+    const workflowId = await createWorkflowFixture();
+    const keyPrefix = `durable-worker-${nanoid()}`;
+    const journalId = await createBootstrapJournal({
+      workflowId,
+      idempotencyKey: `${keyPrefix}:journal`,
+    });
+    const outboxId = await createSignalOutboxRecord({
+      workflowId,
+      journalId,
+      keyPrefix,
+    });
+
+    const relayResult = await relay.drainOutboxV3Relay({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: keys.relayOwnerPrefix,
+      streamKey: keys.streamKey,
+      dedupeIndexKey: keys.dedupeIndexKey,
+    });
+    expect(relayResult).toEqual({
+      processed: 1,
+      published: 1,
+      failed: 0,
+    });
+
+    const crashedFirstAttempt = await drainOutboxV3Worker({
+      db,
+      streamKey: keys.streamKey,
+      groupName: keys.workerGroupName,
+      consumerName: "worker-crash-1",
+      maxItems: 1,
+      staleClaimMs: 0,
+      blockMs: 100,
+      attemptsHashKey: keys.workerAttemptsHash,
+      processedHashKey: keys.workerProcessedHash,
+      deadLetterStreamKey: keys.workerDlqStream,
+      heartbeatKey: keys.workerHeartbeat,
+      readBatchSize: 1,
+      processMessage: async () => {
+        throw new Error("simulated worker crash");
+      },
+    });
+
+    expect(crashedFirstAttempt).toEqual({
+      processed: 1,
+      acknowledged: 0,
+      deadLettered: 0,
+      retried: 1,
+    });
+
+    const journalsAfterCrash = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(journalsAfterCrash).toHaveLength(1);
+
+    const recoveredWorkerResult = await drainOutboxV3Worker({
+      db,
+      streamKey: keys.streamKey,
+      groupName: keys.workerGroupName,
+      consumerName: "worker-crash-2",
+      maxItems: 1,
+      staleClaimMs: 0,
+      blockMs: 100,
+      attemptsHashKey: keys.workerAttemptsHash,
+      processedHashKey: keys.workerProcessedHash,
+      deadLetterStreamKey: keys.workerDlqStream,
+      heartbeatKey: keys.workerHeartbeat,
+      readBatchSize: 1,
+    });
+
+    expect(recoveredWorkerResult).toEqual({
+      processed: 1,
+      acknowledged: 1,
+      deadLettered: 0,
+      retried: 0,
+    });
+
+    const journalsAfterRecovery = await db.query.deliveryLoopJournalV3.findMany(
+      {
+        where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+      },
+    );
+    expect(journalsAfterRecovery).toHaveLength(2);
+
+    const effectsAfterRecovery = await db.query.deliveryEffectLedgerV3.findMany(
+      {
+        where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+      },
+    );
+    expect(effectsAfterRecovery).toHaveLength(1);
+
+    const recoveredHead = await db.query.deliveryWorkflowHeadV3.findFirst({
+      where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
+    });
+    expect(recoveredHead).not.toBeNull();
+    if (!recoveredHead) {
+      throw new Error("Expected workflow head after worker recovery");
+    }
+    expect(recoveredHead.state).toBe("implementing");
+    expect(recoveredHead.version).toBe(1);
+
+    const recoveredOutbox = await getOutboxRow(outboxId);
+    expect(recoveredOutbox.status).toBe("published");
+    expect(await redis.xlen(keys.streamKey)).toBe(1);
+  });
+});
