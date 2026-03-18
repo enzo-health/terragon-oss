@@ -103,8 +103,20 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
 - **Validation**:
   - Relay unit/integration tests.
   - Crash/restart replay test.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Added Redis-backed outbox relay worker in `apps/www/src/server-lib/delivery-loop/v3/relay.ts` with:
+    - deterministic lease-based claim loop,
+    - Lua-based idempotent Redis `XADD` publish (dedupe index),
+    - transient-failure retry metadata persistence (`error_code`, `error_message`, `available_at` bump),
+    - published audit marker writeback (`relay_message_id`, `published_at`).
+  - Added `drainOutboxV3Relay` integration into scheduled-tasks cron path in `apps/www/src/app/api/internal/cron/scheduled-tasks/route.ts` and surfaced outbox relay metrics.
+  - Added `apps/www/src/server-lib/delivery-loop/v3/relay.test.ts` with tests for:
+    - publish + mark-published happy path,
+    - idempotent publish,
+    - retry + error metadata updates,
+    - stale claim replay (crash/restart) with single publish outcome.
+  - 2026-03-18 verification: `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/relay.test.ts` (4 tests) and `pnpm -C apps/www exec tsc --noEmit --pretty false` passed.
 
 ### Task S1-T4: Worker Consumer Group Leasing
 
