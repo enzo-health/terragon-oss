@@ -31,6 +31,7 @@ function common(overrides?: Partial<WorkflowCommon>): WorkflowCommon {
     generation: 1,
     version: 0,
     fixAttemptCount: 0,
+    infraRetryCount: 0,
     maxFixAttempts: 6,
     createdAt: new Date("2025-12-01"),
     updatedAt: new Date("2025-12-01"),
@@ -343,8 +344,12 @@ describe("reduceWorkflow", () => {
       expect(reduce(planning(), "babysit_passed")).toBeNull();
     });
 
-    it("gate_blocked → null", () => {
-      expect(reduce(planning(), "gate_blocked")).toBeNull();
+    it("gate_blocked → stays in planning (version bump for re-dispatch)", () => {
+      const wf = planning();
+      const result = reduce(wf, "gate_blocked");
+      expect(result).not.toBeNull();
+      expect(result!.kind).toBe("planning");
+      expect(result!.version).toBe(wf.version + 1);
     });
   });
 
@@ -376,9 +381,19 @@ describe("reduceWorkflow", () => {
       expect(result).not.toBeNull();
       expect(result!.kind).toBe("implementing");
       expect(result!.fixAttemptCount).toBe(2); // NOT incremented
+      expect(result!.infraRetryCount).toBe(0); // NOT incremented without infraRetry context
       if (result!.kind === "implementing") {
         expect(result!.dispatch.kind).toBe("queued");
       }
+    });
+
+    it("redispatch_requested + infraRetry → implementing (infraRetryCount incremented, fixAttemptCount unchanged)", () => {
+      const wf = implementing({ fixAttemptCount: 2, infraRetryCount: 3 });
+      const result = reduce(wf, "redispatch_requested", { infraRetry: true });
+      expect(result).not.toBeNull();
+      expect(result!.kind).toBe("implementing");
+      expect(result!.fixAttemptCount).toBe(2); // NOT incremented
+      expect(result!.infraRetryCount).toBe(4); // incremented
     });
 
     it("gate_blocked → implementing (fixAttemptCount incremented)", () => {

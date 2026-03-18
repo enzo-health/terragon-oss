@@ -41,6 +41,7 @@ const COMMON = {
   generation: 1,
   version: 1,
   fixAttemptCount: 0,
+  infraRetryCount: 0,
   maxFixAttempts: 5,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -54,6 +55,7 @@ function planning(planVersion: PlanVersion | null = null): DeliveryWorkflow {
 function implementing(
   overrides: Partial<{
     fixAttemptCount: number;
+    infraRetryCount: number;
     maxFixAttempts: number;
     dispatch: DispatchSubState;
     planVersion: PlanVersion;
@@ -71,6 +73,7 @@ function implementing(
       acknowledgedAt: new Date(),
     },
     fixAttemptCount: overrides.fixAttemptCount ?? 0,
+    infraRetryCount: overrides.infraRetryCount ?? 0,
     maxFixAttempts: overrides.maxFixAttempts ?? 5,
   };
 }
@@ -387,6 +390,74 @@ describe("reduceSignalToEvent", () => {
           done(),
         );
         expect(result).toBeNull();
+      });
+
+      // Infrastructure failure tests (ACP transient "Internal error")
+      it("implementing + infra failure → redispatch_requested (no fixAttemptCount penalty)", () => {
+        const result = reduce(
+          daemonSignal({
+            kind: "run_failed",
+            runId: "r1",
+            failure: {
+              kind: "runtime_crash",
+              exitCode: null,
+              message: "Internal error",
+            },
+          }),
+          implementing({ fixAttemptCount: 3, maxFixAttempts: 5 }),
+        );
+        expectEvent(result, "redispatch_requested");
+      });
+
+      it("implementing + infra failure at max fixAttempts still retries (budget not consumed)", () => {
+        // fixAttemptCount=4 would normally trigger exhausted_retries, but infra
+        // failures bypass the fix budget entirely.
+        const result = reduce(
+          daemonSignal({
+            kind: "run_failed",
+            runId: "r1",
+            failure: {
+              kind: "runtime_crash",
+              exitCode: null,
+              message: "Internal error",
+            },
+          }),
+          implementing({ fixAttemptCount: 4, maxFixAttempts: 5 }),
+        );
+        expectEvent(result, "redispatch_requested");
+      });
+
+      it("implementing + infra failure with exhausted infra retries → exhausted_retries", () => {
+        const result = reduce(
+          daemonSignal({
+            kind: "run_failed",
+            runId: "r1",
+            failure: {
+              kind: "runtime_crash",
+              exitCode: null,
+              message: "Internal error",
+            },
+          }),
+          implementing({
+            infraRetryCount: 10,
+            fixAttemptCount: 0,
+            maxFixAttempts: 5,
+          }),
+        );
+        expectEvent(result, "exhausted_retries");
+      });
+
+      it("implementing + non-infra runtime_crash still consumes fix budget", () => {
+        // "crash" is a real agent failure, not "Internal error"
+        const result = reduce(
+          daemonSignal({
+            kind: "run_failed",
+            runId: "r1",
+            failure: { kind: "runtime_crash", exitCode: 1, message: "crash" },
+          }),
+          implementing({ fixAttemptCount: 4, maxFixAttempts: 5 }),
+        );
+        expectEvent(result, "exhausted_retries");
       });
     });
 

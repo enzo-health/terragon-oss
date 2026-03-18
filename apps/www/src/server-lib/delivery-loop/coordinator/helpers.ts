@@ -44,6 +44,7 @@ const WORKFLOW_COMMON_KEY_MAP: Record<keyof WorkflowCommon | "kind", true> = {
   generation: true,
   version: true,
   fixAttemptCount: true,
+  infraRetryCount: true,
   maxFixAttempts: true,
   createdAt: true,
   updatedAt: true,

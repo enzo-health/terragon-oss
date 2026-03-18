@@ -22,6 +22,7 @@ function bump(wf: DeliveryWorkflow, now: Date): WorkflowCommon {
     generation: wf.generation,
     version: wf.version + 1,
     fixAttemptCount: wf.fixAttemptCount,
+    infraRetryCount: wf.infraRetryCount,
     maxFixAttempts: wf.maxFixAttempts,
     createdAt: wf.createdAt,
     updatedAt: now,
@@ -37,7 +38,7 @@ function bumpWithFixReset(
 ): WorkflowCommon {
   const base = bump(wf, now);
   if (shouldResetFixAttemptCount(event, ctx)) {
-    return { ...base, fixAttemptCount: 0 };
+    return { ...base, fixAttemptCount: 0, infraRetryCount: 0 };
   }
   return base;
 }
@@ -309,11 +310,15 @@ function reduceImplementing(
   }
 
   if (event === "redispatch_requested") {
-    // Partial completion — stay in implementing for re-dispatch without
-    // incrementing fixAttemptCount (this is normal multi-pass, not failure).
+    // Partial completion or infra retry — stay in implementing for re-dispatch
+    // without incrementing fixAttemptCount.
     const base = bump(wf, now);
     return {
       ...base,
+      // Infra retries increment their own counter; partial completions don't.
+      infraRetryCount: ctx.infraRetry
+        ? wf.infraRetryCount + 1
+        : wf.infraRetryCount,
       kind: "implementing",
       planVersion: wf.planVersion,
       dispatch: defaultQueuedDispatch(wf) as DispatchSubState,

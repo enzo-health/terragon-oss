@@ -21,6 +21,7 @@ const COMMON = {
   generation: 1,
   version: 1,
   fixAttemptCount: 0,
+  infraRetryCount: 0,
   maxFixAttempts: 3,
   createdAt: NOW,
   updatedAt: NOW,

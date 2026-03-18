@@ -1,6 +1,7 @@
 import type {
   DeliverySignal,
   DaemonSignal,
+  DaemonFailure,
   GitHubSignal,
   HumanSignal,
   TimerSignal,
@@ -101,6 +102,20 @@ function reduceDaemonSignal(
 
     case "run_failed":
       if (workflow.kind === "implementing") {
+        // Infrastructure failures (e.g. ACP transient "Internal error" during
+        // sandbox-agent startup) should NOT consume the fix-attempt budget.
+        // Re-dispatch without penalty, up to a separate infra retry limit.
+        if (isInfrastructureFailure(event.failure)) {
+          const MAX_INFRA_RETRIES = 10;
+          if (workflow.infraRetryCount >= MAX_INFRA_RETRIES) {
+            return { event: "exhausted_retries", context: {} };
+          }
+          return {
+            event: "redispatch_requested",
+            context: { infraRetry: true },
+          };
+        }
+
         // Budget check — if at or past max, escalate to manual fix
         if (workflow.fixAttemptCount >= workflow.maxFixAttempts - 1) {
           return { event: "exhausted_retries", context: {} };
@@ -344,4 +359,19 @@ function reduceGateSignal(params: {
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure failure detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Identifies transient infrastructure failures (e.g. ACP startup race condition
+ * where sandbox-agent isn't ready and Claude Agent SDK returns "Internal error").
+ * These should not consume the fix-attempt budget.
+ */
+function isInfrastructureFailure(failure: DaemonFailure): boolean {
+  return (
+    failure.kind === "runtime_crash" && failure.message === "Internal error"
+  );
 }

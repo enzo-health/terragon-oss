@@ -154,6 +154,7 @@ export type WorkflowCommon = {
   generation: number;
   version: number;
   fixAttemptCount: number;
+  infraRetryCount: number;
   maxFixAttempts: number;
   createdAt: Date;
   updatedAt: Date;

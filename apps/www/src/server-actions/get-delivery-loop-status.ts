@@ -295,6 +295,7 @@ function hydrateV2Workflow(
     generation: row.generation,
     version: row.version,
     fixAttemptCount: row.fixAttemptCount,
+    infraRetryCount: row.infraRetryCount ?? 0,
     maxFixAttempts: row.maxFixAttempts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

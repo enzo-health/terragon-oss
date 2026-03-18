@@ -78,6 +78,7 @@ export async function updateWorkflowState(params: {
   kind: string;
   stateJson: Record<string, unknown>;
   fixAttemptCount?: number;
+  infraRetryCount?: number;
   headSha?: string | null;
   reviewSurfaceJson?: Record<string, unknown> | null;
   now?: Date;
@@ -96,6 +97,9 @@ export async function updateWorkflowState(params: {
       stateJson: params.stateJson,
       ...(params.fixAttemptCount !== undefined && {
         fixAttemptCount: params.fixAttemptCount,
+      }),
+      ...(params.infraRetryCount !== undefined && {
+        infraRetryCount: params.infraRetryCount,
       }),
       ...(params.headSha !== undefined && { headSha: params.headSha }),
       ...(params.reviewSurfaceJson !== undefined && {

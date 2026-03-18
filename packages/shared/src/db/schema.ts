@@ -1847,6 +1847,7 @@ export const deliveryWorkflow = pgTable(
     version: integer("version").notNull().default(0),
     stateJson: jsonb("state_json").notNull(),
     fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
+    infraRetryCount: integer("infra_retry_count").notNull().default(0),
     maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
     repoFullName: text("repo_full_name").notNull().default(""),
     prNumber: integer("pr_number"),

@@ -39,6 +39,7 @@ export type LoopEventContext = {
   headSha?: string;
   runId?: string | null;
   prNumber?: number | null;
+  infraRetry?: boolean;
 };
 
 // Publication targets
