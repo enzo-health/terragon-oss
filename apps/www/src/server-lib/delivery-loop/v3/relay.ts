@@ -185,13 +185,16 @@ export async function drainOutboxV3Relay(
         dedupeIndexKey,
       });
 
-      await markOutboxPublishedV3({
+      const markedPublished = await markOutboxPublishedV3({
         db: params.db,
         outboxId: outbox.id,
         leaseOwner,
         leaseEpoch: outbox.leaseEpoch,
         relayMessageId,
       });
+      if (!markedPublished) {
+        throw new Error("Failed to mark outbox row as published");
+      }
 
       published += 1;
       continue;

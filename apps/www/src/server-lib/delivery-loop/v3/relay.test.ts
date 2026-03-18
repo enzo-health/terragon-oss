@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid/non-secure";
 import { db } from "@/lib/db";
@@ -9,7 +9,7 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { enqueueOutboxRecordV3 } from "./store";
+import * as store from "./store";
 import * as relay from "./relay";
 import type { DeliveryOutboxV3Row } from "@terragon/shared/db/types";
 import { addMilliseconds } from "date-fns";
@@ -32,7 +32,7 @@ async function createOutboxRecord(params: {
   workflowId: string;
   outboxIdPrefix: string;
 }): Promise<string> {
-  const outbox = await enqueueOutboxRecordV3({
+  const outbox = await store.enqueueOutboxRecordV3({
     db,
     outbox: {
       workflowId: params.workflowId,
@@ -188,6 +188,50 @@ describe("v3 outbox relay", () => {
     );
     expect(failedOutbox.attemptCount).toBe(1);
     expect(await redis.get(streamKey)).toBe("seed");
+  });
+
+  it("treats publish writeback misses as retryable failures", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const outboxId = await createOutboxRecord({
+      workflowId,
+      outboxIdPrefix: nanoid(),
+    });
+    const streamKey = `dl3:test:relay:${nanoid()}`;
+    const dedupeIndexKey = `dl3:test:relay:dedupe:${nanoid()}`;
+    const markPublishedSpy = vi
+      .spyOn(store, "markOutboxPublishedV3")
+      .mockResolvedValueOnce(false);
+
+    try {
+      const result = await relay.drainOutboxV3Relay({
+        db,
+        maxItems: 1,
+        now,
+        leaseOwnerPrefix: "test:relay:mark-published-miss",
+        streamKey,
+        dedupeIndexKey,
+      });
+      expect(result).toEqual({
+        processed: 1,
+        published: 0,
+        failed: 1,
+      });
+
+      const row = await getOutboxRow(outboxId);
+      expect(row.status).toBe("pending");
+      expect(row.relayMessageId).toBeNull();
+      expect(row.lastErrorCode).toBe("outbox_relay_failed");
+      expect(row.lastErrorMessage).toContain(
+        "Failed to mark outbox row as published",
+      );
+      expect(row.availableAt.getTime()).toBe(
+        addMilliseconds(now, 1_000).getTime(),
+      );
+      expect(await redis.xlen(streamKey)).toBe(1);
+    } finally {
+      markPublishedSpy.mockRestore();
+    }
   });
 
   it("replays a crashed publish via stale publishing claim and publishes exactly once", async () => {
