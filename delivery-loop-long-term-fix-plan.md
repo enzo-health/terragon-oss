@@ -130,8 +130,22 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
 - **Validation**:
   - Concurrency tests for claim/lease behavior.
   - Restart/reclaim simulation test.
-- **Status**: pending
-- **Work Log**:
+  - **Status**: completed
+  - **Work Log**:
+    - Implemented `apps/www/src/server-lib/delivery-loop/v3/worker.ts` with deterministic Redis Stream consumer-group processing:
+      - Consumer-group claim/read loop with configurable group name and consumer identity.
+      - Heartbeat writes in a Redis hash for active consumers.
+      - Deterministic stale claim recovery via `XAUTOCLAIM` with cursor-aware sweep.
+      - Bounded retry using attempt-count hash with expiry and dead-letter handoff on exhaustion.
+      - Strict message parsing and typed invalid-message dead-lettering.
+      - Default signal processor kept aligned with relay payload contract and v3 kernel event appending.
+    - Added `apps/www/src/server-lib/delivery-loop/v3/worker.test.ts` to verify:
+      - Parallel consumers do not process a given message twice in the same batch window.
+      - Stale claim reclaim enables restart-style recovery without losing unacked work.
+      - Bounded retry transitions to dead-letter when max attempts are exceeded.
+    - Integrated v3 worker execution into cron route (`apps/www/src/app/api/internal/cron/scheduled-tasks/route.ts`) and exposed worker result counters + failure marker.
+    - Preserved current v2/v3 staging behavior; worker errors now surface as `v3WorkerError` in cron payload with non-200 status on failure.
+    - 2026-03-18 verification: `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/worker.test.ts` (3 tests) and `pnpm -C apps/www exec tsc --noEmit --pretty false` passed.
 
 ### Task S1-T5: Durable Delivery Test Suite
 
