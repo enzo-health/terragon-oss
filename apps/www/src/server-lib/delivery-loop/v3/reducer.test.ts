@@ -37,7 +37,10 @@ describe("reduceV3", () => {
     expect(result.effects).toHaveLength(1);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
-      payload: { kind: "dispatch_implementing" },
+      payload: {
+        kind: "dispatch_implementing",
+        executionClass: "implementation_runtime",
+      },
     });
   });
 
@@ -128,6 +131,10 @@ describe("reduceV3", () => {
     expect(result.head.blockedReason).toBeNull();
     expect(result.effects).toHaveLength(1);
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[0]?.payload).toMatchObject({
+      kind: "dispatch_implementing",
+      executionClass: "implementation_runtime",
+    });
   });
 
   it("implementing run_completed without activeRunId still resolves to gate_review", () => {
@@ -162,16 +169,46 @@ describe("reduceV3", () => {
       event: {
         type: "run_failed",
         runId: "run-early",
-        message: "infra hiccup",
-        category: null,
+        message: "Internal error",
+        category: "runtime_crash",
       },
       now,
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.head.fixAttemptCount).toBe(1);
+    expect(result.head.fixAttemptCount).toBe(0);
+    expect(result.head.infraRetryCount).toBe(1);
     expect(result.effects).toHaveLength(1);
-    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[0]?.payload).toMatchObject({
+      kind: "dispatch_implementing",
+      executionClass: "implementation_runtime_fallback",
+    });
+  });
+
+  it("infra run_failed from planning/implementing falls back to secondary runtime", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_review"),
+        activeGate: "review",
+        infraRetryCount: 2,
+      },
+      event: {
+        type: "run_failed",
+        runId: "run-review",
+        message: "couldn't connect to server",
+        category: "transport",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.fixAttemptCount).toBe(0);
+    expect(result.head.infraRetryCount).toBe(3);
+    expect(result.effects[0]?.payload).toMatchObject({
+      kind: "dispatch_implementing",
+      executionClass: "implementation_runtime_fallback",
+    });
   });
 
   it("ignores stale implementing run_failed for previous run", () => {

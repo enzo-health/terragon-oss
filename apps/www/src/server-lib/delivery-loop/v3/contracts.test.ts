@@ -65,6 +65,19 @@ describe("v3 contracts", () => {
     });
   });
 
+  it("round-trips dispatch_implementing with fallback executionClass", () => {
+    const serialized = serializeEffectPayloadV3({
+      kind: "dispatch_implementing",
+      executionClass: "implementation_runtime_fallback",
+    });
+    const parsed = parseEffectPayloadV3(serialized);
+
+    expect(parsed).toEqual({
+      kind: "dispatch_implementing",
+      executionClass: "implementation_runtime_fallback",
+    });
+  });
+
   it("builds effect ledger contracts with canonical idempotency", () => {
     const contract = buildEffectLedgerContractV3({
       workflowId: "wf-1",
@@ -73,7 +86,10 @@ describe("v3 contracts", () => {
         kind: "dispatch_implementing",
         effectKey: "wf-1:11:dispatch_implementing",
         dueAt: new Date("2026-03-18T12:10:00.000Z"),
-        payload: { kind: "dispatch_implementing" },
+        payload: {
+          kind: "dispatch_implementing",
+          executionClass: "implementation_runtime_fallback",
+        },
       },
     });
 

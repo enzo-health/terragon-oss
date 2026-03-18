@@ -21,6 +21,13 @@ export type CircuitBreakerPolicy = {
   maxTotal: number;
 };
 
+export type FailureLane = "agent" | "infra";
+
+export type FailureClassifyInput = {
+  category: string | null;
+  message: string | null;
+};
+
 // ---------------------------------------------------------------------------
 // Default policies per failure category
 // ---------------------------------------------------------------------------
@@ -36,6 +43,16 @@ const INFRA_POLICY: CircuitBreakerPolicy = {
   maxConsecutive: 10,
   maxTotal: 15,
 };
+
+const INFRA_FAILURE_MESSAGE_MARKERS = [
+  "internal error",
+  "couldn't connect to server",
+  "could not connect to server",
+  "acp",
+  "sandbox-not-found",
+  "daemon not running",
+  "daemon dead",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Pure functions
@@ -135,6 +152,42 @@ export function isInfrastructureSignature(sig: FailureSignature): boolean {
   return (
     sig.category === "runtime_crash" &&
     sig.messageHash === hashFailureMessage("Internal error")
+  );
+}
+
+/**
+ * Classifies a terminal failure into infra vs agent lane.
+ *
+ * Deterministic and explicit to avoid heuristic drift.
+ */
+export function classifyFailureLane(params: FailureClassifyInput): FailureLane {
+  if (isInfrastructureFailure(params)) {
+    return "infra";
+  }
+  return "agent";
+}
+
+/**
+ * Infra-only detector for explicit failure categories/messages.
+ */
+export function isInfrastructureFailure(params: FailureClassifyInput): boolean {
+  const category = (params.category ?? "").toLowerCase().trim();
+  const message = (params.message ?? "").toLowerCase().trim();
+
+  if (category === "dispatch_ack_timeout") {
+    return true;
+  }
+
+  if (category === "runtime_crash" && message.includes("internal error")) {
+    return true;
+  }
+
+  if (category === "transport" || category === "infra") {
+    return true;
+  }
+
+  return INFRA_FAILURE_MESSAGE_MARKERS.some(
+    (marker) => message.includes(marker) || category.includes(marker),
   );
 }
 

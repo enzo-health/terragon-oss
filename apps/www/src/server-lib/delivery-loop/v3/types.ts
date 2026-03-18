@@ -1,4 +1,8 @@
 import type { DeliveryEffectKindV3 } from "@terragon/shared/db/types";
+import {
+  type FailureLane,
+  classifyFailureLane as classifyFailureLaneShared,
+} from "@terragon/shared/delivery-loop/domain/failure-signature";
 
 export type WorkflowStateV3 =
   | "planning"
@@ -11,8 +15,6 @@ export type WorkflowStateV3 =
   | "done"
   | "stopped"
   | "terminated";
-
-export type FailureLane = "agent" | "infra";
 
 export type LoopEventV3 =
   | { type: "bootstrap" }
@@ -43,7 +45,12 @@ export type LoopEventV3 =
 export type EffectKindV3 = DeliveryEffectKindV3;
 
 export type EffectPayloadV3 =
-  | { kind: "dispatch_implementing" }
+  | {
+      kind: "dispatch_implementing";
+      executionClass:
+        | "implementation_runtime"
+        | "implementation_runtime_fallback";
+    }
   | { kind: "dispatch_gate_review"; gate: "review" }
   | {
       kind: "ack_timeout_check";
@@ -86,20 +93,8 @@ export function classifyFailureLane(params: {
   category: string | null;
   message: string | null;
 }): FailureLane {
-  const c = (params.category ?? "").toLowerCase();
-  const m = (params.message ?? "").toLowerCase();
-  if (
-    c.includes("dispatch_ack_timeout") ||
-    c.includes("runtime_crash") ||
-    c.includes("transport") ||
-    c.includes("timeout") ||
-    c.includes("infra") ||
-    m.includes("sandbox-not-found") ||
-    m.includes("internal error") ||
-    m.includes("acp") ||
-    m.includes("couldn't connect to server")
-  ) {
-    return "infra";
-  }
-  return "agent";
+  return classifyFailureLaneShared({
+    category: params.category,
+    message: params.message,
+  });
 }

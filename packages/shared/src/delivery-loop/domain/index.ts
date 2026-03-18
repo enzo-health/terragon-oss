@@ -108,6 +108,8 @@ export {
 export {
   type FailureSignature,
   type FailureSignatureMap,
+  type FailureLane,
+  type FailureClassifyInput,
   type CircuitBreakerPolicy,
   hashFailureMessage,
   makeSignatureKey,
@@ -115,6 +117,8 @@ export {
   isSameSignature,
   shouldTripCircuitBreaker,
   isInfrastructureSignature,
+  isInfrastructureFailure,
+  classifyFailureLane,
   getPolicyForSignature,
 } from "./failure-signature";
 

@@ -56,7 +56,10 @@ export type DispatchSubState =
       failedAt: Date;
     };
 
-export type ExecutionClass = "implementation_runtime" | "gate_runtime";
+export type ExecutionClass =
+  | "implementation_runtime"
+  | "implementation_runtime_fallback"
+  | "gate_runtime";
 export type DispatchMechanism = "self_dispatch" | "queue_fallback";
 export type DispatchFailure =
   | { kind: "ack_timeout" }

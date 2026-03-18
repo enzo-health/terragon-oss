@@ -863,6 +863,7 @@ export type DispatchIntentStatus =
 
 export type DispatchIntentExecutionClass =
   | "implementation_runtime"
+  | "implementation_runtime_fallback"
   | "gate_runtime";
 
 export type DispatchIntentDispatchMechanism =

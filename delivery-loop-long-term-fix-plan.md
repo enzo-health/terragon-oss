@@ -261,8 +261,19 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Fallback decision is deterministic and recorded.
 - **Validation**:
   - Failure classification tests and fallback transition tests.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+- 2026-03-18: Added deterministic infra lane classifier in shared domain (`failure-signature.ts`) with explicit
+  message/category heuristics and exported `FailureClassifyInput`, `FailureLane`, `isInfrastructureFailure`,
+  and `classifyFailureLane`.
+- 2026-03-18: Extended shared v3 reducer types/payloads to carry implementation execution class (`implementation_runtime`
+  or `implementation_runtime_fallback`) on `dispatch_implementing`.
+- 2026-03-18: Wired v3 retry path so infra retries bump only `infraRetryCount`, keep `fixAttemptCount` unchanged,
+  and resolve dispatch execution class deterministically (`>0` infra retries → fallback class).
+- 2026-03-18: Updated v3 effect parsing/serialization and effect worker dispatching so executionClass is persisted and
+  passed through to work items as recorded fallback decisions.
+- 2026-03-18: Extended `DispatchIntentExecutionClass`/`ExecutionClass` to include `implementation_runtime_fallback` and
+  updated targeted tests for failure classification and infra fallback transitions.
 
 ### Task S2-T5: Reducer/Worker Race Hardening Tests
 

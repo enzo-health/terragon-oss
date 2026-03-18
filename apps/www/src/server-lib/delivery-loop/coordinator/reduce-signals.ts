@@ -23,6 +23,7 @@ import {
   shouldTripCircuitBreaker,
   isInfrastructureSignature,
   getPolicyForSignature,
+  isInfrastructureFailure,
 } from "@terragon/shared/delivery-loop/domain/failure-signature";
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,13 @@ function reduceDaemonSignal(
         workflow.kind === "implementing" &&
         workflow.dispatch.kind !== "failed"
       ) {
+        const isInfraFailure = isInfrastructureFailure({
+          category: event.failure.kind,
+          message:
+            event.failure.kind === "runtime_crash"
+              ? event.failure.message
+              : null,
+        });
         // Extract failure signature and check circuit breaker
         const existingMap = workflow.failureSignatures ?? {};
         const { signature, updatedMap } = extractFailureSignature(
@@ -161,7 +169,7 @@ function reduceDaemonSignal(
         const policy = getPolicyForSignature(signature);
         const tripped = shouldTripCircuitBreaker(signature, policy);
 
-        if (isInfrastructureSignature(signature)) {
+        if (isInfraFailure || isInfrastructureSignature(signature)) {
           // Infrastructure failures bypass fix-attempt budget but have
           // their own circuit breaker (maxConsecutive=10, maxTotal=15).
           if (tripped) {

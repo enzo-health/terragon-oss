@@ -290,7 +290,10 @@ export function serializeEffectPayloadV3(
 ): Record<string, unknown> {
   switch (payload.kind) {
     case "dispatch_implementing":
-      return { kind: payload.kind };
+      return {
+        kind: "dispatch_implementing",
+        executionClass: payload.executionClass,
+      };
     case "dispatch_gate_review":
       return { kind: payload.kind, gate: payload.gate };
     case "ack_timeout_check":
@@ -299,6 +302,10 @@ export function serializeEffectPayloadV3(
         runId: payload.runId,
         workflowVersion: payload.workflowVersion,
       };
+    default:
+      throw new Error(
+        `Unhandled effect kind ${(payload as { kind: string }).kind}`,
+      );
   }
 }
 
@@ -307,7 +314,16 @@ export function parseEffectPayloadV3(payload: unknown): EffectPayloadV3 | null {
     return null;
   }
   if (payload.kind === "dispatch_implementing") {
-    return { kind: "dispatch_implementing" };
+    if (
+      payload.executionClass !== "implementation_runtime" &&
+      payload.executionClass !== "implementation_runtime_fallback"
+    ) {
+      return null;
+    }
+    return {
+      kind: "dispatch_implementing",
+      executionClass: payload.executionClass,
+    };
   }
   if (payload.kind === "dispatch_gate_review" && payload.gate === "review") {
     return { kind: "dispatch_gate_review", gate: "review" };

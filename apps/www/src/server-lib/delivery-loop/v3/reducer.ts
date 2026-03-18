@@ -187,12 +187,18 @@ function withVersion(head: WorkflowHeadV3, now: Date): WorkflowHeadV3 {
 function dispatchImplementingEffect(
   head: WorkflowHeadV3,
   now: Date,
+  lane: "agent" | "infra",
+  infraRetryCount: number,
 ): EffectSpecV3 {
+  const executionClass =
+    lane === "infra" && infraRetryCount > 0
+      ? "implementation_runtime_fallback"
+      : "implementation_runtime";
   return {
     kind: "dispatch_implementing",
     effectKey: `${head.workflowId}:${head.version + 1}:dispatch_implementing`,
     dueAt: now,
-    payload: { kind: "dispatch_implementing" },
+    payload: { kind: "dispatch_implementing", executionClass },
   };
 }
 
@@ -259,7 +265,14 @@ function retryToImplementing(params: {
       fixAttemptCount: laneUpdate.fixAttemptCount,
       infraRetryCount: laneUpdate.infraRetryCount,
     },
-    effects: [dispatchImplementingEffect(next, params.now)],
+    effects: [
+      dispatchImplementingEffect(
+        next,
+        params.now,
+        params.lane,
+        laneUpdate.infraRetryCount,
+      ),
+    ],
     invariantActions: [],
   };
 }
@@ -326,7 +339,9 @@ export function reduceV3(params: {
           activeGate: null,
           blockedReason: null,
         },
-        effects: [dispatchImplementingEffect(next, now)],
+        effects: [
+          dispatchImplementingEffect(next, now, "agent", next.infraRetryCount),
+        ],
         invariantActions: [],
       };
       break;
@@ -626,7 +641,9 @@ export function reduceV3(params: {
           activeRunId: null,
           blockedReason: null,
         },
-        effects: [dispatchImplementingEffect(next, now)],
+        effects: [
+          dispatchImplementingEffect(next, now, "agent", next.infraRetryCount),
+        ],
         invariantActions: [],
       };
       break;

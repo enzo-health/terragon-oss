@@ -6,7 +6,9 @@ import {
   extractFailureSignature,
   isSameSignature,
   shouldTripCircuitBreaker,
+  isInfrastructureFailure,
   isInfrastructureSignature,
+  classifyFailureLane,
   getPolicyForSignature,
   type FailureSignature,
 } from "./failure-signature.js";
@@ -248,6 +250,68 @@ describe("isInfrastructureSignature", () => {
       totalCount: 1,
     };
     expect(isInfrastructureSignature(sig)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyFailureLane / isInfrastructureFailure
+// ---------------------------------------------------------------------------
+
+describe("isInfrastructureFailure", () => {
+  it("classifies runtime_crash + Internal error as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "Internal error",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies dispatch ack timeout as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "dispatch_ack_timeout",
+        message: "run timed out waiting for ack",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies transport-related daemon messages as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "transport",
+        message: "socket hang up",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not classify normal runtime crash as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "Segmentation fault",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("classifyFailureLane", () => {
+  it("routes infra failures to the infra lane", () => {
+    expect(
+      classifyFailureLane({
+        category: "runtime_crash",
+        message: "couldn't connect to server",
+      }),
+    ).toBe("infra");
+  });
+
+  it("routes terminal runtime failures to the agent lane", () => {
+    expect(
+      classifyFailureLane({
+        category: "runtime_crash",
+        message: "segmentation fault",
+      }),
+    ).toBe("agent");
   });
 });
 

@@ -38,7 +38,7 @@ async function processSingleEffect(params: {
         correlationId: `v3:dispatch:impl:${params.effect.id}`,
         kind: "dispatch",
         payloadJson: {
-          executionClass: "implementation_runtime",
+          executionClass: payload.executionClass,
           workflowId: params.effect.workflowId,
         },
       });
