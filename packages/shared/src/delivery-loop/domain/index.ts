@@ -103,3 +103,40 @@ export {
   type DeliveryLoopRetryAction,
   DELIVERY_LOOP_FAILURE_ACTION_TABLE,
 } from "./failure";
+
+// failure-signature.ts
+export {
+  type FailureSignature,
+  type FailureSignatureMap,
+  type CircuitBreakerPolicy,
+  hashFailureMessage,
+  makeSignatureKey,
+  extractFailureSignature,
+  isSameSignature,
+  shouldTripCircuitBreaker,
+  isInfrastructureSignature,
+  getPolicyForSignature,
+} from "./failure-signature";
+
+// retrospective.ts
+export {
+  type PhaseMetric,
+  type GateMetric,
+  type FailurePattern,
+  type RetryMetric,
+  type WorkflowRetrospective,
+  computeRetrospective,
+} from "./retrospective";
+
+// outcomes.ts
+export {
+  type DaemonTerminalErrorCategory,
+  classifyDaemonTerminalErrorCategory,
+  mapDaemonTerminalCategoryToFailureCategory,
+  type DaemonEnvelopeContext,
+  type DaemonOutcome,
+  type GitHubOutcome,
+  type HumanOutcome,
+  type TimerOutcome,
+  type BabysitOutcome,
+} from "./outcomes";

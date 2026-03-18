@@ -65,6 +65,9 @@ export async function GET(request: NextRequest) {
       const { runRetryWork } = await import(
         "@/server-lib/delivery-loop/workers/run-retry-work"
       );
+      const { runRetrospectiveWork } = await import(
+        "@/server-lib/delivery-loop/workers/run-retrospective-work"
+      );
 
       const MAX_V2_WORK_ITEMS = 20;
 
@@ -116,6 +119,16 @@ export async function GET(request: NextRequest) {
                 correlationId: item.correlationId,
                 payload: payload as Parameters<
                   typeof runRetryWork
+                >[0]["payload"],
+              });
+              break;
+            case "retrospective":
+              await runRetrospectiveWork({
+                db,
+                workItemId: item.id,
+                claimToken,
+                payload: payload as Parameters<
+                  typeof runRetrospectiveWork
                 >[0]["payload"],
               });
               break;

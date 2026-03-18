@@ -1,7 +1,6 @@
 import type {
   DeliverySignal,
   DaemonSignal,
-  DaemonFailure,
   GitHubSignal,
   HumanSignal,
   TimerSignal,
@@ -9,6 +8,7 @@ import type {
 } from "@terragon/shared/delivery-loop/domain/signals";
 import type {
   DeliveryWorkflow,
+  WorkflowId,
   GateKind,
 } from "@terragon/shared/delivery-loop/domain/workflow";
 import { isActiveState } from "@terragon/shared/delivery-loop/domain/workflow";
@@ -17,28 +17,58 @@ import type {
   LoopEventContext,
   GateVerdict,
 } from "@terragon/shared/delivery-loop/domain/events";
+import type { FailureSignatureMap } from "@terragon/shared/delivery-loop/domain/failure-signature";
+import {
+  extractFailureSignature,
+  shouldTripCircuitBreaker,
+  isInfrastructureSignature,
+  getPolicyForSignature,
+} from "@terragon/shared/delivery-loop/domain/failure-signature";
+
+// ---------------------------------------------------------------------------
+// ReductionContext — bundles contextual params for signal reduction
+// ---------------------------------------------------------------------------
+
+export type ReductionContext = {
+  workflowId: WorkflowId;
+  prNumber: number | null;
+  gateVerdicts?: GateVerdict[];
+  now: Date;
+};
 
 export type SignalReductionResult =
-  | { event: LoopEvent; context: LoopEventContext }
+  | {
+      event: LoopEvent;
+      context: LoopEventContext;
+      signatureUpdate?: FailureSignatureMap;
+    }
   | { retryable: true; reason: string }
   | null;
 
 export function reduceSignalToEvent(params: {
   signal: DeliverySignal;
   workflow: DeliveryWorkflow;
+  reductionContext?: ReductionContext;
+  /** @deprecated Use reductionContext.gateVerdicts */
   gateVerdicts?: GateVerdict[];
+  /** @deprecated Use reductionContext.prNumber */
   prNumber?: number | null;
 }): SignalReductionResult {
+  const gateVerdicts =
+    params.reductionContext?.gateVerdicts ?? params.gateVerdicts;
+  const prNumber = params.reductionContext?.prNumber ?? params.prNumber ?? null;
+  const now = params.reductionContext?.now ?? new Date();
+
   let result: SignalReductionResult;
   switch (params.signal.source) {
     case "daemon":
-      result = reduceDaemonSignal(params.signal.event, params.workflow);
+      result = reduceDaemonSignal(params.signal.event, params.workflow, now);
       break;
     case "github":
       result = reduceGitHubSignal(
         params.signal.event,
         params.workflow,
-        params.gateVerdicts,
+        gateVerdicts,
       );
       break;
     case "human":
@@ -58,12 +88,12 @@ export function reduceSignalToEvent(params: {
     result &&
     "event" in result &&
     result.event === "gate_passed" &&
-    params.prNumber != null
+    prNumber != null
   ) {
     result.context = {
       ...result.context,
       hasPrLink: true,
-      prNumber: params.prNumber,
+      prNumber,
     };
   }
 
@@ -77,6 +107,7 @@ export function reduceSignalToEvent(params: {
 function reduceDaemonSignal(
   event: DaemonSignal,
   workflow: DeliveryWorkflow,
+  now: Date,
 ): SignalReductionResult {
   switch (event.kind) {
     case "run_completed":
@@ -102,34 +133,58 @@ function reduceDaemonSignal(
 
     case "run_failed":
       if (workflow.kind === "implementing") {
-        // Infrastructure failures (e.g. ACP transient "Internal error" during
-        // sandbox-agent startup) should NOT consume the fix-attempt budget.
-        // Re-dispatch without penalty, up to a separate infra retry limit.
-        if (isInfrastructureFailure(event.failure)) {
-          const MAX_INFRA_RETRIES = 10;
-          if (workflow.infraRetryCount >= MAX_INFRA_RETRIES) {
-            return { event: "exhausted_retries", context: {} };
+        // Extract failure signature and check circuit breaker
+        const existingMap = workflow.failureSignatures ?? {};
+        const { signature, updatedMap } = extractFailureSignature(
+          event.failure,
+          "daemon",
+          existingMap,
+          now,
+        );
+        const policy = getPolicyForSignature(signature);
+        const tripped = shouldTripCircuitBreaker(signature, policy);
+
+        if (isInfrastructureSignature(signature)) {
+          // Infrastructure failures bypass fix-attempt budget but have
+          // their own circuit breaker (maxConsecutive=10, maxTotal=15).
+          if (tripped) {
+            return {
+              event: "exhausted_retries",
+              context: {},
+              signatureUpdate: updatedMap,
+            };
           }
           return {
             event: "redispatch_requested",
             context: { infraRetry: true },
+            signatureUpdate: updatedMap,
+          };
+        }
+
+        // Circuit breaker tripped — escalate immediately
+        if (tripped) {
+          return {
+            event: "exhausted_retries",
+            context: {},
+            signatureUpdate: updatedMap,
           };
         }
 
         // Budget check — if at or past max, escalate to manual fix
         if (workflow.fixAttemptCount >= workflow.maxFixAttempts - 1) {
-          return { event: "exhausted_retries", context: {} };
+          return {
+            event: "exhausted_retries",
+            context: {},
+            signatureUpdate: updatedMap,
+          };
         }
-        // Classify by failure kind
-        switch (event.failure.kind) {
-          case "runtime_crash":
-          case "timeout":
-          case "oom":
-            // Transient-ish failures — let the state machine retry via gate_blocked
-            return { event: "gate_blocked", context: {} };
-          case "config_error":
-            return { event: "exhausted_retries", context: {} };
-        }
+
+        // Under budget + not tripped — retry via gate_blocked
+        return {
+          event: "gate_blocked",
+          context: {},
+          signatureUpdate: updatedMap,
+        };
       }
       if (workflow.kind === "gating") {
         // Gate runtime dispatch crashed — send back to implementing for a fix cycle
@@ -359,19 +414,4 @@ function reduceGateSignal(params: {
   }
 
   return null;
-}
-
-// ---------------------------------------------------------------------------
-// Infrastructure failure detection
-// ---------------------------------------------------------------------------
-
-/**
- * Identifies transient infrastructure failures (e.g. ACP startup race condition
- * where sandbox-agent isn't ready and Claude Agent SDK returns "Internal error").
- * These should not consume the fix-attempt budget.
- */
-function isInfrastructureFailure(failure: DaemonFailure): boolean {
-  return (
-    failure.kind === "runtime_crash" && failure.message === "Internal error"
-  );
 }

@@ -14,7 +14,13 @@ import {
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
 } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
+import {
+  type DaemonTerminalErrorCategory,
+  classifyDaemonTerminalErrorCategory,
+  mapDaemonTerminalCategoryToFailureCategory,
+  type DaemonOutcome,
+  type DaemonEnvelopeContext,
+} from "@terragon/shared/delivery-loop/domain/outcomes";
 import {
   buildDispatchIntentId,
   getReplayableSelfDispatch,
@@ -39,41 +45,6 @@ type DaemonEventEnvelopeV2 = {
 
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
-
-type DaemonTerminalErrorCategory =
-  | "provider_not_configured"
-  | "acp_sse_not_found"
-  | "daemon_custom_error"
-  | "daemon_result_error"
-  | "unknown";
-
-function mapDaemonTerminalCategoryToFailureCategory(
-  category: DaemonTerminalErrorCategory,
-  errorMessage?: string | null,
-): DeliveryLoopFailureCategory {
-  // Context window overflow is non-retryable regardless of agent type
-  if (
-    errorMessage &&
-    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
-      errorMessage,
-    )
-  ) {
-    return "config_error";
-  }
-
-  switch (category) {
-    case "provider_not_configured":
-      return "config_error";
-    case "acp_sse_not_found":
-      return "daemon_unreachable";
-    case "daemon_custom_error":
-    case "daemon_result_error":
-      return "claude_runtime_exit";
-    case "unknown":
-      return "unknown";
-  }
-  return "unknown";
-}
 
 type DaemonProcessingEventClaimResult =
   | {
@@ -326,21 +297,6 @@ function deriveRunStatusFromMessages(
     return "completed";
   }
   return "processing";
-}
-
-function classifyDaemonTerminalErrorCategory(
-  errorMessage: string | null,
-): DaemonTerminalErrorCategory {
-  if (!errorMessage) {
-    return "unknown";
-  }
-  if (errorMessage.includes("provider not configured")) {
-    return "provider_not_configured";
-  }
-  if (errorMessage.includes("SSE failed (404")) {
-    return "acp_sse_not_found";
-  }
-  return "daemon_custom_error";
 }
 
 function deriveDaemonTerminalErrorInfo(
@@ -961,6 +917,51 @@ export async function POST(request: Request) {
       const { handleDaemonIngress } = await import(
         "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress"
       );
+
+      // Construct typed DaemonOutcome preserving envelope context
+      const envelopeContext: DaemonEnvelopeContext = {
+        eventId: envelopeV2.eventId,
+        seq: envelopeV2.seq,
+        runId: envelopeV2.runId,
+        contextUsage: computedContextUsage ?? null,
+      };
+      const daemonOutcome: DaemonOutcome = (() => {
+        switch (
+          daemonRunStatusFromMessages as "completed" | "failed" | "stopped"
+        ) {
+          case "completed":
+            return {
+              kind: "completion" as const,
+              envelope: envelopeContext,
+              result:
+                ((): import("@terragon/shared/delivery-loop/domain/signals").DaemonCompletionResult => {
+                  // Mirror normalizeDaemonEvent logic for result construction
+                  // but from the raw json body rather than the DaemonEventPayload
+                  return { kind: "success" as const, headSha: "", summary: "" };
+                })(),
+              headSha: null,
+              summary: null,
+            };
+          case "failed":
+            return {
+              kind: "failure" as const,
+              envelope: envelopeContext,
+              errorMessage: daemonTerminalErrorInfo.errorMessage,
+              errorCategory: daemonTerminalErrorInfo.errorCategory,
+              failureCategory: mapDaemonTerminalCategoryToFailureCategory(
+                daemonTerminalErrorInfo.errorCategory,
+                daemonTerminalErrorInfo.errorMessage,
+              ),
+              exitCode: null,
+            };
+          case "stopped":
+            return {
+              kind: "user_stop" as const,
+              envelope: envelopeContext,
+            };
+        }
+      })();
+
       const ingressResult = await handleDaemonIngress({
         db,
         rawEvent: {
@@ -978,10 +979,53 @@ export async function POST(request: Request) {
         },
         workflowId: effectiveLoopId! as WorkflowId,
         consecutiveDispatches: 0,
+        outcome: daemonOutcome,
       });
       if (ingressResult.selfDispatch) {
         selfDispatchPayload =
           ingressResult.selfDispatch as unknown as typeof selfDispatchPayload;
+      }
+
+      // Inline work item execution: if the coordinator tick scheduled work
+      // items, claim and run them immediately via waitUntil to avoid up to
+      // 60s cron latency. This is best-effort — the cron is the safety net.
+      if (ingressResult.workItemsScheduled > 0) {
+        const { waitUntil } = await import("@vercel/functions");
+        const wfId = effectiveLoopId!;
+        waitUntil(
+          (async () => {
+            try {
+              const { claimNextWorkItem } = await import(
+                "@terragon/shared/delivery-loop/store/work-queue-store"
+              );
+              const { runDispatchWork } = await import(
+                "@/server-lib/delivery-loop/workers/run-dispatch-work"
+              );
+              const claimToken = `inline:${envelopeV2!.runId}:${crypto.randomUUID()}`;
+              const item = await claimNextWorkItem({
+                db,
+                kind: "dispatch",
+                workflowId: wfId,
+                claimToken,
+              });
+              if (item) {
+                await runDispatchWork({
+                  db,
+                  workItemId: item.id,
+                  claimToken,
+                  payload: item.payloadJson as Parameters<
+                    typeof runDispatchWork
+                  >[0]["payload"],
+                });
+              }
+            } catch (err) {
+              console.warn(
+                "[daemon-event] inline work item execution failed, cron will retry",
+                { workflowId: wfId, error: err },
+              );
+            }
+          })(),
+        );
       }
     } catch (error) {
       console.error("[sdlc-loop-v2] handleDaemonIngress failed", {

@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DaemonEventPayload } from "./daemon-ingress";
 import { normalizeDaemonEvent, handleDaemonIngress } from "./daemon-ingress";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import type {
+  DaemonOutcome,
+  DaemonEnvelopeContext,
+} from "@terragon/shared/delivery-loop/domain/outcomes";
 
 // ── mocks ──────────────────────────────────────────────────────────────
 vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({
@@ -307,7 +311,7 @@ describe("handleDaemonIngress", () => {
     expect(call.canonicalCauseId).toMatch(/:terminal$/);
   });
 
-  it("circuit breaker: consecutiveDispatches >= 7 → selfDispatch is null", async () => {
+  it("circuit breaker: consecutiveDispatches >= 7 → selfDispatch is null, workItemsScheduled is 0", async () => {
     const { runCoordinatorTick } = await getMocks();
     runCoordinatorTick.mockResolvedValueOnce({
       workflowId,
@@ -326,11 +330,12 @@ describe("handleDaemonIngress", () => {
       consecutiveDispatches: 7,
     });
     expect(result.selfDispatch).toBeNull();
+    expect(result.workItemsScheduled).toBe(0);
     // tick should still be called
     expect(runCoordinatorTick).toHaveBeenCalledOnce();
   });
 
-  it("circuit breaker: consecutiveDispatches < 7 → tick runs, selfDispatch still null (TODO path)", async () => {
+  it("circuit breaker: consecutiveDispatches < 7 → tick runs, workItemsScheduled is returned", async () => {
     const { runCoordinatorTick } = await getMocks();
     runCoordinatorTick.mockResolvedValueOnce({
       workflowId,
@@ -339,7 +344,7 @@ describe("handleDaemonIngress", () => {
       transitioned: true,
       stateBefore: "implementing",
       stateAfter: "implementing",
-      workItemsScheduled: 1,
+      workItemsScheduled: 2,
       incidentsEvaluated: false,
     });
     const result = await handleDaemonIngress({
@@ -350,6 +355,7 @@ describe("handleDaemonIngress", () => {
     });
     // Currently returns null because the TODO payload construction isn't wired
     expect(result.selfDispatch).toBeNull();
+    expect(result.workItemsScheduled).toBe(2);
     expect(runCoordinatorTick).toHaveBeenCalledOnce();
   });
 
@@ -392,7 +398,7 @@ describe("handleDaemonIngress", () => {
       rawEvent: basePayload(),
       workflowId,
     });
-    expect(result).toEqual({ selfDispatch: null });
+    expect(result).toEqual({ selfDispatch: null, workItemsScheduled: 0 });
     expect(warnSpy).toHaveBeenCalledWith(
       "[daemon-ingress] self-dispatch micro-tick failed",
       expect.objectContaining({ workflowId, runId: "run-1" }),
@@ -459,5 +465,135 @@ describe("isEligibleForSelfDispatch (indirect)", () => {
       workflowId,
     });
     expect(runCoordinatorTick).not.toHaveBeenCalled();
+  });
+
+  it("non-completed events return workItemsScheduled: 0", async () => {
+    for (const status of ["failed", "stopped", "progress"] as const) {
+      const result = await handleDaemonIngress({
+        db: fakeDb,
+        rawEvent: basePayload({ status }),
+        workflowId,
+      });
+      expect(result.workItemsScheduled).toBe(0);
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// Part 4 — DaemonOutcome (backward compatibility & metadata preservation)
+// ════════════════════════════════════════════════════════════════════════
+describe("handleDaemonIngress with DaemonOutcome", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const baseEnvelope: DaemonEnvelopeContext = {
+    eventId: "evt-1",
+    seq: 3,
+    runId: "run-1",
+    contextUsage: 42000,
+  };
+
+  it("backward compatible — works without outcome parameter", async () => {
+    const { appendSignalToInbox } = await getMocks();
+    const result = await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload(),
+      workflowId,
+    });
+    expect(appendSignalToInbox).toHaveBeenCalledOnce();
+    expect(result.selfDispatch).toBeNull();
+  });
+
+  it("accepts completion outcome without changing signal behavior", async () => {
+    const { appendSignalToInbox } = await getMocks();
+    const outcome: DaemonOutcome = {
+      kind: "completion",
+      envelope: baseEnvelope,
+      result: { kind: "success", headSha: "abc", summary: "done" },
+      headSha: "abc",
+      summary: "done",
+    };
+    const result = await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload(),
+      workflowId,
+      outcome,
+    });
+    // Signal still appended normally
+    expect(appendSignalToInbox).toHaveBeenCalledOnce();
+    expect(appendSignalToInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ causeType: "daemon_run_completed" }),
+    );
+    // Return shape unchanged
+    expect(result).toHaveProperty("selfDispatch");
+    expect(result).toHaveProperty("workItemsScheduled");
+  });
+
+  it("accepts failure outcome without changing signal behavior", async () => {
+    const { appendSignalToInbox } = await getMocks();
+    const outcome: DaemonOutcome = {
+      kind: "failure",
+      envelope: baseEnvelope,
+      errorMessage: "segfault",
+      errorCategory: "daemon_custom_error",
+      failureCategory: "claude_runtime_exit",
+      exitCode: 1,
+    };
+    await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload({
+        status: "failed",
+        exitCode: 1,
+        errorMessage: "segfault",
+      }),
+      workflowId,
+      outcome,
+    });
+    expect(appendSignalToInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ causeType: "daemon_run_failed" }),
+    );
+  });
+
+  it("accepts user_stop outcome without changing signal behavior", async () => {
+    const { appendSignalToInbox } = await getMocks();
+    const outcome: DaemonOutcome = {
+      kind: "user_stop",
+      envelope: baseEnvelope,
+    };
+    await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload({ status: "stopped" }),
+      workflowId,
+      outcome,
+    });
+    expect(appendSignalToInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ causeType: "human_stop" }),
+    );
+  });
+
+  it("accepts progress outcome without changing signal behavior", async () => {
+    const { appendSignalToInbox } = await getMocks();
+    const outcome: DaemonOutcome = {
+      kind: "progress",
+      envelope: baseEnvelope,
+      completedTasks: 2,
+      totalTasks: 5,
+      currentTask: "lint",
+    };
+    await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload({
+        status: "progress",
+        completedTasks: 2,
+        totalTasks: 5,
+        currentTask: "lint",
+      }),
+      workflowId,
+      outcome,
+    });
+    expect(appendSignalToInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ causeType: "daemon_progress" }),
+    );
   });
 });

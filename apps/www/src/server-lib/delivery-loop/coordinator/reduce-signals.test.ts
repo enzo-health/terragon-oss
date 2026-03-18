@@ -30,6 +30,10 @@ import type {
   BabysitSignal,
 } from "@terragon/shared/delivery-loop/domain/signals";
 import type { GateVerdict } from "@terragon/shared/delivery-loop/domain/events";
+import {
+  extractFailureSignature,
+  type FailureSignatureMap,
+} from "@terragon/shared/delivery-loop/domain/failure-signature";
 
 // ---------------------------------------------------------------------------
 // Helpers — workflow snapshot builders
@@ -428,21 +432,34 @@ describe("reduceSignalToEvent", () => {
       });
 
       it("implementing + infra failure with exhausted infra retries → exhausted_retries", () => {
+        // Pre-populate 9 infra failures so the 10th trips the circuit breaker
+        const failure = {
+          kind: "runtime_crash" as const,
+          exitCode: null,
+          message: "Internal error",
+        };
+        const now = new Date();
+        let map: FailureSignatureMap = {};
+        for (let i = 0; i < 9; i++) {
+          ({ updatedMap: map } = extractFailureSignature(
+            failure,
+            "daemon",
+            map,
+            now,
+          ));
+        }
+        const wf = implementing({
+          fixAttemptCount: 0,
+          maxFixAttempts: 5,
+        });
+        const wfWithSigs = { ...wf, failureSignatures: map };
         const result = reduce(
           daemonSignal({
             kind: "run_failed",
             runId: "r1",
-            failure: {
-              kind: "runtime_crash",
-              exitCode: null,
-              message: "Internal error",
-            },
+            failure,
           }),
-          implementing({
-            infraRetryCount: 10,
-            fixAttemptCount: 0,
-            maxFixAttempts: 5,
-          }),
+          wfWithSigs as DeliveryWorkflow,
         );
         expectEvent(result, "exhausted_retries");
       });
@@ -1095,6 +1112,175 @@ describe("reduceSignalToEvent", () => {
         );
         expect(result).toBeNull();
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Signature-based circuit breaker
+  // ---------------------------------------------------------------------------
+
+  describe("failure signature circuit breaker", () => {
+    it("returns signatureUpdate on daemon run_failed in implementing", () => {
+      const result = reduce(
+        daemonSignal({
+          kind: "run_failed",
+          runId: "r1",
+          failure: { kind: "runtime_crash", exitCode: 1, message: "crash" },
+        }),
+        implementing({ fixAttemptCount: 0, maxFixAttempts: 5 }),
+      );
+      expect(result).not.toBeNull();
+      expect(result).toHaveProperty("signatureUpdate");
+      const r = result as { signatureUpdate: Record<string, unknown> };
+      expect(Object.keys(r.signatureUpdate)).toHaveLength(1);
+    });
+
+    it("trips circuit breaker after maxConsecutive runtime_crash (3)", () => {
+      const failure = {
+        kind: "runtime_crash" as const,
+        exitCode: 1,
+        message: "same crash",
+      };
+      const now = new Date();
+      let map: FailureSignatureMap = {};
+      // Simulate 2 prior failures
+      ({ updatedMap: map } = extractFailureSignature(
+        failure,
+        "daemon",
+        map,
+        now,
+      ));
+      ({ updatedMap: map } = extractFailureSignature(
+        failure,
+        "daemon",
+        map,
+        now,
+      ));
+
+      // Third failure should trip the breaker
+      const wf = implementing({
+        fixAttemptCount: 0,
+        maxFixAttempts: 10,
+      });
+      const wfWithSigs = { ...wf, failureSignatures: map };
+      const result = reduce(
+        daemonSignal({
+          kind: "run_failed",
+          runId: "r1",
+          failure,
+        }),
+        wfWithSigs as DeliveryWorkflow,
+      );
+      expectEvent(result, "exhausted_retries");
+    });
+
+    it("infra failure (Internal error) uses infra policy with higher limits", () => {
+      const result = reduce(
+        daemonSignal({
+          kind: "run_failed",
+          runId: "r1",
+          failure: {
+            kind: "runtime_crash",
+            exitCode: null,
+            message: "Internal error",
+          },
+        }),
+        implementing({ fixAttemptCount: 4, maxFixAttempts: 5 }),
+      );
+      // Infra failures bypass fix budget, first occurrence should redispatch
+      expectEvent(result, "redispatch_requested");
+      expect(result).toHaveProperty("signatureUpdate");
+    });
+
+    it("infra failure trips after 10 consecutive", () => {
+      const failure = {
+        kind: "runtime_crash" as const,
+        exitCode: null,
+        message: "Internal error",
+      };
+      const now = new Date();
+      let map: FailureSignatureMap = {};
+      // Simulate 9 prior infra failures
+      for (let i = 0; i < 9; i++) {
+        ({ updatedMap: map } = extractFailureSignature(
+          failure,
+          "daemon",
+          map,
+          now,
+        ));
+      }
+      const wf = implementing({ fixAttemptCount: 0, maxFixAttempts: 5 });
+      const wfWithSigs = { ...wf, failureSignatures: map };
+
+      const result = reduce(
+        daemonSignal({ kind: "run_failed", runId: "r1", failure }),
+        wfWithSigs as DeliveryWorkflow,
+      );
+      expectEvent(result, "exhausted_retries");
+    });
+
+    it("config_error trips immediately (maxConsecutive=1)", () => {
+      const result = reduce(
+        daemonSignal({
+          kind: "run_failed",
+          runId: "r1",
+          failure: { kind: "config_error", message: "bad config" },
+        }),
+        implementing({ fixAttemptCount: 0, maxFixAttempts: 5 }),
+      );
+      expectEvent(result, "exhausted_retries");
+    });
+
+    it("oom trips after 2 consecutive", () => {
+      const failure = { kind: "oom" as const, durationMs: 30000 };
+      const now = new Date();
+      let map: FailureSignatureMap = {};
+      ({ updatedMap: map } = extractFailureSignature(
+        failure,
+        "daemon",
+        map,
+        now,
+      ));
+      const wf = implementing({ fixAttemptCount: 0, maxFixAttempts: 10 });
+      const wfWithSigs = { ...wf, failureSignatures: map };
+
+      const result = reduce(
+        daemonSignal({ kind: "run_failed", runId: "r1", failure }),
+        wfWithSigs as DeliveryWorkflow,
+      );
+      expectEvent(result, "exhausted_retries");
+    });
+
+    it("different failure messages create separate signatures", () => {
+      const result1 = reduce(
+        daemonSignal({
+          kind: "run_failed",
+          runId: "r1",
+          failure: { kind: "runtime_crash", exitCode: 1, message: "crash A" },
+        }),
+        implementing({ fixAttemptCount: 0, maxFixAttempts: 5 }),
+      );
+      expect(result1).toHaveProperty("signatureUpdate");
+      const map1 = (result1 as { signatureUpdate: Record<string, unknown> })
+        .signatureUpdate;
+      expect(Object.keys(map1)).toHaveLength(1);
+
+      // Different message creates a second entry
+      const wfWithSigs = {
+        ...implementing({ fixAttemptCount: 0, maxFixAttempts: 5 }),
+        failureSignatures: map1,
+      };
+      const result2 = reduce(
+        daemonSignal({
+          kind: "run_failed",
+          runId: "r1",
+          failure: { kind: "runtime_crash", exitCode: 1, message: "crash B" },
+        }),
+        wfWithSigs as DeliveryWorkflow,
+      );
+      const map2 = (result2 as { signatureUpdate: Record<string, unknown> })
+        .signatureUpdate;
+      expect(Object.keys(map2)).toHaveLength(2);
     });
   });
 });

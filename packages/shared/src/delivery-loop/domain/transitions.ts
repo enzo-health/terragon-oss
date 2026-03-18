@@ -9,6 +9,7 @@ import type {
   ManualFixIssue,
   ResumableWorkflowState,
 } from "./workflow";
+import type { FailureSignatureMap } from "./failure-signature";
 import type { LoopEvent, LoopEventContext } from "./events";
 
 // ---------------------------------------------------------------------------
@@ -104,12 +105,19 @@ function retryToImplementing(
     "planVersion" in wf && wf.planVersion != null
       ? wf.planVersion
       : (1 as PlanVersion);
+  // Carry failure signatures forward so the circuit breaker accumulates
+  const failureSignatures: FailureSignatureMap | undefined =
+    wf.kind === "implementing" ? wf.failureSignatures : undefined;
+  const lastFailureSignatureKey: string | undefined =
+    wf.kind === "implementing" ? wf.lastFailureSignatureKey : undefined;
   return {
     ...base,
     fixAttemptCount: wf.fixAttemptCount + 1,
     kind: "implementing",
     planVersion,
     dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    failureSignatures,
+    lastFailureSignatureKey,
   };
 }
 
@@ -322,6 +330,8 @@ function reduceImplementing(
       kind: "implementing",
       planVersion: wf.planVersion,
       dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+      failureSignatures: wf.failureSignatures,
+      lastFailureSignatureKey: wf.lastFailureSignatureKey,
     };
   }
 

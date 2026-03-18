@@ -91,6 +91,10 @@ export type DeliveryLoopRuntimeStatusRow =
   typeof schema.deliveryLoopRuntimeStatus.$inferSelect;
 export type DeliveryLoopRuntimeStatusInsert =
   typeof schema.deliveryLoopRuntimeStatus.$inferInsert;
+export type DeliveryWorkflowRetrospectiveRow =
+  typeof schema.deliveryWorkflowRetrospective.$inferSelect;
+export type DeliveryWorkflowRetrospectiveInsert =
+  typeof schema.deliveryWorkflowRetrospective.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;

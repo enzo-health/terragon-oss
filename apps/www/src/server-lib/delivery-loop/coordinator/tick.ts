@@ -34,7 +34,7 @@ import {
   getOpenIncidents,
 } from "@terragon/shared/delivery-loop/store/incident-store";
 
-import { reduceSignalToEvent } from "./reduce-signals";
+import { reduceSignalToEvent, type ReductionContext } from "./reduce-signals";
 import { resolveWorkItems } from "./schedule-work";
 import { buildWorkflowEvent } from "./append-events";
 import {
@@ -125,6 +125,13 @@ export async function runCoordinatorTick(params: {
   let workItemsScheduled = 0;
   let pendingAction: ReturnType<typeof derivePendingAction> = null;
 
+  // Build reduction context once for the tick
+  const reductionContext: ReductionContext = {
+    workflowId,
+    prNumber: workflowRow.prNumber ?? null,
+    now,
+  };
+
   // 2. Process pending signals (up to limit per tick)
   //    The outer do/while handles level-triggered gate bypass: when the
   //    workflow is already in gating with skipGates but no signals exist,
@@ -186,7 +193,7 @@ export async function runCoordinatorTick(params: {
           reduction = reduceSignalToEvent({
             signal: deliverySignal,
             workflow,
-            prNumber: workflowRow.prNumber,
+            reductionContext,
           });
         } catch (reductionErr) {
           console.warn(
@@ -226,7 +233,19 @@ export async function runCoordinatorTick(params: {
           continue;
         }
 
-        // 3b. Apply the state machine transition
+        // 3b. Merge failure signature updates into the in-memory workflow
+        if (
+          "signatureUpdate" in reduction &&
+          reduction.signatureUpdate &&
+          workflow.kind === "implementing"
+        ) {
+          workflow = {
+            ...workflow,
+            failureSignatures: reduction.signatureUpdate,
+          };
+        }
+
+        // 3c. Apply the state machine transition
         const newWorkflow = reduceWorkflow({
           snapshot: workflow,
           event: reduction.event,
@@ -250,7 +269,7 @@ export async function runCoordinatorTick(params: {
           continue;
         }
 
-        // 3c. Resolve work items from the transition
+        // 3d. Resolve work items from the transition
         const scheduledItems = resolveWorkItems({
           previousWorkflow: workflow,
           newWorkflow,
@@ -259,7 +278,7 @@ export async function runCoordinatorTick(params: {
           now,
         });
 
-        // 3d. Build the audit event
+        // 3e. Build the audit event
         const workflowEvent = buildWorkflowEvent({
           previousWorkflow: workflow,
           newWorkflow,

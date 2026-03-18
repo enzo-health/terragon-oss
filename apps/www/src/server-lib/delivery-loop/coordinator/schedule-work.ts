@@ -2,7 +2,7 @@ import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/wor
 import type { LoopEvent } from "@terragon/shared/delivery-loop/domain/events";
 
 export type ScheduledWorkItem = {
-  kind: "dispatch" | "publication" | "retry" | "babysit";
+  kind: "dispatch" | "publication" | "retry" | "babysit" | "retrospective";
   payloadJson: Record<string, unknown>;
   scheduledAt: Date;
 };
@@ -139,6 +139,20 @@ export function resolveWorkItems(params: {
     case "stopped":
     case "terminated":
       // Final status publication already handled above
+      // Schedule retrospective computation for terminal transitions
+      if (
+        params.previousWorkflow.kind !== "done" &&
+        params.previousWorkflow.kind !== "stopped" &&
+        params.previousWorkflow.kind !== "terminated"
+      ) {
+        items.push({
+          kind: "retrospective",
+          payloadJson: {
+            workflowId: params.newWorkflow.workflowId,
+          },
+          scheduledAt: now,
+        });
+      }
       break;
   }
 

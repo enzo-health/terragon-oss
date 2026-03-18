@@ -2019,6 +2019,27 @@ export const deliveryLoopRuntimeStatus = pgTable(
   },
 );
 
+export const deliveryWorkflowRetrospective = pgTable(
+  "delivery_workflow_retrospective",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .unique()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    outcome: text("outcome").notNull(),
+    e2eDurationMs: integer("e2e_duration_ms").notNull(),
+    phaseMetrics: jsonb("phase_metrics").notNull(),
+    gateMetrics: jsonb("gate_metrics").notNull(),
+    failurePatterns: jsonb("failure_patterns").notNull(),
+    retryMetrics: jsonb("retry_metrics").notNull(),
+    dispatchCount: integer("dispatch_count").notNull().default(0),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+);
+
 export const deliveryLoopDispatchIntent = pgTable(
   "delivery_loop_dispatch_intent",
   {

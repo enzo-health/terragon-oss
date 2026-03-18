@@ -57,6 +57,12 @@ export {
   persistWorkflowCheckRunReference,
 } from "./workflow-github-refs";
 
+// retrospective-store.ts
+export {
+  computeAndStoreRetrospective,
+  getRetrospective,
+} from "./retrospective-store";
+
 // artifact-store.ts
 export {
   getLatestAcceptedArtifact,

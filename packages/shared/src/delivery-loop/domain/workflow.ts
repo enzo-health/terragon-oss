@@ -1,3 +1,5 @@
+import type { FailureSignatureMap } from "./failure-signature";
+
 // Branded IDs — prevent silent ID swaps at compile time
 export type WorkflowId = string & { readonly __brand: "WorkflowId" };
 export type SignalId = string & { readonly __brand: "SignalId" };
@@ -168,6 +170,8 @@ export type DeliveryWorkflow =
       kind: "implementing";
       planVersion: PlanVersion;
       dispatch: DispatchSubState;
+      failureSignatures?: FailureSignatureMap;
+      lastFailureSignatureKey?: string;
     })
   | (WorkflowCommon & {
       kind: "gating";

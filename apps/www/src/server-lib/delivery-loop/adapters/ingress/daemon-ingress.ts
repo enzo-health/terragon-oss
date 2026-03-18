@@ -7,6 +7,7 @@ import type {
   DaemonProgress,
 } from "@terragon/shared/delivery-loop/domain/signals";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import type { DaemonOutcome } from "@terragon/shared/delivery-loop/domain/outcomes";
 import { runCoordinatorTick } from "../../coordinator/tick";
 
 // Raw daemon event payload (what the daemon HTTP endpoint receives)
@@ -27,6 +28,7 @@ export type DaemonEventPayload = {
 
 export type DaemonEventResponse = {
   selfDispatch: Record<string, unknown> | null;
+  workItemsScheduled: number;
 };
 
 const MAX_CONSECUTIVE_SELF_DISPATCHES = 7;
@@ -119,6 +121,8 @@ export async function handleDaemonIngress(params: {
   /** The v2 workflow ID — distinct from rawEvent.loopId (v1 sdlcLoop ID). */
   workflowId: WorkflowId;
   consecutiveDispatches?: number;
+  /** Typed outcome preserving ingress envelope metadata. Optional for backward compatibility. */
+  outcome?: DaemonOutcome;
 }): Promise<DaemonEventResponse> {
   const signal = normalizeDaemonEvent(params.rawEvent);
   const { workflowId } = params;
@@ -196,7 +200,10 @@ export async function handleDaemonIngress(params: {
         // TODO: construct a real SdlcSelfDispatchPayload from the
         // prepared dispatch/replay state. For now, return null — the
         // cron/work-queue path handles dispatch instead.
-        return { selfDispatch: null };
+        return {
+          selfDispatch: null,
+          workItemsScheduled: tickResult.workItemsScheduled,
+        };
       }
     } catch (err) {
       // Self-dispatch is best-effort; the async coordinator will pick it up
@@ -208,7 +215,7 @@ export async function handleDaemonIngress(params: {
     }
   }
 
-  return { selfDispatch: null };
+  return { selfDispatch: null, workItemsScheduled: 0 };
 }
 
 function mapSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
