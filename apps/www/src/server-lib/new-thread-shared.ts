@@ -225,6 +225,7 @@ export async function createNewThread({
     (runInSdlcLoop ||
       sourceType === "automation" ||
       sourceType === "github-mention" ||
+      sourceType === "cli" ||
       (sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn));
   const planApprovalPolicy =
     sourceMetadata?.type === "www"
