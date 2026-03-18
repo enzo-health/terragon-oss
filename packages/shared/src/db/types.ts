@@ -72,6 +72,43 @@ export type DeliveryLoopDispatchIntentRow =
 export type DeliveryLoopDispatchIntentInsert =
   typeof schema.deliveryLoopDispatchIntent.$inferInsert;
 
+export type DeliverySignalSourceV3 =
+  | "daemon"
+  | "github"
+  | "human"
+  | "timer"
+  | "system";
+
+export type DeliveryEffectKindV3 =
+  | "dispatch_implementing"
+  | "dispatch_gate_review"
+  | "ack_timeout_check";
+
+export type DeliveryEffectStatusV3 =
+  | "planned"
+  | "running"
+  | "succeeded"
+  | "cancelled"
+  | "dead_letter";
+
+export type DeliveryTimerKindV3 = "dispatch_ack_timeout";
+
+export type DeliveryTimerStatusV3 =
+  | "planned"
+  | "running"
+  | "fired"
+  | "cancelled"
+  | "dead_letter";
+
+export type DeliveryOutboxTopicV3 = "signal" | "effect" | "timer";
+
+export type DeliveryOutboxStatusV3 =
+  | "pending"
+  | "publishing"
+  | "published"
+  | "cancelled"
+  | "dead_letter";
+
 // Delivery Loop v2 tables
 export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
 export type DeliveryWorkflowInsert =
@@ -95,6 +132,25 @@ export type DeliveryWorkflowRetrospectiveRow =
   typeof schema.deliveryWorkflowRetrospective.$inferSelect;
 export type DeliveryWorkflowRetrospectiveInsert =
   typeof schema.deliveryWorkflowRetrospective.$inferInsert;
+export type DeliveryWorkflowHeadV3Row =
+  typeof schema.deliveryWorkflowHeadV3.$inferSelect;
+export type DeliveryWorkflowHeadV3Insert =
+  typeof schema.deliveryWorkflowHeadV3.$inferInsert;
+export type DeliveryLoopJournalV3Row =
+  typeof schema.deliveryLoopJournalV3.$inferSelect;
+export type DeliveryLoopJournalV3Insert =
+  typeof schema.deliveryLoopJournalV3.$inferInsert;
+export type DeliveryEffectLedgerV3Row =
+  typeof schema.deliveryEffectLedgerV3.$inferSelect;
+export type DeliveryEffectLedgerV3Insert =
+  typeof schema.deliveryEffectLedgerV3.$inferInsert;
+export type DeliveryTimerLedgerV3Row =
+  typeof schema.deliveryTimerLedgerV3.$inferSelect;
+export type DeliveryTimerLedgerV3Insert =
+  typeof schema.deliveryTimerLedgerV3.$inferInsert;
+export type DeliveryOutboxV3Row = typeof schema.deliveryOutboxV3.$inferSelect;
+export type DeliveryOutboxV3Insert =
+  typeof schema.deliveryOutboxV3.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;

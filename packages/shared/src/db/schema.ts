@@ -68,6 +68,13 @@ import {
   SdlcBabysitEvaluationPayload,
   SdlcPlanTaskStatus,
   SdlcPlanTaskCompletedBy,
+  DeliverySignalSourceV3,
+  DeliveryEffectKindV3,
+  DeliveryEffectStatusV3,
+  DeliveryTimerKindV3,
+  DeliveryTimerStatusV3,
+  DeliveryOutboxTopicV3,
+  DeliveryOutboxStatusV3,
 } from "./types";
 import {
   AutomationAction,
@@ -2085,6 +2092,273 @@ export const deliveryLoopDispatchIntent = pgTable(
     ),
     index("delivery_loop_dispatch_intent_thread_chat_index").on(
       table.threadChatId,
+    ),
+  ],
+);
+
+/**
+ * Delivery Loop v3 — canonical workflow head projection.
+ * One mutable row per workflow_id, updated transactionally by the v3 kernel.
+ */
+export const deliveryWorkflowHeadV3 = pgTable(
+  "delivery_workflow_head_v3",
+  {
+    workflowId: text("workflow_id")
+      .primaryKey()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    generation: integer("generation").notNull().default(1),
+    version: integer("version").notNull().default(0),
+    state: text("state").notNull(),
+    activeGate: text("active_gate"),
+    headSha: text("head_sha"),
+    activeRunId: text("active_run_id"),
+    fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
+    infraRetryCount: integer("infra_retry_count").notNull().default(0),
+    maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
+    maxInfraRetries: integer("max_infra_retries").notNull().default(10),
+    blockedReason: text("blocked_reason"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    lastActivityAt: timestamp("last_activity_at", { mode: "date" }),
+  },
+  (table) => [
+    index("delivery_workflow_head_v3_state_index").on(table.state),
+    index("delivery_workflow_head_v3_thread_index").on(table.threadId),
+  ],
+);
+
+/**
+ * Delivery Loop v3 — immutable event journal (idempotent append).
+ */
+export const deliveryLoopJournalV3 = pgTable(
+  "delivery_loop_journal_v3",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    source: text("source").$type<DeliverySignalSourceV3>().notNull(),
+    eventType: text("event_type").notNull(),
+    payloadJson: jsonb("payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    occurredAt: timestamp("occurred_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("delivery_loop_journal_v3_dedupe_unique").on(
+      table.workflowId,
+      table.source,
+      table.idempotencyKey,
+    ),
+    index("delivery_loop_journal_v3_workflow_created_index").on(
+      table.workflowId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
+ * Delivery Loop v3 — executable effect ledger.
+ */
+export const deliveryEffectLedgerV3 = pgTable(
+  "delivery_effect_ledger_v3",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    workflowVersion: integer("workflow_version").notNull(),
+    effectKind: text("effect_kind").$type<DeliveryEffectKindV3>().notNull(),
+    effectKey: text("effect_key").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status")
+      .$type<DeliveryEffectStatusV3>()
+      .notNull()
+      .default("planned"),
+    payloadJson: jsonb("payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    dueAt: timestamp("due_at", { mode: "date" }).notNull().defaultNow(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    leaseOwner: text("lease_owner"),
+    leaseEpoch: integer("lease_epoch").notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date" }),
+    claimedAt: timestamp("claimed_at", { mode: "date" }),
+    completedAt: timestamp("completed_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("delivery_effect_ledger_v3_effect_dedupe_unique").on(
+      table.workflowId,
+      table.effectKind,
+      table.idempotencyKey,
+    ),
+    index("delivery_effect_ledger_v3_claimable_index").on(
+      table.status,
+      table.dueAt,
+      table.createdAt,
+    ),
+    index("delivery_effect_ledger_v3_workflow_index").on(
+      table.workflowId,
+      table.workflowVersion,
+    ),
+    index("delivery_effect_ledger_v3_lease_expiry_index").on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+  ],
+);
+
+/**
+ * Delivery Loop v3 — durable timer ledger.
+ * Timers are idempotently scheduled and claimable for processing.
+ */
+export const deliveryTimerLedgerV3 = pgTable(
+  "delivery_timer_ledger_v3",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    timerKind: text("timer_kind").$type<DeliveryTimerKindV3>().notNull(),
+    timerKey: text("timer_key").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    sourceSignalId: text("source_signal_id").references(
+      () => deliveryLoopJournalV3.id,
+      { onDelete: "set null" },
+    ),
+    status: text("status")
+      .$type<DeliveryTimerStatusV3>()
+      .notNull()
+      .default("planned"),
+    payloadJson: jsonb("payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    dueAt: timestamp("due_at", { mode: "date" }).notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    leaseOwner: text("lease_owner"),
+    leaseEpoch: integer("lease_epoch").notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date" }),
+    claimedAt: timestamp("claimed_at", { mode: "date" }),
+    firedAt: timestamp("fired_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("delivery_timer_ledger_v3_dedupe_unique").on(
+      table.workflowId,
+      table.timerKind,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("delivery_timer_ledger_v3_timer_key_unique").on(
+      table.workflowId,
+      table.timerKey,
+    ),
+    index("delivery_timer_ledger_v3_claimable_index").on(
+      table.status,
+      table.dueAt,
+      table.createdAt,
+    ),
+    index("delivery_timer_ledger_v3_lease_expiry_index").on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+    index("delivery_timer_ledger_v3_workflow_status_index").on(
+      table.workflowId,
+      table.status,
+    ),
+  ],
+);
+
+/**
+ * Delivery Loop v3 — transactional outbox for relay to Redis-backed workers.
+ */
+export const deliveryOutboxV3 = pgTable(
+  "delivery_outbox_v3",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
+    topic: text("topic").$type<DeliveryOutboxTopicV3>().notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    payloadJson: jsonb("payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    status: text("status")
+      .$type<DeliveryOutboxStatusV3>()
+      .notNull()
+      .default("pending"),
+    availableAt: timestamp("available_at", { mode: "date" })
+      .notNull()
+      .defaultNow(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(10),
+    leaseOwner: text("lease_owner"),
+    leaseEpoch: integer("lease_epoch").notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date" }),
+    claimedAt: timestamp("claimed_at", { mode: "date" }),
+    publishedAt: timestamp("published_at", { mode: "date" }),
+    relayMessageId: text("relay_message_id"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("delivery_outbox_v3_dedupe_key_unique").on(table.dedupeKey),
+    uniqueIndex("delivery_outbox_v3_topic_idempotency_unique").on(
+      table.workflowId,
+      table.topic,
+      table.idempotencyKey,
+    ),
+    index("delivery_outbox_v3_claimable_index").on(
+      table.status,
+      table.availableAt,
+      table.createdAt,
+    ),
+    index("delivery_outbox_v3_lease_expiry_index").on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+    index("delivery_outbox_v3_workflow_status_index").on(
+      table.workflowId,
+      table.status,
     ),
   ],
 );
