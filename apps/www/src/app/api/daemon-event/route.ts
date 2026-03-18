@@ -951,7 +951,11 @@ export async function POST(request: Request) {
     }
   }
 
-  if (effectiveLoopId && envelopeV2) {
+  if (
+    effectiveLoopId &&
+    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
     // Route through daemon ingress adapter
     try {
       const { handleDaemonIngress } = await import(
@@ -966,7 +970,6 @@ export async function POST(request: Request) {
           status: daemonRunStatusFromMessages as
             | "completed"
             | "failed"
-            | "progress"
             | "stopped",
           headSha: null,
           summary: null,
