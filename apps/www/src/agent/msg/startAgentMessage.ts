@@ -56,6 +56,7 @@ import {
 } from "@/server-lib/delivery-loop/enrollment";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   getThreadContextMessageToGenerate,
   generateThreadContextResult,
@@ -649,7 +650,12 @@ export async function startAgentMessage({
             userCredentials,
           );
 
-          const runId = randomUUID();
+          // When dispatched by the delivery loop, reuse the dispatch intent's
+          // runId so ack timeout and daemon events share the same identity.
+          const activeIntent = v2Workflow
+            ? await getActiveDispatchIntent(threadChatId)
+            : null;
+          const runId = activeIntent?.runId ?? randomUUID();
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
           const effectivePermissionMode = v2Workflow
