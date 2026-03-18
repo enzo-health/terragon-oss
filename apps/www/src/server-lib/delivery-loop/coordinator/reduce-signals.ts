@@ -26,23 +26,47 @@ export function reduceSignalToEvent(params: {
   signal: DeliverySignal;
   workflow: DeliveryWorkflow;
   gateVerdicts?: GateVerdict[];
+  prNumber?: number | null;
 }): SignalReductionResult {
+  let result: SignalReductionResult;
   switch (params.signal.source) {
     case "daemon":
-      return reduceDaemonSignal(params.signal.event, params.workflow);
+      result = reduceDaemonSignal(params.signal.event, params.workflow);
+      break;
     case "github":
-      return reduceGitHubSignal(
+      result = reduceGitHubSignal(
         params.signal.event,
         params.workflow,
         params.gateVerdicts,
       );
+      break;
     case "human":
-      return reduceHumanSignal(params.signal.event, params.workflow);
+      result = reduceHumanSignal(params.signal.event, params.workflow);
+      break;
     case "timer":
-      return reduceTimerSignal(params.signal.event, params.workflow);
+      result = reduceTimerSignal(params.signal.event, params.workflow);
+      break;
     case "babysit":
-      return reduceBabysitSignal(params.signal.event, params.workflow);
+      result = reduceBabysitSignal(params.signal.event, params.workflow);
+      break;
   }
+
+  // Enrich gate_passed events with PR link info so the reducer
+  // can decide between babysitting (has PR) and awaiting_pr (no PR).
+  if (
+    result &&
+    "event" in result &&
+    result.event === "gate_passed" &&
+    params.prNumber != null
+  ) {
+    result.context = {
+      ...result.context,
+      hasPrLink: true,
+      prNumber: params.prNumber,
+    };
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

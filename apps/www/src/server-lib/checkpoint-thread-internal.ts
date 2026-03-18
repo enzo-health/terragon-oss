@@ -451,14 +451,18 @@ export async function checkpointThreadAndPush({
       throw commitAndPushError;
     }
 
-    // V2-enrolled threads with active non-planning workflows are handled
-    // entirely by the v2 delivery loop coordinator — skip the legacy
-    // checkpoint path.
+    // V2-enrolled threads beyond implementing are handled entirely by the
+    // v2 delivery loop coordinator — skip the legacy checkpoint path.
+    // We allow `implementing` through so the first PR gets created.
     const { getActiveWorkflowForThread } = await import(
       "@terragon/shared/delivery-loop/store/workflow-store"
     );
     const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-    if (v2Workflow && v2Workflow.kind !== "planning") {
+    if (
+      v2Workflow &&
+      v2Workflow.kind !== "planning" &&
+      v2Workflow.kind !== "implementing"
+    ) {
       return;
     }
 

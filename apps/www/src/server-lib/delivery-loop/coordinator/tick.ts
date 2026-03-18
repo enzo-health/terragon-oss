@@ -160,6 +160,7 @@ export async function runCoordinatorTick(params: {
         reduction = reduceSignalToEvent({
           signal: deliverySignal,
           workflow,
+          prNumber: workflowRow.prNumber,
         });
       } catch (reductionErr) {
         console.warn(
