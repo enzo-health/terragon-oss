@@ -5,6 +5,7 @@ import { addMilliseconds } from "date-fns";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import * as schema from "@terragon/shared/db/schema";
+import type { DeliveryOutboxV3Row } from "@terragon/shared/db/types";
 import {
   createTestThread,
   createTestUser,
@@ -18,11 +19,12 @@ import {
   updateWorkflowHeadV3,
 } from "./store";
 import { buildSignalJournalContractV3 } from "./contracts";
+import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
+import type { LoopEventV3 } from "./types";
 import * as relay from "./relay";
 import * as store from "./store";
 import { drainOutboxV3Worker } from "./worker";
 import { appendEventAndAdvanceV3 } from "./kernel";
-import type { LoopEventV3 } from "./types";
 
 const TEST_STREAM_KEY_PREFIX = "dl3:test:v3-durable:stream";
 const TEST_DEDUPE_KEY_PREFIX = "dl3:test:v3-durable:dedupe";
@@ -56,16 +58,19 @@ async function createWorkflowFixture(): Promise<string> {
   return workflow.id;
 }
 
-async function createBootstrapJournal(params: {
+async function createSignalJournal(params: {
   workflowId: string;
+  source: DeliverySignalSourceV3;
   idempotencyKey: string;
+  event: LoopEventV3;
+  occurredAt?: Date;
 }): Promise<string> {
   const contract = buildSignalJournalContractV3({
     workflowId: params.workflowId,
-    source: "daemon",
+    source: params.source,
     idempotencyKey: params.idempotencyKey,
-    event: { type: "bootstrap" },
-    occurredAt: new Date("2026-03-18T10:00:00.000Z"),
+    event: params.event,
+    occurredAt: params.occurredAt ?? new Date("2026-03-18T10:00:00.000Z"),
   });
 
   const result = await appendJournalEventV3({
@@ -88,7 +93,7 @@ async function createBootstrapJournal(params: {
   const existing = await db.query.deliveryLoopJournalV3.findFirst({
     where: and(
       eq(schema.deliveryLoopJournalV3.workflowId, params.workflowId),
-      eq(schema.deliveryLoopJournalV3.source, "daemon"),
+      eq(schema.deliveryLoopJournalV3.source, params.source),
       eq(schema.deliveryLoopJournalV3.idempotencyKey, params.idempotencyKey),
     ),
   });
@@ -98,22 +103,37 @@ async function createBootstrapJournal(params: {
       "Expected existing signal journal row after idempotent insert",
     );
   }
-
   return existing.id;
 }
 
-async function createSignalOutboxRecord(params: {
+async function createBootstrapJournal(params: {
+  workflowId: string;
+  idempotencyKey: string;
+  source?: DeliverySignalSourceV3;
+}): Promise<string> {
+  return createSignalJournal({
+    workflowId: params.workflowId,
+    source: params.source ?? "daemon",
+    idempotencyKey: params.idempotencyKey,
+    event: {
+      type: "bootstrap",
+    },
+  });
+}
+
+async function createSignalOutboxRecordForEvent(params: {
   workflowId: string;
   journalId: string;
   keyPrefix: string;
+  source: DeliverySignalSourceV3;
+  eventType: string;
 }): Promise<string> {
-  const dedupeKey = `${params.keyPrefix}:dedupe`;
   const result = await enqueueOutboxRecordV3({
     db,
     outbox: {
       workflowId: params.workflowId,
       topic: "signal",
-      dedupeKey,
+      dedupeKey: `${params.keyPrefix}:dedupe`,
       idempotencyKey: `${params.keyPrefix}:idem`,
       availableAt: new Date("2026-03-18T10:00:00.000Z"),
       maxAttempts: 4,
@@ -121,8 +141,8 @@ async function createSignalOutboxRecord(params: {
         kind: "signal",
         journalId: params.journalId,
         workflowId: params.workflowId,
-        eventType: "bootstrap",
-        source: "daemon",
+        eventType: params.eventType,
+        source: params.source,
       },
     },
   });
@@ -132,12 +152,63 @@ async function createSignalOutboxRecord(params: {
   }
 
   const existing = await db.query.deliveryOutboxV3.findFirst({
-    where: eq(schema.deliveryOutboxV3.dedupeKey, dedupeKey),
+    where: eq(schema.deliveryOutboxV3.dedupeKey, `${params.keyPrefix}:dedupe`),
   });
   if (!existing) {
     throw new Error("Expected existing outbox row after idempotent insert");
   }
   return existing.id;
+}
+
+async function createSignalOutboxRecord(params: {
+  workflowId: string;
+  journalId: string;
+  keyPrefix: string;
+  source?: DeliverySignalSourceV3;
+  eventType?: string;
+}): Promise<string> {
+  return createSignalOutboxRecordForEvent({
+    workflowId: params.workflowId,
+    journalId: params.journalId,
+    keyPrefix: params.keyPrefix,
+    source: params.source ?? "daemon",
+    eventType: params.eventType ?? "bootstrap",
+  });
+}
+
+async function writeSignalEntriesToStream(params: {
+  streamKey: string;
+  outbox: DeliveryOutboxV3Row;
+  count: number;
+}): Promise<string[]> {
+  const messagePayload = JSON.stringify({
+    outboxId: params.outbox.id,
+    workflowId: params.outbox.workflowId,
+    topic: params.outbox.topic,
+    payload: params.outbox.payloadJson,
+    idempotencyKey: params.outbox.idempotencyKey,
+    dedupeKey: params.outbox.dedupeKey,
+  });
+
+  const messageIds: string[] = [];
+
+  for (let i = 0; i < params.count; i += 1) {
+    const messageId = await redis.xadd(params.streamKey, "*", {
+      outboxId: params.outbox.id,
+      workflowId: params.outbox.workflowId,
+      topic: params.outbox.topic,
+      dedupeKey: params.outbox.dedupeKey,
+      idempotencyKey: params.outbox.idempotencyKey,
+      payload: messagePayload,
+    });
+
+    if (typeof messageId !== "string") {
+      throw new Error("Failed to write stream message");
+    }
+    messageIds.push(messageId);
+  }
+
+  return messageIds;
 }
 
 async function getOutboxRow(outboxId: string) {
@@ -243,6 +314,286 @@ describe("v3 durable delivery loop", () => {
       throw new Error("Expected effect row after worker progression");
     }
     expect(effectRow.effectKind).toBe("dispatch_implementing");
+  });
+
+  it("keeps duplicate stream deliveries idempotent under concurrent workers", async () => {
+    const keys = createRunKeys();
+    const workflowId = await createWorkflowFixture();
+    const runId = `run-${nanoid()}`;
+    const keyPrefix = `durable-concurrent-${nanoid()}`;
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `${keyPrefix}:bootstrap`,
+      event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `${keyPrefix}:dispatch`,
+      event: {
+        type: "dispatch_sent",
+        runId,
+        ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
+      },
+    });
+
+    const completionJournalId = await createSignalJournal({
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `${keyPrefix}:completion`,
+      event: {
+        type: "run_completed",
+        runId,
+        headSha: "abc123",
+      },
+    });
+
+    const outboxId = await createSignalOutboxRecord({
+      workflowId,
+      journalId: completionJournalId,
+      keyPrefix,
+      source: "daemon",
+      eventType: "run_completed",
+    });
+    const outbox = await getOutboxRow(outboxId);
+
+    const relayResult = await relay.drainOutboxV3Relay({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: keys.relayOwnerPrefix,
+      streamKey: keys.streamKey,
+      dedupeIndexKey: keys.dedupeIndexKey,
+    });
+    expect(relayResult).toEqual({
+      processed: 1,
+      published: 1,
+      failed: 0,
+    });
+
+    const messageIds = await writeSignalEntriesToStream({
+      streamKey: keys.streamKey,
+      outbox,
+      count: 2,
+    });
+    expect(messageIds).toHaveLength(2);
+
+    const [firstWorker, secondWorker] = await Promise.all([
+      drainOutboxV3Worker({
+        db,
+        streamKey: keys.streamKey,
+        groupName: keys.workerGroupName,
+        consumerName: "worker-concurrent-1",
+        maxItems: 2,
+        readBatchSize: 2,
+        blockMs: 100,
+        staleClaimMs: 0,
+        attemptsHashKey: keys.workerAttemptsHash,
+        processedHashKey: keys.workerProcessedHash,
+        deadLetterStreamKey: keys.workerDlqStream,
+        heartbeatKey: keys.workerHeartbeat,
+      }),
+      drainOutboxV3Worker({
+        db,
+        streamKey: keys.streamKey,
+        groupName: keys.workerGroupName,
+        consumerName: "worker-concurrent-2",
+        maxItems: 2,
+        readBatchSize: 2,
+        blockMs: 100,
+        staleClaimMs: 0,
+        attemptsHashKey: keys.workerAttemptsHash,
+        processedHashKey: keys.workerProcessedHash,
+        deadLetterStreamKey: keys.workerDlqStream,
+        heartbeatKey: keys.workerHeartbeat,
+      }),
+    ]);
+
+    expect(firstWorker.processed + secondWorker.processed).toBe(3);
+    expect(firstWorker.acknowledged + secondWorker.acknowledged).toBe(3);
+    expect(firstWorker.retried + secondWorker.retried).toBe(0);
+    expect(firstWorker.deadLettered + secondWorker.deadLettered).toBe(0);
+
+    const workflowHead = await db.query.deliveryWorkflowHeadV3.findFirst({
+      where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
+    });
+    if (!workflowHead) {
+      throw new Error(
+        "Expected workflow head after concurrent duplicate processing",
+      );
+    }
+    expect(workflowHead.state).toBe("gating_review");
+    expect(workflowHead.version).toBe(3);
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    const reviewEffects = effectRows.filter(
+      (effect) => effect.effectKind === "dispatch_gate_review",
+    );
+    expect(reviewEffects).toHaveLength(1);
+  });
+
+  it("preserves a single logical transition when out-of-order + duplicate stream messages race", async () => {
+    const keys = createRunKeys();
+    const workflowId = await createWorkflowFixture();
+    const runIdCurrent = `run-${nanoid()}`;
+    const runIdStale = `run-${nanoid()}`;
+    const currentPrefix = `durable-oof-${nanoid()}`;
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `${currentPrefix}:bootstrap`,
+      event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `${currentPrefix}:dispatch-stale`,
+      event: {
+        type: "dispatch_sent",
+        runId: runIdStale,
+        ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
+      },
+    });
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `${currentPrefix}:dispatch-current`,
+      event: {
+        type: "dispatch_sent",
+        runId: runIdCurrent,
+        ackDeadlineAt: new Date("2026-03-18T10:01:10.000Z"),
+      },
+    });
+
+    const staleJournalId = await createSignalJournal({
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `${currentPrefix}:stale-complete`,
+      event: {
+        type: "run_completed",
+        runId: runIdStale,
+        headSha: "stale-head",
+      },
+    });
+    const staleOutboxId = await createSignalOutboxRecord({
+      workflowId,
+      journalId: staleJournalId,
+      keyPrefix: `${currentPrefix}-stale`,
+      source: "daemon",
+      eventType: "run_completed",
+    });
+    const staleOutbox = await getOutboxRow(staleOutboxId);
+
+    const currentJournalId = await createSignalJournal({
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `${currentPrefix}:current-complete`,
+      event: {
+        type: "run_completed",
+        runId: runIdCurrent,
+        headSha: "current-head",
+      },
+    });
+    const currentOutboxId = await createSignalOutboxRecord({
+      workflowId,
+      journalId: currentJournalId,
+      keyPrefix: `${currentPrefix}-current`,
+      source: "daemon",
+      eventType: "run_completed",
+    });
+    const currentOutbox = await getOutboxRow(currentOutboxId);
+
+    const relayResult = await relay.drainOutboxV3Relay({
+      db,
+      maxItems: 2,
+      leaseOwnerPrefix: keys.relayOwnerPrefix,
+      streamKey: keys.streamKey,
+      dedupeIndexKey: keys.dedupeIndexKey,
+    });
+    expect(relayResult).toEqual({
+      processed: 2,
+      published: 2,
+      failed: 0,
+    });
+
+    const staleMessageIds = await writeSignalEntriesToStream({
+      streamKey: keys.streamKey,
+      outbox: staleOutbox,
+      count: 2,
+    });
+    const currentMessageIds = await writeSignalEntriesToStream({
+      streamKey: keys.streamKey,
+      outbox: currentOutbox,
+      count: 2,
+    });
+
+    expect(staleMessageIds).toHaveLength(2);
+    expect(currentMessageIds).toHaveLength(2);
+
+    const [firstWorker, secondWorker] = await Promise.all([
+      drainOutboxV3Worker({
+        db,
+        streamKey: keys.streamKey,
+        groupName: keys.workerGroupName,
+        consumerName: "worker-oof-1",
+        maxItems: 4,
+        readBatchSize: 4,
+        blockMs: 100,
+        staleClaimMs: 30_000,
+        attemptsHashKey: keys.workerAttemptsHash,
+        processedHashKey: keys.workerProcessedHash,
+        deadLetterStreamKey: keys.workerDlqStream,
+        heartbeatKey: keys.workerHeartbeat,
+      }),
+      drainOutboxV3Worker({
+        db,
+        streamKey: keys.streamKey,
+        groupName: keys.workerGroupName,
+        consumerName: "worker-oof-2",
+        maxItems: 4,
+        readBatchSize: 4,
+        blockMs: 100,
+        staleClaimMs: 30_000,
+        attemptsHashKey: keys.workerAttemptsHash,
+        processedHashKey: keys.workerProcessedHash,
+        deadLetterStreamKey: keys.workerDlqStream,
+        heartbeatKey: keys.workerHeartbeat,
+      }),
+    ]);
+
+    expect(firstWorker.processed + secondWorker.processed).toBe(6);
+    expect(firstWorker.deadLettered + secondWorker.deadLettered).toBe(0);
+
+    const workflowHead = await db.query.deliveryWorkflowHeadV3.findFirst({
+      where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
+    });
+    if (!workflowHead) {
+      throw new Error("Expected workflow head after oof concurrent processing");
+    }
+    expect(workflowHead.state).toBe("gating_review");
+    expect(workflowHead.activeRunId).toBeNull();
+    expect(workflowHead.headSha).toBe("current-head");
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    const reviewEffects = effectRows.filter(
+      (effect) => effect.effectKind === "dispatch_gate_review",
+    );
+    expect(reviewEffects).toHaveLength(1);
+    expect(reviewEffects[0]).toBeDefined();
   });
 
   it("retries a relay markPublished miss and recovers without duplicate stream messages", async () => {

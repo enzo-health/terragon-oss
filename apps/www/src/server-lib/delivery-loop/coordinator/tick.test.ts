@@ -173,6 +173,19 @@ async function tick(workflowId: string, corrId?: CorrelationId) {
   });
 }
 
+async function tickWithClaim(
+  workflowId: string,
+  claimToken: string,
+  corrId?: CorrelationId,
+) {
+  return runCoordinatorTick({
+    db,
+    workflowId: workflowId as WorkflowId,
+    correlationId: corrId ?? correlationId(),
+    claimToken,
+  });
+}
+
 async function tickWithSkipGates(workflowId: string) {
   return runCoordinatorTick({
     db,
@@ -720,6 +733,35 @@ describe("v2 coordinator tick — integration", () => {
       expect(events[0]!.stateAfter).toBe("gating");
       expect(events[1]!.stateBefore).toBe("gating");
       expect(events[1]!.stateAfter).toBe("gating");
+    });
+  });
+
+  describe("concurrent coordinator claims", () => {
+    it("preserves a single logical transition when two workers race on the same signal", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "implementing",
+        stateJson: IMPLEMENTING_STATE,
+      });
+      await daemonRunCompleted(wf.id);
+
+      const [firstTick, secondTick] = await Promise.all([
+        tickWithClaim(wf.id, "worker-a"),
+        tickWithClaim(wf.id, "worker-b"),
+      ]);
+
+      const transitionedCount =
+        Number(firstTick.transitioned) + Number(secondTick.transitioned);
+      const signalsProcessedCount =
+        firstTick.signalsProcessed + secondTick.signalsProcessed;
+      expect(transitionedCount).toBe(1);
+      expect(signalsProcessedCount).toBe(1);
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row?.kind).toBe("gating");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events).toHaveLength(1);
+      expect(events[0]!.eventKind).toBe("implementation_succeeded");
     });
   });
 

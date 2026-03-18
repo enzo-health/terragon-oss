@@ -285,8 +285,10 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Concurrent claim paths preserve single logical transition.
 - **Validation**:
   - Targeted race test suite.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - 2026-03-18: Added deterministic race tests in `apps/www/src/server-lib/delivery-loop/v3/durable-delivery.test.ts` and `apps/www/src/server-lib/delivery-loop/coordinator/tick.test.ts` to prove no duplicate transitions/effects under concurrent duplicate and out-of-order stream claims, and no duplicated transitions from concurrent claim races on the same v2 coordinator signal.
+  - 2026-03-18: Validated race coverage with `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/durable-delivery.test.ts src/server-lib/delivery-loop/coordinator/tick.test.ts` (2 files, 36 tests passing, deterministic fixed timestamps and bounded concurrent fan-in).
 
 ## Sprint 3: Effects, Timers, PR Determinism
 
