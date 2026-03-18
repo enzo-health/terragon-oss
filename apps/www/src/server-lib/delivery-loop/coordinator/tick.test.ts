@@ -740,6 +740,45 @@ describe("v2 coordinator tick — integration", () => {
       expect(events.length).toBe(4); // impl_completed + 3 gate transitions
     });
 
+    it("level-triggered: bypasses gates when workflow is already in gating with no signals", async () => {
+      // Simulate a workflow already stuck in gating(review) with no pending
+      // signals — the flag was enabled after the transition into gating.
+      const wf = await createTestWorkflowInState({
+        kind: "gating",
+        stateJson: gatingState("review"),
+      });
+
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("gating");
+      // All 3 gates bypassed — ends at awaiting_pr (no PR link)
+      expect(result.stateAfter).toBe("awaiting_pr");
+      // 3 bypass signals processed (review, ci, ui)
+      expect(result.signalsProcessed).toBe(3);
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("awaiting_pr");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events.length).toBe(3);
+    });
+
+    it("level-triggered: bypasses from gating(ci) through remaining gates", async () => {
+      // Workflow stuck at ci gate — should bypass ci and ui
+      const wf = await createTestWorkflowInState({
+        kind: "gating",
+        stateJson: gatingState("ci"),
+      });
+
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("awaiting_pr");
+      // 2 bypass signals: ci -> ui -> awaiting_pr
+      expect(result.signalsProcessed).toBe(2);
+    });
+
     it("cascades to babysitting when PR link exists", async () => {
       // Create workflow with a PR number so hasPrLink is true
       const wf = await createWorkflow({

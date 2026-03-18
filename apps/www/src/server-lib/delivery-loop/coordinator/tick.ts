@@ -126,276 +126,318 @@ export async function runCoordinatorTick(params: {
   let pendingAction: ReturnType<typeof derivePendingAction> = null;
 
   // 2. Process pending signals (up to limit per tick)
+  //    The outer do/while handles level-triggered gate bypass: when the
+  //    workflow is already in gating with skipGates but no signals exist,
+  //    we inject a bypass signal after the first (empty) pass and re-enter.
   let versionConflict = false;
+  let levelBypassInjected = false;
   // Track signal IDs released as retryable within this tick so the
   // claim query excludes them. This allows later signals to be
   // processed even when an earlier signal is not yet actionable.
   const retryableSignalIds = new Set<string>();
-  for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
-    const signal = await claimNextUnprocessedSignal({
-      db,
-      loopId,
-      claimToken,
-      now,
-      excludeIds: retryableSignalIds.size > 0 ? retryableSignalIds : undefined,
-    });
-    if (!signal) break;
-
-    // Wrap per-signal processing in try/catch so that a failure in one
-    // signal doesn't leak the claim — the signal gets released for retry.
-    let signalCompleted = false;
-    try {
-      // 3a. Reduce signal to a LoopEvent
-      const parseResult = parseSignalPayload(signal.causeType, signal.payload);
-      if (!parseResult) {
-        // Unrecognized signal — dead-letter it
-        await deadLetterSignal({
-          db,
-          signalId: signal.id,
-          claimToken,
-          reason: `Unrecognized signal cause type: ${signal.causeType}`,
-          now,
-        });
-        signalCompleted = true;
-        signalsProcessed++;
-        continue;
-      }
-      if ("retryable" in parseResult) {
-        console.warn(
-          `[coordinator] Releasing retryable signal ${signal.id}: ${parseResult.reason}`,
-        );
-        await releaseSignalClaim({ db, signalId: signal.id, claimToken });
-        retryableSignalIds.add(signal.id);
-        continue;
-      }
-      const deliverySignal = parseResult;
-
-      // Wrap reduction in try/catch so malformed payloads (poison pills)
-      // get dead-lettered instead of released for infinite retry.
-      let reduction: ReturnType<typeof reduceSignalToEvent>;
-      try {
-        reduction = reduceSignalToEvent({
-          signal: deliverySignal,
-          workflow,
-          prNumber: workflowRow.prNumber,
-        });
-      } catch (reductionErr) {
-        console.warn(
-          `[coordinator] Poison-pill signal ${signal.id}: reduction threw`,
-          { causeType: signal.causeType, error: reductionErr },
-        );
-        await deadLetterSignal({
-          db,
-          signalId: signal.id,
-          claimToken,
-          reason: `Signal reduction error: ${reductionErr instanceof Error ? reductionErr.message : String(reductionErr)}`,
-          now,
-        });
-        signalCompleted = true;
-        signalsProcessed++;
-        continue;
-      }
-
-      if (!reduction) {
-        // No state transition for this signal — complete it and move on
-        await completeSignalClaim({
-          db,
-          signalId: signal.id,
-          claimToken,
-          now,
-        });
-        signalCompleted = true;
-        signalsProcessed++;
-        continue;
-      }
-      if ("retryable" in reduction) {
-        console.warn(
-          `[coordinator] Releasing retryable signal ${signal.id}: ${reduction.reason}`,
-        );
-        await releaseSignalClaim({ db, signalId: signal.id, claimToken });
-        retryableSignalIds.add(signal.id);
-        continue;
-      }
-
-      // 3b. Apply the state machine transition
-      const newWorkflow = reduceWorkflow({
-        snapshot: workflow,
-        event: reduction.event,
-        context: reduction.context,
-        now,
-      });
-
-      if (!newWorkflow) {
-        // Invalid transition — log warning and skip
-        console.warn(
-          `[coordinator] Invalid transition: ${workflow.kind} + ${reduction.event} (workflow=${workflowId})`,
-        );
-        await completeSignalClaim({
-          db,
-          signalId: signal.id,
-          claimToken,
-          now,
-        });
-        signalCompleted = true;
-        signalsProcessed++;
-        continue;
-      }
-
-      // 3c. Resolve work items from the transition
-      const scheduledItems = resolveWorkItems({
-        previousWorkflow: workflow,
-        newWorkflow,
-        event: reduction.event,
+  do {
+    for (let i = 0; i < MAX_SIGNALS_PER_TICK; i++) {
+      const signal = await claimNextUnprocessedSignal({
+        db,
         loopId,
+        claimToken,
         now,
+        excludeIds:
+          retryableSignalIds.size > 0 ? retryableSignalIds : undefined,
       });
+      if (!signal) break;
 
-      // 3d. Build the audit event
-      const workflowEvent = buildWorkflowEvent({
-        previousWorkflow: workflow,
-        newWorkflow,
-        event: reduction.event,
-        context: reduction.context,
-      });
-
-      // 4. Persist everything in a single transaction
-      await db.transaction(async (tx) => {
-        // 4a. Update workflow state (optimistic concurrency)
-        const updateResult = await updateWorkflowState({
-          db: tx,
-          workflowId,
-          expectedVersion: workflow.version,
-          kind: newWorkflow.kind,
-          stateJson: serializeWorkflowState(newWorkflow),
-          fixAttemptCount: newWorkflow.fixAttemptCount,
-          infraRetryCount: newWorkflow.infraRetryCount,
-          headSha: extractHeadSha(newWorkflow),
-          reviewSurfaceJson: extractReviewSurface(newWorkflow),
-          now,
-        });
-
-        if (!updateResult.updated) {
-          // Version conflict — another tick updated this workflow concurrently.
-          // Break out so the current signal stays "claimed" and can be retried.
+      // Wrap per-signal processing in try/catch so that a failure in one
+      // signal doesn't leak the claim — the signal gets released for retry.
+      let signalCompleted = false;
+      try {
+        // 3a. Reduce signal to a LoopEvent
+        const parseResult = parseSignalPayload(
+          signal.causeType,
+          signal.payload,
+        );
+        if (!parseResult) {
+          // Unrecognized signal — dead-letter it
+          await deadLetterSignal({
+            db,
+            signalId: signal.id,
+            claimToken,
+            reason: `Unrecognized signal cause type: ${signal.causeType}`,
+            now,
+          });
+          signalCompleted = true;
+          signalsProcessed++;
+          continue;
+        }
+        if ("retryable" in parseResult) {
           console.warn(
-            `[coordinator] Version conflict on workflow ${workflowId} (expected ${workflow.version}), yielding tick`,
+            `[coordinator] Releasing retryable signal ${signal.id}: ${parseResult.reason}`,
           );
-          versionConflict = true;
-          return; // exit transaction without persisting
+          await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+          retryableSignalIds.add(signal.id);
+          continue;
+        }
+        const deliverySignal = parseResult;
+
+        // Wrap reduction in try/catch so malformed payloads (poison pills)
+        // get dead-lettered instead of released for infinite retry.
+        let reduction: ReturnType<typeof reduceSignalToEvent>;
+        try {
+          reduction = reduceSignalToEvent({
+            signal: deliverySignal,
+            workflow,
+            prNumber: workflowRow.prNumber,
+          });
+        } catch (reductionErr) {
+          console.warn(
+            `[coordinator] Poison-pill signal ${signal.id}: reduction threw`,
+            { causeType: signal.causeType, error: reductionErr },
+          );
+          await deadLetterSignal({
+            db,
+            signalId: signal.id,
+            claimToken,
+            reason: `Signal reduction error: ${reductionErr instanceof Error ? reductionErr.message : String(reductionErr)}`,
+            now,
+          });
+          signalCompleted = true;
+          signalsProcessed++;
+          continue;
         }
 
-        // 4b. Append audit event
-        await appendWorkflowEvent({
-          db: tx,
-          workflowId,
-          correlationId,
-          eventKind: workflowEvent.kind,
-          stateBefore: workflow.kind,
-          stateAfter: newWorkflow.kind,
-          gateBefore: extractGateKind(workflow),
-          gateAfter: extractGateKind(newWorkflow),
-          payloadJson: workflowEvent as unknown as Record<string, unknown>,
-          signalId: signal.id,
-          triggerSource: deliverySignal.source,
-          headSha: extractHeadSha(newWorkflow),
+        if (!reduction) {
+          // No state transition for this signal — complete it and move on
+          await completeSignalClaim({
+            db,
+            signalId: signal.id,
+            claimToken,
+            now,
+          });
+          signalCompleted = true;
+          signalsProcessed++;
+          continue;
+        }
+        if ("retryable" in reduction) {
+          console.warn(
+            `[coordinator] Releasing retryable signal ${signal.id}: ${reduction.reason}`,
+          );
+          await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+          retryableSignalIds.add(signal.id);
+          continue;
+        }
+
+        // 3b. Apply the state machine transition
+        const newWorkflow = reduceWorkflow({
+          snapshot: workflow,
+          event: reduction.event,
+          context: reduction.context,
+          now,
         });
 
-        // 4c. Supersede old pending work items before inserting new ones
-        const uniqueKinds = [
-          ...new Set(scheduledItems.map((item) => item.kind)),
-        ];
-        await Promise.all(
-          uniqueKinds.map((kind) =>
-            supersedePendingWorkItems({ db: tx, workflowId, kind, now }),
-          ),
-        );
+        if (!newWorkflow) {
+          // Invalid transition — log warning and skip
+          console.warn(
+            `[coordinator] Invalid transition: ${workflow.kind} + ${reduction.event} (workflow=${workflowId})`,
+          );
+          await completeSignalClaim({
+            db,
+            signalId: signal.id,
+            claimToken,
+            now,
+          });
+          signalCompleted = true;
+          signalsProcessed++;
+          continue;
+        }
 
-        // 4d. Enqueue work items
-        await Promise.all(
-          scheduledItems.map((item) =>
-            enqueueWorkItem({
-              db: tx,
-              workflowId,
-              correlationId,
-              kind: item.kind,
-              payloadJson: item.payloadJson,
-              scheduledAt: item.scheduledAt,
-            }),
-          ),
-        );
-
-        // 4e. Update runtime status (cache for reuse after the transaction)
-        pendingAction = derivePendingAction(newWorkflow);
-        await upsertRuntimeStatus({
-          db: tx,
-          workflowId,
-          state: newWorkflow.kind,
-          gate: extractGateKind(newWorkflow),
-          pendingActionKind: pendingAction?.kind ?? null,
-          health: "healthy",
-          lastSignalAt: now,
-          lastTransitionAt: now,
-          fixAttemptCount: newWorkflow.fixAttemptCount,
+        // 3c. Resolve work items from the transition
+        const scheduledItems = resolveWorkItems({
+          previousWorkflow: workflow,
+          newWorkflow,
+          event: reduction.event,
+          loopId,
+          now,
         });
-      });
 
-      // If version conflict occurred, release the claim so the signal is
-      // immediately available for the next tick (instead of waiting for
-      // stale-claim timeout).
-      if (versionConflict) {
-        await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+        // 3d. Build the audit event
+        const workflowEvent = buildWorkflowEvent({
+          previousWorkflow: workflow,
+          newWorkflow,
+          event: reduction.event,
+          context: reduction.context,
+        });
+
+        // 4. Persist everything in a single transaction
+        await db.transaction(async (tx) => {
+          // 4a. Update workflow state (optimistic concurrency)
+          const updateResult = await updateWorkflowState({
+            db: tx,
+            workflowId,
+            expectedVersion: workflow.version,
+            kind: newWorkflow.kind,
+            stateJson: serializeWorkflowState(newWorkflow),
+            fixAttemptCount: newWorkflow.fixAttemptCount,
+            infraRetryCount: newWorkflow.infraRetryCount,
+            headSha: extractHeadSha(newWorkflow),
+            reviewSurfaceJson: extractReviewSurface(newWorkflow),
+            now,
+          });
+
+          if (!updateResult.updated) {
+            // Version conflict — another tick updated this workflow concurrently.
+            // Break out so the current signal stays "claimed" and can be retried.
+            console.warn(
+              `[coordinator] Version conflict on workflow ${workflowId} (expected ${workflow.version}), yielding tick`,
+            );
+            versionConflict = true;
+            return; // exit transaction without persisting
+          }
+
+          // 4b. Append audit event
+          await appendWorkflowEvent({
+            db: tx,
+            workflowId,
+            correlationId,
+            eventKind: workflowEvent.kind,
+            stateBefore: workflow.kind,
+            stateAfter: newWorkflow.kind,
+            gateBefore: extractGateKind(workflow),
+            gateAfter: extractGateKind(newWorkflow),
+            payloadJson: workflowEvent as unknown as Record<string, unknown>,
+            signalId: signal.id,
+            triggerSource: deliverySignal.source,
+            headSha: extractHeadSha(newWorkflow),
+          });
+
+          // 4c. Supersede old pending work items before inserting new ones
+          const uniqueKinds = [
+            ...new Set(scheduledItems.map((item) => item.kind)),
+          ];
+          await Promise.all(
+            uniqueKinds.map((kind) =>
+              supersedePendingWorkItems({ db: tx, workflowId, kind, now }),
+            ),
+          );
+
+          // 4d. Enqueue work items
+          await Promise.all(
+            scheduledItems.map((item) =>
+              enqueueWorkItem({
+                db: tx,
+                workflowId,
+                correlationId,
+                kind: item.kind,
+                payloadJson: item.payloadJson,
+                scheduledAt: item.scheduledAt,
+              }),
+            ),
+          );
+
+          // 4e. Update runtime status (cache for reuse after the transaction)
+          pendingAction = derivePendingAction(newWorkflow);
+          await upsertRuntimeStatus({
+            db: tx,
+            workflowId,
+            state: newWorkflow.kind,
+            gate: extractGateKind(newWorkflow),
+            pendingActionKind: pendingAction?.kind ?? null,
+            health: "healthy",
+            lastSignalAt: now,
+            lastTransitionAt: now,
+            fixAttemptCount: newWorkflow.fixAttemptCount,
+          });
+        });
+
+        // If version conflict occurred, release the claim so the signal is
+        // immediately available for the next tick (instead of waiting for
+        // stale-claim timeout).
+        if (versionConflict) {
+          await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+          break;
+        }
+
+        // 4f. Complete the signal (outside transaction — idempotent)
+        await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
+        signalCompleted = true;
+
+        // Auto-inject bypass signal when entering gating with skipGates enabled.
+        // The next loop iteration picks it up, cascading through all 3 gates.
+        if (skipGates && newWorkflow.kind === "gating") {
+          const gateKind = newWorkflow.gate.kind;
+          await appendSignalToInbox({
+            db,
+            loopId,
+            causeType: "human_bypass",
+            payload: {
+              source: "human",
+              event: {
+                kind: "bypass_requested",
+                actorUserId: "system:gate-skip",
+                target: gateKind,
+              },
+            },
+            canonicalCauseId: `auto-gate-skip:${workflowId}:${newWorkflow.version}:${gateKind}`,
+            now,
+          });
+        }
+
+        // Update in-memory workflow for next iteration
+        workflow = newWorkflow;
+        transitioned = true;
+        signalsProcessed++;
+        workItemsScheduled += scheduledItems.length;
+      } catch (signalErr) {
+        // Release claim so another tick can retry this signal instead of
+        // leaving it permanently stuck in "claimed" state.
+        if (!signalCompleted) {
+          try {
+            await releaseSignalClaim({ db, signalId: signal.id, claimToken });
+          } catch {
+            // Best-effort — stale-claim timeout will eventually release it
+          }
+        }
+        console.error(
+          `[coordinator] Error processing signal ${signal.id} for workflow ${workflowId}`,
+          signalErr,
+        );
+        // Break out of the loop — don't process more signals after a failure
+        // since our in-memory workflow state may be inconsistent.
         break;
       }
-
-      // 4f. Complete the signal (outside transaction — idempotent)
-      await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
-      signalCompleted = true;
-
-      // Auto-inject bypass signal when entering gating with skipGates enabled.
-      // The next loop iteration picks it up, cascading through all 3 gates.
-      if (skipGates && newWorkflow.kind === "gating") {
-        const gateKind = newWorkflow.gate.kind;
-        await appendSignalToInbox({
-          db,
-          loopId,
-          causeType: "human_bypass",
-          payload: {
-            source: "human",
-            event: {
-              kind: "bypass_requested",
-              actorUserId: "system:gate-skip",
-              target: gateKind,
-            },
-          },
-          canonicalCauseId: `auto-gate-skip:${workflowId}:${newWorkflow.version}:${gateKind}`,
-          now,
-        });
-      }
-
-      // Update in-memory workflow for next iteration
-      workflow = newWorkflow;
-      transitioned = true;
-      signalsProcessed++;
-      workItemsScheduled += scheduledItems.length;
-    } catch (signalErr) {
-      // Release claim so another tick can retry this signal instead of
-      // leaving it permanently stuck in "claimed" state.
-      if (!signalCompleted) {
-        try {
-          await releaseSignalClaim({ db, signalId: signal.id, claimToken });
-        } catch {
-          // Best-effort — stale-claim timeout will eventually release it
-        }
-      }
-      console.error(
-        `[coordinator] Error processing signal ${signal.id} for workflow ${workflowId}`,
-        signalErr,
-      );
-      // Break out of the loop — don't process more signals after a failure
-      // since our in-memory workflow state may be inconsistent.
-      break;
     }
-  }
+
+    // 4g. Level-triggered gate bypass: when the workflow is already in gating
+    // with skipGates enabled but no signals were processed (e.g. the flag was
+    // enabled after the transition into gating), inject a bypass signal and
+    // re-enter the signal loop so the cascade completes within this tick.
+    if (
+      skipGates &&
+      !versionConflict &&
+      !levelBypassInjected &&
+      workflow.kind === "gating" &&
+      signalsProcessed === 0
+    ) {
+      const gateKind = (
+        workflow as Extract<DeliveryWorkflow, { kind: "gating" }>
+      ).gate.kind;
+      await appendSignalToInbox({
+        db,
+        loopId,
+        causeType: "human_bypass",
+        payload: {
+          source: "human",
+          event: {
+            kind: "bypass_requested",
+            actorUserId: "system:gate-skip",
+            target: gateKind,
+          },
+        },
+        canonicalCauseId: `auto-gate-skip:${workflowId}:${workflow.version}:${gateKind}`,
+        now,
+      });
+      levelBypassInjected = true;
+    }
+  } while (levelBypassInjected && signalsProcessed === 0 && !versionConflict);
 
   // 5. Evaluate incident conditions (skip expensive incident queries on noop ticks)
   let incidentsEvaluated = false;
