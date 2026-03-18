@@ -20,8 +20,12 @@ export function isSdlcLoopEnrollmentAllowedForThread({
     return sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn;
   }
 
-  // GitHub webhook/automation-driven tasks keep existing auto-enrollment behavior.
-  if (sourceType === "github-mention" || sourceType === "automation") {
+  // GitHub webhook/automation-driven tasks and CLI tasks keep existing auto-enrollment behavior.
+  if (
+    sourceType === "github-mention" ||
+    sourceType === "automation" ||
+    sourceType === "cli"
+  ) {
     return true;
   }
 
