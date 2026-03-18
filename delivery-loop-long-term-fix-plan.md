@@ -208,8 +208,21 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - No workflow remains `implementing` with stale terminal signal unhandled.
 - **Validation**:
   - Domain transition tests and pipeline tests.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Added dispatch-lifecycle terminal guard in `apps/www/src/server-lib/delivery-loop/coordinator/reduce-signals.ts`:
+    - `run_completed`/`run_failed` now resolve only for active implementing substate (`queued|sent`) and are ignored when dispatch is already failed.
+  - Added coordinator unit tests in `apps/www/src/server-lib/delivery-loop/coordinator/reduce-signals.test.ts` for:
+    - missing ack/start terminal handling (`queued` dispatch + run_completed/run_failed),
+    - stale terminal terminal events ignored when dispatch is failed.
+  - Added explicit terminal-first branch in `apps/www/src/server-lib/delivery-loop/v3/reducer.ts` by treating missing `runId` as non-stale and still allowing terminal handling.
+  - Added pipeline coverage in `apps/www/src/server-lib/delivery-loop/coordinator/pipeline.test.ts` for:
+    - daemon `run_completed` entering gating with queued dispatch and no prior ack,
+    - daemon `run_failed` returning to implementing with retry scheduling.
+  - Expanded shared domain transitions for infra-retry behavior in
+    `packages/shared/src/delivery-loop/domain/transitions.ts` and added transition tests in
+    `packages/shared/src/delivery-loop/domain/transitions.test.ts` for
+    `gate_blocked + infraRetry`.
 
 ### Task S2-T3: Invariant Middleware (State Reconciliation)
 

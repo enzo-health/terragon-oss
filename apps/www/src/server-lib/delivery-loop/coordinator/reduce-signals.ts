@@ -100,6 +100,20 @@ export function reduceSignalToEvent(params: {
   return result;
 }
 
+function isActiveImplementingDispatch(
+  workflow: DeliveryWorkflow,
+): workflow is Extract<DeliveryWorkflow, { kind: "implementing" }> {
+  return (
+    workflow.kind === "implementing" && workflow.dispatch.kind !== "failed"
+  );
+}
+
+function shouldProcessTerminalDaemonOutcome(
+  workflow: DeliveryWorkflow,
+): boolean {
+  return isActiveImplementingDispatch(workflow);
+}
+
 // ---------------------------------------------------------------------------
 // Daemon signals
 // ---------------------------------------------------------------------------
@@ -114,7 +128,7 @@ function reduceDaemonSignal(
       if (workflow.kind === "planning") {
         return { event: "plan_completed", context: {} };
       }
-      if (workflow.kind === "implementing") {
+      if (shouldProcessTerminalDaemonOutcome(workflow)) {
         if (event.result.kind === "partial") {
           // Partial completion — stay in implementing for re-dispatch
           // without incrementing fixAttemptCount (normal multi-pass).
@@ -132,7 +146,10 @@ function reduceDaemonSignal(
       return null;
 
     case "run_failed":
-      if (workflow.kind === "implementing") {
+      if (
+        workflow.kind === "implementing" &&
+        workflow.dispatch.kind !== "failed"
+      ) {
         // Extract failure signature and check circuit breaker
         const existingMap = workflow.failureSignatures ?? {};
         const { signature, updatedMap } = extractFailureSignature(
@@ -315,7 +332,7 @@ function reduceTimerSignal(
       }
       // gate_blocked re-triggers dispatch in implementing/gating; for
       // planning it bumps the version so schedule-work re-enqueues dispatch.
-      return { event: "gate_blocked", context: {} };
+      return { event: "gate_blocked", context: { infraRetry: true } };
     }
 
     case "babysit_due":

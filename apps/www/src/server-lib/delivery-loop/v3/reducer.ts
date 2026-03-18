@@ -17,6 +17,9 @@ function isOutOfOrderRunSignal(params: {
   if (params.head.activeRunId == null) {
     return false;
   }
+  if (params.runId == null) {
+    return false;
+  }
 
   return params.runId == null || params.runId !== params.head.activeRunId;
 }

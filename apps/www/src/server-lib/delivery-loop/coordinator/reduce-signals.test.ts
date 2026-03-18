@@ -261,6 +261,44 @@ describe("reduceSignalToEvent", () => {
         expectEvent(result, "implementation_completed", { headSha: "sha1" });
       });
 
+      it("implementing + queued dispatch (missing start/ack) still completes", () => {
+        const result = reduce(
+          daemonSignal({
+            kind: "run_completed",
+            runId: "r1",
+            result: { kind: "success", headSha: "sha1", summary: "done" },
+          }),
+          implementing({
+            dispatch: {
+              kind: "queued",
+              dispatchId: "d-queued" as DispatchId,
+              executionClass: "implementation_runtime",
+            },
+          }),
+        );
+        expectEvent(result, "implementation_completed", { headSha: "sha1" });
+      });
+
+      it("implementing + failed dispatch ignores terminal run_completed", () => {
+        const result = reduce(
+          daemonSignal({
+            kind: "run_completed",
+            runId: "r1",
+            result: { kind: "success", headSha: "sha1", summary: "done" },
+          }),
+          implementing({
+            dispatch: {
+              kind: "failed",
+              dispatchId: "d-fail" as DispatchId,
+              executionClass: "implementation_runtime",
+              failure: { kind: "ack_timeout" },
+              failedAt: new Date(),
+            },
+          }),
+        );
+        expect(result).toBeNull();
+      });
+
       it("gating state → null", () => {
         const result = reduce(
           daemonSignal({
@@ -309,6 +347,44 @@ describe("reduceSignalToEvent", () => {
           implementing({ fixAttemptCount: 0, maxFixAttempts: 5 }),
         );
         expectEvent(result, "gate_blocked");
+      });
+
+      it("implementing + queued dispatch (missing start/ack) still marks blocked", () => {
+        const result = reduce(
+          daemonSignal({
+            kind: "run_failed",
+            runId: "r1",
+            failure: { kind: "runtime_crash", exitCode: 1, message: "crash" },
+          }),
+          implementing({
+            dispatch: {
+              kind: "queued",
+              dispatchId: "d-queued" as DispatchId,
+              executionClass: "implementation_runtime",
+            },
+          }),
+        );
+        expectEvent(result, "gate_blocked");
+      });
+
+      it("implementing + failed dispatch ignores terminal run_failed", () => {
+        const result = reduce(
+          daemonSignal({
+            kind: "run_failed",
+            runId: "r1",
+            failure: { kind: "runtime_crash", exitCode: 1, message: "crash" },
+          }),
+          implementing({
+            dispatch: {
+              kind: "failed",
+              dispatchId: "d-fail" as DispatchId,
+              executionClass: "implementation_runtime",
+              failure: { kind: "transport_error", message: "timeout" },
+              failedAt: new Date(),
+            },
+          }),
+        );
+        expect(result).toBeNull();
       });
 
       it("implementing + under budget + timeout → gate_blocked", () => {
@@ -980,7 +1056,7 @@ describe("reduceSignalToEvent", () => {
 
   describe("timer signals", () => {
     describe("dispatch_ack_expired", () => {
-      it("<= 5 consecutive failures → gate_blocked", () => {
+      it("<= 5 consecutive failures → gate_blocked (infraRetry)", () => {
         const result = reduce(
           timerSignal({
             kind: "dispatch_ack_expired",
@@ -989,10 +1065,10 @@ describe("reduceSignalToEvent", () => {
           }),
           implementing(),
         );
-        expectEvent(result, "gate_blocked");
+        expectEvent(result, "gate_blocked", { infraRetry: true });
       });
 
-      it("default (no consecutiveFailures) → gate_blocked", () => {
+      it("default (no consecutiveFailures) → gate_blocked (infraRetry)", () => {
         const result = reduce(
           timerSignal({
             kind: "dispatch_ack_expired",
@@ -1000,7 +1076,7 @@ describe("reduceSignalToEvent", () => {
           }),
           implementing(),
         );
-        expectEvent(result, "gate_blocked");
+        expectEvent(result, "gate_blocked", { infraRetry: true });
       });
 
       it("> 5 consecutive failures in implementing → exhausted_retries", () => {

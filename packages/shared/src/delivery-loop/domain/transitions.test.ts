@@ -404,6 +404,15 @@ describe("reduceWorkflow", () => {
       expect(result!.fixAttemptCount).toBe(2);
     });
 
+    it("gate_blocked + infraRetry → implementing (infraRetryCount incremented, fixAttemptCount unchanged)", () => {
+      const wf = implementing({ fixAttemptCount: 2, infraRetryCount: 4 });
+      const result = reduce(wf, "gate_blocked", { infraRetry: true });
+      expect(result).not.toBeNull();
+      expect(result!.kind).toBe("implementing");
+      expect(result!.fixAttemptCount).toBe(2);
+      expect(result!.infraRetryCount).toBe(5);
+    });
+
     it("plan_completed → null", () => {
       expect(reduce(implementing(), "plan_completed")).toBeNull();
     });
@@ -477,6 +486,18 @@ describe("reduceWorkflow", () => {
       expect(result).not.toBeNull();
       expect(result!.kind).toBe("implementing");
       expect(result!.fixAttemptCount).toBe(3);
+    });
+
+    it("gate_blocked + infraRetry → implementing (infraRetryCount incremented, fixAttemptCount unchanged)", () => {
+      const wf = gating(reviewGate(), {
+        fixAttemptCount: 2,
+        infraRetryCount: 1,
+      });
+      const result = reduce(wf, "gate_blocked", { infraRetry: true });
+      expect(result).not.toBeNull();
+      expect(result!.kind).toBe("implementing");
+      expect(result!.fixAttemptCount).toBe(2);
+      expect(result!.infraRetryCount).toBe(2);
     });
 
     it("implementation_completed → null", () => {

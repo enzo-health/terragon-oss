@@ -326,6 +326,54 @@ describe("v2 pipeline — end-to-end validation", () => {
       expect(events[0]!.stateAfter).toBe("gating");
     });
 
+    it("daemon run_completed terminal event resolves implementing even with missing dispatch ack/start", async () => {
+      const { workflowId } = await enrollWorkflow("implementing");
+
+      await injectDaemonEvent(workflowId, {
+        threadId: testThreadId,
+        loopId: workflowId,
+        runId: `run-queued-${nanoid(6)}`,
+        status: "completed",
+        headSha: "sha-terminal-first",
+        summary: "Completed without ack",
+      });
+
+      // Middleware should treat this as terminal-first in terminal dispatch lifecycle.
+      await assertWorkflowState(workflowId, "gating", "review");
+      const row = await getWorkflow({ db, workflowId });
+      expect(row).toBeDefined();
+      expect(row!.fixAttemptCount).toBe(0);
+      const events = await getWorkflowEvents({ db, workflowId });
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events[0]!.stateBefore).toBe("implementing");
+      expect(events[0]!.stateAfter).toBe("gating");
+    });
+
+    it("daemon run_failed terminal event retries implementing when ack/start are missing", async () => {
+      const { workflowId } = await enrollWorkflow("implementing");
+
+      await injectDaemonEvent(workflowId, {
+        threadId: testThreadId,
+        loopId: workflowId,
+        runId: `run-failed-queued-${nanoid(6)}`,
+        status: "failed",
+        exitCode: 1,
+        errorMessage: "infra drop",
+      });
+      await tick(workflowId);
+
+      await assertWorkflowState(workflowId, "implementing");
+      const row = await getWorkflow({ db, workflowId });
+      expect(row!.fixAttemptCount).toBe(1);
+      const pending = await getPendingWorkItems(workflowId);
+      const dispatchItems = pending.filter((w) => w.kind === "dispatch");
+      expect(dispatchItems.length).toBe(1);
+      expect(
+        (dispatchItems[0]?.payloadJson as Record<string, string>)
+          .executionClass,
+      ).toBe("implementation_runtime");
+    });
+
     it("github review signal → coordinator tick → gate progression", async () => {
       // Start in gating(review)
       const wf = await createWorkflow({

@@ -121,6 +121,35 @@ function retryToImplementing(
   };
 }
 
+/**
+ * Shared helper: re-enter implementing for infrastructure retries.
+ * Keeps fixAttemptCount unchanged and increments infraRetryCount.
+ */
+function retryInfraToImplementing(
+  wf: DeliveryWorkflow,
+  now: Date,
+): DeliveryWorkflow {
+  const base = bump(wf, now);
+  const planVersion =
+    "planVersion" in wf && wf.planVersion != null
+      ? wf.planVersion
+      : (1 as PlanVersion);
+  const failureSignatures: FailureSignatureMap | undefined =
+    wf.kind === "implementing" ? wf.failureSignatures : undefined;
+  const lastFailureSignatureKey: string | undefined =
+    wf.kind === "implementing" ? wf.lastFailureSignatureKey : undefined;
+  return {
+    ...base,
+    fixAttemptCount: wf.fixAttemptCount,
+    infraRetryCount: wf.infraRetryCount + 1,
+    kind: "implementing",
+    planVersion,
+    dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    failureSignatures,
+    lastFailureSignatureKey,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Resumable state helpers
 // ---------------------------------------------------------------------------
@@ -336,6 +365,9 @@ function reduceImplementing(
   }
 
   if (event === "gate_blocked") {
+    if (ctx.infraRetry) {
+      return retryInfraToImplementing(wf, now);
+    }
     return retryToImplementing(wf, now);
   }
 
@@ -379,6 +411,9 @@ function reduceGating(
   }
 
   if (event === "gate_blocked") {
+    if (ctx.infraRetry) {
+      return retryInfraToImplementing(wf, now);
+    }
     return retryToImplementing(wf, now);
   }
 

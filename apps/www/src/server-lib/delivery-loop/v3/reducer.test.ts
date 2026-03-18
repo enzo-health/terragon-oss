@@ -130,6 +130,50 @@ describe("reduceV3", () => {
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
   });
 
+  it("implementing run_completed without activeRunId still resolves to gate_review", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("implementing"),
+        activeRunId: null,
+      },
+      event: {
+        type: "run_completed",
+        runId: "run-early",
+        headSha: "sha-early",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]?.kind).toBe("dispatch_gate_review");
+    expect(result.head.headSha).toBe("sha-early");
+  });
+
+  it("implementing run_failed without activeRunId still retries", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("implementing"),
+        activeRunId: null,
+      },
+      event: {
+        type: "run_failed",
+        runId: "run-early",
+        message: "infra hiccup",
+        category: null,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.fixAttemptCount).toBe(1);
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+  });
+
   it("ignores stale implementing run_failed for previous run", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduceV3({
