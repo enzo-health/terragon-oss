@@ -2115,8 +2115,9 @@ export class TerragonDaemon {
             return;
           }
           consecutiveSseFailures++;
-          // Suppress expected 404s right after sandbox-agent restart
-          if (justRestarted && consecutiveSseFailures <= 3) {
+          // Suppress expected 404s right after sandbox-agent restart.
+          // ACP endpoints can take ~15s to register after health check passes.
+          if (justRestarted && consecutiveSseFailures <= 15) {
             this.runtime.logger.debug(
               "ACP SSE not yet available after restart (expected)",
               {
@@ -2165,24 +2166,41 @@ export class TerragonDaemon {
     };
 
     try {
-      const initializeResponse = await postEnvelope({
-        method: "initialize",
-        params: {
-          protocolVersion: 1,
-          clientInfo: {
-            name: "terragon-daemon",
-            version: DAEMON_VERSION,
-          },
-        },
-        bootstrap: true,
-      });
-      if (toObject(initializeResponse.error)) {
+      // Retry initialize — ACP endpoints may not be registered yet even
+      // though /v1/health passed. Typically ready within ~15s of restart.
+      let initializeResponse: AcpResponseEnvelope | undefined;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try {
+          initializeResponse = await postEnvelope({
+            method: "initialize",
+            params: {
+              protocolVersion: 1,
+              clientInfo: {
+                name: "terragon-daemon",
+                version: DAEMON_VERSION,
+              },
+            },
+            bootstrap: true,
+          });
+          if (!toObject(initializeResponse.error)) break;
+        } catch (err) {
+          if (attempt >= 9) throw err;
+          this.runtime.logger.debug(
+            `ACP initialize attempt ${attempt + 1} failed, retrying`,
+            { error: formatError(err) },
+          );
+        }
+        await new Promise((r) => setTimeout(r, 1_500));
+      }
+      if (toObject(initializeResponse?.error)) {
         throw new Error(
-          `ACP initialize failed: ${JSON.stringify(initializeResponse.error)}`,
+          `ACP initialize failed: ${JSON.stringify(initializeResponse?.error)}`,
         );
       }
 
-      let sessionId = input.acpSessionId ?? input.sessionId;
+      // Always create a fresh session — sandbox-agent was just restarted
+      // so any previous acpSessionId is stale and meaningless.
+      let sessionId: string | undefined;
       if (!sessionId) {
         const newSessionResponse = await postEnvelope({
           method: "session/new",
