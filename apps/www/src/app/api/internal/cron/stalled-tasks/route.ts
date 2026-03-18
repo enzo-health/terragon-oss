@@ -9,6 +9,10 @@ import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
 import { maybeHibernateSandboxById } from "@/agent/sandbox";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
+import {
+  getStaleBootingThreadChats,
+  requeueStaleBootingThreadChats,
+} from "@/server-lib/booting-recovery";
 
 async function sleep(ms: number = 1000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,6 +132,27 @@ async function stopStalledThreadChatsTask() {
   }
 }
 
+const STALE_BOOTING_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+
+async function requeueStaleBootingThreadChatsTask() {
+  console.log("Processing stale booting thread chats");
+  const staleBootingThreadChats = await getStaleBootingThreadChats({
+    db,
+    maxAgeMs: STALE_BOOTING_MAX_AGE_MS,
+  });
+  console.log(
+    `Found ${staleBootingThreadChats.length} stale booting thread chats`,
+  );
+  if (staleBootingThreadChats.length === 0) {
+    return;
+  }
+  const { requeuedCount } = await requeueStaleBootingThreadChats({
+    db,
+    threadChats: staleBootingThreadChats,
+  });
+  console.log(`Requeued ${requeuedCount} stale booting thread chats`);
+}
+
 // This is run every 5 minutes, see vercel.json.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -140,6 +165,7 @@ export async function GET(request: NextRequest) {
     });
   }
   console.log("Stalled tasks cron task triggered");
+  await requeueStaleBootingThreadChatsTask();
   await stopStalledThreadsTask();
   await stopStalledThreadChatsTask();
   console.log("Stalled tasks cron task completed");

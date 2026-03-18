@@ -138,6 +138,19 @@ describe("threadMachine", () => {
     expect(actor.getSnapshot().value).toBe("queued");
   });
 
+  it("concurrency limit from booting requeues to queued-tasks-concurrency", () => {
+    const actor = createActor(threadMachine);
+    actor.start();
+
+    expect(actor.getSnapshot().value).toBe("queued");
+    actor.send({ type: "system.boot" });
+    expect(actor.getSnapshot().value).toBe("booting");
+    actor.send({ type: "system.concurrency-limit" });
+    expect(actor.getSnapshot().value).toBe("queued-tasks-concurrency");
+    actor.send({ type: "system.resume" });
+    expect(actor.getSnapshot().value).toBe("queued");
+  });
+
   it("user stop while in rate limit queue", () => {
     const actor = createActor(threadMachine);
     actor.start();

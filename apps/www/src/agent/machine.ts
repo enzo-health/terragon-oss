@@ -95,6 +95,7 @@ export const machine = createMachine({
         "system.slash-command-done": "complete",
         "assistant.message_done_skip_checkpoint": "complete",
         "system.agent-rate-limit": "queued-agent-rate-limit",
+        "system.concurrency-limit": "queued-tasks-concurrency",
         "system.error": "complete",
       },
     },

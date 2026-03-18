@@ -705,21 +705,39 @@ export async function startAgentMessage({
             daemonTokenKeyId: null,
           });
 
-          await sendDaemonMessage({
-            message: implementationDispatch.message,
-            userId,
-            threadId,
-            threadChatId,
-            sandboxId: session.sandboxId,
-            session,
-            runContext: {
-              runId,
-              tokenNonce,
-              transportMode: implementationDispatch.transportMode,
-              protocolVersion: implementationDispatch.protocolVersion,
-              agent: threadChat.agent,
-            },
-          });
+          try {
+            await sendDaemonMessage({
+              message: implementationDispatch.message,
+              userId,
+              threadId,
+              threadChatId,
+              sandboxId: session.sandboxId,
+              session,
+              runContext: {
+                runId,
+                tokenNonce,
+                transportMode: implementationDispatch.transportMode,
+                protocolVersion: implementationDispatch.protocolVersion,
+                agent: threadChat.agent,
+              },
+            });
+          } catch (dispatchError) {
+            console.error(
+              `Thread ${threadId}: Daemon dispatch failed after sandbox boot, requeuing`,
+              dispatchError,
+            );
+            await updateThreadChatWithTransition({
+              userId,
+              threadId,
+              threadChatId,
+              eventType: "system.concurrency-limit",
+              chatUpdates: {
+                errorMessage: null,
+                errorMessageInfo: null,
+              },
+            });
+            return;
+          }
         },
       });
     },
