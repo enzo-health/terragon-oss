@@ -196,7 +196,7 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
       expect(row!.kind).toBe("implementing");
     });
 
-    it("planning ignores run_completed (waits for checkpoint pipeline)", async () => {
+    it("planning advances to implementing on run_completed", async () => {
       const wf = await createPureV2Workflow({
         kind: "planning",
         stateJson: PLANNING_STATE,
@@ -205,10 +205,12 @@ describe("pure v2 workflow integration (no v1 sdlcLoop)", () => {
       await daemonRunCompleted(wf.id);
       const result = await tick(wf.id);
 
-      // run_completed in planning returns null from reduceSignalToEvent
-      // so signal is consumed but no transition occurs
-      expect(result.transitioned).toBe(false);
-      expect(result.stateAfter).toBe("planning");
+      // run_completed in planning produces plan_completed → implementing
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("implementing");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("implementing");
     });
 
     it("planning -> stopped via human stop", async () => {

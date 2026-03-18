@@ -56,11 +56,7 @@ function reduceDaemonSignal(
   switch (event.kind) {
     case "run_completed":
       if (workflow.kind === "planning") {
-        // Planning run finished — do NOT emit plan_completed here.
-        // The v1 checkpoint pipeline validates the plan, creates the
-        // artifact, and bridges to v2 via plan_approved signal.
-        // Emitting plan_completed here would race ahead of artifact creation.
-        return null;
+        return { event: "plan_completed", context: {} };
       }
       if (workflow.kind === "implementing") {
         if (event.result.kind === "partial") {

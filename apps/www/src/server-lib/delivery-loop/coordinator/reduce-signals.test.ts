@@ -213,7 +213,7 @@ function expectRetryable(result: SignalReductionResult) {
 describe("reduceSignalToEvent", () => {
   describe("daemon signals", () => {
     describe("run_completed", () => {
-      it("planning state → null (checkpoint handles it)", () => {
+      it("planning state → plan_completed", () => {
         const result = reduce(
           daemonSignal({
             kind: "run_completed",
@@ -222,7 +222,7 @@ describe("reduceSignalToEvent", () => {
           }),
           planning(),
         );
-        expect(result).toBeNull();
+        expectEvent(result, "plan_completed");
       });
 
       it("implementing + partial → redispatch_requested", () => {

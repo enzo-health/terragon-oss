@@ -264,6 +264,10 @@ export class DockerProvider implements ISandboxProvider {
           .join(" ")
       : "";
 
+    // Map sandbox size to Docker resource limits
+    const memoryLimit = options.sandboxSize === "large" ? "8g" : "4g";
+    const cpuLimit = options.sandboxSize === "large" ? "4" : "2";
+
     // Generate unique container name with environment-aware prefix and timestamp
     const isTest = process.env.NODE_ENV === "test";
     const prefix = isTest ? TEST_CONTAINER_PREFIX : CONTAINER_PREFIX;
@@ -273,7 +277,7 @@ export class DockerProvider implements ISandboxProvider {
     const containerName = `${prefix}-${dateStr}-${timeStr}-${nanoid()}`;
     try {
       // Create and start container
-      const createCommand = `docker run -d --name ${containerName} ${envFlags} -w ${DEFAULT_DIR} ${BASE_IMAGE} tail -f /dev/null`;
+      const createCommand = `docker run -d --name ${containerName} --memory=${memoryLimit} --cpus=${cpuLimit} ${envFlags} -w ${DEFAULT_DIR} ${BASE_IMAGE} tail -f /dev/null`;
       const containerId = execSync(createCommand, { encoding: "utf8" }).trim();
       const dockerSession = new DockerSession(containerId);
       return dockerSession;

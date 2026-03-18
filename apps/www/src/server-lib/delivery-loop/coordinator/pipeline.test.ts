@@ -827,7 +827,7 @@ describe("v2 pipeline — end-to-end validation", () => {
   });
 
   describe("planning → implementing transition", () => {
-    it("planning → implementing transition creates dispatch work item after plan_approved", async () => {
+    it("planning → implementing transition via daemon run_completed", async () => {
       // 1. Enroll workflow in planning state
       const { workflowId } = await enrollWorkflow("planning");
 
@@ -850,31 +850,12 @@ describe("v2 pipeline — end-to-end validation", () => {
         },
       });
 
-      // 3. Tick — run_completed during planning returns null, so no transition
-      const tickResult1 = await tick(workflowId);
-      expect(tickResult1.transitioned).toBe(false);
-      await assertWorkflowState(workflowId, "planning");
-
-      // 4. Simulate checkpoint pipeline's plan approval (what promote-plan.ts writes)
-      await appendSignalToInbox({
-        db,
-        loopId: workflowId,
-        causeType: "human_resume",
-        payload: {
-          source: "human",
-          event: {
-            kind: "plan_approved",
-            artifactId: `art-${nanoid(6)}`,
-          },
-        },
-      });
-
-      // 5. Tick — plan_approved should transition to implementing
-      const tickResult2 = await tick(workflowId);
-      expect(tickResult2.transitioned).toBe(true);
+      // 3. Tick — run_completed during planning produces plan_completed → implementing
+      const tickResult = await tick(workflowId);
+      expect(tickResult.transitioned).toBe(true);
       await assertWorkflowState(workflowId, "implementing");
 
-      // 6. Assert dispatch work item was created with implementation_runtime
+      // 4. Assert dispatch work item was created with implementation_runtime
       const items = await getPendingWorkItems(workflowId);
       const dispatchItem = items.find((w) => w.kind === "dispatch");
       expect(dispatchItem).toBeDefined();
@@ -883,7 +864,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       );
     });
 
-    it("run_completed during planning does NOT advance to implementing", async () => {
+    it("run_completed during planning advances to implementing", async () => {
       // 1. Enroll workflow in planning
       const { workflowId } = await enrollWorkflow("planning");
 
@@ -902,17 +883,17 @@ describe("v2 pipeline — end-to-end validation", () => {
         },
       });
 
-      // 3. Tick
+      // 3. Tick — run_completed produces plan_completed → implementing
       const result = await tick(workflowId);
 
-      // 4. Assert still in planning
-      expect(result.transitioned).toBe(false);
-      await assertWorkflowState(workflowId, "planning");
+      // 4. Assert transitioned to implementing
+      expect(result.transitioned).toBe(true);
+      await assertWorkflowState(workflowId, "implementing");
 
-      // 5. Assert NO dispatch work items were created
+      // 5. Assert dispatch work item was created
       const items = await getPendingWorkItems(workflowId);
       const dispatchItems = items.filter((w) => w.kind === "dispatch");
-      expect(dispatchItems.length).toBe(0);
+      expect(dispatchItems.length).toBe(1);
     });
   });
 
