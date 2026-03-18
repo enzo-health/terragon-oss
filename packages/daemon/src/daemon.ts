@@ -58,7 +58,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
-const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 10;
+const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 20;
 const ACP_REQUEST_TIMEOUT_MS = 120_000;
 const ACP_SSE_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 min of SSE silence
 const ACP_INACTIVITY_CHECK_INTERVAL_MS = 30_000; // check every 30s
@@ -2076,8 +2076,9 @@ export class TerragonDaemon {
     let justRestarted = true;
 
     const sseLoop = (async () => {
-      // Brief settle after sandbox-agent restart — ACP endpoints need time to register
-      await abortableSleep(300);
+      // Settle after sandbox-agent restart — ACP endpoints need ~15s to register
+      // after /v1/health passes. A longer initial delay reduces SSE failure budget burn.
+      await abortableSleep(2_000);
       let consecutiveSseFailures = 0;
       while (!sseAbortController.signal.aborted) {
         try {
@@ -2201,20 +2202,33 @@ export class TerragonDaemon {
       // Always create a fresh session — sandbox-agent was just restarted
       // so any previous acpSessionId is stale and meaningless.
       let sessionId: string | undefined;
-      if (!sessionId) {
-        const newSessionResponse = await postEnvelope({
-          method: "session/new",
-          params: {
-            cwd: process.cwd(),
-            mcpServers: [],
-          },
-        });
-        if (toObject(newSessionResponse.error)) {
+      {
+        let newSessionResponse: AcpResponseEnvelope | undefined;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          try {
+            newSessionResponse = await postEnvelope({
+              method: "session/new",
+              params: {
+                cwd: process.cwd(),
+                mcpServers: [],
+              },
+            });
+            if (!toObject(newSessionResponse.error)) break;
+          } catch (err) {
+            if (attempt >= 9) throw err;
+            this.runtime.logger.debug(
+              `ACP session/new attempt ${attempt + 1} failed, retrying`,
+              { error: formatError(err) },
+            );
+          }
+          await new Promise((r) => setTimeout(r, 1_500));
+        }
+        if (toObject(newSessionResponse?.error)) {
           throw new Error(
-            `ACP session/new failed: ${JSON.stringify(newSessionResponse.error)}`,
+            `ACP session/new failed: ${JSON.stringify(newSessionResponse?.error)}`,
           );
         }
-        const result = toObject(newSessionResponse.result);
+        const result = toObject(newSessionResponse?.result);
         const newSessionId = result?.sessionId;
         if (typeof newSessionId !== "string" || newSessionId.length === 0) {
           throw new Error("ACP session/new returned invalid sessionId");
