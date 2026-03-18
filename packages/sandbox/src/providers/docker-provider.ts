@@ -234,6 +234,15 @@ export class DockerProvider implements ISandboxProvider {
         encoding: "utf8",
       });
       const containerInfo = JSON.parse(inspectResult)[0];
+
+      // OOM-killed containers are unrecoverable — destroy and return null
+      // so a fresh sandbox is created instead of unpausing a zombie.
+      if (containerInfo.State.OOMKilled) {
+        console.warn(`Container ${sandboxId} was OOM-killed, removing`);
+        execSync(`docker rm -f ${sandboxId}`, { stdio: "ignore" });
+        return null;
+      }
+
       if (containerInfo.State.Status === "paused") {
         execSync(`docker unpause ${sandboxId}`, { stdio: "ignore" });
       } else if (containerInfo.State.Status === "exited") {
@@ -264,8 +273,10 @@ export class DockerProvider implements ISandboxProvider {
           .join(" ")
       : "";
 
-    // Map sandbox size to Docker resource limits
-    const memoryLimit = options.sandboxSize === "large" ? "8g" : "4g";
+    // Map sandbox size to Docker resource limits.
+    // Docker Desktop typically has limited memory (e.g. 5-8 GiB total),
+    // so these are capped lower than production Daytona limits.
+    const memoryLimit = options.sandboxSize === "large" ? "4g" : "3g";
     const cpuLimit = options.sandboxSize === "large" ? "4" : "2";
 
     // Generate unique container name with environment-aware prefix and timestamp
