@@ -172,6 +172,15 @@ async function tick(workflowId: string, corrId?: CorrelationId) {
   });
 }
 
+async function tickWithSkipGates(workflowId: string) {
+  return runCoordinatorTick({
+    db,
+    workflowId: workflowId as WorkflowId,
+    correlationId: correlationId(),
+    skipGates: true,
+  });
+}
+
 // -- Reusable state builders --
 
 const IMPLEMENTING_STATE = {
@@ -702,6 +711,55 @@ describe("v2 coordinator tick — integration", () => {
       // 2 publications (status_comment, check_run_summary) — no dispatch for gating
       expect(workItems.filter((w) => w.kind === "publication").length).toBe(2);
       expect(workItems.every((w) => w.status === "pending")).toBe(true);
+    });
+  });
+
+  describe("skipGates: auto-bypass all gates in single tick", () => {
+    it("cascades through review -> ci -> ui -> awaiting_pr when skipGates enabled", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "implementing",
+        stateJson: IMPLEMENTING_STATE,
+      });
+
+      // implementation_completed -> gating(review), then auto-bypass cascades
+      await daemonRunCompleted(wf.id);
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("implementing");
+      // All 3 gates bypassed — ends at awaiting_pr (no PR link)
+      expect(result.stateAfter).toBe("awaiting_pr");
+      // 1 impl_completed + 3 bypass signals = 4 signals processed
+      expect(result.signalsProcessed).toBe(4);
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("awaiting_pr");
+
+      // Audit events should show the full cascade
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events.length).toBe(4); // impl_completed + 3 gate transitions
+    });
+
+    it("cascades to babysitting when PR link exists", async () => {
+      // Create workflow with a PR number so hasPrLink is true
+      const wf = await createWorkflow({
+        db,
+        threadId: testThreadId,
+        generation: Math.floor(Math.random() * 1_000_000),
+        kind: "implementing",
+        stateJson: IMPLEMENTING_STATE,
+        userId: testUserId,
+        prNumber: 42,
+      });
+
+      await daemonRunCompleted(wf.id);
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("babysitting");
     });
   });
 });

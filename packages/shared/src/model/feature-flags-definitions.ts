@@ -135,6 +135,11 @@ export const featureFlagsDefinitions = {
     description:
       "Renders Delivery Loop plans from agent output in a structured review card in chat and stepper views.",
   },
+  skipDeliveryLoopGates: {
+    defaultValue: false,
+    description:
+      "Auto-bypass all delivery loop gates (review, CI, UI) so workflows skip directly to awaiting_pr or babysitting.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

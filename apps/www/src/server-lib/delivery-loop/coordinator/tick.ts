@@ -21,7 +21,9 @@ import {
   completeSignalClaim,
   releaseSignalClaim,
   deadLetterSignal,
+  appendSignalToInbox,
 } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   enqueueWorkItem,
   supersedePendingWorkItems,
@@ -81,6 +83,10 @@ export async function runCoordinatorTick(params: {
    *  Defaults to workflowId for pure v2 adapters that key signals by workflow. */
   loopId?: string;
   now?: Date;
+  /** Override gate-skip behavior. When true, auto-injects bypass signals for
+   *  gating states. When omitted, reads the `skipDeliveryLoopGates` feature
+   *  flag for the workflow's owner. */
+  skipGates?: boolean;
 }): Promise<CoordinatorTickResult> {
   const {
     db,
@@ -102,6 +108,17 @@ export async function runCoordinatorTick(params: {
   // store schema mirrors the discriminated union shape.
   let workflow = hydrateWorkflow(workflowRow);
   const stateBefore = workflow.kind;
+
+  // Resolve gate-skip flag: explicit param > feature flag for workflow owner
+  const skipGates =
+    params.skipGates ??
+    (workflowRow.userId
+      ? await getFeatureFlagForUser({
+          db,
+          userId: workflowRow.userId,
+          flagName: "skipDeliveryLoopGates",
+        })
+      : false);
 
   let signalsProcessed = 0;
   let transitioned = false;
@@ -332,6 +349,27 @@ export async function runCoordinatorTick(params: {
       // 4f. Complete the signal (outside transaction — idempotent)
       await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
       signalCompleted = true;
+
+      // Auto-inject bypass signal when entering gating with skipGates enabled.
+      // The next loop iteration picks it up, cascading through all 3 gates.
+      if (skipGates && newWorkflow.kind === "gating") {
+        const gateKind = newWorkflow.gate.kind;
+        await appendSignalToInbox({
+          db,
+          loopId,
+          causeType: "human_bypass",
+          payload: {
+            source: "human",
+            event: {
+              kind: "bypass_requested",
+              actorUserId: "system:gate-skip",
+              target: gateKind,
+            },
+          },
+          canonicalCauseId: `auto-gate-skip:${workflowId}:${newWorkflow.version}:${gateKind}`,
+          now,
+        });
+      }
 
       // Update in-memory workflow for next iteration
       workflow = newWorkflow;
