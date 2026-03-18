@@ -191,8 +191,12 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Coordinator loop is idempotent per signal.
 - **Validation**:
   - Coordinator worker tests with duplicate and out-of-order signals.
-- **Status**: pending
 - **Work Log**:
+  - Scope implemented. Added run-signal correlation checks in `apps/www/src/server-lib/delivery-loop/v3/reducer.ts` to make run-scoped events idempotent when they target stale/unknown run IDs.
+  - Added durable coordinator tests that validate duplicate and out-of-order signal behavior and CAS protection in `apps/www/src/server-lib/delivery-loop/v3/durable-delivery.test.ts`.
+  - Updated reducer tests in `apps/www/src/server-lib/delivery-loop/v3/reducer.test.ts` for stale run-scoped events.
+  - Verified `apps/www/src/server-lib/delivery-loop/v3/store.ts` CAS behavior via explicit stale-version update test and existing transition assertions.
+- **Status**: completed
 
 ### Task S2-T2: Dispatch Lifecycle State Model
 

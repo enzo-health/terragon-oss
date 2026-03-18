@@ -10,11 +10,19 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { appendJournalEventV3, enqueueOutboxRecordV3 } from "./store";
+import {
+  appendJournalEventV3,
+  ensureWorkflowHeadV3,
+  enqueueOutboxRecordV3,
+  getWorkflowHeadV3,
+  updateWorkflowHeadV3,
+} from "./store";
 import { buildSignalJournalContractV3 } from "./contracts";
 import * as relay from "./relay";
 import * as store from "./store";
 import { drainOutboxV3Worker } from "./worker";
+import { appendEventAndAdvanceV3 } from "./kernel";
+import type { LoopEventV3 } from "./types";
 
 const TEST_STREAM_KEY_PREFIX = "dl3:test:v3-durable:stream";
 const TEST_DEDUPE_KEY_PREFIX = "dl3:test:v3-durable:dedupe";
@@ -416,5 +424,188 @@ describe("v3 durable delivery loop", () => {
     const recoveredOutbox = await getOutboxRow(outboxId);
     expect(recoveredOutbox.status).toBe("published");
     expect(await redis.xlen(keys.streamKey)).toBe(1);
+  });
+
+  it("ignores duplicate signals per idempotency key at coordinator boundary", async () => {
+    const workflowId = await createWorkflowFixture();
+    const runId = `run-${nanoid()}`;
+
+    const bootstrapResult = await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `dup:${workflowId}:bootstrap`,
+      event: { type: "bootstrap" },
+    });
+    expect(bootstrapResult.transitioned).toBe(true);
+
+    const dispatchResult = await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `dup:${workflowId}:dispatch`,
+      event: {
+        type: "dispatch_sent",
+        runId,
+        ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
+      },
+    });
+    expect(dispatchResult.inserted).toBe(true);
+
+    const applyRunCompleted = async (
+      idempotencyKey: string,
+      event: LoopEventV3,
+    ): Promise<Awaited<ReturnType<typeof appendEventAndAdvanceV3>>> => {
+      return appendEventAndAdvanceV3({
+        db,
+        workflowId,
+        source: "daemon",
+        idempotencyKey,
+        event,
+      });
+    };
+
+    const runCompletedFirst = await applyRunCompleted(
+      `dup:${workflowId}:complete`,
+      {
+        type: "run_completed",
+        runId,
+        headSha: "deadbeef",
+      },
+    );
+    const runCompletedSecond = await applyRunCompleted(
+      `dup:${workflowId}:complete`,
+      {
+        type: "run_completed",
+        runId,
+        headSha: "deadbeef",
+      },
+    );
+
+    expect(runCompletedFirst.inserted).toBe(true);
+    expect(runCompletedFirst.transitioned).toBe(true);
+    expect(runCompletedSecond.inserted).toBe(false);
+    expect(runCompletedSecond.transitioned).toBe(false);
+
+    const effects = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    const effectKinds = effects.map((effect) => effect.effectKind);
+    expect(effectKinds).toContain("dispatch_gate_review");
+    expect(
+      effectKinds.filter((kind) => kind === "dispatch_gate_review"),
+    ).toHaveLength(1);
+    expect(effects).toHaveLength(3);
+  });
+
+  it("ignores out-of-order stale run signal once a newer dispatch is active", async () => {
+    const workflowId = await createWorkflowFixture();
+    const staleRunId = `run-${nanoid()}`;
+    const currentRunId = `run-${nanoid()}`;
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `oof:${workflowId}:bootstrap`,
+      event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `oof:${workflowId}:dispatch-stale`,
+      event: {
+        type: "dispatch_sent",
+        runId: staleRunId,
+        ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
+      },
+    });
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `oof:${workflowId}:dispatch-current`,
+      event: {
+        type: "dispatch_sent",
+        runId: currentRunId,
+        ackDeadlineAt: new Date("2026-03-18T11:00:10.000Z"),
+      },
+    });
+
+    const staleRunCompleted = await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `oof:${workflowId}:out-of-order`,
+      event: {
+        type: "run_completed",
+        runId: staleRunId,
+        headSha: "stale-head-sha",
+      },
+    });
+    expect(staleRunCompleted.transitioned).toBe(false);
+
+    const headAfterStale = await db.query.deliveryWorkflowHeadV3.findFirst({
+      where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
+    });
+    expect(headAfterStale).not.toBeNull();
+    if (!headAfterStale) {
+      throw new Error("Expected workflow head after stale run signal");
+    }
+    expect(headAfterStale.state).toBe("implementing");
+    expect(headAfterStale.activeRunId).toBe(currentRunId);
+
+    const currentRunCompleted = await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `oof:${workflowId}:in-order`,
+      event: {
+        type: "run_completed",
+        runId: currentRunId,
+        headSha: "current-head-sha",
+      },
+    });
+    expect(currentRunCompleted.transitioned).toBe(true);
+
+    const headAfterCurrent = await db.query.deliveryWorkflowHeadV3.findFirst({
+      where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
+    });
+    expect(headAfterCurrent).not.toBeNull();
+    if (!headAfterCurrent) {
+      throw new Error("Expected workflow head after in-order run signal");
+    }
+    expect(headAfterCurrent.state).toBe("gating_review");
+    expect(headAfterCurrent.activeRunId).toBeNull();
+    expect(headAfterCurrent.headSha).toBe("current-head-sha");
+  });
+
+  it("rejects stale CAS updates to workflow head", async () => {
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHeadV3({ db, workflowId });
+    if (!head) {
+      throw new Error("Expected workflow head for CAS test");
+    }
+
+    const updated = await updateWorkflowHeadV3({
+      db,
+      head: {
+        ...head,
+        blockedReason: "CAS test block",
+      },
+      expectedVersion: head.version + 1,
+    });
+    expect(updated).toBe(false);
+
+    const current = await getWorkflowHeadV3({ db, workflowId });
+    expect(current).not.toBeNull();
+    if (!current) {
+      throw new Error("Expected workflow head after stale CAS update");
+    }
+    expect(current.version).toBe(head.version);
+    expect(current.blockedReason).toBeNull();
   });
 });
