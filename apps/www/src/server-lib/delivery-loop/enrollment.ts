@@ -38,8 +38,6 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   repoFullName: string;
   threadId: string;
   planApprovalPolicy?: SdlcPlanApprovalPolicy;
-  /** @deprecated v2 always starts in planning — ignored */
-  initialState?: "planning" | "implementing";
 }) {
   // V2-only enrollment: creates the v2 workflow as a side-effect
   await enrollV2Workflow({
