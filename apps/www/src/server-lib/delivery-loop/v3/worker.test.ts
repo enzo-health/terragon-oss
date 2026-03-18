@@ -8,6 +8,7 @@ const OUTBOX_REDIS_KEY_PREFIX = "dl3:test:v3-worker";
 const OUTBOX_WORKER_DLQ_STREAM = `${OUTBOX_REDIS_KEY_PREFIX}:dead-letter`;
 const OUTBOX_WORKER_ATTEMPTS_HASH = `${OUTBOX_REDIS_KEY_PREFIX}:attempts`;
 const OUTBOX_WORKER_HEARTBEAT = `${OUTBOX_REDIS_KEY_PREFIX}:heartbeat`;
+const OUTBOX_WORKER_PROCESSED_HASH = `${OUTBOX_REDIS_KEY_PREFIX}:processed`;
 
 function randomSignalPayload(): string {
   return JSON.stringify({
@@ -66,6 +67,7 @@ describe("drainOutboxV3Worker", () => {
         readBatchSize: 1,
         blockMs: 100,
         attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
         deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
         heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
         processMessage,
@@ -79,6 +81,7 @@ describe("drainOutboxV3Worker", () => {
         readBatchSize: 1,
         blockMs: 100,
         attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
         deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
         heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
         processMessage,
@@ -114,6 +117,7 @@ describe("drainOutboxV3Worker", () => {
       staleClaimMs: 5,
       processMessage: firstAttempts,
       attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+      processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
       deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
       heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
       maxAttempts: 2,
@@ -137,6 +141,7 @@ describe("drainOutboxV3Worker", () => {
       staleClaimMs: 20,
       processMessage: secondAttempts,
       attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+      processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
       deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
       heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
       maxAttempts: 2,
@@ -170,6 +175,7 @@ describe("drainOutboxV3Worker", () => {
       maxAttempts: 2,
       processMessage: alwaysFail,
       attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+      processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
       deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
       heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
     });
@@ -193,6 +199,7 @@ describe("drainOutboxV3Worker", () => {
       maxAttempts: 2,
       processMessage: alwaysFail,
       attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+      processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
       deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
       heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
     });
@@ -201,5 +208,73 @@ describe("drainOutboxV3Worker", () => {
     expect(secondAttempt.acknowledged).toBe(0);
     expect(secondAttempt.retried).toBe(0);
     expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(1);
+  });
+
+  it("does not re-run message processor when ack fails after successful processing", async () => {
+    const streamKey = `dl3:test:v3-worker:stream:${nanoid()}`;
+    const groupName = `dl3:test:group:${nanoid()}`;
+    const outboxId = `outbox-${nanoid()}`;
+    await addStreamMessage({ streamKey, outboxId });
+
+    const processMessage = vi.fn(async () => {});
+    let ackFailuresRemaining = 1;
+    const ackMessage = vi.fn(async () => {
+      if (ackFailuresRemaining > 0) {
+        ackFailuresRemaining -= 1;
+        throw new Error("ack transient failure");
+      }
+    });
+
+    const firstAttempt = await drainOutboxV3Worker({
+      db,
+      streamKey,
+      groupName,
+      consumerName: "worker-ack-fail-1",
+      maxItems: 1,
+      readBatchSize: 1,
+      blockMs: 0,
+      staleClaimMs: 5,
+      maxAttempts: 2,
+      processMessage,
+      ackMessage,
+      attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+      processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
+      deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
+      heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
+    });
+
+    expect(firstAttempt.processed).toBe(1);
+    expect(firstAttempt.acknowledged).toBe(0);
+    expect(firstAttempt.retried).toBe(1);
+    expect(firstAttempt.deadLettered).toBe(0);
+    expect(processMessage).toHaveBeenCalledTimes(1);
+    expect(ackMessage).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const secondAttempt = await drainOutboxV3Worker({
+      db,
+      streamKey,
+      groupName,
+      consumerName: "worker-ack-fail-2",
+      maxItems: 1,
+      readBatchSize: 1,
+      blockMs: 0,
+      staleClaimMs: 20,
+      maxAttempts: 2,
+      processMessage,
+      ackMessage,
+      attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+      processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
+      deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
+      heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
+    });
+
+    expect(secondAttempt.acknowledged).toBe(1);
+    expect(secondAttempt.deadLettered).toBe(0);
+    expect(secondAttempt.retried).toBe(0);
+    expect(processMessage).toHaveBeenCalledTimes(1);
+    expect(ackMessage).toHaveBeenCalledTimes(2);
+    expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(0);
   });
 });

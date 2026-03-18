@@ -16,6 +16,7 @@ import { getOutboxRelayStreamKey } from "./relay";
 const OUTBOX_WORKER_STREAM_GROUP = "dl3:outbox:v3-consumers";
 const OUTBOX_WORKER_HEARTBEAT_KEY = "dl3:outbox:v3:worker-heartbeat";
 const OUTBOX_WORKER_ATTEMPTS_KEY = "dl3:outbox:v3:worker-attempts";
+const OUTBOX_WORKER_PROCESSED_KEY = "dl3:outbox:v3:worker-processed";
 const OUTBOX_WORKER_DLQ_STREAM = "dl3:outbox:v3:dead-letter";
 
 const OUTBOX_WORKER_DEFAULT_MAX_ATTEMPTS = 3;
@@ -26,6 +27,7 @@ const OUTBOX_WORKER_DEFAULT_MAX_ITEMS = 25;
 const OUTBOX_WORKER_DEFAULT_HEARTBEAT_TTL_MS = 20_000;
 const OUTBOX_WORKER_DEFAULT_BLOCK_MS = 0;
 const OUTBOX_WORKER_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+const OUTBOX_WORKER_PROCESSED_TTL_MS = 60 * 60 * 1000;
 
 export type OutboxWorkerMessage = {
   streamMessageId: string;
@@ -54,8 +56,14 @@ export type OutboxWorkerOptions = {
     db: DB;
     message: OutboxWorkerMessage;
   }) => Promise<void>;
+  ackMessage?: (params: {
+    streamKey: string;
+    groupName: string;
+    messageId: string;
+  }) => Promise<void>;
   heartbeatKey?: string;
   attemptsHashKey?: string;
+  processedHashKey?: string;
   deadLetterStreamKey?: string;
 };
 
@@ -449,12 +457,22 @@ async function readNewMessages(
   return parseXReadGroupResponse(raw);
 }
 
-async function ackStreamMessage(
-  streamKey: string,
-  groupName: string,
-  messageId: string,
-): Promise<void> {
-  await redis.xack(streamKey, groupName, messageId);
+async function ackStreamMessage(params: {
+  streamKey: string;
+  groupName: string;
+  messageId: string;
+}): Promise<void> {
+  const acknowledged = await redis.xack(
+    params.streamKey,
+    params.groupName,
+    params.messageId,
+  );
+  const count = parseAttemptCount(acknowledged);
+  if (count < 1) {
+    throw new Error(
+      `Outbox worker failed to acknowledge stream message ${params.messageId}`,
+    );
+  }
 }
 
 async function incrementAttemptCount(
@@ -471,6 +489,25 @@ async function clearAttemptCount(
   outboxId: string,
 ): Promise<void> {
   await redis.hdel(attemptsHashKey, outboxId);
+}
+
+async function markMessageProcessed(
+  processedHashKey: string,
+  outboxId: string,
+  streamMessageId: string,
+): Promise<void> {
+  await redis.hset(processedHashKey, {
+    [outboxId]: streamMessageId,
+  });
+  await redis.pexpire(processedHashKey, OUTBOX_WORKER_PROCESSED_TTL_MS);
+}
+
+async function isMessageAlreadyProcessed(
+  processedHashKey: string,
+  outboxId: string,
+): Promise<boolean> {
+  const existing = await redis.hget(processedHashKey, outboxId);
+  return typeof existing === "string" && existing.length > 0;
 }
 
 async function deadLetterMessage(params: {
@@ -559,7 +596,13 @@ async function processEntries(params: {
   streamKey: string;
   groupName: string;
   attemptsHashKey: string;
+  processedHashKey: string;
   deadLetterStreamKey: string;
+  ackMessage: (params: {
+    streamKey: string;
+    groupName: string;
+    messageId: string;
+  }) => Promise<void>;
   entries: RedisStreamEntry[];
   messageProcessor: (params: {
     db: DB;
@@ -586,7 +629,11 @@ async function processEntries(params: {
       if (raw.fields.outboxId) {
         await clearAttemptCount(params.attemptsHashKey, raw.fields.outboxId);
       }
-      await ackStreamMessage(params.streamKey, params.groupName, raw.id);
+      await params.ackMessage({
+        streamKey: params.streamKey,
+        groupName: params.groupName,
+        messageId: raw.id,
+      });
       params.result.deadLettered += 1;
       params.result.processed += 1;
       consumed += 1;
@@ -594,14 +641,32 @@ async function processEntries(params: {
     }
 
     try {
-      await params.messageProcessor({ db: params.db, message: parsed });
-      await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
-      await ackStreamMessage(
-        params.streamKey,
-        params.groupName,
-        parsed.streamMessageId,
+      const alreadyProcessed = await isMessageAlreadyProcessed(
+        params.processedHashKey,
+        parsed.outboxId,
       );
-      params.result.acknowledged += 1;
+
+      if (!alreadyProcessed) {
+        await params.messageProcessor({ db: params.db, message: parsed });
+        await markMessageProcessed(
+          params.processedHashKey,
+          parsed.outboxId,
+          parsed.streamMessageId,
+        );
+      }
+
+      try {
+        await params.ackMessage({
+          streamKey: params.streamKey,
+          groupName: params.groupName,
+          messageId: parsed.streamMessageId,
+        });
+        await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
+        params.result.acknowledged += 1;
+      } catch {
+        params.result.retried += 1;
+      }
+
       params.result.processed += 1;
       consumed += 1;
       continue;
@@ -621,11 +686,11 @@ async function processEntries(params: {
             )}`,
           },
         });
-        await ackStreamMessage(
-          params.streamKey,
-          params.groupName,
-          parsed.streamMessageId,
-        );
+        await params.ackMessage({
+          streamKey: params.streamKey,
+          groupName: params.groupName,
+          messageId: parsed.streamMessageId,
+        });
         await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
         params.result.deadLettered += 1;
         params.result.processed += 1;
@@ -663,10 +728,13 @@ export async function drainOutboxV3Worker(
   const blockMs = params.blockMs ?? OUTBOX_WORKER_DEFAULT_BLOCK_MS;
   const heartbeatKey = params.heartbeatKey ?? OUTBOX_WORKER_HEARTBEAT_KEY;
   const attemptsHashKey = params.attemptsHashKey ?? OUTBOX_WORKER_ATTEMPTS_KEY;
+  const processedHashKey =
+    params.processedHashKey ?? OUTBOX_WORKER_PROCESSED_KEY;
   const deadLetterStreamKey =
     params.deadLetterStreamKey ?? OUTBOX_WORKER_DLQ_STREAM;
   const messageProcessor =
     params.processMessage ?? processOutboxMessageWithDefaults;
+  const ackMessage = params.ackMessage ?? ackStreamMessage;
 
   await ensureConsumerGroup(streamKey, groupName);
 
@@ -702,7 +770,9 @@ export async function drainOutboxV3Worker(
         streamKey,
         groupName,
         attemptsHashKey,
+        processedHashKey,
         deadLetterStreamKey,
+        ackMessage,
         entries: stale.entries,
         messageProcessor,
         maxAttempts,
@@ -740,7 +810,9 @@ export async function drainOutboxV3Worker(
       streamKey,
       groupName,
       attemptsHashKey,
+      processedHashKey,
       deadLetterStreamKey,
+      ackMessage,
       entries: newMessages,
       messageProcessor,
       maxAttempts,
