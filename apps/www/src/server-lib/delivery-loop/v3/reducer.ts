@@ -5,10 +5,161 @@ import {
   type WorkflowHeadV3,
 } from "./types";
 
+const DISPATCH_COHERENT_STATES = new Set([
+  "implementing",
+  "gating_review",
+  "gating_ci",
+]);
+
+type InvariantAction = {
+  kind: "dispatch_coherence";
+  reason: string;
+  fromActiveRunId: string | null;
+  toActiveRunId: string | null;
+};
+
+type BranchInvariantAction = {
+  kind: "branch_coherence";
+  reason: string;
+  fromActiveGate: string | null;
+  toActiveGate: string | null;
+};
+
+export type InvariantActionV3 = InvariantAction | BranchInvariantAction;
+
 type ReduceResult = {
   head: WorkflowHeadV3;
   effects: EffectSpecV3[];
+  invariantActions: InvariantActionV3[];
 };
+
+type ApplyInvariantResult = {
+  head: WorkflowHeadV3;
+  invariantActions: InvariantActionV3[];
+};
+
+function withInvariantActions(params: {
+  head: WorkflowHeadV3;
+  effects: EffectSpecV3[];
+  invariantActions: InvariantActionV3[];
+}): ReduceResult {
+  if (params.invariantActions.length === 0) {
+    return {
+      head: params.head,
+      effects: params.effects,
+      invariantActions: [],
+    };
+  }
+
+  const invariants = params.invariantActions;
+  const nextHead = invariants.reduce<WorkflowHeadV3>((acc, action) => {
+    if (action.kind === "dispatch_coherence") {
+      return {
+        ...acc,
+        activeRunId: action.toActiveRunId,
+      };
+    }
+    return {
+      ...acc,
+      activeGate: action.toActiveGate,
+    };
+  }, params.head);
+
+  return {
+    head: nextHead,
+    effects: params.effects,
+    invariantActions: invariants,
+  };
+}
+
+function applyDispatchCoherence(params: {
+  head: WorkflowHeadV3;
+}): ApplyInvariantResult {
+  const beforeActiveRunId = params.head.activeRunId;
+  if (
+    DISPATCH_COHERENT_STATES.has(params.head.state) ||
+    beforeActiveRunId === null
+  ) {
+    return {
+      head: params.head,
+      invariantActions: [],
+    };
+  }
+
+  return {
+    head: {
+      ...params.head,
+      activeRunId: null,
+    },
+    invariantActions: [
+      {
+        kind: "dispatch_coherence",
+        reason: `Clearing stale activeRunId from non-dispatch state ${params.head.state}`,
+        fromActiveRunId: beforeActiveRunId,
+        toActiveRunId: null,
+      },
+    ],
+  };
+}
+
+function expectedBranchForState(state: WorkflowHeadV3["state"]): string | null {
+  if (state === "gating_review") {
+    return "review";
+  }
+  if (state === "gating_ci") {
+    return "ci";
+  }
+  return null;
+}
+
+function applyBranchCoherence(params: {
+  head: WorkflowHeadV3;
+}): ApplyInvariantResult {
+  const beforeActiveGate = params.head.activeGate;
+  const expectedActiveGate = expectedBranchForState(params.head.state);
+  if (beforeActiveGate === expectedActiveGate) {
+    return {
+      head: params.head,
+      invariantActions: [],
+    };
+  }
+
+  return {
+    head: {
+      ...params.head,
+      activeGate: expectedActiveGate,
+    },
+    invariantActions: [
+      {
+        kind: "branch_coherence",
+        reason: `Normalizing activeGate for state ${params.head.state}`,
+        fromActiveGate: beforeActiveGate,
+        toActiveGate: expectedActiveGate,
+      },
+    ],
+  };
+}
+
+function applyInvariantMiddleware(params: {
+  head: WorkflowHeadV3;
+  effects: EffectSpecV3[];
+}): ReduceResult {
+  const dispatchResult = applyDispatchCoherence({ head: params.head });
+  const branchResult = applyBranchCoherence({
+    head: dispatchResult.head,
+  });
+
+  const invariantActions = [
+    ...dispatchResult.invariantActions,
+    ...branchResult.invariantActions,
+  ];
+
+  return withInvariantActions({
+    head: branchResult.head,
+    effects: params.effects,
+    invariantActions,
+  });
+}
 
 function isOutOfOrderRunSignal(params: {
   head: WorkflowHeadV3;
@@ -21,7 +172,7 @@ function isOutOfOrderRunSignal(params: {
     return false;
   }
 
-  return params.runId == null || params.runId !== params.head.activeRunId;
+  return params.runId !== params.head.activeRunId;
 }
 
 function withVersion(head: WorkflowHeadV3, now: Date): WorkflowHeadV3 {
@@ -94,6 +245,7 @@ function retryToImplementing(params: {
         infraRetryCount: laneUpdate.infraRetryCount,
       },
       effects: [],
+      invariantActions: [],
     };
   }
 
@@ -108,6 +260,7 @@ function retryToImplementing(params: {
       infraRetryCount: laneUpdate.infraRetryCount,
     },
     effects: [dispatchImplementingEffect(next, params.now)],
+    invariantActions: [],
   };
 }
 
@@ -124,7 +277,11 @@ export function reduceV3(params: {
     head.state === "stopped" ||
     head.state === "terminated"
   ) {
-    return { head, effects: [] };
+    return {
+      head,
+      effects: [],
+      invariantActions: [],
+    };
   }
 
   if (event.type === "stop_requested") {
@@ -132,6 +289,7 @@ export function reduceV3(params: {
     return {
       head: { ...next, state: "stopped", blockedReason: "Stopped by user" },
       effects: [],
+      invariantActions: [],
     };
   }
 
@@ -144,16 +302,24 @@ export function reduceV3(params: {
         blockedReason: event.merged ? "PR merged" : "PR closed",
       },
       effects: [],
+      invariantActions: [],
     };
   }
+
+  let result: ReduceResult;
 
   switch (head.state) {
     case "planning": {
       if (event.type !== "plan_completed" && event.type !== "bootstrap") {
-        return { head, effects: [] };
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
       }
       const next = withVersion(head, now);
-      return {
+      result = {
         head: {
           ...next,
           state: "implementing",
@@ -161,12 +327,14 @@ export function reduceV3(params: {
           blockedReason: null,
         },
         effects: [dispatchImplementingEffect(next, now)],
+        invariantActions: [],
       };
+      break;
     }
     case "implementing": {
       if (event.type === "dispatch_sent") {
         const next = withVersion(head, now);
-        return {
+        result = {
           head: { ...next, activeRunId: event.runId, blockedReason: null },
           effects: [
             {
@@ -180,30 +348,48 @@ export function reduceV3(params: {
               },
             },
           ],
+          invariantActions: [],
         };
+        break;
       }
       if (event.type === "dispatch_acked") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
         const next = withVersion(head, now);
-        return { head: { ...next, activeRunId: event.runId }, effects: [] };
+        result = {
+          head: { ...next, activeRunId: event.runId },
+          effects: [],
+          invariantActions: [],
+        };
+        break;
       }
       if (event.type === "run_completed") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
         const completedHeadSha = event.headSha ?? head.headSha;
         if (!completedHeadSha) {
-          return retryToImplementing({
+          result = retryToImplementing({
             head,
             now,
             lane: "agent",
             reason: "Run completed without head SHA",
           });
+          break;
         }
         const next = withVersion(head, now);
-        return {
+        result = {
           head: {
             ...next,
             state: "gating_review",
@@ -213,22 +399,35 @@ export function reduceV3(params: {
             blockedReason: null,
           },
           effects: [dispatchReviewEffect(next, now)],
+          invariantActions: [],
         };
+        break;
       }
       if (event.type === "dispatch_ack_timeout") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
-        return retryToImplementing({
+        result = retryToImplementing({
           head,
           now,
           lane: "infra",
           reason: `Dispatch ack timeout for run ${event.runId}`,
         });
+        break;
       }
       if (event.type === "run_failed") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
         const lane =
           event.lane ??
@@ -236,19 +435,25 @@ export function reduceV3(params: {
             category: event.category,
             message: event.message,
           });
-        return retryToImplementing({
+        result = retryToImplementing({
           head,
           now,
           lane,
           reason: event.message,
         });
+        break;
       }
-      return { head, effects: [] };
+      result = {
+        head,
+        effects: [],
+        invariantActions: [],
+      };
+      break;
     }
     case "gating_review": {
       if (event.type === "dispatch_sent") {
         const next = withVersion(head, now);
-        return {
+        result = {
           head: { ...next, activeRunId: event.runId, blockedReason: null },
           effects: [
             {
@@ -262,21 +467,38 @@ export function reduceV3(params: {
               },
             },
           ],
+          invariantActions: [],
         };
+        break;
       }
       if (event.type === "dispatch_acked") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
         const next = withVersion(head, now);
-        return { head: { ...next, activeRunId: event.runId }, effects: [] };
+        result = {
+          head: { ...next, activeRunId: event.runId },
+          effects: [],
+          invariantActions: [],
+        };
+        break;
       }
       if (event.type === "gate_review_passed") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
         const next = withVersion(head, now);
-        return {
+        result = {
           head: {
             ...next,
             state: "gating_ci",
@@ -285,22 +507,35 @@ export function reduceV3(params: {
             blockedReason: null,
           },
           effects: [],
+          invariantActions: [],
         };
+        break;
       }
       if (event.type === "gate_review_failed") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
-        return retryToImplementing({
+        result = retryToImplementing({
           head,
           now,
           lane: "agent",
           reason: event.reason ?? "Review gate blocked",
         });
+        break;
       }
       if (event.type === "run_failed") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
         const lane =
           event.lane ??
@@ -308,30 +543,42 @@ export function reduceV3(params: {
             category: event.category,
             message: event.message,
           });
-        return retryToImplementing({
+        result = retryToImplementing({
           head,
           now,
           lane,
           reason: event.message,
         });
+        break;
       }
       if (event.type === "dispatch_ack_timeout") {
         if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          return { head, effects: [] };
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
         }
-        return retryToImplementing({
+        result = retryToImplementing({
           head,
           now,
           lane: "infra",
           reason: `Dispatch ack timeout for run ${event.runId}`,
         });
+        break;
       }
-      return { head, effects: [] };
+      result = {
+        head,
+        effects: [],
+        invariantActions: [],
+      };
+      break;
     }
     case "gating_ci": {
       if (event.type === "gate_ci_passed") {
         const next = withVersion(head, now);
-        return {
+        result = {
           head: {
             ...next,
             state: "awaiting_pr",
@@ -340,25 +587,38 @@ export function reduceV3(params: {
             blockedReason: null,
           },
           effects: [],
+          invariantActions: [],
         };
+        break;
       }
       if (event.type === "gate_ci_failed") {
-        return retryToImplementing({
+        result = retryToImplementing({
           head,
           now,
           lane: "agent",
           reason: event.reason ?? "CI gate blocked",
         });
+        break;
       }
-      return { head, effects: [] };
+      result = {
+        head,
+        effects: [],
+        invariantActions: [],
+      };
+      break;
     }
     case "awaiting_manual_fix":
     case "awaiting_operator_action": {
       if (event.type !== "resume_requested") {
-        return { head, effects: [] };
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
       }
       const next = withVersion(head, now);
-      return {
+      result = {
         head: {
           ...next,
           state: "implementing",
@@ -367,9 +627,21 @@ export function reduceV3(params: {
           blockedReason: null,
         },
         effects: [dispatchImplementingEffect(next, now)],
+        invariantActions: [],
       };
+      break;
     }
     default:
-      return { head, effects: [] };
+      result = {
+        head,
+        effects: [],
+        invariantActions: [],
+      };
+      break;
   }
+
+  return applyInvariantMiddleware({
+    head: result.head,
+    effects: result.effects,
+  });
 }

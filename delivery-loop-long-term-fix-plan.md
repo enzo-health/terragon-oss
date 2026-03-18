@@ -234,8 +234,22 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Invariant actions are audit-logged.
 - **Validation**:
   - Middleware tests for branch mismatch, stale dispatch, missing PR link.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+- 2026-03-18: Implemented deterministic invariant middleware in v3 reducer:
+  - Added dispatch coherence and branch coherence checks after every transition.
+  - Stale `activeRunId` is coerced to `null` outside active dispatch states (`implementing`, `gating_review`, `gating_ci`).
+  - `activeGate` is normalized to expected state (`null`, `"review"`, `"ci"`).
+  - Ensured middleware preserves transition effects while returning invariant actions.
+- 2026-03-18: Added coordinator PR coherence middleware and auditing in `apps/www/src/server-lib/delivery-loop/coordinator/tick.ts`:
+  - `awaiting_pr` with no diff auto-enqueues `mark_done_requested` once via idempotent signal.
+  - `awaiting_pr` with PR available or discoverable auto-enqueues `pr_synchronized` once via idempotent signal.
+  - Both paths emit auditable `awaiting_pr_invariant` workflow events with deterministic payload.
+- 2026-03-18: Added invariant audit journaling to v3 kernel in `apps/www/src/server-lib/delivery-loop/v3/kernel.ts`:
+  - `dispatch_coherence` and `branch_coherence` actions are appended as journal events (`invariant_action`), using deterministic idempotency keys.
+- 2026-03-18: Added coverage:
+  - `apps/www/src/server-lib/delivery-loop/v3/reducer.test.ts`: stale dispatch and branch mismatch invariant tests.
+  - `apps/www/src/server-lib/delivery-loop/coordinator/tick.test.ts`: awaiting_pr invariant audit event assertions.
 
 ### Task S2-T4: Runtime Fallback Policy
 

@@ -1,6 +1,6 @@
 import type { DB } from "@terragon/shared/db";
 import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
-import { reduceV3 } from "./reducer";
+import { reduceV3, type InvariantActionV3 } from "./reducer";
 import type { LoopEventV3 } from "./types";
 import { buildSignalJournalContractV3 } from "./contracts";
 import {
@@ -9,6 +9,54 @@ import {
   insertEffectsV3,
   updateWorkflowHeadV3,
 } from "./store";
+
+function serializeInvariantAction(params: {
+  action: InvariantActionV3;
+  headBefore: string;
+  headAfter: string;
+  workflowVersion: number;
+}) {
+  return {
+    kind: "invariant_action",
+    actionKind: params.action.kind,
+    headBefore: params.headBefore,
+    headAfter: params.headAfter,
+    workflowVersion: params.workflowVersion,
+    details: params.action,
+  };
+}
+
+async function appendInvariantJournalActions(params: {
+  db: Pick<DB, "insert">;
+  workflowId: string;
+  baseIdempotencyKey: string;
+  headBefore: string;
+  headAfter: string;
+  workflowVersion: number;
+  actions: InvariantActionV3[];
+  now: Date;
+}): Promise<void> {
+  if (params.actions.length === 0) return;
+
+  for (const action of params.actions) {
+    await appendJournalEventV3({
+      db: params.db,
+      workflowId: params.workflowId,
+      source: "system",
+      eventType: "invariant_action",
+      idempotencyKey: `${params.baseIdempotencyKey}:invariant:${params.workflowVersion}:${action.kind}`,
+      payloadJson: {
+        ...serializeInvariantAction({
+          action,
+          headBefore: params.headBefore,
+          headAfter: params.headAfter,
+          workflowVersion: params.workflowVersion,
+        }),
+      },
+      occurredAt: params.now,
+    });
+  }
+}
 
 export async function appendEventAndAdvanceV3(params: {
   db: DB;
@@ -96,6 +144,17 @@ export async function appendEventAndAdvanceV3(params: {
       workflowId: params.workflowId,
       workflowVersion: reduced.head.version,
       effects: reduced.effects,
+    });
+
+    await appendInvariantJournalActions({
+      db: tx,
+      workflowId: params.workflowId,
+      baseIdempotencyKey: `${params.workflowId}:${params.idempotencyKey}`,
+      headBefore: head.state,
+      headAfter: reduced.head.state,
+      workflowVersion: reduced.head.version,
+      actions: reduced.invariantActions,
+      now,
     });
 
     return {

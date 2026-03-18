@@ -44,6 +44,19 @@ import {
   serializeWorkflowState,
 } from "./helpers";
 import { parseSignalPayload } from "./parse-signal";
+import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { updateThread } from "@terragon/shared/model/threads";
+import { upsertGithubPR } from "@terragon/shared/model/github";
+import { getGithubPRStatus } from "@terragon/shared/github-api/helpers";
+import {
+  getDefaultBranchForRepo,
+  getExistingPRForBranch,
+  getOctokitForUserOrThrow,
+  parseRepoFullName,
+} from "@/lib/github";
+import { publicAppUrl } from "@terragon/env/next-public";
+import { eq } from "drizzle-orm";
+import * as schema from "@terragon/shared/db/schema";
 
 export type CoordinatorTickResult = {
   workflowId: WorkflowId;
@@ -54,6 +67,12 @@ export type CoordinatorTickResult = {
   stateAfter: string;
   workItemsScheduled: number;
   incidentsEvaluated: boolean;
+};
+
+type AwaitingPrInvariantAction = {
+  kind: "awaiting_pr_invariant_no_diff" | "awaiting_pr_invariant_pr_linked";
+  stateAfter: WorkflowState;
+  signalId: string;
 };
 
 const MAX_SIGNALS_PER_TICK = 10;
@@ -131,6 +150,39 @@ export async function runCoordinatorTick(params: {
     prNumber: workflowRow.prNumber ?? null,
     now,
   };
+
+  // Enforce awaiting_pr invariant before draining signals.
+  // Invalid state: awaiting_pr + no PR link + no diff.
+  // Resolution policy:
+  // - no diff => mark_done
+  // - PR already linked on thread => pr_linked
+  // - diff + no PR => create/link PR then pr_linked
+  const awaitingPrInvariantAction = await enforceAwaitingPrInvariant({
+    db,
+    workflowId,
+    loopId,
+    now,
+    workflow,
+    workflowRow,
+  });
+  if (awaitingPrInvariantAction) {
+    await appendWorkflowEvent({
+      db,
+      workflowId,
+      correlationId,
+      eventKind: "awaiting_pr_invariant",
+      stateBefore: workflow.kind,
+      stateAfter: awaitingPrInvariantAction.stateAfter,
+      gateBefore: extractGateKind(workflow),
+      gateAfter: extractGateKind(workflow),
+      payloadJson: {
+        kind: awaitingPrInvariantAction.kind,
+        signalId: awaitingPrInvariantAction.signalId,
+      },
+      signalId: awaitingPrInvariantAction.signalId,
+      triggerSource: "system",
+    });
+  }
 
   // 2. Process pending signals (up to limit per tick)
   //    The outer do/while handles level-triggered gate bypass: when the
@@ -609,4 +661,269 @@ function hydrateWorkflow(row: WorkflowRow): DeliveryWorkflow {
     kind: row.kind as WorkflowState,
     ...stateJson,
   } as DeliveryWorkflow;
+}
+
+function hasThreadDiff(params: {
+  gitDiff: string | null;
+  gitDiffStats: unknown;
+}): boolean {
+  const diffStats = params.gitDiffStats as
+    | { files?: unknown; additions?: unknown; deletions?: unknown }
+    | null
+    | undefined;
+  if (diffStats && typeof diffStats.files === "number") {
+    return diffStats.files > 0;
+  }
+  if (!params.gitDiff) {
+    return false;
+  }
+  return params.gitDiff.trim().length > 0;
+}
+
+async function ensureOrCreatePrForAwaitingWorkflow(params: {
+  db: DB;
+  workflowId: WorkflowId;
+  userId: string;
+  threadId: string;
+  threadName: string | null;
+  repoFullName: string;
+  branchName: string;
+  repoBaseBranchName: string | null;
+}): Promise<number | null> {
+  const branchName = params.branchName.trim();
+  if (branchName.length === 0) {
+    return null;
+  }
+
+  let baseBranchName = (params.repoBaseBranchName ?? "").trim();
+  if (baseBranchName.length === 0) {
+    baseBranchName = await getDefaultBranchForRepo({
+      userId: params.userId,
+      repoFullName: params.repoFullName,
+    });
+  }
+  if (baseBranchName === branchName) {
+    baseBranchName = await getDefaultBranchForRepo({
+      userId: params.userId,
+      repoFullName: params.repoFullName,
+    });
+  }
+  if (baseBranchName === branchName) {
+    return null;
+  }
+
+  const existingPr = await getExistingPRForBranch({
+    repoFullName: params.repoFullName,
+    headBranchName: branchName,
+    baseBranchName,
+  });
+  if (existingPr) {
+    await Promise.all([
+      upsertGithubPR({
+        db: params.db,
+        repoFullName: params.repoFullName,
+        number: existingPr.number,
+        threadId: params.threadId,
+        updates: {
+          status: getGithubPRStatus(existingPr),
+        },
+      }),
+      updateThread({
+        db: params.db,
+        userId: params.userId,
+        threadId: params.threadId,
+        updates: {
+          githubPRNumber: existingPr.number,
+          branchName,
+        },
+      }),
+      updateWorkflowPR({
+        db: params.db,
+        workflowId: params.workflowId,
+        prNumber: existingPr.number,
+      }),
+    ]);
+    return existingPr.number;
+  }
+
+  const [owner, repo] = parseRepoFullName(params.repoFullName);
+  const octokit = await getOctokitForUserOrThrow({
+    userId: params.userId,
+  });
+
+  const prTitle = params.threadName?.trim().length
+    ? `Terragon: ${params.threadName.trim()}`
+    : "Terragon: automated update";
+  const taskUrl = `${publicAppUrl()}/task/${params.threadId}`;
+  const prBody = [
+    "Automated pull request created by Terragon Delivery Loop.",
+    "",
+    `Task: ${taskUrl}`,
+  ].join("\n");
+
+  const created = await octokit.rest.pulls.create({
+    owner,
+    repo,
+    title: prTitle,
+    body: prBody,
+    head: branchName,
+    base: baseBranchName,
+    draft: true,
+  });
+
+  await Promise.all([
+    upsertGithubPR({
+      db: params.db,
+      repoFullName: params.repoFullName,
+      number: created.data.number,
+      threadId: params.threadId,
+      updates: {
+        status: getGithubPRStatus(created.data),
+      },
+    }),
+    updateThread({
+      db: params.db,
+      userId: params.userId,
+      threadId: params.threadId,
+      updates: {
+        githubPRNumber: created.data.number,
+        branchName,
+      },
+    }),
+    updateWorkflowPR({
+      db: params.db,
+      workflowId: params.workflowId,
+      prNumber: created.data.number,
+    }),
+  ]);
+
+  return created.data.number;
+}
+
+async function enforceAwaitingPrInvariant(params: {
+  db: DB;
+  workflowId: WorkflowId;
+  loopId: string;
+  now: Date;
+  workflow: DeliveryWorkflow;
+  workflowRow: WorkflowRow;
+}): Promise<AwaitingPrInvariantAction | null> {
+  if (params.workflow.kind !== "awaiting_pr") {
+    return null;
+  }
+  if (typeof params.workflowRow.prNumber === "number") {
+    return null;
+  }
+  if (!params.workflowRow.userId) {
+    return null;
+  }
+
+  const thread = await params.db.query.thread.findFirst({
+    where: eq(schema.thread.id, params.workflow.threadId),
+    columns: {
+      id: true,
+      userId: true,
+      name: true,
+      githubRepoFullName: true,
+      githubPRNumber: true,
+      repoBaseBranchName: true,
+      branchName: true,
+      gitDiff: true,
+      gitDiffStats: true,
+    },
+  });
+  if (!thread) {
+    return null;
+  }
+
+  let prNumber: number | null =
+    typeof thread.githubPRNumber === "number" ? thread.githubPRNumber : null;
+
+  if (!prNumber) {
+    const hasDiff = hasThreadDiff({
+      gitDiff: thread.gitDiff,
+      gitDiffStats: thread.gitDiffStats,
+    });
+    if (!hasDiff) {
+      const signal = await appendSignalToInbox({
+        db: params.db,
+        loopId: params.loopId,
+        causeType: "human_mark_done",
+        payload: {
+          source: "human",
+          event: {
+            kind: "mark_done_requested",
+            actorUserId: "system:awaiting-pr-invariant",
+          },
+        },
+        canonicalCauseId: `awaiting-pr-invariant:no-diff:${params.workflowId}:${params.workflow.version}`,
+        now: params.now,
+      });
+      if (!signal) {
+        return null;
+      }
+      return {
+        kind: "awaiting_pr_invariant_no_diff",
+        stateAfter: "done",
+        signalId: signal.id,
+      };
+    }
+
+    try {
+      prNumber = await ensureOrCreatePrForAwaitingWorkflow({
+        db: params.db,
+        workflowId: params.workflowId,
+        userId: params.workflowRow.userId,
+        threadId: thread.id,
+        threadName: thread.name,
+        repoFullName: thread.githubRepoFullName,
+        branchName: thread.branchName ?? "",
+        repoBaseBranchName: thread.repoBaseBranchName,
+      });
+    } catch (error) {
+      console.warn(
+        "[coordinator] awaiting_pr invariant PR create/link failed",
+        {
+          workflowId: params.workflowId,
+          threadId: thread.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      return null;
+    }
+  } else {
+    await updateWorkflowPR({
+      db: params.db,
+      workflowId: params.workflowId,
+      prNumber,
+    });
+  }
+
+  if (!prNumber) {
+    return null;
+  }
+
+  const signal = await appendSignalToInbox({
+    db: params.db,
+    loopId: params.loopId,
+    causeType: "github_pr_synchronized",
+    payload: {
+      source: "github",
+      event: {
+        kind: "pr_synchronized",
+        prNumber,
+        headSha: params.workflow.headSha,
+      },
+    },
+    canonicalCauseId: `awaiting-pr-invariant:pr-linked:${params.workflowId}:${prNumber}`,
+    now: params.now,
+  });
+  if (!signal) {
+    return null;
+  }
+  return {
+    kind: "awaiting_pr_invariant_pr_linked",
+    stateAfter: "awaiting_pr",
+    signalId: signal.id,
+  };
 }

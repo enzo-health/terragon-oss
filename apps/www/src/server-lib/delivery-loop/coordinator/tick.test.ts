@@ -4,6 +4,7 @@ import {
   createTestUser,
   createTestThread,
 } from "@terragon/shared/model/test-helpers";
+import { updateThread } from "@terragon/shared/model/threads";
 import {
   createWorkflow,
   getWorkflow,
@@ -627,6 +628,68 @@ describe("v2 coordinator tick — integration", () => {
       const status = await getRuntimeStatus({ db, workflowId: wf.id });
       expect(status).toBeDefined();
       expect(status!.state).toBe("implementing");
+    });
+  });
+
+  describe("awaiting_pr invariant middleware", () => {
+    it("awaiting_pr + no diff + no PR => auto mark_done -> done", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("done");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("done");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_no_diff",
+      });
+    });
+
+    it("awaiting_pr + thread PR linked => auto pr_linked -> babysitting", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          githubPRNumber: 42,
+        },
+      });
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("babysitting");
+      expect(row!.prNumber).toBe(42);
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_pr_linked",
+      });
     });
   });
 

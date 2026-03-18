@@ -239,4 +239,54 @@ describe("reduceV3", () => {
     expect(result.head.activeGate).toBe("ci");
     expect(result.head.activeRunId).toBeNull();
   });
+
+  it("dispatch coherence clears stale activeRunId in non-dispatch state", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("awaiting_manual_fix"),
+        activeRunId: "run-stale",
+      },
+      event: {
+        type: "run_completed",
+        runId: "run-completed",
+        headSha: "sha-1",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_manual_fix");
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.effects).toHaveLength(0);
+    expect(result.invariantActions).toHaveLength(1);
+    expect(result.invariantActions[0]?.kind).toBe("dispatch_coherence");
+    expect(result.invariantActions[0]!).toMatchObject({
+      fromActiveRunId: "run-stale",
+      toActiveRunId: null,
+    });
+  });
+
+  it("branch coherence normalizes unexpected gate in gating_review", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_review"),
+        activeGate: "ci",
+      },
+      event: {
+        type: "dispatch_acked",
+        runId: "run-1",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeGate).toBe("review");
+    expect(result.invariantActions).toHaveLength(1);
+    expect(result.invariantActions[0]?.kind).toBe("branch_coherence");
+    expect(result.invariantActions[0]!).toMatchObject({
+      fromActiveGate: "ci",
+      toActiveGate: "review",
+    });
+  });
 });
