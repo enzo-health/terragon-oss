@@ -1805,6 +1805,21 @@ export class TerragonDaemon {
           message.type === "custom-error" ||
           message.type === "custom-stop"
         ) {
+          // Before ACP init succeeds, error envelopes like "Internal error" are
+          // expected — sandbox-agent hasn't registered ACP endpoints yet. Suppress
+          // them so the SSE loop doesn't prematurely kill the run while initialize
+          // is still retrying.
+          if (message.type === "custom-error" && !acpInitialized) {
+            this.runtime.logger.debug(
+              "Suppressing pre-init SSE error envelope (not terminal)",
+              {
+                threadChatId: input.threadChatId,
+                errorInfo:
+                  "error_info" in message ? message.error_info : undefined,
+              },
+            );
+            return;
+          }
           sawTerminalEventFromStream = true;
           resolveSseTerminal?.();
           this.updateActiveProcessState(input.threadChatId, {
@@ -2072,8 +2087,17 @@ export class TerragonDaemon {
     // inherit the updated process.env before spawning the agent.
     await this.ensureSandboxAgentHasToken(baseUrl, input);
 
+    // Wait for ACP endpoints to register after health passes. sandbox-agent's
+    // /v1/health responds before ACP endpoints are ready (~15s gap). This delay
+    // avoids burning retry budget on guaranteed-to-fail requests.
+    await new Promise((r) => setTimeout(r, 5_000));
+
     // Track that we just restarted so we can suppress expected initial SSE 404s
     let justRestarted = true;
+    // Track whether initialize + session/new have succeeded. Before this is set,
+    // SSE error envelopes (e.g. "Internal error") must NOT be treated as terminal
+    // because they're expected during the ACP registration window.
+    let acpInitialized = false;
 
     const sseLoop = (async () => {
       // Settle after sandbox-agent restart — ACP endpoints need ~15s to register
@@ -2169,8 +2193,11 @@ export class TerragonDaemon {
     try {
       // Retry initialize — ACP endpoints may not be registered yet even
       // though /v1/health passed. Typically ready within ~15s of restart.
+      // Use 20 attempts with exponential backoff (2s base, 5s cap) to
+      // tolerate variance in sandbox-agent startup time.
+      const ACP_INIT_MAX_ATTEMPTS = 20;
       let initializeResponse: AcpResponseEnvelope | undefined;
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; attempt < ACP_INIT_MAX_ATTEMPTS; attempt++) {
         try {
           initializeResponse = await postEnvelope({
             method: "initialize",
@@ -2185,13 +2212,14 @@ export class TerragonDaemon {
           });
           if (!toObject(initializeResponse.error)) break;
         } catch (err) {
-          if (attempt >= 9) throw err;
+          if (attempt >= ACP_INIT_MAX_ATTEMPTS - 1) throw err;
           this.runtime.logger.debug(
             `ACP initialize attempt ${attempt + 1} failed, retrying`,
             { error: formatError(err) },
           );
         }
-        await new Promise((r) => setTimeout(r, 1_500));
+        const backoff = Math.min(2_000 * 1.5 ** attempt, 5_000);
+        await new Promise((r) => setTimeout(r, backoff));
       }
       if (toObject(initializeResponse?.error)) {
         throw new Error(
@@ -2204,7 +2232,7 @@ export class TerragonDaemon {
       let sessionId: string | undefined;
       {
         let newSessionResponse: AcpResponseEnvelope | undefined;
-        for (let attempt = 0; attempt < 10; attempt++) {
+        for (let attempt = 0; attempt < ACP_INIT_MAX_ATTEMPTS; attempt++) {
           try {
             newSessionResponse = await postEnvelope({
               method: "session/new",
@@ -2215,13 +2243,14 @@ export class TerragonDaemon {
             });
             if (!toObject(newSessionResponse.error)) break;
           } catch (err) {
-            if (attempt >= 9) throw err;
+            if (attempt >= ACP_INIT_MAX_ATTEMPTS - 1) throw err;
             this.runtime.logger.debug(
               `ACP session/new attempt ${attempt + 1} failed, retrying`,
               { error: formatError(err) },
             );
           }
-          await new Promise((r) => setTimeout(r, 1_500));
+          const backoff = Math.min(2_000 * 1.5 ** attempt, 5_000);
+          await new Promise((r) => setTimeout(r, backoff));
         }
         if (toObject(newSessionResponse?.error)) {
           throw new Error(
@@ -2235,6 +2264,10 @@ export class TerragonDaemon {
         }
         sessionId = newSessionId;
       }
+
+      // Mark ACP as initialized — SSE error envelopes are now treated as
+      // terminal (before this point they were suppressed as startup noise).
+      acpInitialized = true;
 
       this.updateActiveProcessState(input.threadChatId, {
         sessionId,
