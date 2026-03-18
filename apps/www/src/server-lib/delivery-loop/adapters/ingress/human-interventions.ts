@@ -1,5 +1,8 @@
 import type { DB } from "@terragon/shared/db";
-import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
+import type {
+  DeliverySignalSourceV3,
+  SdlcLoopCauseType,
+} from "@terragon/shared/db/types";
 import type {
   WorkflowId,
   GateKind,
@@ -7,6 +10,31 @@ import type {
 import type { DeliverySignal } from "@terragon/shared/delivery-loop/domain/signals";
 
 export type HumanAction = "resume" | "bypass" | "stop" | "mark_done";
+
+function toV3SignalSource(
+  source: DeliverySignal["source"],
+): DeliverySignalSourceV3 {
+  switch (source) {
+    case "daemon":
+    case "github":
+    case "human":
+    case "timer":
+      return source;
+    case "babysit":
+      return "system";
+  }
+}
+
+function serializeSignalForJournal(
+  signal: DeliverySignal,
+): Record<string, unknown> {
+  return {
+    source: signal.source,
+    event: {
+      ...signal.event,
+    },
+  };
+}
 
 /**
  * Normalize a human action to a typed DeliverySignal.
@@ -78,15 +106,70 @@ export async function handleHumanAction(params: {
   const { appendSignalToInbox } = await import(
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
   );
+  const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
+    "../../v3/store"
+  );
 
   const causeType = mapHumanSignalToCauseType(signal);
-  await appendSignalToInbox({
-    db: params.db,
-    loopId: params.inboxPartitionKey,
-    causeType,
-    payload: signal as Record<string, unknown>,
-    canonicalCauseId: `human:${params.workflowId}:${params.action}:${params.idempotencyKey ?? crypto.randomUUID()}`,
-  });
+  const now = new Date();
+  const canonicalCauseId = `human:${params.workflowId}:${params.action}:${params.idempotencyKey ?? crypto.randomUUID()}`;
+  const v3Source = toV3SignalSource(signal.source);
+  const signalPayload = serializeSignalForJournal(signal);
+
+  const writeSignalAndOutbox = async (
+    tx: Pick<DB, "insert">,
+  ): Promise<void> => {
+    await appendSignalToInbox({
+      db: tx,
+      loopId: params.inboxPartitionKey,
+      causeType,
+      payload: signalPayload,
+      canonicalCauseId,
+      now,
+    });
+
+    const journal = await appendJournalEventV3({
+      db: tx,
+      workflowId: params.workflowId,
+      source: v3Source,
+      eventType: signal.event.kind,
+      idempotencyKey: canonicalCauseId,
+      payloadJson: signalPayload,
+      occurredAt: now,
+    });
+
+    if (!journal.inserted || !journal.id) {
+      return;
+    }
+
+    await enqueueOutboxRecordV3({
+      db: tx,
+      outbox: {
+        workflowId: params.workflowId,
+        topic: "signal",
+        dedupeKey: `signal:${params.workflowId}:${v3Source}:${canonicalCauseId}`,
+        idempotencyKey: canonicalCauseId,
+        availableAt: now,
+        maxAttempts: 10,
+        payload: {
+          kind: "signal",
+          journalId: journal.id,
+          workflowId: params.workflowId,
+          eventType: signal.event.kind,
+          source: v3Source,
+        },
+      },
+    });
+  };
+
+  const transactionalDb = params.db as unknown as {
+    transaction?: <T>(fn: (tx: Pick<DB, "insert">) => Promise<T>) => Promise<T>;
+  };
+  if (typeof transactionalDb.transaction === "function") {
+    await transactionalDb.transaction(writeSignalAndOutbox);
+  } else {
+    await writeSignalAndOutbox(params.db);
+  }
 
   if (params.wakeCoordinator) {
     params.wakeCoordinator(params.workflowId).catch((err) => {

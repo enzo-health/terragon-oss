@@ -69,8 +69,27 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
 - **Validation**:
   - Targeted ingress adapter tests.
   - Manual signal insertion smoke check.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Updated daemon, GitHub, and human ingress adapters to dual-write in one DB transaction:
+    - v2 `sdlc_loop_signal_inbox` append
+    - v3 `delivery_loop_journal_v3` append
+    - v3 `delivery_outbox_v3` enqueue (only when journal insert succeeds)
+  - Preserved ingress adapter public interfaces and call signatures; no route contract changes required.
+  - Canonical ingress dedupe identities now drive both journal idempotency and outbox dedupe keys.
+  - Added targeted ingress adapter tests for GitHub and human flows, and expanded daemon ingress tests to verify transactional dual-write + dedupe behavior.
+  - **Files changed**:
+    - `apps/www/src/server-lib/delivery-loop/adapters/ingress/daemon-ingress.ts`
+    - `apps/www/src/server-lib/delivery-loop/adapters/ingress/daemon-ingress.test.ts`
+    - `apps/www/src/server-lib/delivery-loop/adapters/ingress/github-ingress.ts`
+    - `apps/www/src/server-lib/delivery-loop/adapters/ingress/github-ingress.test.ts`
+    - `apps/www/src/server-lib/delivery-loop/adapters/ingress/human-interventions.ts`
+    - `apps/www/src/server-lib/delivery-loop/adapters/ingress/human-interventions.test.ts`
+    - `apps/www/src/server-lib/delivery-loop/v3/contracts.ts`
+    - `apps/www/src/server-lib/delivery-loop/v3/store.ts`
+  - **Gotchas**:
+    - v3 signal journal/outbox contracts were widened from `LoopEventV3`-only payload/event typing to string + record payload so ingress can journal all normalized signal kinds (including non-reducer events) without unsafe casts.
+    - Manual insertion smoke check not required after passing targeted adapter tests and scoped typecheck covering all touched ingress paths.
 
 ### Task S1-T3: Outbox Relay to Redis Queue/Stream
 

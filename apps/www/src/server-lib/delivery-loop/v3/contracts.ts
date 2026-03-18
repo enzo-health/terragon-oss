@@ -10,8 +10,8 @@ export type SignalJournalWriteContractV3 = {
   workflowId: string;
   source: DeliverySignalSourceV3;
   idempotencyKey: string;
-  eventType: LoopEventV3["type"];
-  payload: LoopEventV3;
+  eventType: string;
+  payload: Record<string, unknown>;
   occurredAt: Date;
 };
 
@@ -48,7 +48,7 @@ export type OutboxPayloadV3 =
       kind: "signal";
       journalId: string;
       workflowId: string;
-      eventType: LoopEventV3["type"];
+      eventType: string;
       source: DeliverySignalSourceV3;
     }
   | {
@@ -393,7 +393,7 @@ export function buildSignalJournalContractV3(params: {
     source: params.source,
     idempotencyKey: params.idempotencyKey,
     eventType: params.event.type,
-    payload: params.event,
+    payload: serializeLoopEventV3(params.event),
     occurredAt: params.occurredAt,
   };
 }

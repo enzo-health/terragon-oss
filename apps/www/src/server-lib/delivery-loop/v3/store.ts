@@ -12,7 +12,6 @@ import type { EffectSpecV3, WorkflowHeadV3 } from "./types";
 import {
   buildEffectLedgerContractV3,
   serializeEffectPayloadV3,
-  serializeLoopEventV3,
   serializeOutboxPayloadV3,
   serializeTimerPayloadV3,
   type OutboxWriteContractV3,
@@ -232,7 +231,7 @@ export async function appendJournalEventV3(params: {
       source: params.source,
       eventType: params.eventType,
       idempotencyKey: params.idempotencyKey,
-      payloadJson: serializeLoopEventV3(params.payloadJson),
+      payloadJson: params.payloadJson,
       occurredAt: params.occurredAt ?? new Date(),
     })
     .onConflictDoNothing()

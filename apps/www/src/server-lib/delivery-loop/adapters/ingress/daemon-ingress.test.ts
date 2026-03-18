@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DaemonEventPayload } from "./daemon-ingress";
 import { normalizeDaemonEvent, handleDaemonIngress } from "./daemon-ingress";
+import type { DB } from "@terragon/shared/db";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import type {
   DaemonOutcome,
@@ -25,19 +26,41 @@ vi.mock("../../coordinator/tick", () => ({
   }),
 }));
 
+vi.mock("../../v3/store", () => ({
+  appendJournalEventV3: vi
+    .fn()
+    .mockResolvedValue({ inserted: true, id: "j-1" }),
+  enqueueOutboxRecordV3: vi
+    .fn()
+    .mockResolvedValue({ inserted: true, id: "o-1" }),
+}));
+
 // Lazy imports so mocks are in place
 async function getMocks() {
   const { appendSignalToInbox } = await import(
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
   );
   const { runCoordinatorTick } = await import("../../coordinator/tick");
+  const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
+    "../../v3/store"
+  );
   return {
     appendSignalToInbox: appendSignalToInbox as ReturnType<typeof vi.fn>,
     runCoordinatorTick: runCoordinatorTick as ReturnType<typeof vi.fn>,
+    appendJournalEventV3: appendJournalEventV3 as ReturnType<typeof vi.fn>,
+    enqueueOutboxRecordV3: enqueueOutboxRecordV3 as ReturnType<typeof vi.fn>,
   };
 }
 
-const fakeDb = { insert: vi.fn() } as any;
+const fakeDb = {
+  insert: vi.fn(),
+  transaction: vi.fn(),
+} as unknown as DB;
+(
+  fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> }
+).transaction.mockImplementation(async (fn: (db: DB) => Promise<unknown>) =>
+  fn(fakeDb),
+);
 const workflowId = "wf-test" as WorkflowId;
 
 function basePayload(
@@ -192,6 +215,10 @@ describe("normalizeDaemonEvent", () => {
 describe("handleDaemonIngress", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
+    tx.transaction.mockImplementation(
+      async (fn: (db: DB) => Promise<unknown>) => fn(fakeDb),
+    );
   });
 
   it("completed event → appends signal with daemon_run_completed causeType", async () => {
@@ -205,6 +232,49 @@ describe("handleDaemonIngress", () => {
     expect(appendSignalToInbox).toHaveBeenCalledWith(
       expect.objectContaining({ causeType: "daemon_run_completed" }),
     );
+  });
+
+  it("writes inbox + journal + outbox in a single transaction", async () => {
+    const { appendSignalToInbox, appendJournalEventV3, enqueueOutboxRecordV3 } =
+      await getMocks();
+    const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
+
+    await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload(),
+      workflowId,
+    });
+
+    expect(tx.transaction).toHaveBeenCalledOnce();
+    expect(appendSignalToInbox).toHaveBeenCalledOnce();
+    expect(appendJournalEventV3).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId,
+        source: "daemon",
+        eventType: "run_completed",
+      }),
+    );
+    expect(enqueueOutboxRecordV3).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outbox: expect.objectContaining({
+          workflowId,
+          topic: "signal",
+        }),
+      }),
+    );
+  });
+
+  it("does not enqueue outbox row when journal dedupe detects duplicate", async () => {
+    const { appendJournalEventV3, enqueueOutboxRecordV3 } = await getMocks();
+    appendJournalEventV3.mockResolvedValueOnce({ inserted: false, id: null });
+
+    await handleDaemonIngress({
+      db: fakeDb,
+      rawEvent: basePayload(),
+      workflowId,
+    });
+
+    expect(enqueueOutboxRecordV3).not.toHaveBeenCalled();
   });
 
   it("failed event → appends with daemon_run_failed causeType", async () => {
