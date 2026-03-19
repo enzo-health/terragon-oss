@@ -108,6 +108,7 @@ Framework source:
 ### E2E PR Flow Harness
 
 The `e2e` command is the deterministic end-to-end check for delivery-loop PR creation.
+Real mode requires both `--repo` and `--user-id` so runs are reproducible and never depend on whichever user was most recently created in the local DB.
 
 It does two different jobs:
 

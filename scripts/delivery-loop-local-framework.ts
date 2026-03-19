@@ -209,20 +209,6 @@ async function importAppModule<T>(relativePath: string): Promise<T> {
   return (await import(moduleUrl)) as T;
 }
 
-async function resolveLatestUserId(client: Client): Promise<string> {
-  const result = await client.query<{ id: string }>(
-    `select id
-       from "user"
-      order by created_at desc
-      limit 1`,
-  );
-  const id = result.rows[0]?.id;
-  if (!id) {
-    throw new Error("No users found in the database; pass --user-id");
-  }
-  return id;
-}
-
 async function resolveWorkflowIdByThreadId(
   client: Client,
   threadId: string,
@@ -595,6 +581,9 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
     if (args.mode !== "dry-run" && !args.repo) {
       throw new Error("e2e real mode requires --repo");
     }
+    if (args.mode !== "dry-run" && !args.userId) {
+      throw new Error("e2e real mode requires --user-id");
+    }
     if (!args.threadId && !args.workflowId && args.mode === "dry-run") {
       throw new Error("dry-run e2e requires --thread-id or --workflow-id");
     }
@@ -638,7 +627,7 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    const resolvedUserId = args.userId ?? (await resolveLatestUserId(client));
+    const resolvedUserId = args.userId ?? "";
     const repoFullName = args.repo ?? "";
     const minimalTaskMessage =
       args.message ??
