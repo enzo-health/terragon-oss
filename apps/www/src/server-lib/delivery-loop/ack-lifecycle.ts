@@ -4,6 +4,8 @@ import {
   markDispatchIntentFailed,
   getDispatchIntentByRunId,
 } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { updateThreadChatStatusAtomic } from "@terragon/shared/model/threads";
 import {
   updateDispatchIntent,
   buildDispatchIntentId,
@@ -89,11 +91,15 @@ export async function handleAckTimeout({
   db,
   runId,
   threadChatId,
+  userId,
+  threadId,
   timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
 }: {
   db: DB;
   runId: string;
   threadChatId: string;
+  userId?: string;
+  threadId?: string;
   timeoutMs?: number;
 }): Promise<AckTimeoutOutcome> {
   await markDispatchIntentFailed(
@@ -102,6 +108,47 @@ export async function handleAckTimeout({
     "dispatch_ack_timeout",
     `No daemon event received within ${timeoutMs}ms of dispatch`,
   );
+  if (userId) {
+    try {
+      await updateAgentRunContext({
+        db,
+        runId,
+        userId,
+        updates: { status: "failed" },
+      });
+    } catch (error) {
+      console.warn("[ack-lifecycle] failed to mark run context failed", {
+        runId,
+        threadChatId,
+        userId,
+        error,
+      });
+    }
+  }
+
+  if (userId && threadId) {
+    try {
+      await updateThreadChatStatusAtomic({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+        fromStatus: "booting",
+        toStatus: "complete",
+      });
+    } catch (error) {
+      console.warn(
+        "[ack-lifecycle] failed to transition booting chat to complete on ack timeout",
+        {
+          runId,
+          threadId,
+          threadChatId,
+          userId,
+          error,
+        },
+      );
+    }
+  }
 
   const decision = await evaluateRetryDecision({
     threadChatId,
@@ -180,6 +227,8 @@ export function startAckTimeout({
         db,
         runId,
         threadChatId,
+        userId,
+        threadId,
         timeoutMs,
       });
 

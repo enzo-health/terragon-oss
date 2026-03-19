@@ -9,19 +9,28 @@ const mockRedis = vi.hoisted(() => ({
 
 vi.mock("@/lib/redis", () => ({
   redis: mockRedis,
+  isLocalRedisHttpMode: vi.fn().mockReturnValue(false),
+  isRedisTransportParseError: vi.fn().mockReturnValue(false),
 }));
 
-import {
-  createDispatchIntent,
-  buildDispatchIntentId,
-  updateDispatchIntent,
-  getActiveDispatchIntent,
-  completeDispatchIntent,
-  getReplayableSelfDispatch,
-  storeSelfDispatchReplay,
-} from "./dispatch-intent";
+let createDispatchIntent: typeof import("./dispatch-intent").createDispatchIntent;
+let buildDispatchIntentId: typeof import("./dispatch-intent").buildDispatchIntentId;
+let updateDispatchIntent: typeof import("./dispatch-intent").updateDispatchIntent;
+let getActiveDispatchIntent: typeof import("./dispatch-intent").getActiveDispatchIntent;
+let completeDispatchIntent: typeof import("./dispatch-intent").completeDispatchIntent;
+let getReplayableSelfDispatch: typeof import("./dispatch-intent").getReplayableSelfDispatch;
+let storeSelfDispatchReplay: typeof import("./dispatch-intent").storeSelfDispatchReplay;
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
+  const dispatchIntentModule = await import("./dispatch-intent");
+  createDispatchIntent = dispatchIntentModule.createDispatchIntent;
+  buildDispatchIntentId = dispatchIntentModule.buildDispatchIntentId;
+  updateDispatchIntent = dispatchIntentModule.updateDispatchIntent;
+  getActiveDispatchIntent = dispatchIntentModule.getActiveDispatchIntent;
+  completeDispatchIntent = dispatchIntentModule.completeDispatchIntent;
+  getReplayableSelfDispatch = dispatchIntentModule.getReplayableSelfDispatch;
+  storeSelfDispatchReplay = dispatchIntentModule.storeSelfDispatchReplay;
   vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-03-09T12:00:00.000Z"));

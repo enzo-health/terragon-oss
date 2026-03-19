@@ -42,6 +42,8 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
           db,
           runId: intent.runId,
           threadChatId: intent.threadChatId,
+          userId: intent.userId,
+          threadId: intent.threadId,
           timeoutMs: DEFAULT_ACK_TIMEOUT_MS,
         }),
       ),

@@ -34,7 +34,11 @@ import {
 import { and, eq } from "drizzle-orm";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
-import { redis } from "@/lib/redis";
+import {
+  isLocalRedisHttpMode,
+  isRedisTransportParseError,
+  redis,
+} from "@/lib/redis";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -165,6 +169,13 @@ async function claimEnrolledLoopProcessingEvent({
   loopId: string;
   envelope: DaemonEventEnvelopeV2;
 }): Promise<DaemonProcessingEventClaimResult> {
+  if (isLocalRedisHttpMode()) {
+    // Local redis-http can intermittently fail JSON decoding on basic
+    // commands. Allow local daemon retries to keep flowing and rely on
+    // reducer idempotency for duplicate tolerance.
+    return { claimed: true };
+  }
+
   const claimKey = getDaemonProcessingEventClaimKey({
     loopId,
     eventId: envelope.eventId,
@@ -174,31 +185,45 @@ async function claimEnrolledLoopProcessingEvent({
     eventId: envelope.eventId,
   });
 
-  const alreadyCommitted = await redis.get<string>(committedKey);
-  if (alreadyCommitted) {
+  try {
+    const alreadyCommitted = await redis.get<string>(committedKey);
+    if (alreadyCommitted) {
+      return {
+        claimed: false,
+        reason: "duplicate_event",
+      };
+    }
+
+    const claimed = await redis.set(claimKey, new Date().toISOString(), {
+      nx: true,
+      ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
+    });
+    if (claimed === "OK") {
+      return {
+        claimed: true,
+      };
+    }
+
+    const committedAfterClaimFailure = await redis.get<string>(committedKey);
     return {
       claimed: false,
-      reason: "duplicate_event",
+      reason: committedAfterClaimFailure
+        ? "duplicate_event"
+        : "claim_in_progress",
     };
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[daemon-event] local redis claim parse failure, bypassing claim",
+        {
+          loopId,
+          eventId: envelope.eventId,
+        },
+      );
+      return { claimed: true };
+    }
+    throw error;
   }
-
-  const claimed = await redis.set(claimKey, new Date().toISOString(), {
-    nx: true,
-    ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
-  });
-  if (claimed === "OK") {
-    return {
-      claimed: true,
-    };
-  }
-
-  const committedAfterClaimFailure = await redis.get<string>(committedKey);
-  return {
-    claimed: false,
-    reason: committedAfterClaimFailure
-      ? "duplicate_event"
-      : "claim_in_progress",
-  };
 }
 
 async function commitEnrolledLoopProcessingEvent({
@@ -208,6 +233,10 @@ async function commitEnrolledLoopProcessingEvent({
   loopId: string;
   envelope: DaemonEventEnvelopeV2;
 }): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
+
   const claimKey = getDaemonProcessingEventClaimKey({
     loopId,
     eventId: envelope.eventId,
@@ -216,12 +245,26 @@ async function commitEnrolledLoopProcessingEvent({
     loopId,
     eventId: envelope.eventId,
   });
-  const pipeline = redis.pipeline();
-  pipeline.set(committedKey, new Date().toISOString(), {
-    ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
-  });
-  pipeline.del(claimKey);
-  await pipeline.exec();
+  try {
+    const pipeline = redis.pipeline();
+    pipeline.set(committedKey, new Date().toISOString(), {
+      ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
+    });
+    pipeline.del(claimKey);
+    await pipeline.exec();
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[daemon-event] local redis commit parse failure, skipping commit",
+        {
+          loopId,
+          eventId: envelope.eventId,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 async function rollbackEnrolledLoopProcessingEventClaim({
@@ -231,11 +274,29 @@ async function rollbackEnrolledLoopProcessingEventClaim({
   loopId: string;
   envelope: DaemonEventEnvelopeV2;
 }): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
+
   const claimKey = getDaemonProcessingEventClaimKey({
     loopId,
     eventId: envelope.eventId,
   });
-  await redis.del(claimKey);
+  try {
+    await redis.del(claimKey);
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[daemon-event] local redis rollback parse failure, skipping rollback",
+        {
+          loopId,
+          eventId: envelope.eventId,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 function getDaemonEventEnvelopeV2(

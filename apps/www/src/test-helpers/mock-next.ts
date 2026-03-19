@@ -83,6 +83,7 @@ const promises: Promise<any>[] = [];
 
 export async function mockWaitUntil() {
   const { waitUntil } = await import("@vercel/functions");
+  promises.splice(0, promises.length);
   (waitUntil as any).mockImplementation((promise: Promise<any>) => {
     promises.push(promise);
   });

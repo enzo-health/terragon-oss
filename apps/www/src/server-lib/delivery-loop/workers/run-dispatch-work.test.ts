@@ -15,6 +15,7 @@ const mockMaybeProcessFollowUpQueue = vi.hoisted(() => vi.fn());
 const mockStartAckTimeout = vi.hoisted(() => vi.fn());
 const mockAppendEventAndAdvanceV3 = vi.hoisted(() => vi.fn());
 const mockGetLatestAcceptedArtifact = vi.hoisted(() => vi.fn());
+const mockGetLatestAgentRunContextForThreadChat = vi.hoisted(() => vi.fn());
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getWorkflow: mockGetWorkflow,
@@ -37,6 +38,11 @@ vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
 
 vi.mock("@terragon/shared/model/threads", () => ({
   updateThreadChat: mockUpdateThreadChat,
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getLatestAgentRunContextForThreadChat:
+    mockGetLatestAgentRunContextForThreadChat,
 }));
 
 vi.mock("../ack-lifecycle", () => ({
@@ -101,7 +107,11 @@ beforeEach(() => {
   mockCreateDbDispatchIntent.mockResolvedValue({});
   mockMarkDispatchIntentDispatched.mockResolvedValue({});
   mockUpdateThreadChat.mockResolvedValue({});
-  mockMaybeProcessFollowUpQueue.mockResolvedValue({ processed: true });
+  mockMaybeProcessFollowUpQueue.mockResolvedValue({
+    processed: true,
+    dispatchLaunched: true,
+    reason: "dispatch_started_batch",
+  });
   mockStartAckTimeout.mockResolvedValue(undefined);
   mockAppendEventAndAdvanceV3.mockResolvedValue({
     inserted: true,
@@ -113,6 +123,7 @@ beforeEach(() => {
   mockCompleteWorkItem.mockResolvedValue(undefined);
   mockFailWorkItem.mockResolvedValue(undefined);
   mockGetLatestAcceptedArtifact.mockResolvedValue(null);
+  mockGetLatestAgentRunContextForThreadChat.mockResolvedValue(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -168,6 +179,48 @@ describe("runDispatchWork", () => {
     expect(mockUpdateThreadChat).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-v2",
+      }),
+    );
+  });
+
+  it("includes original task prompt in implementing continuation fallback text", async () => {
+    mockGetWorkflow.mockResolvedValue({
+      id: "wf-1",
+      threadId: "thread-1",
+      userId: "user-1",
+      kind: "implementing",
+      stateJson: {},
+    });
+    mockDb.query.threadChat.findFirst.mockResolvedValue({
+      id: "tc-1",
+      threadId: "thread-1",
+      status: "active",
+      title: "Thread title fallback",
+      messages: [
+        {
+          type: "user",
+          parts: [{ type: "text", text: "Add comment to README" }],
+        },
+      ],
+    });
+
+    await runDispatchWork(baseParams());
+
+    expect(mockUpdateThreadChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updates: {
+          appendQueuedMessages: [
+            expect.objectContaining({
+              parts: [
+                expect.objectContaining({
+                  text: expect.stringContaining(
+                    "Original task request:\nAdd comment to README",
+                  ),
+                }),
+              ],
+            }),
+          ],
+        },
       }),
     );
   });
@@ -234,7 +287,8 @@ describe("runDispatchWork", () => {
     });
     mockMaybeProcessFollowUpQueue.mockResolvedValue({
       processed: false,
-      reason: "cas_mismatch",
+      dispatchLaunched: false,
+      reason: "stale_cas",
     });
 
     await runDispatchWork(baseParams());
@@ -246,7 +300,7 @@ describe("runDispatchWork", () => {
     );
   });
 
-  it("treats stale_cas_busy as successful handoff", async () => {
+  it("completes when follow-up queue scheduled a retry", async () => {
     mockGetWorkflow.mockResolvedValue({
       id: "wf-1",
       threadId: "thread-1",
@@ -261,14 +315,103 @@ describe("runDispatchWork", () => {
     });
     mockMaybeProcessFollowUpQueue.mockResolvedValue({
       processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_scheduled",
+    });
+
+    await runDispatchWork(baseParams());
+
+    expect(mockCompleteWorkItem).toHaveBeenCalled();
+    expect(mockFailWorkItem).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue continuation for bootstrap dispatch before active run context exists", async () => {
+    mockGetWorkflow.mockResolvedValue({
+      id: "wf-1",
+      threadId: "thread-1",
+      userId: "user-1",
+      kind: "implementing",
+      stateJson: {},
+    });
+    mockDb.query.threadChat.findFirst.mockResolvedValue({
+      id: "tc-1",
+      threadId: "thread-1",
+      status: "active",
+    });
+
+    await runDispatchWork(baseParams({ bootstrap: true }));
+
+    expect(mockUpdateThreadChat).not.toHaveBeenCalled();
+    expect(mockMaybeProcessFollowUpQueue).not.toHaveBeenCalled();
+    expect(mockFailWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: "follow_up_not_processed",
+      }),
+    );
+  });
+
+  it("retries when stale_cas_busy does not confirm a launch", async () => {
+    mockGetWorkflow.mockResolvedValue({
+      id: "wf-1",
+      threadId: "thread-1",
+      userId: "user-1",
+      kind: "implementing",
+      stateJson: {},
+    });
+    mockDb.query.threadChat.findFirst.mockResolvedValue({
+      id: "tc-1",
+      threadId: "thread-1",
+      status: "active",
+    });
+    mockMaybeProcessFollowUpQueue.mockResolvedValue({
+      processed: false,
+      dispatchLaunched: false,
       reason: "stale_cas_busy",
     });
 
     await runDispatchWork(baseParams());
 
-    // Should complete (not fail) without depending on an in-process watchdog
+    expect(mockFailWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: "follow_up_not_processed",
+      }),
+    );
+    expect(mockCompleteWorkItem).not.toHaveBeenCalled();
+  });
+
+  it("attaches to an existing active run without queuing continuation follow-up", async () => {
+    mockGetWorkflow.mockResolvedValue({
+      id: "wf-1",
+      threadId: "thread-1",
+      userId: "user-1",
+      kind: "implementing",
+      stateJson: {},
+    });
+    mockDb.query.threadChat.findFirst.mockResolvedValue({
+      id: "tc-1",
+      threadId: "thread-1",
+      status: "active",
+    });
+    mockGetLatestAgentRunContextForThreadChat.mockResolvedValue({
+      runId: "run-active-1",
+      status: "processing",
+    });
+
+    await runDispatchWork(baseParams());
+
     expect(mockCompleteWorkItem).toHaveBeenCalled();
     expect(mockFailWorkItem).not.toHaveBeenCalled();
+    expect(mockAppendEventAndAdvanceV3).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "dispatch_sent",
+          runId: "run-active-1",
+        }),
+      }),
+    );
+    expect(mockUpdateThreadChat).not.toHaveBeenCalled();
+    expect(mockMaybeProcessFollowUpQueue).not.toHaveBeenCalled();
+    expect(mockStartAckTimeout).not.toHaveBeenCalled();
   });
 
   it("falls back to legacy ack timeout when v3 dispatch_sent append fails", async () => {

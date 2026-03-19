@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid/non-secure";
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import * as schema from "@terragon/shared/db/schema";
@@ -94,13 +94,20 @@ async function createPublishedOutboxRecord(params: {
   return row.id;
 }
 
-beforeEach(async () => {
-  await db.delete(schema.deliveryOutboxV3);
+async function cleanupWorkerTestState(): Promise<void> {
+  await db
+    .delete(schema.deliveryOutboxV3)
+    .where(
+      like(schema.deliveryOutboxV3.dedupeKey, `${OUTBOX_REDIS_KEY_PREFIX}%`),
+    );
   const redisKeys = await redis.keys(`${OUTBOX_REDIS_KEY_PREFIX}*`);
   if (redisKeys.length > 0) {
     await redis.del(...redisKeys);
   }
-});
+}
+
+beforeEach(cleanupWorkerTestState);
+afterEach(cleanupWorkerTestState);
 
 describe("drainOutboxV3Worker", () => {
   it("uses the db fallback on local redis-http and retires the row in postgres", async () => {
@@ -131,6 +138,7 @@ describe("drainOutboxV3Worker", () => {
       const first = await drainOutboxV3Worker({
         db,
         consumerName: "worker-local-fallback",
+        fallbackWorkflowId: workflowId,
         maxItems: 1,
         readBatchSize: 1,
         blockMs: 0,
@@ -160,6 +168,7 @@ describe("drainOutboxV3Worker", () => {
       const second = await drainOutboxV3Worker({
         db,
         consumerName: "worker-local-fallback",
+        fallbackWorkflowId: workflowId,
         maxItems: 1,
         readBatchSize: 1,
         blockMs: 0,
@@ -219,6 +228,7 @@ describe("drainOutboxV3Worker", () => {
       const first = await drainOutboxV3Worker({
         db,
         consumerName: "worker-local-fallback-fail",
+        fallbackWorkflowId: workflowId,
         maxItems: 1,
         readBatchSize: 1,
         blockMs: 0,
@@ -248,6 +258,7 @@ describe("drainOutboxV3Worker", () => {
       const second = await drainOutboxV3Worker({
         db,
         consumerName: "worker-local-fallback-fail",
+        fallbackWorkflowId: workflowId,
         maxItems: 1,
         readBatchSize: 1,
         blockMs: 0,

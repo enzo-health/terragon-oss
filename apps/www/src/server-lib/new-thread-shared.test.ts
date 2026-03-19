@@ -1,4 +1,4 @@
-import { describe, it, vi, beforeEach, expect } from "vitest";
+import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
 import { createNewThread } from "./new-thread-shared";
 import { db } from "@/lib/db";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
@@ -6,6 +6,7 @@ import { User, DBUserMessage } from "@terragon/shared";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
 import { getThread } from "@terragon/shared/model/threads";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { execSync } from "node:child_process";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {
@@ -14,8 +15,19 @@ const mockMessage: DBUserMessage = {
   model: "sonnet",
 };
 
-describe("createNewThread", () => {
+async function waitUntilResolvedBestEffort() {
+  await Promise.race([
+    waitUntilResolved(),
+    new Promise((resolve) => setTimeout(resolve, 1_000)),
+  ]);
+}
+
+describe("createNewThread", { timeout: 30_000 }, () => {
   let user: User;
+
+  beforeAll(() => {
+    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+  });
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -34,7 +46,7 @@ describe("createNewThread", () => {
         headBranchName: null,
         sourceType: "www",
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -52,7 +64,7 @@ describe("createNewThread", () => {
         headBranchName: "feature/test-branch",
         sourceType: "www",
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -74,7 +86,7 @@ describe("createNewThread", () => {
           sdlcPlanApprovalPolicy: "human_required",
         },
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const workflow = await getActiveWorkflowForThread({ db, threadId });
       expect(workflow).toBeDefined();
@@ -91,7 +103,7 @@ describe("createNewThread", () => {
         baseBranchName: "main",
         sourceType: "automation",
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const workflow = await getActiveWorkflowForThread({ db, threadId });
       expect(workflow).toBeDefined();

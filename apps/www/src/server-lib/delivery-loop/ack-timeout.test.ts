@@ -42,6 +42,7 @@ describe("sweepAckTimeouts", () => {
       {
         runId: "run-1",
         loopId: "loop-1",
+        userId: "user-1",
         threadId: "thread-1",
         threadChatId: "tc-1",
       },
@@ -63,6 +64,8 @@ describe("sweepAckTimeouts", () => {
       db: {},
       runId: "run-1",
       threadChatId: "tc-1",
+      userId: "user-1",
+      threadId: "thread-1",
       timeoutMs: 30_000,
     });
   });
@@ -72,6 +75,7 @@ describe("sweepAckTimeouts", () => {
       {
         runId: "run-2",
         loopId: "loop-2",
+        userId: "user-2",
         threadId: "thread-2",
         threadChatId: "tc-2",
       },
@@ -96,12 +100,14 @@ describe("sweepAckTimeouts", () => {
       {
         runId: "run-ok",
         loopId: "loop-ok",
+        userId: "user-ok",
         threadId: "thread-ok",
         threadChatId: "tc-ok",
       },
       {
         runId: "run-err",
         loopId: "loop-err",
+        userId: "user-err",
         threadId: "thread-err",
         threadChatId: "tc-err",
       },

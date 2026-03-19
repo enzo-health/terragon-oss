@@ -1,18 +1,43 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { redis } from "@/lib/redis";
 import {
   drainDueDeliveryLoopRetryJobs,
   getRetryJob,
   scheduleFollowUpRetryJob,
 } from "./retry-jobs";
+import { execSync } from "node:child_process";
 
 describe("delivery loop retry jobs", () => {
+  beforeAll(() => {
+    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+  });
+
   beforeEach(async () => {
     const keys = await redis.keys("dlrj:*");
     if (keys.length > 0) {
       await redis.del(...keys);
     }
   });
+
+  async function drainWithRetry(
+    args: Parameters<typeof drainDueDeliveryLoopRetryJobs>[0],
+  ): ReturnType<typeof drainDueDeliveryLoopRetryJobs> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await drainDueDeliveryLoopRetryJobs(args);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message.toLowerCase() : "";
+        if (!message.includes("local redis-http command timeout")) {
+          throw error;
+        }
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    throw lastError;
+  }
 
   it("persists a follow-up retry job into the durable schedule", async () => {
     const runAt = new Date("2026-03-09T12:00:00.000Z");
@@ -48,11 +73,12 @@ describe("delivery loop retry jobs", () => {
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
-    const result = await drainDueDeliveryLoopRetryJobs({
+    const result = await drainWithRetry({
       now: new Date("2026-03-09T12:00:05.000Z"),
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => ({
         processed: true,
+        dispatchLaunched: true,
         reason: "dispatch_started_batch",
       }),
     });
@@ -75,11 +101,12 @@ describe("delivery loop retry jobs", () => {
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
-    const result = await drainDueDeliveryLoopRetryJobs({
+    const result = await drainWithRetry({
       now: new Date("2026-03-09T12:00:05.000Z"),
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => ({
         processed: false,
+        dispatchLaunched: false,
         reason: "stale_cas_busy",
       }),
     });
@@ -108,11 +135,12 @@ describe("delivery loop retry jobs", () => {
       runAt: new Date("2026-03-09T12:00:00.000Z"),
     });
 
-    const result = await drainDueDeliveryLoopRetryJobs({
+    const result = await drainWithRetry({
       now: new Date("2026-03-09T12:00:05.000Z"),
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => ({
         processed: false,
+        dispatchLaunched: false,
         reason: "invalid_event",
       }),
     });
@@ -143,7 +171,7 @@ describe("delivery loop retry jobs", () => {
     });
 
     const newerRunAt = new Date("2026-03-09T12:06:00.000Z");
-    const result = await drainDueDeliveryLoopRetryJobs({
+    const result = await drainWithRetry({
       now: new Date("2026-03-09T12:00:05.000Z"),
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => {
@@ -157,6 +185,7 @@ describe("delivery loop retry jobs", () => {
         });
         return {
           processed: false,
+          dispatchLaunched: false,
           reason: "stale_cas_busy",
         };
       },
@@ -184,7 +213,7 @@ describe("delivery loop retry jobs", () => {
     });
 
     const newerRunAt = new Date("2026-03-09T12:05:00.000Z");
-    const result = await drainDueDeliveryLoopRetryJobs({
+    const result = await drainWithRetry({
       now: new Date("2026-03-09T12:00:05.000Z"),
       leaseOwnerTokenPrefix: "test",
       processFollowUpQueue: async () => {
@@ -198,6 +227,7 @@ describe("delivery loop retry jobs", () => {
         });
         return {
           processed: true,
+          dispatchLaunched: true,
           reason: "dispatch_started_batch",
         };
       },

@@ -64,6 +64,35 @@ export type SandboxBranchReconciliationResult = {
   currentBranchName: string | null;
 };
 
+function normalizeBranchName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function resolveExpectedBranchForReconciliation(params: {
+  createNewBranch: boolean;
+  requestedBranchName: string | null | undefined;
+  threadBranchName: string | null | undefined;
+  repoBaseBranchName: string | null | undefined;
+}): string | null {
+  const threadBranchName = normalizeBranchName(params.threadBranchName);
+  if (threadBranchName) {
+    return threadBranchName;
+  }
+
+  const requestedBranchName = normalizeBranchName(params.requestedBranchName);
+  const repoBaseBranchName = normalizeBranchName(params.repoBaseBranchName);
+
+  if (params.createNewBranch) {
+    if (requestedBranchName && requestedBranchName !== repoBaseBranchName) {
+      return requestedBranchName;
+    }
+    return null;
+  }
+
+  return requestedBranchName ?? repoBaseBranchName;
+}
+
 function getSandboxResumeContextCacheKey({
   userId,
   threadId,
@@ -81,11 +110,10 @@ async function getCachedSandboxResumeContext({
   userId: string;
   threadId: string;
 }): Promise<SandboxResumeMetadataCacheEntry | null> {
-  let raw: string | null = null;
+  const cacheKey = getSandboxResumeContextCacheKey({ userId, threadId });
+  let raw: unknown = null;
   try {
-    raw = await redis.get<string>(
-      getSandboxResumeContextCacheKey({ userId, threadId }),
-    );
+    raw = await redis.get(cacheKey);
   } catch (error) {
     console.warn("Failed to read sandbox resume context cache", {
       userId,
@@ -94,7 +122,27 @@ async function getCachedSandboxResumeContext({
     });
     return null;
   }
-  if (!raw) {
+  if (raw == null) {
+    return null;
+  }
+  if (typeof raw === "object") {
+    return raw as SandboxResumeMetadataCacheEntry;
+  }
+  if (typeof raw !== "string") {
+    console.warn("Unexpected sandbox resume context cache payload type", {
+      userId,
+      threadId,
+      type: typeof raw,
+    });
+    try {
+      await redis.del(cacheKey);
+    } catch (deleteError) {
+      console.warn("Failed to clear sandbox resume context cache", {
+        userId,
+        threadId,
+        deleteError,
+      });
+    }
     return null;
   }
   try {
@@ -105,7 +153,15 @@ async function getCachedSandboxResumeContext({
       threadId,
       error,
     });
-    await redis.del(getSandboxResumeContextCacheKey({ userId, threadId }));
+    try {
+      await redis.del(cacheKey);
+    } catch (deleteError) {
+      console.warn("Failed to clear sandbox resume context cache", {
+        userId,
+        threadId,
+        deleteError,
+      });
+    }
     return null;
   }
 }
@@ -175,9 +231,107 @@ async function readCurrentBranchNameOrNull(
   }
 }
 
+async function checkoutExpectedBranchWithRecovery(params: {
+  session: ISandboxSession;
+  expectedBranchName: string;
+  baseBranchName?: string | null;
+}): Promise<string | null> {
+  const checkoutCommand = `git checkout ${bashQuote(params.expectedBranchName)}`;
+
+  try {
+    await params.session.runCommand(checkoutCommand, {
+      cwd: params.session.repoDir,
+    });
+    const checkedOutBranchName = await readCurrentBranchNameOrNull(
+      params.session,
+    );
+    if (checkedOutBranchName === params.expectedBranchName) {
+      return checkedOutBranchName;
+    }
+  } catch (error) {
+    console.warn("[sandbox] Failed to checkout expected branch", {
+      sandboxId: params.session.sandboxId,
+      repoDir: params.session.repoDir,
+      expectedBranchName: params.expectedBranchName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  try {
+    await params.session.runCommand(
+      `git fetch origin ${bashQuote(params.expectedBranchName)}:${bashQuote(params.expectedBranchName)}`,
+      {
+        cwd: params.session.repoDir,
+      },
+    );
+    await params.session.runCommand(checkoutCommand, {
+      cwd: params.session.repoDir,
+    });
+    const fetchedBranchName = await readCurrentBranchNameOrNull(params.session);
+    if (fetchedBranchName === params.expectedBranchName) {
+      return fetchedBranchName;
+    }
+  } catch (error) {
+    console.warn("[sandbox] Failed to fetch expected branch from origin", {
+      sandboxId: params.session.sandboxId,
+      repoDir: params.session.repoDir,
+      expectedBranchName: params.expectedBranchName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const baseCandidates = Array.from(
+    new Set(
+      [params.baseBranchName?.trim(), "main", "master"].filter(
+        (candidate): candidate is string => !!candidate && candidate.length > 0,
+      ),
+    ),
+  );
+
+  for (const baseBranchName of baseCandidates) {
+    try {
+      await params.session.runCommand(
+        `git fetch origin ${bashQuote(baseBranchName)}`,
+        {
+          cwd: params.session.repoDir,
+        },
+      );
+      await params.session.runCommand(
+        `git checkout -B ${bashQuote(params.expectedBranchName)} ${bashQuote(`origin/${baseBranchName}`)}`,
+        {
+          cwd: params.session.repoDir,
+        },
+      );
+      const recreatedBranchName = await readCurrentBranchNameOrNull(
+        params.session,
+      );
+      if (recreatedBranchName === params.expectedBranchName) {
+        console.warn("[sandbox] Recreated missing expected branch from base", {
+          sandboxId: params.session.sandboxId,
+          repoDir: params.session.repoDir,
+          expectedBranchName: params.expectedBranchName,
+          baseBranchName,
+        });
+        return recreatedBranchName;
+      }
+    } catch (error) {
+      console.warn("[sandbox] Failed to recreate expected branch from base", {
+        sandboxId: params.session.sandboxId,
+        repoDir: params.session.repoDir,
+        expectedBranchName: params.expectedBranchName,
+        baseBranchName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return null;
+}
+
 export async function reconcileSandboxBranchForThread(params: {
   session: ISandboxSession;
   expectedBranchName: string | null | undefined;
+  baseBranchName?: string | null;
   restartSandbox: () => Promise<ISandboxSession>;
 }): Promise<SandboxBranchReconciliationResult> {
   const expectedBranchName = params.expectedBranchName?.trim() ?? "";
@@ -189,6 +343,23 @@ export async function reconcileSandboxBranchForThread(params: {
       reconciled: false,
       restarted: false,
       currentBranchName,
+    };
+  }
+
+  if (!currentBranchName) {
+    console.warn(
+      "[sandbox] Skipping branch drift reconciliation: branch unknown",
+      {
+        sandboxId: params.session.sandboxId,
+        repoDir: params.session.repoDir,
+        expectedBranchName,
+      },
+    );
+    return {
+      session: params.session,
+      reconciled: false,
+      restarted: false,
+      currentBranchName: null,
     };
   }
 
@@ -208,32 +379,18 @@ export async function reconcileSandboxBranchForThread(params: {
     currentBranchName,
   });
 
-  try {
-    await params.session.runCommand(
-      `git checkout ${bashQuote(expectedBranchName)}`,
-      {
-        cwd: params.session.repoDir,
-      },
-    );
-    const checkedOutBranchName = await readCurrentBranchNameOrNull(
-      params.session,
-    );
-    if (checkedOutBranchName === expectedBranchName) {
-      return {
-        session: params.session,
-        reconciled: true,
-        restarted: false,
-        currentBranchName: checkedOutBranchName,
-      };
-    }
-  } catch (error) {
-    console.warn("[sandbox] Failed to checkout expected branch", {
-      sandboxId: params.session.sandboxId,
-      repoDir: params.session.repoDir,
-      expectedBranchName,
-      currentBranchName,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const checkedOutBranchName = await checkoutExpectedBranchWithRecovery({
+    session: params.session,
+    expectedBranchName,
+    baseBranchName: params.baseBranchName,
+  });
+  if (checkedOutBranchName === expectedBranchName) {
+    return {
+      session: params.session,
+      reconciled: true,
+      restarted: false,
+      currentBranchName: checkedOutBranchName,
+    };
   }
 
   let restartedSession: ISandboxSession;
@@ -253,30 +410,18 @@ export async function reconcileSandboxBranchForThread(params: {
     };
   }
 
-  try {
-    await restartedSession.runCommand(
-      `git checkout ${bashQuote(expectedBranchName)}`,
-      {
-        cwd: restartedSession.repoDir,
-      },
-    );
-    const finalBranchName = await readCurrentBranchNameOrNull(restartedSession);
-    if (finalBranchName === expectedBranchName) {
-      return {
-        session: restartedSession,
-        reconciled: true,
-        restarted: true,
-        currentBranchName: finalBranchName,
-      };
-    }
-  } catch (error) {
-    console.warn("[sandbox] Failed to checkout expected branch on restart", {
-      sandboxId: restartedSession.sandboxId,
-      repoDir: restartedSession.repoDir,
-      expectedBranchName,
-      restartedBranchName,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const finalBranchName = await checkoutExpectedBranchWithRecovery({
+    session: restartedSession,
+    expectedBranchName,
+    baseBranchName: params.baseBranchName,
+  });
+  if (finalBranchName === expectedBranchName) {
+    return {
+      session: restartedSession,
+      reconciled: true,
+      restarted: true,
+      currentBranchName: finalBranchName,
+    };
   }
 
   throw wrapError(
@@ -618,6 +763,38 @@ async function getOrCreateSandboxForThread({
       publicUrl: resolvedPublicUrl,
       featureFlags: userFeatureFlags,
       generateBranchName: context.generateBranchNameWithPrefix,
+      onSandboxAllocated: async ({ sandboxId, isCreatingSandbox }) => {
+        const updates: { codesandboxId?: string; sandboxSize?: SandboxSize } =
+          {};
+        if (thread.codesandboxId !== sandboxId) {
+          updates.codesandboxId = sandboxId;
+        }
+        if (thread.sandboxSize !== sandboxSize) {
+          updates.sandboxSize = sandboxSize;
+        }
+        if (Object.keys(updates).length === 0) {
+          return;
+        }
+        try {
+          await updateThread({
+            db,
+            userId,
+            threadId,
+            updates,
+          });
+        } catch (error) {
+          console.warn(
+            "[sandbox] failed to persist allocated sandbox id before setup",
+            {
+              threadId,
+              sandboxId,
+              isCreatingSandbox,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+          throw error;
+        }
+      },
       onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
         if (sandboxId && bootingStatus === "provisioning-done") {
           getPostHogServer().capture({
@@ -672,11 +849,16 @@ async function getOrCreateSandboxForThread({
     }
   }
 
-  const expectedBranchName =
-    branchName?.trim() || thread.branchName?.trim() || null;
+  const expectedBranchName = resolveExpectedBranchForReconciliation({
+    createNewBranch,
+    requestedBranchName: branchName,
+    threadBranchName: thread.branchName,
+    repoBaseBranchName: thread.repoBaseBranchName,
+  });
   const reconciliation = await reconcileSandboxBranchForThread({
     session,
     expectedBranchName,
+    baseBranchName: thread.repoBaseBranchName?.trim() || null,
     restartSandbox: () =>
       getOrCreateSandboxWithTimeout(null, {
         ...bootstrapOptions,
@@ -702,11 +884,19 @@ async function getOrCreateSandboxForThread({
     const updates: {
       codesandboxId?: string;
       sandboxSize: SandboxSize;
+      branchName?: string;
     } = {
       sandboxSize,
     };
     if (!thread.codesandboxId || thread.codesandboxId !== session.sandboxId) {
       updates.codesandboxId = session.sandboxId;
+    }
+    const inferredBranchName =
+      createNewBranch && !thread.branchName
+        ? normalizeBranchName(reconciliation.currentBranchName)
+        : null;
+    if (inferredBranchName) {
+      updates.branchName = inferredBranchName;
     }
     await updateThread({
       db,

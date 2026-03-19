@@ -204,6 +204,8 @@ const redisMocks = vi.hoisted(() => {
 
 vi.mock("@/lib/redis", () => ({
   redis: redisMocks,
+  isLocalRedisHttpMode: vi.fn().mockReturnValue(false),
+  isRedisTransportParseError: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock("@/server-lib/delivery-loop/ack-lifecycle", () => ({
@@ -337,6 +339,7 @@ describe("daemon-event route", () => {
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
     vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
       processed: false,
+      dispatchLaunched: false,
       reason: "no_queued_messages",
     });
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
@@ -1401,6 +1404,7 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          headShaAtCompletion: "abc123def456",
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-1",
@@ -1417,6 +1421,7 @@ describe("daemon-event route", () => {
           rawEvent: expect.objectContaining({
             loopId: "wf-pure-v2",
             runId: "run-1",
+            headSha: "abc123def456",
           }),
         }),
       );

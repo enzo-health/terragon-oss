@@ -430,7 +430,9 @@ export async function createNewThread({
       threadChatId,
       isNewThread: true,
       createNewBranch: effectiveCreateNewBranch,
-      branchName: headBranchName || baseBranchName,
+      branchName: effectiveCreateNewBranch
+        ? undefined
+        : headBranchName || baseBranchName,
       delayMs,
     }).catch((error) => {
       console.error("Error in startAgentMessage:", error);

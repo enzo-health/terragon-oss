@@ -448,7 +448,7 @@ describe("reduceSignalToEvent", () => {
         expectEvent(result, "gate_blocked");
       });
 
-      it("planning → null", () => {
+      it("planning → gate_blocked (re-dispatch planning run)", () => {
         const result = reduce(
           daemonSignal({
             kind: "run_failed",
@@ -457,7 +457,7 @@ describe("reduceSignalToEvent", () => {
           }),
           planning(),
         );
-        expect(result).toBeNull();
+        expectEvent(result, "gate_blocked");
       });
 
       it("done state → null", () => {

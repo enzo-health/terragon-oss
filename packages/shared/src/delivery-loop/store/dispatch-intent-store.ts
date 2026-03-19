@@ -1,15 +1,15 @@
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import { DB } from "../../db";
 import * as schema from "../../db/schema";
 import type {
-  DispatchIntentStatus,
-  DispatchIntentExecutionClass,
   DispatchIntentDispatchMechanism,
+  DispatchIntentExecutionClass,
+  DispatchIntentStatus,
 } from "../../db/types";
 import type {
   DispatchablePhase,
-  SelectedAgent,
   DispatchIntentStatus as DomainDispatchIntentStatus,
+  SelectedAgent,
 } from "../domain/dispatch-types";
 
 function assertNever(x: never): never {
@@ -204,6 +204,43 @@ export async function getDispatchIntentByRunId(db: DB, runId: string) {
     .select()
     .from(schema.deliveryLoopDispatchIntent)
     .where(eq(schema.deliveryLoopDispatchIntent.runId, runId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Get the latest non-terminal dispatch intent for a thread chat.
+ *
+ * Useful when Redis real-time intent lookup is unavailable (for example local
+ * redis-http transport failures) and we still need a deterministic runId.
+ */
+export async function getLatestActiveDispatchIntentForThreadChat(
+  db: DB,
+  input: {
+    threadChatId: string;
+    loopId?: string;
+  },
+) {
+  const activeStatuses: DispatchIntentStatus[] = [
+    "pending",
+    "dispatched",
+    "acknowledged",
+  ];
+  const whereClause = input.loopId
+    ? and(
+        eq(schema.deliveryLoopDispatchIntent.threadChatId, input.threadChatId),
+        eq(schema.deliveryLoopDispatchIntent.loopId, input.loopId),
+        inArray(schema.deliveryLoopDispatchIntent.status, activeStatuses),
+      )
+    : and(
+        eq(schema.deliveryLoopDispatchIntent.threadChatId, input.threadChatId),
+        inArray(schema.deliveryLoopDispatchIntent.status, activeStatuses),
+      );
+  const [row] = await db
+    .select()
+    .from(schema.deliveryLoopDispatchIntent)
+    .where(whereClause)
+    .orderBy(desc(schema.deliveryLoopDispatchIntent.createdAt))
     .limit(1);
   return row ?? null;
 }

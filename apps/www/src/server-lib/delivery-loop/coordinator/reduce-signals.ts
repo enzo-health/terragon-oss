@@ -147,6 +147,12 @@ function reduceDaemonSignal(
       return null;
 
     case "run_failed":
+      if (workflow.kind === "planning") {
+        // Planning run failures can happen when the initial dispatch launched
+        // but failed before a plan was produced. Treat as gate_blocked so the
+        // planning reducer bumps the version and schedule-work re-enqueues.
+        return { event: "gate_blocked", context: {} };
+      }
       if (
         workflow.kind === "implementing" &&
         workflow.dispatch.kind !== "failed"

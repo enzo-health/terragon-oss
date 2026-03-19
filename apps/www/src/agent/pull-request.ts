@@ -151,6 +151,7 @@ export async function openPullRequestForThread({
       repoFullName: thread.githubRepoFullName,
       headBranchName: currentBranch,
       baseBranchName: baseBranch,
+      userId,
     }),
   ]);
   if (existingPr) {

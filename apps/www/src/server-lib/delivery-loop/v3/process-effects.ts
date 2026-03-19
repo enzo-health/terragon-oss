@@ -11,6 +11,8 @@ import {
   markEffectSucceededV3,
 } from "./store";
 
+const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
+
 async function processSingleEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
@@ -42,6 +44,7 @@ async function processSingleEffect(params: {
           executionClass: payload.executionClass,
           workflowId: params.effect.workflowId,
         },
+        maxAttempts: DISPATCH_WORK_ITEM_MAX_ATTEMPTS,
       });
       await markEffectSucceededV3({
         db: params.db,
@@ -63,6 +66,7 @@ async function processSingleEffect(params: {
           workflowId: params.effect.workflowId,
           gate: payload.gate,
         },
+        maxAttempts: DISPATCH_WORK_ITEM_MAX_ATTEMPTS,
       });
       await markEffectSucceededV3({
         db: params.db,

@@ -10,7 +10,11 @@ import type {
 } from "@terragon/shared/delivery-loop/domain/workflow";
 import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import type { SdlcSelfDispatchPayload } from "@terragon/daemon/shared";
-import { redis } from "@/lib/redis";
+import {
+  isLocalRedisHttpMode,
+  isRedisTransportParseError,
+  redis,
+} from "@/lib/redis";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -322,20 +326,6 @@ export type CreateDispatchIntentParams = {
 export async function createDispatchIntent(
   params: CreateDispatchIntentParams,
 ): Promise<RealtimeDispatchIntent> {
-  // Guard: prevent overwriting an active (non-terminal) intent.
-  // Only fetch the status field to avoid deserializing the full intent on the hot path.
-  const key = redisKey(params.threadChatId);
-  const existingStatus = await redis.hget<string>(key, "status");
-  if (
-    existingStatus &&
-    !TERMINAL_DISPATCH_STATUSES.has(existingStatus as DispatchIntentStatus)
-  ) {
-    const existingId = await redis.hget<string>(key, "id");
-    throw new Error(
-      `Cannot create dispatch intent: active intent "${existingId}" exists for threadChat "${params.threadChatId}" with status "${existingStatus}"`,
-    );
-  }
-
   const now = new Date();
   const intent: RealtimeDispatchIntent = {
     id: buildDispatchIntentId(params.loopId, params.runId),
@@ -361,8 +351,37 @@ export async function createDispatchIntent(
     },
   };
 
-  await redis.hset(key, serializeIntent(intent));
-  await redis.expire(key, ACTIVE_TTL_SECONDS);
+  if (isLocalRedisHttpMode()) {
+    return intent;
+  }
+
+  const key = redisKey(params.threadChatId);
+  // Guard: prevent overwriting an active (non-terminal) intent.
+  // Only fetch the status field to avoid deserializing the full intent on the hot path.
+  const existingStatus = await redis.hget<string>(key, "status");
+  if (
+    existingStatus &&
+    !TERMINAL_DISPATCH_STATUSES.has(existingStatus as DispatchIntentStatus)
+  ) {
+    const existingId = await redis.hget<string>(key, "id");
+    throw new Error(
+      `Cannot create dispatch intent: active intent "${existingId}" exists for threadChat "${params.threadChatId}" with status "${existingStatus}"`,
+    );
+  }
+
+  try {
+    await redis.hset(key, serializeIntent(intent));
+    await redis.expire(key, ACTIVE_TTL_SECONDS);
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis create parse failure, skipping cache write",
+        { threadChatId: params.threadChatId, intentId: intent.id },
+      );
+      return intent;
+    }
+    throw error;
+  }
 
   return intent;
 }
@@ -380,8 +399,23 @@ export async function updateDispatchIntent(
     >
   >,
 ): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
   const key = redisKey(threadChatId);
-  const existingId = await redis.hget<string>(key, "id");
+  let existingId: string | null = null;
+  try {
+    existingId = await redis.hget<string>(key, "id");
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis update parse failure while reading id, skipping",
+        { threadChatId, intentId: id },
+      );
+      return;
+    }
+    throw error;
+  }
   if (!existingId || existingId !== id) {
     return;
   }
@@ -397,7 +431,18 @@ export async function updateDispatchIntent(
   if (updates.lastFailureCategory !== undefined)
     patch.lastFailureCategory = updates.lastFailureCategory ?? "";
 
-  await redis.hset(key, patch);
+  try {
+    await redis.hset(key, patch);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis update parse failure while writing patch, skipping",
+        { threadChatId, intentId: id },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -407,8 +452,23 @@ export async function updateDispatchIntent(
 export async function getActiveDispatchIntent(
   threadChatId: string,
 ): Promise<RealtimeDispatchIntent | null> {
+  if (isLocalRedisHttpMode()) {
+    return null;
+  }
   const key = redisKey(threadChatId);
-  const raw = await redis.hgetall(key);
+  let raw: unknown;
+  try {
+    raw = await redis.hgetall(key);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis read parse failure, treating as empty",
+        { threadChatId },
+      );
+      return null;
+    }
+    throw error;
+  }
   if (!raw || Object.keys(raw).length === 0) return null;
   return deserializeIntent(raw as Record<string, string | undefined>);
 }
@@ -422,21 +482,40 @@ export async function storeSelfDispatchReplay(params: {
   destinationRunId: string;
   payload: SdlcSelfDispatchPayload;
 }): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
   const key = selfDispatchReplayRedisKey(params);
-  await redis.hset(
-    key,
-    serializeSelfDispatchReplayRecord({
-      kind: "ready",
-      sourceEventId: params.sourceEventId,
-      sourceSeq: params.sourceSeq,
-      sourceRunId: params.sourceRunId,
-      dispatchIntentId: params.dispatchIntentId,
-      destinationRunId: params.destinationRunId,
-      payload: params.payload,
-      createdAt: new Date().toISOString(),
-    }),
-  );
-  await redis.expire(key, SELF_DISPATCH_REPLAY_TTL_SECONDS);
+  try {
+    await redis.hset(
+      key,
+      serializeSelfDispatchReplayRecord({
+        kind: "ready",
+        sourceEventId: params.sourceEventId,
+        sourceSeq: params.sourceSeq,
+        sourceRunId: params.sourceRunId,
+        dispatchIntentId: params.dispatchIntentId,
+        destinationRunId: params.destinationRunId,
+        payload: params.payload,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    await redis.expire(key, SELF_DISPATCH_REPLAY_TTL_SECONDS);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis replay-store parse failure, skipping",
+        {
+          threadChatId: params.threadChatId,
+          sourceEventId: params.sourceEventId,
+          sourceSeq: params.sourceSeq,
+          sourceRunId: params.sourceRunId,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function getReplayableSelfDispatch(params: {
@@ -445,8 +524,28 @@ export async function getReplayableSelfDispatch(params: {
   sourceSeq: number;
   sourceRunId: string;
 }): Promise<SdlcSelfDispatchPayload | null> {
+  if (isLocalRedisHttpMode()) {
+    return null;
+  }
   const key = selfDispatchReplayRedisKey(params);
-  const raw = await redis.hgetall(key);
+  let raw: unknown;
+  try {
+    raw = await redis.hgetall(key);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis replay-read parse failure, treating as empty",
+        {
+          threadChatId: params.threadChatId,
+          sourceEventId: params.sourceEventId,
+          sourceSeq: params.sourceSeq,
+          sourceRunId: params.sourceRunId,
+        },
+      );
+      return null;
+    }
+    throw error;
+  }
   if (!raw || Object.keys(raw).length === 0) {
     return null;
   }
@@ -480,10 +579,24 @@ export async function completeDispatchIntent(
   id: string,
   threadChatId: string,
 ): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
   const key = redisKey(threadChatId);
-  await redis.hset(key, {
-    status: "completed",
-    updatedAt: new Date().toISOString(),
-  });
-  await redis.expire(key, COMPLETED_TTL_SECONDS);
+  try {
+    await redis.hset(key, {
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+    });
+    await redis.expire(key, COMPLETED_TTL_SECONDS);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis complete parse failure, skipping",
+        { threadChatId, intentId: id },
+      );
+      return;
+    }
+    throw error;
+  }
 }

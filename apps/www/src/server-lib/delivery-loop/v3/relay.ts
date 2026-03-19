@@ -66,6 +66,7 @@ export type OutboxRelayOptions = {
   now?: Date;
   streamKey?: string;
   dedupeIndexKey?: string;
+  workflowId?: string;
 };
 
 export function getOutboxRelayStreamKey(): string {
@@ -170,6 +171,7 @@ export async function drainOutboxV3Relay(
     const outbox = await claimNextOutboxRecordV3({
       db: params.db,
       leaseOwner,
+      workflowId: params.workflowId,
       now,
     });
     if (!outbox) {

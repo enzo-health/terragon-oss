@@ -33,7 +33,7 @@ export async function listActiveWorkflowIds(params: {
   const rows = await params.db.query.deliveryWorkflow.findMany({
     where: notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
     columns: { id: true, threadId: true },
-    limit: params.limit ?? 50,
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
   });
   return rows;
 }

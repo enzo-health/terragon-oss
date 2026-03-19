@@ -69,6 +69,7 @@ export type OutboxWorkerOptions = {
   attemptsHashKey?: string;
   processedHashKey?: string;
   deadLetterStreamKey?: string;
+  fallbackWorkflowId?: string;
 };
 
 export type OutboxWorkerResult = {
@@ -636,11 +637,18 @@ async function loadPublishedOutboxRows(params: {
     publishedAt: Date;
     id: string;
   };
+  workflowId?: string;
 }): Promise<DeliveryOutboxV3Row[]> {
   const cursor = params.cursor;
-  const whereClause = cursor
+  const publishedRowsCondition = params.workflowId
     ? and(
         eq(schema.deliveryOutboxV3.status, "published"),
+        eq(schema.deliveryOutboxV3.workflowId, params.workflowId),
+      )
+    : eq(schema.deliveryOutboxV3.status, "published");
+  const whereClause = cursor
+    ? and(
+        publishedRowsCondition,
         or(
           gt(schema.deliveryOutboxV3.publishedAt, cursor.publishedAt),
           and(
@@ -649,7 +657,7 @@ async function loadPublishedOutboxRows(params: {
           ),
         ),
       )
-    : eq(schema.deliveryOutboxV3.status, "published");
+    : publishedRowsCondition;
 
   return params.db
     .select()
@@ -1073,6 +1081,7 @@ async function processPublishedOutboxRows(params: {
     message: OutboxWorkerMessage;
   }) => Promise<void>;
   result: OutboxWorkerResult;
+  workflowId?: string;
 }): Promise<number> {
   let consumed = 0;
   let cursor: { publishedAt: Date; id: string } | undefined;
@@ -1082,6 +1091,7 @@ async function processPublishedOutboxRows(params: {
       db: params.db,
       maxItems: params.maxItems - consumed,
       cursor,
+      workflowId: params.workflowId,
     });
     if (rows.length === 0) {
       break;
@@ -1203,6 +1213,7 @@ export async function drainOutboxV3Worker(
       maxItems: remaining,
       messageProcessor,
       result,
+      workflowId: params.fallbackWorkflowId,
     });
     remaining = Math.max(0, remaining - consumed);
     return result;

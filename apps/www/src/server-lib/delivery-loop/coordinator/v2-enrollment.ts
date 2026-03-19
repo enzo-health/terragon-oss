@@ -15,6 +15,8 @@ import {
 } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
 
+const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
+
 // ---------------------------------------------------------------------------
 // V2-native enrollment
 // ---------------------------------------------------------------------------
@@ -73,6 +75,7 @@ export async function enrollV2Workflow(params: {
         workflowId: workflow.id,
         bootstrap: true,
       },
+      maxAttempts: DISPATCH_WORK_ITEM_MAX_ATTEMPTS,
     });
 
     return { workflowId: workflow.id, sdlcLoopId: null };

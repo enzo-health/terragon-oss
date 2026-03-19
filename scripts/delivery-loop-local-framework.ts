@@ -1,8 +1,14 @@
 import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "pg";
+import { createORPCClient } from "@orpc/client";
+import { RPCLink } from "@orpc/client/fetch";
+import type { ContractRouterClient } from "@orpc/contract";
 import type { DBUserMessage } from "@terragon/shared/db/db-message";
+import { cliAPIContract } from "@terragon/cli-api-contract";
 
 type CommandName = "help" | "preflight" | "snapshot" | "run" | "e2e";
 type RunProfile = "fast" | "full";
@@ -26,8 +32,10 @@ type ParsedArgs = {
 
 const DEFAULT_DATABASE_URL =
   "postgresql://postgres:postgres@localhost:5432/postgres";
+const DEFAULT_DEV_CRON_SECRET = "123456";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "..");
+let cachedLocalCronSecret: Promise<string | null> | null = null;
 
 function parseArgs(argv: string[]): ParsedArgs {
   let command: CommandName = "help";
@@ -204,9 +212,43 @@ function getNumberValue(row: SnapshotRow | null, key: string): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-async function importAppModule<T>(relativePath: string): Promise<T> {
+async function importLocalModule<T>(relativePath: string): Promise<T> {
   const moduleUrl = pathToFileURL(resolve(REPO_ROOT, relativePath)).href;
   return (await import(moduleUrl)) as T;
+}
+
+async function readTerryApiKey(): Promise<string> {
+  const settingsDir =
+    process.env.TERRY_SETTINGS_DIR?.trim() || `${homedir()}/.terry`;
+  const configPath = resolve(settingsDir, "config.json");
+  const configText = await readFile(configPath, "utf-8");
+  const parsed = JSON.parse(configText) as { apiKey?: unknown };
+  const apiKey = parsed.apiKey;
+  if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
+    throw new Error(`No API key found in ${configPath}`);
+  }
+  return apiKey.trim();
+}
+
+async function createCliApiClient(): Promise<{
+  client: ContractRouterClient<typeof cliAPIContract>;
+}> {
+  const webUrl =
+    process.env.TERRAGON_WEB_URL ??
+    process.env.NEXT_PUBLIC_TERRAGON_WEB_URL ??
+    "http://127.0.0.1:3000";
+  const apiKey = await readTerryApiKey();
+  const link = new RPCLink({
+    url: `${webUrl}/api/cli`,
+    headers: async () => ({
+      "X-Daemon-Token": apiKey,
+    }),
+  });
+  return {
+    client: createORPCClient(link) as ContractRouterClient<
+      typeof cliAPIContract
+    >,
+  };
 }
 
 async function resolveWorkflowIdByThreadId(
@@ -233,6 +275,10 @@ async function loadWorkflowDiagnostics(params: {
   threadId: string;
   workflowId: string;
 }): Promise<WorkflowDiagnostics> {
+  const timerLedgerExistsResult = await params.client.query<{
+    exists: string | null;
+  }>("select to_regclass('public.delivery_timer_ledger_v3') as exists");
+  const timerLedgerExists = Boolean(timerLedgerExistsResult.rows[0]?.exists);
   const [
     thread,
     workflow,
@@ -247,7 +293,7 @@ async function loadWorkflowDiagnostics(params: {
     workItems,
   ] = await Promise.all([
     params.client.query<SnapshotRow>(
-      `select id, status, name, branch_name as "branchName",
+      `select id, status, name, current_branch_name as "branchName",
                 repo_base_branch_name as "repoBaseBranchName",
                 github_pr_number as "githubPRNumber",
                 github_repo_full_name as "githubRepoFullName",
@@ -313,7 +359,18 @@ async function loadWorkflowDiagnostics(params: {
       [params.workflowId],
     ),
     params.client.query<SnapshotRow>(
-      `select *
+      `select workflow_id, thread_id, generation, version, state,
+                active_gate as "activeGate",
+                head_sha as "headSha",
+                active_run_id as "activeRunId",
+                fix_attempt_count as "fixAttemptCount",
+                infra_retry_count as "infraRetryCount",
+                max_fix_attempts as "maxFixAttempts",
+                max_infra_retries as "maxInfraRetries",
+                blocked_reason as "blockedReason",
+                created_at as "createdAt",
+                updated_at as "updatedAt",
+                last_activity_at as "lastActivityAt"
            from delivery_workflow_head_v3
           where workflow_id = $1`,
       [params.workflowId],
@@ -328,8 +385,9 @@ async function loadWorkflowDiagnostics(params: {
       [params.workflowId],
     ),
     params.client.query<SnapshotRow>(
-      `select id, effect_kind as "effectKind", effect_key as "effectKey",
-                idempotency_key as "idempotencyKey", status,
+      `select id, workflow_version as "workflowVersion",
+                effect_kind as "effectKind", effect_key as "effectKey",
+                status,
                 due_at as "dueAt", attempt_count as "attemptCount",
                 max_attempts as "maxAttempts", last_error_code as "lastErrorCode",
                 last_error_message as "lastErrorMessage",
@@ -344,19 +402,22 @@ async function loadWorkflowDiagnostics(params: {
       [params.workflowId],
     ),
     params.client.query<SnapshotRow>(
-      `select id, timer_kind as "timerKind", timer_key as "timerKey",
-                status, due_at as "dueAt", attempt_count as "attemptCount",
-                max_attempts as "maxAttempts", last_error_code as "lastErrorCode",
-                last_error_message as "lastErrorMessage",
-                lease_owner as "leaseOwner", lease_epoch as "leaseEpoch",
-                lease_expires_at as "leaseExpiresAt",
-                claimed_at as "claimedAt", completed_at as "completedAt",
-                created_at as "createdAt"
-           from delivery_timer_ledger_v3
-          where workflow_id = $1
-          order by created_at desc
-          limit 20`,
-      [params.workflowId],
+      timerLedgerExists
+        ? `select id, timer_kind as "timerKind", timer_key as "timerKey",
+                  idempotency_key as "idempotencyKey", source_signal_id as "sourceSignalId",
+                  status, due_at as "dueAt", attempt_count as "attemptCount",
+                  max_attempts as "maxAttempts", last_error_code as "lastErrorCode",
+                  last_error_message as "lastErrorMessage",
+                  lease_owner as "leaseOwner", lease_epoch as "leaseEpoch",
+                  lease_expires_at as "leaseExpiresAt",
+                  claimed_at as "claimedAt", fired_at as "firedAt",
+                  created_at as "createdAt"
+             from delivery_timer_ledger_v3
+            where workflow_id = $1
+            order by created_at desc
+            limit 20`
+        : `select null::text as id where false`,
+      timerLedgerExists ? [params.workflowId] : [],
     ),
     params.client.query<SnapshotRow>(
       `select id, kind, status, attempt_count as "attemptCount",
@@ -525,13 +586,82 @@ type CronRunResult = {
   text: string;
 };
 
+function parseEnvFileValue(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+async function loadLocalCronSecretFromEnvFiles(): Promise<string | null> {
+  const candidatePaths = [
+    resolve(REPO_ROOT, "apps/www/.env.development.local"),
+    resolve(REPO_ROOT, "apps/www/.env.local"),
+    resolve(REPO_ROOT, ".env.development.local"),
+    resolve(REPO_ROOT, ".env.local"),
+  ];
+  for (const candidatePath of candidatePaths) {
+    try {
+      const content = await readFile(candidatePath, "utf-8");
+      const lines = content.split(/\r?\n/);
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (trimmedLine.length === 0 || trimmedLine.startsWith("#")) {
+          continue;
+        }
+        if (!trimmedLine.startsWith("CRON_SECRET=")) {
+          continue;
+        }
+        const parsedValue = parseEnvFileValue(
+          trimmedLine.slice("CRON_SECRET=".length),
+        );
+        if (parsedValue.length > 0) {
+          return parsedValue;
+        }
+      }
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "ENOENT"
+      ) {
+        throw error;
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveCronSecretForUrl(cronUrl: URL): Promise<string | null> {
+  const explicitCronSecret = process.env.CRON_SECRET?.trim();
+  if (explicitCronSecret && explicitCronSecret.length > 0) {
+    return explicitCronSecret;
+  }
+  if (!cachedLocalCronSecret) {
+    cachedLocalCronSecret = loadLocalCronSecretFromEnvFiles();
+  }
+  const localEnvCronSecret = await cachedLocalCronSecret;
+  if (localEnvCronSecret) {
+    return localEnvCronSecret;
+  }
+  if (cronUrl.hostname === "localhost" || cronUrl.hostname === "127.0.0.1") {
+    return DEFAULT_DEV_CRON_SECRET;
+  }
+  return null;
+}
+
 async function triggerScheduledTasksCron(
   webUrl: string,
 ): Promise<CronRunResult> {
   const cronUrl = new URL("/api/internal/cron/scheduled-tasks", webUrl);
   const headers: HeadersInit = {};
-  if (process.env.CRON_SECRET) {
-    headers.authorization = `Bearer ${process.env.CRON_SECRET}`;
+  const cronSecret = await resolveCronSecretForUrl(cronUrl);
+  if (cronSecret) {
+    headers.authorization = `Bearer ${cronSecret}`;
   }
   const response = await fetch(cronUrl, { method: "GET", headers });
   const text = await response.text();
@@ -553,25 +683,14 @@ async function createMinimalTask(params: {
   baseBranchName: string | null;
   headBranchName: string | null;
   message: string;
-}): Promise<{ threadId: string; threadChatId: string }> {
-  const { newThreadInternal } = await importAppModule<{
-    newThreadInternal: (input: {
-      userId: string;
-      message: DBUserMessage;
-      githubRepoFullName: string;
-      baseBranchName?: string | null;
-      headBranchName?: string | null;
-      sourceType: "cli";
-    }) => Promise<{ threadId: string; threadChatId: string }>;
-  }>("apps/www/src/server-lib/new-thread-internal.ts");
-
-  return await newThreadInternal({
-    userId: params.userId,
-    message: buildMinimalTaskMessage(params.message),
+}): Promise<{ threadId: string; branchName: string | null }> {
+  const { client: apiClient } = await createCliApiClient();
+  return await apiClient.threads.create({
+    message: params.message,
     githubRepoFullName: params.repoFullName,
-    baseBranchName: params.baseBranchName,
-    headBranchName: params.headBranchName,
-    sourceType: "cli",
+    repoBaseBranchName: params.baseBranchName ?? undefined,
+    createNewBranch: true,
+    mode: "execute",
   });
 }
 
@@ -644,9 +763,9 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
       userId: resolvedUserId,
       repoFullName,
       threadId: created.threadId,
-      threadChatId: created.threadChatId,
       baseBranchName: args.baseBranch ?? "repo default",
       headBranchName: args.headBranch ?? null,
+      branchName: created.branchName,
     });
 
     const startedAt = Date.now();

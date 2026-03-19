@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       "pull_request.converted_to_draft",
     ],
     async ({ payload }) => {
-      await handlePullRequestStatusChange(payload);
+      await handlePullRequestStatusChange(payload, requestId);
     },
   );
   webhooks.on(

@@ -14,7 +14,10 @@ export async function validateRequest(
     if (sharedSecret && sharedSecret === getInternalSharedSecret(env)) {
       return;
     }
-    console.error("Invalid shared secret");
+    if (sharedSecret) {
+      console.error("Invalid shared secret");
+      throw new Error("Invalid shared secret");
+    }
     throw new Error("Must specify channel");
   }
 

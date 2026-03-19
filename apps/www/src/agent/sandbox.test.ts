@@ -3,6 +3,7 @@ import type { ISandboxSession } from "@terragon/sandbox/types";
 import { bashQuote } from "@terragon/sandbox/utils";
 import {
   reconcileSandboxBranchForThread,
+  resolveExpectedBranchForReconciliation,
   type SandboxBranchReconciliationResult,
 } from "./sandbox";
 
@@ -91,10 +92,12 @@ describe("reconcileSandboxBranchForThread", () => {
   });
 
   it("restarts the sandbox when branch checkout fails", async () => {
-    const runCommand = vi
-      .fn()
-      .mockResolvedValueOnce("terragon/old-branch\n")
-      .mockRejectedValueOnce(new Error("checkout failed"));
+    const runCommand = vi.fn(async (command: string) => {
+      if (command === "git rev-parse --abbrev-ref HEAD") {
+        return "terragon/old-branch\n";
+      }
+      throw new Error("checkout failed");
+    });
     const session = createSession({ runCommand });
     const restartedRunCommand = vi
       .fn()
@@ -118,11 +121,43 @@ describe("reconcileSandboxBranchForThread", () => {
     expect(restartSandbox).toHaveBeenCalledTimes(1);
   });
 
-  it("classifies restart failures as daemon_spawn_failed", async () => {
+  it("recreates the expected branch from base before restarting", async () => {
     const runCommand = vi
       .fn()
       .mockResolvedValueOnce("terragon/old-branch\n")
-      .mockRejectedValueOnce(new Error("checkout failed"));
+      .mockRejectedValueOnce(new Error("checkout failed"))
+      .mockRejectedValueOnce(new Error("fetch expected failed"))
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("terragon/test-branch\n");
+    const session = createSession({ runCommand });
+    const restartSandbox = vi.fn();
+
+    await expectBranchResult(
+      reconcileSandboxBranchForThread({
+        session,
+        expectedBranchName: "terragon/test-branch",
+        baseBranchName: "main",
+        restartSandbox,
+      }),
+      "terragon/test-branch",
+      false,
+    );
+
+    expect(runCommand).toHaveBeenCalledWith(
+      `git checkout -B ${bashQuote("terragon/test-branch")} ${bashQuote("origin/main")}`,
+      { cwd: "/repo" },
+    );
+    expect(restartSandbox).not.toHaveBeenCalled();
+  });
+
+  it("classifies restart failures as daemon_spawn_failed", async () => {
+    const runCommand = vi.fn(async (command: string) => {
+      if (command === "git rev-parse --abbrev-ref HEAD") {
+        return "terragon/old-branch\n";
+      }
+      throw new Error("checkout failed");
+    });
     const session = createSession({ runCommand });
     const restartSandbox = vi
       .fn()
@@ -142,15 +177,19 @@ describe("reconcileSandboxBranchForThread", () => {
   });
 
   it("fails with a structured retryable error when drift cannot be reconciled", async () => {
-    const runCommand = vi
-      .fn()
-      .mockResolvedValueOnce("terragon/old-branch\n")
-      .mockRejectedValueOnce(new Error("checkout failed"));
+    const runCommand = vi.fn(async (command: string) => {
+      if (command === "git rev-parse --abbrev-ref HEAD") {
+        return "terragon/old-branch\n";
+      }
+      throw new Error("checkout failed");
+    });
     const session = createSession({ runCommand });
-    const restartedRunCommand = vi
-      .fn()
-      .mockResolvedValueOnce("terragon/wrong-branch\n")
-      .mockRejectedValueOnce(new Error("checkout failed again"));
+    const restartedRunCommand = vi.fn(async (command: string) => {
+      if (command === "git rev-parse --abbrev-ref HEAD") {
+        return "terragon/wrong-branch\n";
+      }
+      throw new Error("checkout failed again");
+    });
     const restartedSession = createSession({
       sandboxId: "sandbox-2",
       runCommand: restartedRunCommand,
@@ -168,5 +207,40 @@ describe("reconcileSandboxBranchForThread", () => {
       type: "sandbox-resume-failed",
       failureCategory: "daemon_spawn_failed",
     });
+  });
+});
+
+describe("resolveExpectedBranchForReconciliation", () => {
+  it("does not force base branch reconciliation for createNewBranch runs", () => {
+    expect(
+      resolveExpectedBranchForReconciliation({
+        createNewBranch: true,
+        requestedBranchName: "main",
+        threadBranchName: null,
+        repoBaseBranchName: "main",
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers persisted thread branch for follow-up dispatches", () => {
+    expect(
+      resolveExpectedBranchForReconciliation({
+        createNewBranch: false,
+        requestedBranchName: "main",
+        threadBranchName: "terragon/feature-123",
+        repoBaseBranchName: "main",
+      }),
+    ).toBe("terragon/feature-123");
+  });
+
+  it("uses requested branch when createNewBranch=false and no persisted branch exists", () => {
+    expect(
+      resolveExpectedBranchForReconciliation({
+        createNewBranch: false,
+        requestedBranchName: "feature/existing-branch",
+        threadBranchName: null,
+        repoBaseBranchName: "main",
+      }),
+    ).toBe("feature/existing-branch");
   });
 });

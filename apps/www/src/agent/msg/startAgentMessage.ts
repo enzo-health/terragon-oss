@@ -1,71 +1,72 @@
+import { randomUUID } from "node:crypto";
+import { AIAgent, AIModel } from "@terragon/agent/types";
+import {
+  getDefaultModelForAgent,
+  modelRequiresChatGptOAuth,
+  modelToAgent,
+  normalizedModelForDaemon,
+  shouldUseCredits as shouldUseCreditsUtil,
+} from "@terragon/agent/utils";
+import { env } from "@terragon/env/apps-www";
+import { gitPullUpstream } from "@terragon/sandbox/commands";
+import { CreateSandboxOptions, ISandboxSession } from "@terragon/sandbox/types";
 import {
   DBUserMessage,
   DBUserMessageWithModel,
   Thread,
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
+import type { SdlcLoopState } from "@terragon/shared/db/types";
+import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import {
-  getActiveThreadCount,
   activeThreadStatuses,
+  getActiveThreadCount,
   getQueuedThreadCounts,
+  getThread,
+  getThreadChat,
   updateThread,
   updateThreadChat,
-  getThreadChat,
-  getThread,
 } from "@terragon/shared/model/threads";
+import { waitUntil } from "@vercel/functions";
+import { sendDaemonMessage } from "@/agent/daemon";
+import { ThreadError } from "@/agent/error";
+import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
 import {
   createSandboxForThread,
   getSandboxForThreadOrNull,
 } from "@/agent/sandbox";
 import { withSandboxResource } from "@/agent/sandbox-resource";
-import { sendDaemonMessage } from "@/agent/daemon";
-import { ThreadError } from "@/agent/error";
-import { withThreadChat } from "@/agent/thread-resource";
-import { sandboxCreationRateLimit } from "@/lib/rate-limit";
-import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
-import {
-  getUserMessageToSend,
-  convertToPrompt,
-} from "@/lib/db-message-helpers";
-import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { gitPullUpstream } from "@terragon/sandbox/commands";
-import { getPostHogServer } from "@/lib/posthog-server";
-import { CreateSandboxOptions } from "@terragon/sandbox/types";
-import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
-import { ISandboxSession } from "@terragon/sandbox/types";
-import { AIAgent, AIModel } from "@terragon/agent/types";
-import {
-  modelToAgent,
-  getDefaultModelForAgent,
-  normalizedModelForDaemon,
-  shouldUseCredits as shouldUseCreditsUtil,
-  modelRequiresChatGptOAuth,
-} from "@terragon/agent/utils";
 import { handleSlashCommand } from "@/agent/slash-command-handler";
-import { tryAutoCompactThread } from "@/server-lib/compact";
-import { waitUntil } from "@vercel/functions";
+import { withThreadChat } from "@/agent/thread-resource";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
-  ensureDispatchRetryPersistenceOwnership,
-  maybeProcessFollowUpQueue,
-} from "@/server-lib/process-follow-up-queue";
-import { getUserCredentials } from "@/server-lib/user-credentials";
+  convertToPrompt,
+  getUserMessageToSend,
+} from "@/lib/db-message-helpers";
+import { getPostHogServer } from "@/lib/posthog-server";
+import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
+import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
+import { redis } from "@/lib/redis";
+import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
+import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
+import { tryAutoCompactThread } from "@/server-lib/compact";
+import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   ensureSdlcLoopEnrollmentForThreadIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
-import type { SdlcLoopState } from "@terragon/shared/db/types";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
-  getThreadContextMessageToGenerate,
+  ensureDispatchRetryPersistenceOwnership,
+  maybeProcessFollowUpQueue,
+} from "@/server-lib/process-follow-up-queue";
+import {
   generateThreadContextResult,
+  getThreadContextMessageToGenerate,
 } from "@/server-lib/thread-context";
-import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
-import { randomUUID } from "node:crypto";
-import { redis } from "@/lib/redis";
-import { env } from "@terragon/env/apps-www";
-import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
+import { getUserCredentials } from "@/server-lib/user-credentials";
 
 const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
@@ -168,12 +169,12 @@ export async function startAgentMessage({
   createNewBranch?: boolean;
   branchName?: string;
   delayMs?: number;
-}) {
+}): Promise<StartAgentMessageResult> {
+  let dispatchLaunched = false;
   console.log("Starting agent message", { threadId, threadChatId });
   if (!isNewThread) {
     await markFollowUpTtfrStart({ userId, threadId, threadChatId });
   }
-  const userCredentials = await getUserCredentials({ userId });
   if (message) {
     // Check for slash commands
     const slashCommandResult = await handleSlashCommand({
@@ -199,9 +200,17 @@ export async function startAgentMessage({
             }),
         ),
       );
-      return;
+      return { dispatchLaunched: false };
     }
   }
+  const [userCredentials, acpTransportEnabled] = await Promise.all([
+    getUserCredentials({ userId }),
+    getFeatureFlagForUser({
+      db,
+      userId,
+      flagName: "sandboxAgentAcpTransport" as never,
+    }),
+  ]);
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   await withThreadChat({
     threadId,
@@ -231,7 +240,7 @@ export async function startAgentMessage({
         console.log(`Active thread count: ${activeThreadCount}`);
         const [sandboxCreationRateLimitRemaining, maxConcurrentTasks] =
           await Promise.all([
-            sandboxCreationRateLimit.getRemaining(userId),
+            getSandboxCreationRateLimitRemaining(userId),
             getMaxConcurrentTaskCountForUser(userId),
           ]);
         const sandboxCreationRateLimitReached =
@@ -652,10 +661,37 @@ export async function startAgentMessage({
 
           // When dispatched by the delivery loop, reuse the dispatch intent's
           // runId so ack timeout and daemon events share the same identity.
+          // Fall back to the durable DB dispatch-intent row when Redis
+          // real-time intent lookup is unavailable in local redis-http mode.
           const activeIntent = v2Workflow
             ? await getActiveDispatchIntent(threadChatId)
             : null;
-          const runId = activeIntent?.runId ?? randomUUID();
+          const workflowId = v2Workflow?.id ?? null;
+          const durableIntent =
+            workflowId && !activeIntent
+              ? await getLatestActiveDispatchIntentForThreadChat(db, {
+                  threadChatId,
+                  loopId: workflowId,
+                })
+              : null;
+          if (
+            activeIntent &&
+            durableIntent &&
+            activeIntent.runId !== durableIntent.runId
+          ) {
+            console.warn(
+              "[startAgentMessage] dispatch run identity mismatch between redis and db",
+              {
+                threadId,
+                threadChatId,
+                workflowId,
+                redisRunId: activeIntent.runId,
+                dbRunId: durableIntent.runId,
+              },
+            );
+          }
+          const runId =
+            activeIntent?.runId ?? durableIntent?.runId ?? randomUUID();
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
           const effectivePermissionMode = v2Workflow
@@ -674,6 +710,7 @@ export async function startAgentMessage({
             codexPreviousResponseId,
             shouldUseCredits,
             threadChatId,
+            enableAcpTransport: acpTransportEnabled,
           });
           if (
             implementationDispatch.codexPreviousResponseId !==
@@ -727,6 +764,7 @@ export async function startAgentMessage({
                 agent: threadChat.agent,
               },
             });
+            dispatchLaunched = true;
           } catch (dispatchError) {
             console.error(
               `Thread ${threadId}: Daemon dispatch failed after sandbox boot, requeuing`,
@@ -751,7 +789,12 @@ export async function startAgentMessage({
       console.error("Error starting claude:", error);
     },
   });
+  return { dispatchLaunched };
 }
+
+export type StartAgentMessageResult = {
+  dispatchLaunched: boolean;
+};
 
 async function preparePromptForModel({
   model,

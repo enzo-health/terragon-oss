@@ -3,6 +3,14 @@ import { drainDueV3Effects } from "@/server-lib/delivery-loop/v3/process-effects
 import { drainOutboxV3Relay } from "@/server-lib/delivery-loop/v3/relay";
 import { drainOutboxV3Worker } from "@/server-lib/delivery-loop/v3/worker";
 import { reconcileZombieGateHeadsFromLegacy } from "@/server-lib/delivery-loop/v3/store";
+import { sweepAckTimeouts } from "@/server-lib/delivery-loop/ack-timeout";
+import { listActiveWorkflowIds } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
+import { claimNextWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import type {
+  CorrelationId,
+  WorkflowId,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 
 let runScheduledTasksCron: typeof import("./route").runScheduledTasksCron;
 
@@ -20,6 +28,23 @@ vi.mock("@/server-lib/delivery-loop/v3/worker", () => ({
 
 vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
   reconcileZombieGateHeadsFromLegacy: vi.fn(),
+}));
+
+vi.mock("@/server-lib/delivery-loop/ack-timeout", () => ({
+  sweepAckTimeouts: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+  listActiveWorkflowIds: vi.fn(),
+}));
+
+vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
+  runCoordinatorTick: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/delivery-loop/store/work-queue-store", () => ({
+  claimNextWorkItem: vi.fn(),
+  failWorkItem: vi.fn(),
 }));
 
 describe("scheduled-tasks cron route", () => {
@@ -45,9 +70,26 @@ describe("scheduled-tasks cron route", () => {
       scanned: 1,
       reconciled: 1,
     });
+    vi.mocked(sweepAckTimeouts).mockResolvedValue({
+      stalledCount: 0,
+      processedCount: 0,
+      retriedCount: 0,
+    });
+    vi.mocked(listActiveWorkflowIds).mockResolvedValue([]);
+    vi.mocked(runCoordinatorTick).mockResolvedValue({
+      workflowId: "wf-1" as WorkflowId,
+      correlationId: "corr-1" as CorrelationId,
+      signalsProcessed: 0,
+      transitioned: false,
+      stateBefore: "planning",
+      stateAfter: "planning",
+      workItemsScheduled: 0,
+      incidentsEvaluated: false,
+    });
+    vi.mocked(claimNextWorkItem).mockResolvedValue(null);
   });
 
-  it("runs v3 maintenance passes and no longer exposes v2 progression counters", async () => {
+  it("runs v2 + v3 maintenance passes and reports progression counters", async () => {
     const response = await runScheduledTasksCron();
     const data = (await response.json()) as Record<string, unknown>;
 
@@ -64,9 +106,13 @@ describe("scheduled-tasks cron route", () => {
       v3OutboxWorkerRetried: 0,
       v3ZombieHeadsScanned: 1,
       v3ZombieHeadsReconciled: 1,
+      v2ActiveWorkflows: 0,
+      v2TicksCaughtUp: 0,
+      v2WorkItemsProcessed: 0,
+      ackTimeoutStalledCount: 0,
+      ackTimeoutProcessedCount: 0,
+      ackTimeoutRetriedCount: 0,
     });
-    expect("v2WorkItemsProcessed" in data).toBe(false);
-    expect("v2TicksCaughtUp" in data).toBe(false);
     expect(drainDueV3Effects).toHaveBeenCalledWith(
       expect.objectContaining({ leaseOwnerPrefix: "cron:v3" }),
     );
@@ -79,6 +125,11 @@ describe("scheduled-tasks cron route", () => {
     expect(reconcileZombieGateHeadsFromLegacy).toHaveBeenCalledWith(
       expect.objectContaining({ staleMs: 90_000, maxRows: 30 }),
     );
+    expect(sweepAckTimeouts).toHaveBeenCalled();
+    expect(listActiveWorkflowIds).toHaveBeenCalledWith(
+      expect.objectContaining({ db: expect.anything() }),
+    );
+    expect(claimNextWorkItem).toHaveBeenCalled();
   });
 
   it("surfaces v3 effect processing failures in watchdog response", async () => {
@@ -97,9 +148,13 @@ describe("scheduled-tasks cron route", () => {
       v3OutboxProcessed: 1,
       v3OutboxPublished: 1,
       v3OutboxWorkerProcessed: 1,
+      v2ActiveWorkflows: 0,
+      v2TicksCaughtUp: 0,
+      v2WorkItemsProcessed: 0,
+      ackTimeoutStalledCount: 0,
+      ackTimeoutProcessedCount: 0,
+      ackTimeoutRetriedCount: 0,
     });
-    expect("v2WorkItemsProcessed" in data).toBe(false);
-    expect("v2TicksCaughtUp" in data).toBe(false);
     expect(drainOutboxV3Relay).toHaveBeenCalled();
     expect(drainOutboxV3Worker).toHaveBeenCalled();
   });

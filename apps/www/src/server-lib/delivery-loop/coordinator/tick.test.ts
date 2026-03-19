@@ -760,6 +760,202 @@ describe("v2 coordinator tick — integration", () => {
         reason: "GitHub unavailable",
       });
     });
+
+    it("awaiting_pr + clean diff stats + branch commits => creates/links PR", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/pr-from-clean-tree",
+          gitDiff: "",
+          gitDiffStats: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+
+      const getExistingPrSpy = vi
+        .spyOn(githubHelpers, "getExistingPRForBranch")
+        .mockResolvedValueOnce(null);
+      vi.spyOn(githubHelpers, "getDefaultBranchForRepo").mockResolvedValueOnce(
+        "main",
+      );
+      const createPullSpy = vi.fn().mockResolvedValue({
+        data: {
+          number: 123,
+          state: "open",
+          draft: true,
+        },
+      });
+      const octokitMock = {
+        rest: {
+          pulls: {
+            create: createPullSpy,
+          },
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof githubHelpers.getOctokitForUserOrThrow>
+      >;
+      vi.spyOn(githubHelpers, "getOctokitForUserOrThrow").mockResolvedValueOnce(
+        octokitMock,
+      );
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(getExistingPrSpy).toHaveBeenCalledOnce();
+      expect(createPullSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("workflow row missing");
+      }
+      expect(row.kind).toBe("babysitting");
+      expect(row.prNumber).toBe(123);
+
+      const threadRow = await db.query.thread.findFirst({
+        where: eq(schema.thread.id, testThreadId),
+      });
+      expect(threadRow?.githubPRNumber).toBe(123);
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_pr_linked",
+      });
+    });
+
+    it("awaiting_pr + user-oauth failure => falls back to app auth for PR create", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/pr-via-app-fallback",
+          gitDiff: "",
+          gitDiffStats: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+
+      vi.spyOn(githubHelpers, "getExistingPRForBranch").mockResolvedValueOnce(
+        null,
+      );
+      vi.spyOn(githubHelpers, "getDefaultBranchForRepo").mockResolvedValueOnce(
+        "main",
+      );
+      vi.spyOn(githubHelpers, "getOctokitForUserOrThrow").mockRejectedValueOnce(
+        new Error("Invalid keyData"),
+      );
+
+      const createPullSpy = vi.fn().mockResolvedValue({
+        data: {
+          number: 321,
+          state: "open",
+          draft: true,
+        },
+      });
+      const appOctokitMock = {
+        rest: {
+          pulls: {
+            create: createPullSpy,
+          },
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof githubHelpers.getOctokitForApp>
+      >;
+      const appFallbackSpy = vi
+        .spyOn(githubHelpers, "getOctokitForApp")
+        .mockResolvedValueOnce(appOctokitMock);
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(appFallbackSpy).toHaveBeenCalledOnce();
+      expect(createPullSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row?.prNumber).toBe(321);
+    });
+
+    it("awaiting_pr + clean diff stats + no commits between branches => done", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/no-commits",
+          gitDiff: "",
+          gitDiffStats: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+
+      vi.spyOn(githubHelpers, "getExistingPRForBranch").mockResolvedValueOnce(
+        null,
+      );
+      vi.spyOn(githubHelpers, "getDefaultBranchForRepo").mockResolvedValueOnce(
+        "main",
+      );
+      const createError = new Error(
+        "Validation Failed: No commits between main and feature/no-commits",
+      );
+      const createPullSpy = vi.fn().mockRejectedValueOnce(createError);
+      const octokitMock = {
+        rest: {
+          pulls: {
+            create: createPullSpy,
+          },
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof githubHelpers.getOctokitForUserOrThrow>
+      >;
+      vi.spyOn(githubHelpers, "getOctokitForUserOrThrow").mockResolvedValueOnce(
+        octokitMock,
+      );
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(createPullSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("done");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("workflow row missing");
+      }
+      expect(row.kind).toBe("done");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_no_diff",
+      });
+    });
   });
 
   describe("multiple signals in single tick", () => {

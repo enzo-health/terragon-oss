@@ -609,6 +609,7 @@ export async function enqueueOutboxRecordV3(params: {
 export async function claimNextOutboxRecordV3(params: {
   db: DB;
   leaseOwner: string;
+  workflowId?: string;
   now?: Date;
 }): Promise<DeliveryOutboxV3Row | null> {
   const now = params.now ?? new Date();
@@ -621,11 +622,14 @@ export async function claimNextOutboxRecordV3(params: {
     eq(t.status, "publishing"),
     lte(t.leaseExpiresAt, staleThreshold),
   );
+  const claimableCondition = params.workflowId
+    ? and(eq(t.workflowId, params.workflowId), or(pendingCond, staleCond))
+    : or(pendingCond, staleCond);
 
   const [candidate] = await params.db
     .select({ id: t.id })
     .from(t)
-    .where(or(pendingCond, staleCond))
+    .where(claimableCondition)
     .orderBy(t.availableAt, t.createdAt)
     .limit(1)
     .for("update", { skipLocked: true });
@@ -645,6 +649,7 @@ export async function claimNextOutboxRecordV3(params: {
     .where(
       and(
         eq(t.id, candidate.id),
+        ...(params.workflowId ? [eq(t.workflowId, params.workflowId)] : []),
         or(
           and(eq(t.status, "pending"), lte(t.availableAt, now)),
           and(

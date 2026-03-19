@@ -58,12 +58,16 @@ import { createHash, randomUUID } from "node:crypto";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
-const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 20;
+const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 50;
+const ACP_SSE_STARTUP_GRACE_MS = 60_000;
+const ACP_SSE_STARTUP_404_BACKOFF_MS = 400;
 const ACP_REQUEST_TIMEOUT_MS = 120_000;
 const ACP_SSE_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 min of SSE silence
 const ACP_INACTIVITY_CHECK_INTERVAL_MS = 30_000; // check every 30s
 const ACP_TERMINAL_QUIESCENCE_MS = 300;
 const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
+const ACP_POST_INIT_INTERNAL_ERROR_GRACE_MS = 90_000;
+const ACP_POST_INIT_INTERNAL_ERROR_SUPPRESS_LIMIT = 5;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const APP_SERVER_TURN_WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 30_000;
@@ -84,6 +88,16 @@ type AcpResponseEnvelope = {
   result?: unknown;
   error?: unknown;
 };
+
+class AcpSseHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly statusText: string,
+  ) {
+    super(`ACP SSE failed (${status} ${statusText})`);
+    this.name = "AcpSseHttpError";
+  }
+}
 
 function formatError(error: unknown): object {
   if (error instanceof Error) {
@@ -1791,6 +1805,9 @@ export class TerragonDaemon {
       }
       for (const message of messages) {
         lastAcpMessageAtMs = Date.now();
+        if (message.type === "assistant" || message.type === "user") {
+          sawAssistantOrUserMessage = true;
+        }
         if (
           (message.type === "assistant" || message.type === "user") &&
           message.session_id
@@ -1819,6 +1836,40 @@ export class TerragonDaemon {
               },
             );
             return;
+          }
+          if (message.type === "custom-error" && acpInitialized) {
+            const errorInfo =
+              "error_info" in message ? message.error_info : undefined;
+            const isInternalError =
+              typeof errorInfo === "string" &&
+              errorInfo.trim() === "Internal error";
+            const postInitGraceActive =
+              promptIssuedAtMs > 0 &&
+              Date.now() - promptIssuedAtMs <=
+                ACP_POST_INIT_INTERNAL_ERROR_GRACE_MS &&
+              !sawAssistantOrUserMessage;
+            if (
+              isInternalError &&
+              postInitGraceActive &&
+              suppressedPostInitInternalErrors <
+                ACP_POST_INIT_INTERNAL_ERROR_SUPPRESS_LIMIT
+            ) {
+              suppressedPostInitInternalErrors += 1;
+              this.runtime.logger.debug(
+                "Suppressing early post-init Internal error envelope (not terminal)",
+                {
+                  threadChatId: input.threadChatId,
+                  suppressedCount: suppressedPostInitInternalErrors,
+                  suppressLimit: ACP_POST_INIT_INTERNAL_ERROR_SUPPRESS_LIMIT,
+                  graceRemainingMs: Math.max(
+                    0,
+                    ACP_POST_INIT_INTERNAL_ERROR_GRACE_MS -
+                      (Date.now() - promptIssuedAtMs),
+                  ),
+                },
+              );
+              continue;
+            }
           }
           sawTerminalEventFromStream = true;
           resolveSseTerminal?.();
@@ -2098,12 +2149,18 @@ export class TerragonDaemon {
     // SSE error envelopes (e.g. "Internal error") must NOT be treated as terminal
     // because they're expected during the ACP registration window.
     let acpInitialized = false;
+    // Track the post-prompt bootstrap window where ACP can emit transient
+    // "Internal error" envelopes before the first meaningful stream message.
+    let promptIssuedAtMs = 0;
+    let sawAssistantOrUserMessage = false;
+    let suppressedPostInitInternalErrors = 0;
 
     const sseLoop = (async () => {
       // Settle after sandbox-agent restart — ACP endpoints need ~15s to register
       // after /v1/health passes. A longer initial delay reduces SSE failure budget burn.
       await abortableSleep(2_000);
       let consecutiveSseFailures = 0;
+      const sseStartupAtMs = Date.now();
       while (!sseAbortController.signal.aborted) {
         try {
           const sseHeaders: Record<string, string> = {
@@ -2118,9 +2175,7 @@ export class TerragonDaemon {
             signal: sseAbortController.signal,
           });
           if (!response.ok) {
-            throw new Error(
-              `ACP SSE failed (${response.status} ${response.statusText})`,
-            );
+            throw new AcpSseHttpError(response.status, response.statusText);
           }
           if (!response.body) {
             throw new Error("ACP SSE response has no body");
@@ -2139,16 +2194,44 @@ export class TerragonDaemon {
           if (sseAbortController.signal.aborted) {
             return;
           }
-          consecutiveSseFailures++;
-          // Suppress expected 404s right after sandbox-agent restart.
-          // ACP endpoints can take ~15s to register after health check passes.
-          if (justRestarted && consecutiveSseFailures <= 15) {
+          // During startup grace we expect intermittent 404s while ACP routes
+          // are still registering behind /v1/health.
+          const startupGraceActive =
+            justRestarted &&
+            Date.now() - sseStartupAtMs <= ACP_SSE_STARTUP_GRACE_MS;
+          if (
+            startupGraceActive &&
+            error instanceof AcpSseHttpError &&
+            error.status === 404
+          ) {
             this.runtime.logger.debug(
               "ACP SSE not yet available after restart (expected)",
               {
                 threadChatId: input.threadChatId,
                 serverId,
+                startupGraceRemainingMs: Math.max(
+                  0,
+                  ACP_SSE_STARTUP_GRACE_MS - (Date.now() - sseStartupAtMs),
+                ),
+              },
+            );
+            await abortableSleep(ACP_SSE_STARTUP_404_BACKOFF_MS);
+            continue;
+          }
+
+          consecutiveSseFailures++;
+          if (startupGraceActive) {
+            this.runtime.logger.debug(
+              "ACP SSE loop error during startup grace",
+              {
+                threadChatId: input.threadChatId,
+                serverId,
+                error: formatError(error),
                 consecutiveSseFailures,
+                startupGraceRemainingMs: Math.max(
+                  0,
+                  ACP_SSE_STARTUP_GRACE_MS - (Date.now() - sseStartupAtMs),
+                ),
               },
             );
           } else {
@@ -2283,6 +2366,9 @@ export class TerragonDaemon {
       // Fire POST as trigger only — don't use response for completion.
       // The POST holds the connection open for the entire agent turn (5-30+ min).
       // HTTP proxies/LBs may kill it, so SSE terminal event is the sole completion signal.
+      promptIssuedAtMs = Date.now();
+      suppressedPostInitInternalErrors = 0;
+      sawAssistantOrUserMessage = false;
       postEnvelope({
         method: "session/prompt",
         params: {

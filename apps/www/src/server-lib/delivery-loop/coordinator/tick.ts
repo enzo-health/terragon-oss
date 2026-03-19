@@ -52,6 +52,7 @@ import { getGithubPRStatus } from "@terragon/shared/github-api/helpers";
 import {
   getDefaultBranchForRepo,
   getExistingPRForBranch,
+  getOctokitForApp,
   getOctokitForUserOrThrow,
   parseRepoFullName,
 } from "@/lib/github";
@@ -82,6 +83,7 @@ type AwaitingPrInvariantAction = {
 };
 
 const MAX_SIGNALS_PER_TICK = 10;
+const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
 
 const VALID_WORKFLOW_KINDS: ReadonlySet<string> = new Set<WorkflowState>([
   "planning",
@@ -412,6 +414,10 @@ export async function runCoordinatorTick(params: {
                 kind: item.kind,
                 payloadJson: item.payloadJson,
                 scheduledAt: item.scheduledAt,
+                maxAttempts:
+                  item.kind === "dispatch"
+                    ? DISPATCH_WORK_ITEM_MAX_ATTEMPTS
+                    : undefined,
               }),
             ),
           );
@@ -692,6 +698,54 @@ function hasThreadDiff(params: {
   return params.gitDiff.trim().length > 0;
 }
 
+type GitHubRequestErrorLike = Error & {
+  status?: number;
+  response?: {
+    data?: {
+      message?: string;
+      errors?: Array<{ message?: string }>;
+    };
+  };
+};
+
+function getGitHubErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const requestError = error as GitHubRequestErrorLike;
+  const responseMessage = requestError.response?.data?.message;
+  const responseErrorMessages =
+    requestError.response?.data?.errors
+      ?.map((entry) => entry.message?.trim())
+      .filter((entry): entry is string => Boolean(entry && entry.length > 0))
+      .join(" ") ?? "";
+  const allParts = [error.message, responseMessage, responseErrorMessages]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part && part.length > 0));
+  return allParts.join(" | ");
+}
+
+function isNoDiffGitHubError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const requestError = error as GitHubRequestErrorLike;
+  const combinedMessage = getGitHubErrorMessage(error).toLowerCase();
+  if (combinedMessage.includes("no commits between")) {
+    return true;
+  }
+  if (
+    combinedMessage.includes("there isn") &&
+    combinedMessage.includes("compare")
+  ) {
+    return true;
+  }
+  if (requestError.status === 422 && combinedMessage.includes("no commits")) {
+    return true;
+  }
+  return false;
+}
+
 async function ensureOrCreatePrForAwaitingWorkflow(params: {
   db: DB;
   workflowId: WorkflowId;
@@ -733,6 +787,7 @@ async function ensureOrCreatePrForAwaitingWorkflow(params: {
     repoFullName: params.repoFullName,
     headBranchName: branchName,
     baseBranchName,
+    userId: params.userId,
   });
   if (existingPr) {
     try {
@@ -785,8 +840,21 @@ async function ensureOrCreatePrForAwaitingWorkflow(params: {
   }
 
   const [owner, repo] = parseRepoFullName(params.repoFullName);
-  const octokit = await getOctokitForUserOrThrow({
+  let octokit = await getOctokitForUserOrThrow({
     userId: params.userId,
+  }).catch(async (error) => {
+    // Local/dev credentials can drift (e.g. Better Auth token decrypt issues).
+    // Fall back to GitHub App auth so awaiting_pr can still deterministically
+    // create/link PRs.
+    console.warn(
+      "[coordinator] awaiting_pr using GitHub App fallback for PR creation",
+      {
+        workflowId: params.workflowId,
+        threadId: params.threadId,
+        reason: getGitHubErrorMessage(error),
+      },
+    );
+    return getOctokitForApp({ owner, repo });
   });
 
   const prTitle = params.threadName?.trim().length
@@ -899,7 +967,8 @@ async function enforceAwaitingPrInvariant(params: {
       gitDiff: thread.gitDiff,
       gitDiffStats: thread.gitDiffStats,
     });
-    if (!hasDiff) {
+    const workflowBranchName = (thread.branchName ?? "").trim();
+    if (!hasDiff && workflowBranchName.length === 0) {
       const signal = await appendSignalToInbox({
         db: params.db,
         loopId: params.loopId,
@@ -946,12 +1015,36 @@ async function enforceAwaitingPrInvariant(params: {
       }
       prNumber = prResult;
     } catch (error) {
+      if (isNoDiffGitHubError(error)) {
+        const signal = await appendSignalToInbox({
+          db: params.db,
+          loopId: params.loopId,
+          causeType: "human_mark_done",
+          payload: {
+            source: "human",
+            event: {
+              kind: "mark_done_requested",
+              actorUserId: "system:awaiting-pr-invariant",
+            },
+          },
+          canonicalCauseId: `awaiting-pr-invariant:no-diff:${params.workflowId}:${params.workflow.version}`,
+          now: params.now,
+        });
+        if (!signal) {
+          return null;
+        }
+        return {
+          kind: "awaiting_pr_invariant_no_diff",
+          stateAfter: "done",
+          signalId: signal.id,
+        };
+      }
       console.warn(
         "[coordinator] awaiting_pr invariant PR create/link failed",
         {
           workflowId: params.workflowId,
           threadId: thread.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: getGitHubErrorMessage(error),
         },
       );
       return emitAwaitingPrOperatorAction({
@@ -960,10 +1053,7 @@ async function enforceAwaitingPrInvariant(params: {
         loopId: params.loopId,
         now: params.now,
         workflow: params.workflow,
-        reason:
-          error instanceof Error
-            ? error.message
-            : "PR creation or linking failed",
+        reason: getGitHubErrorMessage(error) || "PR creation or linking failed",
         incidentId: `awaiting-pr:${params.workflowId}:${params.workflow.version}`,
       });
     }
