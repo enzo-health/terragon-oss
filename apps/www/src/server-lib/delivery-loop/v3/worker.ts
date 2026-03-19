@@ -612,22 +612,71 @@ async function deadLetterMessage(params: {
   });
 }
 
-async function markPublishedOutboxDeadLettered(params: {
+async function markPublishedOutboxSucceededLocally(params: {
   db: DB;
   outboxId: string;
-  errorCode: string;
-  errorMessage: string;
-}): Promise<void> {
-  await params.db
+  now?: Date;
+}): Promise<boolean> {
+  const now = params.now ?? new Date();
+  const [row] = await params.db
     .update(schema.deliveryOutboxV3)
     .set({
-      status: "dead_letter",
-      lastErrorCode: params.errorCode,
-      lastErrorMessage: params.errorMessage,
+      status: "cancelled",
+      claimedAt: now,
       leaseOwner: null,
       leaseExpiresAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
     })
-    .where(eq(schema.deliveryOutboxV3.id, params.outboxId));
+    .where(
+      and(
+        eq(schema.deliveryOutboxV3.id, params.outboxId),
+        eq(schema.deliveryOutboxV3.status, "published"),
+      ),
+    )
+    .returning({ id: schema.deliveryOutboxV3.id });
+
+  return Boolean(row);
+}
+
+async function markPublishedOutboxFailedLocally(params: {
+  db: DB;
+  row: DeliveryOutboxV3Row;
+  errorCode: string;
+  errorMessage: string;
+  now?: Date;
+}): Promise<"published" | "dead_letter"> {
+  const now = params.now ?? new Date();
+  const attemptCount = params.row.attemptCount + 1;
+  const status =
+    attemptCount >= params.row.maxAttempts ? "dead_letter" : "published";
+
+  const [row] = await params.db
+    .update(schema.deliveryOutboxV3)
+    .set({
+      status,
+      attemptCount,
+      claimedAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastErrorCode: params.errorCode,
+      lastErrorMessage: params.errorMessage,
+    })
+    .where(
+      and(
+        eq(schema.deliveryOutboxV3.id, params.row.id),
+        eq(schema.deliveryOutboxV3.status, "published"),
+      ),
+    )
+    .returning({ id: schema.deliveryOutboxV3.id });
+
+  if (!row) {
+    throw new Error(
+      `Failed to update published outbox row ${params.row.id} in local fallback`,
+    );
+  }
+
+  return status;
 }
 
 async function applySignalMessage(params: {
@@ -817,14 +866,10 @@ async function processEntries(params: {
 async function processPublishedOutboxRows(params: {
   db: DB;
   maxItems: number;
-  attemptsHashKey: string;
-  processedHashKey: string;
-  deadLetterStreamKey: string;
   messageProcessor: (params: {
     db: DB;
     message: OutboxWorkerMessage;
   }) => Promise<void>;
-  maxAttempts: number;
   result: OutboxWorkerResult;
 }): Promise<number> {
   let consumed = 0;
@@ -845,30 +890,17 @@ async function processPublishedOutboxRows(params: {
 
       const parsed = parsePublishedOutboxRow(row);
       if (!parsed) {
-        const reason = "Failed to parse published outbox payload";
-        await deadLetterMessage({
-          deadLetterStreamKey: params.deadLetterStreamKey,
-          message: {
-            streamMessageId: row.relayMessageId ?? row.id,
-            outboxId: row.id,
-            workflowId: row.workflowId,
-            topic: row.topic,
-            reason,
-          },
-        });
-        await markPublishedOutboxDeadLettered({
+        const status = await markPublishedOutboxFailedLocally({
           db: params.db,
-          outboxId: row.id,
+          row,
           errorCode: "outbox_worker_parse_failed",
-          errorMessage: reason,
+          errorMessage: "Failed to parse published outbox payload",
         });
-        await clearAttemptCount(params.attemptsHashKey, row.id);
-        await markMessageProcessed(
-          params.processedHashKey,
-          row.id,
-          row.relayMessageId ?? row.id,
-        );
-        params.result.deadLettered += 1;
+        if (status === "dead_letter") {
+          params.result.deadLettered += 1;
+        } else {
+          params.result.retried += 1;
+        }
         params.result.processed += 1;
         consumed += 1;
         if (consumed >= params.maxItems) {
@@ -877,23 +909,17 @@ async function processPublishedOutboxRows(params: {
         continue;
       }
 
-      const alreadyProcessed = await isMessageAlreadyProcessed(
-        params.processedHashKey,
-        parsed.outboxId,
-      );
-      if (alreadyProcessed) {
-        await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
-        continue;
-      }
-
       try {
         await params.messageProcessor({ db: params.db, message: parsed });
-        await markMessageProcessed(
-          params.processedHashKey,
-          parsed.outboxId,
-          parsed.streamMessageId,
-        );
-        await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
+        const marked = await markPublishedOutboxSucceededLocally({
+          db: params.db,
+          outboxId: parsed.outboxId,
+        });
+        if (!marked) {
+          throw new Error(
+            `Failed to mark published outbox row ${parsed.outboxId} as cancelled`,
+          );
+        }
         params.result.acknowledged += 1;
         params.result.processed += 1;
         consumed += 1;
@@ -902,44 +928,20 @@ async function processPublishedOutboxRows(params: {
         }
         continue;
       } catch (error) {
-        const attempts = await incrementAttemptCount(
-          params.attemptsHashKey,
-          parsed.outboxId,
-        );
-
-        if (attempts >= params.maxAttempts) {
-          const reason = `Outbox worker exhausted attempts: ${coerceString(
+        const status = await markPublishedOutboxFailedLocally({
+          db: params.db,
+          row,
+          errorCode: "v3_outbox_worker_failed",
+          errorMessage: coerceString(
             error instanceof Error ? error.message : error,
-          )}`;
-          await deadLetterMessage({
-            deadLetterStreamKey: params.deadLetterStreamKey,
-            message: {
-              ...parsed,
-              reason,
-            },
-          });
-          await markPublishedOutboxDeadLettered({
-            db: params.db,
-            outboxId: parsed.outboxId,
-            errorCode: "v3_outbox_worker_failed",
-            errorMessage: reason,
-          });
-          await markMessageProcessed(
-            params.processedHashKey,
-            parsed.outboxId,
-            parsed.streamMessageId,
-          );
-          await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
-          params.result.deadLettered += 1;
-          params.result.processed += 1;
-          consumed += 1;
-          if (consumed >= params.maxItems) {
-            break;
-          }
-          continue;
-        }
+          ),
+        });
 
-        params.result.retried += 1;
+        if (status === "dead_letter") {
+          params.result.deadLettered += 1;
+        } else {
+          params.result.retried += 1;
+        }
         params.result.processed += 1;
         consumed += 1;
         if (consumed >= params.maxItems) {
@@ -994,15 +996,10 @@ export async function drainOutboxV3Worker(
   };
 
   if (useLocalDbFallback) {
-    await heartbeatConsumer(heartbeatKey, consumerName, heartbeatTtlMs);
     const consumed = await processPublishedOutboxRows({
       db: params.db,
       maxItems: remaining,
-      attemptsHashKey,
-      processedHashKey,
-      deadLetterStreamKey,
       messageProcessor,
-      maxAttempts,
       result,
     });
     remaining = Math.max(0, remaining - consumed);

@@ -63,6 +63,7 @@ async function createWorkflowFixture(): Promise<string> {
 async function createPublishedOutboxRecord(params: {
   workflowId: string;
   keyPrefix: string;
+  maxAttempts?: number;
 }): Promise<string> {
   const result = await db
     .insert(schema.deliveryOutboxV3)
@@ -72,7 +73,7 @@ async function createPublishedOutboxRecord(params: {
       dedupeKey: `${params.keyPrefix}:dedupe`,
       idempotencyKey: `${params.keyPrefix}:idem`,
       availableAt: new Date("2026-03-18T10:00:00.000Z"),
-      maxAttempts: 3,
+      maxAttempts: params.maxAttempts ?? 3,
       payloadJson: {
         kind: "signal",
         journalId: `${params.keyPrefix}:journal`,
@@ -102,16 +103,25 @@ beforeEach(async () => {
 });
 
 describe("drainOutboxV3Worker", () => {
-  it("uses the db fallback on local redis-http and stays idempotent", async () => {
+  it("uses the db fallback on local redis-http and retires the row in postgres", async () => {
     const originalRedisUrl = process.env.REDIS_URL;
     process.env.REDIS_URL = "http://localhost:8079";
-    const xgroupSpy = vi
-      .spyOn(redis, "xgroup")
-      .mockRejectedValue(new Error("consumer groups should not be used"));
+    const redisCallSpies = [
+      vi.spyOn(redis, "xgroup"),
+      vi.spyOn(redis, "xreadgroup"),
+      vi.spyOn(redis, "xautoclaim"),
+      vi.spyOn(redis, "xack"),
+      vi.spyOn(redis, "xadd"),
+      vi.spyOn(redis, "hset"),
+      vi.spyOn(redis, "hget"),
+      vi.spyOn(redis, "hincrby"),
+      vi.spyOn(redis, "hdel"),
+      vi.spyOn(redis, "pexpire"),
+    ];
 
     try {
       const workflowId = await createWorkflowFixture();
-      await createPublishedOutboxRecord({
+      const outboxId = await createPublishedOutboxRecord({
         workflowId,
         keyPrefix: `dl3:test:v3-worker-fallback:${nanoid()}`,
       });
@@ -125,10 +135,6 @@ describe("drainOutboxV3Worker", () => {
         readBatchSize: 1,
         blockMs: 0,
         processMessage,
-        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
-        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
-        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
-        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
       });
 
       expect(first).toEqual({
@@ -138,7 +144,18 @@ describe("drainOutboxV3Worker", () => {
         retried: 0,
       });
       expect(processMessage).toHaveBeenCalledTimes(1);
-      expect(xgroupSpy).not.toHaveBeenCalled();
+      for (const spy of redisCallSpies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+      const row = await db.query.deliveryOutboxV3.findFirst({
+        where: eq(schema.deliveryOutboxV3.id, outboxId),
+      });
+      expect(row).toMatchObject({
+        status: "cancelled",
+        attemptCount: 0,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      });
 
       const second = await drainOutboxV3Worker({
         db,
@@ -147,10 +164,6 @@ describe("drainOutboxV3Worker", () => {
         readBatchSize: 1,
         blockMs: 0,
         processMessage,
-        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
-        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
-        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
-        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
       });
 
       expect(second).toEqual({
@@ -160,10 +173,13 @@ describe("drainOutboxV3Worker", () => {
         retried: 0,
       });
       expect(processMessage).toHaveBeenCalledTimes(1);
-      expect(xgroupSpy).not.toHaveBeenCalled();
-      expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(0);
+      for (const spy of redisCallSpies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
     } finally {
-      xgroupSpy.mockRestore();
+      for (const spy of redisCallSpies) {
+        spy.mockRestore();
+      }
       if (typeof originalRedisUrl === "undefined") {
         delete process.env.REDIS_URL;
       } else {
@@ -175,12 +191,25 @@ describe("drainOutboxV3Worker", () => {
   it("dead-letters a failing published row in local fallback mode once", async () => {
     const originalRedisUrl = process.env.REDIS_URL;
     process.env.REDIS_URL = "http://localhost:8079";
+    const redisCallSpies = [
+      vi.spyOn(redis, "xgroup"),
+      vi.spyOn(redis, "xreadgroup"),
+      vi.spyOn(redis, "xautoclaim"),
+      vi.spyOn(redis, "xack"),
+      vi.spyOn(redis, "xadd"),
+      vi.spyOn(redis, "hset"),
+      vi.spyOn(redis, "hget"),
+      vi.spyOn(redis, "hincrby"),
+      vi.spyOn(redis, "hdel"),
+      vi.spyOn(redis, "pexpire"),
+    ];
 
     try {
       const workflowId = await createWorkflowFixture();
       const outboxId = await createPublishedOutboxRecord({
         workflowId,
         keyPrefix: `dl3:test:v3-worker-fallback-fail:${nanoid()}`,
+        maxAttempts: 1,
       });
 
       const processMessage = vi.fn(async () => {
@@ -191,14 +220,9 @@ describe("drainOutboxV3Worker", () => {
         db,
         consumerName: "worker-local-fallback-fail",
         maxItems: 1,
-        maxAttempts: 1,
         readBatchSize: 1,
         blockMs: 0,
         processMessage,
-        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
-        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
-        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
-        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
       });
 
       expect(first).toEqual({
@@ -208,29 +232,26 @@ describe("drainOutboxV3Worker", () => {
         retried: 0,
       });
       expect(processMessage).toHaveBeenCalledTimes(1);
-      expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(1);
+      for (const spy of redisCallSpies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
       const row = await db.query.deliveryOutboxV3.findFirst({
         where: eq(schema.deliveryOutboxV3.id, outboxId),
       });
       expect(row).toMatchObject({
         status: "dead_letter",
+        attemptCount: 1,
+        lastErrorCode: "v3_outbox_worker_failed",
+        lastErrorMessage: expect.stringContaining("processor failed"),
       });
-      expect(
-        await redis.hget(OUTBOX_WORKER_PROCESSED_HASH, outboxId),
-      ).not.toBeNull();
 
       const second = await drainOutboxV3Worker({
         db,
         consumerName: "worker-local-fallback-fail",
         maxItems: 1,
-        maxAttempts: 1,
         readBatchSize: 1,
         blockMs: 0,
         processMessage,
-        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
-        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
-        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
-        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
       });
 
       expect(second).toEqual({
@@ -240,8 +261,13 @@ describe("drainOutboxV3Worker", () => {
         retried: 0,
       });
       expect(processMessage).toHaveBeenCalledTimes(1);
-      expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(1);
+      for (const spy of redisCallSpies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
     } finally {
+      for (const spy of redisCallSpies) {
+        spy.mockRestore();
+      }
       if (typeof originalRedisUrl === "undefined") {
         delete process.env.REDIS_URL;
       } else {
