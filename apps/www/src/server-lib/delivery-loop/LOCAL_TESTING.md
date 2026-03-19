@@ -75,6 +75,63 @@ VALUES ('local-dev-user-001', '<flag-id>', true);
 
 ## Running an E2E Test
 
+### Local Testing Framework (Recommended)
+
+Use the local framework command for repeatable checks:
+
+```bash
+# 1) Verify local DB + required delivery-loop tables (v2 + v3)
+pnpm delivery-loop:local preflight
+
+# 2) Run fast validation profile (typecheck + lint + core tests)
+pnpm delivery-loop:local run --profile fast
+
+# 3) Run full profile (adds heavier coordinator/webhook suites)
+pnpm delivery-loop:local run --profile full
+
+# 4) Inspect workflow state/events quickly
+pnpm delivery-loop:local snapshot --workflow-id <workflow-id>
+# or
+pnpm delivery-loop:local snapshot --thread-id <thread-id>
+
+# 5) Run the real E2E PR flow harness
+pnpm delivery-loop:local e2e --repo <owner/repo> --user-id <id>
+
+# Optional deterministic inspection mode
+pnpm delivery-loop:local e2e --dry-run --thread-id <thread-id>
+```
+
+Framework source:
+
+- `scripts/delivery-loop-local-framework.ts`
+
+### E2E PR Flow Harness
+
+The `e2e` command is the deterministic end-to-end check for delivery-loop PR creation.
+
+It does two different jobs:
+
+- **Real mode** creates a minimal task in a real repo, nudges the local app through the internal scheduled-tasks cron endpoint, and waits for the delivery loop to create a linked PR row.
+- **Dry-run mode** inspects an already-created thread/workflow and validates that the PR linkage exists without creating a new task.
+
+The harness does not require manual cron nudges. It calls the internal scheduled-tasks cron endpoint itself on every poll so the flow advances on its own in local development.
+
+When the harness gets stuck, it prints a single diagnostics snapshot that includes:
+
+- `thread`
+- `delivery_workflow`
+- `thread_chat`
+- `github_pr`
+- `delivery_workflow_event`
+- `sdlc_loop_signal_inbox`
+- `delivery_workflow_head_v3`
+- `delivery_loop_journal_v3`
+- `delivery_effect_ledger_v3`
+- `delivery_timer_ledger_v3`
+- `delivery_work_item`
+
+That snapshot is the first place to look when the run stalls on infra or ACP issues.
+
 ### Create a Task
 
 ```bash
@@ -178,6 +235,13 @@ The `sandbox-agent` binary takes ~15s to register ACP endpoints after container 
 - Check `infra_retry_count` -- if >0, ACP startup failures occurred.
 - Check event history for the `manual_fix_required` event and its payload.
 - If all failures are "Internal error", these are transient ACP startup issues handled by the retry budget.
+
+### Real E2E PR harness cannot find a PR row
+
+- Re-run the harness in `--dry-run` mode against the stuck thread to capture the diagnostics snapshot.
+- Check `github_pr` for a row tied to the thread.
+- Check `delivery_workflow_event` and `delivery_effect_ledger_v3` to see whether the workflow advanced but the PR linkage effect never committed.
+- Check `sdlc_loop_signal_inbox` for unprocessed or dead-lettered signals.
 
 ### Docker containers eating memory
 

@@ -389,8 +389,12 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Harness reports stuck-state diagnostics with workflow/signal/effect snapshots.
 - **Validation**:
   - Scripted end-to-end local run.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Extended `scripts/delivery-loop-local-framework.ts` with an `e2e` command that creates a minimal real task, nudges the app through the internal scheduled-tasks cron endpoint on each poll, and waits for a linked PR row before declaring success.
+  - Added deterministic `--dry-run` mode so a stuck thread/workflow can be inspected without creating a new task, while still validating PR linkage when it exists.
+  - Added stuck-state diagnostics output that snapshots `thread`, `delivery_workflow`, `thread_chat`, `github_pr`, `delivery_workflow_event`, `sdlc_loop_signal_inbox`, `delivery_workflow_head_v3`, `delivery_loop_journal_v3`, `delivery_effect_ledger_v3`, `delivery_timer_ledger_v3`, and `delivery_work_item`.
+  - Updated `apps/www/src/server-lib/delivery-loop/LOCAL_TESTING.md` with the new harness flow and the first-step triage checklist for stalled runs.
 
 ## Sprint 4: Big-Bang Cutover + Soak
 
