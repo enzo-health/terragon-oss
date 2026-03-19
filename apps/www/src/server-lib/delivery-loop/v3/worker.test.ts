@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid/non-secure";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
+import * as schema from "@terragon/shared/db/schema";
+import {
+  createTestThread,
+  createTestUser,
+} from "@terragon/shared/model/test-helpers";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { drainOutboxV3Worker } from "./worker";
 
 const OUTBOX_REDIS_KEY_PREFIX = "dl3:test:v3-worker";
@@ -39,7 +46,55 @@ async function addStreamMessage(params: {
   return messageId;
 }
 
+async function createWorkflowFixture(): Promise<string> {
+  const { user } = await createTestUser({ db });
+  const { threadId } = await createTestThread({ db, userId: user.id });
+  const workflow = await createWorkflow({
+    db,
+    threadId,
+    generation: 1,
+    kind: "implementing",
+    userId: user.id,
+    stateJson: { state: "implementing" },
+  });
+  return workflow.id;
+}
+
+async function createPublishedOutboxRecord(params: {
+  workflowId: string;
+  keyPrefix: string;
+}): Promise<string> {
+  const result = await db
+    .insert(schema.deliveryOutboxV3)
+    .values({
+      workflowId: params.workflowId,
+      topic: "signal",
+      dedupeKey: `${params.keyPrefix}:dedupe`,
+      idempotencyKey: `${params.keyPrefix}:idem`,
+      availableAt: new Date("2026-03-18T10:00:00.000Z"),
+      maxAttempts: 3,
+      payloadJson: {
+        kind: "signal",
+        journalId: `${params.keyPrefix}:journal`,
+        workflowId: params.workflowId,
+        eventType: "bootstrap",
+        source: "daemon",
+      },
+      status: "published",
+      publishedAt: new Date("2026-03-18T10:00:00.000Z"),
+      relayMessageId: `${params.keyPrefix}:relay`,
+    })
+    .returning({ id: schema.deliveryOutboxV3.id });
+
+  const row = result[0];
+  if (!row) {
+    throw new Error("Failed to create published outbox row");
+  }
+  return row.id;
+}
+
 beforeEach(async () => {
+  await db.delete(schema.deliveryOutboxV3);
   const redisKeys = await redis.keys(`${OUTBOX_REDIS_KEY_PREFIX}*`);
   if (redisKeys.length > 0) {
     await redis.del(...redisKeys);
@@ -47,6 +102,154 @@ beforeEach(async () => {
 });
 
 describe("drainOutboxV3Worker", () => {
+  it("uses the db fallback on local redis-http and stays idempotent", async () => {
+    const originalRedisUrl = process.env.REDIS_URL;
+    process.env.REDIS_URL = "http://localhost:8079";
+    const xgroupSpy = vi
+      .spyOn(redis, "xgroup")
+      .mockRejectedValue(new Error("consumer groups should not be used"));
+
+    try {
+      const workflowId = await createWorkflowFixture();
+      await createPublishedOutboxRecord({
+        workflowId,
+        keyPrefix: `dl3:test:v3-worker-fallback:${nanoid()}`,
+      });
+
+      const processMessage = vi.fn(async () => {});
+
+      const first = await drainOutboxV3Worker({
+        db,
+        consumerName: "worker-local-fallback",
+        maxItems: 1,
+        readBatchSize: 1,
+        blockMs: 0,
+        processMessage,
+        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
+        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
+        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
+      });
+
+      expect(first).toEqual({
+        processed: 1,
+        acknowledged: 1,
+        deadLettered: 0,
+        retried: 0,
+      });
+      expect(processMessage).toHaveBeenCalledTimes(1);
+      expect(xgroupSpy).not.toHaveBeenCalled();
+
+      const second = await drainOutboxV3Worker({
+        db,
+        consumerName: "worker-local-fallback",
+        maxItems: 1,
+        readBatchSize: 1,
+        blockMs: 0,
+        processMessage,
+        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
+        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
+        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
+      });
+
+      expect(second).toEqual({
+        processed: 0,
+        acknowledged: 0,
+        deadLettered: 0,
+        retried: 0,
+      });
+      expect(processMessage).toHaveBeenCalledTimes(1);
+      expect(xgroupSpy).not.toHaveBeenCalled();
+      expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(0);
+    } finally {
+      xgroupSpy.mockRestore();
+      if (typeof originalRedisUrl === "undefined") {
+        delete process.env.REDIS_URL;
+      } else {
+        process.env.REDIS_URL = originalRedisUrl;
+      }
+    }
+  });
+
+  it("dead-letters a failing published row in local fallback mode once", async () => {
+    const originalRedisUrl = process.env.REDIS_URL;
+    process.env.REDIS_URL = "http://localhost:8079";
+
+    try {
+      const workflowId = await createWorkflowFixture();
+      const outboxId = await createPublishedOutboxRecord({
+        workflowId,
+        keyPrefix: `dl3:test:v3-worker-fallback-fail:${nanoid()}`,
+      });
+
+      const processMessage = vi.fn(async () => {
+        throw new Error("processor failed");
+      });
+
+      const first = await drainOutboxV3Worker({
+        db,
+        consumerName: "worker-local-fallback-fail",
+        maxItems: 1,
+        maxAttempts: 1,
+        readBatchSize: 1,
+        blockMs: 0,
+        processMessage,
+        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
+        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
+        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
+      });
+
+      expect(first).toEqual({
+        processed: 1,
+        acknowledged: 0,
+        deadLettered: 1,
+        retried: 0,
+      });
+      expect(processMessage).toHaveBeenCalledTimes(1);
+      expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(1);
+      const row = await db.query.deliveryOutboxV3.findFirst({
+        where: eq(schema.deliveryOutboxV3.id, outboxId),
+      });
+      expect(row).toMatchObject({
+        status: "dead_letter",
+      });
+      expect(
+        await redis.hget(OUTBOX_WORKER_PROCESSED_HASH, outboxId),
+      ).not.toBeNull();
+
+      const second = await drainOutboxV3Worker({
+        db,
+        consumerName: "worker-local-fallback-fail",
+        maxItems: 1,
+        maxAttempts: 1,
+        readBatchSize: 1,
+        blockMs: 0,
+        processMessage,
+        attemptsHashKey: OUTBOX_WORKER_ATTEMPTS_HASH,
+        processedHashKey: OUTBOX_WORKER_PROCESSED_HASH,
+        deadLetterStreamKey: OUTBOX_WORKER_DLQ_STREAM,
+        heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
+      });
+
+      expect(second).toEqual({
+        processed: 0,
+        acknowledged: 0,
+        deadLettered: 0,
+        retried: 0,
+      });
+      expect(processMessage).toHaveBeenCalledTimes(1);
+      expect(await redis.xlen(OUTBOX_WORKER_DLQ_STREAM)).toBe(1);
+    } finally {
+      if (typeof originalRedisUrl === "undefined") {
+        delete process.env.REDIS_URL;
+      } else {
+        process.env.REDIS_URL = originalRedisUrl;
+      }
+    }
+  });
+
   it("assigns a stream message to only one parallel worker", async () => {
     const streamKey = `dl3:test:v3-worker:stream:${nanoid()}`;
     const groupName = `dl3:test:group:${nanoid()}`;

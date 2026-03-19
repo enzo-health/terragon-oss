@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq, gt, or } from "drizzle-orm";
 import { parseLoopEventV3 } from "./contracts";
 import { appendEventAndAdvanceV3 } from "./kernel";
 import { type OutboxPayloadV3 } from "./contracts";
@@ -7,6 +7,7 @@ import * as schema from "@terragon/shared/db/schema";
 import type {
   DeliveryEffectKindV3,
   DeliveryOutboxTopicV3,
+  DeliveryOutboxV3Row,
   DeliverySignalSourceV3,
   DeliveryTimerKindV3,
 } from "@terragon/shared/db/types";
@@ -28,6 +29,7 @@ const OUTBOX_WORKER_DEFAULT_HEARTBEAT_TTL_MS = 20_000;
 const OUTBOX_WORKER_DEFAULT_BLOCK_MS = 0;
 const OUTBOX_WORKER_ATTEMPT_TTL_MS = 10 * 60 * 1000;
 const OUTBOX_WORKER_PROCESSED_TTL_MS = 60 * 60 * 1000;
+const LOCAL_REDIS_HTTP_PORT = 8079;
 
 export type OutboxWorkerMessage = {
   streamMessageId: string;
@@ -90,6 +92,23 @@ type DeadLetterPayload = Pick<
 > & {
   reason: string;
 };
+
+function isLocalRedisHttpEndpoint(redisUrl: string | undefined): boolean {
+  if (!redisUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(redisUrl);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
+      parsed.port === String(LOCAL_REDIS_HTTP_PORT)
+    );
+  } catch {
+    return false;
+  }
+}
 
 function parseRedisMessageValues(
   rawValues: unknown,
@@ -430,6 +449,39 @@ async function ensureConsumerGroup(
   }
 }
 
+async function loadPublishedOutboxRows(params: {
+  db: DB;
+  maxItems: number;
+  cursor?: {
+    publishedAt: Date;
+    id: string;
+  };
+}): Promise<DeliveryOutboxV3Row[]> {
+  const cursor = params.cursor;
+  const whereClause = cursor
+    ? and(
+        eq(schema.deliveryOutboxV3.status, "published"),
+        or(
+          gt(schema.deliveryOutboxV3.publishedAt, cursor.publishedAt),
+          and(
+            eq(schema.deliveryOutboxV3.publishedAt, cursor.publishedAt),
+            gt(schema.deliveryOutboxV3.id, cursor.id),
+          ),
+        ),
+      )
+    : eq(schema.deliveryOutboxV3.status, "published");
+
+  return params.db
+    .select()
+    .from(schema.deliveryOutboxV3)
+    .where(whereClause)
+    .orderBy(
+      asc(schema.deliveryOutboxV3.publishedAt),
+      asc(schema.deliveryOutboxV3.id),
+    )
+    .limit(params.maxItems);
+}
+
 async function heartbeatConsumer(
   heartbeatKey: string,
   consumerName: string,
@@ -492,6 +544,25 @@ async function ackStreamMessage(params: {
   }
 }
 
+function parsePublishedOutboxRow(
+  row: DeliveryOutboxV3Row,
+): OutboxWorkerMessage | null {
+  const payload = parseOutboxPayload(row.payloadJson);
+  if (!payload) {
+    return null;
+  }
+
+  return {
+    streamMessageId: row.relayMessageId ?? row.id,
+    outboxId: row.id,
+    workflowId: row.workflowId,
+    topic: row.topic,
+    payload,
+    dedupeKey: row.dedupeKey,
+    idempotencyKey: row.idempotencyKey,
+  };
+}
+
 async function incrementAttemptCount(
   attemptsHashKey: string,
   outboxId: string,
@@ -538,6 +609,24 @@ async function deadLetterMessage(params: {
     topic: params.message.topic,
     reason: params.message.reason,
   });
+}
+
+async function markPublishedOutboxDeadLettered(params: {
+  db: DB;
+  outboxId: string;
+  errorCode: string;
+  errorMessage: string;
+}): Promise<void> {
+  await params.db
+    .update(schema.deliveryOutboxV3)
+    .set({
+      status: "dead_letter",
+      lastErrorCode: params.errorCode,
+      lastErrorMessage: params.errorMessage,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    })
+    .where(eq(schema.deliveryOutboxV3.id, params.outboxId));
 }
 
 async function applySignalMessage(params: {
@@ -724,6 +813,144 @@ async function processEntries(params: {
   return consumed;
 }
 
+async function processPublishedOutboxRows(params: {
+  db: DB;
+  maxItems: number;
+  attemptsHashKey: string;
+  processedHashKey: string;
+  deadLetterStreamKey: string;
+  messageProcessor: (params: {
+    db: DB;
+    message: OutboxWorkerMessage;
+  }) => Promise<void>;
+  maxAttempts: number;
+  result: OutboxWorkerResult;
+}): Promise<number> {
+  let consumed = 0;
+  let cursor: { publishedAt: Date; id: string } | undefined;
+
+  while (consumed < params.maxItems) {
+    const rows = await loadPublishedOutboxRows({
+      db: params.db,
+      maxItems: params.maxItems - consumed,
+      cursor,
+    });
+    if (rows.length === 0) {
+      break;
+    }
+
+    for (const row of rows) {
+      cursor = { publishedAt: row.publishedAt ?? row.createdAt, id: row.id };
+
+      const parsed = parsePublishedOutboxRow(row);
+      if (!parsed) {
+        const reason = "Failed to parse published outbox payload";
+        await deadLetterMessage({
+          deadLetterStreamKey: params.deadLetterStreamKey,
+          message: {
+            streamMessageId: row.relayMessageId ?? row.id,
+            outboxId: row.id,
+            workflowId: row.workflowId,
+            topic: row.topic,
+            reason,
+          },
+        });
+        await markPublishedOutboxDeadLettered({
+          db: params.db,
+          outboxId: row.id,
+          errorCode: "outbox_worker_parse_failed",
+          errorMessage: reason,
+        });
+        await clearAttemptCount(params.attemptsHashKey, row.id);
+        await markMessageProcessed(
+          params.processedHashKey,
+          row.id,
+          row.relayMessageId ?? row.id,
+        );
+        params.result.deadLettered += 1;
+        params.result.processed += 1;
+        consumed += 1;
+        if (consumed >= params.maxItems) {
+          break;
+        }
+        continue;
+      }
+
+      const alreadyProcessed = await isMessageAlreadyProcessed(
+        params.processedHashKey,
+        parsed.outboxId,
+      );
+      if (alreadyProcessed) {
+        await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
+        continue;
+      }
+
+      try {
+        await params.messageProcessor({ db: params.db, message: parsed });
+        await markMessageProcessed(
+          params.processedHashKey,
+          parsed.outboxId,
+          parsed.streamMessageId,
+        );
+        await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
+        params.result.acknowledged += 1;
+        params.result.processed += 1;
+        consumed += 1;
+        if (consumed >= params.maxItems) {
+          break;
+        }
+        continue;
+      } catch (error) {
+        const attempts = await incrementAttemptCount(
+          params.attemptsHashKey,
+          parsed.outboxId,
+        );
+
+        if (attempts >= params.maxAttempts) {
+          const reason = `Outbox worker exhausted attempts: ${coerceString(
+            error instanceof Error ? error.message : error,
+          )}`;
+          await deadLetterMessage({
+            deadLetterStreamKey: params.deadLetterStreamKey,
+            message: {
+              ...parsed,
+              reason,
+            },
+          });
+          await markPublishedOutboxDeadLettered({
+            db: params.db,
+            outboxId: parsed.outboxId,
+            errorCode: "v3_outbox_worker_failed",
+            errorMessage: reason,
+          });
+          await markMessageProcessed(
+            params.processedHashKey,
+            parsed.outboxId,
+            parsed.streamMessageId,
+          );
+          await clearAttemptCount(params.attemptsHashKey, parsed.outboxId);
+          params.result.deadLettered += 1;
+          params.result.processed += 1;
+          consumed += 1;
+          if (consumed >= params.maxItems) {
+            break;
+          }
+          continue;
+        }
+
+        params.result.retried += 1;
+        params.result.processed += 1;
+        consumed += 1;
+        if (consumed >= params.maxItems) {
+          break;
+        }
+      }
+    }
+  }
+
+  return consumed;
+}
+
 export async function drainOutboxV3Worker(
   params: OutboxWorkerOptions,
 ): Promise<OutboxWorkerResult> {
@@ -752,8 +979,7 @@ export async function drainOutboxV3Worker(
   const messageProcessor =
     params.processMessage ?? processOutboxMessageWithDefaults;
   const ackMessage = params.ackMessage ?? ackStreamMessage;
-
-  await ensureConsumerGroup(streamKey, groupName);
+  const useLocalDbFallback = isLocalRedisHttpEndpoint(process.env.REDIS_URL);
 
   let remaining = maxItems;
   let staleCursor = "0-0";
@@ -763,6 +989,24 @@ export async function drainOutboxV3Worker(
     deadLettered: 0,
     retried: 0,
   };
+
+  if (useLocalDbFallback) {
+    await heartbeatConsumer(heartbeatKey, consumerName, heartbeatTtlMs);
+    const consumed = await processPublishedOutboxRows({
+      db: params.db,
+      maxItems: remaining,
+      attemptsHashKey,
+      processedHashKey,
+      deadLetterStreamKey,
+      messageProcessor,
+      maxAttempts,
+      result,
+    });
+    remaining = Math.max(0, remaining - consumed);
+    return result;
+  }
+
+  await ensureConsumerGroup(streamKey, groupName);
 
   while (remaining > 0) {
     await heartbeatConsumer(heartbeatKey, consumerName, heartbeatTtlMs);
