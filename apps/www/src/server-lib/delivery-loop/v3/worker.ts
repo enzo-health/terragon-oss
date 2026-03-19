@@ -2,6 +2,7 @@ import { and, asc, eq, gt, or } from "drizzle-orm";
 import { parseLoopEventV3 } from "./contracts";
 import { appendEventAndAdvanceV3 } from "./kernel";
 import { type OutboxPayloadV3 } from "./contracts";
+import { env } from "@terragon/env/apps-www";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type {
@@ -979,7 +980,9 @@ export async function drainOutboxV3Worker(
   const messageProcessor =
     params.processMessage ?? processOutboxMessageWithDefaults;
   const ackMessage = params.ackMessage ?? ackStreamMessage;
-  const useLocalDbFallback = isLocalRedisHttpEndpoint(process.env.REDIS_URL);
+  const useLocalDbFallback = isLocalRedisHttpEndpoint(
+    process.env.REDIS_URL ?? env.REDIS_URL,
+  );
 
   let remaining = maxItems;
   let staleCursor = "0-0";
