@@ -301,7 +301,7 @@ describe("v2 pipeline — end-to-end validation", () => {
       const { workflowId } = await enrollWorkflow("implementing");
 
       // 2. Simulate daemon completion via ingress adapter
-      // handleDaemonIngress writes to signal inbox AND runs a micro-tick
+      // handleDaemonIngress only appends ingress signals; progression is worker-driven.
       await injectDaemonEvent(workflowId, {
         threadId: testThreadId,
         loopId: workflowId,
@@ -310,6 +310,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         headSha: "sha-pipeline-test",
         summary: "Implementation complete",
       });
+      await tick(workflowId);
 
       // 3. Verify state transitioned to gating(review)
       await assertWorkflowState(workflowId, "gating", "review");
@@ -337,6 +338,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         headSha: "sha-terminal-first",
         summary: "Completed without ack",
       });
+      await tick(workflowId);
 
       // Middleware should treat this as terminal-first in terminal dispatch lifecycle.
       await assertWorkflowState(workflowId, "gating", "review");
@@ -429,6 +431,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         status: "completed",
         headSha: "sha-wq-test",
       });
+      await tick(workflowId);
 
       // Verify work items exist and are pending (publications for gating)
       const items = await getPendingWorkItems(workflowId);
@@ -468,6 +471,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         status: "completed",
         headSha: "sha-pub-test",
       });
+      await tick(workflowId);
 
       const items = await getPendingWorkItems(workflowId);
       const pubItems = items.filter((w) => w.kind === "publication");
@@ -500,6 +504,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         headSha: "sha-lifecycle",
         summary: "done",
       });
+      await tick(workflowId);
       await assertWorkflowState(workflowId, "gating", "review");
 
       // 3. Review passes → gating(ci)
@@ -566,6 +571,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         status: "completed",
         headSha: "sha-fix-1",
       });
+      await tick(workflowId);
       await assertWorkflowState(workflowId, "gating", "review");
 
       // Review blocked → back to implementing
@@ -593,6 +599,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         status: "completed",
         headSha: "sha-fix-2",
       });
+      await tick(workflowId);
       await assertWorkflowState(workflowId, "gating", "review");
 
       // fixAttemptCount reset after successful implementation
@@ -627,6 +634,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         status: "completed",
         headSha: "sha-b1",
       });
+      await tick(wf.id);
       await assertWorkflowState(wf.id, "gating", "review");
 
       await injectGitHubSignal(wf.id, {
@@ -710,6 +718,7 @@ describe("v2 pipeline — end-to-end validation", () => {
         status: "completed",
         headSha: "sha-status",
       });
+      await tick(workflowId);
 
       status = await getRuntimeStatus({ db, workflowId });
       expect(status!.state).toBe("gating");
