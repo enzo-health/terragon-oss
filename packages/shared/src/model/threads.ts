@@ -1137,6 +1137,8 @@ export async function updateThread({
   threadId: string;
   updates: Partial<ThreadInsert>;
 }) {
+  const shouldRefreshDiff =
+    updates.gitDiff !== undefined || updates.gitDiffStats !== undefined;
   const updatesObject: Partial<ThreadInsertRaw> = { ...updates };
   for (const stringKey in updatesObject) {
     const key = stringKey as keyof ThreadInsertRaw;
@@ -1183,6 +1185,9 @@ export async function updateThread({
                 : toBroadcastActiveChatRealtimeFields(
                     updatedShell.primaryThreadChat,
                   ),
+            ...(shouldRefreshDiff
+              ? { diffChanged: true, refetch: ["diff"] }
+              : {}),
           },
         ],
       },
@@ -1696,19 +1701,28 @@ export async function getActiveThreadCount({
   db: DB;
   userId: string;
 }) {
+  const latestThreadChatIsActive = sql<boolean>`exists (
+    select 1
+    from thread_chat tc
+    where tc.thread_id = ${schema.thread.id}
+      and tc.status in ('booting', 'working')
+      and not exists (
+        select 1
+        from thread_chat newer
+        where newer.thread_id = tc.thread_id
+          and newer.created_at > tc.created_at
+      )
+  )`;
+
   const result = await db
     .selectDistinct({ id: schema.thread.id })
     .from(schema.thread)
-    .leftJoin(
-      schema.threadChat,
-      eq(schema.thread.id, schema.threadChat.threadId),
-    )
     .where(
       and(
         eq(schema.thread.userId, userId),
         or(
           inArray(schema.thread.status, activeThreadStatuses),
-          inArray(schema.threadChat.status, activeThreadStatuses),
+          latestThreadChatIsActive,
         ),
       ),
     );

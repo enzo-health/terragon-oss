@@ -419,6 +419,49 @@ describe("thread", () => {
         }),
       );
     });
+
+    it("publishes diff refresh metadata when git diff fields are updated", async () => {
+      const { threadId, threadChatId } = await createTestThread({
+        db,
+        userId: user.id,
+        enableThreadChatCreation: true,
+      });
+      const publishSpy = vi
+        .spyOn(broadcastServer, "publishBroadcastUserMessage")
+        .mockResolvedValue(undefined);
+
+      await updateThread({
+        db,
+        userId: user.id,
+        threadId,
+        updates: {
+          gitDiff: "diff --git a/README.md b/README.md",
+          gitDiffStats: {
+            files: 1,
+            additions: 2,
+            deletions: 0,
+          },
+        },
+      });
+
+      expect(publishSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "user",
+          id: user.id,
+          data: {
+            threadPatches: [
+              expect.objectContaining({
+                threadId,
+                threadChatId,
+                op: "upsert",
+                diffChanged: true,
+                refetch: ["diff"],
+              }),
+            ],
+          },
+        }),
+      );
+    });
   });
 
   describe("updateThreadChat", () => {
@@ -3370,6 +3413,31 @@ describe("thread", () => {
 
       const count = await getActiveThreadCount({ db, userId: user.id });
       expect(count).toBe(1);
+    });
+
+    it("should ignore stale active threadChats when the latest threadChat is complete", async () => {
+      const { threadId } = await createTestThread({
+        db,
+        userId: user.id,
+        chatOverrides: { status: "working" },
+        enableThreadChatCreation: true,
+      });
+      await db
+        .update(schema.thread)
+        .set({ status: "complete" })
+        .where(eq(schema.thread.id, threadId));
+
+      const newerTimestamp = new Date(Date.now() + 1_000);
+      await db.insert(schema.threadChat).values({
+        userId: user.id,
+        threadId,
+        status: "complete",
+        createdAt: newerTimestamp,
+        updatedAt: newerTimestamp,
+      });
+
+      const count = await getActiveThreadCount({ db, userId: user.id });
+      expect(count).toBe(0);
     });
 
     it("should not count threadChat when it is complete", async () => {

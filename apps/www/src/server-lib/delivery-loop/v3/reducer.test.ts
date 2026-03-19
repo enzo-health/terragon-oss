@@ -44,6 +44,32 @@ describe("reduceV3", () => {
     });
   });
 
+  it("planning dispatch_sent implicitly enters implementing and arms ack timeout", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
+    const result = reduceV3({
+      head: head("planning"),
+      event: {
+        type: "dispatch_sent",
+        runId: "run-bootstrap",
+        ackDeadlineAt,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.activeRunId).toBe("run-bootstrap");
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]).toMatchObject({
+      kind: "ack_timeout_check",
+      dueAt: ackDeadlineAt,
+      payload: {
+        kind: "ack_timeout_check",
+        runId: "run-bootstrap",
+      },
+    });
+  });
+
   it("gating_review dispatch_sent arms ack timeout check", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
@@ -257,6 +283,25 @@ describe("reduceV3", () => {
     expect(result.effects).toHaveLength(0);
   });
 
+  it("ignores review gate verdicts without runId while a run is active", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_review"),
+        activeGate: "review",
+        activeRunId: "run-current",
+      },
+      event: {
+        type: "gate_review_passed",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeRunId).toBe("run-current");
+    expect(result.effects).toHaveLength(0);
+  });
+
   it("gate_review_passed clears active run before entering CI gate", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduceV3({
@@ -325,5 +370,106 @@ describe("reduceV3", () => {
       fromActiveGate: "ci",
       toActiveGate: "review",
     });
+  });
+
+  it("ignores stale CI verdicts with mismatched headSha", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_ci"),
+        activeGate: "ci",
+        headSha: "sha-current",
+      },
+      event: {
+        type: "gate_ci_passed",
+        headSha: "sha-stale",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_ci");
+    expect(result.head.headSha).toBe("sha-current");
+    expect(result.effects).toHaveLength(0);
+  });
+
+  it("ignores uncorrelated CI verdicts when headSha is missing", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_ci"),
+        activeGate: "ci",
+        headSha: "sha-current",
+      },
+      event: {
+        type: "gate_ci_failed",
+        reason: "CI checks failed",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_ci");
+    expect(result.effects).toHaveLength(0);
+  });
+
+  it("accepts correlated CI pass and transitions to awaiting_pr", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_ci"),
+        activeGate: "ci",
+        headSha: "sha-current",
+      },
+      event: {
+        type: "gate_ci_passed",
+        headSha: "sha-current",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.activeGate).toBeNull();
+    expect(result.head.activeRunId).toBeNull();
+  });
+
+  it("normalizes terminal states through invariants", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("done"),
+        activeGate: "ci",
+        activeRunId: "run-stale",
+      },
+      event: {
+        type: "run_failed",
+        runId: "run-stale",
+        message: "late error",
+        category: null,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("done");
+    expect(result.head.activeGate).toBeNull();
+    expect(result.head.activeRunId).toBeNull();
+  });
+
+  it("normalizes stop_requested terminal transition", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_ci"),
+        activeGate: "review",
+        activeRunId: "run-stale",
+        headSha: "sha-current",
+      },
+      event: {
+        type: "stop_requested",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("stopped");
+    expect(result.head.activeGate).toBeNull();
+    expect(result.head.activeRunId).toBeNull();
   });
 });

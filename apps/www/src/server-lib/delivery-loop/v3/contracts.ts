@@ -95,7 +95,6 @@ export function serializeLoopEventV3(
   switch (event.type) {
     case "bootstrap":
     case "plan_completed":
-    case "gate_ci_passed":
     case "resume_requested":
     case "stop_requested":
       return { type: event.type };
@@ -136,9 +135,17 @@ export function serializeLoopEventV3(
         runId: event.runId ?? null,
         reason: event.reason ?? null,
       };
+    case "gate_ci_passed":
+      return {
+        type: event.type,
+        runId: event.runId ?? null,
+        headSha: event.headSha ?? null,
+      };
     case "gate_ci_failed":
       return {
         type: event.type,
+        runId: event.runId ?? null,
+        headSha: event.headSha ?? null,
         reason: event.reason ?? null,
       };
     case "pr_closed":
@@ -157,7 +164,6 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
   switch (payload.type) {
     case "bootstrap":
     case "plan_completed":
-    case "gate_ci_passed":
     case "resume_requested":
     case "stop_requested":
       return { type: payload.type };
@@ -262,6 +268,20 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
       };
     case "gate_ci_failed":
       if (
+        payload.runId !== undefined &&
+        payload.runId !== null &&
+        typeof payload.runId !== "string"
+      ) {
+        return null;
+      }
+      if (
+        payload.headSha !== undefined &&
+        payload.headSha !== null &&
+        typeof payload.headSha !== "string"
+      ) {
+        return null;
+      }
+      if (
         payload.reason !== undefined &&
         payload.reason !== null &&
         typeof payload.reason !== "string"
@@ -270,7 +290,29 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
       }
       return {
         type: "gate_ci_failed",
+        runId: (payload.runId as string | null | undefined) ?? null,
+        headSha: (payload.headSha as string | null | undefined) ?? null,
         reason: (payload.reason as string | null | undefined) ?? null,
+      };
+    case "gate_ci_passed":
+      if (
+        payload.runId !== undefined &&
+        payload.runId !== null &&
+        typeof payload.runId !== "string"
+      ) {
+        return null;
+      }
+      if (
+        payload.headSha !== undefined &&
+        payload.headSha !== null &&
+        typeof payload.headSha !== "string"
+      ) {
+        return null;
+      }
+      return {
+        type: "gate_ci_passed",
+        runId: (payload.runId as string | null | undefined) ?? null,
+        headSha: (payload.headSha as string | null | undefined) ?? null,
       };
     case "pr_closed":
       if (typeof payload.merged !== "boolean") {

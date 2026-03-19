@@ -50,6 +50,50 @@ describe("v3 contracts", () => {
     expect(parsed).toBeNull();
   });
 
+  it("round-trips correlated CI gate events", () => {
+    const serializedPassed = serializeLoopEventV3({
+      type: "gate_ci_passed",
+      runId: "run-ci-1",
+      headSha: "sha-ci-1",
+    });
+    const parsedPassed = parseLoopEventV3(serializedPassed);
+    expect(parsedPassed).toEqual({
+      type: "gate_ci_passed",
+      runId: "run-ci-1",
+      headSha: "sha-ci-1",
+    });
+
+    const serializedFailed = serializeLoopEventV3({
+      type: "gate_ci_failed",
+      runId: "run-ci-2",
+      headSha: "sha-ci-2",
+      reason: "CI checks failed",
+    });
+    const parsedFailed = parseLoopEventV3(serializedFailed);
+    expect(parsedFailed).toEqual({
+      type: "gate_ci_failed",
+      runId: "run-ci-2",
+      headSha: "sha-ci-2",
+      reason: "CI checks failed",
+    });
+  });
+
+  it("rejects malformed CI gate correlation payloads", () => {
+    expect(
+      parseLoopEventV3({
+        type: "gate_ci_passed",
+        headSha: 123,
+      }),
+    ).toBeNull();
+
+    expect(
+      parseLoopEventV3({
+        type: "gate_ci_failed",
+        runId: 123,
+      }),
+    ).toBeNull();
+  });
+
   it("round-trips effect payload contracts", () => {
     const serialized = serializeEffectPayloadV3({
       kind: "ack_timeout_check",

@@ -2,6 +2,7 @@ import { and, asc, eq, gt, or } from "drizzle-orm";
 import { parseLoopEventV3 } from "./contracts";
 import { appendEventAndAdvanceV3 } from "./kernel";
 import { type OutboxPayloadV3 } from "./contracts";
+import type { LoopEventV3 } from "./types";
 import { env } from "@terragon/env/apps-www";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -93,6 +94,184 @@ type DeadLetterPayload = Pick<
 > & {
   reason: string;
 };
+
+type LegacySignalEnvelopeParseResult =
+  | { kind: "event"; event: LoopEventV3 }
+  | { kind: "noop"; reason: string }
+  | { kind: "invalid" };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseLegacySignalEnvelopeToLoopEvent(
+  payload: unknown,
+): LegacySignalEnvelopeParseResult {
+  if (!isRecord(payload)) {
+    return { kind: "invalid" };
+  }
+  const rawEvent = payload.event;
+  if (!isRecord(rawEvent) || typeof rawEvent.kind !== "string") {
+    return { kind: "invalid" };
+  }
+
+  switch (rawEvent.kind) {
+    case "run_completed": {
+      if (typeof rawEvent.runId !== "string") {
+        return { kind: "invalid" };
+      }
+      const rawResult = rawEvent.result;
+      const headSha =
+        isRecord(rawResult) && typeof rawResult.headSha === "string"
+          ? rawResult.headSha
+          : null;
+      return {
+        kind: "event",
+        event: {
+          type: "run_completed",
+          runId: rawEvent.runId,
+          headSha,
+        },
+      };
+    }
+    case "run_failed": {
+      if (typeof rawEvent.runId !== "string") {
+        return { kind: "invalid" };
+      }
+      const rawFailure = rawEvent.failure;
+      const message =
+        isRecord(rawFailure) && typeof rawFailure.message === "string"
+          ? rawFailure.message
+          : "Run failed";
+      const category =
+        isRecord(rawFailure) && typeof rawFailure.kind === "string"
+          ? rawFailure.kind
+          : null;
+      return {
+        kind: "event",
+        event: {
+          type: "run_failed",
+          runId: rawEvent.runId,
+          message,
+          category,
+          lane: undefined,
+        },
+      };
+    }
+    case "resume_requested":
+    case "plan_approved":
+      return {
+        kind: "event",
+        event: { type: "resume_requested" },
+      };
+    case "stop_requested":
+      return {
+        kind: "event",
+        event: { type: "stop_requested" },
+      };
+    case "ci_changed": {
+      const rawResult = rawEvent.result;
+      if (!isRecord(rawResult) || typeof rawResult.passed !== "boolean") {
+        return { kind: "invalid" };
+      }
+      const ciRunId =
+        typeof rawEvent.runId === "string"
+          ? rawEvent.runId
+          : typeof rawResult.runId === "string"
+            ? rawResult.runId
+            : null;
+      const ciHeadSha =
+        typeof rawEvent.headSha === "string"
+          ? rawEvent.headSha
+          : typeof rawResult.headSha === "string"
+            ? rawResult.headSha
+            : null;
+      if (!ciRunId && !ciHeadSha) {
+        return {
+          kind: "noop",
+          reason:
+            "Signal event ci_changed missing runId/headSha for v3 mapping",
+        };
+      }
+      if (rawResult.passed) {
+        return {
+          kind: "event",
+          event: { type: "gate_ci_passed", runId: ciRunId, headSha: ciHeadSha },
+        };
+      }
+      return {
+        kind: "event",
+        event: {
+          type: "gate_ci_failed",
+          runId: ciRunId,
+          headSha: ciHeadSha,
+          reason: null,
+        },
+      };
+    }
+    case "review_changed": {
+      const rawResult = rawEvent.result;
+      if (!isRecord(rawResult) || typeof rawResult.passed !== "boolean") {
+        return { kind: "invalid" };
+      }
+      const reviewRunId =
+        typeof rawEvent.runId === "string"
+          ? rawEvent.runId
+          : typeof rawResult.runId === "string"
+            ? rawResult.runId
+            : null;
+      if (!reviewRunId) {
+        return {
+          kind: "noop",
+          reason: "Signal event review_changed missing runId for v3 mapping",
+        };
+      }
+      if (rawResult.passed) {
+        return {
+          kind: "event",
+          event: {
+            type: "gate_review_passed",
+            runId: reviewRunId,
+          },
+        };
+      }
+      return {
+        kind: "event",
+        event: {
+          type: "gate_review_failed",
+          runId: reviewRunId,
+          reason: null,
+        },
+      };
+    }
+    case "pr_closed": {
+      if (typeof rawEvent.merged !== "boolean") {
+        return { kind: "invalid" };
+      }
+      return {
+        kind: "event",
+        event: {
+          type: "pr_closed",
+          merged: rawEvent.merged,
+        },
+      };
+    }
+    case "progress_reported":
+    case "pr_synchronized":
+    case "bypass_requested":
+    case "mark_done_requested":
+    case "operator_action_required":
+      return {
+        kind: "noop",
+        reason: `Signal event ${rawEvent.kind} has no v3 loop-event mapping`,
+      };
+    default:
+      return {
+        kind: "noop",
+        reason: `Signal event ${rawEvent.kind} is unsupported by v3 reducer`,
+      };
+  }
+}
 
 function isLocalRedisHttpEndpoint(redisUrl: string | undefined): boolean {
   if (!redisUrl) {
@@ -702,7 +881,30 @@ async function applySignalMessage(params: {
   }
 
   const event = parseLoopEventV3(journal.payloadJson);
-  if (!event) {
+  if (event) {
+    await appendEventAndAdvanceV3({
+      db: params.db,
+      workflowId: params.message.workflowId,
+      source: journal.source,
+      idempotencyKey: params.message.idempotencyKey,
+      event,
+    });
+    return;
+  }
+
+  const legacyEvent = parseLegacySignalEnvelopeToLoopEvent(journal.payloadJson);
+  if (legacyEvent.kind === "noop") {
+    console.info(
+      "[delivery-loop/v3/outbox] skipping unmapped signal envelope",
+      {
+        journalId: journal.id,
+        reason: legacyEvent.reason,
+      },
+    );
+    return;
+  }
+
+  if (legacyEvent.kind === "invalid") {
     throw new Error(
       `Outbox worker parsed invalid loop event for journal ${journal.id}`,
     );
@@ -713,7 +915,7 @@ async function applySignalMessage(params: {
     workflowId: params.message.workflowId,
     source: journal.source,
     idempotencyKey: params.message.idempotencyKey,
-    event,
+    event: legacyEvent.event,
   });
 }
 

@@ -897,7 +897,14 @@ export function applyThreadPatchToQueryClient({
       return result.chat;
     });
 
+    const shouldInvalidateDiffBeforeIgnore =
+      patch.diffChanged || (patch.refetch ?? []).includes("diff");
     if (shouldIgnorePatch) {
+      if (shouldInvalidateDiffBeforeIgnore) {
+        queryClient.invalidateQueries({
+          queryKey: threadQueryKeys.diff(patch.threadId),
+        });
+      }
       return;
     }
     if (shouldInvalidateChat) {

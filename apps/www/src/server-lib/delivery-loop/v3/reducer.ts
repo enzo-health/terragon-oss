@@ -169,10 +169,35 @@ function isOutOfOrderRunSignal(params: {
     return false;
   }
   if (params.runId == null) {
-    return false;
+    return true;
   }
 
   return params.runId !== params.head.activeRunId;
+}
+
+function isOutOfOrderCiSignal(params: {
+  head: WorkflowHeadV3;
+  event: Extract<LoopEventV3, { type: "gate_ci_passed" | "gate_ci_failed" }>;
+}): boolean {
+  const signalHeadSha = params.event.headSha ?? null;
+  if (!signalHeadSha) {
+    return true;
+  }
+
+  if (params.head.headSha !== null && signalHeadSha !== params.head.headSha) {
+    return true;
+  }
+
+  if (params.head.activeRunId === null) {
+    return false;
+  }
+
+  const signalRunId = params.event.runId ?? null;
+  if (signalRunId === null) {
+    return true;
+  }
+
+  return signalRunId !== params.head.activeRunId;
 }
 
 function withVersion(head: WorkflowHeadV3, now: Date): WorkflowHeadV3 {
@@ -285,30 +310,27 @@ export function reduceV3(params: {
   const now = params.now ?? new Date();
   const { head, event } = params;
 
+  let result: ReduceResult;
   if (
     head.state === "done" ||
     head.state === "stopped" ||
     head.state === "terminated"
   ) {
-    return {
+    result = {
       head,
       effects: [],
       invariantActions: [],
     };
-  }
-
-  if (event.type === "stop_requested") {
+  } else if (event.type === "stop_requested") {
     const next = withVersion(head, now);
-    return {
+    result = {
       head: { ...next, state: "stopped", blockedReason: "Stopped by user" },
       effects: [],
       invariantActions: [],
     };
-  }
-
-  if (event.type === "pr_closed") {
+  } else if (event.type === "pr_closed") {
     const next = withVersion(head, now);
-    return {
+    result = {
       head: {
         ...next,
         state: "terminated",
@@ -317,13 +339,175 @@ export function reduceV3(params: {
       effects: [],
       invariantActions: [],
     };
-  }
-
-  let result: ReduceResult;
-
-  switch (head.state) {
-    case "planning": {
-      if (event.type !== "plan_completed" && event.type !== "bootstrap") {
+  } else
+    switch (head.state) {
+      case "planning": {
+        if (event.type === "dispatch_sent") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "implementing",
+              activeGate: null,
+              activeRunId: event.runId,
+              blockedReason: null,
+            },
+            effects: [
+              {
+                kind: "ack_timeout_check",
+                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
+                dueAt: event.ackDeadlineAt,
+                payload: {
+                  kind: "ack_timeout_check",
+                  runId: event.runId,
+                  workflowVersion: next.version,
+                },
+              },
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type !== "plan_completed" && event.type !== "bootstrap") {
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
+        }
+        const next = withVersion(head, now);
+        result = {
+          head: {
+            ...next,
+            state: "implementing",
+            activeGate: null,
+            blockedReason: null,
+          },
+          effects: [
+            dispatchImplementingEffect(
+              next,
+              now,
+              "agent",
+              next.infraRetryCount,
+            ),
+          ],
+          invariantActions: [],
+        };
+        break;
+      }
+      case "implementing": {
+        if (event.type === "dispatch_sent") {
+          const next = withVersion(head, now);
+          result = {
+            head: { ...next, activeRunId: event.runId, blockedReason: null },
+            effects: [
+              {
+                kind: "ack_timeout_check",
+                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
+                dueAt: event.ackDeadlineAt,
+                payload: {
+                  kind: "ack_timeout_check",
+                  runId: event.runId,
+                  workflowVersion: next.version,
+                },
+              },
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "dispatch_acked") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: { ...next, activeRunId: event.runId },
+            effects: [],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "run_completed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const completedHeadSha = event.headSha ?? head.headSha;
+          if (!completedHeadSha) {
+            result = retryToImplementing({
+              head,
+              now,
+              lane: "agent",
+              reason: "Run completed without head SHA",
+            });
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "gating_review",
+              activeGate: "review",
+              headSha: completedHeadSha,
+              activeRunId: null,
+              blockedReason: null,
+            },
+            effects: [dispatchReviewEffect(next, now)],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "dispatch_ack_timeout") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          result = retryToImplementing({
+            head,
+            now,
+            lane: "infra",
+            reason: `Dispatch ack timeout for run ${event.runId}`,
+          });
+          break;
+        }
+        if (event.type === "run_failed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const lane =
+            event.lane ??
+            classifyFailureLane({
+              category: event.category,
+              message: event.message,
+            });
+          result = retryToImplementing({
+            head,
+            now,
+            lane,
+            reason: event.message,
+          });
+          break;
+        }
         result = {
           head,
           effects: [],
@@ -331,331 +515,218 @@ export function reduceV3(params: {
         };
         break;
       }
-      const next = withVersion(head, now);
-      result = {
-        head: {
-          ...next,
-          state: "implementing",
-          activeGate: null,
-          blockedReason: null,
-        },
-        effects: [
-          dispatchImplementingEffect(next, now, "agent", next.infraRetryCount),
-        ],
-        invariantActions: [],
-      };
-      break;
-    }
-    case "implementing": {
-      if (event.type === "dispatch_sent") {
-        const next = withVersion(head, now);
-        result = {
-          head: { ...next, activeRunId: event.runId, blockedReason: null },
-          effects: [
-            {
-              kind: "ack_timeout_check",
-              effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
-              dueAt: event.ackDeadlineAt,
-              payload: {
+      case "gating_review": {
+        if (event.type === "dispatch_sent") {
+          const next = withVersion(head, now);
+          result = {
+            head: { ...next, activeRunId: event.runId, blockedReason: null },
+            effects: [
+              {
                 kind: "ack_timeout_check",
-                runId: event.runId,
-                workflowVersion: next.version,
+                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
+                dueAt: event.ackDeadlineAt,
+                payload: {
+                  kind: "ack_timeout_check",
+                  runId: event.runId,
+                  workflowVersion: next.version,
+                },
               },
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "dispatch_acked") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: { ...next, activeRunId: event.runId },
+            effects: [],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "gate_review_passed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "gating_ci",
+              activeGate: "ci",
+              activeRunId: null,
+              blockedReason: null,
             },
-          ],
-          invariantActions: [],
-        };
-        break;
-      }
-      if (event.type === "dispatch_acked") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
             effects: [],
             invariantActions: [],
           };
           break;
         }
-        const next = withVersion(head, now);
-        result = {
-          head: { ...next, activeRunId: event.runId },
-          effects: [],
-          invariantActions: [],
-        };
-        break;
-      }
-      if (event.type === "run_completed") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        const completedHeadSha = event.headSha ?? head.headSha;
-        if (!completedHeadSha) {
+        if (event.type === "gate_review_failed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
           result = retryToImplementing({
             head,
             now,
             lane: "agent",
-            reason: "Run completed without head SHA",
+            reason: event.reason ?? "Review gate blocked",
           });
+          break;
+        }
+        if (event.type === "run_failed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const lane =
+            event.lane ??
+            classifyFailureLane({
+              category: event.category,
+              message: event.message,
+            });
+          result = retryToImplementing({
+            head,
+            now,
+            lane,
+            reason: event.message,
+          });
+          break;
+        }
+        if (event.type === "dispatch_ack_timeout") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          result = retryToImplementing({
+            head,
+            now,
+            lane: "infra",
+            reason: `Dispatch ack timeout for run ${event.runId}`,
+          });
+          break;
+        }
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
+      }
+      case "gating_ci": {
+        if (event.type === "gate_ci_passed") {
+          if (isOutOfOrderCiSignal({ head, event })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "awaiting_pr",
+              activeGate: null,
+              activeRunId: null,
+              blockedReason: null,
+            },
+            effects: [],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "gate_ci_failed") {
+          if (isOutOfOrderCiSignal({ head, event })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          result = retryToImplementing({
+            head,
+            now,
+            lane: "agent",
+            reason: event.reason ?? "CI gate blocked",
+          });
+          break;
+        }
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
+      }
+      case "awaiting_manual_fix":
+      case "awaiting_operator_action": {
+        if (event.type !== "resume_requested") {
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
           break;
         }
         const next = withVersion(head, now);
         result = {
           head: {
             ...next,
-            state: "gating_review",
-            activeGate: "review",
-            headSha: completedHeadSha,
+            state: "implementing",
+            activeGate: null,
             activeRunId: null,
             blockedReason: null,
           },
-          effects: [dispatchReviewEffect(next, now)],
-          invariantActions: [],
-        };
-        break;
-      }
-      if (event.type === "dispatch_ack_timeout") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        result = retryToImplementing({
-          head,
-          now,
-          lane: "infra",
-          reason: `Dispatch ack timeout for run ${event.runId}`,
-        });
-        break;
-      }
-      if (event.type === "run_failed") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        const lane =
-          event.lane ??
-          classifyFailureLane({
-            category: event.category,
-            message: event.message,
-          });
-        result = retryToImplementing({
-          head,
-          now,
-          lane,
-          reason: event.message,
-        });
-        break;
-      }
-      result = {
-        head,
-        effects: [],
-        invariantActions: [],
-      };
-      break;
-    }
-    case "gating_review": {
-      if (event.type === "dispatch_sent") {
-        const next = withVersion(head, now);
-        result = {
-          head: { ...next, activeRunId: event.runId, blockedReason: null },
           effects: [
-            {
-              kind: "ack_timeout_check",
-              effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
-              dueAt: event.ackDeadlineAt,
-              payload: {
-                kind: "ack_timeout_check",
-                runId: event.runId,
-                workflowVersion: next.version,
-              },
-            },
+            dispatchImplementingEffect(
+              next,
+              now,
+              "agent",
+              next.infraRetryCount,
+            ),
           ],
           invariantActions: [],
         };
         break;
       }
-      if (event.type === "dispatch_acked") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        const next = withVersion(head, now);
+      default:
         result = {
-          head: { ...next, activeRunId: event.runId },
+          head,
           effects: [],
           invariantActions: [],
         };
         break;
-      }
-      if (event.type === "gate_review_passed") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        const next = withVersion(head, now);
-        result = {
-          head: {
-            ...next,
-            state: "gating_ci",
-            activeGate: "ci",
-            activeRunId: null,
-            blockedReason: null,
-          },
-          effects: [],
-          invariantActions: [],
-        };
-        break;
-      }
-      if (event.type === "gate_review_failed") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        result = retryToImplementing({
-          head,
-          now,
-          lane: "agent",
-          reason: event.reason ?? "Review gate blocked",
-        });
-        break;
-      }
-      if (event.type === "run_failed") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        const lane =
-          event.lane ??
-          classifyFailureLane({
-            category: event.category,
-            message: event.message,
-          });
-        result = retryToImplementing({
-          head,
-          now,
-          lane,
-          reason: event.message,
-        });
-        break;
-      }
-      if (event.type === "dispatch_ack_timeout") {
-        if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-          result = {
-            head,
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
-        result = retryToImplementing({
-          head,
-          now,
-          lane: "infra",
-          reason: `Dispatch ack timeout for run ${event.runId}`,
-        });
-        break;
-      }
-      result = {
-        head,
-        effects: [],
-        invariantActions: [],
-      };
-      break;
     }
-    case "gating_ci": {
-      if (event.type === "gate_ci_passed") {
-        const next = withVersion(head, now);
-        result = {
-          head: {
-            ...next,
-            state: "awaiting_pr",
-            activeGate: null,
-            activeRunId: null,
-            blockedReason: null,
-          },
-          effects: [],
-          invariantActions: [],
-        };
-        break;
-      }
-      if (event.type === "gate_ci_failed") {
-        result = retryToImplementing({
-          head,
-          now,
-          lane: "agent",
-          reason: event.reason ?? "CI gate blocked",
-        });
-        break;
-      }
-      result = {
-        head,
-        effects: [],
-        invariantActions: [],
-      };
-      break;
-    }
-    case "awaiting_manual_fix":
-    case "awaiting_operator_action": {
-      if (event.type !== "resume_requested") {
-        result = {
-          head,
-          effects: [],
-          invariantActions: [],
-        };
-        break;
-      }
-      const next = withVersion(head, now);
-      result = {
-        head: {
-          ...next,
-          state: "implementing",
-          activeGate: null,
-          activeRunId: null,
-          blockedReason: null,
-        },
-        effects: [
-          dispatchImplementingEffect(next, now, "agent", next.infraRetryCount),
-        ],
-        invariantActions: [],
-      };
-      break;
-    }
-    default:
-      result = {
-        head,
-        effects: [],
-        invariantActions: [],
-      };
-      break;
-  }
 
   return applyInvariantMiddleware({
     head: result.head,

@@ -36,8 +36,17 @@ export type LoopEventV3 =
       runId?: string | null;
       reason?: string | null;
     }
-  | { type: "gate_ci_passed" }
-  | { type: "gate_ci_failed"; reason?: string | null }
+  | {
+      type: "gate_ci_passed";
+      runId?: string | null;
+      headSha?: string | null;
+    }
+  | {
+      type: "gate_ci_failed";
+      runId?: string | null;
+      headSha?: string | null;
+      reason?: string | null;
+    }
   | { type: "resume_requested" }
   | { type: "stop_requested" }
   | { type: "pr_closed"; merged: boolean };

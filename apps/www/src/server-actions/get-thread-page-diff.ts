@@ -17,19 +17,11 @@ const MAX_GITHUB_PR_DIFF_CHARS = 250_000;
 
 async function maybeLoadGithubPrDiff({
   userId,
-  threadId,
+  shell,
 }: {
   userId: string;
-  threadId: string;
+  shell: Awaited<ReturnType<typeof getThreadPageShellWithPermissions>>;
 }): Promise<{ gitDiff: string; gitDiffStats: ThreadPageDiff["gitDiffStats"] }> {
-  const shell = await getThreadPageShellWithPermissions({
-    db,
-    threadId,
-    userId,
-    allowAdmin: false,
-    getHasRepoPermissions: async (repoFullName) =>
-      getHasRepoPermissionsForUser({ userId, repoFullName }),
-  });
   if (!shell?.githubPRNumber) {
     throw new Error("No PR linked to thread");
   }
@@ -57,8 +49,9 @@ async function maybeLoadGithubPrDiff({
   const gitDiff =
     rawDiff.length >= MAX_GITHUB_PR_DIFF_CHARS ? "too-large" : rawDiff;
   const gitDiffStats =
-    shell.gitDiffStats ??
-    (gitDiff === "too-large" ? null : parseGitDiffStats(gitDiff));
+    gitDiff === "too-large"
+      ? (shell.gitDiffStats ?? null)
+      : parseGitDiffStats(gitDiff);
   return { gitDiff, gitDiffStats };
 }
 
@@ -80,22 +73,33 @@ export const getThreadPageDiffAction = cache(
       if (!threadDiff) {
         throw new UserFacingError("Unauthorized");
       }
+      const shell = await getThreadPageShellWithPermissions({
+        db,
+        threadId,
+        userId,
+        allowAdmin: false,
+        getHasRepoPermissions: async (repoFullName) =>
+          getHasRepoPermissionsForUser({ userId, repoFullName }),
+      });
 
       // Defensive fallback:
       // if thread-level diff was not persisted but a PR exists, fetch PR diff
       // directly from GitHub so the review panel can still render deterministically.
       const diffValue = threadDiff.gitDiff;
+      const hasLiveShellDiffSignal = Boolean(
+        shell?.hasGitDiff || (shell?.gitDiffStats?.files ?? 0) > 0,
+      );
       const isDiffMissing =
         diffValue == null ||
         (typeof diffValue === "string" &&
           diffValue !== "too-large" &&
           diffValue.trim().length === 0);
-      if (isDiffMissing) {
+      if (isDiffMissing && hasLiveShellDiffSignal) {
         try {
-          const prDiff = await maybeLoadGithubPrDiff({ userId, threadId });
+          const prDiff = await maybeLoadGithubPrDiff({ userId, shell });
           return {
             gitDiff: prDiff.gitDiff,
-            gitDiffStats: threadDiff.gitDiffStats ?? prDiff.gitDiffStats,
+            gitDiffStats: prDiff.gitDiffStats,
             hasGitDiff: true,
           };
         } catch (error) {
