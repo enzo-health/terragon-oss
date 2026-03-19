@@ -22,6 +22,7 @@ export type LoopEvent =
   | "gate_passed"
   | "gate_blocked"
   | "pr_linked"
+  | "operator_action_required"
   | "babysit_passed"
   | "babysit_blocked"
   | "blocked_resume"
@@ -40,6 +41,8 @@ export type LoopEventContext = {
   runId?: string | null;
   prNumber?: number | null;
   infraRetry?: boolean;
+  reason?: string;
+  incidentId?: string;
 };
 
 // Publication targets

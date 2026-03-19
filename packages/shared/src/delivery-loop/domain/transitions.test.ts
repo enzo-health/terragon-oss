@@ -884,6 +884,28 @@ describe("derivePendingAction", () => {
     });
   });
 
+  it("awaiting_pr → awaiting_operator_action after operator action signal", () => {
+    const wf = awaitingPr();
+    const next = reduceWorkflow({
+      snapshot: wf,
+      event: "operator_action_required",
+      context: {
+        reason: "PR creation or linkage requires operator action",
+        incidentId: "inc-1",
+      },
+      now: NOW,
+    });
+
+    expect(next).toMatchObject({
+      kind: "awaiting_operator_action",
+      incidentId: "inc-1",
+      reason: {
+        description: "PR creation or linkage requires operator action",
+        system: "github",
+      },
+    });
+  });
+
   it("babysitting → babysit_recheck", () => {
     const wf = babysitting();
     const action = derivePendingAction(wf);

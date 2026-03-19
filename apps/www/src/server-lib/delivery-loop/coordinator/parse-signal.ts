@@ -64,6 +64,7 @@ export function parseSignalPayload(
     case "human_bypass":
     case "human_stop":
     case "human_mark_done":
+    case "human_operator_action_required":
       return {
         source: "human",
         event: payload as unknown as HumanSignal,

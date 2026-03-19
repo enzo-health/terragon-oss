@@ -787,6 +787,7 @@ export type SdlcLoopCauseType =
   | "human_bypass"
   | "human_stop"
   | "human_mark_done"
+  | "human_operator_action_required"
   | "babysit_recheck"
   | "babysit_recheck_passed"
   | "babysit_recheck_blocked"

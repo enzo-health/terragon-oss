@@ -1041,6 +1041,21 @@ describe("reduceSignalToEvent", () => {
       expectEvent(result, "mark_done");
     });
 
+    it("operator_action_required → operator_action_required in awaiting_pr", () => {
+      const result = reduce(
+        humanSignal({
+          kind: "operator_action_required",
+          reason: { description: "Missing branch", system: "github" },
+          incidentId: "inc-1",
+        }),
+        awaitingPr(),
+      );
+      expectEvent(result, "operator_action_required", {
+        reason: "Missing branch",
+        incidentId: "inc-1",
+      });
+    });
+
     it("plan_approved → plan_completed", () => {
       const result = reduce(
         humanSignal({ kind: "plan_approved", artifactId: "art-1" }),

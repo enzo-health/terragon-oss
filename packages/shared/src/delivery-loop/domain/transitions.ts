@@ -435,6 +435,20 @@ function reduceAwaitingPr(
       nextCheckAt: new Date(now.getTime() + 5 * 60_000),
     };
   }
+  if (event === "operator_action_required") {
+    return {
+      ...bump(wf, now),
+      kind: "awaiting_operator_action",
+      reason: {
+        description:
+          ctx.reason ?? "PR creation or linkage requires operator action",
+        system: "github",
+      },
+      incidentId:
+        ctx.incidentId ?? `awaiting-pr:${wf.workflowId}:${wf.version}`,
+      resumableFrom: { kind: "awaiting_pr", headSha: wf.headSha },
+    };
+  }
   if (event === "mark_done") {
     return {
       ...bump(wf, now),

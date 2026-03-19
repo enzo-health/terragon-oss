@@ -74,6 +74,19 @@ export function buildWorkflowEvent(params: {
         headSha: extractHeadSha(previousWorkflow),
       };
 
+    case "operator_action_required":
+      return {
+        kind: "operator_action_required",
+        reason: {
+          description:
+            context.reason ?? "PR creation or linkage requires operator action",
+          system: "github",
+        },
+        incidentId:
+          context.incidentId ??
+          `awaiting-pr:${previousWorkflow.workflowId}:${previousWorkflow.version}`,
+      };
+
     case "babysit_passed":
       return { kind: "workflow_completed", outcome: "completed" };
 

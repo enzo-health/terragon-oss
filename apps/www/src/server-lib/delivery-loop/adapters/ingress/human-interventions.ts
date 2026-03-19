@@ -192,7 +192,11 @@ function mapHumanSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
       return "human_stop";
     case "mark_done_requested":
       return "human_mark_done";
+    case "operator_action_required":
+      return "human_operator_action_required";
     case "plan_approved":
       return "human_resume";
   }
+  const exhaustiveCheck: never = signal.event;
+  return exhaustiveCheck;
 }

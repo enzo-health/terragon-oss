@@ -4,6 +4,7 @@ import type {
   CorrelationId,
   DeliveryWorkflow,
   WorkflowState,
+  OperatorActionReason,
 } from "@terragon/shared/delivery-loop/domain/workflow";
 import { reduceWorkflow } from "@terragon/shared/delivery-loop/domain/transitions";
 import { derivePendingAction } from "@terragon/shared/delivery-loop/domain/transitions";
@@ -70,9 +71,14 @@ export type CoordinatorTickResult = {
 };
 
 type AwaitingPrInvariantAction = {
-  kind: "awaiting_pr_invariant_no_diff" | "awaiting_pr_invariant_pr_linked";
+  kind:
+    | "awaiting_pr_invariant_no_diff"
+    | "awaiting_pr_invariant_pr_linked"
+    | "awaiting_pr_invariant_operator_action";
   stateAfter: WorkflowState;
   signalId: string;
+  reason?: string;
+  incidentId?: string;
 };
 
 const MAX_SIGNALS_PER_TICK = 10;
@@ -178,6 +184,12 @@ export async function runCoordinatorTick(params: {
       payloadJson: {
         kind: awaitingPrInvariantAction.kind,
         signalId: awaitingPrInvariantAction.signalId,
+        ...(awaitingPrInvariantAction.reason
+          ? { reason: awaitingPrInvariantAction.reason }
+          : {}),
+        ...(awaitingPrInvariantAction.incidentId
+          ? { incidentId: awaitingPrInvariantAction.incidentId }
+          : {}),
       },
       signalId: awaitingPrInvariantAction.signalId,
       triggerSource: "system",
@@ -689,10 +701,13 @@ async function ensureOrCreatePrForAwaitingWorkflow(params: {
   repoFullName: string;
   branchName: string;
   repoBaseBranchName: string | null;
-}): Promise<number | null> {
+  loopId: string;
+  now: Date;
+  workflow: DeliveryWorkflow;
+}): Promise<number | AwaitingPrInvariantAction | null> {
   const branchName = params.branchName.trim();
   if (branchName.length === 0) {
-    return null;
+    throw new Error("Workflow branch name is missing");
   }
 
   let baseBranchName = (params.repoBaseBranchName ?? "").trim();
@@ -709,7 +724,9 @@ async function ensureOrCreatePrForAwaitingWorkflow(params: {
     });
   }
   if (baseBranchName === branchName) {
-    return null;
+    throw new Error(
+      `Base branch ${baseBranchName} matches workflow branch ${branchName}`,
+    );
   }
 
   const existingPr = await getExistingPRForBranch({
@@ -718,31 +735,52 @@ async function ensureOrCreatePrForAwaitingWorkflow(params: {
     baseBranchName,
   });
   if (existingPr) {
-    await Promise.all([
-      upsertGithubPR({
-        db: params.db,
-        repoFullName: params.repoFullName,
-        number: existingPr.number,
-        threadId: params.threadId,
-        updates: {
-          status: getGithubPRStatus(existingPr),
+    try {
+      await Promise.all([
+        upsertGithubPR({
+          db: params.db,
+          repoFullName: params.repoFullName,
+          number: existingPr.number,
+          threadId: params.threadId,
+          updates: {
+            status: getGithubPRStatus(existingPr),
+          },
+        }),
+        updateThread({
+          db: params.db,
+          userId: params.userId,
+          threadId: params.threadId,
+          updates: {
+            githubPRNumber: existingPr.number,
+            branchName,
+          },
+        }),
+        updateWorkflowPR({
+          db: params.db,
+          workflowId: params.workflowId,
+          prNumber: existingPr.number,
+        }),
+      ]);
+    } catch (error) {
+      console.warn(
+        "[coordinator] awaiting_pr invariant PR link persistence failed",
+        {
+          workflowId: params.workflowId,
+          prNumber: existingPr.number,
+          error: error instanceof Error ? error.message : String(error),
         },
-      }),
-      updateThread({
-        db: params.db,
-        userId: params.userId,
-        threadId: params.threadId,
-        updates: {
-          githubPRNumber: existingPr.number,
-          branchName,
-        },
-      }),
-      updateWorkflowPR({
+      );
+      return emitAwaitingPrOperatorAction({
         db: params.db,
         workflowId: params.workflowId,
-        prNumber: existingPr.number,
-      }),
-    ]);
+        loopId: params.loopId,
+        now: params.now,
+        workflow: params.workflow,
+        reason:
+          error instanceof Error ? error.message : "PR link persistence failed",
+        incidentId: `awaiting-pr:${params.workflowId}:${params.workflow.version}`,
+      });
+    }
     return existingPr.number;
   }
 
@@ -815,7 +853,16 @@ async function enforceAwaitingPrInvariant(params: {
     return null;
   }
   if (!params.workflowRow.userId) {
-    return null;
+    return emitAwaitingPrOperatorAction({
+      db: params.db,
+      workflowId: params.workflowId,
+      loopId: params.loopId,
+      now: params.now,
+      workflow: params.workflow,
+      reason:
+        "Workflow owner is missing, so PR creation/linking cannot proceed",
+      incidentId: `awaiting-pr:${params.workflowId}:${params.workflow.version}`,
+    });
   }
 
   const thread = await params.db.query.thread.findFirst({
@@ -833,7 +880,15 @@ async function enforceAwaitingPrInvariant(params: {
     },
   });
   if (!thread) {
-    return null;
+    return emitAwaitingPrOperatorAction({
+      db: params.db,
+      workflowId: params.workflowId,
+      loopId: params.loopId,
+      now: params.now,
+      workflow: params.workflow,
+      reason: "Thread record is missing, so PR creation/linking cannot proceed",
+      incidentId: `awaiting-pr:${params.workflowId}:${params.workflow.version}`,
+    });
   }
 
   let prNumber: number | null =
@@ -870,7 +925,7 @@ async function enforceAwaitingPrInvariant(params: {
     }
 
     try {
-      prNumber = await ensureOrCreatePrForAwaitingWorkflow({
+      const prResult = await ensureOrCreatePrForAwaitingWorkflow({
         db: params.db,
         workflowId: params.workflowId,
         userId: params.workflowRow.userId,
@@ -879,7 +934,17 @@ async function enforceAwaitingPrInvariant(params: {
         repoFullName: thread.githubRepoFullName,
         branchName: thread.branchName ?? "",
         repoBaseBranchName: thread.repoBaseBranchName,
+        loopId: params.loopId,
+        now: params.now,
+        workflow: params.workflow,
       });
+      if (prResult == null) {
+        return null;
+      }
+      if (typeof prResult !== "number") {
+        return prResult;
+      }
+      prNumber = prResult;
     } catch (error) {
       console.warn(
         "[coordinator] awaiting_pr invariant PR create/link failed",
@@ -889,18 +954,52 @@ async function enforceAwaitingPrInvariant(params: {
           error: error instanceof Error ? error.message : String(error),
         },
       );
+      return emitAwaitingPrOperatorAction({
+        db: params.db,
+        workflowId: params.workflowId,
+        loopId: params.loopId,
+        now: params.now,
+        workflow: params.workflow,
+        reason:
+          error instanceof Error
+            ? error.message
+            : "PR creation or linking failed",
+        incidentId: `awaiting-pr:${params.workflowId}:${params.workflow.version}`,
+      });
+    }
+    if (prNumber == null) {
       return null;
     }
+    if (typeof prNumber !== "number") {
+      return prNumber;
+    }
   } else {
-    await updateWorkflowPR({
-      db: params.db,
-      workflowId: params.workflowId,
-      prNumber,
-    });
-  }
-
-  if (!prNumber) {
-    return null;
+    try {
+      await updateWorkflowPR({
+        db: params.db,
+        workflowId: params.workflowId,
+        prNumber,
+      });
+    } catch (error) {
+      console.warn(
+        "[coordinator] awaiting_pr invariant PR link persistence failed",
+        {
+          workflowId: params.workflowId,
+          prNumber,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      return emitAwaitingPrOperatorAction({
+        db: params.db,
+        workflowId: params.workflowId,
+        loopId: params.loopId,
+        now: params.now,
+        workflow: params.workflow,
+        reason:
+          error instanceof Error ? error.message : "PR link persistence failed",
+        incidentId: `awaiting-pr:${params.workflowId}:${params.workflow.version}`,
+      });
+    }
   }
 
   const signal = await appendSignalToInbox({
@@ -925,5 +1024,44 @@ async function enforceAwaitingPrInvariant(params: {
     kind: "awaiting_pr_invariant_pr_linked",
     stateAfter: "awaiting_pr",
     signalId: signal.id,
+  };
+}
+
+async function emitAwaitingPrOperatorAction(params: {
+  db: DB;
+  workflowId: WorkflowId;
+  loopId: string;
+  now: Date;
+  workflow: DeliveryWorkflow;
+  reason: string;
+  incidentId: string;
+}): Promise<AwaitingPrInvariantAction | null> {
+  const signal = await appendSignalToInbox({
+    db: params.db,
+    loopId: params.loopId,
+    causeType: "human_operator_action_required",
+    payload: {
+      source: "human",
+      event: {
+        kind: "operator_action_required",
+        reason: {
+          description: params.reason,
+          system: "github",
+        } satisfies OperatorActionReason,
+        incidentId: params.incidentId,
+      },
+    },
+    canonicalCauseId: `awaiting-pr-invariant:operator-action:${params.workflowId}:${params.workflow.version}`,
+    now: params.now,
+  });
+  if (!signal) {
+    return null;
+  }
+  return {
+    kind: "awaiting_pr_invariant_operator_action",
+    stateAfter: "awaiting_operator_action",
+    signalId: signal.id,
+    reason: params.reason,
+    incidentId: params.incidentId,
   };
 }

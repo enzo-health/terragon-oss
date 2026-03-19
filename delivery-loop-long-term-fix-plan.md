@@ -329,8 +329,12 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - PR create/link attempts are idempotent and audited.
 - **Validation**:
   - Awaiting PR invariant tests including failure and retry.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Added a deterministic post-gate invariant that resolves `awaiting_pr` immediately to either PR linkage, automatic done, or operator escalation.
+  - Made PR lookup/link attempts idempotent via existing PR detection, workflow PR upsert, and canonical audit signals.
+  - Added failure-path coverage for PR lookup/link persistence errors and operator-action escalation.
+  - Verified with `pnpm -C packages/shared exec vitest run src/delivery-loop/domain/transitions.test.ts`, `pnpm -C packages/shared exec tsc --noEmit --pretty false`, `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/coordinator/reduce-signals.test.ts src/server-lib/delivery-loop/coordinator/tick.test.ts`, `pnpm -C apps/www exec tsc --noEmit --pretty false`, and `pnpm -C apps/www lint`.
 
 ### Task S3-T3: Base Branch Default Policy (`origin/main`)
 

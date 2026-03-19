@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
+import * as githubHelpers from "@/lib/github";
 import {
   createTestUser,
   createTestThread,
@@ -245,6 +246,10 @@ beforeEach(async () => {
   const { threadId } = await createTestThread({ db, userId: user.id });
   testUserId = user.id;
   testThreadId = threadId;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // ---------------------------------------------------------------------------
@@ -702,6 +707,57 @@ describe("v2 coordinator tick — integration", () => {
       expect(invariantEvent).toBeDefined();
       expect(invariantEvent!.payloadJson).toMatchObject({
         kind: "awaiting_pr_invariant_pr_linked",
+      });
+    });
+
+    it("awaiting_pr + PR link failure => awaiting_operator_action", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/test-pr-link",
+          gitDiff: "diff --git a/file.ts b/file.ts",
+        },
+      });
+
+      const existingPrSpy = vi
+        .spyOn(githubHelpers, "getExistingPRForBranch")
+        .mockRejectedValueOnce(new Error("GitHub unavailable"));
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(existingPrSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("awaiting_operator_action");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("workflow row missing");
+      }
+      expect(row.kind).toBe("awaiting_operator_action");
+      expect(row.stateJson).toMatchObject({
+        reason: {
+          description: "GitHub unavailable",
+          system: "github",
+        },
+      });
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_operator_action",
+        reason: "GitHub unavailable",
       });
     });
   });

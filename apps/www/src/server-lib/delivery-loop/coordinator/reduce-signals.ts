@@ -304,7 +304,7 @@ function reduceGitHubSignal(
 
 function reduceHumanSignal(
   event: HumanSignal,
-  _workflow: DeliveryWorkflow,
+  workflow: DeliveryWorkflow,
 ): SignalReductionResult {
   switch (event.kind) {
     case "resume_requested":
@@ -315,6 +315,17 @@ function reduceHumanSignal(
       return { event: "manual_stop", context: {} };
     case "mark_done_requested":
       return { event: "mark_done", context: {} };
+    case "operator_action_required":
+      if (workflow.kind === "awaiting_pr") {
+        return {
+          event: "operator_action_required",
+          context: {
+            reason: event.reason.description,
+            incidentId: event.incidentId,
+          },
+        };
+      }
+      return null;
     case "plan_approved":
       return { event: "plan_completed", context: {} };
   }
