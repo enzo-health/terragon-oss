@@ -115,7 +115,7 @@ It does two different jobs:
 - **Real mode** creates a minimal task in a real repo, nudges the local app through the internal scheduled-tasks cron endpoint, and waits for the delivery loop to create a linked PR row.
 - **Dry-run mode** inspects an already-created thread/workflow and validates that the PR linkage exists without creating a new task.
 
-The harness does not require manual cron nudges. It calls the internal scheduled-tasks cron endpoint itself on every poll so the flow advances on its own in local development.
+The harness does not require manual cron nudges. It calls the internal scheduled-tasks cron endpoint itself on every poll so scheduled-thread fanout and v3 watchdog work advance on their own in local development.
 
 When the harness gets stuck, it prints a single diagnostics snapshot that includes:
 
@@ -181,7 +181,7 @@ With `skipDeliveryLoopGates` enabled, gating cascades instantly through all 3 su
 
 ### Inline Dispatch
 
-After daemon events, the daemon-event route uses `waitUntil()` to claim and execute dispatch work items inline, eliminating up to 60s of cron latency. The cron remains as a safety net for missed items.
+After daemon events, the daemon-event route uses `waitUntil()` to claim and execute dispatch work items inline, eliminating up to 60s of cron latency. The cron remains as a watchdog path for missed scheduled-thread or v3 maintenance work, not as the primary legacy delivery-loop catch-up engine.
 
 ### Gate Bypass
 

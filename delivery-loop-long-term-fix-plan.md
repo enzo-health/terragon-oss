@@ -414,8 +414,16 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Watchdog mode remains available for incident surfacing.
 - **Validation**:
   - Routing tests + manual smoke.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Removed the legacy v2 delivery-loop progression path from `apps/www/src/app/api/internal/cron/scheduled-tasks/route.ts`.
+  - The cron route now handles only scheduled-thread fanout plus v3 maintenance/watchdog passes:
+    - `drainDueV3Effects`
+    - `drainOutboxV3Relay`
+    - `drainOutboxV3Worker`
+    - `reconcileZombieGateHeadsFromLegacy`
+  - Added a route test in `apps/www/src/app/api/internal/cron/scheduled-tasks/route.test.ts` that verifies the cron path still fans out scheduled threads and runs the v3 maintenance passes, while no longer surfacing v2 progression counters.
+  - Updated `apps/www/src/server-lib/delivery-loop/LOCAL_TESTING.md` to describe the cron route as scheduled-thread fanout plus v3 watchdog work rather than legacy delivery-loop catch-up.
 
 ### Task S4-T2: Retire v2 Progression Paths
 

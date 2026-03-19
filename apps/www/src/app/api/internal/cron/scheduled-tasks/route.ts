@@ -6,14 +6,7 @@ import { internalPOST } from "@/server-lib/internal-request";
 
 const BATCH_SIZE = 5;
 
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  if (!env.CRON_SECRET || authHeader !== `Bearer ${env.CRON_SECRET}`) {
-    // In development without CRON_SECRET, allow access for local testing
-    if (process.env.NODE_ENV !== "development" || env.CRON_SECRET) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
+export async function runScheduledTasksCron(): Promise<Response> {
   console.log("Scheduled tasks cron task triggered");
   try {
     const dueThreadChats = await getScheduledThreadChatsDueToRun({ db });
@@ -45,197 +38,112 @@ export async function GET(request: NextRequest) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    // V2 delivery loop work item processing
-    let v2WorkItemsProcessed = 0;
-    let v2TicksCaughtUp = 0;
-    let v2Error: string | null = null;
+    let v3EffectsProcessed = 0;
+    let v3OutboxProcessed = 0;
+    let v3OutboxPublished = 0;
+    let v3OutboxFailed = 0;
+    let v3OutboxWorkerProcessed = 0;
+    let v3OutboxWorkerAcknowledged = 0;
+    let v3OutboxWorkerDeadLettered = 0;
+    let v3OutboxWorkerRetried = 0;
+    let v3ZombieHeadsScanned = 0;
+    let v3ZombieHeadsReconciled = 0;
+    let v3OutboxError: string | null = null;
+    let v3WorkerError: string | null = null;
+    // V3 effect-ledger processing (Postgres-canonical runtime kernel).
     try {
-      const { claimNextWorkItem, failWorkItem } = await import(
-        "@terragon/shared/delivery-loop/store/work-queue-store"
+      const { drainDueV3Effects } = await import(
+        "@/server-lib/delivery-loop/v3/process-effects"
       );
-      const { runDispatchWork } = await import(
-        "@/server-lib/delivery-loop/workers/run-dispatch-work"
-      );
-      const { runPublicationWork } = await import(
-        "@/server-lib/delivery-loop/workers/run-publication-work"
-      );
-      const { runBabysitWork } = await import(
-        "@/server-lib/delivery-loop/workers/run-babysit-work"
-      );
-      const { runRetryWork } = await import(
-        "@/server-lib/delivery-loop/workers/run-retry-work"
-      );
-      const { runRetrospectiveWork } = await import(
-        "@/server-lib/delivery-loop/workers/run-retrospective-work"
-      );
-
-      const MAX_V2_WORK_ITEMS = 20;
-
-      for (let i = 0; i < MAX_V2_WORK_ITEMS; i++) {
-        const claimToken = `cron:v2:${crypto.randomUUID()}`;
-        const item = await claimNextWorkItem({ db, claimToken });
-        if (!item) break;
-
-        const payload = item.payloadJson as Record<string, unknown>;
-
-        try {
-          switch (item.kind) {
-            case "dispatch":
-              await runDispatchWork({
-                db,
-                workItemId: item.id,
-                claimToken,
-                payload: payload as Parameters<
-                  typeof runDispatchWork
-                >[0]["payload"],
-              });
-              break;
-            case "publication":
-              await runPublicationWork({
-                db,
-                workItemId: item.id,
-                claimToken,
-                workflowId: item.workflowId,
-                payload: payload as Parameters<
-                  typeof runPublicationWork
-                >[0]["payload"],
-              });
-              break;
-            case "babysit":
-              await runBabysitWork({
-                db,
-                workItemId: item.id,
-                claimToken,
-                payload: payload as Parameters<
-                  typeof runBabysitWork
-                >[0]["payload"],
-              });
-              break;
-            case "retry":
-              await runRetryWork({
-                db,
-                workItemId: item.id,
-                claimToken,
-                correlationId: item.correlationId,
-                payload: payload as Parameters<
-                  typeof runRetryWork
-                >[0]["payload"],
-              });
-              break;
-            case "retrospective":
-              await runRetrospectiveWork({
-                db,
-                workItemId: item.id,
-                claimToken,
-                payload: payload as Parameters<
-                  typeof runRetrospectiveWork
-                >[0]["payload"],
-              });
-              break;
-            default: {
-              await failWorkItem({
-                db,
-                workItemId: item.id,
-                claimToken,
-                errorCode: "unsupported_work_kind",
-                errorMessage: `Unknown work item kind: ${item.kind}`,
-              });
-              break;
-            }
-          }
-          v2WorkItemsProcessed++;
-        } catch (itemErr) {
-          console.error(
-            `V2 work item processing failed for item ${item.id} (kind: ${item.kind})`,
-            itemErr,
-          );
-          try {
-            await failWorkItem({
-              db,
-              workItemId: item.id,
-              claimToken,
-              errorCode: "work_item_handler_threw",
-              errorMessage:
-                itemErr instanceof Error ? itemErr.message : String(itemErr),
-            });
-          } catch (failErr) {
-            console.error(
-              `Failed to mark work item ${item.id} as failed`,
-              failErr,
-            );
-          }
-          continue;
-        }
-      }
-      console.log("V2 delivery loop work items processed", {
-        v2WorkItemsProcessed,
+      const v3Result = await drainDueV3Effects({
+        db,
+        maxItems: 30,
+        leaseOwnerPrefix: "cron:v3",
       });
+      v3EffectsProcessed = v3Result.processed;
+      console.log("V3 delivery effects processed", v3Result);
+    } catch (v3Err) {
+      console.error("V3 delivery effect processing failed", v3Err);
+    }
 
-      // Drain legacy follow-up retry jobs (still produced by process-follow-up-queue)
-      try {
-        const { drainDueDeliveryLoopRetryJobs } = await import(
-          "@/server-lib/delivery-loop/retry-jobs"
-        );
-        const retryResult = await drainDueDeliveryLoopRetryJobs({
-          leaseOwnerTokenPrefix: "cron:retry",
-        });
-        console.log("V2 follow-up retry jobs drained", retryResult);
-      } catch (retryErr) {
-        console.error("V2 follow-up retry job drain failed", retryErr);
-      }
-
-      // Coordinator tick catch-up for active workflows with pending signals
-      const { listActiveWorkflowIds } = await import(
-        "@terragon/shared/delivery-loop/store/workflow-store"
+    // V3 outbox relay publishes durable events into Redis for workers.
+    try {
+      const { drainOutboxV3Relay } = await import(
+        "@/server-lib/delivery-loop/v3/relay"
       );
-      const { runCoordinatorTick } = await import(
-        "@/server-lib/delivery-loop/coordinator/tick"
-      );
-
-      const activeWorkflows = await listActiveWorkflowIds({ db, limit: 50 });
-
-      for (const wf of activeWorkflows) {
-        try {
-          const correlationId =
-            `cron:tick-catchup:${wf.id}:${Date.now()}` as Parameters<
-              typeof runCoordinatorTick
-            >[0]["correlationId"];
-          const result = await runCoordinatorTick({
-            db,
-            workflowId: wf.id as Parameters<
-              typeof runCoordinatorTick
-            >[0]["workflowId"],
-            correlationId,
-            claimToken: `cron:tick:${crypto.randomUUID()}`,
-            loopId: wf.id,
-          });
-          if (result.signalsProcessed > 0) {
-            v2TicksCaughtUp++;
-          }
-        } catch (tickErr) {
-          console.error(
-            `V2 coordinator tick catch-up failed for workflow ${wf.id}`,
-            tickErr,
-          );
-        }
-      }
-      console.log("V2 coordinator tick catch-up completed", {
-        activeWorkflows: activeWorkflows.length,
-        v2TicksCaughtUp,
+      const v3RelayResult = await drainOutboxV3Relay({
+        db,
+        maxItems: 30,
+        leaseOwnerPrefix: "cron:v3-relay",
       });
-    } catch (error) {
-      console.error("V2 delivery loop cron processing failed", error);
-      v2Error = "v2_processing_failed";
+      v3OutboxProcessed += v3RelayResult.processed;
+      v3OutboxPublished += v3RelayResult.published;
+      v3OutboxFailed += v3RelayResult.failed;
+      console.log("V3 outbox relay processed", v3RelayResult);
+    } catch (relayErr) {
+      console.error("V3 outbox relay failed", relayErr);
+      v3OutboxError = "v3_outbox_relay_failed";
+    }
+
+    try {
+      const { drainOutboxV3Worker } = await import(
+        "@/server-lib/delivery-loop/v3/worker"
+      );
+      const v3WorkerResult = await drainOutboxV3Worker({
+        db,
+        maxItems: 30,
+        leaseOwnerPrefix: "cron:v3-worker",
+      });
+      v3OutboxWorkerProcessed += v3WorkerResult.processed;
+      v3OutboxWorkerAcknowledged += v3WorkerResult.acknowledged;
+      v3OutboxWorkerDeadLettered += v3WorkerResult.deadLettered;
+      v3OutboxWorkerRetried += v3WorkerResult.retried;
+      console.log("V3 outbox worker processed", v3WorkerResult);
+    } catch (workerErr) {
+      console.error("V3 outbox worker failed", workerErr);
+      v3WorkerError = "v3_outbox_worker_failed";
+    }
+
+    // V3 zombie gate head reconciliation.
+    // During migration, legacy delivery_workflow can advance when a webhook
+    // arrives, while v3 head stays on a gate state if the mirrored v3 event
+    // is missed. Heal stale gate heads from legacy state before the next
+    // watchdog or worker pass.
+    try {
+      const { reconcileZombieGateHeadsFromLegacy } = await import(
+        "@/server-lib/delivery-loop/v3/store"
+      );
+      const reconcileResult = await reconcileZombieGateHeadsFromLegacy({
+        db,
+        staleMs: 90_000,
+        maxRows: 30,
+      });
+      v3ZombieHeadsScanned = reconcileResult.scanned;
+      v3ZombieHeadsReconciled = reconcileResult.reconciled;
+      if (reconcileResult.scanned > 0) {
+        console.log("V3 zombie gate heads reconciled", reconcileResult);
+      }
+    } catch (reconcileErr) {
+      console.error("V3 zombie gate head reconciliation failed", reconcileErr);
     }
 
     return Response.json(
       {
-        success: !v2Error,
-        v2WorkItemsProcessed,
-        v2TicksCaughtUp,
-        ...(v2Error ? { v2Error } : {}),
+        success: !v3OutboxError && !v3WorkerError,
+        v3OutboxWorkerProcessed,
+        v3OutboxWorkerAcknowledged,
+        v3OutboxWorkerDeadLettered,
+        v3OutboxWorkerRetried,
+        v3EffectsProcessed,
+        v3OutboxProcessed,
+        v3OutboxPublished,
+        v3OutboxFailed,
+        v3ZombieHeadsScanned,
+        v3ZombieHeadsReconciled,
+        ...(v3OutboxError ? { v3OutboxError } : {}),
+        ...(v3WorkerError ? { v3WorkerError } : {}),
       },
-      { status: v2Error ? 500 : 200 },
+      { status: v3OutboxError || v3WorkerError ? 500 : 200 },
     );
   } catch (error) {
     console.error("Scheduled tasks cron failed:", error);
@@ -244,4 +152,16 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get("authorization");
+  if (!env.CRON_SECRET || authHeader !== `Bearer ${env.CRON_SECRET}`) {
+    // In development without CRON_SECRET, allow access for local testing
+    if (process.env.NODE_ENV !== "development" || env.CRON_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
+  return runScheduledTasksCron();
 }
