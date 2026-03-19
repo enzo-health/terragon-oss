@@ -118,6 +118,29 @@ describe("reconcileSandboxBranchForThread", () => {
     expect(restartSandbox).toHaveBeenCalledTimes(1);
   });
 
+  it("classifies restart failures as daemon_spawn_failed", async () => {
+    const runCommand = vi
+      .fn()
+      .mockResolvedValueOnce("terragon/old-branch\n")
+      .mockRejectedValueOnce(new Error("checkout failed"));
+    const session = createSession({ runCommand });
+    const restartSandbox = vi
+      .fn()
+      .mockRejectedValue(new Error("restart failed"));
+
+    await expect(
+      reconcileSandboxBranchForThread({
+        session,
+        expectedBranchName: "terragon/test-branch",
+        restartSandbox,
+      }),
+    ).rejects.toMatchObject({
+      name: "ThreadError",
+      type: "sandbox-resume-failed",
+      failureCategory: "daemon_spawn_failed",
+    });
+  });
+
   it("fails with a structured retryable error when drift cannot be reconciled", async () => {
     const runCommand = vi
       .fn()

@@ -236,7 +236,12 @@ export async function reconcileSandboxBranchForThread(params: {
     });
   }
 
-  const restartedSession = await params.restartSandbox();
+  let restartedSession: ISandboxSession;
+  try {
+    restartedSession = await params.restartSandbox();
+  } catch (error) {
+    throw wrapError("sandbox-resume-failed", error, "daemon_spawn_failed");
+  }
   const restartedBranchName =
     await readCurrentBranchNameOrNull(restartedSession);
   if (restartedBranchName === expectedBranchName) {
