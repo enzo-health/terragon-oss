@@ -80,4 +80,27 @@ describe("scheduled-tasks cron route", () => {
       expect.objectContaining({ staleMs: 90_000, maxRows: 30 }),
     );
   });
+
+  it("surfaces v3 effect processing failures in watchdog response", async () => {
+    vi.mocked(drainDueV3Effects).mockRejectedValueOnce(
+      new Error("effect drain failed"),
+    );
+
+    const response = await runScheduledTasksCron();
+    const data = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(500);
+    expect(data).toMatchObject({
+      success: false,
+      v3EffectsProcessed: 0,
+      v3EffectsError: "v3_effect_processing_failed",
+      v3OutboxProcessed: 1,
+      v3OutboxPublished: 1,
+      v3OutboxWorkerProcessed: 1,
+    });
+    expect("v2WorkItemsProcessed" in data).toBe(false);
+    expect("v2TicksCaughtUp" in data).toBe(false);
+    expect(drainOutboxV3Relay).toHaveBeenCalled();
+    expect(drainOutboxV3Worker).toHaveBeenCalled();
+  });
 });

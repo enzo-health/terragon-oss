@@ -48,8 +48,10 @@ export async function runScheduledTasksCron(): Promise<Response> {
     let v3OutboxWorkerRetried = 0;
     let v3ZombieHeadsScanned = 0;
     let v3ZombieHeadsReconciled = 0;
+    let v3EffectsError: string | null = null;
     let v3OutboxError: string | null = null;
     let v3WorkerError: string | null = null;
+    let v3ReconcileError: string | null = null;
     // V3 effect-ledger processing (Postgres-canonical runtime kernel).
     try {
       const { drainDueV3Effects } = await import(
@@ -64,6 +66,7 @@ export async function runScheduledTasksCron(): Promise<Response> {
       console.log("V3 delivery effects processed", v3Result);
     } catch (v3Err) {
       console.error("V3 delivery effect processing failed", v3Err);
+      v3EffectsError = "v3_effect_processing_failed";
     }
 
     // V3 outbox relay publishes durable events into Redis for workers.
@@ -125,11 +128,16 @@ export async function runScheduledTasksCron(): Promise<Response> {
       }
     } catch (reconcileErr) {
       console.error("V3 zombie gate head reconciliation failed", reconcileErr);
+      v3ReconcileError = "v3_zombie_reconcile_failed";
     }
 
     return Response.json(
       {
-        success: !v3OutboxError && !v3WorkerError,
+        success:
+          !v3EffectsError &&
+          !v3OutboxError &&
+          !v3WorkerError &&
+          !v3ReconcileError,
         v3OutboxWorkerProcessed,
         v3OutboxWorkerAcknowledged,
         v3OutboxWorkerDeadLettered,
@@ -140,10 +148,17 @@ export async function runScheduledTasksCron(): Promise<Response> {
         v3OutboxFailed,
         v3ZombieHeadsScanned,
         v3ZombieHeadsReconciled,
+        ...(v3EffectsError ? { v3EffectsError } : {}),
         ...(v3OutboxError ? { v3OutboxError } : {}),
         ...(v3WorkerError ? { v3WorkerError } : {}),
+        ...(v3ReconcileError ? { v3ReconcileError } : {}),
       },
-      { status: v3OutboxError || v3WorkerError ? 500 : 200 },
+      {
+        status:
+          v3EffectsError || v3OutboxError || v3WorkerError || v3ReconcileError
+            ? 500
+            : 200,
+      },
     );
   } catch (error) {
     console.error("Scheduled tasks cron failed:", error);
