@@ -79,14 +79,12 @@ describe("handleGitHubWebhook", () => {
     const { appendSignalToInbox, appendJournalEventV3, enqueueOutboxRecordV3 } =
       await getMocks();
     const lookupWorkflowByPr = vi.fn().mockResolvedValue(workflowId);
-    const wakeCoordinator = vi.fn().mockResolvedValue(undefined);
 
     await handleGitHubWebhook({
       db: fakeDb,
       rawEvent: baseEvent(),
       inboxPartitionKey: workflowId,
       lookupWorkflowByPr,
-      wakeCoordinator,
     });
 
     const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
@@ -109,7 +107,6 @@ describe("handleGitHubWebhook", () => {
         }),
       }),
     );
-    expect(wakeCoordinator).toHaveBeenCalledWith(workflowId);
   });
 
   it("does not enqueue outbox when journal insert is deduped", async () => {

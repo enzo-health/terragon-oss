@@ -66,7 +66,6 @@ describe("handleHumanAction", () => {
   it("writes signal inbox + journal + outbox in one transaction", async () => {
     const { appendSignalToInbox, appendJournalEventV3, enqueueOutboxRecordV3 } =
       await getMocks();
-    const wakeCoordinator = vi.fn().mockResolvedValue(undefined);
 
     await handleHumanAction({
       db: fakeDb,
@@ -75,7 +74,6 @@ describe("handleHumanAction", () => {
       workflowId,
       inboxPartitionKey: workflowId,
       idempotencyKey: "req-1",
-      wakeCoordinator,
     });
 
     const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
@@ -98,7 +96,6 @@ describe("handleHumanAction", () => {
         }),
       }),
     );
-    expect(wakeCoordinator).toHaveBeenCalledWith(workflowId);
   });
 
   it("does not enqueue outbox when journal insert is deduped", async () => {

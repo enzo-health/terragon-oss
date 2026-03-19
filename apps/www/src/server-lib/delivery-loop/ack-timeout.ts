@@ -2,11 +2,6 @@ import { db } from "@/lib/db";
 import { getStalledDispatchIntents } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { handleAckTimeout, DEFAULT_ACK_TIMEOUT_MS } from "./ack-lifecycle";
 import { appendSignalToInbox } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
-import { runCoordinatorTick } from "./coordinator/tick";
-import type {
-  WorkflowId,
-  CorrelationId,
-} from "@terragon/shared/delivery-loop/domain/workflow";
 
 // ---------------------------------------------------------------------------
 // Ack timeout sweep
@@ -69,13 +64,6 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
                 consecutiveFailures: result.value.attempt,
               },
               canonicalCauseId: `ack-timeout-${intent.runId}`,
-            });
-            await runCoordinatorTick({
-              db,
-              workflowId: intent.loopId as WorkflowId,
-              correlationId:
-                `ack-timeout-sweep-${intent.runId}` as CorrelationId,
-              loopId: intent.loopId,
             });
           } catch (retryErr) {
             console.error("[ack-timeout] failed to signal ack-expired retry", {

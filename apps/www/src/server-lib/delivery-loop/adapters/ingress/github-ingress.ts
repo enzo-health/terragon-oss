@@ -186,8 +186,8 @@ export function normalizeGitHubWebhook(
 
 /**
  * Handle an inbound GitHub webhook: normalize to a typed signal,
- * look up the active workflow for the PR, and append the signal
- * to its inbox.
+ * look up the active workflow for the PR, and persist the signal
+ * to the inbox plus mirrored v3 records.
  */
 export async function handleGitHubWebhook(params: {
   db: DB;
@@ -199,7 +199,6 @@ export async function handleGitHubWebhook(params: {
     prNumber: number;
     repoFullName: string;
   }) => Promise<WorkflowId | null>;
-  wakeCoordinator?: (workflowId: WorkflowId) => Promise<void>;
 }): Promise<void> {
   const signal = normalizeGitHubWebhook(params.rawEvent);
   if (!signal) return;
@@ -277,16 +276,6 @@ export async function handleGitHubWebhook(params: {
     await transactionalDb.transaction(writeSignalAndOutbox);
   } else {
     await writeSignalAndOutbox(params.db);
-  }
-
-  // Wake coordinator asynchronously
-  if (params.wakeCoordinator) {
-    params.wakeCoordinator(workflowId).catch((err) => {
-      console.warn("[github-ingress] wakeCoordinator failed", {
-        workflowId,
-        error: err,
-      });
-    });
   }
 }
 

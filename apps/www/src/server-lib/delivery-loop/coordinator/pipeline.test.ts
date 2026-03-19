@@ -733,7 +733,6 @@ describe("v2 pipeline — end-to-end validation", () => {
         },
         workflowId:
           workflowId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
-        consecutiveDispatches: 0,
       });
 
       // Self-dispatch payload construction is not yet wired — returns null
@@ -755,7 +754,6 @@ describe("v2 pipeline — end-to-end validation", () => {
         },
         workflowId:
           workflowId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
-        consecutiveDispatches: 7, // at the MAX_CONSECUTIVE_SELF_DISPATCHES limit
       });
 
       expect(response.selfDispatch).toBeNull();

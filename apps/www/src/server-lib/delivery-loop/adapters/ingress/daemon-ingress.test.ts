@@ -13,19 +13,6 @@ vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({
   appendSignalToInbox: vi.fn().mockResolvedValue([{ id: "sig-1" }]),
 }));
 
-vi.mock("../../coordinator/tick", () => ({
-  runCoordinatorTick: vi.fn().mockResolvedValue({
-    workflowId: "wf-1",
-    correlationId: "corr-1",
-    signalsProcessed: 1,
-    transitioned: false,
-    stateBefore: "implementing",
-    stateAfter: "implementing",
-    workItemsScheduled: 0,
-    incidentsEvaluated: false,
-  }),
-}));
-
 vi.mock("../../v3/store", () => ({
   appendJournalEventV3: vi
     .fn()
@@ -40,13 +27,11 @@ async function getMocks() {
   const { appendSignalToInbox } = await import(
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
   );
-  const { runCoordinatorTick } = await import("../../coordinator/tick");
   const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
     "../../v3/store"
   );
   return {
     appendSignalToInbox: appendSignalToInbox as ReturnType<typeof vi.fn>,
-    runCoordinatorTick: runCoordinatorTick as ReturnType<typeof vi.fn>,
     appendJournalEventV3: appendJournalEventV3 as ReturnType<typeof vi.fn>,
     enqueueOutboxRecordV3: enqueueOutboxRecordV3 as ReturnType<typeof vi.fn>,
   };
@@ -99,8 +84,14 @@ describe("normalizeDaemonEvent", () => {
     );
     expect(signal.source).toBe("daemon");
     expect(signal.event.kind).toBe("run_completed");
-    const ev = signal.event as any;
+    const ev = signal.event;
+    if (ev.kind !== "run_completed") {
+      throw new Error("expected run_completed event");
+    }
     expect(ev.result.kind).toBe("partial");
+    if (ev.result.kind !== "partial") {
+      throw new Error("expected partial completion result");
+    }
     expect(ev.result.remainingTasks).toBe(3);
   });
 
@@ -108,14 +99,20 @@ describe("normalizeDaemonEvent", () => {
     const signal = normalizeDaemonEvent(
       basePayload({ headSha: "deadbeef", summary: "all tasks" }),
     );
-    const ev = signal.event as any;
+    const ev = signal.event;
+    if (ev.kind !== "run_completed") {
+      throw new Error("expected run_completed event");
+    }
     expect(ev.result.headSha).toBe("deadbeef");
     expect(ev.result.summary).toBe("all tasks");
   });
 
   it("completed defaults headSha and summary to empty string", () => {
     const signal = normalizeDaemonEvent(basePayload());
-    const ev = signal.event as any;
+    const ev = signal.event;
+    if (ev.kind !== "run_completed") {
+      throw new Error("expected run_completed event");
+    }
     expect(ev.result.headSha).toBe("");
     expect(ev.result.summary).toBe("");
   });
@@ -142,14 +139,26 @@ describe("normalizeDaemonEvent", () => {
     const signal = normalizeDaemonEvent(
       basePayload({ status: "failed", exitCode: null }),
     );
-    const ev = signal.event as any;
+    const ev = signal.event;
+    if (ev.kind !== "run_failed") {
+      throw new Error("expected run_failed event");
+    }
+    if (ev.failure.kind !== "runtime_crash") {
+      throw new Error("expected runtime_crash failure");
+    }
     expect(ev.failure.exitCode).toBeNull();
     expect(ev.failure.kind).toBe("runtime_crash");
   });
 
   it("failed defaults errorMessage to 'Unknown error'", () => {
     const signal = normalizeDaemonEvent(basePayload({ status: "failed" }));
-    const ev = signal.event as any;
+    const ev = signal.event;
+    if (ev.kind !== "run_failed") {
+      throw new Error("expected run_failed event");
+    }
+    if (ev.failure.kind !== "runtime_crash") {
+      throw new Error("expected runtime_crash failure");
+    }
     expect(ev.failure.message).toBe("Unknown error");
   });
 
@@ -186,7 +195,10 @@ describe("normalizeDaemonEvent", () => {
 
   it("progress defaults missing fields", () => {
     const signal = normalizeDaemonEvent(basePayload({ status: "progress" }));
-    const ev = signal.event as any;
+    const ev = signal.event;
+    if (ev.kind !== "progress_reported") {
+      throw new Error("expected progress_reported event");
+    }
     expect(ev.progress.completedTasks).toBe(0);
     expect(ev.progress.totalTasks).toBe(0);
     expect(ev.progress.currentTask).toBeNull();
@@ -381,99 +393,44 @@ describe("handleDaemonIngress", () => {
     expect(call.canonicalCauseId).toMatch(/:terminal$/);
   });
 
-  it("circuit breaker: consecutiveDispatches >= 7 → selfDispatch is null, workItemsScheduled is 0", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    runCoordinatorTick.mockResolvedValueOnce({
-      workflowId,
-      correlationId: "c-1",
-      signalsProcessed: 1,
-      transitioned: true,
-      stateBefore: "implementing",
-      stateAfter: "implementing",
-      workItemsScheduled: 1,
-      incidentsEvaluated: false,
-    });
+  it("completed events no longer schedule legacy self-dispatch", async () => {
     const result = await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload(),
       workflowId,
-      consecutiveDispatches: 7,
     });
     expect(result.selfDispatch).toBeNull();
     expect(result.workItemsScheduled).toBe(0);
-    // tick should still be called
-    expect(runCoordinatorTick).toHaveBeenCalledOnce();
   });
 
-  it("circuit breaker: consecutiveDispatches < 7 → tick runs, workItemsScheduled is returned", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    runCoordinatorTick.mockResolvedValueOnce({
-      workflowId,
-      correlationId: "c-1",
-      signalsProcessed: 1,
-      transitioned: true,
-      stateBefore: "implementing",
-      stateAfter: "implementing",
-      workItemsScheduled: 2,
-      incidentsEvaluated: false,
-    });
-    const result = await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload(),
-      workflowId,
-      consecutiveDispatches: 3,
-    });
-    // Currently returns null because the TODO payload construction isn't wired
-    expect(result.selfDispatch).toBeNull();
-    expect(result.workItemsScheduled).toBe(2);
-    expect(runCoordinatorTick).toHaveBeenCalledOnce();
-  });
-
-  it("tick is NOT called for non-completed events (failed)", async () => {
-    const { runCoordinatorTick } = await getMocks();
+  it("does not wake the coordinator for non-completed events (failed)", async () => {
+    const { appendSignalToInbox } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "failed" }),
       workflowId,
     });
-    expect(runCoordinatorTick).not.toHaveBeenCalled();
+    expect(appendSignalToInbox).toHaveBeenCalledOnce();
   });
 
-  it("tick is NOT called for stopped events", async () => {
-    const { runCoordinatorTick } = await getMocks();
+  it("does not wake the coordinator for stopped events", async () => {
+    const { appendSignalToInbox } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "stopped" }),
       workflowId,
     });
-    expect(runCoordinatorTick).not.toHaveBeenCalled();
+    expect(appendSignalToInbox).toHaveBeenCalledOnce();
   });
 
-  it("tick is NOT called for progress events", async () => {
-    const { runCoordinatorTick } = await getMocks();
+  it("does not wake the coordinator for progress events", async () => {
+    const { appendSignalToInbox } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "progress" }),
       workflowId,
     });
-    expect(runCoordinatorTick).not.toHaveBeenCalled();
-  });
-
-  it("tick error → caught and logged, returns {selfDispatch: null}", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    runCoordinatorTick.mockRejectedValueOnce(new Error("tick boom"));
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload(),
-      workflowId,
-    });
-    expect(result).toEqual({ selfDispatch: null, workItemsScheduled: 0 });
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[daemon-ingress] self-dispatch micro-tick failed",
-      expect.objectContaining({ workflowId, runId: "run-1" }),
-    );
-    warnSpy.mockRestore();
+    expect(appendSignalToInbox).toHaveBeenCalledOnce();
   });
 
   it("passes loopId (not workflowId) as inbox partition key", async () => {
@@ -486,66 +443,6 @@ describe("handleDaemonIngress", () => {
     expect(appendSignalToInbox).toHaveBeenCalledWith(
       expect.objectContaining({ loopId: "v1-loop-42" }),
     );
-  });
-});
-
-// ════════════════════════════════════════════════════════════════════════
-// Part 3 — isEligibleForSelfDispatch (not exported, tested indirectly)
-// ════════════════════════════════════════════════════════════════════════
-describe("isEligibleForSelfDispatch (indirect)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("daemon + run_completed → tick IS called (eligible)", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({ status: "completed" }),
-      workflowId,
-    });
-    expect(runCoordinatorTick).toHaveBeenCalledOnce();
-  });
-
-  it("daemon + run_failed → tick NOT called (ineligible)", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({ status: "failed" }),
-      workflowId,
-    });
-    expect(runCoordinatorTick).not.toHaveBeenCalled();
-  });
-
-  it("human + stop_requested → tick NOT called (ineligible)", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({ status: "stopped" }),
-      workflowId,
-    });
-    expect(runCoordinatorTick).not.toHaveBeenCalled();
-  });
-
-  it("daemon + progress_reported → tick NOT called (ineligible)", async () => {
-    const { runCoordinatorTick } = await getMocks();
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({ status: "progress" }),
-      workflowId,
-    });
-    expect(runCoordinatorTick).not.toHaveBeenCalled();
-  });
-
-  it("non-completed events return workItemsScheduled: 0", async () => {
-    for (const status of ["failed", "stopped", "progress"] as const) {
-      const result = await handleDaemonIngress({
-        db: fakeDb,
-        rawEvent: basePayload({ status }),
-        workflowId,
-      });
-      expect(result.workItemsScheduled).toBe(0);
-    }
   });
 });
 

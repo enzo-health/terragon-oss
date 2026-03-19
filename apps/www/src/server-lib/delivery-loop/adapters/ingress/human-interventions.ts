@@ -83,7 +83,7 @@ export function normalizeHumanAction(params: {
 
 /**
  * Handle a human action: normalize to a typed signal, append it
- * to the workflow's signal inbox, and wake the coordinator.
+ * to the workflow's signal inbox, and persist the mirrored v3 records.
  */
 export async function handleHumanAction(params: {
   db: DB;
@@ -95,7 +95,6 @@ export async function handleHumanAction(params: {
   gate?: GateKind;
   /** Optional request-scoped idempotency key. When provided, duplicate calls with the same key are deduplicated. Falls back to a random UUID. */
   idempotencyKey?: string;
-  wakeCoordinator?: (workflowId: WorkflowId) => Promise<void>;
 }): Promise<void> {
   const signal = normalizeHumanAction({
     action: params.action,
@@ -169,15 +168,6 @@ export async function handleHumanAction(params: {
     await transactionalDb.transaction(writeSignalAndOutbox);
   } else {
     await writeSignalAndOutbox(params.db);
-  }
-
-  if (params.wakeCoordinator) {
-    params.wakeCoordinator(params.workflowId).catch((err) => {
-      console.warn("[human-interventions] wakeCoordinator failed", {
-        workflowId: params.workflowId,
-        error: err,
-      });
-    });
   }
 }
 

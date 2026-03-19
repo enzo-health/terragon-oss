@@ -380,6 +380,11 @@ export async function POST(request: Request) {
     transportMode = "legacy",
     protocolVersion = 1,
   } = json;
+  const daemonHeadShaAtCompletion =
+    typeof json.headShaAtCompletion === "string" &&
+    json.headShaAtCompletion.length > 0
+      ? json.headShaAtCompletion
+      : null;
   const rawThreadChatId = json.threadChatId;
   const threadChatId =
     typeof rawThreadChatId === "string" && rawThreadChatId.length > 0
@@ -937,9 +942,13 @@ export async function POST(request: Request) {
                 ((): import("@terragon/shared/delivery-loop/domain/signals").DaemonCompletionResult => {
                   // Mirror normalizeDaemonEvent logic for result construction
                   // but from the raw json body rather than the DaemonEventPayload
-                  return { kind: "success" as const, headSha: "", summary: "" };
+                  return {
+                    kind: "success" as const,
+                    headSha: daemonHeadShaAtCompletion ?? "",
+                    summary: "",
+                  };
                 })(),
-              headSha: null,
+              headSha: daemonHeadShaAtCompletion,
               summary: null,
             };
           case "failed":
@@ -972,18 +981,93 @@ export async function POST(request: Request) {
             | "completed"
             | "failed"
             | "stopped",
-          headSha: null,
+          headSha: daemonHeadShaAtCompletion,
           summary: null,
           exitCode: null,
           errorMessage: daemonTerminalErrorInfo?.errorMessage ?? null,
         },
         workflowId: effectiveLoopId! as WorkflowId,
-        consecutiveDispatches: 0,
         outcome: daemonOutcome,
       });
       if (ingressResult.selfDispatch) {
         selfDispatchPayload =
           ingressResult.selfDispatch as unknown as typeof selfDispatchPayload;
+      }
+
+      // V3 kernel bridge: mirror terminal daemon outcomes into the new
+      // Postgres-canonical journal/effect-ledger runtime. Best-effort only.
+      try {
+        const { appendEventAndAdvanceV3 } = await import(
+          "@/server-lib/delivery-loop/v3/kernel"
+        );
+        const { getWorkflowHeadV3 } = await import(
+          "@/server-lib/delivery-loop/v3/store"
+        );
+        const headBefore = await getWorkflowHeadV3({
+          db,
+          workflowId: effectiveLoopId,
+        });
+
+        // First observed daemon terminal event for a run is an implicit ack.
+        await appendEventAndAdvanceV3({
+          db,
+          workflowId: effectiveLoopId,
+          source: "daemon",
+          idempotencyKey: `ack:${envelopeV2.eventId}:${envelopeV2.runId}`,
+          event: {
+            type: "dispatch_acked",
+            runId: envelopeV2.runId,
+          },
+        });
+
+        if (daemonRunStatusFromMessages === "completed") {
+          const completedEvent =
+            headBefore?.state === "gating_review"
+              ? ({
+                  type: "gate_review_passed",
+                  runId: envelopeV2.runId,
+                } as const)
+              : ({
+                  type: "run_completed",
+                  runId: envelopeV2.runId,
+                  headSha: daemonHeadShaAtCompletion,
+                } as const);
+          await appendEventAndAdvanceV3({
+            db,
+            workflowId: effectiveLoopId,
+            source: "daemon",
+            idempotencyKey: `run-completed:${envelopeV2.eventId}`,
+            event: completedEvent,
+          });
+        } else if (daemonRunStatusFromMessages === "failed") {
+          const failedEvent =
+            headBefore?.state === "gating_review"
+              ? ({
+                  type: "gate_review_failed",
+                  runId: envelopeV2.runId,
+                  reason:
+                    daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
+                } as const)
+              : ({
+                  type: "run_failed",
+                  runId: envelopeV2.runId,
+                  message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
+                  category: daemonTerminalErrorInfo.errorCategory,
+                } as const);
+          await appendEventAndAdvanceV3({
+            db,
+            workflowId: effectiveLoopId,
+            source: "daemon",
+            idempotencyKey: `run-failed:${envelopeV2.eventId}`,
+            event: failedEvent,
+          });
+        }
+      } catch (v3Err) {
+        console.warn("[daemon-event] v3 kernel bridge failed, continuing", {
+          loopId: effectiveLoopId,
+          runId: envelopeV2?.runId,
+          error: v3Err,
+        });
       }
 
       // Inline work item execution: if the coordinator tick scheduled work

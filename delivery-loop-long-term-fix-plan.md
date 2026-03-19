@@ -435,8 +435,12 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Compatibility mapping still renders expected status UI.
 - **Validation**:
   - Typecheck/lint/tests for delivery loop and status mapping.
-- **Status**: pending
+- **Status**: complete
 - **Work Log**:
+  - Retired the runtime wake-up path into the legacy v2 coordinator from daemon ingress, GitHub ingress, ack timeout handling, and human intervention actions.
+  - Kept the legacy coordinator module export surface in place as a compatibility shim for status mapping and targeted tests, but removed all normal-operation call sites that invoked `runCoordinatorTick`.
+  - Updated ingress tests to assert durable inbox + v3 journal/outbox persistence without any coordinator wake behavior.
+  - Left read compatibility intact by preserving the v2 coordinator implementation for explicit compatibility and test coverage only.
 
 ### Task S4-T3: Soak Validation (3/3 Real PR Runs)
 

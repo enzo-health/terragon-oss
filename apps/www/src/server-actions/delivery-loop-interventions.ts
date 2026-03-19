@@ -8,8 +8,6 @@ import { DBUserMessage } from "@terragon/shared";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
-import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
-import type { CorrelationId } from "@terragon/shared/delivery-loop/domain/workflow";
 
 function buildResumeFollowUpMessage(): DBUserMessage {
   return {
@@ -70,13 +68,6 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       actorUserId: userId,
       workflowId: v2Row.id as WorkflowId,
       inboxPartitionKey: v2Row.id,
-      wakeCoordinator: async (wfId) => {
-        await runCoordinatorTick({
-          db,
-          workflowId: wfId,
-          correlationId: `human-resume:${wfId}:${Date.now()}` as CorrelationId,
-        });
-      },
     });
 
     if (threadChatId) {
@@ -143,13 +134,6 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
       workflowId: v2Row.id as WorkflowId,
       inboxPartitionKey: v2Row.id,
       gate,
-      wakeCoordinator: async (wfId) => {
-        await runCoordinatorTick({
-          db,
-          workflowId: wfId,
-          correlationId: `human-bypass:${wfId}:${Date.now()}` as CorrelationId,
-        });
-      },
     });
 
     if (threadChatId) {

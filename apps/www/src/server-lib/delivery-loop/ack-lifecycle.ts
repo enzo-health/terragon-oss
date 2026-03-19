@@ -188,7 +188,6 @@ export function startAckTimeout({
           const { appendSignalToInbox } = await import(
             "@terragon/shared/delivery-loop/store/signal-inbox-store"
           );
-          const { runCoordinatorTick } = await import("./coordinator/tick");
           await appendSignalToInbox({
             db,
             loopId,
@@ -198,14 +197,6 @@ export function startAckTimeout({
               consecutiveFailures: outcome.attempt,
             },
             canonicalCauseId: `ack-timeout-${runId}`,
-          });
-          await runCoordinatorTick({
-            db,
-            workflowId:
-              loopId as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
-            correlationId:
-              `ack-timeout-timer-${runId}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
-            loopId,
           });
         } catch (retryErr) {
           console.error("[ack-lifecycle] failed to signal ack-expired retry", {
