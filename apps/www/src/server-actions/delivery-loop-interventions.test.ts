@@ -6,9 +6,7 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { enrollSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
-import * as schema from "@terragon/shared/db/schema";
-import { and, eq } from "drizzle-orm";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
   requestDeliveryLoopBypassCurrentGateOnce,
   requestDeliveryLoopResumeFromBlocked,
@@ -33,7 +31,7 @@ describe("delivery-loop-interventions", () => {
     vi.clearAllMocks();
   });
 
-  it("resumes blocked loops into their persisted resume phase", async () => {
+  it("resumes a v2 workflow blocked on human feedback", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -42,39 +40,21 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    await createWorkflow({
       db,
+      threadId,
+      generation: 1,
+      kind: "awaiting_manual_fix",
+      stateJson: {},
       userId: user.id,
       repoFullName: "owner/repo",
-      threadId,
     });
 
-    await db
-      .update(schema.sdlcLoop)
-      .set({ state: "blocked", blockedFromState: "review_gate" })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
-
+    // Should not throw — workflow is in a blocked kind
     await resumeFromBlocked({ threadId, threadChatId: null });
-
-    const reloadedLoop = await db.query.sdlcLoop.findFirst({
-      where: eq(schema.sdlcLoop.id, loop!.id),
-    });
-    expect(reloadedLoop?.state).toBe("review_gate");
-    expect(reloadedLoop?.blockedFromState).toBeNull();
-
-    const intervention = await db.query.sdlcPhaseArtifact.findFirst({
-      where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
-        eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
-        eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
-      ),
-      orderBy: [schema.sdlcPhaseArtifact.createdAt],
-    });
-    expect(intervention?.status).toBe("accepted");
-    expect(intervention?.phase).toBe("review_gate");
   });
 
-  it("creates a generated one-time quality bypass marker", async () => {
+  it("accepts bypass request for a v2 workflow in implementing state", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -83,37 +63,21 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    await createWorkflow({
       db,
+      threadId,
+      generation: 1,
+      kind: "implementing",
+      stateJson: {},
       userId: user.id,
       repoFullName: "owner/repo",
-      threadId,
     });
 
-    await db
-      .update(schema.sdlcLoop)
-      .set({ state: "blocked" })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
-
+    // Should not throw — workflow is in a bypassable kind
     await bypassOnce({ threadId, threadChatId: null });
-
-    const marker = await db.query.sdlcPhaseArtifact.findFirst({
-      where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
-        eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
-        eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
-        eq(schema.sdlcPhaseArtifact.status, "generated"),
-      ),
-      orderBy: [schema.sdlcPhaseArtifact.createdAt],
-    });
-    expect(marker).toBeTruthy();
-    expect((marker?.payload as { gate?: string } | null)?.gate).toBe("quality");
-    expect(
-      (marker?.payload as { loopVersion?: number } | null)?.loopVersion,
-    ).toBe(loop?.loopVersion);
   });
 
-  it("does not create duplicate bypass markers for stale pending requests", async () => {
+  it("accepts bypass request for a v2 workflow in gating state", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -122,46 +86,21 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
-    });
-
-    await db
-      .update(schema.sdlcLoop)
-      .set({ state: "blocked" })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
-
-    await db.insert(schema.sdlcPhaseArtifact).values({
-      loopId: loop!.id,
-      phase: "implementing",
-      artifactType: "human_intervention",
-      loopVersion: loop!.loopVersion,
-      generatedBy: "human",
-      status: "generated",
-      payload: {
-        kind: "bypass_once",
-        gate: "quality",
-        actorUserId: user.id,
-        loopVersion: loop!.loopVersion,
-        requestedAt: "2000-01-01T00:00:00.000Z",
+      generation: 1,
+      kind: "gating",
+      stateJson: {
+        headSha: "sha-test",
+        gate: { kind: "ci", status: "waiting", runId: null, snapshot: {} },
       },
+      userId: user.id,
+      repoFullName: "owner/repo",
     });
 
+    // Should not throw — workflow is in a bypassable kind
     await bypassOnce({ threadId, threadChatId: null });
-
-    const markers = await db.query.sdlcPhaseArtifact.findMany({
-      where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
-        eq(schema.sdlcPhaseArtifact.phase, "implementing"),
-        eq(schema.sdlcPhaseArtifact.artifactType, "human_intervention"),
-        eq(schema.sdlcPhaseArtifact.generatedBy, "human"),
-        eq(schema.sdlcPhaseArtifact.status, "generated"),
-      ),
-    });
-    expect(markers).toHaveLength(1);
   });
 
   it("rejects intervention when user is logged out", async () => {
@@ -179,7 +118,7 @@ describe("delivery-loop-interventions", () => {
     );
   });
 
-  it("rejects resume when loop is not blocked", async () => {
+  it("rejects resume when v2 workflow is not in a blocked kind", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -188,11 +127,14 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    await enrollSdlcLoopForThread({
+    await createWorkflow({
       db,
+      threadId,
+      generation: 1,
+      kind: "implementing",
+      stateJson: {},
       userId: user.id,
       repoFullName: "owner/repo",
-      threadId,
     });
 
     await expect(

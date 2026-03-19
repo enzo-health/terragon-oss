@@ -225,6 +225,7 @@ export async function createNewThread({
     (runInSdlcLoop ||
       sourceType === "automation" ||
       sourceType === "github-mention" ||
+      sourceType === "cli" ||
       (sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn));
   const planApprovalPolicy =
     sourceMetadata?.type === "www"
@@ -429,7 +430,9 @@ export async function createNewThread({
       threadChatId,
       isNewThread: true,
       createNewBranch: effectiveCreateNewBranch,
-      branchName: headBranchName || baseBranchName,
+      branchName: effectiveCreateNewBranch
+        ? undefined
+        : headBranchName || baseBranchName,
       delayMs,
     }).catch((error) => {
       console.error("Error in startAgentMessage:", error);

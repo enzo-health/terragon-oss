@@ -19,18 +19,14 @@ import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { SdlcLoopState } from "@terragon/shared/db/types";
 import {
-  activeSdlcLoopStateSet,
-  buildPersistedDeliveryLoopSnapshot,
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/gate-persistence";
+import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
-import { ensureV2WorkflowExists } from "@/server-lib/delivery-loop/coordinator/enrollment-bridge";
-import { runCoordinatorTick } from "@/server-lib/delivery-loop/coordinator/tick";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
-import { waitUntil } from "@vercel/functions";
 
 type SdlcCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
 type SdlcReviewThreadGateRun =
@@ -190,13 +186,11 @@ const deliveryLoopStatusSchema = z.object({
 });
 
 type NeedsAttentionInput = {
-  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
+  loopSnapshot: DeliveryLoopSnapshot;
   ciRun: SdlcCiGateRun | null;
   reviewThreadRun: SdlcReviewThreadGateRun | null;
   unresolvedDeepFindingTitles: string[];
   unresolvedCarmackFindingTitles: string[];
-  videoCaptureStatus: (typeof schema.sdlcLoop.$inferSelect)["videoCaptureStatus"];
-  videoFailureMessage: string | null;
 };
 
 function buildDeliveryLoopActions({
@@ -206,7 +200,7 @@ function buildDeliveryLoopActions({
   planningArtifactStatus,
 }: {
   loopState: SdlcLoopState;
-  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
+  loopSnapshot: DeliveryLoopSnapshot;
   planApprovalPolicy: "auto" | "human_required";
   planningArtifactStatus:
     | "generated"
@@ -232,8 +226,6 @@ function buildNeedsAttention({
   reviewThreadRun,
   unresolvedDeepFindingTitles,
   unresolvedCarmackFindingTitles,
-  videoCaptureStatus,
-  videoFailureMessage,
 }: NeedsAttentionInput): {
   isBlocked: boolean;
   blockerCount: number;
@@ -266,14 +258,6 @@ function buildNeedsAttention({
             title:
               "Review-thread evaluation had a transient error and will retry",
             source: "review_threads" as const,
-          },
-        ]
-      : []),
-    ...(videoCaptureStatus === "failed"
-      ? [
-          {
-            title: videoFailureMessage ?? "Video capture failed",
-            source: "video" as const,
           },
         ]
       : []),
@@ -311,6 +295,7 @@ function hydrateV2Workflow(
     generation: row.generation,
     version: row.version,
     fixAttemptCount: row.fixAttemptCount,
+    infraRetryCount: row.infraRetryCount ?? 0,
     maxFixAttempts: row.maxFixAttempts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -322,14 +307,17 @@ function hydrateV2Workflow(
 }
 
 /**
- * Shared helper: fetches gate runs, artifacts, planned tasks, review findings
- * from the DB and assembles the common status data structure. Used by both the
- * v2 workflow path and the v1 fallback path.
+ * Fetches gate runs, artifacts, planned tasks, review findings from the DB
+ * and assembles the common status data structure from the v2 workflow.
  */
 async function assembleLoopStatusData(params: {
-  loop: typeof schema.sdlcLoop.$inferSelect;
-  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
+  loopId: string;
+  loopSnapshot: DeliveryLoopSnapshot;
   currentHeadSha: string | null;
+  repoFullName: string;
+  prNumber: number | null;
+  canonicalStatusCommentId: string | null;
+  canonicalCheckRunId: number | null;
 }): Promise<{
   ciRun: SdlcCiGateRun | null;
   reviewThreadRun: SdlcReviewThreadGateRun | null;
@@ -340,7 +328,7 @@ async function assembleLoopStatusData(params: {
   links: SdlcLoopStatus["links"];
   artifacts: SdlcLoopStatus["artifacts"];
 }> {
-  const { loop, loopSnapshot, currentHeadSha } = params;
+  const { loopId, loopSnapshot, currentHeadSha } = params;
 
   const [ciRun, reviewThreadRun, deepReviewRun, carmackReviewRun] =
     await Promise.all([
@@ -348,7 +336,7 @@ async function assembleLoopStatusData(params: {
         ? db.query.sdlcCiGateRun
             .findFirst({
               where: and(
-                eq(schema.sdlcCiGateRun.loopId, loop.id),
+                eq(schema.sdlcCiGateRun.loopId, loopId),
                 eq(schema.sdlcCiGateRun.headSha, currentHeadSha),
               ),
               orderBy: [
@@ -362,7 +350,7 @@ async function assembleLoopStatusData(params: {
         ? db.query.sdlcReviewThreadGateRun
             .findFirst({
               where: and(
-                eq(schema.sdlcReviewThreadGateRun.loopId, loop.id),
+                eq(schema.sdlcReviewThreadGateRun.loopId, loopId),
                 eq(schema.sdlcReviewThreadGateRun.headSha, currentHeadSha),
               ),
               orderBy: [
@@ -376,7 +364,7 @@ async function assembleLoopStatusData(params: {
         ? db.query.sdlcDeepReviewRun
             .findFirst({
               where: and(
-                eq(schema.sdlcDeepReviewRun.loopId, loop.id),
+                eq(schema.sdlcDeepReviewRun.loopId, loopId),
                 eq(schema.sdlcDeepReviewRun.headSha, currentHeadSha),
               ),
               orderBy: [
@@ -390,7 +378,7 @@ async function assembleLoopStatusData(params: {
         ? db.query.sdlcCarmackReviewRun
             .findFirst({
               where: and(
-                eq(schema.sdlcCarmackReviewRun.loopId, loop.id),
+                eq(schema.sdlcCarmackReviewRun.loopId, loopId),
                 eq(schema.sdlcCarmackReviewRun.headSha, currentHeadSha),
               ),
               orderBy: [
@@ -404,81 +392,52 @@ async function assembleLoopStatusData(params: {
 
   const implementationArtifactFallbackWhere = currentHeadSha
     ? and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
+        eq(schema.sdlcPhaseArtifact.loopId, loopId),
         eq(schema.sdlcPhaseArtifact.phase, "implementing"),
         eq(schema.sdlcPhaseArtifact.headSha, currentHeadSha),
       )
     : and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
+        eq(schema.sdlcPhaseArtifact.loopId, loopId),
         eq(schema.sdlcPhaseArtifact.phase, "implementing"),
         isNull(schema.sdlcPhaseArtifact.headSha),
       );
 
   const [planningArtifact, implementationArtifact] = await Promise.all([
-    loop.activePlanArtifactId
-      ? db.query.sdlcPhaseArtifact.findFirst({
-          where: and(
-            eq(schema.sdlcPhaseArtifact.id, loop.activePlanArtifactId),
-            eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-          ),
-          columns: {
-            id: true,
-            status: true,
-            updatedAt: true,
-            payload: true,
-          },
-        })
-      : db.query.sdlcPhaseArtifact.findFirst({
-          where: and(
-            eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-            eq(schema.sdlcPhaseArtifact.phase, "planning"),
-          ),
-          orderBy: [
-            desc(schema.sdlcPhaseArtifact.updatedAt),
-            desc(schema.sdlcPhaseArtifact.createdAt),
-          ],
-          columns: {
-            id: true,
-            status: true,
-            updatedAt: true,
-            payload: true,
-          },
-        }),
-    loop.activeImplementationArtifactId
-      ? db.query.sdlcPhaseArtifact.findFirst({
-          where: and(
-            eq(
-              schema.sdlcPhaseArtifact.id,
-              loop.activeImplementationArtifactId,
-            ),
-            eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-          ),
-          columns: {
-            id: true,
-            status: true,
-            headSha: true,
-            updatedAt: true,
-          },
-        })
-      : db.query.sdlcPhaseArtifact.findFirst({
-          where: implementationArtifactFallbackWhere,
-          orderBy: [
-            desc(schema.sdlcPhaseArtifact.updatedAt),
-            desc(schema.sdlcPhaseArtifact.createdAt),
-          ],
-          columns: {
-            id: true,
-            status: true,
-            headSha: true,
-            updatedAt: true,
-          },
-        }),
+    db.query.sdlcPhaseArtifact.findFirst({
+      where: and(
+        eq(schema.sdlcPhaseArtifact.loopId, loopId),
+        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+      ),
+      orderBy: [
+        desc(schema.sdlcPhaseArtifact.updatedAt),
+        desc(schema.sdlcPhaseArtifact.createdAt),
+      ],
+      columns: {
+        id: true,
+        status: true,
+        updatedAt: true,
+        payload: true,
+      },
+    }),
+    db.query.sdlcPhaseArtifact.findFirst({
+      where: implementationArtifactFallbackWhere,
+      orderBy: [
+        desc(schema.sdlcPhaseArtifact.updatedAt),
+        desc(schema.sdlcPhaseArtifact.createdAt),
+      ],
+      columns: {
+        id: true,
+        status: true,
+        headSha: true,
+        updatedAt: true,
+      },
+    }),
   ]);
 
   const plannedTasks = planningArtifact
     ? await db.query.sdlcPlanTask.findMany({
         where: and(
-          eq(schema.sdlcPlanTask.loopId, loop.id),
+          eq(schema.sdlcPlanTask.loopId, loopId),
           eq(schema.sdlcPlanTask.artifactId, planningArtifact.id),
         ),
         columns: {
@@ -499,14 +458,14 @@ async function assembleLoopStatusData(params: {
   const unresolvedDeepFindings = currentHeadSha
     ? await getUnresolvedBlockingDeepReviewFindings({
         db,
-        loopId: loop.id,
+        loopId,
         headSha: currentHeadSha,
       })
     : [];
   const unresolvedCarmackFindings = currentHeadSha
     ? await getUnresolvedBlockingCarmackReviewFindings({
         db,
-        loopId: loop.id,
+        loopId,
         headSha: currentHeadSha,
       })
     : [];
@@ -520,8 +479,8 @@ async function assembleLoopStatusData(params: {
     carmackReviewRun,
     unresolvedDeepFindingCount: unresolvedDeepFindings.length,
     unresolvedCarmackFindingCount: unresolvedCarmackFindings.length,
-    videoCaptureStatus: loop.videoCaptureStatus,
-    videoFailureMessage: loop.latestVideoFailureMessage ?? null,
+    videoCaptureStatus: "not_started",
+    videoFailureMessage: null,
   });
   const phases = buildDeliveryLoopTopProgressPhases({
     loopSnapshot,
@@ -538,14 +497,17 @@ async function assembleLoopStatusData(params: {
     unresolvedCarmackFindingTitles: unresolvedCarmackFindings.map((finding) =>
       finding.title.trim(),
     ),
-    videoCaptureStatus: loop.videoCaptureStatus,
-    videoFailureMessage: loop.latestVideoFailureMessage ?? null,
   });
 
+  const linkRepoFullName = params.repoFullName;
+  const linkPrNumber = params.prNumber;
+  const canonicalStatusCommentId = params.canonicalStatusCommentId;
+  const canonicalCheckRunId = params.canonicalCheckRunId;
+
   const pullRequestUrl =
-    loop.prNumber === null
+    linkPrNumber === null
       ? null
-      : `https://github.com/${loop.repoFullName}/pull/${loop.prNumber}`;
+      : `https://github.com/${linkRepoFullName}/pull/${linkPrNumber}`;
 
   return {
     ciRun,
@@ -557,12 +519,12 @@ async function assembleLoopStatusData(params: {
     links: {
       pullRequestUrl,
       statusCommentUrl:
-        pullRequestUrl && loop.canonicalStatusCommentId
-          ? `${pullRequestUrl}#issuecomment-${loop.canonicalStatusCommentId}`
+        pullRequestUrl && canonicalStatusCommentId
+          ? `${pullRequestUrl}#issuecomment-${canonicalStatusCommentId}`
           : null,
       checkRunUrl:
-        pullRequestUrl && loop.canonicalCheckRunId
-          ? `https://github.com/${loop.repoFullName}/runs/${loop.canonicalCheckRunId}?check_suite_focus=true`
+        pullRequestUrl && canonicalCheckRunId
+          ? `https://github.com/${linkRepoFullName}/runs/${canonicalCheckRunId}?check_suite_focus=true`
           : null,
     },
     artifacts: {
@@ -609,14 +571,15 @@ async function assembleLoopStatusData(params: {
 }
 
 /**
- * Build the full SdlcLoopStatus from a v2 delivery workflow, augmented
- * with data from the associated sdlcLoop (artifacts, gate runs, links).
+ * Build the full SdlcLoopStatus from a v2 delivery workflow.
  */
 async function buildStatusFromV2Workflow(params: {
   workflow: DeliveryWorkflow;
-  loop: typeof schema.sdlcLoop.$inferSelect;
+  workflowRow: NonNullable<
+    Awaited<ReturnType<typeof getActiveWorkflowForThread>>
+  >;
 }): Promise<SdlcLoopStatus> {
-  const { workflow, loop } = params;
+  const { workflow, workflowRow } = params;
 
   const loopSnapshot = buildSnapshotFromV2Workflow(workflow);
   const v2State = mapV2KindToSdlcLoopState(workflow);
@@ -624,13 +587,17 @@ async function buildStatusFromV2Workflow(params: {
     ("headSha" in workflow && typeof workflow.headSha === "string"
       ? workflow.headSha
       : null) ??
-    loop.currentHeadSha ??
+    workflowRow.currentHeadSha ??
     null;
 
   const assembled = await assembleLoopStatusData({
-    loop,
+    loopId: workflowRow.id,
     loopSnapshot,
     currentHeadSha,
+    repoFullName: workflowRow.repoFullName,
+    prNumber: workflowRow.prNumber ?? null,
+    canonicalStatusCommentId: workflowRow.canonicalStatusCommentId ?? null,
+    canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
   });
 
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
@@ -643,10 +610,10 @@ async function buildStatusFromV2Workflow(params: {
   const planApprovalPolicy: "auto" | "human_required" =
     workflow.kind === "awaiting_plan_approval"
       ? "human_required"
-      : loop.planApprovalPolicy;
+      : (workflowRow.planApprovalPolicy as "auto" | "human_required");
 
   return {
-    loopId: loop.id,
+    loopId: workflowRow.id,
     state: v2State,
     planApprovalPolicy,
     stateLabel: stateSummary.stateLabel,
@@ -694,147 +661,20 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       }
     }
 
-    // ── V2 fast-path: prefer delivery_workflow if one exists ──
     const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (v2Row) {
-      const workflow = hydrateV2Workflow(v2Row);
-      if (workflow && v2Row.sdlcLoopId) {
-        const loop = await db.query.sdlcLoop.findFirst({
-          where: eq(schema.sdlcLoop.id, v2Row.sdlcLoopId),
-        });
-        if (loop) {
-          const response = await buildStatusFromV2Workflow({ workflow, loop });
-          return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
-        }
-      }
-    }
-
-    // ── V1 fallback: read from sdlcLoop tables ──
-    const threadLoops = await db.query.sdlcLoop.findMany({
-      where: eq(schema.sdlcLoop.threadId, threadId),
-      orderBy: [desc(schema.sdlcLoop.updatedAt), desc(schema.sdlcLoop.id)],
-      limit: 20,
-    });
-    const loop =
-      threadLoops.find((candidate) =>
-        activeSdlcLoopStateSet.has(candidate.state),
-      ) ??
-      threadLoops[0] ??
-      null;
-    if (!loop) {
+    if (!v2Row) {
       return null;
     }
 
-    const currentHeadSha = loop.currentHeadSha ?? null;
-
-    const loopSnapshot = buildPersistedDeliveryLoopSnapshot({
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
-    });
-
-    const assembled = await assembleLoopStatusData({
-      loop,
-      loopSnapshot,
-      currentHeadSha,
-    });
-
-    const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-    const explanation =
-      loop.state === "stopped" && loop.stopReason
-        ? `${stateSummary.explanation} Reason: ${loop.stopReason}.`
-        : stateSummary.explanation;
-
-    const response: SdlcLoopStatus = {
-      loopId: loop.id,
-      state: loop.state as SdlcLoopState,
-      planApprovalPolicy: loop.planApprovalPolicy,
-      stateLabel: stateSummary.stateLabel,
-      explanation,
-      progressPercent: stateSummary.progressPercent,
-      actions: buildDeliveryLoopActions({
-        loopState: loop.state,
-        loopSnapshot,
-        planApprovalPolicy: loop.planApprovalPolicy,
-        planningArtifactStatus:
-          assembled.artifacts.planningArtifact?.status ?? null,
-      }),
-      phases: assembled.phases,
-      checks: assembled.checks,
-      needsAttention: assembled.needsAttention,
-      links: assembled.links,
-      artifacts: assembled.artifacts,
-      updatedAtIso: loop.updatedAt.toISOString(),
-    };
-
-    // Fire-and-forget: if the loop is babysitting, trigger a background
-    // v2 coordinator tick to process any pending signals. Debounced via
-    // Redis SET NX to avoid stampeding on polling UI.
-    if (
-      loop.state === "babysitting" &&
-      activeSdlcLoopStateSet.has(loop.state)
-    ) {
-      waitUntil(
-        (async () => {
-          try {
-            const { redis } = await import("@/lib/redis");
-            const debounceKey = `babysit-tick-debounce:${loop.id}`;
-            const acquired = await redis.set(debounceKey, "1", {
-              nx: true,
-              ex: 30,
-            });
-            if (!acquired) return;
-
-            let workflow = await getActiveWorkflowForThread({
-              db,
-              threadId: loop.threadId,
-            });
-            // Backfill v2 workflow for orphaned v1 loops so idle
-            // babysitting loops don't stay stuck after v1 removal.
-            if (!workflow) {
-              // Skip backfill if headSha is unavailable — creating
-              // a workflow with "unknown" SHA causes the babysit
-              // worker to evaluate a synthetic commit.
-              if (!loop.currentHeadSha) return;
-              const result = await ensureV2WorkflowExists({
-                db,
-                threadId: loop.threadId,
-                sdlcLoopId: loop.id,
-                sdlcLoopState: loop.state,
-                sdlcBlockedFromState: loop.blockedFromState,
-                headSha: loop.currentHeadSha,
-                userId,
-                repoFullName: loop.repoFullName,
-              });
-              if (result.created) {
-                workflow = await getActiveWorkflowForThread({
-                  db,
-                  threadId: loop.threadId,
-                });
-              }
-            }
-            // Only tick if the workflow belongs to this loop generation.
-            // A null sdlcLoopId (pre-migration) or mismatched ID means
-            // the workflow may consume signals from the wrong loop.
-            if (workflow && workflow.sdlcLoopId === loop.id) {
-              await runCoordinatorTick({
-                db,
-                workflowId:
-                  workflow.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
-                correlationId:
-                  `babysit-recheck:${loop.id}:${Date.now()}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
-                loopId: loop.id,
-              });
-            }
-          } catch (error) {
-            console.warn("[babysit-recheck] background v2 tick failed", {
-              loopId: loop.id,
-              error,
-            });
-          }
-        })(),
-      );
+    const workflow = hydrateV2Workflow(v2Row);
+    if (!workflow) {
+      return null;
     }
 
+    const response = await buildStatusFromV2Workflow({
+      workflow,
+      workflowRow: v2Row,
+    });
     return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },

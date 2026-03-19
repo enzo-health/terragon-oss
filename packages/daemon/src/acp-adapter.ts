@@ -167,6 +167,25 @@ function parseEnvelopeError(envelope: JsonObject): ClaudeMessage[] {
   ];
 }
 
+function parseAgentExited(params: JsonObject): ClaudeMessage[] {
+  if (params.success === true) {
+    return [];
+  }
+  const code =
+    typeof params.code === "number" || typeof params.code === "string"
+      ? String(params.code)
+      : null;
+  const reason = code ? `exit code ${code}` : "unknown exit";
+  return [
+    {
+      type: "custom-error",
+      session_id: null,
+      duration_ms: 0,
+      error_info: `ACP agent exited before producing a response (${reason})`,
+    },
+  ];
+}
+
 /**
  * Coalesce consecutive top-level assistant text-only messages into a single message.
  * ACP transports stream token-by-token, producing many tiny ClaudeMessages. This
@@ -273,6 +292,13 @@ export function parseAcpLineToClaudeMessages(
       return [];
     }
     return parseSessionUpdate(params, fallbackSessionId);
+  }
+  if (method === "_adapter/agent_exited" || method === "adapter/agent_exited") {
+    const params = asObject(envelope.params);
+    if (!params) {
+      return [];
+    }
+    return parseAgentExited(params);
   }
   return parseEnvelopeError(envelope);
 }

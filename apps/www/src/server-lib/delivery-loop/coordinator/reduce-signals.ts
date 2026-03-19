@@ -6,39 +6,113 @@ import type {
   TimerSignal,
   BabysitSignal,
 } from "@terragon/shared/delivery-loop/domain/signals";
-import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
+import type {
+  DeliveryWorkflow,
+  WorkflowId,
+  GateKind,
+} from "@terragon/shared/delivery-loop/domain/workflow";
+import { isActiveState } from "@terragon/shared/delivery-loop/domain/workflow";
 import type {
   LoopEvent,
   LoopEventContext,
   GateVerdict,
 } from "@terragon/shared/delivery-loop/domain/events";
+import type { FailureSignatureMap } from "@terragon/shared/delivery-loop/domain/failure-signature";
+import {
+  extractFailureSignature,
+  shouldTripCircuitBreaker,
+  isInfrastructureSignature,
+  getPolicyForSignature,
+  isInfrastructureFailure,
+} from "@terragon/shared/delivery-loop/domain/failure-signature";
+
+// ---------------------------------------------------------------------------
+// ReductionContext — bundles contextual params for signal reduction
+// ---------------------------------------------------------------------------
+
+export type ReductionContext = {
+  workflowId: WorkflowId;
+  prNumber: number | null;
+  gateVerdicts?: GateVerdict[];
+  now: Date;
+};
 
 export type SignalReductionResult =
-  | { event: LoopEvent; context: LoopEventContext }
+  | {
+      event: LoopEvent;
+      context: LoopEventContext;
+      signatureUpdate?: FailureSignatureMap;
+    }
   | { retryable: true; reason: string }
   | null;
 
 export function reduceSignalToEvent(params: {
   signal: DeliverySignal;
   workflow: DeliveryWorkflow;
+  reductionContext?: ReductionContext;
+  /** @deprecated Use reductionContext.gateVerdicts */
   gateVerdicts?: GateVerdict[];
+  /** @deprecated Use reductionContext.prNumber */
+  prNumber?: number | null;
 }): SignalReductionResult {
+  const gateVerdicts =
+    params.reductionContext?.gateVerdicts ?? params.gateVerdicts;
+  const prNumber = params.reductionContext?.prNumber ?? params.prNumber ?? null;
+  const now = params.reductionContext?.now ?? new Date();
+
+  let result: SignalReductionResult;
   switch (params.signal.source) {
     case "daemon":
-      return reduceDaemonSignal(params.signal.event, params.workflow);
+      result = reduceDaemonSignal(params.signal.event, params.workflow, now);
+      break;
     case "github":
-      return reduceGitHubSignal(
+      result = reduceGitHubSignal(
         params.signal.event,
         params.workflow,
-        params.gateVerdicts,
+        gateVerdicts,
       );
+      break;
     case "human":
-      return reduceHumanSignal(params.signal.event, params.workflow);
+      result = reduceHumanSignal(params.signal.event, params.workflow);
+      break;
     case "timer":
-      return reduceTimerSignal(params.signal.event, params.workflow);
+      result = reduceTimerSignal(params.signal.event, params.workflow);
+      break;
     case "babysit":
-      return reduceBabysitSignal(params.signal.event, params.workflow);
+      result = reduceBabysitSignal(params.signal.event, params.workflow);
+      break;
   }
+
+  // Enrich gate_passed events with PR link info so the reducer
+  // can decide between babysitting (has PR) and awaiting_pr (no PR).
+  if (
+    result &&
+    "event" in result &&
+    result.event === "gate_passed" &&
+    prNumber != null
+  ) {
+    result.context = {
+      ...result.context,
+      hasPrLink: true,
+      prNumber,
+    };
+  }
+
+  return result;
+}
+
+function isActiveImplementingDispatch(
+  workflow: DeliveryWorkflow,
+): workflow is Extract<DeliveryWorkflow, { kind: "implementing" }> {
+  return (
+    workflow.kind === "implementing" && workflow.dispatch.kind !== "failed"
+  );
+}
+
+function shouldProcessTerminalDaemonOutcome(
+  workflow: DeliveryWorkflow,
+): boolean {
+  return isActiveImplementingDispatch(workflow);
 }
 
 // ---------------------------------------------------------------------------
@@ -48,17 +122,14 @@ export function reduceSignalToEvent(params: {
 function reduceDaemonSignal(
   event: DaemonSignal,
   workflow: DeliveryWorkflow,
+  now: Date,
 ): SignalReductionResult {
   switch (event.kind) {
     case "run_completed":
       if (workflow.kind === "planning") {
-        // Planning run finished — do NOT emit plan_completed here.
-        // The v1 checkpoint pipeline validates the plan, creates the
-        // artifact, and bridges to v2 via plan_approved signal.
-        // Emitting plan_completed here would race ahead of artifact creation.
-        return null;
+        return { event: "plan_completed", context: {} };
       }
-      if (workflow.kind === "implementing") {
+      if (shouldProcessTerminalDaemonOutcome(workflow)) {
         if (event.result.kind === "partial") {
           // Partial completion — stay in implementing for re-dispatch
           // without incrementing fixAttemptCount (normal multi-pass).
@@ -76,21 +147,75 @@ function reduceDaemonSignal(
       return null;
 
     case "run_failed":
-      if (workflow.kind === "implementing") {
+      if (workflow.kind === "planning") {
+        // Planning run failures can happen when the initial dispatch launched
+        // but failed before a plan was produced. Treat as gate_blocked so the
+        // planning reducer bumps the version and schedule-work re-enqueues.
+        return { event: "gate_blocked", context: {} };
+      }
+      if (
+        workflow.kind === "implementing" &&
+        workflow.dispatch.kind !== "failed"
+      ) {
+        const isInfraFailure = isInfrastructureFailure({
+          category: event.failure.kind,
+          message:
+            event.failure.kind === "runtime_crash"
+              ? event.failure.message
+              : null,
+        });
+        // Extract failure signature and check circuit breaker
+        const existingMap = workflow.failureSignatures ?? {};
+        const { signature, updatedMap } = extractFailureSignature(
+          event.failure,
+          "daemon",
+          existingMap,
+          now,
+        );
+        const policy = getPolicyForSignature(signature);
+        const tripped = shouldTripCircuitBreaker(signature, policy);
+
+        if (isInfraFailure || isInfrastructureSignature(signature)) {
+          // Infrastructure failures bypass fix-attempt budget but have
+          // their own circuit breaker (maxConsecutive=10, maxTotal=15).
+          if (tripped) {
+            return {
+              event: "exhausted_retries",
+              context: {},
+              signatureUpdate: updatedMap,
+            };
+          }
+          return {
+            event: "redispatch_requested",
+            context: { infraRetry: true },
+            signatureUpdate: updatedMap,
+          };
+        }
+
+        // Circuit breaker tripped — escalate immediately
+        if (tripped) {
+          return {
+            event: "exhausted_retries",
+            context: {},
+            signatureUpdate: updatedMap,
+          };
+        }
+
         // Budget check — if at or past max, escalate to manual fix
         if (workflow.fixAttemptCount >= workflow.maxFixAttempts - 1) {
-          return { event: "exhausted_retries", context: {} };
+          return {
+            event: "exhausted_retries",
+            context: {},
+            signatureUpdate: updatedMap,
+          };
         }
-        // Classify by failure kind
-        switch (event.failure.kind) {
-          case "runtime_crash":
-          case "timeout":
-          case "oom":
-            // Transient-ish failures — let the state machine retry via gate_blocked
-            return { event: "gate_blocked", context: {} };
-          case "config_error":
-            return { event: "exhausted_retries", context: {} };
-        }
+
+        // Under budget + not tripped — retry via gate_blocked
+        return {
+          event: "gate_blocked",
+          context: {},
+          signatureUpdate: updatedMap,
+        };
       }
       if (workflow.kind === "gating") {
         // Gate runtime dispatch crashed — send back to implementing for a fix cycle
@@ -123,112 +248,44 @@ function reduceGitHubSignal(
   gateVerdicts?: GateVerdict[],
 ): SignalReductionResult {
   switch (event.kind) {
-    case "ci_changed": {
-      // Stale-signal rejection: if the signal carries a headSha that doesn't
-      // match the workflow's current head, the signal is outdated — complete
-      // it as a no-op so it doesn't incorrectly pass/fail a newer head.
-      if (
-        event.headSha &&
-        workflow.kind === "gating" &&
-        "headSha" in workflow &&
-        workflow.headSha !== event.headSha
-      ) {
-        return null;
-      }
-      // Check verdicts first if provided
-      const verdict = gateVerdicts?.find((v) => v.gate === "ci");
-      if (verdict) {
-        return {
-          event: verdict.passed ? "gate_passed" : "gate_blocked",
-          context: { gate: "ci" },
-        };
-      }
-      // Use the aggregate CI snapshot: only pass when failingChecks is
-      // empty AND there are required checks. A single passing check_run
-      // must not advance the gate while other required checks are pending.
-      // If no required-check data is available (snapshot unavailable or
-      // transient GitHub API failure), return null — stay in gating and
-      // wait for a real signal rather than pushing into a false fix loop.
-      if (workflow.kind === "gating" && workflow.gate.kind === "ci") {
-        if (event.result.requiredChecks.length === 0) {
-          // No check data — cannot determine pass/fail. Mark retryable so
-          // the signal stays pending for the next webhook or cron catch-up
-          // instead of being consumed as a no-op.
+    case "ci_changed":
+      return reduceGateSignal({
+        gate: "ci",
+        headSha: event.headSha,
+        workflow,
+        gateVerdicts,
+        evaluateInGate: () => {
+          // Use the aggregate CI snapshot: only pass when failingChecks is
+          // empty AND there are required checks. A single passing check_run
+          // must not advance the gate while other required checks are pending.
+          if (event.result.requiredChecks.length === 0) {
+            // No check data — cannot determine pass/fail. Mark retryable so
+            // the signal stays pending for the next webhook or cron catch-up
+            // instead of being consumed as a no-op.
+            return {
+              retryable: true,
+              reason: "CI signal has no required checks data",
+            };
+          }
+          const aggregatePassed = event.result.failingChecks.length === 0;
           return {
-            retryable: true,
-            reason: "CI signal has no required checks data",
+            event: aggregatePassed ? "gate_passed" : "gate_blocked",
+            context: { gate: "ci" },
           };
-        }
-        const aggregatePassed = event.result.failingChecks.length === 0;
-        return {
-          event: aggregatePassed ? "gate_passed" : "gate_blocked",
-          context: { gate: "ci" },
-        };
-      }
-      // In babysitting, CI signals trigger a babysit recheck rather than
-      // being silently consumed. Keeping them retryable ensures the babysit
-      // worker's next aggregate evaluation incorporates the new CI data.
-      if (workflow.kind === "babysitting") {
-        return {
-          retryable: true,
-          reason: "CI signal in babysitting — awaiting babysit worker recheck",
-        };
-      }
-      // In other active states (implementing, awaiting_pr, etc.), the
-      // workflow hasn't reached the CI gate yet. Mark the signal
-      // retryable so it stays in the inbox for when the workflow
-      // transitions to the matching gating substate.
-      if (isActiveNonTerminal(workflow.kind)) {
-        return {
-          retryable: true,
-          reason: `CI signal received while workflow is ${workflow.kind}, not in CI gate`,
-        };
-      }
-      return null;
-    }
+        },
+      });
 
-    case "review_changed": {
-      // Stale-signal rejection for review signals (same logic as CI above)
-      if (
-        event.headSha &&
-        workflow.kind === "gating" &&
-        "headSha" in workflow &&
-        workflow.headSha !== event.headSha
-      ) {
-        return null;
-      }
-      const verdict = gateVerdicts?.find((v) => v.gate === "review");
-      if (verdict) {
-        return {
-          event: verdict.passed ? "gate_passed" : "gate_blocked",
-          context: { gate: "review" },
-        };
-      }
-      if (workflow.kind === "gating" && workflow.gate.kind === "review") {
-        return {
+    case "review_changed":
+      return reduceGateSignal({
+        gate: "review",
+        headSha: event.headSha,
+        workflow,
+        gateVerdicts,
+        evaluateInGate: () => ({
           event: event.result.passed ? "gate_passed" : "gate_blocked",
           context: { gate: "review" },
-        };
-      }
-      // In babysitting, review signals trigger a babysit recheck so the
-      // worker re-evaluates aggregate gate state with the latest review data.
-      if (workflow.kind === "babysitting") {
-        return {
-          retryable: true,
-          reason:
-            "Review signal in babysitting — awaiting babysit worker recheck",
-        };
-      }
-      // In other active states, keep the signal pending for when the
-      // workflow reaches the review gate.
-      if (isActiveNonTerminal(workflow.kind)) {
-        return {
-          retryable: true,
-          reason: `Review signal received while workflow is ${workflow.kind}, not in review gate`,
-        };
-      }
-      return null;
-    }
+        }),
+      });
 
     case "pr_closed":
       return {
@@ -253,7 +310,7 @@ function reduceGitHubSignal(
 
 function reduceHumanSignal(
   event: HumanSignal,
-  _workflow: DeliveryWorkflow,
+  workflow: DeliveryWorkflow,
 ): SignalReductionResult {
   switch (event.kind) {
     case "resume_requested":
@@ -264,6 +321,17 @@ function reduceHumanSignal(
       return { event: "manual_stop", context: {} };
     case "mark_done_requested":
       return { event: "mark_done", context: {} };
+    case "operator_action_required":
+      if (workflow.kind === "awaiting_pr") {
+        return {
+          event: "operator_action_required",
+          context: {
+            reason: event.reason.description,
+            incidentId: event.incidentId,
+          },
+        };
+      }
+      return null;
     case "plan_approved":
       return { event: "plan_completed", context: {} };
   }
@@ -284,14 +352,12 @@ function reduceTimerSignal(
       // separate inline limit based on consecutive ack failures.
       const MAX_DISPATCH_ACK_RETRIES = 5;
       const ackFailures = event.consecutiveFailures ?? 1;
-      if (
-        workflow.kind === "implementing" &&
-        ackFailures >= MAX_DISPATCH_ACK_RETRIES
-      ) {
+      if (ackFailures >= MAX_DISPATCH_ACK_RETRIES) {
         return { event: "exhausted_retries", context: {} };
       }
-      // Re-enter implementing for retry (gate_blocked triggers re-dispatch)
-      return { event: "gate_blocked", context: {} };
+      // gate_blocked re-triggers dispatch in implementing/gating; for
+      // planning it bumps the version so schedule-work re-enqueues dispatch.
+      return { event: "gate_blocked", context: { infraRetry: true } };
     }
 
     case "babysit_due":
@@ -329,19 +395,65 @@ function reduceBabysitSignal(
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Shared gate signal handler
 // ---------------------------------------------------------------------------
 
-const ACTIVE_NON_TERMINAL_KINDS = new Set([
-  "planning",
-  "implementing",
-  "gating",
-  "awaiting_pr",
-  "awaiting_plan_approval",
-  "awaiting_manual_fix",
-  "babysitting",
-]);
+/**
+ * Common logic for ci_changed / review_changed signals:
+ * stale-signal rejection → verdict check → gate-specific evaluation →
+ * babysitting deferral → active-state deferral.
+ */
+function reduceGateSignal(params: {
+  gate: GateKind;
+  headSha: string | undefined;
+  workflow: DeliveryWorkflow;
+  gateVerdicts?: GateVerdict[];
+  /** Gate-specific pass/fail evaluation when the workflow is in the matching gate. */
+  evaluateInGate: () => SignalReductionResult;
+}): SignalReductionResult {
+  const { gate, headSha, workflow, gateVerdicts, evaluateInGate } = params;
 
-function isActiveNonTerminal(kind: string): boolean {
-  return ACTIVE_NON_TERMINAL_KINDS.has(kind);
+  // Stale-signal rejection: if the signal carries a headSha that doesn't
+  // match the workflow's current head, the signal is outdated.
+  if (
+    headSha &&
+    workflow.kind === "gating" &&
+    "headSha" in workflow &&
+    workflow.headSha !== headSha
+  ) {
+    return null;
+  }
+
+  // Check pre-computed verdicts first
+  const verdict = gateVerdicts?.find((v) => v.gate === gate);
+  if (verdict) {
+    return {
+      event: verdict.passed ? "gate_passed" : "gate_blocked",
+      context: { gate },
+    };
+  }
+
+  // Gate-specific evaluation when in the matching gating substate
+  if (workflow.kind === "gating" && workflow.gate.kind === gate) {
+    return evaluateInGate();
+  }
+
+  // In babysitting, gate signals trigger a babysit recheck
+  if (workflow.kind === "babysitting") {
+    return {
+      retryable: true,
+      reason: `${gate} signal in babysitting — awaiting babysit worker recheck`,
+    };
+  }
+
+  // In other active states, keep the signal pending for when the
+  // workflow reaches the matching gate.
+  if (isActiveState(workflow.kind)) {
+    return {
+      retryable: true,
+      reason: `${gate} signal received while workflow is ${workflow.kind}, not in ${gate} gate`,
+    };
+  }
+
+  return null;
 }

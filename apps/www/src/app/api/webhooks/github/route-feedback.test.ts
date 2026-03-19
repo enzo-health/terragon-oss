@@ -12,36 +12,30 @@ import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp } from "@/lib/github";
 import {
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  getActiveSdlcLoopForGithubPRIfEnabled,
   isSdlcLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
-import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
 
-const {
-  postHogCapture,
-  signalInboxInsertReturning,
-  signalInboxInsertValues,
-  dbInsert,
-} = vi.hoisted(() => {
-  const postHogCapture = vi.fn();
-  const signalInboxInsertReturning = vi.fn();
-  const signalInboxInsertOnConflictDoNothing = vi.fn(() => ({
-    returning: signalInboxInsertReturning,
-  }));
-  const signalInboxInsertValues = vi.fn(() => ({
-    onConflictDoNothing: signalInboxInsertOnConflictDoNothing,
-  }));
-  const dbInsert = vi.fn(() => ({
-    values: signalInboxInsertValues,
-  }));
-  return {
-    postHogCapture,
-    signalInboxInsertReturning,
-    signalInboxInsertValues,
-    dbInsert,
-  };
-});
+const { postHogCapture, signalInboxInsertReturning, dbInsert } = vi.hoisted(
+  () => {
+    const postHogCapture = vi.fn();
+    const signalInboxInsertReturning = vi.fn();
+    const signalInboxInsertOnConflictDoNothing = vi.fn(() => ({
+      returning: signalInboxInsertReturning,
+    }));
+    const signalInboxInsertValues = vi.fn(() => ({
+      onConflictDoNothing: signalInboxInsertOnConflictDoNothing,
+    }));
+    const dbInsert = vi.fn(() => ({
+      values: signalInboxInsertValues,
+    }));
+    return {
+      postHogCapture,
+      signalInboxInsertReturning,
+      dbInsert,
+    };
+  },
+);
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -92,18 +86,11 @@ vi.mock("@/lib/posthog-server", () => ({
 
 vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
   ensureSdlcLoopEnrollmentForGithubPRIfEnabled: vi.fn(),
-  getActiveSdlcLoopForGithubPRIfEnabled: vi.fn(),
   isSdlcLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
-}));
-
-vi.mock("@/server-lib/delivery-loop/coordinator/enrollment-bridge", () => ({
-  ensureV2WorkflowExists: vi
-    .fn()
-    .mockResolvedValue({ workflowId: "wf-backfilled", created: true }),
 }));
 
 vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
@@ -131,9 +118,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       threadChats: [{ id: "loop-chat-id" }],
     } as Awaited<ReturnType<typeof getThread>>);
     signalInboxInsertReturning.mockResolvedValue([{ id: "signal-inbox-1" }]);
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue(
-      undefined,
-    );
     vi.mocked(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).mockResolvedValue(
       null,
     );
@@ -187,12 +171,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       reason: "existing-unarchived-thread",
     });
     expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
-    expect(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).toHaveBeenCalledWith({
-      userId: "user-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      threadId: "thread-1",
-    });
     const routedPart = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0]
       .messages[0]?.parts[0];
     expect(routedPart).toBeDefined();
@@ -242,12 +220,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([
       { id: "thread-1", userId: "user-1", archived: false },
     ]);
-    const canonical = buildSdlcCanonicalCause({
-      causeType: "check_run.completed",
-      deliveryId: "delivery-dedup-1",
-      checkRunId: "777",
-    });
-    const marker = `<!-- terragon-github-feedback-delivery:${canonical.canonicalCauseId} -->`;
+    const marker = `<!-- terragon-github-feedback-delivery:delivery-dedup-1:777 -->`;
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
       threadChats: [
@@ -316,12 +289,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
         sourceType: "automation",
       }),
     );
-    expect(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).toHaveBeenCalledWith({
-      userId: "user-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      threadId: "new-thread-id",
-    });
   });
 
   it("uses provided PR author id when branch names are supplied", async () => {
@@ -550,153 +517,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
-  it("suppresses direct routing when an enrolled SDLC loop is active", async () => {
-    vi.mocked(getUserIdByGitHubAccountId).mockResolvedValue("user-1");
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
-      id: "loop-1",
-      threadId: "loop-thread-id",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-
-    const result = await routeGithubFeedbackOrSpawnThread({
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      eventType: "check_run.completed",
-      checkRunId: 99,
-      checkName: "CI / tests",
-      checkOutcome: "fail",
-      headSha: "sha-123",
-      checkSummary: "CI failed",
-      failureDetails: "2 tests failed.",
-    });
-
-    const expectedCause = buildSdlcCanonicalCause({
-      causeType: "check_run.completed",
-      deliveryId: "no-delivery:check-run:99",
-      checkRunId: "99",
-    });
-
-    expect(result).toEqual({
-      mode: "suppressed_enrolled_loop",
-      reason: "sdlc-loop-enrolled",
-      sdlcLoopId: "loop-1",
-      threadId: "loop-thread-id",
-    });
-    expect(dbInsert).toHaveBeenCalledTimes(1);
-    expect(signalInboxInsertValues).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loopId: "loop-1",
-        causeType: expectedCause.causeType,
-        canonicalCauseId: expectedCause.canonicalCauseId,
-        signalHeadShaOrNull: expectedCause.signalHeadShaOrNull,
-        causeIdentityVersion: expectedCause.causeIdentityVersion,
-        payload: expect.objectContaining({
-          checkName: "CI / tests",
-          checkOutcome: "fail",
-          headSha: "sha-123",
-        }),
-      }),
-    );
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
-    expect(newThreadInternal).not.toHaveBeenCalled();
-  });
-
-  it("enqueues canonical check suite feedback when suppressing enrolled loop routing", async () => {
-    vi.mocked(getUserIdByGitHubAccountId).mockResolvedValue("user-1");
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
-      id: "loop-1",
-      threadId: "loop-thread-id",
-      loopVersion: 5,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-
-    const result = await routeGithubFeedbackOrSpawnThread({
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      eventType: "check_suite.completed",
-      checkSuiteId: 11,
-      checkOutcome: "pass",
-      headSha: "sha-suite-1",
-      checkSummary: "Check suite (completed)",
-      failureDetails: "Check suite failed.",
-    });
-
-    const expectedCause = buildSdlcCanonicalCause({
-      causeType: "check_suite.completed",
-      deliveryId: "no-delivery:check-suite:11",
-      checkSuiteId: "11",
-    });
-
-    expect(result).toEqual({
-      mode: "suppressed_enrolled_loop",
-      reason: "sdlc-loop-enrolled",
-      sdlcLoopId: "loop-1",
-      threadId: "loop-thread-id",
-    });
-    expect(signalInboxInsertValues).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loopId: "loop-1",
-        causeType: expectedCause.causeType,
-        canonicalCauseId: expectedCause.canonicalCauseId,
-        signalHeadShaOrNull: expectedCause.signalHeadShaOrNull,
-        causeIdentityVersion: expectedCause.causeIdentityVersion,
-        payload: expect.objectContaining({
-          checkOutcome: "pass",
-          headSha: "sha-suite-1",
-        }),
-      }),
-    );
-  });
-
-  it("suppresses direct routing and enqueues signal when enrolled loop has no loopVersion", async () => {
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
-      id: "loop-1",
-      threadId: "loop-thread-id",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-    const result = await routeGithubFeedbackOrSpawnThread({
-      userId: "user-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      eventType: "check_run.completed",
-      checkRunId: 99,
-      checkSummary: "CI failed",
-      failureDetails: "2 tests failed.",
-    });
-    expect(result).toEqual({
-      mode: "suppressed_enrolled_loop",
-      reason: "sdlc-loop-enrolled",
-      sdlcLoopId: "loop-1",
-      threadId: "loop-thread-id",
-    });
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
-    expect(newThreadInternal).not.toHaveBeenCalled();
-  });
-
-  it("suppresses direct routing and enqueues signal when enrolled loop has loopVersion", async () => {
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
-      id: "loop-1",
-      threadId: "loop-thread-id",
-      loopVersion: 9,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
-    const result = await routeGithubFeedbackOrSpawnThread({
-      userId: "user-1",
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      eventType: "check_run.completed",
-      checkRunId: 99,
-      checkSummary: "CI failed",
-      failureDetails: "2 tests failed.",
-    });
-    expect(result).toEqual({
-      mode: "suppressed_enrolled_loop",
-      reason: "sdlc-loop-enrolled",
-      sdlcLoopId: "loop-1",
-      threadId: "loop-thread-id",
-    });
-    expect(queueFollowUpInternal).not.toHaveBeenCalled();
-    expect(newThreadInternal).not.toHaveBeenCalled();
-  });
-
-  it("falls back to direct routing when enrolled loop thread is not routable", async () => {
+  it("falls back to direct routing when thread is not routable", async () => {
     vi.mocked(getUserIdByGitHubAccountId).mockResolvedValue("user-1");
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([
       { id: "thread-1", userId: "user-1", archived: false },
@@ -705,10 +526,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       id: "thread-1",
       threadChats: [{ id: "chat-1" }],
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
-    vi.mocked(getActiveSdlcLoopForGithubPRIfEnabled).mockResolvedValue({
-      id: "loop-1",
-      threadId: "loop-thread-id",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForGithubPRIfEnabled>>);
     vi.mocked(getThread).mockResolvedValue(undefined);
 
     const result = await routeGithubFeedbackOrSpawnThread({

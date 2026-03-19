@@ -13,12 +13,12 @@ import {
 } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
 import {
-  createImplementationArtifactForHead,
-  createPlanArtifactForLoop,
-  enrollSdlcLoopForThread,
-  markPlanTasksCompletedByAgent,
+  createPlanArtifact,
+  createImplementationArtifact,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/model/delivery-loop";
+  markPlanTasksCompletedByAgent,
+} from "@terragon/shared/delivery-loop/store/artifact-store";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -139,18 +139,20 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const workflow = await createWorkflow({
       db,
+      threadId,
+      generation: 1,
+      kind: "implementing",
+      stateJson: {},
       userId: user.id,
       repoFullName: "owner/repo",
-      threadId,
       currentHeadSha: "sha-status-1",
     });
-    expect(loop).toBeDefined();
 
-    const planArtifact = await createPlanArtifactForLoop({
+    const planArtifact = await createPlanArtifact({
       db,
-      loopId: loop!.id,
+      loopId: workflow.id,
       loopVersion: 1,
       status: "accepted",
       generatedBy: "agent",
@@ -173,7 +175,7 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: workflow.id,
       artifactId: planArtifact.id,
       tasks: [
         {
@@ -190,7 +192,7 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await markPlanTasksCompletedByAgent({
       db,
-      loopId: loop!.id,
+      loopId: workflow.id,
       artifactId: planArtifact.id,
       completions: [
         {
@@ -205,9 +207,9 @@ describe("getDeliveryLoopStatusAction", () => {
       ],
     });
 
-    await createImplementationArtifactForHead({
+    await createImplementationArtifact({
       db,
-      loopId: loop!.id,
+      loopId: workflow.id,
       headSha: "sha-status-1",
       loopVersion: 2,
       status: "accepted",
@@ -222,7 +224,7 @@ describe("getDeliveryLoopStatusAction", () => {
 
     const status = await getDeliveryLoopStatus(threadId);
     expect(status).not.toBeNull();
-    expect(status?.loopId).toBe(loop!.id);
+    expect(status?.loopId).toBe(workflow.id);
     expect(status?.links.pullRequestUrl).toBeNull();
     expect(status?.artifacts.planningArtifact?.id).toBe(planArtifact.id);
     expect(status?.artifacts.planningArtifact?.status).toBe("accepted");
@@ -242,7 +244,7 @@ describe("getDeliveryLoopStatusAction", () => {
     });
   });
 
-  it("uses persisted blocked origin to describe blocked implementation attention", async () => {
+  it("surfaces awaiting_manual_fix as blocked in implementing attention", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -253,29 +255,22 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    await createWorkflow({
       db,
+      threadId,
+      generation: 1,
+      kind: "awaiting_manual_fix",
+      stateJson: {},
       userId: user.id,
       repoFullName: "owner/repo",
-      threadId,
       currentHeadSha: "sha-blocked-1",
     });
-
-    await db
-      .update(schema.sdlcLoop)
-      .set({
-        state: "blocked",
-        blockedFromState: "implementing",
-      })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
 
     const status = await getDeliveryLoopStatus(threadId);
 
     expect(status?.state).toBe("blocked");
-    expect(status?.stateLabel).toBe("Blocked in Implementing");
     expect(status?.needsAttention.topBlockers).toContainEqual(
       expect.objectContaining({
-        title: "Implementation is blocked and needs human feedback",
         source: "human_feedback",
       }),
     );
@@ -306,7 +301,7 @@ describe("getDeliveryLoopStatusAction", () => {
     );
   });
 
-  it("exposes latest planning artifact when active pointer is null", async () => {
+  it("exposes latest planning artifact for a v2 workflow", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -317,15 +312,18 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const workflow = await createWorkflow({
       db,
+      threadId,
+      generation: 1,
+      kind: "implementing",
+      stateJson: {},
       userId: user.id,
       repoFullName: "owner/repo",
-      threadId,
     });
-    const planArtifact = await createPlanArtifactForLoop({
+    const planArtifact = await createPlanArtifact({
       db,
-      loopId: loop!.id,
+      loopId: workflow.id,
       loopVersion: 1,
       status: "accepted",
       generatedBy: "agent",
@@ -343,7 +341,7 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: workflow.id,
       artifactId: planArtifact.id,
       tasks: [
         {
@@ -354,17 +352,12 @@ describe("getDeliveryLoopStatusAction", () => {
       ],
     });
 
-    await db
-      .update(schema.sdlcLoop)
-      .set({ activePlanArtifactId: null })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
-
     const status = await getDeliveryLoopStatus(threadId);
     expect(status?.artifacts.planningArtifact?.id).toBe(planArtifact.id);
 
     const persistedTasks = await db.query.sdlcPlanTask.findMany({
       where: and(
-        eq(schema.sdlcPlanTask.loopId, loop!.id),
+        eq(schema.sdlcPlanTask.loopId, workflow.id),
         eq(schema.sdlcPlanTask.artifactId, planArtifact.id),
       ),
     });

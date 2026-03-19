@@ -255,6 +255,56 @@ describe("applyThreadPatchToQueryClient", () => {
     expect(invalidateQueriesSpy).not.toHaveBeenCalled();
   });
 
+  it("still invalidates diff when a stale chat patch is ignored", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(threadQueryKeys.chat("thread-1", "chat-1"), {
+      ...createThreadChat(),
+      status: "working" as const,
+    });
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: STALE_CHAT_SEQUENCE,
+        diffChanged: true,
+        chat: {
+          status: "complete",
+          updatedAt: STALE_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.diff("thread-1"),
+    });
+  });
+
+  it("invalidates diff when patch requests explicit diff refetch", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.shell("thread-1"),
+      createThreadShell(),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        op: "upsert",
+        refetch: ["diff"],
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.diff("thread-1"),
+    });
+  });
+
   it("invalidates duplicate append patches once message counts no longer line up", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(

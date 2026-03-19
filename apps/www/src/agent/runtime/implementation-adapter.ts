@@ -32,6 +32,7 @@ export type ImplementationAdapterInput = {
   codexPreviousResponseId: string | null;
   shouldUseCredits: boolean;
   threadChatId: string;
+  enableAcpTransport?: boolean;
 };
 
 export type ImplementationDispatch = {
@@ -48,7 +49,8 @@ export interface ImplementationRuntimeAdapter {
 
 const genericImplementationAdapter: ImplementationRuntimeAdapter = {
   createDispatch(input) {
-    const supportsAcp = input.agent !== "gemini";
+    const supportsAcp =
+      input.agent !== "gemini" && input.enableAcpTransport !== false;
 
     if (supportsAcp) {
       return {

@@ -2,12 +2,10 @@ import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
-  approvePlanArtifactForLoop,
-  createPlanArtifactForLoop,
+  approvePlanArtifact,
+  createPlanArtifact,
   replacePlanTasksForArtifact,
-  transitionSdlcLoopStateWithArtifact,
-  type SdlcTransitionWithArtifactOutcome,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/artifact-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { ParsedPlanSpec } from "./parse-plan-spec";
 
@@ -18,7 +16,11 @@ type PlanningLoopContext = {
 };
 
 type PromotePlanMode = "checkpoint" | "approve";
-type PlanSpecSource = "exit_plan_mode" | "write_tool" | "agent_text" | "system";
+export type PlanSpecSource =
+  | "exit_plan_mode"
+  | "write_tool"
+  | "agent_text"
+  | "system";
 
 export type PromotePlanToImplementingResult =
   | {
@@ -30,12 +32,6 @@ export type PromotePlanToImplementingResult =
       outcome: "promoted";
       artifactId: string;
       loopVersion: number;
-    }
-  | {
-      outcome: "promotion_blocked";
-      artifactId: string;
-      loopVersion: number;
-      transitionOutcome: SdlcTransitionWithArtifactOutcome;
     };
 
 function nextLoopVersion(loopVersion: number): number {
@@ -162,28 +158,8 @@ async function transitionPlanningArtifactToImplementing(params: {
   artifactId: string;
   loopVersion: number;
 }): Promise<PromotePlanToImplementingResult> {
-  const transitionOutcome = await transitionSdlcLoopStateWithArtifact({
-    db: params.db,
-    loopId: params.loopId,
-    artifactId: params.artifactId,
-    expectedPhase: "planning",
-    transitionEvent: "plan_completed",
-    loopVersion: params.loopVersion,
-  });
-
-  if (transitionOutcome !== "updated") {
-    return {
-      outcome: "promotion_blocked",
-      artifactId: params.artifactId,
-      loopVersion: params.loopVersion,
-      transitionOutcome,
-    };
-  }
-
-  // Bridge: write a plan_completed signal to the v2 inbox so the
-  // coordinator tick can advance the v2 workflow from planning →
-  // implementing. The v1 checkpoint pipeline validated the plan;
-  // this signal is the handoff to v2.
+  // Write a plan_approved signal to the v2 inbox so the coordinator
+  // tick advances the workflow from planning → implementing.
   // Retry once since canonicalCauseId makes this idempotent via onConflictDoNothing.
   const { appendSignalToInbox } = await import(
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
@@ -207,7 +183,7 @@ async function transitionPlanningArtifactToImplementing(params: {
       signalWritten = true;
     } catch (signalErr) {
       if (attempt === 0) {
-        console.warn("[promote-plan] v2 signal write failed, retrying once", {
+        console.warn("[promote-plan] signal write failed, retrying once", {
           loopId: params.loopId,
           artifactId: params.artifactId,
           error:
@@ -215,18 +191,12 @@ async function transitionPlanningArtifactToImplementing(params: {
         });
         await new Promise((r) => setTimeout(r, 200));
       } else {
-        console.error(
-          "[promote-plan] v2 signal write failed after retry — v1/v2 state may diverge",
-          {
-            loopId: params.loopId,
-            artifactId: params.artifactId,
-            error:
-              signalErr instanceof Error
-                ? signalErr.message
-                : String(signalErr),
-          },
-        );
-        // v1 transition already committed — v2 coordinator will re-sync via cron/babysit
+        console.error("[promote-plan] signal write failed after retry", {
+          loopId: params.loopId,
+          artifactId: params.artifactId,
+          error:
+            signalErr instanceof Error ? signalErr.message : String(signalErr),
+        });
       }
     }
   }
@@ -246,7 +216,7 @@ async function createPlanningArtifactFromParsedPlan(params: {
   status: "generated" | "accepted";
   workflowId?: string | null;
 }) {
-  const planArtifact = await createPlanArtifactForLoop({
+  const planArtifact = await createPlanArtifact({
     db: params.db,
     loopId: params.loopId,
     loopVersion: params.loopVersion,
@@ -441,7 +411,7 @@ export async function promotePlanToImplementing(params: {
           "approve mode requires approvedByUserId for human_required loops",
         );
       }
-      const approvedArtifact = await approvePlanArtifactForLoop({
+      const approvedArtifact = await approvePlanArtifact({
         db: params.db,
         loopId: params.loop.id,
         artifactId: artifact.id,

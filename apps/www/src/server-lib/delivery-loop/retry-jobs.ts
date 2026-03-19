@@ -383,6 +383,7 @@ export async function drainDueDeliveryLoopRetryJobs({
     if (
       effectiveResult.reason === "scheduled_not_runnable" ||
       effectiveResult.reason === "stale_cas_busy" ||
+      effectiveResult.reason === "dispatch_not_started" ||
       effectiveResult.reason === "agent_rate_limited" ||
       effectiveResult.reason === "stale_cas" ||
       effectiveResult.reason === "invalid_event" ||

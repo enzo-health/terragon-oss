@@ -1,4 +1,5 @@
 import type { DispatchId, GateKind } from "./workflow";
+import type { OperatorActionReason } from "./workflow";
 
 // Daemon completion/failure types
 export type DaemonCompletionResult =
@@ -72,6 +73,11 @@ export type HumanSignal =
   | { kind: "bypass_requested"; actorUserId: string; target: GateKind }
   | { kind: "stop_requested"; actorUserId: string }
   | { kind: "mark_done_requested"; actorUserId: string }
+  | {
+      kind: "operator_action_required";
+      reason: OperatorActionReason;
+      incidentId: string;
+    }
   | { kind: "plan_approved"; artifactId: string };
 
 export type TimerSignal =

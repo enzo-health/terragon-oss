@@ -2,7 +2,7 @@ import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/wor
 import type { LoopEvent } from "@terragon/shared/delivery-loop/domain/events";
 
 export type ScheduledWorkItem = {
-  kind: "dispatch" | "publication" | "retry" | "babysit";
+  kind: "dispatch" | "publication" | "retry" | "babysit" | "retrospective";
   payloadJson: Record<string, unknown>;
   scheduledAt: Date;
 };
@@ -59,13 +59,16 @@ export function resolveWorkItems(params: {
       // approval or operator action resume. Planning uses the same daemon
       // runtime as implementation; the daemon inspects the workflow state
       // to determine whether to plan or implement.
-      if (params.previousWorkflow.kind !== "planning") {
+      // Also re-dispatch on version bump within planning (ack timeout retry).
+      if (
+        params.previousWorkflow.kind !== "planning" ||
+        params.newWorkflow.version !== params.previousWorkflow.version
+      ) {
         items.push({
           kind: "dispatch",
           payloadJson: {
             executionClass: "implementation_runtime",
             workflowId: params.newWorkflow.workflowId,
-            loopId: params.loopId,
           },
           scheduledAt: now,
         });
@@ -87,7 +90,6 @@ export function resolveWorkItems(params: {
           payloadJson: {
             executionClass: "implementation_runtime",
             workflowId: params.newWorkflow.workflowId,
-            loopId: params.loopId,
           },
           scheduledAt: now,
         });
@@ -109,7 +111,6 @@ export function resolveWorkItems(params: {
             executionClass: "gate_runtime",
             workflowId: params.newWorkflow.workflowId,
             gate: params.newWorkflow.gate.kind,
-            loopId: params.loopId,
           },
           scheduledAt: now,
         });
@@ -138,6 +139,20 @@ export function resolveWorkItems(params: {
     case "stopped":
     case "terminated":
       // Final status publication already handled above
+      // Schedule retrospective computation for terminal transitions
+      if (
+        params.previousWorkflow.kind !== "done" &&
+        params.previousWorkflow.kind !== "stopped" &&
+        params.previousWorkflow.kind !== "terminated"
+      ) {
+        items.push({
+          kind: "retrospective",
+          payloadJson: {
+            workflowId: params.newWorkflow.workflowId,
+          },
+          scheduledAt: now,
+        });
+      }
       break;
   }
 

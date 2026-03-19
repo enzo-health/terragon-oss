@@ -1,3 +1,5 @@
+import type { FailureSignatureMap } from "./failure-signature";
+
 // Branded IDs — prevent silent ID swaps at compile time
 export type WorkflowId = string & { readonly __brand: "WorkflowId" };
 export type SignalId = string & { readonly __brand: "SignalId" };
@@ -54,7 +56,10 @@ export type DispatchSubState =
       failedAt: Date;
     };
 
-export type ExecutionClass = "implementation_runtime" | "gate_runtime";
+export type ExecutionClass =
+  | "implementation_runtime"
+  | "implementation_runtime_fallback"
+  | "gate_runtime";
 export type DispatchMechanism = "self_dispatch" | "queue_fallback";
 export type DispatchFailure =
   | { kind: "ack_timeout" }
@@ -154,6 +159,7 @@ export type WorkflowCommon = {
   generation: number;
   version: number;
   fixAttemptCount: number;
+  infraRetryCount: number;
   maxFixAttempts: number;
   createdAt: Date;
   updatedAt: Date;
@@ -167,6 +173,8 @@ export type DeliveryWorkflow =
       kind: "implementing";
       planVersion: PlanVersion;
       dispatch: DispatchSubState;
+      failureSignatures?: FailureSignatureMap;
+      lastFailureSignatureKey?: string;
     })
   | (WorkflowCommon & {
       kind: "gating";

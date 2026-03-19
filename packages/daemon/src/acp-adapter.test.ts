@@ -270,6 +270,35 @@ describe("parseAcpLineToClaudeMessages", () => {
     expect(parseAcpLineToClaudeMessages("not json", "fb")).toEqual([]);
   });
 
+  it("maps _adapter/agent_exited failures to custom-error", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "_adapter/agent_exited",
+      params: {
+        success: false,
+        code: 137,
+      },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("custom-error");
+    if (result[0]!.type === "custom-error") {
+      expect(result[0]!.error_info).toContain("exit code 137");
+    }
+  });
+
+  it("ignores _adapter/agent_exited success notifications", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "_adapter/agent_exited",
+      params: {
+        success: true,
+      },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toEqual([]);
+  });
+
   it("parses agent_thought_chunk as thinking block", () => {
     const line = JSON.stringify({
       jsonrpc: "2.0",

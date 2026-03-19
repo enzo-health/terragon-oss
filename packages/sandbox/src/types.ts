@@ -55,6 +55,10 @@ export type CreateSandboxOptions = {
     sandboxStatus: SandboxStatus;
     bootingStatus: BootingSubstatus | null;
   }) => Promise<void>;
+  onSandboxAllocated?: (params: {
+    sandboxId: string;
+    isCreatingSandbox: boolean;
+  }) => Promise<void>;
 };
 
 export interface ISandboxProvider {

@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
+import * as githubHelpers from "@/lib/github";
 import {
   createTestUser,
   createTestThread,
 } from "@terragon/shared/model/test-helpers";
+import { updateThread } from "@terragon/shared/model/threads";
 import {
   createWorkflow,
   getWorkflow,
@@ -172,6 +174,28 @@ async function tick(workflowId: string, corrId?: CorrelationId) {
   });
 }
 
+async function tickWithClaim(
+  workflowId: string,
+  claimToken: string,
+  corrId?: CorrelationId,
+) {
+  return runCoordinatorTick({
+    db,
+    workflowId: workflowId as WorkflowId,
+    correlationId: corrId ?? correlationId(),
+    claimToken,
+  });
+}
+
+async function tickWithSkipGates(workflowId: string) {
+  return runCoordinatorTick({
+    db,
+    workflowId: workflowId as WorkflowId,
+    correlationId: correlationId(),
+    skipGates: true,
+  });
+}
+
 // -- Reusable state builders --
 
 const IMPLEMENTING_STATE = {
@@ -222,6 +246,10 @@ beforeEach(async () => {
   const { threadId } = await createTestThread({ db, userId: user.id });
   testUserId = user.id;
   testThreadId = threadId;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // ---------------------------------------------------------------------------
@@ -621,6 +649,315 @@ describe("v2 coordinator tick — integration", () => {
     });
   });
 
+  describe("awaiting_pr invariant middleware", () => {
+    it("awaiting_pr + no diff + no PR => auto mark_done -> done", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("done");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("done");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_no_diff",
+      });
+    });
+
+    it("awaiting_pr + thread PR linked => auto pr_linked -> babysitting", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          githubPRNumber: 42,
+        },
+      });
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("babysitting");
+      expect(row!.prNumber).toBe(42);
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_pr_linked",
+      });
+    });
+
+    it("awaiting_pr + PR link failure => awaiting_operator_action", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/test-pr-link",
+          gitDiff: "diff --git a/file.ts b/file.ts",
+        },
+      });
+
+      const existingPrSpy = vi
+        .spyOn(githubHelpers, "getExistingPRForBranch")
+        .mockRejectedValueOnce(new Error("GitHub unavailable"));
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(existingPrSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("awaiting_operator_action");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("workflow row missing");
+      }
+      expect(row.kind).toBe("awaiting_operator_action");
+      expect(row.stateJson).toMatchObject({
+        reason: {
+          description: "GitHub unavailable",
+          system: "github",
+        },
+      });
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_operator_action",
+        reason: "GitHub unavailable",
+      });
+    });
+
+    it("awaiting_pr + clean diff stats + branch commits => creates/links PR", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/pr-from-clean-tree",
+          gitDiff: "",
+          gitDiffStats: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+
+      const getExistingPrSpy = vi
+        .spyOn(githubHelpers, "getExistingPRForBranch")
+        .mockResolvedValueOnce(null);
+      vi.spyOn(githubHelpers, "getDefaultBranchForRepo").mockResolvedValueOnce(
+        "main",
+      );
+      const createPullSpy = vi.fn().mockResolvedValue({
+        data: {
+          number: 123,
+          state: "open",
+          draft: true,
+        },
+      });
+      const octokitMock = {
+        rest: {
+          pulls: {
+            create: createPullSpy,
+          },
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof githubHelpers.getOctokitForUserOrThrow>
+      >;
+      vi.spyOn(githubHelpers, "getOctokitForUserOrThrow").mockResolvedValueOnce(
+        octokitMock,
+      );
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(getExistingPrSpy).toHaveBeenCalledOnce();
+      expect(createPullSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("workflow row missing");
+      }
+      expect(row.kind).toBe("babysitting");
+      expect(row.prNumber).toBe(123);
+
+      const threadRow = await db.query.thread.findFirst({
+        where: eq(schema.thread.id, testThreadId),
+      });
+      expect(threadRow?.githubPRNumber).toBe(123);
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_pr_linked",
+      });
+    });
+
+    it("awaiting_pr + user-oauth failure => falls back to app auth for PR create", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/pr-via-app-fallback",
+          gitDiff: "",
+          gitDiffStats: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+
+      vi.spyOn(githubHelpers, "getExistingPRForBranch").mockResolvedValueOnce(
+        null,
+      );
+      vi.spyOn(githubHelpers, "getDefaultBranchForRepo").mockResolvedValueOnce(
+        "main",
+      );
+      vi.spyOn(githubHelpers, "getOctokitForUserOrThrow").mockRejectedValueOnce(
+        new Error("Invalid keyData"),
+      );
+
+      const createPullSpy = vi.fn().mockResolvedValue({
+        data: {
+          number: 321,
+          state: "open",
+          draft: true,
+        },
+      });
+      const appOctokitMock = {
+        rest: {
+          pulls: {
+            create: createPullSpy,
+          },
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof githubHelpers.getOctokitForApp>
+      >;
+      const appFallbackSpy = vi
+        .spyOn(githubHelpers, "getOctokitForApp")
+        .mockResolvedValueOnce(appOctokitMock);
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(appFallbackSpy).toHaveBeenCalledOnce();
+      expect(createPullSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row?.prNumber).toBe(321);
+    });
+
+    it("awaiting_pr + clean diff stats + no commits between branches => done", async () => {
+      await updateThread({
+        db,
+        userId: testUserId,
+        threadId: testThreadId,
+        updates: {
+          branchName: "feature/no-commits",
+          gitDiff: "",
+          gitDiffStats: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+
+      vi.spyOn(githubHelpers, "getExistingPRForBranch").mockResolvedValueOnce(
+        null,
+      );
+      vi.spyOn(githubHelpers, "getDefaultBranchForRepo").mockResolvedValueOnce(
+        "main",
+      );
+      const createError = new Error(
+        "Validation Failed: No commits between main and feature/no-commits",
+      );
+      const createPullSpy = vi.fn().mockRejectedValueOnce(createError);
+      const octokitMock = {
+        rest: {
+          pulls: {
+            create: createPullSpy,
+          },
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof githubHelpers.getOctokitForUserOrThrow>
+      >;
+      vi.spyOn(githubHelpers, "getOctokitForUserOrThrow").mockResolvedValueOnce(
+        octokitMock,
+      );
+
+      const wf = await createTestWorkflowInState({
+        kind: "awaiting_pr",
+        stateJson: { headSha: "sha-test" },
+      });
+
+      const result = await tick(wf.id);
+
+      expect(createPullSpy).toHaveBeenCalledOnce();
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("awaiting_pr");
+      expect(result.stateAfter).toBe("done");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("workflow row missing");
+      }
+      expect(row.kind).toBe("done");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      const invariantEvent = events.find(
+        (event) => event.eventKind === "awaiting_pr_invariant",
+      );
+      expect(invariantEvent).toBeDefined();
+      expect(invariantEvent!.payloadJson).toMatchObject({
+        kind: "awaiting_pr_invariant_no_diff",
+      });
+    });
+  });
+
   describe("multiple signals in single tick", () => {
     it("processes multiple signals sequentially within one tick", async () => {
       // implementing -> gating(review) -> gating(ci) in one tick
@@ -648,6 +985,35 @@ describe("v2 coordinator tick — integration", () => {
       expect(events[0]!.stateAfter).toBe("gating");
       expect(events[1]!.stateBefore).toBe("gating");
       expect(events[1]!.stateAfter).toBe("gating");
+    });
+  });
+
+  describe("concurrent coordinator claims", () => {
+    it("preserves a single logical transition when two workers race on the same signal", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "implementing",
+        stateJson: IMPLEMENTING_STATE,
+      });
+      await daemonRunCompleted(wf.id);
+
+      const [firstTick, secondTick] = await Promise.all([
+        tickWithClaim(wf.id, "worker-a"),
+        tickWithClaim(wf.id, "worker-b"),
+      ]);
+
+      const transitionedCount =
+        Number(firstTick.transitioned) + Number(secondTick.transitioned);
+      const signalsProcessedCount =
+        firstTick.signalsProcessed + secondTick.signalsProcessed;
+      expect(transitionedCount).toBe(1);
+      expect(signalsProcessedCount).toBe(1);
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row?.kind).toBe("gating");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events).toHaveLength(1);
+      expect(events[0]!.eventKind).toBe("implementation_succeeded");
     });
   });
 
@@ -702,6 +1068,94 @@ describe("v2 coordinator tick — integration", () => {
       // 2 publications (status_comment, check_run_summary) — no dispatch for gating
       expect(workItems.filter((w) => w.kind === "publication").length).toBe(2);
       expect(workItems.every((w) => w.status === "pending")).toBe(true);
+    });
+  });
+
+  describe("skipGates: auto-bypass all gates in single tick", () => {
+    it("cascades through review -> ci -> ui -> awaiting_pr when skipGates enabled", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "implementing",
+        stateJson: IMPLEMENTING_STATE,
+      });
+
+      // implementation_completed -> gating(review), then auto-bypass cascades
+      await daemonRunCompleted(wf.id);
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("implementing");
+      // All 3 gates bypassed — ends at awaiting_pr (no PR link)
+      expect(result.stateAfter).toBe("awaiting_pr");
+      // 1 impl_completed + 3 bypass signals = 4 signals processed
+      expect(result.signalsProcessed).toBe(4);
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("awaiting_pr");
+
+      // Audit events should show the full cascade
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events.length).toBe(4); // impl_completed + 3 gate transitions
+    });
+
+    it("level-triggered: bypasses gates when workflow is already in gating with no signals", async () => {
+      // Simulate a workflow already stuck in gating(review) with no pending
+      // signals — the flag was enabled after the transition into gating.
+      const wf = await createTestWorkflowInState({
+        kind: "gating",
+        stateJson: gatingState("review"),
+      });
+
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("gating");
+      // All 3 gates bypassed — ends at awaiting_pr (no PR link)
+      expect(result.stateAfter).toBe("awaiting_pr");
+      // 3 bypass signals processed (review, ci, ui)
+      expect(result.signalsProcessed).toBe(3);
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("awaiting_pr");
+
+      const events = await getWorkflowEvents({ db, workflowId: wf.id });
+      expect(events.length).toBe(3);
+    });
+
+    it("level-triggered: bypasses from gating(ci) through remaining gates", async () => {
+      // Workflow stuck at ci gate — should bypass ci and ui
+      const wf = await createTestWorkflowInState({
+        kind: "gating",
+        stateJson: gatingState("ci"),
+      });
+
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("awaiting_pr");
+      // 2 bypass signals: ci -> ui -> awaiting_pr
+      expect(result.signalsProcessed).toBe(2);
+    });
+
+    it("cascades to babysitting when PR link exists", async () => {
+      // Create workflow with a PR number so hasPrLink is true
+      const wf = await createWorkflow({
+        db,
+        threadId: testThreadId,
+        generation: Math.floor(Math.random() * 1_000_000),
+        kind: "implementing",
+        stateJson: IMPLEMENTING_STATE,
+        userId: testUserId,
+        prNumber: 42,
+      });
+
+      await daemonRunCompleted(wf.id);
+      const result = await tickWithSkipGates(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateAfter).toBe("babysitting");
+
+      const row = await getWorkflow({ db, workflowId: wf.id });
+      expect(row!.kind).toBe("babysitting");
     });
   });
 });

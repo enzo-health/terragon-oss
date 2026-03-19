@@ -1,10 +1,9 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
-  getActiveSdlcLoopForThread,
   getLatestAcceptedArtifact,
   markPlanTasksCompletedByAgent,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/artifact-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { SdlcPlanTaskCompletionEvidence } from "@terragon/shared/db/types";
 
@@ -38,28 +37,14 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── V2 fast-path: prefer delivery_workflow ──
-  let loopId: string | null = null;
   const v2Row = await getActiveWorkflowForThread({ db, threadId });
-  if (v2Row?.sdlcLoopId) {
-    loopId = v2Row.sdlcLoopId;
+  if (!v2Row) {
+    return Response.json(
+      { success: false, error: "no_active_loop" },
+      { status: 404 },
+    );
   }
-
-  // ── V1 fallback ──
-  if (!loopId) {
-    const enrolledLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId: authContext.userId,
-      threadId,
-    });
-    if (!enrolledLoop) {
-      return Response.json(
-        { success: false, error: "no_active_loop" },
-        { status: 404 },
-      );
-    }
-    loopId = enrolledLoop.id;
-  }
+  const loopId = v2Row.id;
 
   const acceptedPlanArtifact = await getLatestAcceptedArtifact({
     db,

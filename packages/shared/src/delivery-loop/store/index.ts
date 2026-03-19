@@ -49,3 +49,32 @@ export { upsertRuntimeStatus, getRuntimeStatus } from "./runtime-status-store";
 
 // replay-store.ts
 export { buildWorkflowReplay } from "./replay-store";
+
+// workflow-github-refs.ts
+export {
+  persistWorkflowStatusCommentReference,
+  clearWorkflowStatusCommentReference,
+  persistWorkflowCheckRunReference,
+} from "./workflow-github-refs";
+
+// retrospective-store.ts
+export {
+  computeAndStoreRetrospective,
+  getRetrospective,
+} from "./retrospective-store";
+
+// artifact-store.ts
+export {
+  getLatestAcceptedArtifact,
+  createPlanArtifact,
+  approvePlanArtifact,
+  replacePlanTasksForArtifact,
+  markPlanTasksCompletedByAgent,
+  verifyPlanTaskCompletionForHead,
+  createImplementationArtifact,
+  createReviewBundleArtifact,
+  createUiSmokeArtifact,
+  createPrLinkArtifact,
+  createBabysitEvaluationArtifact,
+  getArtifactsForWorkflow,
+} from "./artifact-store";

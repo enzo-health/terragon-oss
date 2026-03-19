@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
-import { getStalledDispatchIntents } from "@terragon/shared/model/delivery-loop";
+import { getStalledDispatchIntents } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { handleAckTimeout, DEFAULT_ACK_TIMEOUT_MS } from "./ack-lifecycle";
+import { appendSignalToInbox } from "@terragon/shared/delivery-loop/store/signal-inbox-store";
 
 // ---------------------------------------------------------------------------
 // Ack timeout sweep
@@ -41,19 +42,51 @@ export async function sweepAckTimeouts(): Promise<AckTimeoutResult> {
           db,
           runId: intent.runId,
           threadChatId: intent.threadChatId,
+          userId: intent.userId,
+          threadId: intent.threadId,
           timeoutMs: DEFAULT_ACK_TIMEOUT_MS,
         }),
       ),
     );
 
-    for (const result of results) {
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j]!;
+      const intent = batch[j]!;
       if (result.status === "fulfilled") {
         processedCount++;
         if (result.value.shouldRetry) {
           retriedCount++;
+          try {
+            await appendSignalToInbox({
+              db,
+              loopId: intent.loopId,
+              causeType: "timer_dispatch_ack_expired",
+              payload: {
+                kind: "dispatch_ack_expired",
+                consecutiveFailures: result.value.attempt,
+              },
+              canonicalCauseId: `ack-timeout-${intent.runId}`,
+            });
+          } catch (retryErr) {
+            console.error("[ack-timeout] failed to signal ack-expired retry", {
+              runId: intent.runId,
+              threadChatId: intent.threadChatId,
+              error: retryErr,
+            });
+          }
+        } else {
+          console.warn(
+            "[ack-timeout] retry budget exhausted, no retry scheduled",
+            {
+              runId: intent.runId,
+              threadChatId: intent.threadChatId,
+              attempt: result.value.attempt,
+            },
+          );
         }
       } else {
         console.error("[ack-timeout] failed to process stalled intent", {
+          runId: intent.runId,
           error: result.reason,
         });
       }

@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { sandboxCreationRateLimit } from "@/lib/rate-limit";
+import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import {
   atomicDequeueThreadChats,
@@ -23,7 +23,7 @@ export async function getEligibleQueuedThreadChats({
     activeThreadCount,
     maxConcurrentTasks,
   ] = await Promise.all([
-    sandboxCreationRateLimit.getRemaining(userId),
+    getSandboxCreationRateLimitRemaining(userId),
     getActiveThreadCount({ db, userId }),
     getMaxConcurrentTaskCountForUser(userId),
   ]);

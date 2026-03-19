@@ -9,6 +9,7 @@ import type {
   ManualFixIssue,
   ResumableWorkflowState,
 } from "./workflow";
+import type { FailureSignatureMap } from "./failure-signature";
 import type { LoopEvent, LoopEventContext } from "./events";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ function bump(wf: DeliveryWorkflow, now: Date): WorkflowCommon {
     generation: wf.generation,
     version: wf.version + 1,
     fixAttemptCount: wf.fixAttemptCount,
+    infraRetryCount: wf.infraRetryCount,
     maxFixAttempts: wf.maxFixAttempts,
     createdAt: wf.createdAt,
     updatedAt: now,
@@ -37,7 +39,7 @@ function bumpWithFixReset(
 ): WorkflowCommon {
   const base = bump(wf, now);
   if (shouldResetFixAttemptCount(event, ctx)) {
-    return { ...base, fixAttemptCount: 0 };
+    return { ...base, fixAttemptCount: 0, infraRetryCount: 0 };
   }
   return base;
 }
@@ -103,12 +105,48 @@ function retryToImplementing(
     "planVersion" in wf && wf.planVersion != null
       ? wf.planVersion
       : (1 as PlanVersion);
+  // Carry failure signatures forward so the circuit breaker accumulates
+  const failureSignatures: FailureSignatureMap | undefined =
+    wf.kind === "implementing" ? wf.failureSignatures : undefined;
+  const lastFailureSignatureKey: string | undefined =
+    wf.kind === "implementing" ? wf.lastFailureSignatureKey : undefined;
   return {
     ...base,
     fixAttemptCount: wf.fixAttemptCount + 1,
     kind: "implementing",
     planVersion,
     dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    failureSignatures,
+    lastFailureSignatureKey,
+  };
+}
+
+/**
+ * Shared helper: re-enter implementing for infrastructure retries.
+ * Keeps fixAttemptCount unchanged and increments infraRetryCount.
+ */
+function retryInfraToImplementing(
+  wf: DeliveryWorkflow,
+  now: Date,
+): DeliveryWorkflow {
+  const base = bump(wf, now);
+  const planVersion =
+    "planVersion" in wf && wf.planVersion != null
+      ? wf.planVersion
+      : (1 as PlanVersion);
+  const failureSignatures: FailureSignatureMap | undefined =
+    wf.kind === "implementing" ? wf.failureSignatures : undefined;
+  const lastFailureSignatureKey: string | undefined =
+    wf.kind === "implementing" ? wf.lastFailureSignatureKey : undefined;
+  return {
+    ...base,
+    fixAttemptCount: wf.fixAttemptCount,
+    infraRetryCount: wf.infraRetryCount + 1,
+    kind: "implementing",
+    planVersion,
+    dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+    failureSignatures,
+    lastFailureSignatureKey,
   };
 }
 
@@ -278,6 +316,16 @@ function reducePlanning(
       dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
     };
   }
+  if (event === "gate_blocked") {
+    // Ack timeout or transient failure during planning dispatch — stay in
+    // planning but bump version so schedule-work sees the change and
+    // re-enqueues a dispatch work item.
+    return {
+      ...bump(wf, now),
+      kind: "planning",
+      planVersion: wf.planVersion,
+    };
+  }
   return null;
 }
 
@@ -299,18 +347,27 @@ function reduceImplementing(
   }
 
   if (event === "redispatch_requested") {
-    // Partial completion — stay in implementing for re-dispatch without
-    // incrementing fixAttemptCount (this is normal multi-pass, not failure).
+    // Partial completion or infra retry — stay in implementing for re-dispatch
+    // without incrementing fixAttemptCount.
     const base = bump(wf, now);
     return {
       ...base,
+      // Infra retries increment their own counter; partial completions don't.
+      infraRetryCount: ctx.infraRetry
+        ? wf.infraRetryCount + 1
+        : wf.infraRetryCount,
       kind: "implementing",
       planVersion: wf.planVersion,
       dispatch: defaultQueuedDispatch(wf) as DispatchSubState,
+      failureSignatures: wf.failureSignatures,
+      lastFailureSignatureKey: wf.lastFailureSignatureKey,
     };
   }
 
   if (event === "gate_blocked") {
+    if (ctx.infraRetry) {
+      return retryInfraToImplementing(wf, now);
+    }
     return retryToImplementing(wf, now);
   }
 
@@ -354,6 +411,9 @@ function reduceGating(
   }
 
   if (event === "gate_blocked") {
+    if (ctx.infraRetry) {
+      return retryInfraToImplementing(wf, now);
+    }
     return retryToImplementing(wf, now);
   }
 
@@ -373,6 +433,20 @@ function reduceAwaitingPr(
       headSha: wf.headSha,
       reviewSurface: { kind: "github_pr", prNumber: ctx.prNumber ?? 0 },
       nextCheckAt: new Date(now.getTime() + 5 * 60_000),
+    };
+  }
+  if (event === "operator_action_required") {
+    return {
+      ...bump(wf, now),
+      kind: "awaiting_operator_action",
+      reason: {
+        description:
+          ctx.reason ?? "PR creation or linkage requires operator action",
+        system: "github",
+      },
+      incidentId:
+        ctx.incidentId ?? `awaiting-pr:${wf.workflowId}:${wf.version}`,
+      resumableFrom: { kind: "awaiting_pr", headSha: wf.headSha },
     };
   }
   if (event === "mark_done") {

@@ -22,12 +22,8 @@ import {
   PullRequestTriggerConfig,
   IssueTriggerConfig,
 } from "@terragon/shared/automations";
-import {
-  transitionActiveSdlcLoopsForGithubPREvent,
-  activeSdlcLoopStateList,
-} from "@terragon/shared/model/delivery-loop";
 import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { and, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
+import { and, eq, isNotNull, notInArray } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import {
   runPullRequestAutomation,
@@ -35,6 +31,7 @@ import {
 } from "@/server-lib/automations";
 import { Automation } from "@terragon/shared/db/types";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
+import type { LoopEventV3 } from "@/server-lib/delivery-loop/v3/types";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -121,6 +118,42 @@ function getUniqueUserIdsFromActiveLoops(
   return routeUserIds;
 }
 
+async function appendV3EventForWorkflowIds(params: {
+  workflowIds: string[];
+  deliveryId?: string;
+  idempotencyScope: string;
+  event: LoopEventV3;
+}): Promise<void> {
+  const workflowIds = [...new Set(params.workflowIds)];
+  if (workflowIds.length === 0) {
+    return;
+  }
+
+  try {
+    const { appendEventAndAdvanceV3 } = await import(
+      "@/server-lib/delivery-loop/v3/kernel"
+    );
+    await Promise.all(
+      workflowIds.map(async (workflowId) => {
+        await appendEventAndAdvanceV3({
+          db,
+          workflowId,
+          source: "github",
+          idempotencyKey: `${params.idempotencyScope}:${params.deliveryId ?? "no-delivery-id"}`,
+          event: params.event,
+        });
+      }),
+    );
+  } catch (error) {
+    console.warn("[github webhook] failed to append v3 event", {
+      idempotencyScope: params.idempotencyScope,
+      workflowCount: workflowIds.length,
+      eventType: params.event.type,
+      error,
+    });
+  }
+}
+
 function deriveUnresolvedThreadCountFromReviewState(
   reviewState: string | null | undefined,
 ): number | null {
@@ -142,53 +175,6 @@ function deriveUnresolvedThreadCountFromReviewState(
   }
 
   return null;
-}
-
-async function syncSdlcLoopStateForPullRequestLifecycle({
-  repoFullName,
-  prNumber,
-  action,
-  merged,
-}: {
-  repoFullName: string;
-  prNumber: number;
-  action: string;
-  merged?: boolean;
-}) {
-  const transitionEvent =
-    action === "closed"
-      ? merged
-        ? "pr_merged"
-        : "pr_closed_unmerged"
-      : action === "opened" ||
-          action === "ready_for_review" ||
-          action === "reopened" ||
-          action === "synchronize" ||
-          action === "edited"
-        ? "pr_linked"
-        : null;
-
-  if (!transitionEvent) {
-    return;
-  }
-
-  const transitionResult = await transitionActiveSdlcLoopsForGithubPREvent({
-    db,
-    repoFullName,
-    prNumber,
-    transitionEvent,
-  });
-
-  if (transitionResult.totalLoops > 0) {
-    console.log("[github webhook] SDLC loop lifecycle transition applied", {
-      repoFullName,
-      prNumber,
-      action,
-      merged: merged ?? null,
-      transitionEvent,
-      ...transitionResult,
-    });
-  }
 }
 
 export type CiSignalSnapshot = {
@@ -491,6 +477,7 @@ function getCheckSuiteFailureDetails(
 // Handle pull request events
 export async function handlePullRequestStatusChange(
   event: PullRequestEvent,
+  deliveryId?: string,
 ): Promise<void> {
   try {
     const repoName = event.repository.full_name;
@@ -508,12 +495,24 @@ export async function handlePullRequestStatusChange(
       prNumber,
       createIfNotFound: false,
     });
-    await syncSdlcLoopStateForPullRequestLifecycle({
-      repoFullName: repoName,
-      prNumber,
-      action: event.action,
-      merged: event.pull_request.merged ?? undefined,
-    });
+
+    if (event.action === "closed") {
+      const activeWorkflows = await getActiveWorkflowForGithubPR({
+        db,
+        repoFullName: repoName,
+        prNumber,
+      });
+      await appendV3EventForWorkflowIds({
+        workflowIds: activeWorkflows.map((workflow) => workflow.id),
+        deliveryId,
+        idempotencyScope: `pull_request.closed:${repoName}:${prNumber}:${event.pull_request.merged ? "merged" : "closed"}`,
+        event: {
+          type: "pr_closed",
+          merged: event.pull_request.merged === true,
+        },
+      });
+    }
+
     console.log(`Successfully updated PR #${prNumber} status in ${repoName}`);
     return;
   } catch (error) {
@@ -531,13 +530,6 @@ export async function handlePullRequestUpdated(
     `Pull request updated: ${event.action} for PR #${prNumber} in ${repoFullName}`,
   );
   try {
-    await syncSdlcLoopStateForPullRequestLifecycle({
-      repoFullName,
-      prNumber,
-      action: event.action,
-      merged: event.pull_request.merged ?? undefined,
-    });
-
     // Get all pull request automations for this repository
     const automations = await getPullRequestAutomationsForRepo({
       db,
@@ -890,6 +882,37 @@ export async function handlePullRequestReviewEvent(
       repoFullName,
       prNumber,
     });
+    const normalizedReviewState = event.review.state.trim().toLowerCase();
+    let v3ReviewEvent: LoopEventV3 | null = null;
+    if (normalizedReviewState === "changes_requested") {
+      v3ReviewEvent = {
+        type: "gate_review_failed",
+        runId: event.review.commit_id ?? null,
+        reason: reviewBody?.trim() || "Review requested changes",
+      };
+    } else if (normalizedReviewState === "approved") {
+      if (unresolvedThreadCount !== null && unresolvedThreadCount > 0) {
+        v3ReviewEvent = {
+          type: "gate_review_failed",
+          runId: event.review.commit_id ?? null,
+          reason: `Review approved but ${unresolvedThreadCount} unresolved thread(s) remain`,
+        };
+      } else {
+        v3ReviewEvent = {
+          type: "gate_review_passed",
+          runId: event.review.commit_id ?? null,
+        };
+      }
+    }
+    if (v3ReviewEvent) {
+      await appendV3EventForWorkflowIds({
+        workflowIds: activeWorkflows.map((workflow) => workflow.id),
+        deliveryId,
+        idempotencyScope: `pull_request_review.submitted:${repoFullName}:${prNumber}:${event.review.id}:${normalizedReviewState}`,
+        event: v3ReviewEvent,
+      });
+    }
+
     const enrolledLoopUserIds =
       getUniqueUserIdsFromActiveLoops(activeWorkflows);
     const shouldSkipFeedbackRoutingForMention =
@@ -1010,35 +1033,26 @@ async function resolvePrNumbersFromSha({
       }
     })(),
     (async (): Promise<number[]> => {
-      const [loops, workflows] = await Promise.all([
-        db.query.sdlcLoop.findMany({
-          where: and(
-            eq(schema.sdlcLoop.repoFullName, repoFullName),
-            eq(schema.sdlcLoop.currentHeadSha, headSha),
-            inArray(schema.sdlcLoop.state, activeSdlcLoopStateList),
-            isNotNull(schema.sdlcLoop.prNumber),
-          ),
-          columns: { prNumber: true },
-        }),
-        db.query.deliveryWorkflow.findMany({
-          where: and(
-            eq(schema.deliveryWorkflow.repoFullName, repoFullName),
-            eq(schema.deliveryWorkflow.currentHeadSha, headSha),
-            notInArray(schema.deliveryWorkflow.kind, [
-              "done",
-              "stopped",
-              "terminated",
-            ]),
-            isNotNull(schema.deliveryWorkflow.prNumber),
-          ),
-          columns: { prNumber: true },
-        }),
-      ]);
-      const allPrNumbers = [
-        ...loops.map((l) => l.prNumber),
-        ...workflows.map((w) => w.prNumber),
+      const workflows = await db.query.deliveryWorkflow.findMany({
+        where: and(
+          eq(schema.deliveryWorkflow.repoFullName, repoFullName),
+          eq(schema.deliveryWorkflow.currentHeadSha, headSha),
+          notInArray(schema.deliveryWorkflow.kind, [
+            "done",
+            "stopped",
+            "terminated",
+          ]),
+          isNotNull(schema.deliveryWorkflow.prNumber),
+        ),
+        columns: { prNumber: true },
+      });
+      return [
+        ...new Set(
+          workflows
+            .map((w) => w.prNumber)
+            .filter((n): n is number => n !== null),
+        ),
       ];
-      return [...new Set(allPrNumbers.filter((n): n is number => n !== null))];
     })(),
   ]);
 
@@ -1101,6 +1115,26 @@ export async function handleCheckRunEvent(
               repoFullName,
               prNumber,
             });
+            const v3CiEvent: LoopEventV3 =
+              signalOutcome === "pass"
+                ? {
+                    type: "gate_ci_passed",
+                    runId: String(checkRun.id),
+                    headSha: checkRun.head_sha ?? null,
+                  }
+                : {
+                    type: "gate_ci_failed",
+                    runId: String(checkRun.id),
+                    headSha: checkRun.head_sha ?? null,
+                    reason: failureDetails ?? "CI checks failed",
+                  };
+            await appendV3EventForWorkflowIds({
+              workflowIds: activeWorkflows.map((workflow) => workflow.id),
+              deliveryId,
+              idempotencyScope: `check_run.completed:${repoFullName}:${prNumber}:${checkRun.id}:${signalOutcome}`,
+              event: v3CiEvent,
+            });
+
             const enrolledLoopUserIds =
               getUniqueUserIdsFromActiveLoops(activeWorkflows);
             const routeUserIds = getRouteUserIdsForCheckSignal({
@@ -1224,6 +1258,26 @@ export async function handleCheckSuiteEvent(
               repoFullName,
               prNumber,
             });
+            const v3CiEvent: LoopEventV3 =
+              signalOutcome === "pass"
+                ? {
+                    type: "gate_ci_passed",
+                    runId: String(checkSuite.id),
+                    headSha: checkSuite.head_sha ?? null,
+                  }
+                : {
+                    type: "gate_ci_failed",
+                    runId: String(checkSuite.id),
+                    headSha: checkSuite.head_sha ?? null,
+                    reason: failureDetails ?? "CI checks failed",
+                  };
+            await appendV3EventForWorkflowIds({
+              workflowIds: activeWorkflows.map((workflow) => workflow.id),
+              deliveryId,
+              idempotencyScope: `check_suite.completed:${repoFullName}:${prNumber}:${checkSuite.id}:${signalOutcome}`,
+              event: v3CiEvent,
+            });
+
             const enrolledLoopUserIds =
               getUniqueUserIdsFromActiveLoops(activeWorkflows);
             const routeUserIds = getRouteUserIdsForCheckSignal({

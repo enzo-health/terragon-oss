@@ -1,5 +1,8 @@
 import type { DB } from "@terragon/shared/db";
-import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
+import type {
+  DeliverySignalSourceV3,
+  SdlcLoopCauseType,
+} from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
   CiEvaluation,
@@ -31,6 +34,35 @@ export type GitHubWebhookPayload = {
   // Merge signals
   merged?: boolean;
 };
+
+function toV3SignalSource(
+  source: DeliverySignal["source"],
+): DeliverySignalSourceV3 {
+  switch (source) {
+    case "daemon":
+    case "github":
+    case "human":
+    case "timer":
+      return source;
+    case "babysit":
+      return "system";
+  }
+}
+
+function serializeSignalForJournal(
+  signal: DeliverySignal,
+): Record<string, unknown> {
+  return {
+    source: signal.source,
+    event: {
+      ...signal.event,
+    },
+  };
+}
+
+function buildGitHubCanonicalCauseId(raw: GitHubWebhookPayload): string {
+  return `github:${raw.repoFullName}:${raw.prNumber}:${raw.action}:${raw.checkRunId ?? raw.checkSuiteId ?? raw.reviewId ?? raw.commentId ?? raw.headSha ?? "no-id"}`;
+}
 
 /**
  * Normalize a raw GitHub webhook payload to a typed DeliverySignal.
@@ -154,8 +186,8 @@ export function normalizeGitHubWebhook(
 
 /**
  * Handle an inbound GitHub webhook: normalize to a typed signal,
- * look up the active workflow for the PR, and append the signal
- * to its inbox.
+ * look up the active workflow for the PR, and persist the signal
+ * to the inbox plus mirrored v3 records.
  */
 export async function handleGitHubWebhook(params: {
   db: DB;
@@ -167,7 +199,6 @@ export async function handleGitHubWebhook(params: {
     prNumber: number;
     repoFullName: string;
   }) => Promise<WorkflowId | null>;
-  wakeCoordinator?: (workflowId: WorkflowId) => Promise<void>;
 }): Promise<void> {
   const signal = normalizeGitHubWebhook(params.rawEvent);
   if (!signal) return;
@@ -182,24 +213,69 @@ export async function handleGitHubWebhook(params: {
   const { appendSignalToInbox } = await import(
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
   );
+  const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
+    "../../v3/store"
+  );
 
   const causeType = mapGitHubSignalToCauseType(signal);
-  await appendSignalToInbox({
-    db: params.db,
-    loopId: params.inboxPartitionKey,
-    causeType,
-    payload: signal as Record<string, unknown>,
-    canonicalCauseId: `github:${params.rawEvent.repoFullName}:${params.rawEvent.prNumber}:${params.rawEvent.action}:${params.rawEvent.checkRunId ?? params.rawEvent.checkSuiteId ?? params.rawEvent.reviewId ?? params.rawEvent.commentId ?? params.rawEvent.headSha ?? "no-id"}`,
-  });
+  const now = new Date();
+  const canonicalCauseId = buildGitHubCanonicalCauseId(params.rawEvent);
+  const v3Source = toV3SignalSource(signal.source);
+  const signalPayload = serializeSignalForJournal(signal);
 
-  // Wake coordinator asynchronously
-  if (params.wakeCoordinator) {
-    params.wakeCoordinator(workflowId).catch((err) => {
-      console.warn("[github-ingress] wakeCoordinator failed", {
-        workflowId,
-        error: err,
-      });
+  const writeSignalAndOutbox = async (
+    tx: Pick<DB, "insert">,
+  ): Promise<void> => {
+    await appendSignalToInbox({
+      db: tx,
+      loopId: params.inboxPartitionKey,
+      causeType,
+      payload: signalPayload,
+      canonicalCauseId,
+      now,
     });
+
+    const journal = await appendJournalEventV3({
+      db: tx,
+      workflowId,
+      source: v3Source,
+      eventType: signal.event.kind,
+      idempotencyKey: canonicalCauseId,
+      payloadJson: signalPayload,
+      occurredAt: now,
+    });
+
+    if (!journal.inserted || !journal.id) {
+      return;
+    }
+
+    await enqueueOutboxRecordV3({
+      db: tx,
+      outbox: {
+        workflowId,
+        topic: "signal",
+        dedupeKey: `signal:${workflowId}:${v3Source}:${canonicalCauseId}`,
+        idempotencyKey: canonicalCauseId,
+        availableAt: now,
+        maxAttempts: 10,
+        payload: {
+          kind: "signal",
+          journalId: journal.id,
+          workflowId,
+          eventType: signal.event.kind,
+          source: v3Source,
+        },
+      },
+    });
+  };
+
+  const transactionalDb = params.db as unknown as {
+    transaction?: <T>(fn: (tx: Pick<DB, "insert">) => Promise<T>) => Promise<T>;
+  };
+  if (typeof transactionalDb.transaction === "function") {
+    await transactionalDb.transaction(writeSignalAndOutbox);
+  } else {
+    await writeSignalAndOutbox(params.db);
   }
 }
 

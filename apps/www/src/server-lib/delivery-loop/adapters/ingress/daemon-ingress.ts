@@ -1,5 +1,8 @@
 import type { DB } from "@terragon/shared/db";
-import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
+import type {
+  DeliverySignalSourceV3,
+  SdlcLoopCauseType,
+} from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
   DaemonCompletionResult,
@@ -7,7 +10,7 @@ import type {
   DaemonProgress,
 } from "@terragon/shared/delivery-loop/domain/signals";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
-import { runCoordinatorTick } from "../../coordinator/tick";
+import type { DaemonOutcome } from "@terragon/shared/delivery-loop/domain/outcomes";
 
 // Raw daemon event payload (what the daemon HTTP endpoint receives)
 export type DaemonEventPayload = {
@@ -27,9 +30,47 @@ export type DaemonEventPayload = {
 
 export type DaemonEventResponse = {
   selfDispatch: Record<string, unknown> | null;
+  workItemsScheduled: number;
 };
 
-const MAX_CONSECUTIVE_SELF_DISPATCHES = 7;
+function toV3SignalSource(
+  source: DeliverySignal["source"],
+): DeliverySignalSourceV3 {
+  switch (source) {
+    case "daemon":
+    case "github":
+    case "human":
+    case "timer":
+      return source;
+    case "babysit":
+      return "system";
+  }
+}
+
+function serializeSignalForJournal(
+  signal: DeliverySignal,
+): Record<string, unknown> {
+  return {
+    source: signal.source,
+    event: {
+      ...signal.event,
+    },
+  };
+}
+
+function buildDaemonCanonicalCauseId(rawEvent: DaemonEventPayload): string {
+  if (rawEvent.status === "progress") {
+    return `daemon:${rawEvent.runId}:progress:${rawEvent.completedTasks ?? 0}:${rawEvent.totalTasks ?? 0}:${rawEvent.currentTask ?? "none"}`;
+  }
+
+  return `daemon:${rawEvent.runId}:${rawEvent.status}:${
+    rawEvent.status === "completed" &&
+    rawEvent.remainingTasks != null &&
+    rawEvent.remainingTasks > 0
+      ? "partial"
+      : "terminal"
+  }`;
+}
 
 export function normalizeDaemonEvent(raw: DaemonEventPayload): DeliverySignal {
   switch (raw.status) {
@@ -100,115 +141,94 @@ export function normalizeDaemonEvent(raw: DaemonEventPayload): DeliverySignal {
 }
 
 /**
- * Self-dispatch eligibility check. Only completed runs may trigger
- * an inline coordinator micro-tick that returns the next dispatch
- * payload in the HTTP response body.
- */
-function isEligibleForSelfDispatch(signal: DeliverySignal): boolean {
-  return signal.source === "daemon" && signal.event.kind === "run_completed";
-}
-
-/**
  * Handle an inbound daemon event: normalize to a typed signal,
- * append it to the signal inbox, and optionally run a synchronous
- * coordinator micro-tick for self-dispatch.
+ * append it to the signal inbox, and persist the mirrored v3 outbox
+ * record for replayable progression.
  */
 export async function handleDaemonIngress(params: {
   db: DB;
   rawEvent: DaemonEventPayload;
   /** The v2 workflow ID — distinct from rawEvent.loopId (v1 sdlcLoop ID). */
   workflowId: WorkflowId;
-  consecutiveDispatches?: number;
+  /** Typed outcome preserving ingress envelope metadata. Optional for backward compatibility. */
+  outcome?: DaemonOutcome;
 }): Promise<DaemonEventResponse> {
   const signal = normalizeDaemonEvent(params.rawEvent);
   const { workflowId } = params;
   // The signal inbox is keyed by v1 loopId for backwards compatibility
   // with the shared sdlcLoopSignalInbox table.
   const inboxPartitionKey = params.rawEvent.loopId;
-  const consecutiveDispatches = params.consecutiveDispatches ?? 0;
 
   // Append signal to inbox via v2 store
   const { appendSignalToInbox } = await import(
     "@terragon/shared/delivery-loop/store/signal-inbox-store"
   );
+  const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
+    "../../v3/store"
+  );
 
   const causeType = mapSignalToCauseType(signal);
+  const now = new Date();
+  const canonicalCauseId = buildDaemonCanonicalCauseId(params.rawEvent);
+  const v3Source = toV3SignalSource(signal.source);
+  const signalPayload = serializeSignalForJournal(signal);
 
-  await appendSignalToInbox({
-    db: params.db,
-    loopId: inboxPartitionKey,
-    causeType,
-    payload: signal as Record<string, unknown>,
-    // Progress events include a timestamp so later updates aren't deduplicated
-    // against earlier ones. Terminal/completed events use runId:status:resultKind
-    // for proper idempotency on daemon retries. The resultKind suffix is critical:
-    // partial completions (remainingTasks > 0) and final success completions
-    // share the same raw status "completed", but must produce distinct inbox rows
-    // so the final success signal isn't dropped by ON CONFLICT DO NOTHING.
-    // Progress events use a stable identity derived from the task snapshot
-    // so network retries of the same progress update deduplicate, while
-    // genuinely new progress updates (different task counts) still append.
-    canonicalCauseId:
-      params.rawEvent.status === "progress"
-        ? `daemon:${params.rawEvent.runId}:progress:${params.rawEvent.completedTasks ?? 0}:${params.rawEvent.totalTasks ?? 0}:${params.rawEvent.currentTask ?? "none"}`
-        : `daemon:${params.rawEvent.runId}:${params.rawEvent.status}:${
-            params.rawEvent.status === "completed" &&
-            params.rawEvent.remainingTasks != null &&
-            params.rawEvent.remainingTasks > 0
-              ? "partial"
-              : "terminal"
-          }`,
-  });
+  const writeSignalAndOutbox = async (
+    tx: Pick<DB, "insert">,
+  ): Promise<void> => {
+    await appendSignalToInbox({
+      db: tx,
+      loopId: inboxPartitionKey,
+      causeType,
+      payload: signalPayload,
+      canonicalCauseId,
+      now,
+    });
 
-  // Self-dispatch path: if the daemon completed, run a synchronous
-  // coordinator micro-tick to consume the signal from the inbox.
-  // When under the circuit breaker limit, the tick result could
-  // carry a self-dispatch payload in the HTTP response (not yet wired).
-  // When AT the limit, we still run the tick to consume the signal —
-  // otherwise it accumulates in the inbox and cron processes it anyway,
-  // defeating the breaker. The breaker's purpose is to prevent tight
-  // HTTP-level self-dispatch loops; the work queue handles dispatch
-  // asynchronously regardless.
-  if (isEligibleForSelfDispatch(signal)) {
-    const breakerTripped =
-      consecutiveDispatches >= MAX_CONSECUTIVE_SELF_DISPATCHES;
-    if (breakerTripped) {
-      console.warn("[daemon-ingress] self-dispatch circuit breaker tripped", {
-        workflowId,
-        runId: params.rawEvent.runId,
-        consecutiveDispatches,
-      });
+    const journal = await appendJournalEventV3({
+      db: tx,
+      workflowId,
+      source: v3Source,
+      eventType: signal.event.kind,
+      idempotencyKey: canonicalCauseId,
+      payloadJson: signalPayload,
+      occurredAt: now,
+    });
+
+    if (!journal.inserted || !journal.id) {
+      return;
     }
-    try {
-      const tickResult = await runCoordinatorTick({
-        db: params.db,
-        workflowId,
-        correlationId:
-          `self-dispatch:${params.rawEvent.runId}` as import("@terragon/shared/delivery-loop/domain/workflow").CorrelationId,
-        loopId: inboxPartitionKey,
-      });
 
-      if (
-        !breakerTripped &&
-        tickResult.transitioned &&
-        tickResult.workItemsScheduled > 0
-      ) {
-        // TODO: construct a real SdlcSelfDispatchPayload from the
-        // prepared dispatch/replay state. For now, return null — the
-        // cron/work-queue path handles dispatch instead.
-        return { selfDispatch: null };
-      }
-    } catch (err) {
-      // Self-dispatch is best-effort; the async coordinator will pick it up
-      console.warn("[daemon-ingress] self-dispatch micro-tick failed", {
+    await enqueueOutboxRecordV3({
+      db: tx,
+      outbox: {
         workflowId,
-        runId: params.rawEvent.runId,
-        error: err,
-      });
-    }
+        topic: "signal",
+        dedupeKey: `signal:${workflowId}:${v3Source}:${canonicalCauseId}`,
+        idempotencyKey: canonicalCauseId,
+        availableAt: now,
+        maxAttempts: 10,
+        payload: {
+          kind: "signal",
+          journalId: journal.id,
+          workflowId,
+          eventType: signal.event.kind,
+          source: v3Source,
+        },
+      },
+    });
+  };
+
+  const transactionalDb = params.db as unknown as {
+    transaction?: <T>(fn: (tx: Pick<DB, "insert">) => Promise<T>) => Promise<T>;
+  };
+  if (typeof transactionalDb.transaction === "function") {
+    await transactionalDb.transaction(writeSignalAndOutbox);
+  } else {
+    await writeSignalAndOutbox(params.db);
   }
 
-  return { selfDispatch: null };
+  return { selfDispatch: null, workItemsScheduled: 0 };
 }
 
 function mapSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {

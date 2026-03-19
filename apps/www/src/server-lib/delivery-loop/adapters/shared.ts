@@ -1,4 +1,4 @@
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
+import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import type { NormalizedRunUpdate } from "./types";
 
 /**

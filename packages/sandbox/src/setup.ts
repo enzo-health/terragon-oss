@@ -142,8 +142,15 @@ async function probeSandboxAgentEndpoint({
   if (!baseUrl) {
     return;
   }
+  const healthMaxRetries = options.sandboxProvider === "docker" ? 30 : 12;
+  const healthRetryDelayMs = options.sandboxProvider === "docker" ? 750 : 500;
   await ensureSandboxAgentRunning({ session, baseUrl });
-  await waitForSandboxAgentHealth({ session, baseUrl });
+  await waitForSandboxAgentHealth({
+    session,
+    baseUrl,
+    maxRetries: healthMaxRetries,
+    retryDelayMs: healthRetryDelayMs,
+  });
   try {
     await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`, {
       cwd: "/",

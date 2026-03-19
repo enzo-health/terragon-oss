@@ -9,30 +9,33 @@ import {
 import { mockLoggedInUser } from "@/test-helpers/mock-next";
 import { updateThreadChat } from "@terragon/shared/model/threads";
 import {
-  createPlanArtifactForLoop,
-  enrollSdlcLoopForThread,
-  getActiveSdlcLoopForThread,
+  createPlanArtifact,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/artifact-store";
+import {
+  createWorkflow,
+  getActiveWorkflowForThread,
+} from "@terragon/shared/delivery-loop/store/workflow-store";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
-const approvePlanArtifactForLoopMock = vi.hoisted(() => vi.fn());
+const approvePlanArtifactMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/model/delivery-loop", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@terragon/shared/model/delivery-loop")
-    >();
-  approvePlanArtifactForLoopMock.mockImplementation(
-    actual.approvePlanArtifactForLoop,
-  );
-  return {
-    ...actual,
-    approvePlanArtifactForLoop: approvePlanArtifactForLoopMock,
-  };
-});
+vi.mock(
+  "@terragon/shared/delivery-loop/store/artifact-store",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@terragon/shared/delivery-loop/store/artifact-store")
+      >();
+    approvePlanArtifactMock.mockImplementation(actual.approvePlanArtifact);
+    return {
+      ...actual,
+      approvePlanArtifact: approvePlanArtifactMock,
+    };
+  },
+);
 
 vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn(),
@@ -68,11 +71,14 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const loop = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
     });
     expect(loop).toBeDefined();
 
@@ -120,17 +126,21 @@ describe("approvePlan", () => {
       }),
     );
 
-    const activeLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId: user.id,
-      threadId,
+    // approvePlan writes a plan_approved signal to the inbox; the coordinator
+    // tick advances the workflow kind asynchronously — so we verify the signal
+    // was written rather than asserting on workflow.kind here.
+    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+      where: (s, { eq }) => eq(s.loopId, loop.id),
     });
-    expect(activeLoop?.state).toBe("implementing");
-    expect(activeLoop?.activePlanArtifactId).toBeTruthy();
+    expect(approvalSignal).toBeDefined();
+    expect(
+      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
+        ?.event?.kind,
+    ).toBe("plan_approved");
 
     const planArtifacts = await db.query.sdlcPhaseArtifact.findMany({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
+        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
         eq(schema.sdlcPhaseArtifact.phase, "planning"),
       ),
     });
@@ -143,7 +153,7 @@ describe("approvePlan", () => {
 
     const planTasks = await db.query.sdlcPlanTask.findMany({
       where: and(
-        eq(schema.sdlcPlanTask.loopId, loop!.id),
+        eq(schema.sdlcPlanTask.loopId, loop.id),
         eq(schema.sdlcPlanTask.artifactId, planArtifacts[0]!.id),
       ),
     });
@@ -162,14 +172,17 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const loop = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
       planApprovalPolicy: "human_required",
     });
-    expect(loop?.planApprovalPolicy).toBe("human_required");
+    expect(loop.planApprovalPolicy).toBe("human_required");
 
     await updateThreadChat({
       db,
@@ -210,16 +223,19 @@ describe("approvePlan", () => {
 
     await approvePlan({ threadId, threadChatId });
 
-    const activeLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId: user.id,
-      threadId,
+    // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
+    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+      where: (s, { eq }) => eq(s.loopId, loop.id),
     });
-    expect(activeLoop?.state).toBe("implementing");
+    expect(approvalSignal).toBeDefined();
+    expect(
+      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
+        ?.event?.kind,
+    ).toBe("plan_approved");
 
     const artifact = await db.query.sdlcPhaseArtifact.findFirst({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
+        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
         eq(schema.sdlcPhaseArtifact.phase, "planning"),
       ),
       orderBy: [schema.sdlcPhaseArtifact.createdAt],
@@ -243,17 +259,20 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const loop = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
       planApprovalPolicy: "human_required",
     });
-    const existingArtifact = await createPlanArtifactForLoop({
+    const existingArtifact = await createPlanArtifact({
       db,
-      loopId: loop!.id,
-      loopVersion: Math.max(loop!.loopVersion, 0) + 1,
+      loopId: loop.id,
+      loopVersion: 1,
       status: "generated",
       generatedBy: "agent",
       payload: {
@@ -270,7 +289,7 @@ describe("approvePlan", () => {
     });
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: loop.id,
       artifactId: existingArtifact.id,
       tasks: [
         {
@@ -314,7 +333,7 @@ describe("approvePlan", () => {
 
     const planningArtifacts = await db.query.sdlcPhaseArtifact.findMany({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop!.id),
+        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
         eq(schema.sdlcPhaseArtifact.phase, "planning"),
       ),
     });
@@ -334,11 +353,14 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const loop = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
       planApprovalPolicy: "human_required",
     });
     expect(loop).toBeDefined();
@@ -371,7 +393,7 @@ describe("approvePlan", () => {
     const [staleGeneratedArtifact] = await db
       .insert(schema.sdlcPhaseArtifact)
       .values({
-        loopId: loop!.id,
+        loopId: loop.id,
         phase: "planning",
         artifactType: "plan_spec",
         headSha: null,
@@ -387,7 +409,7 @@ describe("approvePlan", () => {
     const [approvedArtifact] = await db
       .insert(schema.sdlcPhaseArtifact)
       .values({
-        loopId: loop!.id,
+        loopId: loop.id,
         phase: "planning",
         artifactType: "plan_spec",
         headSha: null,
@@ -410,13 +432,13 @@ describe("approvePlan", () => {
 
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: loop.id,
       artifactId: staleGeneratedArtifact.id,
       tasks: staleGeneratedPayload.tasks,
     });
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: loop.id,
       artifactId: approvedArtifact.id,
       tasks: newestApprovedPayload.tasks,
     });
@@ -443,13 +465,15 @@ describe("approvePlan", () => {
 
     await approvePlan({ threadId, threadChatId });
 
-    const activeLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId: user.id,
-      threadId,
+    // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
+    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+      where: (s, { eq }) => eq(s.loopId, loop.id),
     });
-    expect(activeLoop?.state).toBe("implementing");
-    expect(activeLoop?.activePlanArtifactId).toBe(approvedArtifact.id);
+    expect(approvalSignal).toBeDefined();
+    expect(
+      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
+        ?.event?.kind,
+    ).toBe("plan_approved");
 
     const [refreshedStale, refreshedApproved] = await Promise.all([
       db.query.sdlcPhaseArtifact.findFirst({
@@ -474,11 +498,14 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const loop = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
       planApprovalPolicy: "human_required",
     });
     expect(loop).toBeDefined();
@@ -509,7 +536,7 @@ describe("approvePlan", () => {
     const [staleApprovedArtifact] = await db
       .insert(schema.sdlcPhaseArtifact)
       .values({
-        loopId: loop!.id,
+        loopId: loop.id,
         phase: "planning",
         artifactType: "plan_spec",
         headSha: null,
@@ -530,7 +557,7 @@ describe("approvePlan", () => {
 
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: loop.id,
       artifactId: staleApprovedArtifact.id,
       tasks: staleApprovedPayload.tasks,
     });
@@ -557,27 +584,29 @@ describe("approvePlan", () => {
 
     await approvePlan({ threadId, threadChatId });
 
-    const activeLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId: user.id,
-      threadId,
+    // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
+    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+      where: (s, { eq }) => eq(s.loopId, loop.id),
     });
-    expect(activeLoop?.state).toBe("implementing");
-    expect(activeLoop?.activePlanArtifactId).toBeTruthy();
-    expect(activeLoop?.activePlanArtifactId).not.toBe(staleApprovedArtifact.id);
-
-    const activeArtifact = await db.query.sdlcPhaseArtifact.findFirst({
-      where: eq(schema.sdlcPhaseArtifact.id, activeLoop!.activePlanArtifactId!),
-    });
-    expect(activeArtifact?.status).toBe("approved");
+    expect(approvalSignal).toBeDefined();
     expect(
-      (activeArtifact?.payload as { planText?: string } | undefined)?.planText,
-    ).toBe(parsedPlanPayload.planText);
+      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
+        ?.event?.kind,
+    ).toBe("plan_approved");
 
-    const refreshedStaleArtifact = await db.query.sdlcPhaseArtifact.findFirst({
-      where: eq(schema.sdlcPhaseArtifact.id, staleApprovedArtifact.id),
+    // The new artifact (matching parsedPlanPayload) should be approved
+    const approvedArtifact = await db.query.sdlcPhaseArtifact.findFirst({
+      where: and(
+        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
+        eq(schema.sdlcPhaseArtifact.status, "approved"),
+        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+      ),
     });
-    expect(refreshedStaleArtifact?.status).toBe("superseded");
+    expect(approvedArtifact?.id).not.toBe(staleApprovedArtifact.id);
+    expect(
+      (approvedArtifact?.payload as { planText?: string } | undefined)
+        ?.planText,
+    ).toBe(parsedPlanPayload.planText);
   });
 
   it("does not fallback to unrelated approved artifact when approval CAS is lost", async () => {
@@ -591,11 +620,14 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const loop = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
       planApprovalPolicy: "human_required",
     });
     expect(loop).toBeDefined();
@@ -623,17 +655,17 @@ describe("approvePlan", () => {
       ],
     };
 
-    const generatedArtifact = await createPlanArtifactForLoop({
+    const generatedArtifact = await createPlanArtifact({
       db,
-      loopId: loop!.id,
-      loopVersion: Math.max(loop!.loopVersion, 0) + 1,
+      loopId: loop.id,
+      loopVersion: 1,
       status: "generated",
       generatedBy: "agent",
       payload: matchingGeneratedPayload,
     });
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: loop.id,
       artifactId: generatedArtifact.id,
       tasks: matchingGeneratedPayload.tasks,
     });
@@ -641,7 +673,7 @@ describe("approvePlan", () => {
     const [unrelatedApprovedArtifact] = await db
       .insert(schema.sdlcPhaseArtifact)
       .values({
-        loopId: loop!.id,
+        loopId: loop.id,
         phase: "planning",
         artifactType: "plan_spec",
         headSha: null,
@@ -661,7 +693,7 @@ describe("approvePlan", () => {
     }
     await replacePlanTasksForArtifact({
       db,
-      loopId: loop!.id,
+      loopId: loop.id,
       artifactId: unrelatedApprovedArtifact.id,
       tasks: unrelatedApprovedPayload.tasks,
     });
@@ -686,21 +718,14 @@ describe("approvePlan", () => {
       },
     });
 
-    approvePlanArtifactForLoopMock.mockResolvedValueOnce(undefined);
+    approvePlanArtifactMock.mockResolvedValueOnce(undefined);
 
     await expect(approvePlan({ threadId, threadChatId })).rejects.toThrow(
       "Failed to approve plan",
     );
 
-    const activeLoop = await getActiveSdlcLoopForThread({
-      db,
-      userId: user.id,
-      threadId,
-    });
-    expect(activeLoop?.state).toBe("planning");
-    expect(activeLoop?.activePlanArtifactId).not.toBe(
-      unrelatedApprovedArtifact.id,
-    );
+    const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
+    expect(activeWorkflow?.kind).toBe("planning");
   });
 
   it("rejects approval when no plan artifact exists in thread chat", async () => {
@@ -714,14 +739,15 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
     });
-    expect(loop).toBeDefined();
-    expect(loop?.state).toBe("planning");
 
     await expect(approvePlan({ threadId, threadChatId })).rejects.toThrow(
       "No plan artifact found",
@@ -739,16 +765,16 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    const loop = await enrollSdlcLoopForThread({
+    const workflow = await createWorkflow({
       db,
-      userId: user.id,
-      repoFullName: "owner/repo",
       threadId,
+      generation: 1,
+      kind: "implementing",
+      stateJson: {},
+      repoFullName: "owner/repo",
+      userId: user.id,
     });
-    await db
-      .update(schema.sdlcLoop)
-      .set({ state: "implementing" })
-      .where(eq(schema.sdlcLoop.id, loop!.id));
+    expect(workflow).toBeDefined();
 
     await expect(approvePlan({ threadId, threadChatId })).rejects.toThrow(
       "planning phase",

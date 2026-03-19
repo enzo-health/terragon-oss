@@ -50,25 +50,15 @@ export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
-export type SdlcLoop = typeof schema.sdlcLoop.$inferSelect;
-export type SdlcLoopInsert = typeof schema.sdlcLoop.$inferInsert;
+export type SdlcLoopSignalInbox =
+  typeof schema.sdlcLoopSignalInbox.$inferSelect;
+export type SdlcLoopSignalInboxInsert =
+  typeof schema.sdlcLoopSignalInbox.$inferInsert;
 export type SdlcPhaseArtifact = typeof schema.sdlcPhaseArtifact.$inferSelect;
 export type SdlcPhaseArtifactInsert =
   typeof schema.sdlcPhaseArtifact.$inferInsert;
 export type SdlcPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
 export type SdlcPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
-export type SdlcLoopLease = typeof schema.sdlcLoopLease.$inferSelect;
-export type SdlcLoopLeaseInsert = typeof schema.sdlcLoopLease.$inferInsert;
-export type SdlcLoopSignalInbox =
-  typeof schema.sdlcLoopSignalInbox.$inferSelect;
-export type SdlcLoopSignalInboxInsert =
-  typeof schema.sdlcLoopSignalInbox.$inferInsert;
-export type SdlcLoopOutbox = typeof schema.sdlcLoopOutbox.$inferSelect;
-export type SdlcLoopOutboxInsert = typeof schema.sdlcLoopOutbox.$inferInsert;
-export type SdlcLoopOutboxAttempt =
-  typeof schema.sdlcLoopOutboxAttempt.$inferSelect;
-export type SdlcLoopOutboxAttemptInsert =
-  typeof schema.sdlcLoopOutboxAttempt.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =
@@ -81,6 +71,43 @@ export type DeliveryLoopDispatchIntentRow =
   typeof schema.deliveryLoopDispatchIntent.$inferSelect;
 export type DeliveryLoopDispatchIntentInsert =
   typeof schema.deliveryLoopDispatchIntent.$inferInsert;
+
+export type DeliverySignalSourceV3 =
+  | "daemon"
+  | "github"
+  | "human"
+  | "timer"
+  | "system";
+
+export type DeliveryEffectKindV3 =
+  | "dispatch_implementing"
+  | "dispatch_gate_review"
+  | "ack_timeout_check";
+
+export type DeliveryEffectStatusV3 =
+  | "planned"
+  | "running"
+  | "succeeded"
+  | "cancelled"
+  | "dead_letter";
+
+export type DeliveryTimerKindV3 = "dispatch_ack_timeout";
+
+export type DeliveryTimerStatusV3 =
+  | "planned"
+  | "running"
+  | "fired"
+  | "cancelled"
+  | "dead_letter";
+
+export type DeliveryOutboxTopicV3 = "signal" | "effect" | "timer";
+
+export type DeliveryOutboxStatusV3 =
+  | "pending"
+  | "publishing"
+  | "published"
+  | "cancelled"
+  | "dead_letter";
 
 // Delivery Loop v2 tables
 export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
@@ -101,6 +128,29 @@ export type DeliveryLoopRuntimeStatusRow =
   typeof schema.deliveryLoopRuntimeStatus.$inferSelect;
 export type DeliveryLoopRuntimeStatusInsert =
   typeof schema.deliveryLoopRuntimeStatus.$inferInsert;
+export type DeliveryWorkflowRetrospectiveRow =
+  typeof schema.deliveryWorkflowRetrospective.$inferSelect;
+export type DeliveryWorkflowRetrospectiveInsert =
+  typeof schema.deliveryWorkflowRetrospective.$inferInsert;
+export type DeliveryWorkflowHeadV3Row =
+  typeof schema.deliveryWorkflowHeadV3.$inferSelect;
+export type DeliveryWorkflowHeadV3Insert =
+  typeof schema.deliveryWorkflowHeadV3.$inferInsert;
+export type DeliveryLoopJournalV3Row =
+  typeof schema.deliveryLoopJournalV3.$inferSelect;
+export type DeliveryLoopJournalV3Insert =
+  typeof schema.deliveryLoopJournalV3.$inferInsert;
+export type DeliveryEffectLedgerV3Row =
+  typeof schema.deliveryEffectLedgerV3.$inferSelect;
+export type DeliveryEffectLedgerV3Insert =
+  typeof schema.deliveryEffectLedgerV3.$inferInsert;
+export type DeliveryTimerLedgerV3Row =
+  typeof schema.deliveryTimerLedgerV3.$inferSelect;
+export type DeliveryTimerLedgerV3Insert =
+  typeof schema.deliveryTimerLedgerV3.$inferInsert;
+export type DeliveryOutboxV3Row = typeof schema.deliveryOutboxV3.$inferSelect;
+export type DeliveryOutboxV3Insert =
+  typeof schema.deliveryOutboxV3.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;
@@ -737,9 +787,13 @@ export type SdlcLoopCauseType =
   | "human_bypass"
   | "human_stop"
   | "human_mark_done"
+  | "human_operator_action_required"
   | "babysit_recheck"
   | "babysit_recheck_passed"
-  | "babysit_recheck_blocked";
+  | "babysit_recheck_blocked"
+  | "timer_dispatch_ack_expired"
+  | "timer_babysit_due"
+  | "timer_heartbeat";
 
 export type SdlcLoopOutboxActionType =
   | "publish_status_comment"
@@ -810,6 +864,7 @@ export type DispatchIntentStatus =
 
 export type DispatchIntentExecutionClass =
   | "implementation_runtime"
+  | "implementation_runtime_fallback"
   | "gate_runtime";
 
 export type DispatchIntentDispatchMechanism =

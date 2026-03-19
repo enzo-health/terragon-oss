@@ -3,7 +3,9 @@ import {
   markDispatchIntentAcknowledged,
   markDispatchIntentFailed,
   getDispatchIntentByRunId,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { updateThreadChatStatusAtomic } from "@terragon/shared/model/threads";
 import {
   updateDispatchIntent,
   buildDispatchIntentId,
@@ -16,7 +18,7 @@ import { evaluateRetryDecision, resetRetryCounter } from "./retry-policy";
 // ---------------------------------------------------------------------------
 
 /** Default timeout before a dispatched intent is considered timed out. */
-export const DEFAULT_ACK_TIMEOUT_MS = 30_000; // 30 seconds
+export const DEFAULT_ACK_TIMEOUT_MS = 90_000; // 90 seconds — allows Docker cold starts
 
 // ---------------------------------------------------------------------------
 // handleAckReceived
@@ -89,11 +91,15 @@ export async function handleAckTimeout({
   db,
   runId,
   threadChatId,
+  userId,
+  threadId,
   timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
 }: {
   db: DB;
   runId: string;
   threadChatId: string;
+  userId?: string;
+  threadId?: string;
   timeoutMs?: number;
 }): Promise<AckTimeoutOutcome> {
   await markDispatchIntentFailed(
@@ -102,6 +108,47 @@ export async function handleAckTimeout({
     "dispatch_ack_timeout",
     `No daemon event received within ${timeoutMs}ms of dispatch`,
   );
+  if (userId) {
+    try {
+      await updateAgentRunContext({
+        db,
+        runId,
+        userId,
+        updates: { status: "failed" },
+      });
+    } catch (error) {
+      console.warn("[ack-lifecycle] failed to mark run context failed", {
+        runId,
+        threadChatId,
+        userId,
+        error,
+      });
+    }
+  }
+
+  if (userId && threadId) {
+    try {
+      await updateThreadChatStatusAtomic({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+        fromStatus: "booting",
+        toStatus: "complete",
+      });
+    } catch (error) {
+      console.warn(
+        "[ack-lifecycle] failed to transition booting chat to complete on ack timeout",
+        {
+          runId,
+          threadId,
+          threadChatId,
+          userId,
+          error,
+        },
+      );
+    }
+  }
 
   const decision = await evaluateRetryDecision({
     threadChatId,
@@ -157,12 +204,16 @@ export function startAckTimeout({
   runId,
   loopId,
   threadChatId,
+  userId,
+  threadId,
   timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
 }: {
   db: DB;
   runId: string;
   loopId: string;
   threadChatId: string;
+  userId?: string;
+  threadId?: string;
   timeoutMs?: number;
 }): () => void {
   const timer = setTimeout(async () => {
@@ -172,7 +223,48 @@ export function startAckTimeout({
       if (!intent) return;
       if (intent.status !== "dispatched") return; // Already acked/failed/completed
 
-      await handleAckTimeout({ db, runId, threadChatId, timeoutMs });
+      const outcome = await handleAckTimeout({
+        db,
+        runId,
+        threadChatId,
+        userId,
+        threadId,
+        timeoutMs,
+      });
+
+      if (outcome.shouldRetry) {
+        try {
+          const { appendSignalToInbox } = await import(
+            "@terragon/shared/delivery-loop/store/signal-inbox-store"
+          );
+          await appendSignalToInbox({
+            db,
+            loopId,
+            causeType: "timer_dispatch_ack_expired",
+            payload: {
+              kind: "dispatch_ack_expired",
+              consecutiveFailures: outcome.attempt,
+            },
+            canonicalCauseId: `ack-timeout-${runId}`,
+          });
+        } catch (retryErr) {
+          console.error("[ack-lifecycle] failed to signal ack-expired retry", {
+            runId,
+            loopId,
+            threadChatId,
+            error: retryErr,
+          });
+        }
+      } else if (!outcome.shouldRetry) {
+        console.warn(
+          "[ack-lifecycle] ack timeout retry budget exhausted, no retry scheduled",
+          {
+            runId,
+            threadChatId,
+            attempt: outcome.attempt,
+          },
+        );
+      }
     } catch (error) {
       console.error("[ack-lifecycle] startAckTimeout handler failed", {
         runId,

@@ -28,6 +28,19 @@ export async function getOrCreateSandbox(
     });
   }
   const sandbox = await provider.getOrCreateSandbox(sandboxId, options);
+  if (options.onSandboxAllocated) {
+    try {
+      await options.onSandboxAllocated({
+        sandboxId: sandbox.sandboxId,
+        isCreatingSandbox: !sandboxId,
+      });
+    } catch (error) {
+      console.warn(
+        `[${options.sandboxProvider}] failed to persist allocated sandbox id ${sandbox.sandboxId}`,
+        error,
+      );
+    }
+  }
   await options.onStatusUpdate({
     sandboxId: sandbox.sandboxId,
     sandboxStatus: "booting",

@@ -32,8 +32,8 @@ export async function listActiveWorkflowIds(params: {
 }) {
   const rows = await params.db.query.deliveryWorkflow.findMany({
     where: notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
-    columns: { id: true, threadId: true, sdlcLoopId: true },
-    limit: params.limit ?? 50,
+    columns: { id: true, threadId: true },
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
   });
   return rows;
 }
@@ -45,7 +45,6 @@ export async function createWorkflow(params: {
   kind: string;
   stateJson: Record<string, unknown>;
   maxFixAttempts?: number;
-  sdlcLoopId?: string;
   repoFullName?: string;
   prNumber?: number | null;
   userId?: string;
@@ -61,7 +60,6 @@ export async function createWorkflow(params: {
       kind: params.kind,
       stateJson: params.stateJson,
       maxFixAttempts: params.maxFixAttempts ?? 6,
-      sdlcLoopId: params.sdlcLoopId ?? null,
       repoFullName: params.repoFullName ?? "",
       prNumber: params.prNumber ?? null,
       userId: params.userId ?? "",
@@ -80,6 +78,7 @@ export async function updateWorkflowState(params: {
   kind: string;
   stateJson: Record<string, unknown>;
   fixAttemptCount?: number;
+  infraRetryCount?: number;
   headSha?: string | null;
   reviewSurfaceJson?: Record<string, unknown> | null;
   now?: Date;
@@ -98,6 +97,9 @@ export async function updateWorkflowState(params: {
       stateJson: params.stateJson,
       ...(params.fixAttemptCount !== undefined && {
         fixAttemptCount: params.fixAttemptCount,
+      }),
+      ...(params.infraRetryCount !== undefined && {
+        infraRetryCount: params.infraRetryCount,
       }),
       ...(params.headSha !== undefined && { headSha: params.headSha }),
       ...(params.reviewSurfaceJson !== undefined && {

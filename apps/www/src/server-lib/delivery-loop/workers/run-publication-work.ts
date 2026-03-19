@@ -4,7 +4,7 @@ import {
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { resolveLoopForWorker, stringifyError } from "./resolve-loop";
+import { stringifyError } from "./resolve-loop";
 import {
   upsertSdlcCanonicalStatusComment,
   upsertSdlcCanonicalCheckSummary,
@@ -49,7 +49,7 @@ export async function runPublicationWork(params: {
   payload: PublicationWorkPayload;
 }): Promise<void> {
   try {
-    // 1. Load workflow to get threadId, then look up sdlcLoop
+    // 1. Load workflow — it now holds repo/PR info and GitHub references directly
     const workflow = await getWorkflow({
       db: params.db,
       workflowId: params.workflowId,
@@ -65,27 +65,11 @@ export async function runPublicationWork(params: {
       return;
     }
 
-    const loop = await resolveLoopForWorker({
-      db: params.db,
-      loopId: params.payload.loopId,
-      threadId: workflow.threadId,
-    });
-    if (!loop) {
-      await failWorkItem({
-        db: params.db,
-        workItemId: params.workItemId,
-        claimToken: params.claimToken,
-        errorCode: "loop_not_found",
-        errorMessage: `No sdlcLoop found for threadId ${workflow.threadId}`,
-      });
-      return;
-    }
-
-    // 3. Only publish if the loop has a PR number.
+    // 2. Only publish if the workflow has a PR number.
     //    Always publish the *current* workflow state, not the payload snapshot.
     //    A retried work item's payload may be stale if the workflow advanced
     //    since the item was first scheduled.
-    if (typeof loop.prNumber === "number") {
+    if (typeof workflow.prNumber === "number") {
       const currentState = workflow.kind;
       const body = formatStatusBody(currentState);
       const targetKind = params.payload.target.kind;
@@ -94,10 +78,10 @@ export async function runPublicationWork(params: {
         if (targetKind === "check_run_summary") {
           await upsertSdlcCanonicalCheckSummary({
             db: params.db,
-            loopId: loop.id,
+            workflowId: workflow.id,
             payload: {
-              repoFullName: loop.repoFullName,
-              prNumber: loop.prNumber,
+              repoFullName: workflow.repoFullName,
+              prNumber: workflow.prNumber,
               title: "Terragon Delivery Loop",
               summary: body,
               status:
@@ -118,9 +102,9 @@ export async function runPublicationWork(params: {
           // Default: status_comment
           await upsertSdlcCanonicalStatusComment({
             db: params.db,
-            loopId: loop.id,
-            repoFullName: loop.repoFullName,
-            prNumber: loop.prNumber,
+            workflowId: workflow.id,
+            repoFullName: workflow.repoFullName,
+            prNumber: workflow.prNumber,
             body,
           });
         }
@@ -129,7 +113,7 @@ export async function runPublicationWork(params: {
         if (!classified.retriable) {
           console.warn(
             "[publication-worker] non-retriable publication error, failing work item",
-            { loopId: loop.id, errorCode: classified.errorCode },
+            { workflowId: workflow.id, errorCode: classified.errorCode },
           );
           await failWorkItem({
             db: params.db,

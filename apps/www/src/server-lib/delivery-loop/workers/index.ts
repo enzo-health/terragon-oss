@@ -5,3 +5,7 @@ export {
 } from "./run-publication-work";
 export { runRetryWork, type RetryWorkPayload } from "./run-retry-work";
 export { runBabysitWork, type BabysitWorkPayload } from "./run-babysit-work";
+export {
+  runRetrospectiveWork,
+  type RetrospectiveWorkPayload,
+} from "./run-retrospective-work";

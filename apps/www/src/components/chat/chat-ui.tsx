@@ -158,20 +158,6 @@ function ChatUI({
         })),
     enabled: threadChatId !== undefined,
   });
-  const shouldLoadDiff = Boolean(
-    shell?.hasGitDiff &&
-      (isSecondaryPanelOpen ||
-        (shouldAutoOpenSecondaryPanel && platform === "desktop")),
-  );
-  const shouldRenderSecondaryPanel =
-    isSecondaryPanelOpen ||
-    (platform === "desktop" &&
-      shouldAutoOpenSecondaryPanel &&
-      Boolean(shell?.hasGitDiff));
-  const { data: threadDiff } = useQuery({
-    ...threadDiffQueryOptions(threadId),
-    enabled: shouldLoadDiff,
-  });
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -184,6 +170,24 @@ function ChatUI({
         : null,
     [threadChat?.queuedMessages],
   );
+  const hasLiveDiffSignal = Boolean(
+    shell?.hasGitDiff || (shell?.gitDiffStats?.files ?? 0) > 0,
+  );
+  const shouldLoadDiff = Boolean(
+    isSecondaryPanelOpen ||
+      (platform === "desktop" &&
+        shouldAutoOpenSecondaryPanel &&
+        hasLiveDiffSignal),
+  );
+  const shouldRenderSecondaryPanel =
+    isSecondaryPanelOpen ||
+    (platform === "desktop" &&
+      shouldAutoOpenSecondaryPanel &&
+      hasLiveDiffSignal);
+  const { data: threadDiff } = useQuery({
+    ...threadDiffQueryOptions(threadId),
+    enabled: shouldLoadDiff,
+  });
 
   const threadPreviewChat = useMemo<ThreadChatInfoFull | null>(() => {
     if (!shell) {
@@ -226,6 +230,8 @@ function ChatUI({
     return {
       ...threadShell,
       gitDiff: threadDiff?.gitDiff ?? null,
+      gitDiffStats:
+        threadDiff?.gitDiffStats ?? threadShell.gitDiffStats ?? null,
       threadChats: [threadPreviewChat],
       childThreads: shell.childThreads,
       parentThreadName: shell.parentThreadName,
@@ -238,18 +244,24 @@ function ChatUI({
     shell.sourceMetadata.sdlcLoopOptIn;
   const shouldShowSdlcLoopStatus =
     Boolean(isSdlcLoopOptedIn) || Boolean(shell?.githubPRNumber);
+  const hasAnyDiffSignal = hasLiveDiffSignal;
 
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
   // This will set the cookie if the panel is opened automatically
   useEffect(() => {
-    if (shell?.hasGitDiff && shouldAutoOpenSecondaryPanel) {
+    if (
+      hasAnyDiffSignal &&
+      shouldAutoOpenSecondaryPanel &&
+      !isSecondaryPanelOpen
+    ) {
       setIsSecondaryPanelOpen(true);
       return;
     }
   }, [
-    shell?.hasGitDiff,
-    shouldAutoOpenSecondaryPanel,
+    hasAnyDiffSignal,
+    isSecondaryPanelOpen,
     setIsSecondaryPanelOpen,
+    shouldAutoOpenSecondaryPanel,
   ]);
   useThreadDocumentTitleAndFavicon({
     name: shell?.name ?? "",

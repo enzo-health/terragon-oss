@@ -15,6 +15,27 @@ interface CreateCommandProps {
   model?: AIModelExternal;
 }
 
+export function resolveCreateTaskBaseBranchName({
+  branch,
+  currentBranch,
+  createNewBranch,
+}: {
+  branch?: string;
+  currentBranch?: string | null;
+  createNewBranch: boolean;
+}): string | undefined {
+  const explicitBranch = branch?.trim();
+  if (explicitBranch) {
+    return explicitBranch;
+  }
+
+  if (!createNewBranch) {
+    return currentBranch?.trim() || undefined;
+  }
+
+  return undefined;
+}
+
 export function CreateCommand({
   message,
   repo,
@@ -35,7 +56,11 @@ export function CreateCommand({
         );
       }
 
-      const finalBranch = branch || gitInfo.branch || "main";
+      const repoBaseBranchName = resolveCreateTaskBaseBranchName({
+        branch,
+        currentBranch: gitInfo.branch,
+        createNewBranch,
+      });
 
       // Normalize mode just in case
       const normalizedMode: "plan" | "execute" =
@@ -44,7 +69,7 @@ export function CreateCommand({
       const result = await apiClient.threads.create({
         message,
         githubRepoFullName: finalRepo,
-        repoBaseBranchName: finalBranch,
+        repoBaseBranchName,
         createNewBranch,
         mode: normalizedMode,
         model,

@@ -4,7 +4,7 @@ const mockMarkDispatchIntentAcknowledged = vi.hoisted(() => vi.fn());
 const mockMarkDispatchIntentFailed = vi.hoisted(() => vi.fn());
 const mockGetDispatchIntentByRunId = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
+vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
   markDispatchIntentAcknowledged: mockMarkDispatchIntentAcknowledged,
   markDispatchIntentFailed: mockMarkDispatchIntentFailed,
   getDispatchIntentByRunId: mockGetDispatchIntentByRunId,
@@ -24,10 +24,20 @@ vi.mock("./dispatch-intent", () => ({
 
 const mockResetRetryCounter = vi.hoisted(() => vi.fn());
 const mockEvaluateRetryDecision = vi.hoisted(() => vi.fn());
+const mockUpdateAgentRunContext = vi.hoisted(() => vi.fn());
+const mockUpdateThreadChatStatusAtomic = vi.hoisted(() => vi.fn());
 
 vi.mock("./retry-policy", () => ({
   resetRetryCounter: mockResetRetryCounter,
   evaluateRetryDecision: mockEvaluateRetryDecision,
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  updateAgentRunContext: mockUpdateAgentRunContext,
+}));
+
+vi.mock("@terragon/shared/model/threads", () => ({
+  updateThreadChatStatusAtomic: mockUpdateThreadChatStatusAtomic,
 }));
 
 import {
@@ -125,6 +135,10 @@ describe("handleAckReceived", () => {
 describe("handleAckTimeout", () => {
   it("marks intent as failed and evaluates retry policy", async () => {
     mockMarkDispatchIntentFailed.mockResolvedValue(undefined);
+    mockUpdateAgentRunContext.mockResolvedValue(undefined);
+    mockUpdateThreadChatStatusAtomic.mockResolvedValue({
+      didUpdateStatus: true,
+    });
     mockEvaluateRetryDecision.mockResolvedValue({
       shouldRetry: true,
       action: "retry_same_intent",
@@ -137,6 +151,8 @@ describe("handleAckTimeout", () => {
       db: fakeDb,
       runId: "run-1",
       threadChatId: "tc-1",
+      userId: "user-1",
+      threadId: "thread-1",
       timeoutMs: 30_000,
     });
 
@@ -154,6 +170,20 @@ describe("handleAckTimeout", () => {
     expect(mockEvaluateRetryDecision).toHaveBeenCalledWith({
       threadChatId: "tc-1",
       failureCategory: "dispatch_ack_timeout",
+    });
+    expect(mockUpdateAgentRunContext).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId: "run-1",
+      userId: "user-1",
+      updates: { status: "failed" },
+    });
+    expect(mockUpdateThreadChatStatusAtomic).toHaveBeenCalledWith({
+      db: fakeDb,
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "tc-1",
+      fromStatus: "booting",
+      toStatus: "complete",
     });
   });
 
@@ -175,6 +205,8 @@ describe("handleAckTimeout", () => {
 
     expect(outcome.shouldRetry).toBe(false);
     expect(outcome.attempt).toBe(4);
+    expect(mockUpdateAgentRunContext).not.toHaveBeenCalled();
+    expect(mockUpdateThreadChatStatusAtomic).not.toHaveBeenCalled();
   });
 });
 

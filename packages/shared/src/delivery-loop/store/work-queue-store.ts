@@ -30,6 +30,7 @@ export const WORK_ITEM_CLAIM_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export async function claimNextWorkItem(params: {
   db: DB;
   kind?: string;
+  workflowId?: string;
   claimToken: string;
   now?: Date;
 }) {
@@ -43,11 +44,13 @@ export async function claimNextWorkItem(params: {
     eq(t.status, "pending"),
     lte(t.scheduledAt, now),
     ...(params.kind ? [eq(t.kind, params.kind)] : []),
+    ...(params.workflowId ? [eq(t.workflowId, params.workflowId)] : []),
   ];
   const staleCond = [
     eq(t.status, "claimed"),
     lte(t.claimedAt, staleThreshold),
     ...(params.kind ? [eq(t.kind, params.kind)] : []),
+    ...(params.workflowId ? [eq(t.workflowId, params.workflowId)] : []),
   ];
 
   // SELECT ... FOR UPDATE SKIP LOCKED prevents concurrent workers from

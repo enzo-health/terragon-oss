@@ -1,7 +1,7 @@
 import {
   DeepReviewGateOutput,
   deepReviewGateOutputSchema,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/gate-persistence";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { runStructuredCodexGateInSandbox } from "./sandbox-codex-gate";
 
