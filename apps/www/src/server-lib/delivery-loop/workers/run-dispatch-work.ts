@@ -14,12 +14,13 @@ import {
   createDispatchIntent,
   type CreateDispatchIntentParams,
 } from "../dispatch-intent";
-import { startAckTimeout } from "../ack-lifecycle";
+import { DEFAULT_ACK_TIMEOUT_MS } from "../ack-lifecycle";
 import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
 } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { stringifyError } from "./resolve-loop";
+import { appendEventAndAdvanceV3 } from "../v3/kernel";
 
 export type DispatchWorkPayload = {
   executionClass: ExecutionClass;
@@ -42,10 +43,10 @@ export type DispatchWorkPayload = {
  *    picks up the `threadChatId` associated with the intent, creates or resumes
  *    a sandbox, and sends the actual daemon message that starts the agent run.
  *
- * 3. **The ack timeout** (started here via `startAckTimeout`) monitors whether
- *    the daemon acknowledges the dispatch within a deadline. If the timeout
- *    expires without an ack, a timer signal is appended to the signal inbox
- *    so the coordinator can schedule a retry on the next tick.
+ * 3. **The ack timeout** is persisted as a v3 effect (`ack_timeout_check`)
+ *    when the dispatch enters the active run state. The effect worker
+ *    replays that timer durably, so the retry path does not depend on an
+ *    in-process timeout callback.
  *
  * This separation keeps the dispatch worker fast and idempotent — it only
  * touches Redis and the DB, while sandbox/daemon orchestration stays in
@@ -312,27 +313,29 @@ export async function runDispatchWork(params: {
 
     // Arm ack watchdog whenever a run was actually launched.
     if (followUpProcessed) {
+      const ackTimeoutMs = DEFAULT_ACK_TIMEOUT_MS;
       try {
-        await startAckTimeout({
+        await appendEventAndAdvanceV3({
           db: params.db,
-          runId,
-          loopId: effectiveLoopId,
-          threadChatId: threadChat.id,
-          userId: effectiveUserId,
-          threadId: workflow.threadId,
-        });
-      } catch (ackErr) {
-        console.warn(
-          "[dispatch-worker] startAckTimeout failed, run may lack watchdog",
-          {
+          workflowId: effectiveLoopId,
+          source: "system",
+          idempotencyKey: `dispatch-sent:${runId}`,
+          event: {
+            type: "dispatch_sent",
             runId,
-            error: ackErr instanceof Error ? ackErr.message : String(ackErr),
+            ackDeadlineAt: new Date(Date.now() + ackTimeoutMs),
           },
-        );
+        });
+      } catch (v3Err) {
+        console.warn("[dispatch-worker] failed to append v3 dispatch_sent", {
+          workflowId: effectiveLoopId,
+          runId,
+          error: v3Err instanceof Error ? v3Err.message : String(v3Err),
+        });
       }
 
       // 7. Complete work item — dispatch worker's job is done; the follow-up
-      //    queue and ack timeout handle the rest asynchronously.
+      //    queue and durable effect ledger handle the rest asynchronously.
       await completeWorkItem({
         db: params.db,
         workItemId: params.workItemId,

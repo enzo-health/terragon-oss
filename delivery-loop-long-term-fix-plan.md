@@ -308,8 +308,16 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Timer effects are persisted and replayable.
 - **Validation**:
   - Worker/effect tests + delayed job simulations.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Added deterministic v3 effect draining in `apps/www/src/server-lib/delivery-loop/v3/process-effects.ts` with replayable `ack_timeout_check`, `dispatch_implementing`, and `dispatch_gate_review` handling.
+  - Removed the redundant in-process ack watchdog from `apps/www/src/server-lib/delivery-loop/workers/run-dispatch-work.ts`; ack expiry is now driven by the persisted v3 effect ledger.
+  - Repointed `apps/www/src/app/api/internal/cron/dispatch-ack-timeout/route.ts` at the v3 effect ledger drain path so timer replay uses the same durable worker path as the rest of delivery loop v3.
+  - Added `apps/www/src/server-lib/delivery-loop/v3/process-effects.test.ts` to simulate delayed timer behavior deterministically:
+    - ack timeout effect stays pending before `dueAt`,
+    - due timer drains exactly once into a `dispatch_ack_timeout` replay and retry transition,
+    - replay remains idempotent after the effect row is marked succeeded.
+  - Verification: `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/process-effects.test.ts src/server-lib/delivery-loop/workers/run-dispatch-work.test.ts` (2 files, 9 tests) and `pnpm -C apps/www exec tsc --noEmit --pretty false` passed.
 
 ### Task S3-T2: Deterministic Post-Gate PR Invariant
 

@@ -15,6 +15,7 @@ async function processSingleEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
   leaseOwner: string;
+  now: Date;
 }) {
   const payload = parseEffectPayloadV3(params.effect.payloadJson);
   if (!payload) {
@@ -25,7 +26,7 @@ async function processSingleEffect(params: {
       leaseEpoch: params.effect.leaseEpoch,
       errorCode: "invalid_payload",
       errorMessage: "Unsupported effect payload",
-      retryAt: addMilliseconds(new Date(), 5_000),
+      retryAt: addMilliseconds(params.now, 5_000),
     });
     return;
   }
@@ -111,7 +112,7 @@ async function processSingleEffect(params: {
       leaseEpoch: params.effect.leaseEpoch,
       errorCode: "effect_handler_threw",
       errorMessage: error instanceof Error ? error.message : String(error),
-      retryAt: addMilliseconds(new Date(), 2_000),
+      retryAt: addMilliseconds(params.now, 2_000),
     });
   }
 }
@@ -120,9 +121,11 @@ export async function drainDueV3Effects(params: {
   db: DB;
   maxItems?: number;
   leaseOwnerPrefix?: string;
+  now?: Date;
 }): Promise<{ processed: number }> {
   const maxItems = params.maxItems ?? 25;
   const leaseOwnerPrefix = params.leaseOwnerPrefix ?? "cron:v3";
+  const now = params.now ?? new Date();
 
   let processed = 0;
   for (let i = 0; i < maxItems; i++) {
@@ -130,12 +133,14 @@ export async function drainDueV3Effects(params: {
     const effect = await claimNextEffectV3({
       db: params.db,
       leaseOwner,
+      now,
     });
     if (!effect) break;
     await processSingleEffect({
       db: params.db,
       effect,
       leaseOwner,
+      now,
     });
     processed++;
   }

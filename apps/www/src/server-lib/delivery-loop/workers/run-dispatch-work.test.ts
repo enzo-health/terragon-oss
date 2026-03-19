@@ -13,6 +13,7 @@ const mockMarkDispatchIntentDispatched = vi.hoisted(() => vi.fn());
 const mockUpdateThreadChat = vi.hoisted(() => vi.fn());
 const mockMaybeProcessFollowUpQueue = vi.hoisted(() => vi.fn());
 const mockStartAckTimeout = vi.hoisted(() => vi.fn());
+const mockAppendEventAndAdvanceV3 = vi.hoisted(() => vi.fn());
 const mockGetLatestAcceptedArtifact = vi.hoisted(() => vi.fn());
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
@@ -39,7 +40,12 @@ vi.mock("@terragon/shared/model/threads", () => ({
 }));
 
 vi.mock("../ack-lifecycle", () => ({
+  DEFAULT_ACK_TIMEOUT_MS: 90_000,
   startAckTimeout: mockStartAckTimeout,
+}));
+
+vi.mock("../v3/kernel", () => ({
+  appendEventAndAdvanceV3: mockAppendEventAndAdvanceV3,
 }));
 
 vi.mock("@/server-lib/process-follow-up-queue", () => ({
@@ -97,6 +103,13 @@ beforeEach(() => {
   mockUpdateThreadChat.mockResolvedValue({});
   mockMaybeProcessFollowUpQueue.mockResolvedValue({ processed: true });
   mockStartAckTimeout.mockResolvedValue(undefined);
+  mockAppendEventAndAdvanceV3.mockResolvedValue({
+    inserted: true,
+    transitioned: false,
+    effectsInserted: 0,
+    stateBefore: "implementing",
+    stateAfter: "implementing",
+  });
   mockCompleteWorkItem.mockResolvedValue(undefined);
   mockFailWorkItem.mockResolvedValue(undefined);
   mockGetLatestAcceptedArtifact.mockResolvedValue(null);
@@ -253,9 +266,8 @@ describe("runDispatchWork", () => {
 
     await runDispatchWork(baseParams());
 
-    // Should complete (not fail), and start ack timeout
+    // Should complete (not fail) without depending on an in-process watchdog
     expect(mockCompleteWorkItem).toHaveBeenCalled();
-    expect(mockStartAckTimeout).toHaveBeenCalled();
     expect(mockFailWorkItem).not.toHaveBeenCalled();
   });
 });
