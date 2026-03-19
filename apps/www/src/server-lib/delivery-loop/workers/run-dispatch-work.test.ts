@@ -270,4 +270,33 @@ describe("runDispatchWork", () => {
     expect(mockCompleteWorkItem).toHaveBeenCalled();
     expect(mockFailWorkItem).not.toHaveBeenCalled();
   });
+
+  it("falls back to legacy ack timeout when v3 dispatch_sent append fails", async () => {
+    mockGetWorkflow.mockResolvedValue({
+      id: "wf-1",
+      threadId: "thread-1",
+      userId: "user-1",
+      kind: "implementing",
+      stateJson: {},
+    });
+    mockDb.query.threadChat.findFirst.mockResolvedValue({
+      id: "tc-1",
+      threadId: "thread-1",
+      status: "active",
+    });
+    mockAppendEventAndAdvanceV3.mockRejectedValue(new Error("db transient"));
+
+    await runDispatchWork(baseParams());
+
+    expect(mockStartAckTimeout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loopId: "wf-1",
+        threadId: "thread-1",
+        threadChatId: "tc-1",
+        userId: "user-1",
+      }),
+    );
+    expect(mockCompleteWorkItem).toHaveBeenCalled();
+    expect(mockFailWorkItem).not.toHaveBeenCalled();
+  });
 });

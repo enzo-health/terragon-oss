@@ -14,7 +14,7 @@ import {
   createDispatchIntent,
   type CreateDispatchIntentParams,
 } from "../dispatch-intent";
-import { DEFAULT_ACK_TIMEOUT_MS } from "../ack-lifecycle";
+import { DEFAULT_ACK_TIMEOUT_MS, startAckTimeout } from "../ack-lifecycle";
 import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
@@ -332,6 +332,22 @@ export async function runDispatchWork(params: {
           runId,
           error: v3Err instanceof Error ? v3Err.message : String(v3Err),
         });
+        try {
+          await startAckTimeout({
+            db: params.db,
+            runId,
+            loopId: effectiveLoopId,
+            threadChatId: threadChat.id,
+            userId: effectiveUserId,
+            threadId: workflow.threadId,
+          });
+        } catch (ackErr) {
+          console.warn("[dispatch-worker] startAckTimeout fallback failed", {
+            workflowId: effectiveLoopId,
+            runId,
+            error: ackErr instanceof Error ? ackErr.message : String(ackErr),
+          });
+        }
       }
 
       // 7. Complete work item — dispatch worker's job is done; the follow-up
