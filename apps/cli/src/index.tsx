@@ -116,7 +116,10 @@ program
     "-r, --repo <repo>",
     "GitHub repository (default: current repository)",
   )
-  .option("-b, --branch <branch>", "Base branch name (default: current branch)")
+  .option(
+    "-b, --branch <branch>",
+    "Base branch name (default: repo default branch for new tasks)",
+  )
   .option("--no-new-branch", "Don't create a new branch")
   .option("-m, --model <model>", `AI model: ${CLI_MODEL_OPTIONS.join(", ")}`)
   .option("-M, --mode <mode>", "Task mode: plan or execute (default: execute)")

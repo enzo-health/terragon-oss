@@ -39,6 +39,31 @@ const os = implement(cliAPIContract)
     });
   });
 
+export function resolveCreateThreadBranchNames({
+  repoBaseBranchName,
+  createNewBranch = true,
+}: {
+  repoBaseBranchName?: string | null;
+  createNewBranch?: boolean;
+}): {
+  baseBranchName: string | null;
+  headBranchName: string | null;
+} {
+  const normalizedRepoBaseBranchName = repoBaseBranchName?.trim() || null;
+
+  if (createNewBranch) {
+    return {
+      baseBranchName: normalizedRepoBaseBranchName,
+      headBranchName: null,
+    };
+  }
+
+  return {
+    baseBranchName: null,
+    headBranchName: normalizedRepoBaseBranchName,
+  };
+}
+
 // Create procedures
 const listThreads = os.threads.list.handler(async ({ input, context }) => {
   console.log("cli list threads", {
@@ -129,7 +154,7 @@ const createThread = os.threads.create.handler(
     const {
       message,
       githubRepoFullName,
-      repoBaseBranchName = "main",
+      repoBaseBranchName,
       createNewBranch = true,
       mode,
       model,
@@ -201,8 +226,10 @@ const createThread = os.threads.create.handler(
       permissionMode: toPermissionMode(mode),
     };
 
-    let baseBranchName = createNewBranch ? repoBaseBranchName : null;
-    let headBranchName = createNewBranch ? null : repoBaseBranchName;
+    const { baseBranchName, headBranchName } = resolveCreateThreadBranchNames({
+      repoBaseBranchName,
+      createNewBranch,
+    });
     try {
       const { threadId } = await newThreadInternal({
         userId: context.userId,

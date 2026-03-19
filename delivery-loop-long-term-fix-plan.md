@@ -336,19 +336,29 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Added failure-path coverage for PR lookup/link persistence errors and operator-action escalation.
   - Verified with `pnpm -C packages/shared exec vitest run src/delivery-loop/domain/transitions.test.ts`, `pnpm -C packages/shared exec tsc --noEmit --pretty false`, `pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/coordinator/reduce-signals.test.ts src/server-lib/delivery-loop/coordinator/tick.test.ts`, `pnpm -C apps/www exec tsc --noEmit --pretty false`, and `pnpm -C apps/www lint`.
 
-### Task S3-T3: Base Branch Default Policy (`origin/main`)
+### Task S3-T3: Base Branch Default Policy (`repo default branch`)
 
 - **depends_on**: [S3-T1]
 - **Location**: `apps/cli/*`, `apps/www/src/agent/msg/startAgentMessage.ts`, `apps/www/src/server-lib/*`
-- **Description**: Default new task base branch to `origin/main` (repo default branch) unless explicitly overridden.
+- **Description**: Default new task base branch to the repository default branch unless explicitly overridden.
 - **Acceptance Criteria**:
   - New task creation path resolves repo default branch consistently.
   - Dirty long-lived user branch is no longer default base.
 - **Validation**:
   - CLI create flow test.
   - API task create branch-resolution test.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Updated CLI create flow to stop defaulting new tasks to the checked-out branch when `--branch` is omitted. New tasks now defer to repo-default branch resolution, while `--no-new-branch` still uses the current branch when no explicit branch override is supplied.
+  - Updated the CLI ORPC create handler to preserve explicit branch overrides and pass through an omitted base branch so server-side thread creation can resolve the repository default branch consistently.
+  - Added focused tests:
+    - CLI helper coverage in `apps/cli/src/commands/create.test.ts` for default/new-task and no-new-branch behavior.
+    - API branch-resolution coverage in `apps/www/src/server/orpc/cli-router.test.ts` for omitted and explicit base-branch handling.
+  - Verification:
+    - `pnpm -C apps/cli exec tsx --test src/commands/create.test.ts`
+    - `pnpm -C apps/www exec vitest run src/server/orpc/cli-router.test.ts`
+    - `pnpm -C apps/cli exec tsc --noEmit --pretty false`
+    - `pnpm -C apps/www exec tsc --noEmit --pretty false`
 
 ### Task S3-T4: Sandbox/Branch Reconciliation Effect
 
