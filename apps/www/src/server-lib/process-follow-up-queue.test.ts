@@ -16,6 +16,10 @@ async function loadSubject(options: {
   scheduleFollowUpRetryError?: Error | null;
 }) {
   const getThreadChat = vi.fn();
+  const getThreadMinimal = vi.fn().mockResolvedValue({
+    id: "thread-1",
+    branchName: "terragon/test-branch",
+  });
   getThreadChat.mockResolvedValueOnce(options.initialThreadChat);
   if (options.latestThreadChat !== undefined) {
     getThreadChat.mockResolvedValueOnce(options.latestThreadChat);
@@ -45,6 +49,7 @@ async function loadSubject(options: {
   }));
   vi.doMock("@terragon/shared/model/threads", () => ({
     getThreadChat,
+    getThreadMinimal,
   }));
   vi.doMock("@/agent/update-status", () => ({
     updateThreadChatWithTransition,

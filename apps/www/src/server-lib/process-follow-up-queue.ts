@@ -4,7 +4,10 @@ import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import {
+  getThreadChat,
+  getThreadMinimal,
+} from "@terragon/shared/model/threads";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
 import type {
@@ -327,6 +330,12 @@ export async function maybeProcessFollowUpQueue({
     threadChatId,
     userId,
   });
+  const thread = await getThreadMinimal({
+    db,
+    threadId,
+    userId,
+  });
+  const threadBranchName = thread?.branchName ?? undefined;
   if (runId) {
     const runContext = await getAgentRunContextByRunId({
       db,
@@ -450,6 +459,8 @@ export async function maybeProcessFollowUpQueue({
         threadId,
         threadChatId,
         isNewThread: false,
+        createNewBranch: false,
+        branchName: threadBranchName,
       });
       return { processed: true, reason: "dispatch_started_slash" };
     } catch (error) {
@@ -514,6 +525,8 @@ export async function maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
       isNewThread: false,
+      createNewBranch: false,
+      branchName: threadBranchName,
     });
     return { processed: true, reason: "dispatch_started_batch" };
   } catch (error) {

@@ -32,6 +32,7 @@ import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
 } from "@terragon/sandbox";
+import { bashQuote } from "@terragon/sandbox/utils";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -54,6 +55,13 @@ type SandboxResumeMetadataCacheEntry = {
   userSettings: Awaited<ReturnType<typeof getUserSettings>>;
   userFeatureFlags: Awaited<ReturnType<typeof getFeatureFlagsForUser>>;
   repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>>;
+};
+
+export type SandboxBranchReconciliationResult = {
+  session: ISandboxSession;
+  reconciled: boolean;
+  restarted: boolean;
+  currentBranchName: string | null;
 };
 
 function getSandboxResumeContextCacheKey({
@@ -144,6 +152,135 @@ async function getOrCreateSandboxWithTimeout(
     throw new Error("Sandbox creation timed out. Please try again later.");
   }
   return result;
+}
+
+async function readCurrentBranchNameOrNull(
+  session: ISandboxSession,
+): Promise<string | null> {
+  try {
+    const branchName = await session.runCommand(
+      "git rev-parse --abbrev-ref HEAD",
+      {
+        cwd: session.repoDir,
+      },
+    );
+    const trimmedBranchName = branchName.trim();
+    return trimmedBranchName.length > 0 ? trimmedBranchName : null;
+  } catch (error) {
+    console.warn("[sandbox] Failed to read current branch name", {
+      sandboxId: session.sandboxId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+export async function reconcileSandboxBranchForThread(params: {
+  session: ISandboxSession;
+  expectedBranchName: string | null | undefined;
+  restartSandbox: () => Promise<ISandboxSession>;
+}): Promise<SandboxBranchReconciliationResult> {
+  const expectedBranchName = params.expectedBranchName?.trim() ?? "";
+  const currentBranchName = await readCurrentBranchNameOrNull(params.session);
+
+  if (!expectedBranchName) {
+    return {
+      session: params.session,
+      reconciled: false,
+      restarted: false,
+      currentBranchName,
+    };
+  }
+
+  if (currentBranchName === expectedBranchName) {
+    return {
+      session: params.session,
+      reconciled: false,
+      restarted: false,
+      currentBranchName,
+    };
+  }
+
+  console.warn("[sandbox] Detected branch drift before dispatch", {
+    sandboxId: params.session.sandboxId,
+    repoDir: params.session.repoDir,
+    expectedBranchName,
+    currentBranchName,
+  });
+
+  try {
+    await params.session.runCommand(
+      `git checkout ${bashQuote(expectedBranchName)}`,
+      {
+        cwd: params.session.repoDir,
+      },
+    );
+    const checkedOutBranchName = await readCurrentBranchNameOrNull(
+      params.session,
+    );
+    if (checkedOutBranchName === expectedBranchName) {
+      return {
+        session: params.session,
+        reconciled: true,
+        restarted: false,
+        currentBranchName: checkedOutBranchName,
+      };
+    }
+  } catch (error) {
+    console.warn("[sandbox] Failed to checkout expected branch", {
+      sandboxId: params.session.sandboxId,
+      repoDir: params.session.repoDir,
+      expectedBranchName,
+      currentBranchName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const restartedSession = await params.restartSandbox();
+  const restartedBranchName =
+    await readCurrentBranchNameOrNull(restartedSession);
+  if (restartedBranchName === expectedBranchName) {
+    return {
+      session: restartedSession,
+      reconciled: true,
+      restarted: true,
+      currentBranchName: restartedBranchName,
+    };
+  }
+
+  try {
+    await restartedSession.runCommand(
+      `git checkout ${bashQuote(expectedBranchName)}`,
+      {
+        cwd: restartedSession.repoDir,
+      },
+    );
+    const finalBranchName = await readCurrentBranchNameOrNull(restartedSession);
+    if (finalBranchName === expectedBranchName) {
+      return {
+        session: restartedSession,
+        reconciled: true,
+        restarted: true,
+        currentBranchName: finalBranchName,
+      };
+    }
+  } catch (error) {
+    console.warn("[sandbox] Failed to checkout expected branch on restart", {
+      sandboxId: restartedSession.sandboxId,
+      repoDir: restartedSession.repoDir,
+      expectedBranchName,
+      restartedBranchName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  throw wrapError(
+    "sandbox-resume-failed",
+    new Error(
+      `Sandbox branch drift could not be reconciled to ${expectedBranchName}`,
+    ),
+    "daemon_spawn_failed",
+  );
 }
 
 export async function getSandboxForThreadOrNull({
@@ -420,6 +557,15 @@ async function getOrCreateSandboxForThread({
   const buildSandboxOptions = (
     context: BootstrapContext,
   ): CreateSandboxOptions => {
+    const shouldAutoSkipSetupInLocalDocker =
+      process.env.NODE_ENV === "development" &&
+      thread.sandboxProvider === "docker";
+    const localDockerPublicUrl = "http://host.docker.internal:3000";
+    const resolvedPublicUrl =
+      process.env.NODE_ENV === "development" &&
+      thread.sandboxProvider === "docker"
+        ? localDockerPublicUrl
+        : nonLocalhostPublicAppUrl();
     const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
     const setupScriptHash = getSetupScriptHash(context.resolvedSetupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
@@ -460,9 +606,11 @@ async function getOrCreateSandboxForThread({
       customSystemPrompt: context.customSystemPrompt,
       skipLocalQualityChecks: env.SKIP_LOCAL_QUALITY_CHECKS,
       setupScript: context.resolvedSetupScript,
-      skipSetupScript: thread.skipSetup,
+      // Local docker sandboxes can OOM on monorepo `pnpm install` during first
+      // boot; skip setup script by default in local dev unless explicitly needed.
+      skipSetupScript: thread.skipSetup || shouldAutoSkipSetupInLocalDocker,
       snapshotTemplateId: snapshot?.snapshotName ?? undefined,
-      publicUrl: nonLocalhostPublicAppUrl(),
+      publicUrl: resolvedPublicUrl,
       featureFlags: userFeatureFlags,
       generateBranchName: context.generateBranchNameWithPrefix,
       onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
@@ -491,9 +639,9 @@ async function getOrCreateSandboxForThread({
   const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
   const startTime = Date.now();
   const bootstrap = await getBootstrapContext();
+  const bootstrapOptions = buildSandboxOptions(bootstrap);
   let session: ISandboxSession;
   try {
-    const bootstrapOptions = buildSandboxOptions(bootstrap);
     session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
       ...bootstrapOptions,
       fastResume: shouldFastResume,
@@ -517,6 +665,28 @@ async function getOrCreateSandboxForThread({
         fastResume: false,
       });
     }
+  }
+
+  const expectedBranchName =
+    branchName?.trim() || thread.branchName?.trim() || null;
+  const reconciliation = await reconcileSandboxBranchForThread({
+    session,
+    expectedBranchName,
+    restartSandbox: () =>
+      getOrCreateSandboxWithTimeout(null, {
+        ...bootstrapOptions,
+        fastResume: false,
+      }),
+  });
+  session = reconciliation.session;
+  if (reconciliation.reconciled) {
+    console.warn("[sandbox] Branch reconciliation completed before dispatch", {
+      threadId,
+      sandboxId: session.sandboxId,
+      expectedBranchName,
+      currentBranchName: reconciliation.currentBranchName,
+      restarted: reconciliation.restarted,
+    });
   }
 
   if (

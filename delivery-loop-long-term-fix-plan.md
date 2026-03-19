@@ -370,8 +370,14 @@ Replace cron-driven progression with an event-driven pipeline where Redis is the
   - Reconciliation failures route to explicit operator or retry state.
 - **Validation**:
   - Branch drift simulation test.
-- **Status**: pending
+- **Status**: completed
 - **Work Log**:
+  - Added `reconcileSandboxBranchForThread()` in `apps/www/src/agent/sandbox.ts` to deterministically compare the active sandbox branch against the thread branch before dispatch.
+  - If the sandbox has drifted, the effect first tries `git checkout <expected-branch>` inside the existing sandbox, then verifies the result.
+  - If checkout fails or the branch still does not match, the effect restarts the sandbox and retries reconciliation once on the fresh session.
+  - If the branch still cannot be reconciled, the effect throws a structured `ThreadError("sandbox-resume-failed", ..., "daemon_spawn_failed")` so the delivery loop can route it through the explicit retry/operator failure lane instead of continuing on a stale branch.
+  - Updated follow-up dispatch to pass the thread branch into `startAgentMessage` so normal happy-path dispatch preserves the existing branch while still enforcing pre-dispatch alignment.
+  - Added branch-drift tests for branch match, in-place checkout repair, restart fallback, and unrecoverable failure.
 
 ### Task S3-T5: Real E2E PR Flow Validation Harness
 
