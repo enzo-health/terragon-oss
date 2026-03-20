@@ -348,6 +348,28 @@ function applyChatFields(
     };
   }
 
+  // Optimistic pre-broadcast: no chatSequence means this is a preview
+  // before DB write. Always append without safety checks — the confirmation
+  // patch (with chatSequence, no messages) will follow after DB write.
+  if (
+    incomingSequence === undefined &&
+    patch.appendMessages !== undefined &&
+    isDbMessageArray(patch.appendMessages) &&
+    patch.appendMessages.length > 0
+  ) {
+    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        nextMessages,
+        currentSequence ?? 0,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
+  }
+
   // Legacy timestamp-based path
   if (
     incomingSequence !== undefined &&
