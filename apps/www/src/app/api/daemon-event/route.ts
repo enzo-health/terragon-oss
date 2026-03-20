@@ -411,6 +411,54 @@ function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
   );
 }
 
+function buildCompletedEvent(
+  state: string | undefined,
+  runId: string,
+  headSha: string | null | undefined,
+) {
+  switch (state) {
+    case "planning":
+      return { type: "planning_run_completed" as const };
+    case "gating_review":
+      return { type: "gate_review_passed" as const, runId };
+    case "gating_ci":
+      return { type: "gate_ci_passed" as const, runId, headSha };
+    default:
+      return { type: "run_completed" as const, runId, headSha };
+  }
+}
+
+function buildFailedEvent(
+  state: string | undefined,
+  runId: string,
+  headSha: string | null | undefined,
+  errorMessage: string | undefined,
+  errorCategory: string | null,
+) {
+  switch (state) {
+    case "gating_review":
+      return {
+        type: "gate_review_failed" as const,
+        runId,
+        reason: errorMessage ?? "Gate blocked",
+      };
+    case "gating_ci":
+      return {
+        type: "gate_ci_failed" as const,
+        runId,
+        headSha,
+        reason: errorMessage ?? "CI gate blocked",
+      };
+    default:
+      return {
+        type: "run_failed" as const,
+        runId,
+        message: errorMessage ?? "Run failed",
+        category: errorCategory,
+      };
+  }
+}
+
 function hasRequiredThreadChatIdForNonLegacyPayload(
   threadChatId: unknown,
 ): threadChatId is string {
@@ -1000,60 +1048,30 @@ export async function POST(request: Request) {
       });
 
       if (daemonRunStatusFromMessages === "completed") {
-        const completedEvent =
-          headAfterAck?.state === "planning"
-            ? ({ type: "planning_run_completed" } as const)
-            : headAfterAck?.state === "gating_review"
-              ? ({
-                  type: "gate_review_passed",
-                  runId: envelopeV2.runId,
-                } as const)
-              : headAfterAck?.state === "gating_ci"
-                ? ({
-                    type: "gate_ci_passed",
-                    runId: envelopeV2.runId,
-                    headSha: daemonHeadShaAtCompletion,
-                  } as const)
-                : ({
-                    type: "run_completed",
-                    runId: envelopeV2.runId,
-                    headSha: daemonHeadShaAtCompletion,
-                  } as const);
         await appendEventAndAdvanceV3({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
           idempotencyKey: `run-completed:${envelopeV2.eventId}`,
-          event: completedEvent,
+          event: buildCompletedEvent(
+            headAfterAck?.state,
+            envelopeV2.runId,
+            daemonHeadShaAtCompletion,
+          ),
         });
       } else if (daemonRunStatusFromMessages === "failed") {
-        const failedEvent =
-          headAfterAck?.state === "gating_review"
-            ? ({
-                type: "gate_review_failed",
-                runId: envelopeV2.runId,
-                reason: daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
-              } as const)
-            : headAfterAck?.state === "gating_ci"
-              ? ({
-                  type: "gate_ci_failed",
-                  runId: envelopeV2.runId,
-                  headSha: daemonHeadShaAtCompletion,
-                  reason:
-                    daemonTerminalErrorInfo.errorMessage ?? "CI gate blocked",
-                } as const)
-              : ({
-                  type: "run_failed",
-                  runId: envelopeV2.runId,
-                  message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
-                  category: daemonTerminalErrorInfo.errorCategory,
-                } as const);
         await appendEventAndAdvanceV3({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
           idempotencyKey: `run-failed:${envelopeV2.eventId}`,
-          event: failedEvent,
+          event: buildFailedEvent(
+            headAfterAck?.state,
+            envelopeV2.runId,
+            daemonHeadShaAtCompletion,
+            daemonTerminalErrorInfo.errorMessage ?? undefined,
+            daemonTerminalErrorInfo.errorCategory,
+          ),
         });
       }
     } catch (v3Err) {

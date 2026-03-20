@@ -604,7 +604,7 @@ async function processSingleEffect(params: {
         workflowId: params.effect.workflowId,
       });
       const approvalPolicy = workflow?.planApprovalPolicy ?? "auto";
-      if (approvalPolicy === "auto" || !artifactCreated) {
+      if (artifactCreated && approvalPolicy === "auto") {
         await appendEventAndAdvanceV3({
           db: params.db,
           workflowId: params.effect.workflowId,
