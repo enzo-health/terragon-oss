@@ -473,6 +473,7 @@ async function processSingleEffect(params: {
 
 export async function drainDueV3Effects(params: {
   db: DB;
+  workflowId?: string;
   maxItems?: number;
   leaseOwnerPrefix?: string;
   now?: Date;
@@ -487,6 +488,7 @@ export async function drainDueV3Effects(params: {
     const effect = await claimNextEffectV3({
       db: params.db,
       leaseOwner,
+      workflowId: params.workflowId,
       now,
     });
     if (!effect) break;

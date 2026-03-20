@@ -305,6 +305,7 @@ export async function insertEffectsV3(params: {
 export async function claimNextEffectV3(params: {
   db: DB;
   leaseOwner: string;
+  workflowId?: string;
   now?: Date;
 }): Promise<DeliveryEffectLedgerV3Row | null> {
   const now = params.now ?? new Date();
@@ -317,11 +318,14 @@ export async function claimNextEffectV3(params: {
     eq(t.status, "running"),
     lte(t.leaseExpiresAt, staleThreshold),
   );
+  const claimableCondition = params.workflowId
+    ? and(eq(t.workflowId, params.workflowId), or(pendingCond, staleCond))
+    : or(pendingCond, staleCond);
 
   const [candidate] = await params.db
     .select({ id: t.id })
     .from(t)
-    .where(or(pendingCond, staleCond))
+    .where(claimableCondition)
     .orderBy(t.dueAt, t.createdAt)
     .limit(1)
     .for("update", { skipLocked: true });

@@ -36,6 +36,9 @@ import {
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
+import { appendEventAndAdvanceV3 } from "@/server-lib/delivery-loop/v3/kernel";
+import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { drainDueV3Effects } from "@/server-lib/delivery-loop/v3/process-effects";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -978,17 +981,6 @@ export async function POST(request: Request) {
     daemonRunStatusFromMessages !== "processing"
   ) {
     try {
-      const { appendEventAndAdvanceV3 } = await import(
-        "@/server-lib/delivery-loop/v3/kernel"
-      );
-      const { getWorkflowHeadV3 } = await import(
-        "@/server-lib/delivery-loop/v3/store"
-      );
-      const headBefore = await getWorkflowHeadV3({
-        db,
-        workflowId: effectiveLoopId,
-      });
-
       // First observed daemon terminal event for a run is an implicit ack.
       await appendEventAndAdvanceV3({
         db,
@@ -1001,9 +993,15 @@ export async function POST(request: Request) {
         },
       });
 
+      // Read head AFTER the ack so it reflects post-ack state.
+      const headAfterAck = await getWorkflowHeadV3({
+        db,
+        workflowId: effectiveLoopId,
+      });
+
       if (daemonRunStatusFromMessages === "completed") {
         const completedEvent =
-          headBefore?.state === "gating_review"
+          headAfterAck?.state === "gating_review"
             ? ({
                 type: "gate_review_passed",
                 runId: envelopeV2.runId,
@@ -1022,7 +1020,7 @@ export async function POST(request: Request) {
         });
       } else if (daemonRunStatusFromMessages === "failed") {
         const failedEvent =
-          headBefore?.state === "gating_review"
+          headAfterAck?.state === "gating_review"
             ? ({
                 type: "gate_review_failed",
                 runId: envelopeV2.runId,
@@ -1043,10 +1041,24 @@ export async function POST(request: Request) {
         });
       }
     } catch (v3Err) {
-      console.warn("[daemon-event] v3 kernel bridge failed, continuing", {
+      console.error("[daemon-event] v3 kernel bridge failed, continuing", {
         loopId: effectiveLoopId,
         runId: envelopeV2?.runId,
         error: v3Err,
+      });
+    }
+
+    // Inline effect drain to avoid cron latency
+    try {
+      await drainDueV3Effects({
+        db,
+        workflowId: effectiveLoopId,
+        maxItems: 5,
+        leaseOwnerPrefix: "inline:daemon-event",
+      });
+    } catch (err) {
+      console.error("[daemon-event] inline effect drain failed", {
+        error: err,
       });
     }
   }
