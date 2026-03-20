@@ -968,9 +968,7 @@ export async function updateThreadChat({
         throw new Error("Failed to update thread chat (legacy)");
       }
       updatedAtIsoString = updatedThread.updatedAt.toISOString();
-      chatSequence = sanitizedAppendMessages
-        ? updatedThread.messageSeq
-        : updatedThread.updatedAt.getTime();
+      chatSequence = updatedThread.messageSeq ?? 0;
       chatForPatch = {
         updatedAt: updatedAtIsoString,
         ...(updatesWithoutAppends.agent !== undefined
@@ -1067,9 +1065,7 @@ export async function updateThreadChat({
         throw new Error("Failed to update thread chat");
       }
       updatedAtIsoString = updatedThreadChat.updatedAt.toISOString();
-      chatSequence = sanitizedAppendMessages
-        ? updatedThreadChat.messageSeq
-        : updatedThreadChat.updatedAt.getTime();
+      chatSequence = updatedThreadChat.messageSeq ?? 0;
       chatForPatch = {
         updatedAt: updatedAtIsoString,
         ...(updatesWithoutAppends.agent !== undefined
