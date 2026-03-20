@@ -25,8 +25,8 @@ import {
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
 import {
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  isSdlcLoopEnrollmentAllowedForThread,
+  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
+  isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 
 export async function openPullRequestForThread({
@@ -67,7 +67,7 @@ export async function openPullRequestForThread({
     getCurrentBranchName(session),
     getGitDefaultBranch(session),
   ]);
-  const sdlcLoopOptIn = isSdlcLoopEnrollmentAllowedForThread({
+  const deliveryLoopOptIn = isDeliveryLoopEnrollmentAllowedForThread({
     sourceType: thread.sourceType,
     sourceMetadata: thread.sourceMetadata ?? null,
   });
@@ -76,15 +76,15 @@ export async function openPullRequestForThread({
   }: {
     prNumber: number;
   }) => {
-    if (!sdlcLoopOptIn) {
+    if (!deliveryLoopOptIn) {
       return;
     }
     try {
       const planApprovalPolicy =
         thread.sourceMetadata?.type === "www"
-          ? (thread.sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
+          ? (thread.sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
           : "auto";
-      await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+      await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
         userId,
         repoFullName: thread.githubRepoFullName,
         threadId,

@@ -4,15 +4,15 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
-  buildSdlcLoopStatusChecks,
+  buildDeliveryLoopStatusChecks,
   buildSnapshotFromV2Workflow,
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
   getV2StopReason,
-  mapV2KindToSdlcLoopState,
-  type SdlcLoopStatusCheck,
-  type SdlcLoopStatusCheckKey,
+  mapV2KindToDeliveryLoopState,
+  type DeliveryLoopStatusCheck,
+  type DeliveryLoopStatusCheckKey,
 } from "@/lib/delivery-loop-status";
 import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
@@ -28,14 +28,14 @@ import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/wor
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 
-type SdlcCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
-type SdlcReviewThreadGateRun =
+type DeliveryCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
+type DeliveryReviewThreadGateRun =
   typeof schema.sdlcReviewThreadGateRun.$inferSelect;
-type SdlcLoopStatusBlocker = {
+type DeliveryLoopStatusBlocker = {
   title: string;
-  source: SdlcLoopStatusCheckKey | "human_feedback";
+  source: DeliveryLoopStatusCheckKey | "human_feedback";
 };
-type SdlcPlannedTask = {
+type DeliveryPlannedTask = {
   stableTaskId: string;
   title: string;
   description: string | null;
@@ -43,7 +43,7 @@ type SdlcPlannedTask = {
   status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
 };
 
-type SdlcLoopStatus = {
+type DeliveryLoopStatus = {
   loopId: string;
   state: SdlcLoopState;
   planApprovalPolicy: "auto" | "human_required";
@@ -56,11 +56,11 @@ type SdlcLoopStatus = {
     canApprovePlan: boolean;
   };
   phases: DeliveryLoopTopProgressPhase[];
-  checks: SdlcLoopStatusCheck[];
+  checks: DeliveryLoopStatusCheck[];
   needsAttention: {
     isBlocked: boolean;
     blockerCount: number;
-    topBlockers: SdlcLoopStatusBlocker[];
+    topBlockers: DeliveryLoopStatusBlocker[];
   };
   links: {
     pullRequestUrl: string | null;
@@ -85,7 +85,7 @@ type SdlcLoopStatus = {
       done: number;
       remaining: number;
     };
-    plannedTasks: SdlcPlannedTask[];
+    plannedTasks: DeliveryPlannedTask[];
   };
   updatedAtIso: string;
 };
@@ -187,8 +187,8 @@ const deliveryLoopStatusSchema = z.object({
 
 type NeedsAttentionInput = {
   loopSnapshot: DeliveryLoopSnapshot;
-  ciRun: SdlcCiGateRun | null;
-  reviewThreadRun: SdlcReviewThreadGateRun | null;
+  ciRun: DeliveryCiGateRun | null;
+  reviewThreadRun: DeliveryReviewThreadGateRun | null;
   unresolvedDeepFindingTitles: string[];
   unresolvedCarmackFindingTitles: string[];
 };
@@ -229,9 +229,9 @@ function buildNeedsAttention({
 }: NeedsAttentionInput): {
   isBlocked: boolean;
   blockerCount: number;
-  topBlockers: SdlcLoopStatusBlocker[];
+  topBlockers: DeliveryLoopStatusBlocker[];
 } {
-  const blockers: SdlcLoopStatusBlocker[] = [
+  const blockers: DeliveryLoopStatusBlocker[] = [
     ...unresolvedDeepFindingTitles.map((title) => ({
       title,
       source: "deep_review" as const,
@@ -319,14 +319,14 @@ async function assembleLoopStatusData(params: {
   canonicalStatusCommentId: string | null;
   canonicalCheckRunId: number | null;
 }): Promise<{
-  ciRun: SdlcCiGateRun | null;
-  reviewThreadRun: SdlcReviewThreadGateRun | null;
-  checks: SdlcLoopStatusCheck[];
+  ciRun: DeliveryCiGateRun | null;
+  reviewThreadRun: DeliveryReviewThreadGateRun | null;
+  checks: DeliveryLoopStatusCheck[];
   phases: DeliveryLoopTopProgressPhase[];
   needsAttention: ReturnType<typeof buildNeedsAttention>;
   pullRequestUrl: string | null;
-  links: SdlcLoopStatus["links"];
-  artifacts: SdlcLoopStatus["artifacts"];
+  links: DeliveryLoopStatus["links"];
+  artifacts: DeliveryLoopStatus["artifacts"];
 }> {
   const { loopId, loopSnapshot, currentHeadSha } = params;
 
@@ -470,7 +470,7 @@ async function assembleLoopStatusData(params: {
       })
     : [];
 
-  const checks = buildSdlcLoopStatusChecks({
+  const checks = buildDeliveryLoopStatusChecks({
     loopSnapshot,
     currentHeadSha,
     ciRun,
@@ -571,18 +571,18 @@ async function assembleLoopStatusData(params: {
 }
 
 /**
- * Build the full SdlcLoopStatus from a v2 delivery workflow.
+ * Build the full DeliveryLoopStatus from a v2 delivery workflow.
  */
 async function buildStatusFromV2Workflow(params: {
   workflow: DeliveryWorkflow;
   workflowRow: NonNullable<
     Awaited<ReturnType<typeof getActiveWorkflowForThread>>
   >;
-}): Promise<SdlcLoopStatus> {
+}): Promise<DeliveryLoopStatus> {
   const { workflow, workflowRow } = params;
 
   const loopSnapshot = buildSnapshotFromV2Workflow(workflow);
-  const v2State = mapV2KindToSdlcLoopState(workflow);
+  const v2State = mapV2KindToDeliveryLoopState(workflow);
   const currentHeadSha =
     ("headSha" in workflow && typeof workflow.headSha === "string"
       ? workflow.headSha
@@ -639,7 +639,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
   async function getDeliveryLoopStatusAction(
     userId: string,
     threadId: string,
-  ): Promise<SdlcLoopStatus | null> {
+  ): Promise<DeliveryLoopStatus | null> {
     const thread = await db.query.thread.findFirst({
       columns: {
         id: true,
@@ -675,7 +675,7 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       workflow,
       workflowRow: v2Row,
     });
-    return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
+    return deliveryLoopStatusSchema.parse(response) as DeliveryLoopStatus;
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },
 );

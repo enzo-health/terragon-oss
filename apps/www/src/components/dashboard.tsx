@@ -42,7 +42,7 @@ export function Dashboard({
       disableGitCheckpointing,
       skipSetup,
       createNewBranch,
-      runInSdlcLoop,
+      runInDeliveryLoop,
     }) => {
       // Build an optimistic thread to show immediately in the list
       const optimisticId = `optimistic-${Date.now()}`;
@@ -119,7 +119,7 @@ export function Dashboard({
             disableGitCheckpointing,
             skipSetup,
             createNewBranch,
-            runInSdlcLoop,
+            runInDeliveryLoop,
             scheduleAt,
             selectedModels,
           }),

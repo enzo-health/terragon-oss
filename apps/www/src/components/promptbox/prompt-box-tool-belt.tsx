@@ -62,13 +62,13 @@ interface PromptBoxToolBeltProps {
   createNewBranchDisabled?: boolean;
 
   /** Whether to show Delivery Loop opt-in toggle */
-  showSdlcLoopOptIn?: boolean;
+  showDeliveryLoopOptIn?: boolean;
   /** Value for Delivery Loop opt-in toggle */
-  sdlcLoopOptInValue?: boolean;
+  deliveryLoopOptInValue?: boolean;
   /** Handler for Delivery Loop opt-in toggle */
-  onSdlcLoopOptInChange?: (value: boolean) => void;
+  onDeliveryLoopOptInChange?: (value: boolean) => void;
   /** Whether to disable Delivery Loop opt-in toggle */
-  sdlcLoopOptInDisabled?: boolean;
+  deliveryLoopOptInDisabled?: boolean;
 }
 
 export function PromptBoxToolBelt({
@@ -89,10 +89,10 @@ export function PromptBoxToolBelt({
   createNewBranchValue = true,
   onCreateNewBranchChange,
   createNewBranchDisabled = false,
-  showSdlcLoopOptIn = false,
-  sdlcLoopOptInValue = false,
-  onSdlcLoopOptInChange,
-  sdlcLoopOptInDisabled = false,
+  showDeliveryLoopOptIn = false,
+  deliveryLoopOptInValue = false,
+  onDeliveryLoopOptInChange,
+  deliveryLoopOptInDisabled = false,
 }: PromptBoxToolBeltProps) {
   const isBranchToggleEnabled = useFeatureFlag("branchCreationToggle");
 
@@ -100,7 +100,7 @@ export function PromptBoxToolBelt({
     !showSkipArchive &&
     !showSkipSetup &&
     !showCheckpoint &&
-    !showSdlcLoopOptIn &&
+    !showDeliveryLoopOptIn &&
     (!showCreateNewBranchOption || !isBranchToggleEnabled)
   ) {
     return null;
@@ -149,34 +149,34 @@ export function PromptBoxToolBelt({
           showDialog={checkpointShowDialog}
         />
       )}
-      {showSdlcLoopOptIn && (
+      {showDeliveryLoopOptIn && (
         <Button
           variant="ghost"
           size="icon"
           type="button"
           className={
-            sdlcLoopOptInValue
+            deliveryLoopOptInValue
               ? "text-muted-foreground hover:text-muted-foreground"
               : "opacity-50 hover:opacity-50"
           }
-          aria-pressed={sdlcLoopOptInValue}
+          aria-pressed={deliveryLoopOptInValue}
           aria-label={
-            sdlcLoopOptInValue
+            deliveryLoopOptInValue
               ? "Run task in Delivery Loop"
               : "Run task without Delivery Loop"
           }
           title={
-            sdlcLoopOptInValue
+            deliveryLoopOptInValue
               ? "Run task in Delivery Loop"
               : "Run task without Delivery Loop"
           }
-          disabled={sdlcLoopOptInDisabled}
+          disabled={deliveryLoopOptInDisabled}
           onClick={() => {
-            if (sdlcLoopOptInDisabled) {
+            if (deliveryLoopOptInDisabled) {
               return;
             }
-            const nextValue = !sdlcLoopOptInValue;
-            onSdlcLoopOptInChange?.(nextValue);
+            const nextValue = !deliveryLoopOptInValue;
+            onDeliveryLoopOptInChange?.(nextValue);
             toast.success(
               nextValue
                 ? "Delivery Loop will run for this task"
@@ -185,7 +185,7 @@ export function PromptBoxToolBelt({
           }}
         >
           <Repeat2
-            className={`h-4 w-4 ${sdlcLoopOptInValue ? "" : "opacity-50"}`}
+            className={`h-4 w-4 ${deliveryLoopOptInValue ? "" : "opacity-50"}`}
           />
         </Button>
       )}

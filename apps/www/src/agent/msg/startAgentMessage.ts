@@ -55,8 +55,8 @@ import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
 import { tryAutoCompactThread } from "@/server-lib/compact";
 import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
-  ensureSdlcLoopEnrollmentForThreadIfEnabled,
-  isSdlcLoopEnrollmentAllowedForThread,
+  ensureDeliveryLoopEnrollmentForThreadIfEnabled,
+  isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import {
   ensureDispatchRetryPersistenceOwnership,
@@ -552,18 +552,19 @@ export async function startAgentMessage({
             threadMessages: threadChat.messages ?? [],
             session,
           });
-          const sdlcEligibleForThread = isSdlcLoopEnrollmentAllowedForThread({
-            sourceType: thread?.sourceType ?? null,
-            sourceMetadata: thread?.sourceMetadata ?? null,
-          });
+          const deliveryEligibleForThread =
+            isDeliveryLoopEnrollmentAllowedForThread({
+              sourceType: thread?.sourceType ?? null,
+              sourceMetadata: thread?.sourceMetadata ?? null,
+            });
           let v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-          if (sdlcEligibleForThread && !v2Workflow) {
+          if (deliveryEligibleForThread && !v2Workflow) {
             try {
               const planApprovalPolicy =
                 thread?.sourceMetadata?.type === "www"
-                  ? (thread.sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
+                  ? (thread.sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
                   : "auto";
-              await ensureSdlcLoopEnrollmentForThreadIfEnabled({
+              await ensureDeliveryLoopEnrollmentForThreadIfEnabled({
                 userId,
                 repoFullName: thread.githubRepoFullName,
                 threadId,
@@ -582,7 +583,7 @@ export async function startAgentMessage({
               );
             }
           }
-          if (sdlcEligibleForThread && !v2Workflow) {
+          if (deliveryEligibleForThread && !v2Workflow) {
             throw new ThreadError(
               "unknown-error",
               "Delivery Loop enrollment missing for eligible thread",
@@ -865,7 +866,7 @@ async function preparePromptForModel({
 }
 
 /**
- * Maps a v2 workflow DB row's kind + stateJson to the v1 SdlcLoopState
+ * Maps a v2 workflow DB row's kind + stateJson to the v1 DeliveryLoopState
  * string used by the prompt prefix builder.
  */
 function workflowRowKindToState(

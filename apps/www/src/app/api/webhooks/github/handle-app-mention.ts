@@ -33,8 +33,8 @@ import { AIAgent, AIModel } from "@terragon/agent/types";
 import { getThread, getThreadChat } from "@terragon/shared/model/threads";
 import { modelToAgent } from "@terragon/agent/utils";
 import {
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  isSdlcLoopEnrollmentAllowedForThread,
+  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
+  isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
@@ -407,7 +407,7 @@ async function triggerTasksForUser({
       threadSourceType?: ThreadSource | null;
       threadSourceMetadata?: ThreadSourceMetadata | null;
     }): Promise<{ threadId: string; threadChatId: string }> => {
-      const maybeEnsureSdlcEnrollment = async ({
+      const maybeEnsureDeliveryEnrollment = async ({
         threadId,
         sourceType,
         sourceMetadata,
@@ -420,12 +420,15 @@ async function triggerTasksForUser({
           return;
         }
         if (
-          !isSdlcLoopEnrollmentAllowedForThread({ sourceType, sourceMetadata })
+          !isDeliveryLoopEnrollmentAllowedForThread({
+            sourceType,
+            sourceMetadata,
+          })
         ) {
           return;
         }
         try {
-          await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+          await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
             userId,
             repoFullName,
             prNumber: issueOrPrNumber,
@@ -473,7 +476,7 @@ async function triggerTasksForUser({
           sourceType = existingThread?.sourceType ?? null;
           sourceMetadata = existingThread?.sourceMetadata ?? null;
         }
-        await maybeEnsureSdlcEnrollment({
+        await maybeEnsureDeliveryEnrollment({
           threadId: threadIdOrNull,
           sourceType,
           sourceMetadata,
@@ -517,7 +520,7 @@ async function triggerTasksForUser({
         repoFullName,
         userId,
       });
-      await maybeEnsureSdlcEnrollment({
+      await maybeEnsureDeliveryEnrollment({
         threadId,
         sourceType: "github-mention",
         sourceMetadata: mentionSourceMetadata,

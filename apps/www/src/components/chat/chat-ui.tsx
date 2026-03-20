@@ -238,12 +238,12 @@ function ChatUI({
     };
   }, [shell, threadDiff, threadPreviewChat]);
 
-  const isSdlcLoopOptedIn =
+  const isDeliveryLoopOptedIn =
     shell?.sourceType === "www" &&
     shell.sourceMetadata?.type === "www" &&
-    shell.sourceMetadata.sdlcLoopOptIn;
-  const shouldShowSdlcLoopStatus =
-    Boolean(isSdlcLoopOptedIn) || Boolean(shell?.githubPRNumber);
+    shell.sourceMetadata.deliveryLoopOptIn;
+  const shouldShowDeliveryLoopStatus =
+    Boolean(isDeliveryLoopOptedIn) || Boolean(shell?.githubPRNumber);
   const hasAnyDiffSignal = hasLiveDiffSignal;
 
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
@@ -508,7 +508,7 @@ function ChatUI({
           onHeaderClick={platform === "mobile" ? scrollToTop : undefined}
           onTerminalClick={() => setShowTerminal(true)}
         />
-        {shouldShowSdlcLoopStatus ? (
+        {shouldShowDeliveryLoopStatus ? (
           <DeliveryLoopTopProgressStepper
             threadId={threadId}
             threadChatId={threadChatId ?? null}

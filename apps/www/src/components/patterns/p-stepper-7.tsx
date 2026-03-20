@@ -2,9 +2,9 @@
 
 import { useCallback, useState } from "react";
 import type {
-  SdlcLoopStatusCheck,
-  SdlcLoopStatusCheckKey,
-  SdlcLoopStatusCheckStatus,
+  DeliveryLoopStatusCheck,
+  DeliveryLoopStatusCheckKey,
+  DeliveryLoopStatusCheckStatus,
 } from "@/lib/delivery-loop-status";
 import { cn } from "@/lib/utils";
 import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
@@ -48,7 +48,7 @@ import {
   LoaderCircleIcon,
 } from "lucide-react";
 
-type SdlcPhaseKey =
+type DeliveryPhaseKey =
   | "planning"
   | "implementing"
   | "reviewing"
@@ -58,7 +58,7 @@ type SdlcPhaseKey =
 // ---------------------------------------------------------------------------
 // Check key → phase key mapping
 // ---------------------------------------------------------------------------
-const CHECK_TO_PHASE: Record<SdlcLoopStatusCheckKey, SdlcPhaseKey> = {
+const CHECK_TO_PHASE: Record<DeliveryLoopStatusCheckKey, DeliveryPhaseKey> = {
   ci: "ci",
   review_threads: "reviewing",
   deep_review: "reviewing",
@@ -67,9 +67,9 @@ const CHECK_TO_PHASE: Record<SdlcLoopStatusCheckKey, SdlcPhaseKey> = {
 };
 
 function getChecksForPhase(
-  checks: SdlcLoopStatusCheck[],
-  phaseKey: SdlcPhaseKey,
-): SdlcLoopStatusCheck[] {
+  checks: DeliveryLoopStatusCheck[],
+  phaseKey: DeliveryPhaseKey,
+): DeliveryLoopStatusCheck[] {
   return checks.filter((c) => CHECK_TO_PHASE[c.key] === phaseKey);
 }
 
@@ -77,7 +77,7 @@ function getChecksForPhase(
 // Status helpers
 // ---------------------------------------------------------------------------
 
-function getCheckStatusLabel(status: SdlcLoopStatusCheckStatus): string {
+function getCheckStatusLabel(status: DeliveryLoopStatusCheckStatus): string {
   switch (status) {
     case "passed":
       return "Passed";
@@ -92,7 +92,7 @@ function getCheckStatusLabel(status: SdlcLoopStatusCheckStatus): string {
   }
 }
 
-function getStatusBadgeClass(status: SdlcLoopStatusCheckStatus): string {
+function getStatusBadgeClass(status: DeliveryLoopStatusCheckStatus): string {
   switch (status) {
     case "passed":
       return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -107,7 +107,7 @@ function getStatusBadgeClass(status: SdlcLoopStatusCheckStatus): string {
   }
 }
 
-function getGateDotColor(status: SdlcLoopStatusCheckStatus): string {
+function getGateDotColor(status: DeliveryLoopStatusCheckStatus): string {
   switch (status) {
     case "passed":
       return "bg-emerald-500";
@@ -123,7 +123,7 @@ function getGateDotColor(status: SdlcLoopStatusCheckStatus): string {
 }
 
 function getCurrentStep(
-  phases: ReadonlyArray<{ status: SdlcLoopStatusCheckStatus }>,
+  phases: ReadonlyArray<{ status: DeliveryLoopStatusCheckStatus }>,
 ): number {
   const blockedIndex = phases.findIndex((phase) => phase.status === "blocked");
   if (blockedIndex >= 0) return blockedIndex + 1;
@@ -140,7 +140,7 @@ function getCurrentStep(
 function GateTooltipContent({
   gateChecks,
 }: {
-  gateChecks: SdlcLoopStatusCheck[];
+  gateChecks: DeliveryLoopStatusCheck[];
 }) {
   return (
     <div className="space-y-1.5 text-left">
@@ -170,7 +170,7 @@ function GateTooltipContent({
 // Plan task list
 // ---------------------------------------------------------------------------
 
-type SdlcPlannedTask = {
+type DeliveryPlannedTask = {
   stableTaskId: string;
   title: string;
   description: string | null;
@@ -178,7 +178,11 @@ type SdlcPlannedTask = {
   status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
 };
 
-function PlanTaskStatusIcon({ status }: { status: SdlcPlannedTask["status"] }) {
+function PlanTaskStatusIcon({
+  status,
+}: {
+  status: DeliveryPlannedTask["status"];
+}) {
   switch (status) {
     case "done":
     case "skipped":
@@ -196,14 +200,14 @@ function PlanTaskStatusIcon({ status }: { status: SdlcPlannedTask["status"] }) {
   }
 }
 
-function SdlcPlanTaskList({
+function DeliveryPlanTaskList({
   tasks,
   taskSummary,
   showApprove,
   threadId,
   threadChatId,
 }: {
-  tasks: SdlcPlannedTask[];
+  tasks: DeliveryPlannedTask[];
   taskSummary: { total: number; done: number; remaining: number };
   showApprove: boolean;
   threadId: string;
@@ -261,7 +265,7 @@ function SdlcPlanTaskList({
 // Intervention controls
 // ---------------------------------------------------------------------------
 
-function SdlcInterventionControls({
+function DeliveryInterventionControls({
   threadId,
   threadChatId,
   canResume,
@@ -323,12 +327,14 @@ export function DeliveryLoopTopProgressStepper({
   threadChatId: string | null;
   enabled: boolean;
 }) {
-  const [expandedPhase, setExpandedPhase] = useState<SdlcPhaseKey | null>(null);
+  const [expandedPhase, setExpandedPhase] = useState<DeliveryPhaseKey | null>(
+    null,
+  );
   const { data, isLoading, isError } = useDeliveryLoopStatusQuery({
     threadId,
     enabled,
   });
-  const sdlcPlanReviewCard = useFeatureFlag("sdlcPlanReviewCard");
+  const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
 
   if (!enabled || isError) return null;
 
@@ -342,9 +348,9 @@ export function DeliveryLoopTopProgressStepper({
           { key: "ci", label: "CI", status: "not_started" },
           { key: "ui_testing", label: "UI Testing", status: "not_started" },
         ] satisfies ReadonlyArray<{
-          key: SdlcPhaseKey;
+          key: DeliveryPhaseKey;
           label: string;
-          status: SdlcLoopStatusCheckStatus;
+          status: DeliveryLoopStatusCheckStatus;
         }>)
       : []);
 
@@ -360,7 +366,7 @@ export function DeliveryLoopTopProgressStepper({
     (data?.actions.canBypassOnce ?? false);
 
   const planCardModel =
-    data && sdlcPlanReviewCard
+    data && deliveryPlanReviewCard
       ? buildArtifactFallbackPlanSpecViewModel({
           summary:
             data.artifacts.planningArtifact?.planText ??
@@ -448,7 +454,7 @@ export function DeliveryLoopTopProgressStepper({
         )}
 
         {showInterventionControls && data && (
-          <SdlcInterventionControls
+          <DeliveryInterventionControls
             threadId={threadId}
             threadChatId={threadChatId}
             canResume={data.actions.canResume}
@@ -465,7 +471,10 @@ export function DeliveryLoopTopProgressStepper({
           }}
           className="w-full"
         >
-          <StepperNav aria-label="Delivery loop progress" className="gap-3 overflow-x-auto pb-1">
+          <StepperNav
+            aria-label="Delivery loop progress"
+            className="gap-3 overflow-x-auto pb-1"
+          >
             {phases.map((phase, index) => {
               const isStepDone =
                 phase.status === "passed" || phase.status === "degraded";
@@ -581,7 +590,7 @@ export function DeliveryLoopTopProgressStepper({
                             className="mt-1.5"
                           />
                         ) : null}
-                        <SdlcPlanTaskList
+                        <DeliveryPlanTaskList
                           tasks={data.artifacts.plannedTasks}
                           taskSummary={data.artifacts.plannedTaskSummary}
                           showApprove={data.actions.canApprovePlan}

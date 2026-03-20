@@ -14,24 +14,24 @@ import type {
   DeliveryWorkflow,
   GateKind,
 } from "@terragon/shared/delivery-loop/domain/workflow";
-export type SdlcLoopStatusCheckKey =
+export type DeliveryLoopStatusCheckKey =
   | "ci"
   | "review_threads"
   | "deep_review"
   | "architecture_carmack"
   | "video";
 
-export type SdlcLoopStatusCheckStatus =
+export type DeliveryLoopStatusCheckStatus =
   | "passed"
   | "blocked"
   | "pending"
   | "not_started"
   | "degraded";
 
-export type SdlcLoopStatusCheck = {
-  key: SdlcLoopStatusCheckKey;
+export type DeliveryLoopStatusCheck = {
+  key: DeliveryLoopStatusCheckKey;
   label: string;
-  status: SdlcLoopStatusCheckStatus;
+  status: DeliveryLoopStatusCheckStatus;
   detail: string;
 };
 
@@ -45,28 +45,28 @@ export type DeliveryLoopTopProgressPhaseKey =
 export type DeliveryLoopTopProgressPhase = {
   key: DeliveryLoopTopProgressPhaseKey;
   label: string;
-  status: SdlcLoopStatusCheckStatus;
+  status: DeliveryLoopStatusCheckStatus;
 };
 
-type SdlcLoopStatusCiRun = {
+type DeliveryLoopStatusCiRun = {
   status: SdlcCiGateStatus;
   failingRequiredChecks: string[];
 };
 
-type SdlcLoopStatusReviewThreadRun = {
+type DeliveryLoopStatusReviewThreadRun = {
   status: SdlcReviewThreadGateStatus;
   unresolvedThreadCount: number;
 };
 
-type SdlcLoopStatusDeepReviewRun = {
+type DeliveryLoopStatusDeepReviewRun = {
   status: SdlcDeepReviewStatus;
 };
 
-type SdlcLoopStatusCarmackReviewRun = {
+type DeliveryLoopStatusCarmackReviewRun = {
   status: SdlcCarmackReviewStatus;
 };
 
-export type SdlcLoopStatusStateSummary = {
+export type DeliveryLoopStatusStateSummary = {
   stateLabel: string;
   explanation: string;
   progressPercent: number;
@@ -83,7 +83,7 @@ const TOP_PROGRESS_PHASE_LABELS: Record<
   ui_testing: "UI Testing",
 };
 
-const SDLC_STATE_SUMMARY = {
+const DELIVERY_STATE_SUMMARY = {
   planning: {
     stateLabel: "Planning",
     explanation: "Agent is drafting an implementation plan before coding.",
@@ -146,11 +146,11 @@ const SDLC_STATE_SUMMARY = {
     explanation: "The loop was stopped before completion.",
     progressPercent: 100,
   },
-} satisfies Record<SdlcLoopState, SdlcLoopStatusStateSummary>;
+} satisfies Record<SdlcLoopState, DeliveryLoopStatusStateSummary>;
 
 function getBlockedStateSummary(
   blocked: DeliveryLoopBlockedState,
-): SdlcLoopStatusStateSummary {
+): DeliveryLoopStatusStateSummary {
   switch (blocked.from) {
     case "planning":
       return {
@@ -227,7 +227,7 @@ export function getDeliveryLoopBlockedAttentionTitle(
 
 export function getDeliveryLoopSnapshotStateSummary(
   snapshot: DeliveryLoopSnapshot,
-): SdlcLoopStatusStateSummary {
+): DeliveryLoopStatusStateSummary {
   switch (snapshot.kind) {
     case "blocked":
       return getBlockedStateSummary(snapshot);
@@ -242,7 +242,7 @@ export function getDeliveryLoopSnapshotStateSummary(
     case "stopped":
     case "terminated_pr_closed":
     case "terminated_pr_merged":
-      return SDLC_STATE_SUMMARY[snapshot.kind];
+      return DELIVERY_STATE_SUMMARY[snapshot.kind];
   }
 }
 
@@ -259,7 +259,7 @@ function getEffectiveLoopStateForChecks(
 
 function inferCiStatusFromLoopState(
   snapshot: DeliveryLoopSnapshot,
-): SdlcLoopStatusCheckStatus {
+): DeliveryLoopStatusCheckStatus {
   const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
@@ -283,7 +283,7 @@ function inferCiStatusFromLoopState(
 
 function inferReviewThreadsStatusFromLoopState(
   snapshot: DeliveryLoopSnapshot,
-): SdlcLoopStatusCheckStatus {
+): DeliveryLoopStatusCheckStatus {
   const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
@@ -308,7 +308,7 @@ function inferReviewThreadsStatusFromLoopState(
 
 function inferReviewGateStatusFromLoopState(
   snapshot: DeliveryLoopSnapshot,
-): SdlcLoopStatusCheckStatus {
+): DeliveryLoopStatusCheckStatus {
   const loopState = getEffectiveLoopStateForChecks(snapshot);
   switch (loopState) {
     case "planning":
@@ -332,8 +332,8 @@ function inferReviewGateStatusFromLoopState(
 }
 
 function aggregateTopProgressStatuses(
-  statuses: readonly SdlcLoopStatusCheckStatus[],
-): SdlcLoopStatusCheckStatus {
+  statuses: readonly DeliveryLoopStatusCheckStatus[],
+): DeliveryLoopStatusCheckStatus {
   if (statuses.length === 0) {
     return "not_started";
   }
@@ -360,9 +360,9 @@ function aggregateTopProgressStatuses(
 }
 
 function getCheckStatusOrDefault(
-  checks: readonly SdlcLoopStatusCheck[],
-  key: SdlcLoopStatusCheckKey,
-): SdlcLoopStatusCheckStatus {
+  checks: readonly DeliveryLoopStatusCheck[],
+  key: DeliveryLoopStatusCheckKey,
+): DeliveryLoopStatusCheckStatus {
   return checks.find((check) => check.key === key)?.status ?? "not_started";
 }
 
@@ -371,7 +371,7 @@ export function buildDeliveryLoopTopProgressPhases({
   checks,
 }: {
   loopSnapshot: DeliveryLoopSnapshot;
-  checks: readonly SdlcLoopStatusCheck[];
+  checks: readonly DeliveryLoopStatusCheck[];
 }): DeliveryLoopTopProgressPhase[] {
   const effectiveState = getEffectiveLoopStateForChecks(loopSnapshot);
   const reviewStatuses = [
@@ -383,10 +383,10 @@ export function buildDeliveryLoopTopProgressPhases({
   const ciStatus = getCheckStatusOrDefault(checks, "ci");
   const uiStatus = getCheckStatusOrDefault(checks, "video");
 
-  const planningStatus: SdlcLoopStatusCheckStatus =
+  const planningStatus: DeliveryLoopStatusCheckStatus =
     effectiveState === "planning" ? "pending" : "passed";
 
-  const implementingStatus: SdlcLoopStatusCheckStatus =
+  const implementingStatus: DeliveryLoopStatusCheckStatus =
     effectiveState === "planning"
       ? "not_started"
       : effectiveState === "implementing"
@@ -396,7 +396,7 @@ export function buildDeliveryLoopTopProgressPhases({
           ? "degraded"
           : "passed";
 
-  const normalizedReviewStatus: SdlcLoopStatusCheckStatus =
+  const normalizedReviewStatus: DeliveryLoopStatusCheckStatus =
     effectiveState === "planning" || effectiveState === "implementing"
       ? "not_started"
       : effectiveState === "stopped" ||
@@ -415,7 +415,7 @@ export function buildDeliveryLoopTopProgressPhases({
               : reviewStatus
             : reviewStatus;
 
-  const normalizedCiStatus: SdlcLoopStatusCheckStatus =
+  const normalizedCiStatus: DeliveryLoopStatusCheckStatus =
     effectiveState === "planning" ||
     effectiveState === "implementing" ||
     effectiveState === "review_gate"
@@ -434,7 +434,7 @@ export function buildDeliveryLoopTopProgressPhases({
               : ciStatus
             : ciStatus;
 
-  const normalizedUiStatus: SdlcLoopStatusCheckStatus =
+  const normalizedUiStatus: DeliveryLoopStatusCheckStatus =
     effectiveState === "planning" ||
     effectiveState === "implementing" ||
     effectiveState === "review_gate" ||
@@ -483,7 +483,7 @@ export function buildDeliveryLoopTopProgressPhases({
   ];
 }
 
-export function buildSdlcLoopStatusChecks({
+export function buildDeliveryLoopStatusChecks({
   loopSnapshot,
   currentHeadSha,
   ciRun,
@@ -497,15 +497,15 @@ export function buildSdlcLoopStatusChecks({
 }: {
   loopSnapshot: DeliveryLoopSnapshot;
   currentHeadSha: string | null;
-  ciRun: SdlcLoopStatusCiRun | null;
-  reviewThreadRun: SdlcLoopStatusReviewThreadRun | null;
-  deepReviewRun: SdlcLoopStatusDeepReviewRun | null;
-  carmackReviewRun: SdlcLoopStatusCarmackReviewRun | null;
+  ciRun: DeliveryLoopStatusCiRun | null;
+  reviewThreadRun: DeliveryLoopStatusReviewThreadRun | null;
+  deepReviewRun: DeliveryLoopStatusDeepReviewRun | null;
+  carmackReviewRun: DeliveryLoopStatusCarmackReviewRun | null;
   unresolvedDeepFindingCount: number;
   unresolvedCarmackFindingCount: number;
   videoCaptureStatus: SdlcVideoCaptureStatus;
   videoFailureMessage: string | null;
-}): SdlcLoopStatusCheck[] {
+}): DeliveryLoopStatusCheck[] {
   const ciFallbackStatus = inferCiStatusFromLoopState(loopSnapshot);
   const reviewThreadsFallbackStatus =
     inferReviewThreadsStatusFromLoopState(loopSnapshot);
@@ -514,7 +514,7 @@ export function buildSdlcLoopStatusChecks({
   const carmackFallbackStatus =
     inferReviewGateStatusFromLoopState(loopSnapshot);
 
-  const ciCheck: SdlcLoopStatusCheck = !currentHeadSha
+  const ciCheck: DeliveryLoopStatusCheck = !currentHeadSha
     ? {
         key: "ci",
         label: "CI",
@@ -552,7 +552,7 @@ export function buildSdlcLoopStatusChecks({
                     : "Awaiting CI evaluation for the current head.",
           };
 
-  const reviewThreadsCheck: SdlcLoopStatusCheck = !currentHeadSha
+  const reviewThreadsCheck: DeliveryLoopStatusCheck = !currentHeadSha
     ? {
         key: "review_threads",
         label: "Review Threads",
@@ -595,7 +595,7 @@ export function buildSdlcLoopStatusChecks({
                       : "Awaiting review thread evaluation.",
             };
 
-  const deepReviewCheck: SdlcLoopStatusCheck = !currentHeadSha
+  const deepReviewCheck: DeliveryLoopStatusCheck = !currentHeadSha
     ? {
         key: "deep_review",
         label: "Deep Review",
@@ -633,7 +633,7 @@ export function buildSdlcLoopStatusChecks({
                     : "Awaiting deep review run.",
           };
 
-  const carmackCheck: SdlcLoopStatusCheck = !currentHeadSha
+  const carmackCheck: DeliveryLoopStatusCheck = !currentHeadSha
     ? {
         key: "architecture_carmack",
         label: "Architecture/Carmack",
@@ -671,7 +671,7 @@ export function buildSdlcLoopStatusChecks({
                     : "Awaiting architecture gate run.",
           };
 
-  const videoCheck: SdlcLoopStatusCheck =
+  const videoCheck: DeliveryLoopStatusCheck =
     videoCaptureStatus === "captured"
       ? {
           key: "video",
@@ -900,10 +900,10 @@ export function buildSnapshotFromV2Workflow(
 }
 
 /**
- * Maps a v2 workflow kind to the v1 SdlcLoopState string used by the
+ * Maps a v2 workflow kind to the v1 DeliveryLoopState string used by the
  * status response shape. Gating states expand to review_gate/ci_gate/ui_gate.
  */
-export function mapV2KindToSdlcLoopState(
+export function mapV2KindToDeliveryLoopState(
   workflow: DeliveryWorkflow,
 ): SdlcLoopState {
   switch (workflow.kind) {

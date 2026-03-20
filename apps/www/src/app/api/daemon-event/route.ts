@@ -655,7 +655,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // Heartbeat shortcut: empty messages skip SDLC loop, envelope validation, and
+  // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
   // run-context status transitions — just extend sandbox life + refresh updatedAt.
   if (messages.length === 0) {
     const result = await handleDaemonEvent({
@@ -710,7 +710,7 @@ export async function POST(request: Request) {
   if (effectiveLoopId) {
     if (!envelopeV2) {
       console.error(
-        "[sdlc-loop] rejecting daemon event for enrolled loop without v2 envelope",
+        "[delivery-loop] rejecting daemon event for enrolled loop without v2 envelope",
         {
           userId,
           threadId,
@@ -1173,7 +1173,7 @@ export async function POST(request: Request) {
         );
       }
     } catch (error) {
-      console.error("[sdlc-loop-v2] handleDaemonIngress failed", {
+      console.error("[delivery-loop-v2] handleDaemonIngress failed", {
         userId,
         threadId,
         loopId: effectiveLoopId!,

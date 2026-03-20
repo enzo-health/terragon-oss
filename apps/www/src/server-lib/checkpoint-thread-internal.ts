@@ -33,7 +33,7 @@ import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { sendSystemMessage } from "./send-system-message";
 
-const SDLC_PLAN_TOOL_NAMES = {
+const DELIVERY_PLAN_TOOL_NAMES = {
   EXIT_PLAN_MODE: "ExitPlanMode",
   WRITE: "Write",
 } as const;
@@ -84,7 +84,7 @@ function findPlanFromWriteToolCall({
     const message = messages[i];
     if (
       message?.type === "tool-call" &&
-      message.name === SDLC_PLAN_TOOL_NAMES.EXIT_PLAN_MODE &&
+      message.name === DELIVERY_PLAN_TOOL_NAMES.EXIT_PLAN_MODE &&
       message.id === exitPlanModeToolId
     ) {
       exitPlanModeIndex = i;
@@ -105,7 +105,7 @@ function findPlanFromWriteToolCall({
     }
     if (
       message.type === "tool-call" &&
-      message.name === SDLC_PLAN_TOOL_NAMES.WRITE
+      message.name === DELIVERY_PLAN_TOOL_NAMES.WRITE
     ) {
       const filePath = message.parameters?.file_path;
       const content = message.parameters?.content;
@@ -137,7 +137,7 @@ export function extractLatestPlanText(messages: DBMessage[] | null): {
     if (
       !message ||
       message.type !== "tool-call" ||
-      message.name !== SDLC_PLAN_TOOL_NAMES.EXIT_PLAN_MODE
+      message.name !== DELIVERY_PLAN_TOOL_NAMES.EXIT_PLAN_MODE
     ) {
       continue;
     }
@@ -170,7 +170,7 @@ export function extractLatestPlanText(messages: DBMessage[] | null): {
     if (message.type === "user") break;
     if (
       message.type === "tool-call" &&
-      message.name === SDLC_PLAN_TOOL_NAMES.WRITE
+      message.name === DELIVERY_PLAN_TOOL_NAMES.WRITE
     ) {
       const filePath = message.parameters?.file_path;
       const content = message.parameters?.content;
@@ -246,7 +246,7 @@ export function detectPhaseCompleteSignal(
   return false;
 }
 
-function buildSdlcFixFollowUpMessage({
+function buildDeliveryFixFollowUpMessage({
   heading,
   details,
 }: {
@@ -266,7 +266,7 @@ function buildSdlcFixFollowUpMessage({
   };
 }
 
-export async function queueSdlcFollowUpMessage({
+export async function queueDeliveryFollowUpMessage({
   userId,
   threadId,
   threadChatId,
@@ -284,7 +284,7 @@ export async function queueSdlcFollowUpMessage({
     threadId,
     threadChatId,
     messages: [
-      buildSdlcFixFollowUpMessage({
+      buildDeliveryFixFollowUpMessage({
         heading,
         details,
       }),
@@ -466,7 +466,7 @@ export async function checkpointThreadAndPush({
       return;
     }
 
-    // Non-SDLC fallback path:
+    // Non-delivery-loop fallback path:
     // 1. Normal case: diffOutput exists and diff has changed
     // 2. After git retry: diffOutput exists but thread doesn't have a PR yet
     //    (handles the case where git push failed after diff was captured)

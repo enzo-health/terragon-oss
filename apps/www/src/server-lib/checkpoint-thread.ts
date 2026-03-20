@@ -18,7 +18,7 @@ import { maybeUpdateGitHubCheckRunForThreadChat } from "./github";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { isSdlcLoopEnrollmentAllowedForThread } from "./delivery-loop/enrollment";
+import { isDeliveryLoopEnrollmentAllowedForThread } from "./delivery-loop/enrollment";
 
 export async function checkpointThread({
   userId,
@@ -52,9 +52,9 @@ export async function checkpointThread({
           getUserSettings({ db, userId }),
           getThread({ db, threadId, userId }),
         ]);
-        const shouldAutoCreatePrForSdlcLoop =
+        const shouldAutoCreatePrForDeliveryLoop =
           !!thread &&
-          isSdlcLoopEnrollmentAllowedForThread({
+          isDeliveryLoopEnrollmentAllowedForThread({
             sourceType: thread.sourceType,
             sourceMetadata: thread.sourceMetadata ?? null,
           });
@@ -63,7 +63,8 @@ export async function checkpointThread({
           threadId,
           threadChatId,
           session,
-          createPR: userSettings.autoCreatePRs || shouldAutoCreatePrForSdlcLoop,
+          createPR:
+            userSettings.autoCreatePRs || shouldAutoCreatePrForDeliveryLoop,
           prType: userSettings.prType,
         });
       } catch (e) {
