@@ -253,6 +253,11 @@ export async function getFeatureFlagsGlobal({
   const flags = await getFeatureFlags({ db });
   const result: Record<string, boolean> = {};
   for (const flag of flags) {
+    if (
+      process.env.NODE_ENV !== "test" &&
+      !(flag.name in featureFlagsDefinitions)
+    )
+      continue;
     result[flag.name] = flag.globalOverride ?? flag.defaultValue;
   }
   return result;
@@ -283,6 +288,11 @@ export async function getFeatureFlagsForUser({
   }
   const result: Record<string, boolean> = {};
   for (const flag of globalFlags) {
+    if (
+      process.env.NODE_ENV !== "test" &&
+      !(flag.name in featureFlagsDefinitions)
+    )
+      continue;
     const def = featureFlagsDefinitions[
       flag.name as FeatureFlagName
     ] as FeatureFlagDefinition;
