@@ -520,6 +520,85 @@ describe("v2 coordinator tick — integration", () => {
     });
   });
 
+  describe("plan artifact creation on planning -> implementing", () => {
+    it("creates sdlcPhaseArtifact and sdlcPlanTask rows when planning transitions to implementing", async () => {
+      const wf = await createTestWorkflowInState({
+        kind: "planning",
+        stateJson: {},
+      });
+
+      // Set up thread chat messages with a Write tool call to plans/*.md
+      // that extractLatestPlanText can parse (Priority 2: standalone Write)
+      const planContent = JSON.stringify({
+        tasks: [
+          {
+            stableTaskId: "task-1",
+            title: "Implement feature A",
+            description: "Add the new feature",
+            acceptance: ["it compiles", "tests pass"],
+          },
+          {
+            stableTaskId: "task-2",
+            title: "Write tests for feature A",
+            description: "Cover edge cases",
+            acceptance: ["coverage above 80%"],
+          },
+        ],
+      });
+
+      const planMessages = [
+        {
+          type: "tool-call" as const,
+          id: `write-${nanoid(6)}`,
+          name: "Write",
+          parameters: {
+            file_path: "/workspace/plans/plan.md",
+            content: planContent,
+          },
+          parent_tool_use_id: null,
+        },
+      ];
+
+      // Insert a threadChat row (tick.ts queries threadChat, not the thread table)
+      await db.insert(schema.threadChat).values({
+        userId: testUserId,
+        threadId: testThreadId,
+        messages: planMessages,
+      });
+
+      // Inject daemon run completed signal and tick
+      await daemonRunCompleted(wf.id);
+      const result = await tick(wf.id);
+
+      expect(result.transitioned).toBe(true);
+      expect(result.stateBefore).toBe("planning");
+      expect(result.stateAfter).toBe("implementing");
+
+      // Assert plan artifact was created
+      const artifact = await db.query.sdlcPhaseArtifact.findFirst({
+        where: eq(schema.sdlcPhaseArtifact.loopId, wf.id),
+      });
+      expect(artifact).toBeDefined();
+      expect(artifact!.phase).toBe("planning");
+      expect(artifact!.status).toBe("accepted");
+
+      // Assert plan tasks were created
+      const tasks = await db.query.sdlcPlanTask.findMany({
+        where: eq(schema.sdlcPlanTask.loopId, wf.id),
+      });
+      expect(tasks.length).toBe(2);
+
+      const taskIds = tasks.map((t) => t.stableTaskId).sort();
+      expect(taskIds).toEqual(["task-1", "task-2"]);
+
+      const task1 = tasks.find((t) => t.stableTaskId === "task-1");
+      expect(task1!.title).toBe("Implement feature A");
+
+      const task2 = tasks.find((t) => t.stableTaskId === "task-2");
+      expect(task2!.title).toBe("Write tests for feature A");
+    });
+  });
+
   describe("manual stop", () => {
     it("implementing -> stopped via manual_stop", async () => {
       const wf = await createTestWorkflowInState({
