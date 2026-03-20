@@ -298,7 +298,7 @@ export class DockerProvider implements ISandboxProvider {
     const containerName = `${prefix}-${dateStr}-${timeStr}-${nanoid()}`;
     try {
       // Create and start container
-      const createCommand = `docker run -d --name ${containerName} --memory=${memoryLimit} --cpus=${cpuLimit} ${envFlags} -w ${DEFAULT_DIR} ${BASE_IMAGE} tail -f /dev/null`;
+      const createCommand = `docker run -d --name ${containerName} --memory=${memoryLimit} --cpus=${cpuLimit} ${envFlags} -w ${DEFAULT_DIR} --entrypoint "" ${BASE_IMAGE} tail -f /dev/null`;
       const containerId = execSync(createCommand, { encoding: "utf8" }).trim();
       const dockerSession = new DockerSession(containerId);
       return dockerSession;
