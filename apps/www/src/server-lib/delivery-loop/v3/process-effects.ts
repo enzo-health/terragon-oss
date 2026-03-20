@@ -35,6 +35,7 @@ import {
   type CreateDispatchIntentParams,
 } from "@/server-lib/delivery-loop/dispatch-intent";
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
+import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 
 const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
 const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
@@ -103,7 +104,7 @@ async function processGateReviewEffect(params: {
     threadId: workflow.threadId,
     threadChatId: threadChat.id,
     targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-    selectedAgent: "claudeCode",
+    selectedAgent: toSelectedAgent(threadChat.agent),
     executionClass: "gate_runtime",
     dispatchMechanism: "self_dispatch",
     runId,
@@ -139,7 +140,7 @@ async function processGateReviewEffect(params: {
       threadChatId: threadChat.id,
       runId,
       targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-      selectedAgent: "claudeCode",
+      selectedAgent: toSelectedAgent(threadChat.agent),
       executionClass: "gate_runtime",
       dispatchMechanism: "self_dispatch",
     });
