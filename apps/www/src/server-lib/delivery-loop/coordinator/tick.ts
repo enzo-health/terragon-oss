@@ -57,8 +57,15 @@ import {
   parseRepoFullName,
 } from "@/lib/github";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
+import {
+  createPlanArtifact,
+  replacePlanTasksForArtifact,
+} from "@terragon/shared/delivery-loop/store/artifact-store";
+import { extractLatestPlanText } from "../../checkpoint-thread-internal";
+import { parsePlanSpec } from "../parse-plan-spec";
+import type { PlanSpecSource } from "../promote-plan";
 
 export type CoordinatorTickResult = {
   workflowId: WorkflowId;
@@ -335,7 +342,52 @@ export async function runCoordinatorTick(params: {
           continue;
         }
 
-        // 3d. Resolve work items from the transition
+        // 3d. Extract plan text for artifact creation on planning → implementing
+        let parsedPlanForArtifact: {
+          planText: string;
+          tasks: {
+            stableTaskId: string;
+            title: string;
+            description: string | null;
+            acceptance: string[];
+          }[];
+          source?: PlanSpecSource;
+        } | null = null;
+        if (
+          workflow.kind === "planning" &&
+          newWorkflow.kind === "implementing"
+        ) {
+          try {
+            const threadChat = await db.query.threadChat.findFirst({
+              where: eq(schema.threadChat.threadId, workflow.threadId),
+              columns: { messages: true },
+              orderBy: [desc(schema.threadChat.createdAt)],
+            });
+            if (threadChat?.messages) {
+              const extracted = extractLatestPlanText(
+                threadChat.messages as Parameters<
+                  typeof extractLatestPlanText
+                >[0],
+              );
+              if (extracted) {
+                const parseResult = parsePlanSpec(extracted.text);
+                if (parseResult.ok) {
+                  parsedPlanForArtifact = {
+                    ...parseResult.plan,
+                    source: extracted.source as PlanSpecSource,
+                  };
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(
+              "[coordinator] Failed to extract plan text for artifact creation",
+              { workflowId, error: err },
+            );
+          }
+        }
+
+        // 3e. Resolve work items from the transition
         const scheduledItems = resolveWorkItems({
           previousWorkflow: workflow,
           newWorkflow,
@@ -344,7 +396,7 @@ export async function runCoordinatorTick(params: {
           now,
         });
 
-        // 3e. Build the audit event
+        // 3f. Build the audit event
         const workflowEvent = buildWorkflowEvent({
           previousWorkflow: workflow,
           newWorkflow,
@@ -394,7 +446,31 @@ export async function runCoordinatorTick(params: {
             headSha: extractHeadSha(newWorkflow),
           });
 
-          // 4c. Supersede old pending work items before inserting new ones
+          // 4c. Create plan artifact for planning → implementing transition
+          if (parsedPlanForArtifact) {
+            const planArtifact = await createPlanArtifact({
+              db: tx as unknown as DB,
+              loopId,
+              loopVersion: newWorkflow.version,
+              status: "accepted",
+              generatedBy: "agent",
+              workflowId,
+              payload: {
+                planText: parsedPlanForArtifact.planText,
+                tasks: parsedPlanForArtifact.tasks,
+                source: parsedPlanForArtifact.source ?? "system",
+              },
+              now,
+            });
+            await replacePlanTasksForArtifact({
+              db: tx as unknown as DB,
+              loopId,
+              artifactId: planArtifact.id,
+              tasks: parsedPlanForArtifact.tasks,
+            });
+          }
+
+          // 4e. Supersede old pending work items before inserting new ones
           const uniqueKinds = [
             ...new Set(scheduledItems.map((item) => item.kind)),
           ];
@@ -404,7 +480,7 @@ export async function runCoordinatorTick(params: {
             ),
           );
 
-          // 4d. Enqueue work items
+          // 4f. Enqueue work items
           await Promise.all(
             scheduledItems.map((item) =>
               enqueueWorkItem({
@@ -422,7 +498,7 @@ export async function runCoordinatorTick(params: {
             ),
           );
 
-          // 4e. Update runtime status (cache for reuse after the transaction)
+          // 4g. Update runtime status (cache for reuse after the transaction)
           pendingAction = derivePendingAction(newWorkflow);
           await upsertRuntimeStatus({
             db: tx,
@@ -445,7 +521,7 @@ export async function runCoordinatorTick(params: {
           break;
         }
 
-        // 4f. Complete the signal (outside transaction — idempotent)
+        // 4h. Complete the signal (outside transaction — idempotent)
         await completeSignalClaim({ db, signalId: signal.id, claimToken, now });
         signalCompleted = true;
 
