@@ -1,18 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
+  PatchDiff,
   type AnnotationSide,
   type DiffLineEventBaseProps,
   type DiffLineAnnotation,
 } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
-
-const PatchDiff = dynamic(
-  () => import("@pierre/diffs/react").then((mod) => mod.PatchDiff),
-  { ssr: false },
-);
 import {
   ChevronRight,
   ChevronDown,
@@ -27,8 +22,8 @@ import {
   X,
   Image,
 } from "lucide-react";
-import { ThreadInfoFull } from "@terragon/shared";
-import { cn } from "@/lib/utils";
+import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
+import { cn, formatBytes } from "@/lib/utils";
 import {
   parseMultiFileDiff,
   type FileChangeType,
@@ -43,21 +38,11 @@ import { followUp } from "@/server-actions/follow-up";
 import { useOptimisticUpdateThreadChat } from "./hooks";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 
-/**
- * Formats file size in bytes to human-readable format
- */
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
-
 interface GitDiffViewProps {
   thread: ThreadInfoFull;
   mode?: "split" | "unified";
   enableComments?: boolean;
+  diffPart?: UIGitDiffPart;
   threadChatId?: string;
   threadMessages?: DBMessage[];
 }
@@ -338,17 +323,10 @@ function FileDiffWrapper({
     ];
   }, [activeAnnotation, enableComments]);
 
-  const getLineTheme = useMemo(() => {
-    if (theme === "light") return "pierre-light";
-    if (theme === "dark") return "pierre-dark";
-    return "pierre-dark";
-  }, [theme]);
+  const getLineTheme = theme === "light" ? "pierre-light" : "pierre-dark";
 
-  const themeType = useMemo(() => {
-    if (theme === "light") return "light";
-    if (theme === "dark") return "dark";
-    return "system";
-  }, [theme]);
+  const themeType: "light" | "dark" | "system" =
+    theme === "light" ? "light" : theme === "dark" ? "dark" : "system";
 
   const closeActiveAnnotation = () => setActiveAnnotation(null);
 
@@ -417,20 +395,20 @@ function FileDiffWrapper({
               {parsedFile.changeType === "added" ? (
                 <span className="text-green-600 dark:text-green-400">
                   {parsedFile.newFileSize !== undefined
-                    ? `+${formatFileSize(parsedFile.newFileSize)}`
+                    ? `+${formatBytes(parsedFile.newFileSize)}`
                     : "New image"}
                 </span>
               ) : parsedFile.changeType === "deleted" ? (
                 <span className="text-red-600 dark:text-red-400">
                   {parsedFile.oldFileSize !== undefined
-                    ? `-${formatFileSize(parsedFile.oldFileSize)}`
+                    ? `-${formatBytes(parsedFile.oldFileSize)}`
                     : "Deleted image"}
                 </span>
               ) : (
                 <span className="text-muted-foreground">
                   {parsedFile.oldFileSize !== undefined &&
                   parsedFile.newFileSize !== undefined
-                    ? `${formatFileSize(parsedFile.oldFileSize)} → ${formatFileSize(parsedFile.newFileSize)}`
+                    ? `${formatBytes(parsedFile.oldFileSize)} → ${formatBytes(parsedFile.newFileSize)}`
                     : "Image"}
                 </span>
               )}
@@ -489,7 +467,7 @@ function FileDiffWrapper({
   );
 }
 
-function FilesChangedHeader({
+export function FilesChangedHeader({
   fileCount,
   viewMode,
   onViewModeChange,
@@ -500,6 +478,7 @@ function FilesChangedHeader({
   additions,
   deletions,
   isSmallScreen,
+  fileTreeId,
 }: {
   fileCount: number;
   viewMode: "split" | "unified";
@@ -511,6 +490,7 @@ function FilesChangedHeader({
   additions: number;
   deletions: number;
   isSmallScreen: boolean;
+  fileTreeId: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 px-4 py-3">
@@ -544,9 +524,15 @@ function FilesChangedHeader({
       {fileCount > 0 && (
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
+            type="button"
             onClick={onToggleFileTree}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
             title={showFileTree ? "Hide file tree" : "Show file tree"}
+            aria-label={
+              showFileTree ? "Hide changed files" : "Show changed files"
+            }
+            aria-expanded={showFileTree}
+            aria-controls={fileTreeId}
           >
             {showFileTree ? (
               <PanelLeftClose className="w-3.5 h-3.5" />
@@ -555,9 +541,12 @@ function FilesChangedHeader({
             )}
           </button>
           <button
+            type="button"
             onClick={onToggleAll}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
             title={allExpanded ? "Collapse all" : "Expand all"}
+            aria-label={allExpanded ? "Collapse all files" : "Expand all files"}
+            aria-pressed={allExpanded}
           >
             {allExpanded ? (
               <ChevronsDownUp className="w-3.5 h-3.5" />
@@ -569,22 +558,30 @@ function FilesChangedHeader({
             </span>
           </button>
           {!isSmallScreen && (
-            <div className="flex items-center rounded-md border bg-background">
+            <div
+              className="flex items-center rounded-md border bg-background"
+              role="group"
+              aria-label="Diff view mode"
+            >
               <button
+                type="button"
                 onClick={() => onViewModeChange("unified")}
                 className={cn(
                   "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
                   viewMode === "unified" ? "bg-muted" : "hover:bg-muted/50",
                 )}
+                aria-pressed={viewMode === "unified"}
               >
                 Unified
               </button>
               <button
+                type="button"
                 onClick={() => onViewModeChange("split")}
                 className={cn(
                   "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
                   viewMode === "split" ? "bg-muted" : "hover:bg-muted/50",
                 )}
+                aria-pressed={viewMode === "split"}
               >
                 Split
               </button>
@@ -667,13 +664,42 @@ function FileTreeItem({
   );
 }
 
+function computeDefaultExpanded(
+  diffInstances: ParsedDiffFile[],
+): Record<number, boolean> {
+  return diffInstances.reduce(
+    (acc, file, idx) => {
+      const totalChanges = (file.additions ?? 0) + (file.deletions ?? 0);
+      acc[idx] = diffInstances.length === 1 || totalChanges < 200;
+      return acc;
+    },
+    {} as Record<number, boolean>,
+  );
+}
+
+function collectAllFolders(fileTree: FileTreeNode[]): Set<string> {
+  const folders = new Set<string>();
+  const walk = (nodes: FileTreeNode[]) => {
+    for (const node of nodes) {
+      if (node.type === "folder") {
+        folders.add(node.path);
+        if (node.children) walk(node.children);
+      }
+    }
+  };
+  walk(fileTree);
+  return folders;
+}
+
 export function GitDiffView({
   thread,
   enableComments = false,
+  diffPart,
   threadChatId,
   threadMessages,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const fileTreeId = useId();
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [isWideScreen, setIsWideScreen] = useState(false);
   const { resolvedTheme } = useTheme();
@@ -720,50 +746,46 @@ export function GitDiffView({
 
   // Force unified mode on small screens
   const effectiveViewMode = isSmallScreen ? "unified" : viewMode;
+  const activeDiff = diffPart?.diff ?? thread.gitDiff;
+  // When rendering a specific diffPart (e.g. checkpoint), use only its stats —
+  // don't fall back to thread.gitDiffStats which reflects the live working tree.
+  // headerStats will fall back to computedDiffStats if activeDiffStats is undefined.
+  const activeDiffStats = diffPart ? diffPart.diffStats : thread.gitDiffStats;
 
   const diffInstances = useMemo(() => {
-    if (!thread.gitDiff || thread.gitDiff === "too-large") return [];
+    if (!activeDiff || activeDiff === "too-large") return [];
 
     try {
-      return parseMultiFileDiff(thread.gitDiff);
+      return parseMultiFileDiff(activeDiff);
     } catch (e) {
       console.error("Failed to create diff instances:", e);
       return [];
     }
-  }, [thread.gitDiff]);
+  }, [activeDiff]);
 
   const fileTree = useMemo(() => buildFileTree(diffInstances), [diffInstances]);
 
-  const [expanded, setExpanded] = useState<Record<number, boolean>>(() => {
-    return diffInstances.reduce(
-      (acc, file, idx) => {
-        const totalChanges = (file.additions ?? 0) + (file.deletions ?? 0);
-        const shouldExpandDiff =
-          diffInstances.length === 1 || totalChanges < 200;
-        acc[idx] = shouldExpandDiff;
-        return acc;
-      },
-      {} as Record<number, boolean>,
-    );
-  });
+  const [expanded, setExpanded] = useState<Record<number, boolean>>(() =>
+    computeDefaultExpanded(diffInstances),
+  );
 
   const [selectedFile, setSelectedFile] = useState<number | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
-    // Expand all folders by default
-    const folders = new Set<string>();
-    const collectFolders = (nodes: FileTreeNode[], parentPath = "") => {
-      nodes.forEach((node) => {
-        if (node.type === "folder") {
-          folders.add(node.path);
-          if (node.children) {
-            collectFolders(node.children, node.path);
-          }
-        }
-      });
-    };
-    collectFolders(fileTree);
-    return folders;
-  });
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() =>
+    collectAllFolders(fileTree),
+  );
+
+  // Reinitialise UI state when the diff content changes (e.g. switching
+  // between diff artifacts in the secondary panel). useState initialisers
+  // only run on mount, so subsequent diffInstances/fileTree changes would
+  // otherwise leave stale expansion/selection state.
+  useEffect(() => {
+    setExpanded(computeDefaultExpanded(diffInstances));
+    setSelectedFile(null);
+  }, [diffInstances]);
+
+  useEffect(() => {
+    setExpandedFolders(collectAllFolders(fileTree));
+  }, [fileTree]);
 
   const toggle = (idx: number) => {
     setExpanded((prev) => ({ ...prev, [idx]: !prev[idx] }));
@@ -817,14 +839,14 @@ export function GitDiffView({
   }, [diffInstances]);
 
   const headerStats = useMemo(() => {
-    const stats = thread.gitDiffStats;
+    const stats = activeDiffStats;
 
     return {
       files: stats?.files ?? computedDiffStats.files,
       additions: stats?.additions ?? computedDiffStats.additions,
       deletions: stats?.deletions ?? computedDiffStats.deletions,
     };
-  }, [thread.gitDiffStats, computedDiffStats]);
+  }, [activeDiffStats, computedDiffStats]);
 
   // Handle manual view mode change
   const handleViewModeChange = (mode: "split" | "unified") => {
@@ -832,7 +854,7 @@ export function GitDiffView({
     setManuallySelectedMode(true);
   };
 
-  if (!thread.gitDiff) {
+  if (!activeDiff) {
     return (
       <div ref={containerRef} className="flex flex-col h-full">
         <div className="border-b">
@@ -847,6 +869,7 @@ export function GitDiffView({
             additions={headerStats.additions}
             deletions={headerStats.deletions}
             isSmallScreen={isSmallScreen}
+            fileTreeId={fileTreeId}
           />
         </div>
         <div className="flex items-center justify-center text-muted-foreground/50 py-8">
@@ -871,6 +894,7 @@ export function GitDiffView({
             additions={headerStats.additions}
             deletions={headerStats.deletions}
             isSmallScreen={isSmallScreen}
+            fileTreeId={fileTreeId}
           />
         </div>
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -894,6 +918,7 @@ export function GitDiffView({
           additions={headerStats.additions}
           deletions={headerStats.deletions}
           isSmallScreen={isSmallScreen}
+          fileTreeId={fileTreeId}
         />
       </div>
       <div className="flex flex-1 overflow-hidden relative">
@@ -908,10 +933,12 @@ export function GitDiffView({
         {/* File tree sidebar */}
         {showFileTree && (
           <div
+            id={fileTreeId}
             className={cn(
               "w-64 border-r overflow-y-auto flex-shrink-0 bg-background",
               isSmallScreen && "absolute inset-y-0 left-0 z-40 shadow-lg",
             )}
+            aria-label="Changed files"
           >
             <div className="p-2">
               {fileTree.map((node) => (

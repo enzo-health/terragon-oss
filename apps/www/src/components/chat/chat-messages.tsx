@@ -6,7 +6,10 @@ import {
   ThreadInfoFull,
   ThreadStatus,
   UIMessage,
+  UIPart,
 } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
@@ -32,6 +35,8 @@ export const ChatMessages = memo(function ChatMessages({
   toolProps,
   redoDialogData,
   forkDialogData,
+  artifactDescriptors = [],
+  onOpenArtifact = () => {},
 }: {
   messages: UIMessage[];
   isAgentWorking: boolean;
@@ -73,6 +78,8 @@ export const ChatMessages = memo(function ChatMessages({
     agent: AIAgent;
     lastSelectedModel: AIModel | null;
   };
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
 }) {
   const messagePartProps = useMemo(
     () => ({
@@ -102,6 +109,15 @@ export const ChatMessages = memo(function ChatMessages({
     }
   }
 
+  // Thread-global plan occurrence map: keyed by UIPart reference -> its
+  // thread-global occurrence index for that plan text. This mirrors the
+  // `planTextOccurrences` counter in `getArtifactDescriptors` so the render
+  // side can match descriptors by occurrence index.
+  const planOccurrences = useMemo(
+    () => buildThreadPlanOccurrenceMap(messages),
+    [messages],
+  );
+
   return (
     <>
       {messages.map((message: UIMessage, index: number) => {
@@ -129,6 +145,9 @@ export const ChatMessages = memo(function ChatMessages({
             }
             redoDialogData={isFirstUserMessage ? redoDialogData : undefined}
             forkDialogData={isLatestAgentMessage ? forkDialogData : undefined}
+            artifactDescriptors={artifactDescriptors}
+            onOpenArtifact={onOpenArtifact}
+            planOccurrences={planOccurrences}
           />
         );
       })}
@@ -366,4 +385,43 @@ export function MessageScheduled({
       />
     </div>
   );
+}
+
+/**
+ * Builds a thread-global plan occurrence map across all messages.
+ * Mirrors the `planTextOccurrences` counter in `getArtifactDescriptors`
+ * so that the render side can match descriptors by occurrence index.
+ * Recurses into nested tool parts to match the descriptor traversal.
+ */
+function buildThreadPlanOccurrenceMap(
+  messages: UIMessage[],
+): Map<UIPart, number> {
+  const counts = new Map<string, number>();
+  const result = new Map<UIPart, number>();
+
+  function walkParts(parts: UIPart[]) {
+    for (const part of parts) {
+      if (part.type === "text") {
+        const planText = extractProposedPlanText(
+          (part as { text: string }).text,
+        );
+        if (planText) {
+          const count = counts.get(planText) ?? 0;
+          result.set(part, count);
+          counts.set(planText, count + 1);
+        }
+      } else if (part.type === "tool" && "parts" in part) {
+        // Recurse into nested tool output (e.g. Task/subagent)
+        walkParts((part as { parts: UIPart[] }).parts);
+      }
+    }
+  }
+
+  for (const message of messages) {
+    // Only count agent text parts -- mirrors getArtifactDescriptors which only
+    // creates plan descriptors for agent messages.
+    if (message.role !== "agent") continue;
+    walkParts(message.parts);
+  }
+  return result;
 }
