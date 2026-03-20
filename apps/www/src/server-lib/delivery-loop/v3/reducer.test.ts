@@ -25,7 +25,7 @@ function head(state: WorkflowHeadV3["state"]): WorkflowHeadV3 {
 }
 
 describe("reduceV3", () => {
-  it("planning bootstrap schedules implementation dispatch", () => {
+  it("planning bootstrap schedules implementation dispatch and plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduceV3({
       head: head("planning"),
@@ -34,13 +34,44 @@ describe("reduceV3", () => {
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(3);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
       payload: {
         kind: "dispatch_implementing",
         executionClass: "implementation_runtime",
       },
+    });
+    expect(result.effects[1]).toMatchObject({
+      kind: "create_plan_artifact",
+      payload: { kind: "create_plan_artifact" },
+    });
+    expect(result.effects[2]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
+  });
+
+  it("plan_completed emits create_plan_artifact effect", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: head("planning"),
+      event: { type: "plan_completed" },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.effects).toHaveLength(3);
+    expect(
+      result.effects.find((e) => e.kind === "create_plan_artifact"),
+    ).toMatchObject({
+      kind: "create_plan_artifact",
+      payload: { kind: "create_plan_artifact" },
+    });
+    expect(
+      result.effects.find((e) => e.kind === "publish_status"),
+    ).toMatchObject({
+      kind: "publish_status",
     });
   });
 
@@ -115,9 +146,9 @@ describe("reduceV3", () => {
 
     expect(result.head.state).toBe("implementing");
     expect(result.head.fixAttemptCount).toBe(3);
-    expect(result.effects).toHaveLength(1);
-    const [effect] = result.effects;
-    expect(effect?.kind).toBe("dispatch_implementing");
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
   it("review dispatch ack timeout uses infra retry lane", () => {
@@ -155,12 +186,13 @@ describe("reduceV3", () => {
     expect(result.head.state).toBe("implementing");
     expect(result.head.fixAttemptCount).toBe(1);
     expect(result.head.blockedReason).toBeNull();
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
     expect(result.effects[0]?.payload).toMatchObject({
       kind: "dispatch_implementing",
       executionClass: "implementation_runtime",
     });
+    expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
   it("implementing run_completed without activeRunId still resolves to gate_review", () => {
@@ -180,8 +212,9 @@ describe("reduceV3", () => {
 
     expect(result.head.state).toBe("gating_review");
     expect(result.head.activeRunId).toBeNull();
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.kind).toBe("dispatch_gate_review");
+    expect(result.effects[1]?.kind).toBe("publish_status");
     expect(result.head.headSha).toBe("sha-early");
   });
 
@@ -204,11 +237,12 @@ describe("reduceV3", () => {
     expect(result.head.state).toBe("implementing");
     expect(result.head.fixAttemptCount).toBe(0);
     expect(result.head.infraRetryCount).toBe(1);
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.payload).toMatchObject({
       kind: "dispatch_implementing",
       executionClass: "implementation_runtime_fallback",
     });
+    expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
   it("infra run_failed from planning/implementing falls back to secondary runtime", () => {

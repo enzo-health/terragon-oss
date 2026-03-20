@@ -1,6 +1,18 @@
+import { and, eq, ne, desc } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type { DB } from "@terragon/shared/db";
+import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryEffectLedgerV3Row } from "@terragon/shared/db/types";
 import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
+import {
+  createPlanArtifact,
+  replacePlanTasksForArtifact,
+} from "@terragon/shared/delivery-loop/store/artifact-store";
+import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import {
+  createDispatchIntent as createDbDispatchIntent,
+  markDispatchIntentDispatched,
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { addMilliseconds } from "date-fns";
 import { parseEffectPayloadV3 } from "./contracts";
 import { appendEventAndAdvanceV3 } from "./kernel";
@@ -10,8 +22,284 @@ import {
   markEffectFailedV3,
   markEffectSucceededV3,
 } from "./store";
+import {
+  upsertDeliveryCanonicalStatusComment,
+  upsertDeliveryCanonicalCheckSummary,
+  classifyDeliveryPublicationFailure,
+} from "@/server-lib/delivery-loop/publication";
+import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
+import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
+import type { PlanSpecSource } from "@/server-lib/delivery-loop/promote-plan";
+import {
+  createDispatchIntent,
+  type CreateDispatchIntentParams,
+} from "@/server-lib/delivery-loop/dispatch-intent";
+import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 
 const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
+
+/**
+ * Execute the `dispatch_gate_review` effect natively — resolves the workflow
+ * context, creates a dispatch intent for the gate sandbox run, triggers the
+ * follow-up queue, and emits `dispatch_sent` into the v3 kernel.
+ *
+ * This replaces the v2 work-queue bridge, keeping the full lifecycle within
+ * the v3 effect ledger.
+ */
+async function processGateReviewEffect(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  leaseOwner: string;
+  gate: string;
+  now: Date;
+}): Promise<void> {
+  const workflowId = params.effect.workflowId;
+
+  const workflow = await getWorkflow({ db: params.db, workflowId });
+  if (!workflow) {
+    await markEffectSucceededV3({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+    });
+    return;
+  }
+
+  // Resolve threadChat (prefer active, fall back to most-recent)
+  const threadChat =
+    (await params.db.query.threadChat.findFirst({
+      where: and(
+        eq(schema.threadChat.threadId, workflow.threadId),
+        ne(schema.threadChat.status, "complete"),
+      ),
+      orderBy: [desc(schema.threadChat.createdAt)],
+    })) ??
+    (await params.db.query.threadChat.findFirst({
+      where: eq(schema.threadChat.threadId, workflow.threadId),
+      orderBy: [desc(schema.threadChat.createdAt)],
+    }));
+
+  if (!threadChat) {
+    await markEffectFailedV3({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+      errorCode: "thread_chat_not_found",
+      errorMessage: `No threadChat for threadId ${workflow.threadId}`,
+      retryAt: addMilliseconds(params.now, 10_000),
+    });
+    return;
+  }
+
+  const runId = randomUUID();
+  const targetPhase = `${params.gate}_gate` as const;
+
+  // Create Redis dispatch intent
+  const intentParams: CreateDispatchIntentParams = {
+    loopId: workflowId,
+    threadId: workflow.threadId,
+    threadChatId: threadChat.id,
+    targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
+    selectedAgent: "claudeCode",
+    executionClass: "gate_runtime",
+    dispatchMechanism: "self_dispatch",
+    runId,
+    maxRetries: 3,
+    gate: params.gate,
+    headSha: workflow.headSha ?? undefined,
+  };
+
+  try {
+    await createDispatchIntent(intentParams);
+  } catch (intentErr) {
+    if (
+      intentErr instanceof Error &&
+      intentErr.message.includes("active intent")
+    ) {
+      // Prior attempt already created the intent — complete silently
+      await markEffectSucceededV3({
+        db: params.db,
+        effectId: params.effect.id,
+        leaseOwner: params.leaseOwner,
+        leaseEpoch: params.effect.leaseEpoch,
+      });
+      return;
+    }
+    throw intentErr;
+  }
+
+  // Persist durable dispatch intent in DB
+  try {
+    await createDbDispatchIntent(params.db, {
+      loopId: workflowId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      runId,
+      targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
+      selectedAgent: "claudeCode",
+      executionClass: "gate_runtime",
+      dispatchMechanism: "self_dispatch",
+    });
+    await markDispatchIntentDispatched(params.db, runId);
+  } catch {
+    // Non-fatal: Redis intent + cron sweep handle recovery
+  }
+
+  // Queue a "Continue gate check" message for the follow-up queue
+  const { updateThreadChat } = await import("@terragon/shared/model/threads");
+  await updateThreadChat({
+    db: params.db,
+    userId: workflow.userId,
+    threadId: workflow.threadId,
+    threadChatId: threadChat.id,
+    updates: {
+      appendQueuedMessages: [
+        {
+          type: "user" as const,
+          model: null,
+          timestamp: new Date().toISOString(),
+          parts: [{ type: "text" as const, text: "Continue gate check." }],
+        },
+      ],
+    },
+  });
+
+  // Trigger the follow-up queue to launch the sandbox run
+  let dispatchLaunched = false;
+  try {
+    const { maybeProcessFollowUpQueue } = await import(
+      "@/server-lib/process-follow-up-queue"
+    );
+    const followUpResult = await maybeProcessFollowUpQueue({
+      userId: workflow.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+    });
+    dispatchLaunched = followUpResult.dispatchLaunched;
+  } catch {
+    // Non-fatal: cron will pick up pending follow-ups
+  }
+
+  // Emit dispatch_sent into v3 kernel if a run was launched
+  if (dispatchLaunched) {
+    await appendEventAndAdvanceV3({
+      db: params.db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `dispatch-sent:${runId}`,
+      event: {
+        type: "dispatch_sent",
+        runId,
+        ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
+      },
+    });
+  }
+
+  await markEffectSucceededV3({
+    db: params.db,
+    effectId: params.effect.id,
+    leaseOwner: params.leaseOwner,
+    leaseEpoch: params.effect.leaseEpoch,
+  });
+}
+
+const STATE_LABELS: Record<string, string> = {
+  planning: "Planning phase in progress",
+  implementing: "Implementation in progress",
+  gating_review: "Waiting on review gate",
+  gating_ci: "Waiting on CI gate",
+  awaiting_pr: "Awaiting PR review",
+  awaiting_manual_fix: "Awaiting manual fix from human",
+  awaiting_operator_action: "Awaiting operator action",
+  done: "Delivery loop completed",
+  stopped: "Delivery loop stopped",
+  terminated: "Delivery loop terminated",
+};
+
+function formatStatusBodyV3(state: string): string {
+  const label = STATE_LABELS[state] ?? `State: ${state}`;
+  return `Terragon Delivery Loop status update.\n\n- Current state: \`${state}\`\n- ${label}`;
+}
+
+async function processPublishStatusEffect(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  leaseOwner: string;
+  now: Date;
+}): Promise<void> {
+  const workflow = await getWorkflow({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (!workflow || typeof workflow.prNumber !== "number") {
+    await markEffectSucceededV3({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+    });
+    return;
+  }
+
+  const head = await getWorkflowHeadV3({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  const currentState = head?.state ?? workflow.kind;
+  const body = formatStatusBodyV3(currentState);
+  const isTerminal =
+    currentState === "done" ||
+    currentState === "stopped" ||
+    currentState === "terminated";
+
+  try {
+    await upsertDeliveryCanonicalStatusComment({
+      db: params.db,
+      workflowId: workflow.id,
+      repoFullName: workflow.repoFullName,
+      prNumber: workflow.prNumber,
+      body,
+    });
+    await upsertDeliveryCanonicalCheckSummary({
+      db: params.db,
+      workflowId: workflow.id,
+      payload: {
+        repoFullName: workflow.repoFullName,
+        prNumber: workflow.prNumber,
+        title: "Terragon Delivery Loop",
+        summary: body,
+        status: isTerminal ? "completed" : "in_progress",
+        conclusion:
+          currentState === "done"
+            ? "success"
+            : currentState === "stopped" || currentState === "terminated"
+              ? "cancelled"
+              : undefined,
+      },
+    });
+  } catch (pubErr) {
+    const classified = classifyDeliveryPublicationFailure(pubErr);
+    if (!classified.retriable) {
+      await markEffectSucceededV3({
+        db: params.db,
+        effectId: params.effect.id,
+        leaseOwner: params.leaseOwner,
+        leaseEpoch: params.effect.leaseEpoch,
+      });
+      return;
+    }
+    throw pubErr;
+  }
+
+  await markEffectSucceededV3({
+    db: params.db,
+    effectId: params.effect.id,
+    leaseOwner: params.leaseOwner,
+    leaseEpoch: params.effect.leaseEpoch,
+  });
+}
 
 async function processSingleEffect(params: {
   db: DB;
@@ -56,18 +344,80 @@ async function processSingleEffect(params: {
     }
 
     if (payload.kind === "dispatch_gate_review") {
-      await enqueueWorkItem({
+      await processGateReviewEffect({
+        db: params.db,
+        effect: params.effect,
+        leaseOwner: params.leaseOwner,
+        gate: payload.gate,
+        now: params.now,
+      });
+      return;
+    }
+
+    if (payload.kind === "publish_status") {
+      await processPublishStatusEffect({
+        db: params.db,
+        effect: params.effect,
+        leaseOwner: params.leaseOwner,
+        now: params.now,
+      });
+      return;
+    }
+
+    if (payload.kind === "create_plan_artifact") {
+      const head = await getWorkflowHeadV3({
         db: params.db,
         workflowId: params.effect.workflowId,
-        correlationId: `v3:dispatch:review:${params.effect.id}`,
-        kind: "dispatch",
-        payloadJson: {
-          executionClass: "gate_runtime",
-          workflowId: params.effect.workflowId,
-          gate: payload.gate,
-        },
-        maxAttempts: DISPATCH_WORK_ITEM_MAX_ATTEMPTS,
       });
+      if (!head) {
+        await markEffectSucceededV3({
+          db: params.db,
+          effectId: params.effect.id,
+          leaseOwner: params.leaseOwner,
+          leaseEpoch: params.effect.leaseEpoch,
+        });
+        return;
+      }
+
+      const threadChat = await params.db.query.threadChat.findFirst({
+        where: eq(schema.threadChat.threadId, head.threadId),
+        columns: { messages: true },
+        orderBy: [desc(schema.threadChat.createdAt)],
+      });
+
+      if (threadChat?.messages) {
+        const extracted = extractLatestPlanText(
+          threadChat.messages as Parameters<typeof extractLatestPlanText>[0],
+        );
+        if (extracted) {
+          const parseResult = parsePlanSpec(extracted.text);
+          if (parseResult.ok) {
+            const planPayload = {
+              planText: parseResult.plan.planText,
+              tasks: parseResult.plan.tasks,
+              source: (extracted.source as PlanSpecSource) ?? "system",
+            };
+            const artifact = await createPlanArtifact({
+              db: params.db,
+              loopId: params.effect.workflowId,
+              loopVersion: head.version,
+              status: "accepted",
+              generatedBy: "agent",
+              workflowId: params.effect.workflowId,
+              payload: planPayload,
+              now: params.now,
+            });
+            await replacePlanTasksForArtifact({
+              db: params.db,
+              loopId: params.effect.workflowId,
+              artifactId: artifact.id,
+              tasks: parseResult.plan.tasks,
+              now: params.now,
+            });
+          }
+        }
+      }
+
       await markEffectSucceededV3({
         db: params.db,
         effectId: params.effect.id,

@@ -65,6 +65,8 @@ export async function appendEventAndAdvanceV3(params: {
   idempotencyKey: string;
   event: LoopEventV3;
   now?: Date;
+  /** When true, auto-injects bypass events for gating states (edge-triggered). */
+  skipGates?: boolean;
 }): Promise<{
   inserted: boolean;
   transitioned: boolean;
@@ -74,7 +76,7 @@ export async function appendEventAndAdvanceV3(params: {
 }> {
   const now = params.now ?? new Date();
 
-  return params.db.transaction(async (tx) => {
+  const result = await params.db.transaction(async (tx) => {
     const head = await ensureWorkflowHeadV3({
       db: tx,
       workflowId: params.workflowId,
@@ -165,4 +167,33 @@ export async function appendEventAndAdvanceV3(params: {
       stateAfter: reduced.head.state,
     };
   });
+
+  // Edge-triggered gate bypass: if we just entered a gating state and
+  // skipGates is on, immediately inject the corresponding bypass event.
+  if (params.skipGates && result.transitioned) {
+    const bypassEvent = gateBypassEvent(result.stateAfter);
+    if (bypassEvent) {
+      await appendEventAndAdvanceV3({
+        db: params.db,
+        workflowId: params.workflowId,
+        source: "system",
+        idempotencyKey: `${params.idempotencyKey}:gate-bypass:${result.stateAfter}`,
+        event: bypassEvent,
+        now: params.now,
+        skipGates: true,
+      });
+    }
+  }
+
+  return result;
+}
+
+function gateBypassEvent(state: string | null): LoopEventV3 | null {
+  if (state === "gating_review") {
+    return { type: "gate_review_passed" };
+  }
+  if (state === "gating_ci") {
+    return { type: "gate_ci_passed" };
+  }
+  return null;
 }

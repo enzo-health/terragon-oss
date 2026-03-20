@@ -84,7 +84,9 @@ export type DeliverySignalSourceV3 =
 export type DeliveryEffectKindV3 =
   | "dispatch_implementing"
   | "dispatch_gate_review"
-  | "ack_timeout_check";
+  | "ack_timeout_check"
+  | "create_plan_artifact"
+  | "publish_status";
 
 export type DeliveryEffectStatusV3 =
   | "planned"

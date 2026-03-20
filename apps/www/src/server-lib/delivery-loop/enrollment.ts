@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
-import { enrollV2Workflow } from "./coordinator/v2-enrollment";
+import { enrollV3Workflow } from "./v3/enrollment";
 import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 export function isDeliveryLoopEnrollmentAllowedForThread({
@@ -43,8 +43,7 @@ export async function ensureDeliveryLoopEnrollmentForThreadIfEnabled({
   threadId: string;
   planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
-  // V2-only enrollment: creates the v2 workflow as a side-effect
-  await enrollV2Workflow({
+  await enrollV3Workflow({
     db,
     threadId,
     userId,
@@ -68,8 +67,7 @@ export async function ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
   threadId: string;
   planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
-  // V2-only enrollment with PR number set directly on workflow
-  const v2Result = await enrollV2Workflow({
+  const result = await enrollV3Workflow({
     db,
     threadId,
     userId,
@@ -77,10 +75,9 @@ export async function ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
     planApprovalPolicy,
   });
 
-  // Update the v2 workflow with the PR number
   await updateWorkflowPR({
     db,
-    workflowId: v2Result.workflowId,
+    workflowId: result.workflowId,
     prNumber,
   });
 

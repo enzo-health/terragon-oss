@@ -209,20 +209,42 @@ function withVersion(head: WorkflowHeadV3, now: Date): WorkflowHeadV3 {
   };
 }
 
+function publishStatusEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
+  return {
+    kind: "publish_status",
+    effectKey: `${head.workflowId}:${head.version + 1}:publish_status`,
+    dueAt: now,
+    maxAttempts: 3,
+    payload: { kind: "publish_status" },
+  };
+}
+
+function computeRetryBackoffMs(attempt: number): number {
+  const BASE_MS = 1_000;
+  const MAX_MS = 30_000;
+  const exponential = Math.min(MAX_MS, BASE_MS * Math.pow(2, attempt));
+  return Math.floor(Math.random() * exponential);
+}
+
 function dispatchImplementingEffect(
   head: WorkflowHeadV3,
   now: Date,
   lane: "agent" | "infra",
   infraRetryCount: number,
+  retryAttempt?: number,
 ): EffectSpecV3 {
   const executionClass =
     lane === "infra" && infraRetryCount > 0
       ? "implementation_runtime_fallback"
       : "implementation_runtime";
+  const dueAt =
+    retryAttempt != null
+      ? new Date(now.getTime() + computeRetryBackoffMs(retryAttempt))
+      : now;
   return {
     kind: "dispatch_implementing",
     effectKey: `${head.workflowId}:${head.version + 1}:dispatch_implementing`,
-    dueAt: now,
+    dueAt,
     payload: { kind: "dispatch_implementing", executionClass },
   };
 }
@@ -261,42 +283,46 @@ function retryToImplementing(params: {
         };
 
   if (laneUpdate.count >= laneUpdate.max) {
+    const blockedHead = {
+      ...next,
+      state: laneUpdate.blockedState,
+      activeGate: null,
+      activeRunId: null,
+      blockedReason:
+        params.reason ??
+        (params.lane === "infra"
+          ? "Infrastructure retry budget exhausted"
+          : "Fix attempt budget exhausted"),
+      fixAttemptCount: laneUpdate.fixAttemptCount,
+      infraRetryCount: laneUpdate.infraRetryCount,
+    };
     return {
-      head: {
-        ...next,
-        state: laneUpdate.blockedState,
-        activeGate: null,
-        activeRunId: null,
-        blockedReason:
-          params.reason ??
-          (params.lane === "infra"
-            ? "Infrastructure retry budget exhausted"
-            : "Fix attempt budget exhausted"),
-        fixAttemptCount: laneUpdate.fixAttemptCount,
-        infraRetryCount: laneUpdate.infraRetryCount,
-      },
-      effects: [],
+      head: blockedHead,
+      effects: [publishStatusEffect(next, params.now)],
       invariantActions: [],
     };
   }
 
+  const retryHead = {
+    ...next,
+    state: "implementing" as const,
+    activeGate: null,
+    activeRunId: null,
+    blockedReason: null,
+    fixAttemptCount: laneUpdate.fixAttemptCount,
+    infraRetryCount: laneUpdate.infraRetryCount,
+  };
   return {
-    head: {
-      ...next,
-      state: "implementing",
-      activeGate: null,
-      activeRunId: null,
-      blockedReason: null,
-      fixAttemptCount: laneUpdate.fixAttemptCount,
-      infraRetryCount: laneUpdate.infraRetryCount,
-    },
+    head: retryHead,
     effects: [
       dispatchImplementingEffect(
         next,
         params.now,
         params.lane,
         laneUpdate.infraRetryCount,
+        laneUpdate.count,
       ),
+      publishStatusEffect(next, params.now),
     ],
     invariantActions: [],
   };
@@ -325,7 +351,7 @@ export function reduceV3(params: {
     const next = withVersion(head, now);
     result = {
       head: { ...next, state: "stopped", blockedReason: "Stopped by user" },
-      effects: [],
+      effects: [publishStatusEffect(next, now)],
       invariantActions: [],
     };
   } else if (event.type === "pr_closed") {
@@ -336,7 +362,7 @@ export function reduceV3(params: {
         state: "terminated",
         blockedReason: event.merged ? "PR merged" : "PR closed",
       },
-      effects: [],
+      effects: [publishStatusEffect(next, now)],
       invariantActions: [],
     };
   } else
@@ -391,6 +417,13 @@ export function reduceV3(params: {
               "agent",
               next.infraRetryCount,
             ),
+            {
+              kind: "create_plan_artifact",
+              effectKey: `${head.workflowId}:${next.version}:create_plan_artifact`,
+              dueAt: now,
+              payload: { kind: "create_plan_artifact" },
+            },
+            publishStatusEffect(next, now),
           ],
           invariantActions: [],
         };
@@ -463,7 +496,10 @@ export function reduceV3(params: {
               activeRunId: null,
               blockedReason: null,
             },
-            effects: [dispatchReviewEffect(next, now)],
+            effects: [
+              dispatchReviewEffect(next, now),
+              publishStatusEffect(next, now),
+            ],
             invariantActions: [],
           };
           break;
@@ -571,7 +607,7 @@ export function reduceV3(params: {
               activeRunId: null,
               blockedReason: null,
             },
-            effects: [],
+            effects: [publishStatusEffect(next, now)],
             invariantActions: [],
           };
           break;
@@ -659,7 +695,7 @@ export function reduceV3(params: {
               activeRunId: null,
               blockedReason: null,
             },
-            effects: [],
+            effects: [publishStatusEffect(next, now)],
             invariantActions: [],
           };
           break;
@@ -714,6 +750,7 @@ export function reduceV3(params: {
               "agent",
               next.infraRetryCount,
             ),
+            publishStatusEffect(next, now),
           ],
           invariantActions: [],
         };

@@ -65,7 +65,9 @@ export type EffectPayloadV3 =
       kind: "ack_timeout_check";
       runId: string;
       workflowVersion: number;
-    };
+    }
+  | { kind: "create_plan_artifact" }
+  | { kind: "publish_status" };
 
 export type EffectSpecV3 = {
   kind: EffectKindV3;

@@ -367,13 +367,14 @@ describe("v3 durable delivery loop", () => {
     const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
       where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
     });
-    expect(effectRows).toHaveLength(1);
-    const [effectRow] = effectRows;
-    expect(effectRow).toBeDefined();
-    if (!effectRow) {
-      throw new Error("Expected effect row after worker progression");
-    }
-    expect(effectRow.effectKind).toBe("dispatch_implementing");
+    expect(effectRows).toHaveLength(3);
+    expect(effectRows.map((r) => r.effectKind)).toContain(
+      "dispatch_implementing",
+    );
+    expect(effectRows.map((r) => r.effectKind)).toContain(
+      "create_plan_artifact",
+    );
+    expect(effectRows.map((r) => r.effectKind)).toContain("publish_status");
   });
 
   it("keeps duplicate stream deliveries idempotent under concurrent workers", async () => {
@@ -935,7 +936,7 @@ describe("v3 durable delivery loop", () => {
         where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
       },
     );
-    expect(effectsAfterRecovery).toHaveLength(1);
+    expect(effectsAfterRecovery).toHaveLength(3);
 
     const recoveredHead = await db.query.deliveryWorkflowHeadV3.findFirst({
       where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
@@ -1021,7 +1022,7 @@ describe("v3 durable delivery loop", () => {
     expect(
       effectKinds.filter((kind) => kind === "dispatch_gate_review"),
     ).toHaveLength(1);
-    expect(effects).toHaveLength(3);
+    expect(effects).toHaveLength(6);
   });
 
   it("ignores out-of-order stale run signal once a newer dispatch is active", async () => {

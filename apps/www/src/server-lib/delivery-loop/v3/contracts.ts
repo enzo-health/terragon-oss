@@ -344,6 +344,9 @@ export function serializeEffectPayloadV3(
         runId: payload.runId,
         workflowVersion: payload.workflowVersion,
       };
+    case "create_plan_artifact":
+    case "publish_status":
+      return { kind: payload.kind };
     default:
       throw new Error(
         `Unhandled effect kind ${(payload as { kind: string }).kind}`,
@@ -380,6 +383,12 @@ export function parseEffectPayloadV3(payload: unknown): EffectPayloadV3 | null {
       runId: payload.runId,
       workflowVersion: payload.workflowVersion,
     };
+  }
+  if (payload.kind === "create_plan_artifact") {
+    return { kind: "create_plan_artifact" };
+  }
+  if (payload.kind === "publish_status") {
+    return { kind: "publish_status" };
   }
   return null;
 }

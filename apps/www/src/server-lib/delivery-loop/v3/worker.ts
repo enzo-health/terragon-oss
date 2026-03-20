@@ -526,7 +526,9 @@ function isDeliveryEffectKind(
   return (
     kind === "dispatch_implementing" ||
     kind === "dispatch_gate_review" ||
-    kind === "ack_timeout_check"
+    kind === "ack_timeout_check" ||
+    kind === "create_plan_artifact" ||
+    kind === "publish_status"
   );
 }
 
