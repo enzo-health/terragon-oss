@@ -1038,7 +1038,8 @@ export class CodexAppServerManager {
       if (!trimmed) {
         return;
       }
-      this.logger.warn("codex app-server stderr", {
+      const level = trimmed.includes("failed to load skill") ? "debug" : "warn";
+      this.logger[level]("codex app-server stderr", {
         line: trimmed,
       });
     });
