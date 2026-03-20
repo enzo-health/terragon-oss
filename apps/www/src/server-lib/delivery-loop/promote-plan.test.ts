@@ -104,7 +104,7 @@ describe("plan deduplication (via approve mode)", () => {
     const mockFindMany = vi.fn().mockResolvedValue([existingArtifact]);
     const db = {
       query: {
-        sdlcPhaseArtifact: { findMany: mockFindMany },
+        deliveryPhaseArtifact: { findMany: mockFindMany },
       },
     } as any;
 
@@ -152,7 +152,7 @@ describe("plan deduplication (via approve mode)", () => {
 
     const db = {
       query: {
-        sdlcPhaseArtifact: {
+        deliveryPhaseArtifact: {
           findMany: vi.fn().mockResolvedValue([existingArtifact]),
         },
       },
@@ -195,7 +195,7 @@ describe("plan deduplication (via approve mode)", () => {
 
     const db = {
       query: {
-        sdlcPhaseArtifact: {
+        deliveryPhaseArtifact: {
           findMany: vi
             .fn()
             .mockResolvedValue([generatedArtifact, approvedArtifact]),
@@ -260,7 +260,7 @@ describe("plan deduplication (via approve mode)", () => {
 
     const db = {
       query: {
-        sdlcPhaseArtifact: {
+        deliveryPhaseArtifact: {
           findMany: vi.fn().mockResolvedValue([existingArtifact]),
         },
       },
@@ -305,7 +305,7 @@ describe("plan deduplication (via approve mode)", () => {
 
     const db = {
       query: {
-        sdlcPhaseArtifact: {
+        deliveryPhaseArtifact: {
           findMany: vi.fn().mockResolvedValue([existingArtifact]),
         },
       },
@@ -470,7 +470,7 @@ describe("promotePlanToImplementing", () => {
 
       const db = {
         query: {
-          sdlcPhaseArtifact: {
+          deliveryPhaseArtifact: {
             findMany: vi.fn().mockResolvedValue([existingArtifact]),
           },
         },
@@ -505,7 +505,7 @@ describe("promotePlanToImplementing", () => {
 
       const db = {
         query: {
-          sdlcPhaseArtifact: {
+          deliveryPhaseArtifact: {
             findMany: vi.fn().mockResolvedValue([existingArtifact]),
           },
         },
@@ -544,7 +544,7 @@ describe("promotePlanToImplementing", () => {
 
       const db = {
         query: {
-          sdlcPhaseArtifact: { findMany: findManyMock },
+          deliveryPhaseArtifact: { findMany: findManyMock },
         },
       } as any;
 
@@ -574,7 +574,7 @@ describe("promotePlanToImplementing", () => {
 
       const db = {
         query: {
-          sdlcPhaseArtifact: { findMany: findManyMock },
+          deliveryPhaseArtifact: { findMany: findManyMock },
         },
       } as any;
 
