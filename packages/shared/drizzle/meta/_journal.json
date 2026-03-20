@@ -127,6 +127,13 @@
       "when": 1773959498694,
       "tag": "0017_silly_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1774070400000,
+      "tag": "0018_rename_sdlc_to_delivery",
+      "breakpoints": true
     }
   ]
 }
