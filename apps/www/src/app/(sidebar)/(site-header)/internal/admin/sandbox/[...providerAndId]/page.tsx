@@ -32,6 +32,13 @@ export default async function AdminSandboxIdPage({
             sandboxId={providerAndId[1]!}
           />
         );
+      case "docker":
+        return (
+          <AdminSandboxContent
+            sandboxProvider="docker"
+            sandboxId={providerAndId[1]!}
+          />
+        );
       default:
         throw new Error(`Invalid provider ${providerAndId[0]}`);
     }
