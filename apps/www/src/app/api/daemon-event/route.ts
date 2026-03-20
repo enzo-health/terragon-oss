@@ -1002,7 +1002,7 @@ export async function POST(request: Request) {
       if (daemonRunStatusFromMessages === "completed") {
         const completedEvent =
           headAfterAck?.state === "planning"
-            ? ({ type: "plan_completed" } as const)
+            ? ({ type: "planning_run_completed" } as const)
             : headAfterAck?.state === "gating_review"
               ? ({
                   type: "gate_review_passed",

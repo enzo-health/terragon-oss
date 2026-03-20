@@ -25,7 +25,7 @@ function head(state: WorkflowHeadV3["state"]): WorkflowHeadV3 {
 }
 
 describe("reduceV3", () => {
-  it("planning bootstrap schedules implementation dispatch and plan artifact", () => {
+  it("planning bootstrap schedules implementation dispatch without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduceV3({
       head: head("planning"),
@@ -34,7 +34,7 @@ describe("reduceV3", () => {
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.effects).toHaveLength(3);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
       payload: {
@@ -43,16 +43,12 @@ describe("reduceV3", () => {
       },
     });
     expect(result.effects[1]).toMatchObject({
-      kind: "create_plan_artifact",
-      payload: { kind: "create_plan_artifact" },
-    });
-    expect(result.effects[2]).toMatchObject({
       kind: "publish_status",
       payload: { kind: "publish_status" },
     });
   });
 
-  it("plan_completed emits create_plan_artifact effect", () => {
+  it("plan_completed transitions to implementing without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduceV3({
       head: head("planning"),
@@ -61,18 +57,49 @@ describe("reduceV3", () => {
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.effects).toHaveLength(3);
+    expect(result.effects).toHaveLength(2);
     expect(
-      result.effects.find((e) => e.kind === "create_plan_artifact"),
+      result.effects.find((e) => e.kind === "dispatch_implementing"),
     ).toMatchObject({
-      kind: "create_plan_artifact",
-      payload: { kind: "create_plan_artifact" },
+      kind: "dispatch_implementing",
     });
     expect(
       result.effects.find((e) => e.kind === "publish_status"),
     ).toMatchObject({
       kind: "publish_status",
     });
+  });
+
+  it("planning_run_completed stays in planning and emits create_plan_artifact", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: head("planning"),
+      event: { type: "planning_run_completed" },
+      now,
+    });
+
+    expect(result.head.state).toBe("planning");
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]).toMatchObject({
+      kind: "create_plan_artifact",
+      payload: { kind: "create_plan_artifact" },
+    });
+    expect(result.effects[1]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
+  });
+
+  it("planning_run_completed is idempotent (no-op from non-planning state)", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: head("implementing"),
+      event: { type: "planning_run_completed" },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.effects).toHaveLength(0);
   });
 
   it("planning dispatch_sent implicitly enters implementing and arms ack timeout", () => {

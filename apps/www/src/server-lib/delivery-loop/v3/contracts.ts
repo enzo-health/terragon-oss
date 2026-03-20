@@ -94,6 +94,7 @@ export function serializeLoopEventV3(
 ): Record<string, unknown> {
   switch (event.type) {
     case "bootstrap":
+    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
@@ -169,6 +170,7 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
 
   switch (payload.type) {
     case "bootstrap":
+    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":

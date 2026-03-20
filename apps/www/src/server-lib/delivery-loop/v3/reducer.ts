@@ -406,6 +406,28 @@ export function reduceV3(params: {
           };
           break;
         }
+        if (event.type === "planning_run_completed") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "planning",
+              activeGate: null,
+              blockedReason: null,
+            },
+            effects: [
+              {
+                kind: "create_plan_artifact",
+                effectKey: `${head.workflowId}:${next.version}:create_plan_artifact`,
+                dueAt: now,
+                payload: { kind: "create_plan_artifact" },
+              },
+              publishStatusEffect(next, now),
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
         if (event.type !== "plan_completed" && event.type !== "bootstrap") {
           result = {
             head,
@@ -429,12 +451,6 @@ export function reduceV3(params: {
               "agent",
               next.infraRetryCount,
             ),
-            {
-              kind: "create_plan_artifact",
-              effectKey: `${head.workflowId}:${next.version}:create_plan_artifact`,
-              dueAt: now,
-              payload: { kind: "create_plan_artifact" },
-            },
             publishStatusEffect(next, now),
           ],
           invariantActions: [],

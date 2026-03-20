@@ -554,6 +554,7 @@ async function processSingleEffect(params: {
         orderBy: [desc(schema.threadChat.createdAt)],
       });
 
+      let artifactCreated = false;
       if (threadChat?.messages) {
         const extracted = extractLatestPlanText(
           threadChat.messages as Parameters<typeof extractLatestPlanText>[0],
@@ -583,6 +584,7 @@ async function processSingleEffect(params: {
               tasks: parseResult.plan.tasks,
               now: params.now,
             });
+            artifactCreated = true;
           }
         }
       }
@@ -593,6 +595,25 @@ async function processSingleEffect(params: {
         leaseOwner: params.leaseOwner,
         leaseEpoch: params.effect.leaseEpoch,
       });
+
+      // Auto-approve plan if policy allows — fire plan_completed to
+      // transition planning → implementing.  When human approval is
+      // required the approve-plan UI fires plan_completed instead.
+      const workflow = await getWorkflow({
+        db: params.db,
+        workflowId: params.effect.workflowId,
+      });
+      const approvalPolicy = workflow?.planApprovalPolicy ?? "auto";
+      if (approvalPolicy === "auto" || !artifactCreated) {
+        await appendEventAndAdvanceV3({
+          db: params.db,
+          workflowId: params.effect.workflowId,
+          source: "system",
+          idempotencyKey: `plan-auto-approve:${params.effect.workflowId}:${params.effect.id}`,
+          event: { type: "plan_completed" },
+        });
+      }
+
       return;
     }
 
