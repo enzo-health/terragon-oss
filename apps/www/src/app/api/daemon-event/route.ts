@@ -1008,11 +1008,17 @@ export async function POST(request: Request) {
                   type: "gate_review_passed",
                   runId: envelopeV2.runId,
                 } as const)
-              : ({
-                  type: "run_completed",
-                  runId: envelopeV2.runId,
-                  headSha: daemonHeadShaAtCompletion,
-                } as const);
+              : headAfterAck?.state === "gating_ci"
+                ? ({
+                    type: "gate_ci_passed",
+                    runId: envelopeV2.runId,
+                    headSha: daemonHeadShaAtCompletion,
+                  } as const)
+                : ({
+                    type: "run_completed",
+                    runId: envelopeV2.runId,
+                    headSha: daemonHeadShaAtCompletion,
+                  } as const);
         await appendEventAndAdvanceV3({
           db,
           workflowId: effectiveLoopId,
@@ -1028,12 +1034,20 @@ export async function POST(request: Request) {
                 runId: envelopeV2.runId,
                 reason: daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
               } as const)
-            : ({
-                type: "run_failed",
-                runId: envelopeV2.runId,
-                message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
-                category: daemonTerminalErrorInfo.errorCategory,
-              } as const);
+            : headAfterAck?.state === "gating_ci"
+              ? ({
+                  type: "gate_ci_failed",
+                  runId: envelopeV2.runId,
+                  headSha: daemonHeadShaAtCompletion,
+                  reason:
+                    daemonTerminalErrorInfo.errorMessage ?? "CI gate blocked",
+                } as const)
+              : ({
+                  type: "run_failed",
+                  runId: envelopeV2.runId,
+                  message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
+                  category: daemonTerminalErrorInfo.errorCategory,
+                } as const);
         await appendEventAndAdvanceV3({
           db,
           workflowId: effectiveLoopId,
