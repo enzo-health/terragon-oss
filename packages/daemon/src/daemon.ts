@@ -1163,6 +1163,7 @@ export class TerragonDaemon {
       model: input.model,
       useCredits: !!input.useCredits,
       daemonToken: input.token,
+      transport: "websocket",
     });
   }
 
@@ -1262,6 +1263,7 @@ export class TerragonDaemon {
 
     let removeNotificationHandler: (() => void) | null = null;
     let processHealthInterval: NodeJS.Timeout | null = null;
+    const seenUnknownTypes = new Set<string>();
 
     try {
       // Update MCP config with current env vars so the MCP server subprocess
@@ -1327,6 +1329,23 @@ export class TerragonDaemon {
 
           const threadEvent = extractThreadEvent(notification);
           if (!threadEvent) {
+            if (notification.method?.includes("item")) {
+              const itemType = (
+                notification.params?.item as Record<string, unknown> | undefined
+              )?.type;
+              const warnKey = `${notification.method}:${itemType}`;
+              if (!seenUnknownTypes.has(warnKey)) {
+                seenUnknownTypes.add(warnKey);
+                this.runtime.logger.warn(
+                  "Unknown Codex notification, skipping",
+                  {
+                    method: notification.method,
+                    itemType,
+                    threadId: input.threadId,
+                  },
+                );
+              }
+            }
             return;
           }
 
@@ -1387,6 +1406,17 @@ export class TerragonDaemon {
               input,
               manager,
             });
+          }
+
+          // Intermediate flush for codex: coalesce rapid-fire completions
+          // at 250ms instead of the default 1000ms messageFlushDelay
+          if (threadEvent.type === "item.completed") {
+            if (this.messageFlushTimer) {
+              clearTimeout(this.messageFlushTimer);
+            }
+            this.messageFlushTimer = setTimeout(() => {
+              this.flushMessageBuffer();
+            }, 250);
           }
 
           if (threadEvent.type === "turn.failed") {

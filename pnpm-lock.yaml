@@ -660,6 +660,9 @@ importers:
       strip-ansi:
         specifier: ^7.1.0
         version: 7.1.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.18.0
       zod:
         specifier: 4.1.11
         version: 4.1.11
@@ -679,6 +682,9 @@ importers:
       '@types/node':
         specifier: 24.0.1
         version: 24.0.1
+      '@types/ws':
+        specifier: ^8.5.14
+        version: 8.18.1
       esbuild:
         specifier: ^0.24.0
         version: 0.24.2
@@ -5448,6 +5454,9 @@ packages:
 
   '@types/uuid@9.0.8':
     resolution: {integrity: sha512-jg+97EGIcY9AGHJJRaaPVgetKDsrTgbRjQ5Msgjh/DQKEFl0DtyRr/VCOyD1T2R1MNeWPK/u7JoGhlDZnKBAfA==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
@@ -15655,6 +15664,10 @@ snapshots:
   '@types/use-sync-external-store@0.0.6': {}
 
   '@types/uuid@9.0.8': {}
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.0.1
 
   '@types/yauzl@2.10.3':
     dependencies:
