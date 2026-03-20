@@ -1,6 +1,5 @@
 "use client";
 
-import isEqual from "fast-deep-equal";
 import { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
 import {
   DBMessage,
@@ -232,51 +231,6 @@ function applyChatSummaryFields(
 }
 
 /**
- * Returns true if the last `append.length` items in `messages` are
- * structurally identical to `append`, indicating a duplicate delivery.
- */
-function tailMatchesAppend(messages: unknown[], append: unknown[]): boolean {
-  if (append.length === 0) return false;
-  const offset = messages.length - append.length;
-  if (offset < 0) return false;
-  for (let i = 0; i < append.length; i++) {
-    const cached = messages[offset + i];
-    const incoming = append[i];
-    // Fast path: reference equality (same object from optimistic update)
-    if (cached === incoming) continue;
-    // Deep structural comparison (key-order independent, safe for all types)
-    if (!isEqual(cached, incoming)) return false;
-  }
-  return true;
-}
-
-function sequenceMatchesUpdatedAt(
-  sequence: number | null | undefined,
-  updatedAt: Date | string | null | undefined,
-): boolean {
-  if (sequence == null || updatedAt == null) {
-    return false;
-  }
-
-  const updatedAtTime =
-    typeof updatedAt === "string"
-      ? new Date(updatedAt).getTime()
-      : updatedAt.getTime();
-
-  return Number.isFinite(updatedAtTime) && updatedAtTime === sequence;
-}
-
-function usesTimestampChatSequence(
-  chat: ThreadPageChat,
-  patch: BroadcastThreadPatch,
-): boolean {
-  return (
-    sequenceMatchesUpdatedAt(chat.chatSequence, chat.updatedAt) ||
-    sequenceMatchesUpdatedAt(patch.chatSequence, patch.chat?.updatedAt)
-  );
-}
-
-/**
  * Monotonic integer sequences are always < 1 billion.
  * Timestamp-based sequences are ~1.7 trillion (milliseconds since epoch).
  */
@@ -305,42 +259,52 @@ function applyChatFields(
   const incomingSequence = patch.chatSequence;
   const currentSequence = chat.chatSequence;
 
-  // Fast path: monotonic (integer) sequences — no expectedMessageCount or
-  // tailMatchesAppend checks needed, just compare seq numbers.
+  // Confirmation patch: monotonic seq present, no messages to append.
+  // This is the post-DB-write confirmation after an optimistic pre-broadcast.
+  // Accept if seq >= current (catching up), ignore if stale.
+  // Must be checked BEFORE the gap detection which would reject it.
   if (
     isMonotonicSequence(incomingSequence) &&
-    isMonotonicSequence(currentSequence)
+    (patch.appendMessages === undefined || patch.appendMessages.length === 0)
   ) {
-    // Duplicate or stale — ignore
-    if (incomingSequence! <= currentSequence!) {
+    if (
+      isMonotonicSequence(currentSequence) &&
+      incomingSequence! < currentSequence!
+    ) {
       return { chat, shouldInvalidate: false, shouldIgnore: true };
-    }
-    // Gap — request replay / invalidate
-    if (incomingSequence! > currentSequence! + 1) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    // Exactly next in sequence — append directly
-    if (patch.appendMessages !== undefined) {
-      if (!isDbMessageArray(patch.appendMessages)) {
-        return { chat, shouldInvalidate: true, shouldIgnore: false };
-      }
-      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
-      return {
-        chat: applyPatchToChatObject(
-          chat,
-          patch,
-          nextMessages,
-          incomingSequence!,
-        ),
-        shouldInvalidate: false,
-        shouldIgnore: false,
-      };
     }
     return {
       chat: applyPatchToChatObject(
         chat,
         patch,
         chat.messages ?? [],
+        incomingSequence!,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
+  }
+
+  // Fast path: monotonic sequences with messages — seq ordering checks.
+  if (
+    isMonotonicSequence(incomingSequence) &&
+    isMonotonicSequence(currentSequence)
+  ) {
+    if (incomingSequence! <= currentSequence!) {
+      return { chat, shouldInvalidate: false, shouldIgnore: true };
+    }
+    if (incomingSequence! > currentSequence! + 1) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    if (!isDbMessageArray(patch.appendMessages!)) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages!];
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        nextMessages,
         incomingSequence!,
       ),
       shouldInvalidate: false,
@@ -370,57 +334,8 @@ function applyChatFields(
     };
   }
 
-  // Legacy timestamp-based path
-  if (
-    incomingSequence !== undefined &&
-    currentSequence !== null &&
-    incomingSequence < currentSequence
-  ) {
-    return { chat, shouldInvalidate: false, shouldIgnore: true };
-  }
-  if (
-    incomingSequence !== undefined &&
-    currentSequence !== null &&
-    !usesTimestampChatSequence(chat, patch) &&
-    incomingSequence > currentSequence + 1
-  ) {
-    return { chat, shouldInvalidate: true, shouldIgnore: false };
-  }
-
-  let nextMessages = chat.messages ?? [];
-  if (patch.appendMessages !== undefined) {
-    if (!isDbMessageArray(patch.appendMessages)) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    if (
-      patch.expectedMessageCount !== undefined &&
-      patch.expectedMessageCount !== nextMessages.length
-    ) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    // Safety net: detect tail-overlap duplicates where the last N cache messages
-    // match the incoming appendMessages (e.g. from WebSocket reconnection replay
-    // or a broadcast arriving after the data was already fetched).
-    if (
-      patch.appendMessages.length > 0 &&
-      nextMessages.length >= patch.appendMessages.length &&
-      tailMatchesAppend(nextMessages, patch.appendMessages)
-    ) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    nextMessages = [...nextMessages, ...patch.appendMessages];
-  }
-
-  return {
-    chat: applyPatchToChatObject(
-      chat,
-      patch,
-      nextMessages,
-      incomingSequence ?? currentSequence,
-    ),
-    shouldInvalidate: false,
-    shouldIgnore: false,
-  };
+  // Fallback: unrecognized sequence state — invalidate to force refetch
+  return { chat, shouldInvalidate: true, shouldIgnore: false };
 }
 
 function applyPatchToChatObject(
