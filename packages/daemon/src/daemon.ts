@@ -51,7 +51,11 @@ import {
   buildThreadStartParams,
   buildTurnStartParams,
 } from "./codex";
-import { CodexAppServerManager, extractThreadEvent } from "./codex-app-server";
+import {
+  CodexAppServerManager,
+  extractThreadEvent,
+  SILENTLY_IGNORED_ITEM_TYPES,
+} from "./codex-app-server";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
 import { createHash, randomUUID } from "node:crypto";
@@ -1333,17 +1337,22 @@ export class TerragonDaemon {
               const itemType = (
                 notification.params?.item as Record<string, unknown> | undefined
               )?.type;
-              const warnKey = `${notification.method}:${itemType}`;
-              if (!seenUnknownTypes.has(warnKey)) {
-                seenUnknownTypes.add(warnKey);
-                this.runtime.logger.warn(
-                  "Unknown Codex notification, skipping",
-                  {
-                    method: notification.method,
-                    itemType,
-                    threadId: input.threadId,
-                  },
-                );
+              if (
+                typeof itemType !== "string" ||
+                !SILENTLY_IGNORED_ITEM_TYPES.has(itemType)
+              ) {
+                const warnKey = `${notification.method}:${itemType}`;
+                if (!seenUnknownTypes.has(warnKey)) {
+                  seenUnknownTypes.add(warnKey);
+                  this.runtime.logger.warn(
+                    "Unknown Codex notification, skipping",
+                    {
+                      method: notification.method,
+                      itemType,
+                      threadId: input.threadId,
+                    },
+                  );
+                }
               }
             }
             return;

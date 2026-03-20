@@ -112,6 +112,14 @@ const EMPTY_USAGE: Usage = {
   output_tokens: 0,
 };
 
+/**
+ * Item types that Codex may send but that we intentionally do not map to a
+ * ThreadItem.  `normalizeThreadItemType` returns `null` for these, so
+ * `extractThreadEvent` will also return `null`.  Callers (e.g. the daemon
+ * notification handler) can check this set to suppress "unknown type" warnings.
+ */
+export const SILENTLY_IGNORED_ITEM_TYPES = new Set(["userMessage"]);
+
 const METHOD_TO_THREAD_EVENT_TYPE: Partial<
   Record<string, ThreadEvent["type"]>
 > = {
@@ -547,6 +555,26 @@ function extractThreadEventFromMethod({
   method: string;
   params: Record<string, unknown>;
 }): ThreadEvent | null {
+  // Handle agentMessage/delta — incremental text for an in-progress agent
+  // message.  We synthesize an item.updated ThreadEvent so the downstream
+  // pipeline (parseCodexItem) can process it like any other item update.
+  if (method === "item/agentMessage/delta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const delta = readString(params, "delta") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "agent_message",
+        text: delta,
+      },
+    };
+  }
+
   const eventType = METHOD_TO_THREAD_EVENT_TYPE[method];
   if (!eventType) {
     return null;
