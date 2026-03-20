@@ -50,15 +50,16 @@ export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
-export type SdlcLoopSignalInbox =
+export type DeliveryLoopSignalInbox =
   typeof schema.sdlcLoopSignalInbox.$inferSelect;
-export type SdlcLoopSignalInboxInsert =
+export type DeliveryLoopSignalInboxInsert =
   typeof schema.sdlcLoopSignalInbox.$inferInsert;
-export type SdlcPhaseArtifact = typeof schema.sdlcPhaseArtifact.$inferSelect;
-export type SdlcPhaseArtifactInsert =
+export type DeliveryPhaseArtifact =
+  typeof schema.sdlcPhaseArtifact.$inferSelect;
+export type DeliveryPhaseArtifactInsert =
   typeof schema.sdlcPhaseArtifact.$inferInsert;
-export type SdlcPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
-export type SdlcPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
+export type DeliveryPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
+export type DeliveryPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =
@@ -217,7 +218,7 @@ export type ThreadSourceMetadata =
   | {
       type: "www";
       sdlcLoopOptIn: boolean;
-      sdlcPlanApprovalPolicy?: SdlcPlanApprovalPolicy;
+      sdlcPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
     }
   | {
       type: "github-mention";
@@ -652,7 +653,7 @@ export type AgentProviderMetadata =
   | ClaudeAgentProviderMetadata
   | OpenAIProviderMetadata;
 
-export type SdlcLoopState =
+export type DeliveryLoopState =
   | "planning"
   | "implementing"
   | "review_gate"
@@ -666,7 +667,7 @@ export type SdlcLoopState =
   | "done"
   | "stopped";
 
-export type SdlcPhase =
+export type DeliveryPhase =
   | "planning"
   | "implementing"
   | "review_gate"
@@ -675,7 +676,7 @@ export type SdlcPhase =
   | "awaiting_pr_link"
   | "babysitting";
 
-export type SdlcArtifactType =
+export type DeliveryArtifactType =
   | "plan_spec"
   | "implementation_snapshot"
   | "review_bundle"
@@ -684,53 +685,53 @@ export type SdlcArtifactType =
   | "babysit_evaluation"
   | "human_intervention";
 
-export type SdlcArtifactStatus =
+export type DeliveryArtifactStatus =
   | "generated"
   | "approved"
   | "accepted"
   | "rejected"
   | "superseded";
 
-export type SdlcArtifactGeneratedBy = "agent" | "system" | "human";
+export type DeliveryArtifactGeneratedBy = "agent" | "system" | "human";
 
-export type SdlcPlanTaskStatus =
+export type DeliveryPlanTaskStatus =
   | "todo"
   | "in_progress"
   | "done"
   | "blocked"
   | "skipped";
 
-export type SdlcPlanTaskCompletedBy = "agent" | "verifier" | "human";
+export type DeliveryPlanTaskCompletedBy = "agent" | "verifier" | "human";
 
-export type SdlcPlanApprovalPolicy = "auto" | "human_required";
+export type DeliveryPlanApprovalPolicy = "auto" | "human_required";
 
-export type SdlcPlanTaskDefinition = {
+export type DeliveryPlanTaskDefinition = {
   stableTaskId: string;
   title: string;
   description?: string | null;
   acceptance: string[];
 };
 
-export type SdlcPlanSpecPayload = {
+export type DeliveryPlanSpecPayload = {
   planText: string;
-  tasks: SdlcPlanTaskDefinition[];
+  tasks: DeliveryPlanTaskDefinition[];
   source: "exit_plan_mode" | "write_tool" | "agent_text" | "system";
 };
 
-export type SdlcPlanTaskCompletionEvidence = {
+export type DeliveryPlanTaskCompletionEvidence = {
   headSha: string;
   note?: string | null;
   changedFiles?: string[] | null;
 };
 
-export type SdlcImplementationSnapshotPayload = {
+export type DeliveryImplementationSnapshotPayload = {
   headSha: string;
   summary: string;
   changedFiles: string[];
   completedTaskIds: string[];
 };
 
-export type SdlcReviewBundlePayload = {
+export type DeliveryReviewBundlePayload = {
   headSha: string;
   deepRunId?: string | null;
   carmackRunId?: string | null;
@@ -740,7 +741,7 @@ export type SdlcReviewBundlePayload = {
   summary: string;
 };
 
-export type SdlcUiSmokePayload = {
+export type DeliveryUiSmokePayload = {
   headSha: string;
   gatePassed: boolean;
   summary: string;
@@ -748,14 +749,14 @@ export type SdlcUiSmokePayload = {
   changedFiles: string[];
 };
 
-export type SdlcPrLinkPayload = {
+export type DeliveryPrLinkPayload = {
   repoFullName: string;
   prNumber: number;
   pullRequestUrl: string;
   operation: "created" | "updated" | "linked";
 };
 
-export type SdlcBabysitEvaluationPayload = {
+export type DeliveryBabysitEvaluationPayload = {
   headSha: string;
   requiredCiPassed: boolean;
   unresolvedReviewThreads: number;
@@ -764,7 +765,7 @@ export type SdlcBabysitEvaluationPayload = {
   allRequiredGatesPassed: boolean;
 };
 
-export type SdlcLoopCauseType =
+export type DeliveryLoopCauseType =
   | "daemon_terminal"
   | "check_run.completed"
   | "check_suite.completed"
@@ -795,65 +796,72 @@ export type SdlcLoopCauseType =
   | "timer_babysit_due"
   | "timer_heartbeat";
 
-export type SdlcLoopOutboxActionType =
+export type DeliveryLoopOutboxActionType =
   | "publish_status_comment"
   | "publish_check_summary"
   | "enqueue_fix_task"
   | "publish_video_link"
   | "emit_telemetry";
 
-export type SdlcLoopOutboxSupersessionGroup =
+export type DeliveryLoopOutboxSupersessionGroup =
   | "publication_status"
   | "fix_task_enqueue"
   | "publication_video"
   | "telemetry";
 
-export type SdlcLoopOutboxStatus =
+export type DeliveryLoopOutboxStatus =
   | "pending"
   | "running"
   | "completed"
   | "failed"
   | "canceled";
 
-export type SdlcOutboxAttemptStatus =
+export type DeliveryOutboxAttemptStatus =
   | "completed"
   | "retry_scheduled"
   | "failed";
 
-export type SdlcDeepReviewSeverity = "critical" | "high" | "medium" | "low";
+export type DeliveryDeepReviewSeverity = "critical" | "high" | "medium" | "low";
 
-export type SdlcDeepReviewStatus = "passed" | "blocked" | "invalid_output";
+export type DeliveryDeepReviewStatus = "passed" | "blocked" | "invalid_output";
 
-export type SdlcCarmackReviewSeverity = "critical" | "high" | "medium" | "low";
+export type DeliveryCarmackReviewSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low";
 
-export type SdlcCarmackReviewStatus = "passed" | "blocked" | "invalid_output";
+export type DeliveryCarmackReviewStatus =
+  | "passed"
+  | "blocked"
+  | "invalid_output";
 
-export type SdlcCiCapabilityState =
+export type DeliveryCiCapabilityState =
   | "supported"
   | "forbidden"
   | "unsupported"
   | "transient_error";
 
-export type SdlcCiGateStatus = "passed" | "blocked" | "capability_error";
+export type DeliveryCiGateStatus = "passed" | "blocked" | "capability_error";
 
-export type SdlcCiRequiredCheckSource =
+export type DeliveryCiRequiredCheckSource =
   | "ruleset"
   | "branch_protection"
   | "allowlist"
   | "no_required";
 
-export type SdlcReviewThreadGateStatus =
+export type DeliveryReviewThreadGateStatus =
   | "passed"
   | "blocked"
   | "transient_error";
 
-export type SdlcReviewThreadEvaluationSource = "webhook" | "polling";
+export type DeliveryReviewThreadEvaluationSource = "webhook" | "polling";
 
-export type SdlcVideoCaptureStatus = "not_started" | "captured" | "failed";
+export type DeliveryVideoCaptureStatus = "not_started" | "captured" | "failed";
 
-export type SdlcVideoFailureClass = "auth" | "quota" | "script" | "infra";
+export type DeliveryVideoFailureClass = "auth" | "quota" | "script" | "infra";
 
-export type SdlcParityTargetClass = "coordinator";
+export type DeliveryParityTargetClass = "coordinator";
 
 export type DispatchIntentStatus =
   | "pending"
