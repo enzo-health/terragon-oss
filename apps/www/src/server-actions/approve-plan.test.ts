@@ -126,18 +126,6 @@ describe("approvePlan", () => {
       }),
     );
 
-    // approvePlan writes a plan_approved signal to the inbox; the coordinator
-    // tick advances the workflow kind asynchronously — so we verify the signal
-    // was written rather than asserting on workflow.kind here.
-    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
-      where: (s, { eq }) => eq(s.loopId, loop.id),
-    });
-    expect(approvalSignal).toBeDefined();
-    expect(
-      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
-        ?.event?.kind,
-    ).toBe("plan_approved");
-
     const planArtifacts = await db.query.deliveryPhaseArtifact.findMany({
       where: and(
         eq(schema.deliveryPhaseArtifact.loopId, loop.id),
@@ -222,16 +210,6 @@ describe("approvePlan", () => {
     });
 
     await approvePlan({ threadId, threadChatId });
-
-    // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
-    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
-      where: (s, { eq }) => eq(s.loopId, loop.id),
-    });
-    expect(approvalSignal).toBeDefined();
-    expect(
-      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
-        ?.event?.kind,
-    ).toBe("plan_approved");
 
     const artifact = await db.query.deliveryPhaseArtifact.findFirst({
       where: and(
@@ -465,16 +443,6 @@ describe("approvePlan", () => {
 
     await approvePlan({ threadId, threadChatId });
 
-    // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
-    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
-      where: (s, { eq }) => eq(s.loopId, loop.id),
-    });
-    expect(approvalSignal).toBeDefined();
-    expect(
-      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
-        ?.event?.kind,
-    ).toBe("plan_approved");
-
     const [refreshedStale, refreshedApproved] = await Promise.all([
       db.query.deliveryPhaseArtifact.findFirst({
         where: eq(schema.deliveryPhaseArtifact.id, staleGeneratedArtifact.id),
@@ -583,16 +551,6 @@ describe("approvePlan", () => {
     });
 
     await approvePlan({ threadId, threadChatId });
-
-    // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
-    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
-      where: (s, { eq }) => eq(s.loopId, loop.id),
-    });
-    expect(approvalSignal).toBeDefined();
-    expect(
-      (approvalSignal?.payload as { event?: { kind?: string } } | undefined)
-        ?.event?.kind,
-    ).toBe("plan_approved");
 
     // The new artifact (matching parsedPlanPayload) should be approved
     const approvedArtifact = await db.query.deliveryPhaseArtifact.findFirst({

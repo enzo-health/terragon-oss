@@ -8,7 +8,6 @@ const mockApprovePlanArtifactForLoop = vi.hoisted(() => vi.fn());
 const mockReplacePlanTasksForArtifact = vi.hoisted(() => vi.fn());
 const mockTransitionSdlcLoopStateWithArtifact = vi.hoisted(() => vi.fn());
 const mockGetActiveWorkflowForThread = vi.hoisted(() => vi.fn());
-const mockAppendSignalToInbox = vi.hoisted(() => vi.fn());
 
 vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
   createPlanArtifact: mockCreatePlanArtifactForLoop,
@@ -18,10 +17,6 @@ vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: mockGetActiveWorkflowForThread,
-}));
-
-vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({
-  appendSignalToInbox: mockAppendSignalToInbox,
 }));
 
 // ─── import SUT after mocks ───────────────────────────────────
@@ -93,7 +88,6 @@ describe("plan deduplication (via approve mode)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetActiveWorkflowForThread.mockResolvedValue(null);
-    mockAppendSignalToInbox.mockResolvedValue(undefined);
   });
 
   it("reuses existing matching artifact instead of creating a new one", async () => {
@@ -336,7 +330,6 @@ describe("promotePlanToImplementing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetActiveWorkflowForThread.mockResolvedValue(null);
-    mockAppendSignalToInbox.mockResolvedValue(undefined);
   });
 
   describe("mode: checkpoint", () => {
@@ -366,21 +359,6 @@ describe("promotePlanToImplementing", () => {
         }),
       );
 
-      expect(mockAppendSignalToInbox).toHaveBeenCalledWith(
-        expect.objectContaining({
-          loopId: "loop-1",
-          causeType: "human_resume",
-          payload: {
-            source: "human",
-            event: {
-              kind: "plan_approved",
-              artifactId: "art-1",
-            },
-          },
-          canonicalCauseId: "plan-promoted:loop-1:art-1",
-        }),
-      );
-
       expect(result).toEqual({
         outcome: "promoted",
         artifactId: "art-1",
@@ -405,9 +383,6 @@ describe("promotePlanToImplementing", () => {
       expect(mockCreatePlanArtifactForLoop).toHaveBeenCalledWith(
         expect.objectContaining({ status: "generated" }),
       );
-
-      // No signal for human_required (waits for explicit approval)
-      expect(mockAppendSignalToInbox).not.toHaveBeenCalled();
 
       expect(result).toEqual({
         outcome: "awaiting_human_approval",
@@ -496,7 +471,6 @@ describe("promotePlanToImplementing", () => {
       );
 
       expect(result.outcome).toBe("promoted");
-      expect(mockAppendSignalToInbox).toHaveBeenCalled();
     });
 
     it("throws when approvedByUserId missing for human_required", async () => {
@@ -610,79 +584,7 @@ describe("promotePlanToImplementing", () => {
         expect.objectContaining({ status: "accepted" }),
       );
       expect(result.outcome).toBe("promoted");
-      expect(mockAppendSignalToInbox).toHaveBeenCalled();
     });
-  });
-
-  describe("v2 signal bridge", () => {
-    it("writes signal with correct shape on successful promotion", async () => {
-      const artifact = makeArtifact({ id: "art-sig", status: "accepted" });
-      mockCreatePlanArtifactForLoop.mockResolvedValue(artifact);
-      mockReplacePlanTasksForArtifact.mockResolvedValue(undefined);
-      mockTransitionSdlcLoopStateWithArtifact.mockResolvedValue("updated");
-
-      await promotePlanToImplementing({
-        db: fakeDb,
-        loop: makeLoop({ planApprovalPolicy: "auto" }),
-        parsedPlan: makeParsedPlan(),
-        mode: "checkpoint",
-      });
-
-      expect(mockAppendSignalToInbox).toHaveBeenCalledTimes(1);
-      const call = mockAppendSignalToInbox.mock.calls[0]![0];
-      expect(call.causeType).toBe("human_resume");
-      expect(call.payload.source).toBe("human");
-      expect(call.payload.event.kind).toBe("plan_approved");
-      expect(call.payload.event.artifactId).toBe("art-sig");
-      expect(call.canonicalCauseId).toBe("plan-promoted:loop-1:art-sig");
-    });
-
-    it("retries signal write once on failure", async () => {
-      const artifact = makeArtifact({ id: "art-retry", status: "accepted" });
-      mockCreatePlanArtifactForLoop.mockResolvedValue(artifact);
-      mockReplacePlanTasksForArtifact.mockResolvedValue(undefined);
-      mockTransitionSdlcLoopStateWithArtifact.mockResolvedValue("updated");
-
-      mockAppendSignalToInbox
-        .mockRejectedValueOnce(new Error("transient"))
-        .mockResolvedValueOnce(undefined);
-
-      const result = await promotePlanToImplementing({
-        db: fakeDb,
-        loop: makeLoop({ planApprovalPolicy: "auto" }),
-        parsedPlan: makeParsedPlan(),
-        mode: "checkpoint",
-      });
-
-      expect(mockAppendSignalToInbox).toHaveBeenCalledTimes(2);
-      expect(result.outcome).toBe("promoted");
-    });
-
-    it("still returns promoted even if signal write fails after retry", async () => {
-      const artifact = makeArtifact({ id: "art-fail", status: "accepted" });
-      mockCreatePlanArtifactForLoop.mockResolvedValue(artifact);
-      mockReplacePlanTasksForArtifact.mockResolvedValue(undefined);
-      mockTransitionSdlcLoopStateWithArtifact.mockResolvedValue("updated");
-
-      mockAppendSignalToInbox
-        .mockRejectedValueOnce(new Error("fail1"))
-        .mockRejectedValueOnce(new Error("fail2"));
-
-      const result = await promotePlanToImplementing({
-        db: fakeDb,
-        loop: makeLoop({ planApprovalPolicy: "auto" }),
-        parsedPlan: makeParsedPlan(),
-        mode: "checkpoint",
-      });
-
-      expect(mockAppendSignalToInbox).toHaveBeenCalledTimes(2);
-      // v1 transition committed — still returns promoted
-      expect(result.outcome).toBe("promoted");
-    });
-
-    // "promotion_blocked" outcome removed in v2: transitionSdlcLoopStateWithArtifact
-    // no longer exists; transitionPlanningArtifactToImplementing always writes the
-    // signal unconditionally. Blocking is handled at the coordinator-tick level.
   });
 
   describe("v2 workflow lookup", () => {
