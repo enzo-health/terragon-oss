@@ -1,9 +1,9 @@
-export function register() {
+export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const {
-      registerMessageStreamAppend,
-    } = require("@terragon/shared/broadcast-server");
-    const { appendToMessageStream } = require("./lib/message-stream");
+    const { registerMessageStreamAppend } = await import(
+      "@terragon/shared/broadcast-server"
+    );
+    const { appendToMessageStream } = await import("./lib/message-stream");
     registerMessageStreamAppend(appendToMessageStream);
   }
 }
