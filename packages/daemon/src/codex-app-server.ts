@@ -1417,56 +1417,59 @@ export class CodexAppServerManager {
     const url = `ws://127.0.0.1:${port}`;
     const startTime = Date.now();
     const timeout = this.handshakeTimeoutMs;
+    const perAttemptTimeout = 5_000;
 
-    // Poll /readyz until server is listening (bounded by timeout)
+    // Retry WebSocket connection until the server is listening (bounded by timeout).
+    // We connect directly instead of polling /readyz because production Codex
+    // app-server versions do not always serve that HTTP endpoint.
     while (Date.now() - startTime < timeout) {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/readyz`);
-        if (res.ok) break;
+        const ws = this.createWebSocket(url);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            ws.close();
+            reject(new Error("ws connect timeout"));
+          }, perAttemptTimeout);
+          ws.on("open", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          ws.on("error", (err) => {
+            clearTimeout(timer);
+            ws.close();
+            reject(err);
+          });
+        });
+
+        // Connection succeeded — wire up handlers
+        ws.on("message", (data) => {
+          const line = typeof data === "string" ? data : data.toString();
+          this.handleIncomingMessage(line);
+        });
+
+        ws.on("close", () => {
+          this.ws = null;
+          this.ready = false;
+          this.rejectPendingRequests(
+            new Error("WebSocket connection closed unexpectedly"),
+          );
+        });
+
+        ws.on("error", (error) => {
+          this.logger.error("WebSocket error", { message: error.message });
+        });
+
+        this.ws = ws;
+        return;
       } catch {
-        // Server not ready yet
+        // Connection failed — retry after short delay
+        await new Promise((r) => setTimeout(r, 300));
       }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    if (Date.now() - startTime >= timeout) {
-      throw new Error(`codex app-server /readyz timeout after ${timeout}ms`);
     }
 
-    // Connect WebSocket
-    const ws = this.createWebSocket(url);
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("WebSocket connect timeout")),
-        timeout,
-      );
-      ws.on("open", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      ws.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-    });
-
-    ws.on("message", (data) => {
-      const line = typeof data === "string" ? data : data.toString();
-      this.handleIncomingMessage(line);
-    });
-
-    ws.on("close", () => {
-      this.ws = null;
-      this.ready = false;
-      this.rejectPendingRequests(
-        new Error("WebSocket connection closed unexpectedly"),
-      );
-    });
-
-    ws.on("error", (error) => {
-      this.logger.error("WebSocket error", { message: error.message });
-    });
-
-    this.ws = ws;
+    throw new Error(
+      `codex app-server WebSocket connect timeout after ${timeout}ms`,
+    );
   }
 }
 
