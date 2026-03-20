@@ -282,7 +282,7 @@ describe("handleAppMention", () => {
         githubRepoFullName: isolatedPr.repoFullName,
         githubPRNumber: isolatedPr.number,
         sourceType: "www",
-        sourceMetadata: { type: "www", sdlcLoopOptIn: false },
+        sourceMetadata: { type: "www", deliveryLoopOptIn: false },
       },
     });
 

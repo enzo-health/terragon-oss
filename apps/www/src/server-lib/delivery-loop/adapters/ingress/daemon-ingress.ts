@@ -1,7 +1,7 @@
 import type { DB } from "@terragon/shared/db";
 import type {
   DeliverySignalSourceV3,
-  SdlcLoopCauseType,
+  DeliveryLoopCauseType,
 } from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
@@ -148,7 +148,7 @@ export function normalizeDaemonEvent(raw: DaemonEventPayload): DeliverySignal {
 export async function handleDaemonIngress(params: {
   db: DB;
   rawEvent: DaemonEventPayload;
-  /** The v2 workflow ID — distinct from rawEvent.loopId (v1 sdlcLoop ID). */
+  /** The v2 workflow ID — distinct from rawEvent.loopId (v1 delivery loop ID). */
   workflowId: WorkflowId;
   /** Typed outcome preserving ingress envelope metadata. Optional for backward compatibility. */
   outcome?: DaemonOutcome;
@@ -156,7 +156,7 @@ export async function handleDaemonIngress(params: {
   const signal = normalizeDaemonEvent(params.rawEvent);
   const { workflowId } = params;
   // The signal inbox is keyed by v1 loopId for backwards compatibility
-  // with the shared sdlcLoopSignalInbox table.
+  // with the shared deliverySignalInbox table.
   const inboxPartitionKey = params.rawEvent.loopId;
 
   // Append signal to inbox via v2 store
@@ -231,7 +231,7 @@ export async function handleDaemonIngress(params: {
   return { selfDispatch: null, workItemsScheduled: 0 };
 }
 
-function mapSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
+function mapSignalToCauseType(signal: DeliverySignal): DeliveryLoopCauseType {
   switch (signal.source) {
     case "daemon":
       switch (signal.event.kind) {

@@ -1,6 +1,6 @@
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { type SdlcOutboxErrorClass } from "@terragon/shared/delivery-loop/store/outbox-types";
+import { type DeliveryOutboxErrorClass } from "@terragon/shared/delivery-loop/store/outbox-types";
 import {
   persistWorkflowStatusCommentReference,
   clearWorkflowStatusCommentReference,
@@ -69,25 +69,25 @@ async function buildReviewerSafeVideoArtifactLink(
   return `🎥 [Session video artifact (view in Terragon)](${publicAppUrl()}/task/${threadId})`;
 }
 
-function getSdlcStatusCommentMarker(loopId: string): string {
+function getDeliveryStatusCommentMarker(loopId: string): string {
   return `<!-- ${SDLC_STATUS_COMMENT_MARKER_PREFIX}${loopId} -->`;
 }
 
-function appendSdlcStatusCommentMarker({
+function appendDeliveryStatusCommentMarker({
   body,
   loopId,
 }: {
   body: string;
   loopId: string;
 }): string {
-  const marker = getSdlcStatusCommentMarker(loopId);
+  const marker = getDeliveryStatusCommentMarker(loopId);
   if (body.includes(marker)) {
     return body;
   }
   return `${body}\n\n${marker}`;
 }
 
-function getSdlcCheckRunExternalId(loopId: string): string {
+function getDeliveryCheckRunExternalId(loopId: string): string {
   return `${SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX}${loopId}`;
 }
 
@@ -104,7 +104,7 @@ async function findReconciledCanonicalStatusComment({
   prNumber: number;
   loopId: string;
 }) {
-  const marker = getSdlcStatusCommentMarker(loopId);
+  const marker = getDeliveryStatusCommentMarker(loopId);
   for (let page = 1; page <= 10; page += 1) {
     const comments = await octokit.rest.issues.listComments({
       owner,
@@ -145,7 +145,7 @@ async function findReconciledCanonicalCheckRun({
   loopId: string;
   checkName: string;
 }) {
-  const externalId = getSdlcCheckRunExternalId(loopId);
+  const externalId = getDeliveryCheckRunExternalId(loopId);
   for (let page = 1; page <= 10; page += 1) {
     const runs = await octokit.rest.checks.listForRef({
       owner,
@@ -168,7 +168,7 @@ async function findReconciledCanonicalCheckRun({
   return null;
 }
 
-export async function upsertSdlcCanonicalStatusComment({
+export async function upsertDeliveryCanonicalStatusComment({
   db,
   workflowId,
   repoFullName,
@@ -191,7 +191,7 @@ export async function upsertSdlcCanonicalStatusComment({
 
   const [owner, repo] = parseRepoFullName(repoFullName);
   const octokit = await getOctokitForApp({ owner, repo });
-  const canonicalBody = appendSdlcStatusCommentMarker({
+  const canonicalBody = appendDeliveryStatusCommentMarker({
     body,
     loopId: workflowId,
   });
@@ -279,7 +279,7 @@ export async function upsertSdlcCanonicalStatusComment({
   };
 }
 
-export async function upsertSdlcCanonicalCheckSummary({
+export async function upsertDeliveryCanonicalCheckSummary({
   db,
   workflowId,
   payload,
@@ -298,7 +298,7 @@ export async function upsertSdlcCanonicalCheckSummary({
 
   const [owner, repo] = parseRepoFullName(payload.repoFullName);
   const octokit = await getOctokitForApp({ owner, repo });
-  const checkRunExternalId = getSdlcCheckRunExternalId(workflowId);
+  const checkRunExternalId = getDeliveryCheckRunExternalId(workflowId);
 
   const artifactLink = await buildReviewerSafeVideoArtifactLink(
     payload.artifactR2Key,
@@ -410,8 +410,8 @@ export async function upsertSdlcCanonicalCheckSummary({
   };
 }
 
-export function classifySdlcPublicationFailure(error: unknown): {
-  errorClass: SdlcOutboxErrorClass;
+export function classifyDeliveryPublicationFailure(error: unknown): {
+  errorClass: DeliveryOutboxErrorClass;
   errorCode: string;
   retriable: boolean;
   message: string;

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
-  buildSdlcLoopStatusChecks,
+  buildDeliveryLoopStatusChecks,
   getDeliveryLoopSnapshotStateSummary,
 } from "@/lib/delivery-loop-status";
 import { unwrapResult } from "@/lib/server-actions";
@@ -53,7 +53,7 @@ describe("getDeliveryLoopStatusAction", () => {
   });
 
   it("derives fallback gate statuses from blocked origin instead of generic blocked state", () => {
-    const checks = buildSdlcLoopStatusChecks({
+    const checks = buildDeliveryLoopStatusChecks({
       loopSnapshot: {
         kind: "blocked",
         from: "review_gate",
@@ -101,7 +101,7 @@ describe("getDeliveryLoopStatusAction", () => {
       lastFailureCategory: "gate_failed",
     } as const;
 
-    const checks = buildSdlcLoopStatusChecks({
+    const checks = buildDeliveryLoopStatusChecks({
       loopSnapshot,
       currentHeadSha: "sha-1",
       ciRun: null,
@@ -355,10 +355,10 @@ describe("getDeliveryLoopStatusAction", () => {
     const status = await getDeliveryLoopStatus(threadId);
     expect(status?.artifacts.planningArtifact?.id).toBe(planArtifact.id);
 
-    const persistedTasks = await db.query.sdlcPlanTask.findMany({
+    const persistedTasks = await db.query.deliveryPlanTask.findMany({
       where: and(
-        eq(schema.sdlcPlanTask.loopId, workflow.id),
-        eq(schema.sdlcPlanTask.artifactId, planArtifact.id),
+        eq(schema.deliveryPlanTask.loopId, workflow.id),
+        eq(schema.deliveryPlanTask.artifactId, planArtifact.id),
       ),
     });
     expect(persistedTasks).toHaveLength(1);

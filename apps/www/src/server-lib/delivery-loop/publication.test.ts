@@ -54,13 +54,15 @@ describe("sdlc publication", () => {
     };
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
 
-    const result = await publicationModule.upsertSdlcCanonicalStatusComment({
-      db: makeDb({ id: "wf-1", canonicalStatusCommentId: "123" }),
-      workflowId: "wf-1",
-      repoFullName: "owner/repo",
-      prNumber: 1,
-      body: "updated",
-    });
+    const result = await publicationModule.upsertDeliveryCanonicalStatusComment(
+      {
+        db: makeDb({ id: "wf-1", canonicalStatusCommentId: "123" }),
+        workflowId: "wf-1",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        body: "updated",
+      },
+    );
 
     expect(octokit.rest.issues.updateComment).toHaveBeenCalledTimes(1);
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
@@ -87,13 +89,15 @@ describe("sdlc publication", () => {
     };
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
 
-    const result = await publicationModule.upsertSdlcCanonicalStatusComment({
-      db: makeDb({ id: "wf-2", canonicalStatusCommentId: "456" }),
-      workflowId: "wf-2",
-      repoFullName: "owner/repo",
-      prNumber: 2,
-      body: "recreated",
-    });
+    const result = await publicationModule.upsertDeliveryCanonicalStatusComment(
+      {
+        db: makeDb({ id: "wf-2", canonicalStatusCommentId: "456" }),
+        workflowId: "wf-2",
+        repoFullName: "owner/repo",
+        prNumber: 2,
+        body: "recreated",
+      },
+    );
 
     expect(clearWorkflowStatusCommentReference).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId: "wf-2" }),
@@ -130,7 +134,7 @@ describe("sdlc publication", () => {
       .mockResolvedValue(undefined);
 
     await expect(
-      publicationModule.upsertSdlcCanonicalStatusComment({
+      publicationModule.upsertDeliveryCanonicalStatusComment({
         db: makeDb({ id: workflowId, canonicalStatusCommentId: null }),
         workflowId,
         repoFullName: "owner/repo",
@@ -139,13 +143,14 @@ describe("sdlc publication", () => {
       }),
     ).rejects.toThrow("transient db failure");
 
-    const recovered = await publicationModule.upsertSdlcCanonicalStatusComment({
-      db: makeDb({ id: workflowId, canonicalStatusCommentId: null }),
-      workflowId,
-      repoFullName: "owner/repo",
-      prNumber: 5,
-      body: "status body",
-    });
+    const recovered =
+      await publicationModule.upsertDeliveryCanonicalStatusComment({
+        db: makeDb({ id: workflowId, canonicalStatusCommentId: null }),
+        workflowId,
+        repoFullName: "owner/repo",
+        prNumber: 5,
+        body: "status body",
+      });
 
     expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
     expect(octokit.rest.issues.updateComment).toHaveBeenCalledTimes(1);
@@ -169,7 +174,7 @@ describe("sdlc publication", () => {
     };
     vi.mocked(getOctokitForApp).mockResolvedValue(octokit as any);
 
-    await publicationModule.upsertSdlcCanonicalCheckSummary({
+    await publicationModule.upsertDeliveryCanonicalCheckSummary({
       db: makeDb({
         id: "wf-3",
         threadId: "thread-3",
@@ -241,7 +246,7 @@ describe("sdlc publication", () => {
       .mockResolvedValue(undefined);
 
     await expect(
-      publicationModule.upsertSdlcCanonicalCheckSummary({
+      publicationModule.upsertDeliveryCanonicalCheckSummary({
         db: makeDb({
           id: workflowId,
           threadId: "thread-9",
@@ -259,22 +264,23 @@ describe("sdlc publication", () => {
       }),
     ).rejects.toThrow("transient db failure");
 
-    const recovered = await publicationModule.upsertSdlcCanonicalCheckSummary({
-      db: makeDb({
-        id: workflowId,
-        threadId: "thread-9",
-        canonicalCheckRunId: null,
-      }),
-      workflowId,
-      payload: {
-        repoFullName: "owner/repo",
-        prNumber: 9,
-        title: "Terragon Delivery Loop",
-        summary: "Gate summary",
-        status: "completed",
-        conclusion: "success",
-      },
-    });
+    const recovered =
+      await publicationModule.upsertDeliveryCanonicalCheckSummary({
+        db: makeDb({
+          id: workflowId,
+          threadId: "thread-9",
+          canonicalCheckRunId: null,
+        }),
+        workflowId,
+        payload: {
+          repoFullName: "owner/repo",
+          prNumber: 9,
+          title: "Terragon Delivery Loop",
+          summary: "Gate summary",
+          status: "completed",
+          conclusion: "success",
+        },
+      });
 
     expect(octokit.rest.checks.create).toHaveBeenCalledTimes(1);
     expect(octokit.rest.checks.update).toHaveBeenCalledTimes(1);
@@ -286,15 +292,15 @@ describe("sdlc publication", () => {
 
   it("classifies publication errors into retry policy classes", () => {
     expect(
-      publicationModule.classifySdlcPublicationFailure({ status: 429 })
+      publicationModule.classifyDeliveryPublicationFailure({ status: 429 })
         .errorClass,
     ).toBe("quota");
     expect(
-      publicationModule.classifySdlcPublicationFailure({ status: 403 })
+      publicationModule.classifyDeliveryPublicationFailure({ status: 403 })
         .retriable,
     ).toBe(false);
     expect(
-      publicationModule.classifySdlcPublicationFailure({ status: 502 })
+      publicationModule.classifyDeliveryPublicationFailure({ status: 502 })
         .retriable,
     ).toBe(true);
   });

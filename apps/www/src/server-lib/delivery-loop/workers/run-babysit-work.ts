@@ -81,7 +81,7 @@ export async function runBabysitWork(params: {
     // - recheckBabysitCompletion() from
     //   apps/www/src/server-lib/delivery-loop/babysit-recheck.ts
     //   Polls GitHub CI and review threads directly (for missed webhooks),
-    //   inserts synthetic signals into sdlcLoopSignalInbox.
+    //   inserts synthetic signals into deliverySignalInbox.
     //
     // - appendSignalToInbox() from
     //   packages/shared/src/delivery-loop/store/signal-inbox-store.ts

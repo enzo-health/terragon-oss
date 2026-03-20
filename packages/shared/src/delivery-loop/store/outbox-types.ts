@@ -9,10 +9,10 @@
 
 /**
  * Classifies the failure mode of a delivery-loop outbox publication attempt.
- * Maps to the `last_error_class` / `error_class` columns on `sdlc_loop_outbox`
- * and `sdlc_loop_outbox_attempt`.
+ * Maps to the `last_error_class` / `error_class` columns on `delivery_loop_outbox`
+ * and `delivery_loop_outbox_attempt`.
  */
-export type SdlcOutboxErrorClass =
+export type DeliveryOutboxErrorClass =
   | "auth"
   | "quota"
   | "infra"

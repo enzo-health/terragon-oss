@@ -1,10 +1,10 @@
 import { db } from "@/lib/db";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
-import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
+import { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
 import { enrollV2Workflow } from "./coordinator/v2-enrollment";
 import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
-export function isSdlcLoopEnrollmentAllowedForThread({
+export function isDeliveryLoopEnrollmentAllowedForThread({
   sourceType,
   sourceMetadata,
 }: {
@@ -17,7 +17,7 @@ export function isSdlcLoopEnrollmentAllowedForThread({
 
   // Dashboard-created web tasks must explicitly opt in.
   if (sourceType === "www") {
-    return sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn;
+    return sourceMetadata?.type === "www" && sourceMetadata.deliveryLoopOptIn;
   }
 
   // GitHub webhook/automation-driven tasks and CLI tasks keep existing auto-enrollment behavior.
@@ -32,7 +32,7 @@ export function isSdlcLoopEnrollmentAllowedForThread({
   return false;
 }
 
-export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
+export async function ensureDeliveryLoopEnrollmentForThreadIfEnabled({
   userId,
   repoFullName,
   threadId,
@@ -41,7 +41,7 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   userId: string;
   repoFullName: string;
   threadId: string;
-  planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
   // V2-only enrollment: creates the v2 workflow as a side-effect
   await enrollV2Workflow({
@@ -55,7 +55,7 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   return null;
 }
 
-export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+export async function ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
   userId,
   repoFullName,
   prNumber,
@@ -66,7 +66,7 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   repoFullName: string;
   prNumber: number;
   threadId: string;
-  planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
   // V2-only enrollment with PR number set directly on workflow
   const v2Result = await enrollV2Workflow({

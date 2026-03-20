@@ -129,7 +129,7 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
-  sdlcPlanReviewCard: {
+  deliveryPlanReviewCard: {
     defaultValue: false,
     enabledForPreview: false,
     description:

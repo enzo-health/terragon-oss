@@ -129,7 +129,7 @@ async function injectGitHubSignal(
 
   const causeTypeMap: Record<
     string,
-    import("@terragon/shared/db/types").SdlcLoopCauseType
+    import("@terragon/shared/db/types").DeliveryLoopCauseType
   > = {
     ci_changed: "github_ci_changed",
     review_changed: "github_review_changed",

@@ -51,15 +51,16 @@ export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
 export type DeliveryLoopSignalInbox =
-  typeof schema.sdlcLoopSignalInbox.$inferSelect;
+  typeof schema.deliverySignalInbox.$inferSelect;
 export type DeliveryLoopSignalInboxInsert =
-  typeof schema.sdlcLoopSignalInbox.$inferInsert;
+  typeof schema.deliverySignalInbox.$inferInsert;
 export type DeliveryPhaseArtifact =
-  typeof schema.sdlcPhaseArtifact.$inferSelect;
+  typeof schema.deliveryPhaseArtifact.$inferSelect;
 export type DeliveryPhaseArtifactInsert =
-  typeof schema.sdlcPhaseArtifact.$inferInsert;
-export type DeliveryPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
-export type DeliveryPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
+  typeof schema.deliveryPhaseArtifact.$inferInsert;
+export type DeliveryPlanTask = typeof schema.deliveryPlanTask.$inferSelect;
+export type DeliveryPlanTaskInsert =
+  typeof schema.deliveryPlanTask.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =
@@ -217,7 +218,11 @@ export type ThreadSource =
 export type ThreadSourceMetadata =
   | {
       type: "www";
-      sdlcLoopOptIn: boolean;
+      deliveryLoopOptIn: boolean;
+      deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
+      /** @deprecated Backward compat — old DB rows may still carry this key */
+      sdlcLoopOptIn?: boolean;
+      /** @deprecated Backward compat — old DB rows may still carry this key */
       sdlcPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
     }
   | {

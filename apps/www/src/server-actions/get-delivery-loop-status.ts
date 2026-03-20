@@ -17,7 +17,7 @@ import {
 import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
-import type { SdlcLoopState } from "@terragon/shared/db/types";
+import type { DeliveryLoopState } from "@terragon/shared/db/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
@@ -28,9 +28,9 @@ import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/wor
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 
-type DeliveryCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
+type DeliveryCiGateRun = typeof schema.deliveryCiGateRun.$inferSelect;
 type DeliveryReviewThreadGateRun =
-  typeof schema.sdlcReviewThreadGateRun.$inferSelect;
+  typeof schema.deliveryReviewThreadGateRun.$inferSelect;
 type DeliveryLoopStatusBlocker = {
   title: string;
   source: DeliveryLoopStatusCheckKey | "human_feedback";
@@ -45,7 +45,7 @@ type DeliveryPlannedTask = {
 
 type DeliveryLoopStatus = {
   loopId: string;
-  state: SdlcLoopState;
+  state: DeliveryLoopState;
   planApprovalPolicy: "auto" | "human_required";
   stateLabel: string;
   explanation: string;
@@ -199,7 +199,7 @@ function buildDeliveryLoopActions({
   planApprovalPolicy,
   planningArtifactStatus,
 }: {
-  loopState: SdlcLoopState;
+  loopState: DeliveryLoopState;
   loopSnapshot: DeliveryLoopSnapshot;
   planApprovalPolicy: "auto" | "human_required";
   planningArtifactStatus:
@@ -333,57 +333,57 @@ async function assembleLoopStatusData(params: {
   const [ciRun, reviewThreadRun, deepReviewRun, carmackReviewRun] =
     await Promise.all([
       currentHeadSha
-        ? db.query.sdlcCiGateRun
+        ? db.query.deliveryCiGateRun
             .findFirst({
               where: and(
-                eq(schema.sdlcCiGateRun.loopId, loopId),
-                eq(schema.sdlcCiGateRun.headSha, currentHeadSha),
+                eq(schema.deliveryCiGateRun.loopId, loopId),
+                eq(schema.deliveryCiGateRun.headSha, currentHeadSha),
               ),
               orderBy: [
-                desc(schema.sdlcCiGateRun.updatedAt),
-                desc(schema.sdlcCiGateRun.createdAt),
+                desc(schema.deliveryCiGateRun.updatedAt),
+                desc(schema.deliveryCiGateRun.createdAt),
               ],
             })
             .then((run) => run ?? null)
         : Promise.resolve(null),
       currentHeadSha
-        ? db.query.sdlcReviewThreadGateRun
+        ? db.query.deliveryReviewThreadGateRun
             .findFirst({
               where: and(
-                eq(schema.sdlcReviewThreadGateRun.loopId, loopId),
-                eq(schema.sdlcReviewThreadGateRun.headSha, currentHeadSha),
+                eq(schema.deliveryReviewThreadGateRun.loopId, loopId),
+                eq(schema.deliveryReviewThreadGateRun.headSha, currentHeadSha),
               ),
               orderBy: [
-                desc(schema.sdlcReviewThreadGateRun.updatedAt),
-                desc(schema.sdlcReviewThreadGateRun.createdAt),
+                desc(schema.deliveryReviewThreadGateRun.updatedAt),
+                desc(schema.deliveryReviewThreadGateRun.createdAt),
               ],
             })
             .then((run) => run ?? null)
         : Promise.resolve(null),
       currentHeadSha
-        ? db.query.sdlcDeepReviewRun
+        ? db.query.deliveryDeepReviewRun
             .findFirst({
               where: and(
-                eq(schema.sdlcDeepReviewRun.loopId, loopId),
-                eq(schema.sdlcDeepReviewRun.headSha, currentHeadSha),
+                eq(schema.deliveryDeepReviewRun.loopId, loopId),
+                eq(schema.deliveryDeepReviewRun.headSha, currentHeadSha),
               ),
               orderBy: [
-                desc(schema.sdlcDeepReviewRun.updatedAt),
-                desc(schema.sdlcDeepReviewRun.createdAt),
+                desc(schema.deliveryDeepReviewRun.updatedAt),
+                desc(schema.deliveryDeepReviewRun.createdAt),
               ],
             })
             .then((run) => run ?? null)
         : Promise.resolve(null),
       currentHeadSha
-        ? db.query.sdlcCarmackReviewRun
+        ? db.query.deliveryCarmackReviewRun
             .findFirst({
               where: and(
-                eq(schema.sdlcCarmackReviewRun.loopId, loopId),
-                eq(schema.sdlcCarmackReviewRun.headSha, currentHeadSha),
+                eq(schema.deliveryCarmackReviewRun.loopId, loopId),
+                eq(schema.deliveryCarmackReviewRun.headSha, currentHeadSha),
               ),
               orderBy: [
-                desc(schema.sdlcCarmackReviewRun.updatedAt),
-                desc(schema.sdlcCarmackReviewRun.createdAt),
+                desc(schema.deliveryCarmackReviewRun.updatedAt),
+                desc(schema.deliveryCarmackReviewRun.createdAt),
               ],
             })
             .then((run) => run ?? null)
@@ -392,25 +392,25 @@ async function assembleLoopStatusData(params: {
 
   const implementationArtifactFallbackWhere = currentHeadSha
     ? and(
-        eq(schema.sdlcPhaseArtifact.loopId, loopId),
-        eq(schema.sdlcPhaseArtifact.phase, "implementing"),
-        eq(schema.sdlcPhaseArtifact.headSha, currentHeadSha),
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "implementing"),
+        eq(schema.deliveryPhaseArtifact.headSha, currentHeadSha),
       )
     : and(
-        eq(schema.sdlcPhaseArtifact.loopId, loopId),
-        eq(schema.sdlcPhaseArtifact.phase, "implementing"),
-        isNull(schema.sdlcPhaseArtifact.headSha),
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "implementing"),
+        isNull(schema.deliveryPhaseArtifact.headSha),
       );
 
   const [planningArtifact, implementationArtifact] = await Promise.all([
-    db.query.sdlcPhaseArtifact.findFirst({
+    db.query.deliveryPhaseArtifact.findFirst({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loopId),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
       ),
       orderBy: [
-        desc(schema.sdlcPhaseArtifact.updatedAt),
-        desc(schema.sdlcPhaseArtifact.createdAt),
+        desc(schema.deliveryPhaseArtifact.updatedAt),
+        desc(schema.deliveryPhaseArtifact.createdAt),
       ],
       columns: {
         id: true,
@@ -419,11 +419,11 @@ async function assembleLoopStatusData(params: {
         payload: true,
       },
     }),
-    db.query.sdlcPhaseArtifact.findFirst({
+    db.query.deliveryPhaseArtifact.findFirst({
       where: implementationArtifactFallbackWhere,
       orderBy: [
-        desc(schema.sdlcPhaseArtifact.updatedAt),
-        desc(schema.sdlcPhaseArtifact.createdAt),
+        desc(schema.deliveryPhaseArtifact.updatedAt),
+        desc(schema.deliveryPhaseArtifact.createdAt),
       ],
       columns: {
         id: true,
@@ -435,10 +435,10 @@ async function assembleLoopStatusData(params: {
   ]);
 
   const plannedTasks = planningArtifact
-    ? await db.query.sdlcPlanTask.findMany({
+    ? await db.query.deliveryPlanTask.findMany({
         where: and(
-          eq(schema.sdlcPlanTask.loopId, loopId),
-          eq(schema.sdlcPlanTask.artifactId, planningArtifact.id),
+          eq(schema.deliveryPlanTask.loopId, loopId),
+          eq(schema.deliveryPlanTask.artifactId, planningArtifact.id),
         ),
         columns: {
           status: true,

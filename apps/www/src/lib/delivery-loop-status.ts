@@ -1,10 +1,10 @@
 import type {
-  SdlcCarmackReviewStatus,
-  SdlcCiGateStatus,
-  SdlcDeepReviewStatus,
-  SdlcLoopState,
-  SdlcReviewThreadGateStatus,
-  SdlcVideoCaptureStatus,
+  DeliveryCarmackReviewStatus,
+  DeliveryCiGateStatus,
+  DeliveryDeepReviewStatus,
+  DeliveryLoopState,
+  DeliveryReviewThreadGateStatus,
+  DeliveryVideoCaptureStatus,
 } from "@terragon/shared/db/types";
 import type {
   DeliveryLoopBlockedState,
@@ -49,21 +49,21 @@ export type DeliveryLoopTopProgressPhase = {
 };
 
 type DeliveryLoopStatusCiRun = {
-  status: SdlcCiGateStatus;
+  status: DeliveryCiGateStatus;
   failingRequiredChecks: string[];
 };
 
 type DeliveryLoopStatusReviewThreadRun = {
-  status: SdlcReviewThreadGateStatus;
+  status: DeliveryReviewThreadGateStatus;
   unresolvedThreadCount: number;
 };
 
 type DeliveryLoopStatusDeepReviewRun = {
-  status: SdlcDeepReviewStatus;
+  status: DeliveryDeepReviewStatus;
 };
 
 type DeliveryLoopStatusCarmackReviewRun = {
-  status: SdlcCarmackReviewStatus;
+  status: DeliveryCarmackReviewStatus;
 };
 
 export type DeliveryLoopStatusStateSummary = {
@@ -146,7 +146,7 @@ const DELIVERY_STATE_SUMMARY = {
     explanation: "The loop was stopped before completion.",
     progressPercent: 100,
   },
-} satisfies Record<SdlcLoopState, DeliveryLoopStatusStateSummary>;
+} satisfies Record<DeliveryLoopState, DeliveryLoopStatusStateSummary>;
 
 function getBlockedStateSummary(
   blocked: DeliveryLoopBlockedState,
@@ -503,7 +503,7 @@ export function buildDeliveryLoopStatusChecks({
   carmackReviewRun: DeliveryLoopStatusCarmackReviewRun | null;
   unresolvedDeepFindingCount: number;
   unresolvedCarmackFindingCount: number;
-  videoCaptureStatus: SdlcVideoCaptureStatus;
+  videoCaptureStatus: DeliveryVideoCaptureStatus;
   videoFailureMessage: string | null;
 }): DeliveryLoopStatusCheck[] {
   const ciFallbackStatus = inferCiStatusFromLoopState(loopSnapshot);
@@ -905,7 +905,7 @@ export function buildSnapshotFromV2Workflow(
  */
 export function mapV2KindToDeliveryLoopState(
   workflow: DeliveryWorkflow,
-): SdlcLoopState {
+): DeliveryLoopState {
   switch (workflow.kind) {
     case "planning":
       return "planning";
@@ -917,7 +917,7 @@ export function mapV2KindToDeliveryLoopState(
         | null
         | undefined;
       return gate?.kind
-        ? (V2_GATE_TO_V1_STATE[gate.kind] as SdlcLoopState)
+        ? (V2_GATE_TO_V1_STATE[gate.kind] as DeliveryLoopState)
         : "implementing";
     }
     case "awaiting_pr":

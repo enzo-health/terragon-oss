@@ -11,8 +11,8 @@ import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp } from "@/lib/github";
 import {
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  isSdlcLoopEnrollmentAllowedForThread,
+  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
+  isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
 
@@ -85,8 +85,8 @@ vi.mock("@/lib/posthog-server", () => ({
 }));
 
 vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled: vi.fn(),
-  isSdlcLoopEnrollmentAllowedForThread: vi.fn(() => true),
+  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled: vi.fn(),
+  isDeliveryLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
@@ -118,10 +118,10 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       threadChats: [{ id: "loop-chat-id" }],
     } as Awaited<ReturnType<typeof getThread>>);
     signalInboxInsertReturning.mockResolvedValue([{ id: "signal-inbox-1" }]);
-    vi.mocked(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).mockResolvedValue(
-      null,
-    );
-    vi.mocked(isSdlcLoopEnrollmentAllowedForThread).mockReturnValue(true);
+    vi.mocked(
+      ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
+    ).mockResolvedValue(null);
+    vi.mocked(isDeliveryLoopEnrollmentAllowedForThread).mockReturnValue(true);
     vi.mocked(maybeBatchThreads).mockImplementation(
       async ({ createNewThread }) => {
         const created = await createNewThread();
@@ -195,7 +195,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       sourceType: "www",
       sourceMetadata: { type: "www", sdlcLoopOptIn: false },
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
-    vi.mocked(isSdlcLoopEnrollmentAllowedForThread).mockReturnValue(false);
+    vi.mocked(isDeliveryLoopEnrollmentAllowedForThread).mockReturnValue(false);
 
     const result = await routeGithubFeedbackOrSpawnThread({
       repoFullName: "owner/repo",
@@ -213,7 +213,9 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       reason: "existing-unarchived-thread",
     });
     expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
-    expect(ensureSdlcLoopEnrollmentForGithubPRIfEnabled).not.toHaveBeenCalled();
+    expect(
+      ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
+    ).not.toHaveBeenCalled();
   });
 
   it("deduplicates non-enrolled delivery retries for existing threads", async () => {

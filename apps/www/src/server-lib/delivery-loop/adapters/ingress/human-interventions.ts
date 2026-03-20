@@ -1,7 +1,7 @@
 import type { DB } from "@terragon/shared/db";
 import type {
   DeliverySignalSourceV3,
-  SdlcLoopCauseType,
+  DeliveryLoopCauseType,
 } from "@terragon/shared/db/types";
 import type {
   WorkflowId,
@@ -90,7 +90,7 @@ export async function handleHumanAction(params: {
   action: HumanAction;
   actorUserId: string;
   workflowId: WorkflowId;
-  /** V1 sdlcLoop ID used as inbox partition key. Must match the key cron uses to drain. */
+  /** V1 delivery loop ID used as inbox partition key. Must match the key cron uses to drain. */
   inboxPartitionKey: string;
   gate?: GateKind;
   /** Optional request-scoped idempotency key. When provided, duplicate calls with the same key are deduplicated. Falls back to a random UUID. */
@@ -171,7 +171,9 @@ export async function handleHumanAction(params: {
   }
 }
 
-function mapHumanSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
+function mapHumanSignalToCauseType(
+  signal: DeliverySignal,
+): DeliveryLoopCauseType {
   if (signal.source !== "human") return "human_resume";
   switch (signal.event.kind) {
     case "resume_requested":

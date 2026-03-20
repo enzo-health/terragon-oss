@@ -49,7 +49,7 @@ import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
 const newThread = async (args: NewThreadArgs) => {
   return unwrapResult(
     await newThreadAction({
-      runInSdlcLoop: false,
+      runInDeliveryLoop: false,
       ...args,
     }),
   );

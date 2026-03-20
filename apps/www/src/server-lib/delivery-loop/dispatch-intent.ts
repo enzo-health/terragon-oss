@@ -9,7 +9,7 @@ import type {
   ExecutionClass,
 } from "@terragon/shared/delivery-loop/domain/workflow";
 import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
-import type { SdlcSelfDispatchPayload } from "@terragon/daemon/shared";
+import type { DeliveryLoopSelfDispatchPayload } from "@terragon/daemon/shared";
 import {
   isLocalRedisHttpMode,
   isRedisTransportParseError,
@@ -50,7 +50,7 @@ export type SelfDispatchReplayState =
       sourceEventId: string;
       sourceSeq: number;
       sourceRunId: string;
-      payload: SdlcSelfDispatchPayload;
+      payload: DeliveryLoopSelfDispatchPayload;
     };
 
 export type RealtimeDispatchIntent = DispatchIntent & {
@@ -68,7 +68,7 @@ type SelfDispatchReplayRecord =
       sourceRunId: string;
       dispatchIntentId: string;
       destinationRunId: string;
-      payload: SdlcSelfDispatchPayload;
+      payload: DeliveryLoopSelfDispatchPayload;
       createdAt: string;
     };
 
@@ -164,7 +164,7 @@ function deserializeSelfDispatchReplayState(
 
   try {
     const payload = JSON.parse(raw.selfDispatchReplayPayloadJson);
-    if (!isSdlcSelfDispatchPayload(payload)) {
+    if (!isDeliveryLoopSelfDispatchPayload(payload)) {
       return { kind: "none" };
     }
     return {
@@ -223,7 +223,7 @@ function deserializeSelfDispatchReplayRecord(
 
   try {
     const payload = JSON.parse(raw.payloadJson);
-    if (!isSdlcSelfDispatchPayload(payload)) {
+    if (!isDeliveryLoopSelfDispatchPayload(payload)) {
       return { kind: "none" };
     }
     if (payload.runId !== raw.destinationRunId) {
@@ -244,9 +244,9 @@ function deserializeSelfDispatchReplayRecord(
   }
 }
 
-function isSdlcSelfDispatchPayload(
+function isDeliveryLoopSelfDispatchPayload(
   value: unknown,
-): value is SdlcSelfDispatchPayload {
+): value is DeliveryLoopSelfDispatchPayload {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -480,7 +480,7 @@ export async function storeSelfDispatchReplay(params: {
   sourceRunId: string;
   dispatchIntentId: string;
   destinationRunId: string;
-  payload: SdlcSelfDispatchPayload;
+  payload: DeliveryLoopSelfDispatchPayload;
 }): Promise<void> {
   if (isLocalRedisHttpMode()) {
     return;
@@ -523,7 +523,7 @@ export async function getReplayableSelfDispatch(params: {
   sourceEventId: string;
   sourceSeq: number;
   sourceRunId: string;
-}): Promise<SdlcSelfDispatchPayload | null> {
+}): Promise<DeliveryLoopSelfDispatchPayload | null> {
   if (isLocalRedisHttpMode()) {
     return null;
   }

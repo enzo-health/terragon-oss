@@ -244,22 +244,22 @@ async function getPromotablePlanningArtifacts(params: {
   db: DB;
   loopId: string;
 }) {
-  return await params.db.query.sdlcPhaseArtifact.findMany({
+  return await params.db.query.deliveryPhaseArtifact.findMany({
     where: and(
-      eq(schema.sdlcPhaseArtifact.loopId, params.loopId),
-      eq(schema.sdlcPhaseArtifact.phase, "planning"),
-      eq(schema.sdlcPhaseArtifact.artifactType, "plan_spec"),
-      inArray(schema.sdlcPhaseArtifact.status, [
+      eq(schema.deliveryPhaseArtifact.loopId, params.loopId),
+      eq(schema.deliveryPhaseArtifact.phase, "planning"),
+      eq(schema.deliveryPhaseArtifact.artifactType, "plan_spec"),
+      inArray(schema.deliveryPhaseArtifact.status, [
         "generated",
         "accepted",
         "approved",
       ]),
     ),
     orderBy: [
-      desc(schema.sdlcPhaseArtifact.loopVersion),
-      desc(schema.sdlcPhaseArtifact.updatedAt),
-      desc(schema.sdlcPhaseArtifact.createdAt),
-      desc(schema.sdlcPhaseArtifact.id),
+      desc(schema.deliveryPhaseArtifact.loopVersion),
+      desc(schema.deliveryPhaseArtifact.updatedAt),
+      desc(schema.deliveryPhaseArtifact.createdAt),
+      desc(schema.deliveryPhaseArtifact.id),
     ],
   });
 }

@@ -1,6 +1,6 @@
 /**
  * V2-native enrollment: creates a delivery_workflow as the sole source
- * of truth. No v1 sdlcLoop is created.
+ * of truth. No v1 delivery loop is created.
  *
  * Idempotent: if a workflow already exists for the thread, returns it.
  */
@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
-import type { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
+import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
 import {
   createWorkflow,
   getActiveWorkflowForThread,
@@ -27,8 +27,8 @@ export async function enrollV2Workflow(params: {
   userId: string;
   repoFullName: string;
   generation?: number;
-  planApprovalPolicy?: SdlcPlanApprovalPolicy;
-}): Promise<{ workflowId: string; sdlcLoopId: null }> {
+  planApprovalPolicy?: DeliveryPlanApprovalPolicy;
+}): Promise<{ workflowId: string; deliveryLoopId: null }> {
   // 1. Idempotency: if a v2 workflow already exists for this thread, return it
   const existing = await getActiveWorkflowForThread({
     db: params.db,
@@ -37,7 +37,7 @@ export async function enrollV2Workflow(params: {
   if (existing) {
     return {
       workflowId: existing.id,
-      sdlcLoopId: null,
+      deliveryLoopId: null,
     };
   }
 
@@ -52,7 +52,7 @@ export async function enrollV2Workflow(params: {
     generation = (latest?.generation ?? 0) + 1;
   }
 
-  // 3. Create v2 workflow directly in planning state (no v1 sdlcLoop)
+  // 3. Create v2 workflow directly in planning state (no v1 delivery loop)
   try {
     const workflow = await createWorkflow({
       db: params.db,
@@ -78,7 +78,7 @@ export async function enrollV2Workflow(params: {
       maxAttempts: DISPATCH_WORK_ITEM_MAX_ATTEMPTS,
     });
 
-    return { workflowId: workflow.id, sdlcLoopId: null };
+    return { workflowId: workflow.id, deliveryLoopId: null };
   } catch (err) {
     // Race: concurrent caller may have inserted between our check and insert.
     // Re-query and return if a workflow now exists.
@@ -89,7 +89,7 @@ export async function enrollV2Workflow(params: {
     if (raceWinner) {
       return {
         workflowId: raceWinner.id,
-        sdlcLoopId: null,
+        deliveryLoopId: null,
       };
     }
     throw err;

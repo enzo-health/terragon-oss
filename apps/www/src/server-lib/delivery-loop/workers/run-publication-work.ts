@@ -6,9 +6,9 @@ import {
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { stringifyError } from "./resolve-loop";
 import {
-  upsertSdlcCanonicalStatusComment,
-  upsertSdlcCanonicalCheckSummary,
-  classifySdlcPublicationFailure,
+  upsertDeliveryCanonicalStatusComment,
+  upsertDeliveryCanonicalCheckSummary,
+  classifyDeliveryPublicationFailure,
 } from "../publication";
 
 export type PublicationWorkPayload = {
@@ -38,7 +38,7 @@ function formatStatusBody(workflowState: string): string {
 
 /**
  * Execute a publication work item: supersede stale publications,
- * look up the sdlcLoop for repo/PR info, then publish a status comment
+ * look up the delivery workflow for repo/PR info, then publish a status comment
  * or check run summary to GitHub.
  */
 export async function runPublicationWork(params: {
@@ -76,7 +76,7 @@ export async function runPublicationWork(params: {
 
       try {
         if (targetKind === "check_run_summary") {
-          await upsertSdlcCanonicalCheckSummary({
+          await upsertDeliveryCanonicalCheckSummary({
             db: params.db,
             workflowId: workflow.id,
             payload: {
@@ -100,7 +100,7 @@ export async function runPublicationWork(params: {
           });
         } else {
           // Default: status_comment
-          await upsertSdlcCanonicalStatusComment({
+          await upsertDeliveryCanonicalStatusComment({
             db: params.db,
             workflowId: workflow.id,
             repoFullName: workflow.repoFullName,
@@ -109,7 +109,7 @@ export async function runPublicationWork(params: {
           });
         }
       } catch (pubErr) {
-        const classified = classifySdlcPublicationFailure(pubErr);
+        const classified = classifyDeliveryPublicationFailure(pubErr);
         if (!classified.retriable) {
           console.warn(
             "[publication-worker] non-retriable publication error, failing work item",

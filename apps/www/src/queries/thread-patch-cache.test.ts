@@ -53,7 +53,7 @@ function createThreadShell(): ThreadPageShell {
     sourceType: "www",
     sourceMetadata: {
       type: "www",
-      sdlcLoopOptIn: false,
+      deliveryLoopOptIn: false,
     },
     version: 1,
     isUnread: false,
@@ -702,7 +702,7 @@ describe("applyThreadPatchToListQueries", () => {
           sourceType: "www",
           sourceMetadata: {
             type: "www",
-            sdlcLoopOptIn: false,
+            deliveryLoopOptIn: false,
           },
           visibility: "private",
           archived: true,

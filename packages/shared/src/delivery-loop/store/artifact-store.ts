@@ -2,56 +2,54 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 import type {
-  SdlcPhase,
-  SdlcArtifactType,
-  SdlcArtifactStatus,
-  SdlcArtifactGeneratedBy,
-  SdlcPlanApprovalPolicy,
-  SdlcPlanSpecPayload,
-  SdlcImplementationSnapshotPayload,
-  SdlcReviewBundlePayload,
-  SdlcUiSmokePayload,
-  SdlcPrLinkPayload,
-  SdlcBabysitEvaluationPayload,
-  SdlcPlanTask,
-  SdlcPlanTaskStatus,
-  SdlcPlanTaskCompletedBy,
-  SdlcPlanTaskCompletionEvidence,
-  SdlcPhaseArtifact,
+  DeliveryPhase,
+  DeliveryArtifactType,
+  DeliveryArtifactStatus,
+  DeliveryArtifactGeneratedBy,
+  DeliveryPlanApprovalPolicy,
+  DeliveryPlanSpecPayload,
+  DeliveryImplementationSnapshotPayload,
+  DeliveryReviewBundlePayload,
+  DeliveryUiSmokePayload,
+  DeliveryPrLinkPayload,
+  DeliveryBabysitEvaluationPayload,
+  DeliveryPlanTask,
+  DeliveryPlanTaskStatus,
+  DeliveryPlanTaskCompletedBy,
+  DeliveryPlanTaskCompletionEvidence,
+  DeliveryPhaseArtifact,
 } from "../../db/types";
-const sdlcPlanTaskIncompleteStatusSet = new Set<SdlcPlanTaskStatus>([
+const deliveryPlanTaskIncompleteStatusSet = new Set<DeliveryPlanTaskStatus>([
   "todo",
   "in_progress",
   "blocked",
 ]);
 
-const sdlcPlanTaskNonBlockingTerminalStatusSet = new Set<SdlcPlanTaskStatus>([
-  "done",
-  "skipped",
-]);
+const deliveryPlanTaskNonBlockingTerminalStatusSet =
+  new Set<DeliveryPlanTaskStatus>(["done", "skipped"]);
 
-function isIncompletePlanTaskStatus(status: SdlcPlanTaskStatus): boolean {
-  return sdlcPlanTaskIncompleteStatusSet.has(status);
+function isIncompletePlanTaskStatus(status: DeliveryPlanTaskStatus): boolean {
+  return deliveryPlanTaskIncompleteStatusSet.has(status);
 }
 
 function isNonBlockingTerminalPlanTaskStatus(
-  status: SdlcPlanTaskStatus,
+  status: DeliveryPlanTaskStatus,
 ): boolean {
-  return sdlcPlanTaskNonBlockingTerminalStatusSet.has(status);
+  return deliveryPlanTaskNonBlockingTerminalStatusSet.has(status);
 }
 
-type SdlcArtifactPayload =
-  | SdlcPlanSpecPayload
-  | SdlcImplementationSnapshotPayload
-  | SdlcReviewBundlePayload
-  | SdlcUiSmokePayload
-  | SdlcPrLinkPayload
-  | SdlcBabysitEvaluationPayload
+type DeliveryArtifactPayload =
+  | DeliveryPlanSpecPayload
+  | DeliveryImplementationSnapshotPayload
+  | DeliveryReviewBundlePayload
+  | DeliveryUiSmokePayload
+  | DeliveryPrLinkPayload
+  | DeliveryBabysitEvaluationPayload
   | Record<string, unknown>;
 
 function getPlanArtifactRequiredStatus(
-  policy: SdlcPlanApprovalPolicy,
-): SdlcArtifactStatus {
+  policy: DeliveryPlanApprovalPolicy,
+): DeliveryArtifactStatus {
   return policy === "human_required" ? "approved" : "accepted";
 }
 
@@ -64,33 +62,33 @@ export async function getLatestAcceptedArtifact({
 }: {
   db: DB;
   loopId: string;
-  phase: SdlcPhase;
+  phase: DeliveryPhase;
   headSha?: string | null;
   includeApprovedForPlanning?: boolean;
 }) {
-  const acceptedStatuses: SdlcArtifactStatus[] =
+  const acceptedStatuses: DeliveryArtifactStatus[] =
     includeApprovedForPlanning && phase === "planning"
       ? ["accepted", "approved"]
       : ["accepted"];
 
   const whereClauses = [
-    eq(schema.sdlcPhaseArtifact.loopId, loopId),
-    eq(schema.sdlcPhaseArtifact.phase, phase),
-    inArray(schema.sdlcPhaseArtifact.status, acceptedStatuses),
+    eq(schema.deliveryPhaseArtifact.loopId, loopId),
+    eq(schema.deliveryPhaseArtifact.phase, phase),
+    inArray(schema.deliveryPhaseArtifact.status, acceptedStatuses),
   ];
   if (headSha !== undefined) {
     if (headSha === null) {
-      whereClauses.push(isNull(schema.sdlcPhaseArtifact.headSha));
+      whereClauses.push(isNull(schema.deliveryPhaseArtifact.headSha));
     } else {
-      whereClauses.push(eq(schema.sdlcPhaseArtifact.headSha, headSha));
+      whereClauses.push(eq(schema.deliveryPhaseArtifact.headSha, headSha));
     }
   }
 
-  return await db.query.sdlcPhaseArtifact.findFirst({
+  return await db.query.deliveryPhaseArtifact.findFirst({
     where: and(...whereClauses),
     orderBy: [
-      desc(schema.sdlcPhaseArtifact.createdAt),
-      desc(schema.sdlcPhaseArtifact.id),
+      desc(schema.deliveryPhaseArtifact.createdAt),
+      desc(schema.deliveryPhaseArtifact.id),
     ],
   });
 }
@@ -108,24 +106,24 @@ export async function createPlanArtifact({
   db: DB;
   loopId: string;
   loopVersion: number;
-  payload: SdlcPlanSpecPayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryPlanSpecPayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
     await tx
-      .update(schema.sdlcPhaseArtifact)
+      .update(schema.deliveryPhaseArtifact)
       .set({
         status: "superseded",
         updatedAt: now,
       })
       .where(
         and(
-          eq(schema.sdlcPhaseArtifact.loopId, loopId),
-          eq(schema.sdlcPhaseArtifact.phase, "planning"),
-          inArray(schema.sdlcPhaseArtifact.status, [
+          eq(schema.deliveryPhaseArtifact.loopId, loopId),
+          eq(schema.deliveryPhaseArtifact.phase, "planning"),
+          inArray(schema.deliveryPhaseArtifact.status, [
             "generated",
             "approved",
             "accepted",
@@ -134,7 +132,7 @@ export async function createPlanArtifact({
       );
 
     const [artifact] = await tx
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId,
         phase: "planning",
@@ -151,7 +149,7 @@ export async function createPlanArtifact({
       .returning();
 
     if (!artifact) {
-      throw new Error("Failed to create SDLC plan artifact");
+      throw new Error("Failed to create delivery plan artifact");
     }
 
     return artifact;
@@ -172,7 +170,7 @@ export async function approvePlanArtifact({
   now?: Date;
 }) {
   const [artifact] = await db
-    .update(schema.sdlcPhaseArtifact)
+    .update(schema.deliveryPhaseArtifact)
     .set({
       status: "approved",
       approvedByUserId,
@@ -181,11 +179,11 @@ export async function approvePlanArtifact({
     })
     .where(
       and(
-        eq(schema.sdlcPhaseArtifact.id, artifactId),
-        eq(schema.sdlcPhaseArtifact.loopId, loopId),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
-        eq(schema.sdlcPhaseArtifact.artifactType, "plan_spec"),
-        inArray(schema.sdlcPhaseArtifact.status, ["generated", "accepted"]),
+        eq(schema.deliveryPhaseArtifact.id, artifactId),
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.artifactType, "plan_spec"),
+        inArray(schema.deliveryPhaseArtifact.status, ["generated", "accepted"]),
       ),
     )
     .returning();
@@ -212,12 +210,12 @@ export async function replacePlanTasksForArtifact({
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
-    const artifact = await tx.query.sdlcPhaseArtifact.findFirst({
+    const artifact = await tx.query.deliveryPhaseArtifact.findFirst({
       where: and(
-        eq(schema.sdlcPhaseArtifact.id, artifactId),
-        eq(schema.sdlcPhaseArtifact.loopId, loopId),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
-        eq(schema.sdlcPhaseArtifact.artifactType, "plan_spec"),
+        eq(schema.deliveryPhaseArtifact.id, artifactId),
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.artifactType, "plan_spec"),
       ),
     });
     if (!artifact) {
@@ -225,11 +223,11 @@ export async function replacePlanTasksForArtifact({
     }
 
     await tx
-      .delete(schema.sdlcPlanTask)
-      .where(eq(schema.sdlcPlanTask.artifactId, artifactId));
+      .delete(schema.deliveryPlanTask)
+      .where(eq(schema.deliveryPlanTask.artifactId, artifactId));
 
     if (tasks.length === 0) {
-      return [] as SdlcPlanTask[];
+      return [] as DeliveryPlanTask[];
     }
 
     const dedupedTasks = new Map<
@@ -258,10 +256,10 @@ export async function replacePlanTasksForArtifact({
       (task) => task.title.length > 0,
     );
     if (preparedTasks.length === 0) {
-      return [] as SdlcPlanTask[];
+      return [] as DeliveryPlanTask[];
     }
 
-    const taskRows: Array<typeof schema.sdlcPlanTask.$inferInsert> =
+    const taskRows: Array<typeof schema.deliveryPlanTask.$inferInsert> =
       preparedTasks.map((task) => ({
         artifactId,
         loopId,
@@ -274,7 +272,10 @@ export async function replacePlanTasksForArtifact({
         updatedAt: now,
       }));
 
-    return await tx.insert(schema.sdlcPlanTask).values(taskRows).returning();
+    return await tx
+      .insert(schema.deliveryPlanTask)
+      .values(taskRows)
+      .returning();
   });
 }
 
@@ -290,8 +291,8 @@ export async function markPlanTasksCompletedByAgent({
   artifactId: string;
   completions: Array<{
     stableTaskId: string;
-    status?: Extract<SdlcPlanTaskStatus, "done" | "skipped" | "blocked">;
-    evidence: SdlcPlanTaskCompletionEvidence;
+    status?: Extract<DeliveryPlanTaskStatus, "done" | "skipped" | "blocked">;
+    evidence: DeliveryPlanTaskCompletionEvidence;
   }>;
   now?: Date;
 }) {
@@ -310,11 +311,11 @@ export async function markPlanTasksCompletedByAgent({
     const nextStatus = completion.status ?? "done";
     const completedAt =
       nextStatus === "done" || nextStatus === "skipped" ? now : null;
-    const completedBy: SdlcPlanTaskCompletedBy | null =
+    const completedBy: DeliveryPlanTaskCompletedBy | null =
       nextStatus === "done" || nextStatus === "skipped" ? "agent" : null;
 
     const [updated] = await db
-      .update(schema.sdlcPlanTask)
+      .update(schema.deliveryPlanTask)
       .set({
         status: nextStatus,
         completedAt,
@@ -324,12 +325,12 @@ export async function markPlanTasksCompletedByAgent({
       })
       .where(
         and(
-          eq(schema.sdlcPlanTask.loopId, loopId),
-          eq(schema.sdlcPlanTask.artifactId, artifactId),
-          eq(schema.sdlcPlanTask.stableTaskId, stableTaskId),
+          eq(schema.deliveryPlanTask.loopId, loopId),
+          eq(schema.deliveryPlanTask.artifactId, artifactId),
+          eq(schema.deliveryPlanTask.stableTaskId, stableTaskId),
         ),
       )
-      .returning({ id: schema.sdlcPlanTask.id });
+      .returning({ id: schema.deliveryPlanTask.id });
     if (updated) {
       updatedTaskCount += 1;
     }
@@ -350,14 +351,14 @@ export async function verifyPlanTaskCompletionForHead({
   artifactId: string;
   headSha?: string;
 }) {
-  const tasks = await db.query.sdlcPlanTask.findMany({
+  const tasks = await db.query.deliveryPlanTask.findMany({
     where: and(
-      eq(schema.sdlcPlanTask.loopId, loopId),
-      eq(schema.sdlcPlanTask.artifactId, artifactId),
+      eq(schema.deliveryPlanTask.loopId, loopId),
+      eq(schema.deliveryPlanTask.artifactId, artifactId),
     ),
   });
 
-  const incompleteTasks = tasks.filter((task) =>
+  const incompleteTasks = tasks.filter((task: DeliveryPlanTask) =>
     isIncompletePlanTaskStatus(task.status),
   );
 
@@ -370,7 +371,7 @@ export async function verifyPlanTaskCompletionForHead({
       continue;
     }
     const evidence =
-      task.completionEvidence as SdlcPlanTaskCompletionEvidence | null;
+      task.completionEvidence as DeliveryPlanTaskCompletionEvidence | null;
     if (!evidence) {
       invalidEvidenceTaskIds.push(task.stableTaskId);
     }
@@ -382,7 +383,9 @@ export async function verifyPlanTaskCompletionForHead({
       incompleteTasks.length === 0 &&
       invalidEvidenceTaskIds.length === 0,
     totalTasks: tasks.length,
-    incompleteTaskIds: incompleteTasks.map((task) => task.stableTaskId),
+    incompleteTaskIds: incompleteTasks.map(
+      (task: DeliveryPlanTask) => task.stableTaskId,
+    ),
     invalidEvidenceTaskIds,
   };
 }
@@ -402,29 +405,29 @@ async function createHeadScopedArtifact({
 }: {
   db: DB;
   loopId: string;
-  phase: SdlcPhase;
-  artifactType: SdlcArtifactType;
+  phase: DeliveryPhase;
+  artifactType: DeliveryArtifactType;
   headSha: string;
   loopVersion: number;
-  payload: SdlcArtifactPayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryArtifactPayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
     await tx
-      .update(schema.sdlcPhaseArtifact)
+      .update(schema.deliveryPhaseArtifact)
       .set({
         status: "superseded",
         updatedAt: now,
       })
       .where(
         and(
-          eq(schema.sdlcPhaseArtifact.loopId, loopId),
-          eq(schema.sdlcPhaseArtifact.phase, phase),
-          eq(schema.sdlcPhaseArtifact.headSha, headSha),
-          inArray(schema.sdlcPhaseArtifact.status, [
+          eq(schema.deliveryPhaseArtifact.loopId, loopId),
+          eq(schema.deliveryPhaseArtifact.phase, phase),
+          eq(schema.deliveryPhaseArtifact.headSha, headSha),
+          inArray(schema.deliveryPhaseArtifact.status, [
             "generated",
             "approved",
             "accepted",
@@ -433,7 +436,7 @@ async function createHeadScopedArtifact({
       );
 
     const [artifact] = await tx
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId,
         phase,
@@ -449,7 +452,7 @@ async function createHeadScopedArtifact({
       })
       .returning();
     if (!artifact) {
-      throw new Error("Failed to create SDLC phase artifact");
+      throw new Error("Failed to create delivery phase artifact");
     }
 
     return artifact;
@@ -471,9 +474,9 @@ export async function createImplementationArtifact({
   loopId: string;
   headSha: string;
   loopVersion: number;
-  payload: SdlcImplementationSnapshotPayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryImplementationSnapshotPayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
@@ -507,9 +510,9 @@ export async function createReviewBundleArtifact({
   loopId: string;
   headSha: string;
   loopVersion: number;
-  payload: SdlcReviewBundlePayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryReviewBundlePayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
@@ -543,9 +546,9 @@ export async function createUiSmokeArtifact({
   loopId: string;
   headSha: string;
   loopVersion: number;
-  payload: SdlcUiSmokePayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryUiSmokePayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
@@ -577,24 +580,24 @@ export async function createPrLinkArtifact({
   db: DB;
   loopId: string;
   loopVersion: number;
-  payload: SdlcPrLinkPayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryPrLinkPayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
   return await db.transaction(async (tx) => {
     await tx
-      .update(schema.sdlcPhaseArtifact)
+      .update(schema.deliveryPhaseArtifact)
       .set({
         status: "superseded",
         updatedAt: now,
       })
       .where(
         and(
-          eq(schema.sdlcPhaseArtifact.loopId, loopId),
-          eq(schema.sdlcPhaseArtifact.phase, "awaiting_pr_link"),
-          inArray(schema.sdlcPhaseArtifact.status, [
+          eq(schema.deliveryPhaseArtifact.loopId, loopId),
+          eq(schema.deliveryPhaseArtifact.phase, "awaiting_pr_link"),
+          inArray(schema.deliveryPhaseArtifact.status, [
             "generated",
             "approved",
             "accepted",
@@ -603,7 +606,7 @@ export async function createPrLinkArtifact({
       );
 
     const [artifact] = await tx
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId,
         phase: "awaiting_pr_link",
@@ -619,7 +622,7 @@ export async function createPrLinkArtifact({
       })
       .returning();
     if (!artifact) {
-      throw new Error("Failed to create SDLC PR link artifact");
+      throw new Error("Failed to create delivery PR link artifact");
     }
 
     return artifact;
@@ -641,9 +644,9 @@ export async function createBabysitEvaluationArtifact({
   loopId: string;
   headSha: string;
   loopVersion: number;
-  payload: SdlcBabysitEvaluationPayload;
-  generatedBy?: SdlcArtifactGeneratedBy;
-  status?: SdlcArtifactStatus;
+  payload: DeliveryBabysitEvaluationPayload;
+  generatedBy?: DeliveryArtifactGeneratedBy;
+  status?: DeliveryArtifactStatus;
   workflowId?: string | null;
   now?: Date;
 }) {
@@ -667,19 +670,23 @@ export async function getArtifactsForWorkflow(params: {
   workflowId: string;
   phase?: string;
   status?: string;
-}): Promise<SdlcPhaseArtifact[]> {
+}): Promise<DeliveryPhaseArtifact[]> {
   const conditions = [
-    eq(schema.sdlcPhaseArtifact.workflowId, params.workflowId),
+    eq(schema.deliveryPhaseArtifact.workflowId, params.workflowId),
   ];
   if (params.phase)
-    conditions.push(eq(schema.sdlcPhaseArtifact.phase, params.phase as any));
+    conditions.push(
+      eq(schema.deliveryPhaseArtifact.phase, params.phase as any),
+    );
   if (params.status)
-    conditions.push(eq(schema.sdlcPhaseArtifact.status, params.status as any));
+    conditions.push(
+      eq(schema.deliveryPhaseArtifact.status, params.status as any),
+    );
   return params.db
     .select()
-    .from(schema.sdlcPhaseArtifact)
+    .from(schema.deliveryPhaseArtifact)
     .where(and(...conditions))
-    .orderBy(desc(schema.sdlcPhaseArtifact.createdAt));
+    .orderBy(desc(schema.deliveryPhaseArtifact.createdAt));
 }
 
 export { getPlanArtifactRequiredStatus };

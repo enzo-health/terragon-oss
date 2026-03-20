@@ -129,7 +129,7 @@ describe("approvePlan", () => {
     // approvePlan writes a plan_approved signal to the inbox; the coordinator
     // tick advances the workflow kind asynchronously — so we verify the signal
     // was written rather than asserting on workflow.kind here.
-    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
       where: (s, { eq }) => eq(s.loopId, loop.id),
     });
     expect(approvalSignal).toBeDefined();
@@ -138,10 +138,10 @@ describe("approvePlan", () => {
         ?.event?.kind,
     ).toBe("plan_approved");
 
-    const planArtifacts = await db.query.sdlcPhaseArtifact.findMany({
+    const planArtifacts = await db.query.deliveryPhaseArtifact.findMany({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.loopId, loop.id),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
       ),
     });
     expect(planArtifacts).toHaveLength(1);
@@ -151,10 +151,10 @@ describe("approvePlan", () => {
       | undefined;
     expect(exitPlanPayload?.source).toBe("exit_plan_mode");
 
-    const planTasks = await db.query.sdlcPlanTask.findMany({
+    const planTasks = await db.query.deliveryPlanTask.findMany({
       where: and(
-        eq(schema.sdlcPlanTask.loopId, loop.id),
-        eq(schema.sdlcPlanTask.artifactId, planArtifacts[0]!.id),
+        eq(schema.deliveryPlanTask.loopId, loop.id),
+        eq(schema.deliveryPlanTask.artifactId, planArtifacts[0]!.id),
       ),
     });
     expect(planTasks).toHaveLength(2);
@@ -224,7 +224,7 @@ describe("approvePlan", () => {
     await approvePlan({ threadId, threadChatId });
 
     // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
-    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
       where: (s, { eq }) => eq(s.loopId, loop.id),
     });
     expect(approvalSignal).toBeDefined();
@@ -233,12 +233,12 @@ describe("approvePlan", () => {
         ?.event?.kind,
     ).toBe("plan_approved");
 
-    const artifact = await db.query.sdlcPhaseArtifact.findFirst({
+    const artifact = await db.query.deliveryPhaseArtifact.findFirst({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.loopId, loop.id),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
       ),
-      orderBy: [schema.sdlcPhaseArtifact.createdAt],
+      orderBy: [schema.deliveryPhaseArtifact.createdAt],
     });
     expect(artifact?.status).toBe("approved");
     expect(artifact?.approvedByUserId).toBe(user.id);
@@ -331,10 +331,10 @@ describe("approvePlan", () => {
 
     await approvePlan({ threadId, threadChatId });
 
-    const planningArtifacts = await db.query.sdlcPhaseArtifact.findMany({
+    const planningArtifacts = await db.query.deliveryPhaseArtifact.findMany({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.loopId, loop.id),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
       ),
     });
     expect(planningArtifacts).toHaveLength(1);
@@ -391,7 +391,7 @@ describe("approvePlan", () => {
     const approvedCreatedAt = new Date("2026-03-09T12:00:10.000Z");
 
     const [staleGeneratedArtifact] = await db
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId: loop.id,
         phase: "planning",
@@ -407,7 +407,7 @@ describe("approvePlan", () => {
       .returning();
 
     const [approvedArtifact] = await db
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId: loop.id,
         phase: "planning",
@@ -466,7 +466,7 @@ describe("approvePlan", () => {
     await approvePlan({ threadId, threadChatId });
 
     // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
-    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
       where: (s, { eq }) => eq(s.loopId, loop.id),
     });
     expect(approvalSignal).toBeDefined();
@@ -476,11 +476,11 @@ describe("approvePlan", () => {
     ).toBe("plan_approved");
 
     const [refreshedStale, refreshedApproved] = await Promise.all([
-      db.query.sdlcPhaseArtifact.findFirst({
-        where: eq(schema.sdlcPhaseArtifact.id, staleGeneratedArtifact.id),
+      db.query.deliveryPhaseArtifact.findFirst({
+        where: eq(schema.deliveryPhaseArtifact.id, staleGeneratedArtifact.id),
       }),
-      db.query.sdlcPhaseArtifact.findFirst({
-        where: eq(schema.sdlcPhaseArtifact.id, approvedArtifact.id),
+      db.query.deliveryPhaseArtifact.findFirst({
+        where: eq(schema.deliveryPhaseArtifact.id, approvedArtifact.id),
       }),
     ]);
     expect(refreshedStale?.status).toBe("generated");
@@ -534,7 +534,7 @@ describe("approvePlan", () => {
     };
 
     const [staleApprovedArtifact] = await db
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId: loop.id,
         phase: "planning",
@@ -585,7 +585,7 @@ describe("approvePlan", () => {
     await approvePlan({ threadId, threadChatId });
 
     // approvePlan writes a plan_approved signal; coordinator advances kind asynchronously
-    const approvalSignal = await db.query.sdlcLoopSignalInbox.findFirst({
+    const approvalSignal = await db.query.deliverySignalInbox.findFirst({
       where: (s, { eq }) => eq(s.loopId, loop.id),
     });
     expect(approvalSignal).toBeDefined();
@@ -595,11 +595,11 @@ describe("approvePlan", () => {
     ).toBe("plan_approved");
 
     // The new artifact (matching parsedPlanPayload) should be approved
-    const approvedArtifact = await db.query.sdlcPhaseArtifact.findFirst({
+    const approvedArtifact = await db.query.deliveryPhaseArtifact.findFirst({
       where: and(
-        eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-        eq(schema.sdlcPhaseArtifact.status, "approved"),
-        eq(schema.sdlcPhaseArtifact.phase, "planning"),
+        eq(schema.deliveryPhaseArtifact.loopId, loop.id),
+        eq(schema.deliveryPhaseArtifact.status, "approved"),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
       ),
     });
     expect(approvedArtifact?.id).not.toBe(staleApprovedArtifact.id);
@@ -671,7 +671,7 @@ describe("approvePlan", () => {
     });
 
     const [unrelatedApprovedArtifact] = await db
-      .insert(schema.sdlcPhaseArtifact)
+      .insert(schema.deliveryPhaseArtifact)
       .values({
         loopId: loop.id,
         phase: "planning",

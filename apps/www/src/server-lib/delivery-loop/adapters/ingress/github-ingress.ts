@@ -1,7 +1,7 @@
 import type { DB } from "@terragon/shared/db";
 import type {
   DeliverySignalSourceV3,
-  SdlcLoopCauseType,
+  DeliveryLoopCauseType,
 } from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
@@ -192,7 +192,7 @@ export function normalizeGitHubWebhook(
 export async function handleGitHubWebhook(params: {
   db: DB;
   rawEvent: GitHubWebhookPayload;
-  /** V1 sdlcLoop ID used as inbox partition key. Must match the key cron uses to drain. */
+  /** V1 delivery loop ID used as inbox partition key. Must match the key cron uses to drain. */
   inboxPartitionKey: string;
   lookupWorkflowByPr: (params: {
     db: DB;
@@ -279,7 +279,9 @@ export async function handleGitHubWebhook(params: {
   }
 }
 
-function mapGitHubSignalToCauseType(signal: DeliverySignal): SdlcLoopCauseType {
+function mapGitHubSignalToCauseType(
+  signal: DeliverySignal,
+): DeliveryLoopCauseType {
   if (signal.source !== "github") return "github_ci_changed";
   switch (signal.event.kind) {
     case "ci_changed":

@@ -43,16 +43,16 @@ export async function getUnresolvedBlockingDeepReviewFindings(args: {
   db: DB;
   loopId: string;
   headSha: string;
-}): Promise<InferSelectModel<typeof schema.sdlcDeepReviewFinding>[]> {
+}): Promise<InferSelectModel<typeof schema.deliveryDeepReviewFinding>[]> {
   const { db, loopId, headSha } = args;
-  return db.query.sdlcDeepReviewFinding.findMany({
+  return db.query.deliveryDeepReviewFinding.findMany({
     where: and(
-      eq(schema.sdlcDeepReviewFinding.loopId, loopId),
-      eq(schema.sdlcDeepReviewFinding.headSha, headSha),
-      eq(schema.sdlcDeepReviewFinding.isBlocking, true),
-      isNull(schema.sdlcDeepReviewFinding.resolvedAt),
+      eq(schema.deliveryDeepReviewFinding.loopId, loopId),
+      eq(schema.deliveryDeepReviewFinding.headSha, headSha),
+      eq(schema.deliveryDeepReviewFinding.isBlocking, true),
+      isNull(schema.deliveryDeepReviewFinding.resolvedAt),
     ),
-    orderBy: [schema.sdlcDeepReviewFinding.createdAt],
+    orderBy: [schema.deliveryDeepReviewFinding.createdAt],
   });
 }
 
@@ -60,15 +60,15 @@ export async function getUnresolvedBlockingCarmackReviewFindings(args: {
   db: DB;
   loopId: string;
   headSha: string;
-}): Promise<InferSelectModel<typeof schema.sdlcCarmackReviewFinding>[]> {
+}): Promise<InferSelectModel<typeof schema.deliveryCarmackReviewFinding>[]> {
   const { db, loopId, headSha } = args;
-  return db.query.sdlcCarmackReviewFinding.findMany({
+  return db.query.deliveryCarmackReviewFinding.findMany({
     where: and(
-      eq(schema.sdlcCarmackReviewFinding.loopId, loopId),
-      eq(schema.sdlcCarmackReviewFinding.headSha, headSha),
-      eq(schema.sdlcCarmackReviewFinding.isBlocking, true),
-      isNull(schema.sdlcCarmackReviewFinding.resolvedAt),
+      eq(schema.deliveryCarmackReviewFinding.loopId, loopId),
+      eq(schema.deliveryCarmackReviewFinding.headSha, headSha),
+      eq(schema.deliveryCarmackReviewFinding.isBlocking, true),
+      isNull(schema.deliveryCarmackReviewFinding.resolvedAt),
     ),
-    orderBy: [schema.sdlcCarmackReviewFinding.createdAt],
+    orderBy: [schema.deliveryCarmackReviewFinding.createdAt],
   });
 }

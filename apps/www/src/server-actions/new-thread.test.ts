@@ -115,7 +115,7 @@ describe("newThread", { timeout: 30_000 }, () => {
       expect(thread!.sourceType).toBe("www");
       expect(thread!.sourceMetadata).toEqual({
         type: "www",
-        sdlcLoopOptIn: true,
+        deliveryLoopOptIn: true,
       });
     });
 
@@ -127,7 +127,7 @@ describe("newThread", { timeout: 30_000 }, () => {
         message: mockMessage,
         githubRepoFullName: repoFullName,
         branchName: "main",
-        runInSdlcLoop: true,
+        runInDeliveryLoop: true,
       });
       const { threadId } = unwrapResult(result);
       await waitUntilResolvedBestEffort();
@@ -137,7 +137,7 @@ describe("newThread", { timeout: 30_000 }, () => {
       expect(thread!.sourceType).toBe("www");
       expect(thread!.sourceMetadata).toEqual({
         type: "www",
-        sdlcLoopOptIn: true,
+        deliveryLoopOptIn: true,
       });
     });
   });

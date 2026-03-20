@@ -77,7 +77,7 @@ describe("enrollV2Workflow", () => {
     expect(workItems).toHaveLength(1);
   });
 
-  it("returns sdlcLoopId as null for pure v2 enrollment", async () => {
+  it("returns deliveryLoopId as null for pure v2 enrollment", async () => {
     const result = await enrollV2Workflow({
       db,
       threadId: testThreadId,
@@ -86,7 +86,7 @@ describe("enrollV2Workflow", () => {
     });
 
     expect(result.workflowId).toBeTruthy();
-    // sdlcLoopId is always null — v1 sdlcLoop table no longer exists
-    expect(result.sdlcLoopId).toBeNull();
+    // deliveryLoopId is always null — v1 sdlcLoop table no longer exists
+    expect(result.deliveryLoopId).toBeNull();
   });
 });

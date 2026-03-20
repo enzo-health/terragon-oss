@@ -41,33 +41,33 @@ import {
   AgentRunProtocolVersion,
   AgentRunStatus,
   AgentProviderMetadata,
-  SdlcCarmackReviewSeverity,
-  SdlcCarmackReviewStatus,
-  SdlcCiCapabilityState,
-  SdlcCiGateStatus,
-  SdlcCiRequiredCheckSource,
-  SdlcDeepReviewSeverity,
-  SdlcDeepReviewStatus,
-  SdlcLoopCauseType,
-  SdlcLoopState,
-  SdlcParityTargetClass,
-  SdlcReviewThreadEvaluationSource,
-  SdlcReviewThreadGateStatus,
+  DeliveryCarmackReviewSeverity,
+  DeliveryCarmackReviewStatus,
+  DeliveryCiCapabilityState,
+  DeliveryCiGateStatus,
+  DeliveryCiRequiredCheckSource,
+  DeliveryDeepReviewSeverity,
+  DeliveryDeepReviewStatus,
+  DeliveryLoopCauseType,
+  DeliveryLoopState,
+  DeliveryParityTargetClass,
+  DeliveryReviewThreadEvaluationSource,
+  DeliveryReviewThreadGateStatus,
   DispatchIntentStatus,
   DispatchIntentExecutionClass,
   DispatchIntentDispatchMechanism,
-  SdlcPhase,
-  SdlcArtifactType,
-  SdlcArtifactStatus,
-  SdlcArtifactGeneratedBy,
-  SdlcPlanSpecPayload,
-  SdlcImplementationSnapshotPayload,
-  SdlcReviewBundlePayload,
-  SdlcUiSmokePayload,
-  SdlcPrLinkPayload,
-  SdlcBabysitEvaluationPayload,
-  SdlcPlanTaskStatus,
-  SdlcPlanTaskCompletedBy,
+  DeliveryPhase,
+  DeliveryArtifactType,
+  DeliveryArtifactStatus,
+  DeliveryArtifactGeneratedBy,
+  DeliveryPlanSpecPayload,
+  DeliveryImplementationSnapshotPayload,
+  DeliveryReviewBundlePayload,
+  DeliveryUiSmokePayload,
+  DeliveryPrLinkPayload,
+  DeliveryBabysitEvaluationPayload,
+  DeliveryPlanTaskStatus,
+  DeliveryPlanTaskCompletedBy,
   DeliverySignalSourceV3,
   DeliveryEffectKindV3,
   DeliveryEffectStatusV3,
@@ -1344,10 +1344,10 @@ export const agentProviderCredentials = pgTable(
   ],
 );
 
-// v1 sdlcLoop table REMOVED — see delivery_workflow for v2
+// v1 deliveryLoop table REMOVED — see delivery_workflow for v2
 
-export const sdlcPhaseArtifact = pgTable(
-  "sdlc_phase_artifact",
+export const deliveryPhaseArtifact = pgTable(
+  "delivery_phase_artifact",
   {
     id: text("id")
       .primaryKey()
@@ -1356,16 +1356,16 @@ export const sdlcPhaseArtifact = pgTable(
     workflowId: text("workflow_id").references(() => deliveryWorkflow.id, {
       onDelete: "set null",
     }),
-    phase: text("phase").$type<SdlcPhase>().notNull(),
-    artifactType: text("artifact_type").$type<SdlcArtifactType>().notNull(),
+    phase: text("phase").$type<DeliveryPhase>().notNull(),
+    artifactType: text("artifact_type").$type<DeliveryArtifactType>().notNull(),
     headSha: text("head_sha"),
     loopVersion: integer("loop_version").notNull(),
     status: text("status")
-      .$type<SdlcArtifactStatus>()
+      .$type<DeliveryArtifactStatus>()
       .notNull()
       .default("generated"),
     generatedBy: text("generated_by")
-      .$type<SdlcArtifactGeneratedBy>()
+      .$type<DeliveryArtifactGeneratedBy>()
       .notNull()
       .default("system"),
     approvedByUserId: text("approved_by_user_id").references(() => user.id, {
@@ -1374,12 +1374,12 @@ export const sdlcPhaseArtifact = pgTable(
     approvedAt: timestamp("approved_at", { mode: "date" }),
     payload: jsonb("payload")
       .$type<
-        | SdlcPlanSpecPayload
-        | SdlcImplementationSnapshotPayload
-        | SdlcReviewBundlePayload
-        | SdlcUiSmokePayload
-        | SdlcPrLinkPayload
-        | SdlcBabysitEvaluationPayload
+        | DeliveryPlanSpecPayload
+        | DeliveryImplementationSnapshotPayload
+        | DeliveryReviewBundlePayload
+        | DeliveryUiSmokePayload
+        | DeliveryPrLinkPayload
+        | DeliveryBabysitEvaluationPayload
         | Record<string, unknown>
       >()
       .notNull(),
@@ -1390,36 +1390,36 @@ export const sdlcPhaseArtifact = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    index("sdlc_phase_artifact_loop_phase_created_index").on(
+    index("delivery_phase_artifact_loop_phase_created_index").on(
       table.loopId,
       table.phase,
       table.createdAt,
     ),
-    index("sdlc_phase_artifact_loop_phase_status_created_index").on(
+    index("delivery_phase_artifact_loop_phase_status_created_index").on(
       table.loopId,
       table.phase,
       table.status,
       table.createdAt,
     ),
-    index("sdlc_phase_artifact_loop_head_phase_created_index").on(
+    index("delivery_phase_artifact_loop_head_phase_created_index").on(
       table.loopId,
       table.headSha,
       table.phase,
       table.createdAt,
     ),
-    index("sdlc_phase_artifact_workflow_id_index").on(table.workflowId),
+    index("delivery_phase_artifact_workflow_id_index").on(table.workflowId),
   ],
 );
 
-export const sdlcPlanTask = pgTable(
-  "sdlc_plan_task",
+export const deliveryPlanTask = pgTable(
+  "delivery_plan_task",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     artifactId: text("artifact_id")
       .notNull()
-      .references(() => sdlcPhaseArtifact.id, { onDelete: "cascade" }),
+      .references(() => deliveryPhaseArtifact.id, { onDelete: "cascade" }),
     loopId: text("loop_id").notNull(),
     stableTaskId: text("stable_task_id").notNull(),
     title: text("title").notNull(),
@@ -1429,11 +1429,11 @@ export const sdlcPlanTask = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     status: text("status")
-      .$type<SdlcPlanTaskStatus>()
+      .$type<DeliveryPlanTaskStatus>()
       .notNull()
       .default("todo"),
     completedAt: timestamp("completed_at", { mode: "date" }),
-    completedBy: text("completed_by").$type<SdlcPlanTaskCompletedBy>(),
+    completedBy: text("completed_by").$type<DeliveryPlanTaskCompletedBy>(),
     completionEvidence: jsonb("completion_evidence").$type<
       Record<string, unknown>
     >(),
@@ -1444,28 +1444,31 @@ export const sdlcPlanTask = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_plan_task_artifact_stable_task_unique").on(
+    uniqueIndex("delivery_plan_task_artifact_stable_task_unique").on(
       table.artifactId,
       table.stableTaskId,
     ),
-    index("sdlc_plan_task_loop_status_index").on(table.loopId, table.status),
-    index("sdlc_plan_task_loop_artifact_status_index").on(
+    index("delivery_plan_task_loop_status_index").on(
+      table.loopId,
+      table.status,
+    ),
+    index("delivery_plan_task_loop_artifact_status_index").on(
       table.loopId,
       table.artifactId,
       table.status,
     ),
   ],
 );
-// v1 sdlcLoopLease table REMOVED
+// v1 deliveryLoopLease table REMOVED
 
-export const sdlcLoopSignalInbox = pgTable(
-  "sdlc_loop_signal_inbox",
+export const deliverySignalInbox = pgTable(
+  "delivery_signal_inbox",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     loopId: text("loop_id").notNull(),
-    causeType: text("cause_type").$type<SdlcLoopCauseType>().notNull(),
+    causeType: text("cause_type").$type<DeliveryLoopCauseType>().notNull(),
     canonicalCauseId: text("canonical_cause_id").notNull(),
     signalHeadShaOrNull: text("signal_head_sha_or_null"),
     causeIdentityVersion: integer("cause_identity_version")
@@ -1487,14 +1490,14 @@ export const sdlcLoopSignalInbox = pgTable(
     deadLetterReason: text("dead_letter_reason"),
   },
   (table) => [
-    uniqueIndex("sdlc_loop_signal_inbox_dedupe_unique").on(
+    uniqueIndex("delivery_signal_inbox_dedupe_unique").on(
       table.loopId,
       table.causeType,
       table.canonicalCauseId,
       table.signalHeadShaOrNull,
       table.causeIdentityVersion,
     ),
-    uniqueIndex("sdlc_loop_signal_inbox_dedupe_null_head_unique")
+    uniqueIndex("delivery_signal_inbox_dedupe_null_head_unique")
       .on(
         table.loopId,
         table.causeType,
@@ -1502,26 +1505,26 @@ export const sdlcLoopSignalInbox = pgTable(
         table.causeIdentityVersion,
       )
       .where(sql`${table.signalHeadShaOrNull} is null`),
-    index("sdlc_loop_signal_inbox_claimable_unclaimed_index")
+    index("delivery_signal_inbox_claimable_unclaimed_index")
       .on(table.loopId, table.receivedAt)
       .where(sql`${table.processedAt} is null and ${table.claimToken} is null`),
-    index("sdlc_loop_signal_inbox_claimable_stale_index")
+    index("delivery_signal_inbox_claimable_stale_index")
       .on(table.loopId, table.claimedAt, table.receivedAt)
       .where(
         sql`${table.processedAt} is null and ${table.claimToken} is not null`,
       ),
-    index("sdlc_loop_signal_inbox_loop_received_index").on(
+    index("delivery_signal_inbox_loop_received_index").on(
       table.loopId,
       table.receivedAt,
     ),
   ],
 );
 
-// v1 sdlcLoopOutbox table REMOVED
-// v1 sdlcLoopOutboxAttempt table REMOVED
+// v1 deliveryLoopOutbox table REMOVED
+// v1 deliveryLoopOutboxAttempt table REMOVED
 
-export const sdlcDeepReviewRun = pgTable(
-  "sdlc_deep_review_run",
+export const deliveryDeepReviewRun = pgTable(
+  "delivery_deep_review_run",
   {
     id: text("id")
       .primaryKey()
@@ -1530,7 +1533,7 @@ export const sdlcDeepReviewRun = pgTable(
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
     status: text("status")
-      .$type<SdlcDeepReviewStatus>()
+      .$type<DeliveryDeepReviewStatus>()
       .notNull()
       .default("invalid_output"),
     gatePassed: boolean("gate_passed").notNull().default(false),
@@ -1546,32 +1549,32 @@ export const sdlcDeepReviewRun = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_deep_review_run_loop_head_unique").on(
+    uniqueIndex("delivery_deep_review_run_loop_head_unique").on(
       table.loopId,
       table.headSha,
     ),
-    index("sdlc_deep_review_run_loop_created_index").on(
+    index("delivery_deep_review_run_loop_created_index").on(
       table.loopId,
       table.createdAt,
     ),
-    index("sdlc_deep_review_run_status_index").on(table.status),
+    index("delivery_deep_review_run_status_index").on(table.status),
   ],
 );
 
-export const sdlcDeepReviewFinding = pgTable(
-  "sdlc_deep_review_finding",
+export const deliveryDeepReviewFinding = pgTable(
+  "delivery_deep_review_finding",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     reviewRunId: text("review_run_id")
       .notNull()
-      .references(() => sdlcDeepReviewRun.id, { onDelete: "cascade" }),
+      .references(() => deliveryDeepReviewRun.id, { onDelete: "cascade" }),
     loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     stableFindingId: text("stable_finding_id").notNull(),
     title: text("title").notNull(),
-    severity: text("severity").$type<SdlcDeepReviewSeverity>().notNull(),
+    severity: text("severity").$type<DeliveryDeepReviewSeverity>().notNull(),
     category: text("category").notNull(),
     detail: text("detail").notNull(),
     suggestedFix: text("suggested_fix"),
@@ -1585,23 +1588,23 @@ export const sdlcDeepReviewFinding = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_deep_review_finding_loop_head_stable_unique").on(
+    uniqueIndex("delivery_deep_review_finding_loop_head_stable_unique").on(
       table.loopId,
       table.headSha,
       table.stableFindingId,
     ),
-    index("sdlc_deep_review_finding_loop_head_blocking_index").on(
+    index("delivery_deep_review_finding_loop_head_blocking_index").on(
       table.loopId,
       table.headSha,
       table.isBlocking,
       table.resolvedAt,
     ),
-    index("sdlc_deep_review_finding_run_id_index").on(table.reviewRunId),
+    index("delivery_deep_review_finding_run_id_index").on(table.reviewRunId),
   ],
 );
 
-export const sdlcCarmackReviewRun = pgTable(
-  "sdlc_carmack_review_run",
+export const deliveryCarmackReviewRun = pgTable(
+  "delivery_carmack_review_run",
   {
     id: text("id")
       .primaryKey()
@@ -1610,7 +1613,7 @@ export const sdlcCarmackReviewRun = pgTable(
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
     status: text("status")
-      .$type<SdlcCarmackReviewStatus>()
+      .$type<DeliveryCarmackReviewStatus>()
       .notNull()
       .default("invalid_output"),
     gatePassed: boolean("gate_passed").notNull().default(false),
@@ -1626,32 +1629,32 @@ export const sdlcCarmackReviewRun = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_carmack_review_run_loop_head_unique").on(
+    uniqueIndex("delivery_carmack_review_run_loop_head_unique").on(
       table.loopId,
       table.headSha,
     ),
-    index("sdlc_carmack_review_run_loop_created_index").on(
+    index("delivery_carmack_review_run_loop_created_index").on(
       table.loopId,
       table.createdAt,
     ),
-    index("sdlc_carmack_review_run_status_index").on(table.status),
+    index("delivery_carmack_review_run_status_index").on(table.status),
   ],
 );
 
-export const sdlcCarmackReviewFinding = pgTable(
-  "sdlc_carmack_review_finding",
+export const deliveryCarmackReviewFinding = pgTable(
+  "delivery_carmack_review_finding",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     reviewRunId: text("review_run_id")
       .notNull()
-      .references(() => sdlcCarmackReviewRun.id, { onDelete: "cascade" }),
+      .references(() => deliveryCarmackReviewRun.id, { onDelete: "cascade" }),
     loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     stableFindingId: text("stable_finding_id").notNull(),
     title: text("title").notNull(),
-    severity: text("severity").$type<SdlcCarmackReviewSeverity>().notNull(),
+    severity: text("severity").$type<DeliveryCarmackReviewSeverity>().notNull(),
     category: text("category").notNull(),
     detail: text("detail").notNull(),
     suggestedFix: text("suggested_fix"),
@@ -1665,23 +1668,23 @@ export const sdlcCarmackReviewFinding = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_carmack_review_finding_loop_head_stable_unique").on(
+    uniqueIndex("delivery_carmack_review_finding_loop_head_stable_unique").on(
       table.loopId,
       table.headSha,
       table.stableFindingId,
     ),
-    index("sdlc_carmack_review_finding_loop_head_blocking_index").on(
+    index("delivery_carmack_review_finding_loop_head_blocking_index").on(
       table.loopId,
       table.headSha,
       table.isBlocking,
       table.resolvedAt,
     ),
-    index("sdlc_carmack_review_finding_run_id_index").on(table.reviewRunId),
+    index("delivery_carmack_review_finding_run_id_index").on(table.reviewRunId),
   ],
 );
 
-export const sdlcCiGateRun = pgTable(
-  "sdlc_ci_gate_run",
+export const deliveryCiGateRun = pgTable(
+  "delivery_ci_gate_run",
   {
     id: text("id")
       .primaryKey()
@@ -1689,14 +1692,14 @@ export const sdlcCiGateRun = pgTable(
     loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
-    status: text("status").$type<SdlcCiGateStatus>().notNull(),
+    status: text("status").$type<DeliveryCiGateStatus>().notNull(),
     gatePassed: boolean("gate_passed").notNull().default(false),
     actorType: text("actor_type").notNull().default("installation_app"),
     capabilityState: text("capability_state")
-      .$type<SdlcCiCapabilityState>()
+      .$type<DeliveryCiCapabilityState>()
       .notNull(),
     requiredCheckSource: text("required_check_source")
-      .$type<SdlcCiRequiredCheckSource>()
+      .$type<DeliveryCiRequiredCheckSource>()
       .notNull(),
     requiredChecks: jsonb("required_checks")
       .$type<string[]>()
@@ -1718,23 +1721,23 @@ export const sdlcCiGateRun = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_ci_gate_run_loop_head_unique").on(
+    uniqueIndex("delivery_ci_gate_run_loop_head_unique").on(
       table.loopId,
       table.headSha,
     ),
-    uniqueIndex("sdlc_ci_gate_run_idempotency_key_unique")
+    uniqueIndex("delivery_ci_gate_run_idempotency_key_unique")
       .on(table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
-    index("sdlc_ci_gate_run_loop_created_index").on(
+    index("delivery_ci_gate_run_loop_created_index").on(
       table.loopId,
       table.createdAt,
     ),
-    index("sdlc_ci_gate_run_status_index").on(table.status),
+    index("delivery_ci_gate_run_status_index").on(table.status),
   ],
 );
 
-export const sdlcReviewThreadGateRun = pgTable(
-  "sdlc_review_thread_gate_run",
+export const deliveryReviewThreadGateRun = pgTable(
+  "delivery_review_thread_gate_run",
   {
     id: text("id")
       .primaryKey()
@@ -1742,10 +1745,10 @@ export const sdlcReviewThreadGateRun = pgTable(
     loopId: text("loop_id").notNull(),
     headSha: text("head_sha").notNull(),
     loopVersion: integer("loop_version").notNull(),
-    status: text("status").$type<SdlcReviewThreadGateStatus>().notNull(),
+    status: text("status").$type<DeliveryReviewThreadGateStatus>().notNull(),
     gatePassed: boolean("gate_passed").notNull().default(false),
     evaluationSource: text("evaluation_source")
-      .$type<SdlcReviewThreadEvaluationSource>()
+      .$type<DeliveryReviewThreadEvaluationSource>()
       .notNull(),
     unresolvedThreadCount: integer("unresolved_thread_count")
       .notNull()
@@ -1761,29 +1764,31 @@ export const sdlcReviewThreadGateRun = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("sdlc_review_thread_gate_run_loop_head_unique").on(
+    uniqueIndex("delivery_review_thread_gate_run_loop_head_unique").on(
       table.loopId,
       table.headSha,
     ),
-    uniqueIndex("sdlc_review_thread_gate_run_idempotency_key_unique")
+    uniqueIndex("delivery_review_thread_gate_run_idempotency_key_unique")
       .on(table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
-    index("sdlc_review_thread_gate_run_loop_created_index").on(
+    index("delivery_review_thread_gate_run_loop_created_index").on(
       table.loopId,
       table.createdAt,
     ),
-    index("sdlc_review_thread_gate_run_status_index").on(table.status),
+    index("delivery_review_thread_gate_run_status_index").on(table.status),
   ],
 );
 
-export const sdlcParityMetricSample = pgTable(
-  "sdlc_parity_metric_sample",
+export const deliveryParityMetricSample = pgTable(
+  "delivery_parity_metric_sample",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    causeType: text("cause_type").$type<SdlcLoopCauseType>().notNull(),
-    targetClass: text("target_class").$type<SdlcParityTargetClass>().notNull(),
+    causeType: text("cause_type").$type<DeliveryLoopCauseType>().notNull(),
+    targetClass: text("target_class")
+      .$type<DeliveryParityTargetClass>()
+      .notNull(),
     eligible: boolean("eligible").notNull().default(true),
     matched: boolean("matched").notNull(),
     observedAt: timestamp("observed_at", { mode: "date" })
@@ -1792,13 +1797,13 @@ export const sdlcParityMetricSample = pgTable(
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (table) => [
-    index("sdlc_parity_metric_sample_bucket_index").on(
+    index("delivery_parity_metric_sample_bucket_index").on(
       table.causeType,
       table.targetClass,
       table.observedAt,
     ),
-    index("sdlc_parity_metric_sample_observed_index").on(table.observedAt),
-    index("sdlc_parity_metric_sample_eligible_index").on(
+    index("delivery_parity_metric_sample_observed_index").on(table.observedAt),
+    index("delivery_parity_metric_sample_eligible_index").on(
       table.eligible,
       table.observedAt,
     ),
@@ -2059,7 +2064,7 @@ export const deliveryLoopDispatchIntent = pgTable(
       .references(() => thread.id, { onDelete: "cascade" }),
     threadChatId: text("thread_chat_id").notNull(),
     runId: text("run_id").notNull(),
-    targetPhase: text("target_phase").$type<SdlcLoopState>().notNull(),
+    targetPhase: text("target_phase").$type<DeliveryLoopState>().notNull(),
     selectedAgent: text("selected_agent").notNull(),
     executionClass: text("execution_class")
       .$type<DispatchIntentExecutionClass>()

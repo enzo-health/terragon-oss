@@ -52,7 +52,7 @@ function correlationId(): CorrelationId {
 
 async function injectSignal(
   workflowId: string,
-  causeType: import("@terragon/shared/db/types").SdlcLoopCauseType,
+  causeType: import("@terragon/shared/db/types").DeliveryLoopCauseType,
   payload: Record<string, unknown>,
 ) {
   return appendSignalToInbox({
@@ -521,7 +521,7 @@ describe("v2 coordinator tick — integration", () => {
   });
 
   describe("plan artifact creation on planning -> implementing", () => {
-    it("creates sdlcPhaseArtifact and sdlcPlanTask rows when planning transitions to implementing", async () => {
+    it("creates deliveryPhaseArtifact and deliveryPlanTask rows when planning transitions to implementing", async () => {
       const wf = await createTestWorkflowInState({
         kind: "planning",
         stateJson: {},
@@ -575,16 +575,16 @@ describe("v2 coordinator tick — integration", () => {
       expect(result.stateAfter).toBe("implementing");
 
       // Assert plan artifact was created
-      const artifact = await db.query.sdlcPhaseArtifact.findFirst({
-        where: eq(schema.sdlcPhaseArtifact.loopId, wf.id),
+      const artifact = await db.query.deliveryPhaseArtifact.findFirst({
+        where: eq(schema.deliveryPhaseArtifact.loopId, wf.id),
       });
       expect(artifact).toBeDefined();
       expect(artifact!.phase).toBe("planning");
       expect(artifact!.status).toBe("accepted");
 
       // Assert plan tasks were created
-      const tasks = await db.query.sdlcPlanTask.findMany({
-        where: eq(schema.sdlcPlanTask.loopId, wf.id),
+      const tasks = await db.query.deliveryPlanTask.findMany({
+        where: eq(schema.deliveryPlanTask.loopId, wf.id),
       });
       expect(tasks.length).toBe(2);
 
@@ -664,7 +664,7 @@ describe("v2 coordinator tick — integration", () => {
 
       await injectSignal(
         wf.id,
-        "totally_unknown_cause_type" as import("@terragon/shared/db/types").SdlcLoopCauseType,
+        "totally_unknown_cause_type" as import("@terragon/shared/db/types").DeliveryLoopCauseType,
         { foo: "bar" },
       );
       const result = await tick(wf.id);
@@ -672,8 +672,8 @@ describe("v2 coordinator tick — integration", () => {
       expect(result.signalsProcessed).toBe(1);
       expect(result.transitioned).toBe(false);
 
-      const signals = await db.query.sdlcLoopSignalInbox.findMany({
-        where: eq(schema.sdlcLoopSignalInbox.loopId, wf.id),
+      const signals = await db.query.deliverySignalInbox.findMany({
+        where: eq(schema.deliverySignalInbox.loopId, wf.id),
       });
       expect(signals.some((s) => s.deadLetteredAt !== null)).toBe(true);
     });

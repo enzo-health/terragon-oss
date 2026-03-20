@@ -135,15 +135,15 @@ const TextPart = memo(function TextPart({
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
-  const sdlcPlanReviewCard = useFeatureFlag("sdlcPlanReviewCard");
+  const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
   const parsedPlan = useMemo(() => {
-    if (!sdlcPlanReviewCard) {
+    if (!deliveryPlanReviewCard) {
       return null;
     }
     return parsePlanSpecViewModelFromText(text);
-  }, [sdlcPlanReviewCard, text]);
+  }, [deliveryPlanReviewCard, text]);
 
   const processedText = normalizeBoldHeaders(
     convertCitationsToGitHubLinks(

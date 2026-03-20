@@ -16,7 +16,7 @@ import {
   Thread,
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
-import type { SdlcLoopState } from "@terragon/shared/db/types";
+import type { DeliveryLoopState } from "@terragon/shared/db/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -590,7 +590,7 @@ export async function startAgentMessage({
               null,
             );
           }
-          const effectiveState: SdlcLoopState | null = v2Workflow
+          const effectiveState: DeliveryLoopState | null = v2Workflow
             ? workflowRowKindToState(v2Workflow.kind, v2Workflow.stateJson)
             : null;
           let planContext: {
@@ -872,7 +872,7 @@ async function preparePromptForModel({
 function workflowRowKindToState(
   kind: string,
   stateJson: unknown,
-): SdlcLoopState {
+): DeliveryLoopState {
   if (kind === "gating") {
     const gate = (stateJson as Record<string, unknown> | null)?.gate as
       | { kind?: string }
@@ -897,11 +897,11 @@ function workflowRowKindToState(
   )
     return "blocked";
   if (kind === "awaiting_pr") return "awaiting_pr_link";
-  return kind as SdlcLoopState;
+  return kind as DeliveryLoopState;
 }
 
 function buildDeliveryLoopPhasePromptPrefix(
-  state: SdlcLoopState | null,
+  state: DeliveryLoopState | null,
   planContext?: {
     planText: string;
     tasks: Array<{

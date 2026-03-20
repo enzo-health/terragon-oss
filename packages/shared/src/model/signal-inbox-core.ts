@@ -20,7 +20,7 @@ import {
 } from "drizzle-orm";
 import type { DB } from "../db";
 import * as schema from "../db/schema";
-import type { SdlcLoopCauseType } from "../db/types";
+import type { DeliveryLoopCauseType } from "../db/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,7 +28,7 @@ import type { SdlcLoopCauseType } from "../db/types";
 
 export type PendingSignal = {
   id: string;
-  causeType: SdlcLoopCauseType;
+  causeType: DeliveryLoopCauseType;
   canonicalCauseId: string;
   payload: Record<string, unknown> | null;
   receivedAt: Date;
@@ -110,7 +110,7 @@ export function getPayloadStringArray(
 // Signal classification
 // ---------------------------------------------------------------------------
 
-const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
+const feedbackSignalCauseTypes: ReadonlySet<DeliveryLoopCauseType> = new Set([
   "daemon_terminal",
   "check_run.completed",
   "check_suite.completed",
@@ -119,7 +119,7 @@ const feedbackSignalCauseTypes: ReadonlySet<SdlcLoopCauseType> = new Set([
 ]);
 
 export function classifySignalPolicy(
-  causeType: SdlcLoopCauseType,
+  causeType: DeliveryLoopCauseType,
 ): SignalPolicy {
   const isFeedbackSignal = feedbackSignalCauseTypes.has(causeType);
   return {
@@ -201,30 +201,30 @@ export async function claimNextUnprocessedSignal({
   const staleClaimCutoff = new Date(now.getTime() - staleClaimMs);
   const excludeArray = excludeIds?.size ? [...excludeIds] : null;
   const claimableWhere = and(
-    eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-    isNull(schema.sdlcLoopSignalInbox.processedAt),
-    isNull(schema.sdlcLoopSignalInbox.deadLetteredAt),
+    eq(schema.deliverySignalInbox.loopId, loopId),
+    isNull(schema.deliverySignalInbox.processedAt),
+    isNull(schema.deliverySignalInbox.deadLetteredAt),
     or(
-      isNull(schema.sdlcLoopSignalInbox.claimToken),
-      lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
+      isNull(schema.deliverySignalInbox.claimToken),
+      lte(schema.deliverySignalInbox.claimedAt, staleClaimCutoff),
     ),
     or(
-      ne(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
+      ne(schema.deliverySignalInbox.causeType, "daemon_terminal"),
       and(
-        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        isNotNull(schema.sdlcLoopSignalInbox.committedAt),
+        eq(schema.deliverySignalInbox.causeType, "daemon_terminal"),
+        isNotNull(schema.deliverySignalInbox.committedAt),
       ),
     ),
     ...(excludeArray
-      ? [notInArray(schema.sdlcLoopSignalInbox.id, excludeArray)]
+      ? [notInArray(schema.deliverySignalInbox.id, excludeArray)]
       : []),
   );
 
-  const signal = await db.query.sdlcLoopSignalInbox.findFirst({
+  const signal = await db.query.deliverySignalInbox.findFirst({
     where: claimableWhere,
     orderBy: [
-      sql`case when ${schema.sdlcLoopSignalInbox.causeType} = 'daemon_terminal' then 0 else 1 end`,
-      schema.sdlcLoopSignalInbox.receivedAt,
+      sql`case when ${schema.deliverySignalInbox.causeType} = 'daemon_terminal' then 0 else 1 end`,
+      schema.deliverySignalInbox.receivedAt,
     ],
   });
   if (!signal) {
@@ -232,22 +232,22 @@ export async function claimNextUnprocessedSignal({
   }
 
   const [claimedSignal] = await db
-    .update(schema.sdlcLoopSignalInbox)
+    .update(schema.deliverySignalInbox)
     .set({
       claimToken,
       claimedAt: now,
     })
     .where(
       and(
-        eq(schema.sdlcLoopSignalInbox.id, signal.id),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        eq(schema.deliverySignalInbox.id, signal.id),
+        isNull(schema.deliverySignalInbox.processedAt),
         or(
-          isNull(schema.sdlcLoopSignalInbox.claimToken),
-          lte(schema.sdlcLoopSignalInbox.claimedAt, staleClaimCutoff),
+          isNull(schema.deliverySignalInbox.claimToken),
+          lte(schema.deliverySignalInbox.claimedAt, staleClaimCutoff),
         ),
       ),
     )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
+    .returning({ id: schema.deliverySignalInbox.id });
 
   if (!claimedSignal) {
     return null;
@@ -270,18 +270,18 @@ export async function refreshSignalClaim(params: {
   now: Date;
 }): Promise<boolean> {
   const [refreshedClaim] = await params.db
-    .update(schema.sdlcLoopSignalInbox)
+    .update(schema.deliverySignalInbox)
     .set({
       claimedAt: params.now,
     })
     .where(
       and(
-        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
-        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        eq(schema.deliverySignalInbox.id, params.signalId),
+        eq(schema.deliverySignalInbox.claimToken, params.claimToken),
+        isNull(schema.deliverySignalInbox.processedAt),
       ),
     )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
+    .returning({ id: schema.deliverySignalInbox.id });
   return Boolean(refreshedClaim);
 }
 
@@ -291,16 +291,16 @@ export async function releaseSignalClaim(params: {
   claimToken: string;
 }): Promise<void> {
   await params.db
-    .update(schema.sdlcLoopSignalInbox)
+    .update(schema.deliverySignalInbox)
     .set({
       claimToken: null,
       claimedAt: null,
     })
     .where(
       and(
-        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
-        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        eq(schema.deliverySignalInbox.id, params.signalId),
+        eq(schema.deliverySignalInbox.claimToken, params.claimToken),
+        isNull(schema.deliverySignalInbox.processedAt),
       ),
     );
 }
@@ -312,7 +312,7 @@ export async function completeSignalClaim(params: {
   now: Date;
 }): Promise<boolean> {
   const [markedProcessed] = await params.db
-    .update(schema.sdlcLoopSignalInbox)
+    .update(schema.deliverySignalInbox)
     .set({
       processedAt: params.now,
       claimToken: null,
@@ -320,12 +320,12 @@ export async function completeSignalClaim(params: {
     })
     .where(
       and(
-        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
-        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        eq(schema.deliverySignalInbox.id, params.signalId),
+        eq(schema.deliverySignalInbox.claimToken, params.claimToken),
+        isNull(schema.deliverySignalInbox.processedAt),
       ),
     )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
+    .returning({ id: schema.deliverySignalInbox.id });
   return Boolean(markedProcessed);
 }
 
@@ -342,14 +342,14 @@ export async function getPriorCiRequiredChecksForHead({
   loopId: string;
   headSha: string;
 }): Promise<string[] | null> {
-  const latestCiRun = await db.query.sdlcCiGateRun.findFirst({
+  const latestCiRun = await db.query.deliveryCiGateRun.findFirst({
     where: and(
-      eq(schema.sdlcCiGateRun.loopId, loopId),
-      eq(schema.sdlcCiGateRun.headSha, headSha),
+      eq(schema.deliveryCiGateRun.loopId, loopId),
+      eq(schema.deliveryCiGateRun.headSha, headSha),
     ),
     orderBy: [
-      desc(schema.sdlcCiGateRun.updatedAt),
-      desc(schema.sdlcCiGateRun.createdAt),
+      desc(schema.deliveryCiGateRun.updatedAt),
+      desc(schema.deliveryCiGateRun.createdAt),
     ],
     columns: {
       requiredChecks: true,
@@ -383,28 +383,28 @@ export async function evaluateBabysitCompletionForHead({
     unresolvedDeepFindings,
     unresolvedCarmackFindings,
   ] = await Promise.all([
-    db.query.sdlcCiGateRun.findFirst({
+    db.query.deliveryCiGateRun.findFirst({
       where: and(
-        eq(schema.sdlcCiGateRun.loopId, loopId),
-        eq(schema.sdlcCiGateRun.headSha, headSha),
+        eq(schema.deliveryCiGateRun.loopId, loopId),
+        eq(schema.deliveryCiGateRun.headSha, headSha),
       ),
       orderBy: [
-        desc(schema.sdlcCiGateRun.updatedAt),
-        desc(schema.sdlcCiGateRun.createdAt),
+        desc(schema.deliveryCiGateRun.updatedAt),
+        desc(schema.deliveryCiGateRun.createdAt),
       ],
       columns: {
         gatePassed: true,
         status: true,
       },
     }),
-    db.query.sdlcReviewThreadGateRun.findFirst({
+    db.query.deliveryReviewThreadGateRun.findFirst({
       where: and(
-        eq(schema.sdlcReviewThreadGateRun.loopId, loopId),
-        eq(schema.sdlcReviewThreadGateRun.headSha, headSha),
+        eq(schema.deliveryReviewThreadGateRun.loopId, loopId),
+        eq(schema.deliveryReviewThreadGateRun.headSha, headSha),
       ),
       orderBy: [
-        desc(schema.sdlcReviewThreadGateRun.updatedAt),
-        desc(schema.sdlcReviewThreadGateRun.createdAt),
+        desc(schema.deliveryReviewThreadGateRun.updatedAt),
+        desc(schema.deliveryReviewThreadGateRun.createdAt),
       ],
       columns: {
         gatePassed: true,
@@ -413,25 +413,25 @@ export async function evaluateBabysitCompletionForHead({
       },
     }),
     db
-      .select({ id: schema.sdlcDeepReviewFinding.id })
-      .from(schema.sdlcDeepReviewFinding)
+      .select({ id: schema.deliveryDeepReviewFinding.id })
+      .from(schema.deliveryDeepReviewFinding)
       .where(
         and(
-          eq(schema.sdlcDeepReviewFinding.loopId, loopId),
-          eq(schema.sdlcDeepReviewFinding.headSha, headSha),
-          eq(schema.sdlcDeepReviewFinding.isBlocking, true),
-          isNull(schema.sdlcDeepReviewFinding.resolvedAt),
+          eq(schema.deliveryDeepReviewFinding.loopId, loopId),
+          eq(schema.deliveryDeepReviewFinding.headSha, headSha),
+          eq(schema.deliveryDeepReviewFinding.isBlocking, true),
+          isNull(schema.deliveryDeepReviewFinding.resolvedAt),
         ),
       ),
     db
-      .select({ id: schema.sdlcCarmackReviewFinding.id })
-      .from(schema.sdlcCarmackReviewFinding)
+      .select({ id: schema.deliveryCarmackReviewFinding.id })
+      .from(schema.deliveryCarmackReviewFinding)
       .where(
         and(
-          eq(schema.sdlcCarmackReviewFinding.loopId, loopId),
-          eq(schema.sdlcCarmackReviewFinding.headSha, headSha),
-          eq(schema.sdlcCarmackReviewFinding.isBlocking, true),
-          isNull(schema.sdlcCarmackReviewFinding.resolvedAt),
+          eq(schema.deliveryCarmackReviewFinding.loopId, loopId),
+          eq(schema.deliveryCarmackReviewFinding.headSha, headSha),
+          eq(schema.deliveryCarmackReviewFinding.isBlocking, true),
+          isNull(schema.deliveryCarmackReviewFinding.resolvedAt),
         ),
       ),
   ]);
@@ -461,7 +461,7 @@ export async function evaluateBabysitCompletionForHead({
 
 // ---------------------------------------------------------------------------
 // Gate persistence — REMOVED
-// persistGateEvaluationForSignal was removed with the v1 sdlcLoop table drop.
+// persistGateEvaluationForSignal was removed with the v1 delivery loop table drop.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -483,23 +483,23 @@ export async function deferSignalProcessing(params: {
   now?: Date;
 }): Promise<{ deferred: boolean; attemptCount: number }> {
   const [updated] = await params.db
-    .update(schema.sdlcLoopSignalInbox)
+    .update(schema.deliverySignalInbox)
     .set({
       claimToken: null,
       claimedAt: null,
-      processingAttemptCount: sql`${schema.sdlcLoopSignalInbox.processingAttemptCount} + 1`,
+      processingAttemptCount: sql`${schema.deliverySignalInbox.processingAttemptCount} + 1`,
       lastProcessingError: params.error,
     })
     .where(
       and(
-        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
-        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        eq(schema.deliverySignalInbox.id, params.signalId),
+        eq(schema.deliverySignalInbox.claimToken, params.claimToken),
+        isNull(schema.deliverySignalInbox.processedAt),
       ),
     )
     .returning({
-      id: schema.sdlcLoopSignalInbox.id,
-      processingAttemptCount: schema.sdlcLoopSignalInbox.processingAttemptCount,
+      id: schema.deliverySignalInbox.id,
+      processingAttemptCount: schema.deliverySignalInbox.processingAttemptCount,
     });
 
   if (!updated) {
@@ -517,7 +517,7 @@ export async function deadLetterSignal(params: {
 }): Promise<boolean> {
   const now = params.now ?? new Date();
   const [updated] = await params.db
-    .update(schema.sdlcLoopSignalInbox)
+    .update(schema.deliverySignalInbox)
     .set({
       deadLetteredAt: now,
       deadLetterReason: params.reason,
@@ -525,11 +525,11 @@ export async function deadLetterSignal(params: {
     })
     .where(
       and(
-        eq(schema.sdlcLoopSignalInbox.id, params.signalId),
-        eq(schema.sdlcLoopSignalInbox.claimToken, params.claimToken),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
+        eq(schema.deliverySignalInbox.id, params.signalId),
+        eq(schema.deliverySignalInbox.claimToken, params.claimToken),
+        isNull(schema.deliverySignalInbox.processedAt),
       ),
     )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
+    .returning({ id: schema.deliverySignalInbox.id });
   return Boolean(updated);
 }

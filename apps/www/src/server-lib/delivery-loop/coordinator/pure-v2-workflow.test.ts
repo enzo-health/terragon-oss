@@ -53,7 +53,7 @@ function correlationId(): CorrelationId {
 
 async function injectSignal(
   workflowId: string,
-  causeType: import("@terragon/shared/db/types").SdlcLoopCauseType,
+  causeType: import("@terragon/shared/db/types").DeliveryLoopCauseType,
   payload: Record<string, unknown>,
 ) {
   return appendSignalToInbox({

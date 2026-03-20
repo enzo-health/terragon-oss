@@ -82,8 +82,8 @@ describe("createNewThread", { timeout: 30_000 }, () => {
         sourceType: "www",
         sourceMetadata: {
           type: "www",
-          sdlcLoopOptIn: true,
-          sdlcPlanApprovalPolicy: "human_required",
+          deliveryLoopOptIn: true,
+          deliveryPlanApprovalPolicy: "human_required",
         },
       });
       await waitUntilResolvedBestEffort();
