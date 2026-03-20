@@ -16,7 +16,7 @@ import type {
   GateSubState,
   ResumableWorkflowState,
 } from "./workflow";
-import type { LoopEvent, LoopEventContext } from "./events";
+import type { LoopEvent, LoopEventContext } from "./transitions";
 
 // ---------------------------------------------------------------------------
 // Helpers

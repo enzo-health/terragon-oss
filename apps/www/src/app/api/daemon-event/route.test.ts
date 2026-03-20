@@ -20,7 +20,6 @@ import {
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { handleDaemonIngress } from "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -175,14 +174,6 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
-  runCoordinatorTick: vi.fn().mockResolvedValue({
-    transitioned: false,
-    signalsProcessed: 0,
-    workItemsScheduled: 0,
-  }),
-}));
-
 const redisMocks = vi.hoisted(() => {
   const pipelineSet = vi.fn();
   const pipelineDel = vi.fn();
@@ -210,10 +201,6 @@ vi.mock("@/lib/redis", () => ({
 
 vi.mock("@/server-lib/delivery-loop/ack-lifecycle", () => ({
   handleAckReceived: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/server-lib/delivery-loop/adapters/ingress/daemon-ingress", () => ({
-  handleDaemonIngress: vi.fn().mockResolvedValue({ selfDispatch: null }),
 }));
 
 function createDaemonRequest(
@@ -1392,7 +1379,7 @@ describe("daemon-event route", () => {
       generation: 1,
     };
 
-    it("routes pure v2 terminal event through handleDaemonIngress", async () => {
+    it("routes pure v2 terminal event through v3 kernel bridge", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
           ReturnType<typeof getActiveWorkflowForThread>
@@ -1415,19 +1402,9 @@ describe("daemon-event route", () => {
 
       expect(response.status).toBe(200);
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-      expect(handleDaemonIngress).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workflowId: "wf-pure-v2",
-          rawEvent: expect.objectContaining({
-            loopId: "wf-pure-v2",
-            runId: "run-1",
-            headSha: "abc123def456",
-          }),
-        }),
-      );
     });
 
-    it("sets useV2Ingress=true and skips v1 signal inbox", async () => {
+    it("skips v1 signal inbox for enrolled workflows", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
           ReturnType<typeof getActiveWorkflowForThread>
@@ -1448,8 +1425,6 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      // v2 ingress was invoked
-      expect(handleDaemonIngress).toHaveBeenCalledTimes(1);
       // v1 signal inbox claim was NOT called (no insert into sdlcLoopSignalInbox)
       expect(dbMocks.signalInboxFindFirst).not.toHaveBeenCalled();
     });
@@ -1563,9 +1538,6 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(handleDaemonIngress).mockResolvedValue({
-        selfDispatch: null,
-      } as any);
 
       const response = await POST(
         createDaemonRequest({

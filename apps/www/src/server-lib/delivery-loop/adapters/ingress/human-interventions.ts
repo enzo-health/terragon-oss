@@ -1,8 +1,5 @@
 import type { DB } from "@terragon/shared/db";
-import type {
-  DeliverySignalSourceV3,
-  DeliveryLoopCauseType,
-} from "@terragon/shared/db/types";
+import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
 import type {
   WorkflowId,
   GateKind,
@@ -82,8 +79,8 @@ export function normalizeHumanAction(params: {
 }
 
 /**
- * Handle a human action: normalize to a typed signal, append it
- * to the workflow's signal inbox, and persist the mirrored v3 records.
+ * Handle a human action: normalize to a typed signal
+ * and persist journal + outbox records.
  */
 export async function handleHumanAction(params: {
   db: DB;
@@ -102,31 +99,18 @@ export async function handleHumanAction(params: {
     gate: params.gate,
   });
 
-  const { appendSignalToInbox } = await import(
-    "@terragon/shared/delivery-loop/store/signal-inbox-store"
-  );
   const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
     "../../v3/store"
   );
 
-  const causeType = mapHumanSignalToCauseType(signal);
   const now = new Date();
   const canonicalCauseId = `human:${params.workflowId}:${params.action}:${params.idempotencyKey ?? crypto.randomUUID()}`;
   const v3Source = toV3SignalSource(signal.source);
   const signalPayload = serializeSignalForJournal(signal);
 
-  const writeSignalAndOutbox = async (
+  const writeJournalAndOutbox = async (
     tx: Pick<DB, "insert">,
   ): Promise<void> => {
-    await appendSignalToInbox({
-      db: tx,
-      loopId: params.inboxPartitionKey,
-      causeType,
-      payload: signalPayload,
-      canonicalCauseId,
-      now,
-    });
-
     const journal = await appendJournalEventV3({
       db: tx,
       workflowId: params.workflowId,
@@ -165,30 +149,8 @@ export async function handleHumanAction(params: {
     transaction?: <T>(fn: (tx: Pick<DB, "insert">) => Promise<T>) => Promise<T>;
   };
   if (typeof transactionalDb.transaction === "function") {
-    await transactionalDb.transaction(writeSignalAndOutbox);
+    await transactionalDb.transaction(writeJournalAndOutbox);
   } else {
-    await writeSignalAndOutbox(params.db);
+    await writeJournalAndOutbox(params.db);
   }
-}
-
-function mapHumanSignalToCauseType(
-  signal: DeliverySignal,
-): DeliveryLoopCauseType {
-  if (signal.source !== "human") return "human_resume";
-  switch (signal.event.kind) {
-    case "resume_requested":
-      return "human_resume";
-    case "bypass_requested":
-      return "human_bypass";
-    case "stop_requested":
-      return "human_stop";
-    case "mark_done_requested":
-      return "human_mark_done";
-    case "operator_action_required":
-      return "human_operator_action_required";
-    case "plan_approved":
-      return "human_resume";
-  }
-  const exhaustiveCheck: never = signal.event;
-  return exhaustiveCheck;
 }

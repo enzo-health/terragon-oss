@@ -20,8 +20,11 @@ import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
 } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { stringifyError } from "./resolve-loop";
 import { appendEventAndAdvanceV3 } from "../v3/kernel";
+
+function stringifyError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 const ACTIVE_AGENT_RUN_STATUSES = new Set([
   "pending",

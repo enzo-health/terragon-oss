@@ -1,8 +1,5 @@
 import type { DB } from "@terragon/shared/db";
-import type {
-  DeliverySignalSourceV3,
-  DeliveryLoopCauseType,
-} from "@terragon/shared/db/types";
+import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
   DaemonCompletionResult,
@@ -10,7 +7,6 @@ import type {
   DaemonProgress,
 } from "@terragon/shared/delivery-loop/domain/signals";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
-import type { DaemonOutcome } from "@terragon/shared/delivery-loop/domain/outcomes";
 
 // Raw daemon event payload (what the daemon HTTP endpoint receives)
 export type DaemonEventPayload = {
@@ -141,50 +137,30 @@ export function normalizeDaemonEvent(raw: DaemonEventPayload): DeliverySignal {
 }
 
 /**
- * Handle an inbound daemon event: normalize to a typed signal,
- * append it to the signal inbox, and persist the mirrored v3 outbox
- * record for replayable progression.
+ * Handle an inbound daemon event: normalize to a typed signal
+ * and persist journal + outbox records for replayable progression.
  */
 export async function handleDaemonIngress(params: {
   db: DB;
   rawEvent: DaemonEventPayload;
   /** The v2 workflow ID — distinct from rawEvent.loopId (v1 delivery loop ID). */
   workflowId: WorkflowId;
-  /** Typed outcome preserving ingress envelope metadata. Optional for backward compatibility. */
-  outcome?: DaemonOutcome;
 }): Promise<DaemonEventResponse> {
   const signal = normalizeDaemonEvent(params.rawEvent);
   const { workflowId } = params;
-  // The signal inbox is keyed by v1 loopId for backwards compatibility
-  // with the shared deliverySignalInbox table.
-  const inboxPartitionKey = params.rawEvent.loopId;
 
-  // Append signal to inbox via v2 store
-  const { appendSignalToInbox } = await import(
-    "@terragon/shared/delivery-loop/store/signal-inbox-store"
-  );
   const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
     "../../v3/store"
   );
 
-  const causeType = mapSignalToCauseType(signal);
   const now = new Date();
   const canonicalCauseId = buildDaemonCanonicalCauseId(params.rawEvent);
   const v3Source = toV3SignalSource(signal.source);
   const signalPayload = serializeSignalForJournal(signal);
 
-  const writeSignalAndOutbox = async (
+  const writeJournalAndOutbox = async (
     tx: Pick<DB, "insert">,
   ): Promise<void> => {
-    await appendSignalToInbox({
-      db: tx,
-      loopId: inboxPartitionKey,
-      causeType,
-      payload: signalPayload,
-      canonicalCauseId,
-      now,
-    });
-
     const journal = await appendJournalEventV3({
       db: tx,
       workflowId,
@@ -223,33 +199,10 @@ export async function handleDaemonIngress(params: {
     transaction?: <T>(fn: (tx: Pick<DB, "insert">) => Promise<T>) => Promise<T>;
   };
   if (typeof transactionalDb.transaction === "function") {
-    await transactionalDb.transaction(writeSignalAndOutbox);
+    await transactionalDb.transaction(writeJournalAndOutbox);
   } else {
-    await writeSignalAndOutbox(params.db);
+    await writeJournalAndOutbox(params.db);
   }
 
   return { selfDispatch: null, workItemsScheduled: 0 };
-}
-
-function mapSignalToCauseType(signal: DeliverySignal): DeliveryLoopCauseType {
-  switch (signal.source) {
-    case "daemon":
-      switch (signal.event.kind) {
-        case "run_completed":
-          return "daemon_run_completed";
-        case "run_failed":
-          return "daemon_run_failed";
-        case "progress_reported":
-          return "daemon_progress";
-      }
-      break;
-    case "human":
-      if (signal.event.kind === "stop_requested") return "human_stop";
-      return "human_resume";
-    case "github":
-    case "timer":
-    case "babysit":
-      return "daemon_run_completed";
-  }
-  return "daemon_run_completed";
 }

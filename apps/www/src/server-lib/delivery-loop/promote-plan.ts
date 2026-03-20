@@ -158,49 +158,6 @@ async function transitionPlanningArtifactToImplementing(params: {
   artifactId: string;
   loopVersion: number;
 }): Promise<PromotePlanToImplementingResult> {
-  // Write a plan_approved signal to the v2 inbox so the coordinator
-  // tick advances the workflow from planning → implementing.
-  // Retry once since canonicalCauseId makes this idempotent via onConflictDoNothing.
-  const { appendSignalToInbox } = await import(
-    "@terragon/shared/delivery-loop/store/signal-inbox-store"
-  );
-  let signalWritten = false;
-  for (let attempt = 0; attempt < 2 && !signalWritten; attempt++) {
-    try {
-      await appendSignalToInbox({
-        db: params.db,
-        loopId: params.loopId,
-        causeType: "human_resume",
-        payload: {
-          source: "human",
-          event: {
-            kind: "plan_approved",
-            artifactId: params.artifactId,
-          },
-        },
-        canonicalCauseId: `plan-promoted:${params.loopId}:${params.artifactId}`,
-      });
-      signalWritten = true;
-    } catch (signalErr) {
-      if (attempt === 0) {
-        console.warn("[promote-plan] signal write failed, retrying once", {
-          loopId: params.loopId,
-          artifactId: params.artifactId,
-          error:
-            signalErr instanceof Error ? signalErr.message : String(signalErr),
-        });
-        await new Promise((r) => setTimeout(r, 200));
-      } else {
-        console.error("[promote-plan] signal write failed after retry", {
-          loopId: params.loopId,
-          artifactId: params.artifactId,
-          error:
-            signalErr instanceof Error ? signalErr.message : String(signalErr),
-        });
-      }
-    }
-  }
-
   return {
     outcome: "promoted",
     artifactId: params.artifactId,

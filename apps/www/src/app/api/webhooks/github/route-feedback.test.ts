@@ -93,14 +93,6 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
 }));
 
-vi.mock("@/server-lib/delivery-loop/coordinator/tick", () => ({
-  runCoordinatorTick: vi.fn().mockResolvedValue({
-    transitioned: false,
-    signalsProcessed: 0,
-    workItemsScheduled: 0,
-  }),
-}));
-
 describe("routeGithubFeedbackOrSpawnThread", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -7,10 +7,6 @@ import {
   type GitHubWebhookPayload,
 } from "./github-ingress";
 
-vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({
-  appendSignalToInbox: vi.fn().mockResolvedValue({ id: "sig-1" }),
-}));
-
 vi.mock("../../v3/store", () => ({
   appendJournalEventV3: vi
     .fn()
@@ -21,14 +17,10 @@ vi.mock("../../v3/store", () => ({
 }));
 
 async function getMocks() {
-  const { appendSignalToInbox } = await import(
-    "@terragon/shared/delivery-loop/store/signal-inbox-store"
-  );
   const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
     "../../v3/store"
   );
   return {
-    appendSignalToInbox: appendSignalToInbox as ReturnType<typeof vi.fn>,
     appendJournalEventV3: appendJournalEventV3 as ReturnType<typeof vi.fn>,
     enqueueOutboxRecordV3: enqueueOutboxRecordV3 as ReturnType<typeof vi.fn>,
   };
@@ -75,9 +67,8 @@ describe("handleGitHubWebhook", () => {
     );
   });
 
-  it("writes signal inbox + journal + outbox in one transaction", async () => {
-    const { appendSignalToInbox, appendJournalEventV3, enqueueOutboxRecordV3 } =
-      await getMocks();
+  it("writes journal + outbox in one transaction", async () => {
+    const { appendJournalEventV3, enqueueOutboxRecordV3 } = await getMocks();
     const lookupWorkflowByPr = vi.fn().mockResolvedValue(workflowId);
 
     await handleGitHubWebhook({
@@ -89,7 +80,6 @@ describe("handleGitHubWebhook", () => {
 
     const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
     expect(tx.transaction).toHaveBeenCalledOnce();
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
     expect(appendJournalEventV3).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowId,
@@ -125,8 +115,7 @@ describe("handleGitHubWebhook", () => {
   });
 
   it("no-ops when no active workflow is found", async () => {
-    const { appendSignalToInbox, appendJournalEventV3, enqueueOutboxRecordV3 } =
-      await getMocks();
+    const { appendJournalEventV3, enqueueOutboxRecordV3 } = await getMocks();
     const lookupWorkflowByPr = vi.fn().mockResolvedValue(null);
 
     await handleGitHubWebhook({
@@ -136,7 +125,6 @@ describe("handleGitHubWebhook", () => {
       lookupWorkflowByPr,
     });
 
-    expect(appendSignalToInbox).not.toHaveBeenCalled();
     expect(appendJournalEventV3).not.toHaveBeenCalled();
     expect(enqueueOutboxRecordV3).not.toHaveBeenCalled();
   });

@@ -18,9 +18,7 @@ import {
   type DaemonTerminalErrorCategory,
   classifyDaemonTerminalErrorCategory,
   mapDaemonTerminalCategoryToFailureCategory,
-  type DaemonOutcome,
-  type DaemonEnvelopeContext,
-} from "@terragon/shared/delivery-loop/domain/outcomes";
+} from "@terragon/shared/delivery-loop/domain/failure";
 import {
   buildDispatchIntentId,
   getReplayableSelfDispatch,
@@ -33,7 +31,6 @@ import {
 } from "@terragon/shared/model/agent-run-context";
 import { and, eq } from "drizzle-orm";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import {
   isLocalRedisHttpMode,
   isRedisTransportParseError,
@@ -973,218 +970,84 @@ export async function POST(request: Request) {
     }
   }
 
+  // V3 kernel bridge: mirror terminal daemon outcomes into the
+  // Postgres-canonical journal/effect-ledger runtime.
   if (
     effectiveLoopId &&
     envelopeV2 &&
     daemonRunStatusFromMessages !== "processing"
   ) {
-    // Route through daemon ingress adapter
     try {
-      const { handleDaemonIngress } = await import(
-        "@/server-lib/delivery-loop/adapters/ingress/daemon-ingress"
+      const { appendEventAndAdvanceV3 } = await import(
+        "@/server-lib/delivery-loop/v3/kernel"
       );
-
-      // Construct typed DaemonOutcome preserving envelope context
-      const envelopeContext: DaemonEnvelopeContext = {
-        eventId: envelopeV2.eventId,
-        seq: envelopeV2.seq,
-        runId: envelopeV2.runId,
-        contextUsage: computedContextUsage ?? null,
-      };
-      const daemonOutcome: DaemonOutcome = (() => {
-        switch (
-          daemonRunStatusFromMessages as "completed" | "failed" | "stopped"
-        ) {
-          case "completed":
-            return {
-              kind: "completion" as const,
-              envelope: envelopeContext,
-              result:
-                ((): import("@terragon/shared/delivery-loop/domain/signals").DaemonCompletionResult => {
-                  // Mirror normalizeDaemonEvent logic for result construction
-                  // but from the raw json body rather than the DaemonEventPayload
-                  return {
-                    kind: "success" as const,
-                    headSha: daemonHeadShaAtCompletion ?? "",
-                    summary: "",
-                  };
-                })(),
-              headSha: daemonHeadShaAtCompletion,
-              summary: null,
-            };
-          case "failed":
-            return {
-              kind: "failure" as const,
-              envelope: envelopeContext,
-              errorMessage: daemonTerminalErrorInfo.errorMessage,
-              errorCategory: daemonTerminalErrorInfo.errorCategory,
-              failureCategory: mapDaemonTerminalCategoryToFailureCategory(
-                daemonTerminalErrorInfo.errorCategory,
-                daemonTerminalErrorInfo.errorMessage,
-              ),
-              exitCode: null,
-            };
-          case "stopped":
-            return {
-              kind: "user_stop" as const,
-              envelope: envelopeContext,
-            };
-        }
-      })();
-
-      const ingressResult = await handleDaemonIngress({
+      const { getWorkflowHeadV3 } = await import(
+        "@/server-lib/delivery-loop/v3/store"
+      );
+      const headBefore = await getWorkflowHeadV3({
         db,
-        rawEvent: {
-          threadId,
-          loopId: effectiveLoopId!,
-          runId: envelopeV2.runId,
-          status: daemonRunStatusFromMessages as
-            | "completed"
-            | "failed"
-            | "stopped",
-          headSha: daemonHeadShaAtCompletion,
-          summary: null,
-          exitCode: null,
-          errorMessage: daemonTerminalErrorInfo?.errorMessage ?? null,
-        },
-        workflowId: effectiveLoopId! as WorkflowId,
-        outcome: daemonOutcome,
+        workflowId: effectiveLoopId,
       });
-      if (ingressResult.selfDispatch) {
-        selfDispatchPayload =
-          ingressResult.selfDispatch as unknown as typeof selfDispatchPayload;
-      }
 
-      // V3 kernel bridge: mirror terminal daemon outcomes into the new
-      // Postgres-canonical journal/effect-ledger runtime. Best-effort only.
-      try {
-        const { appendEventAndAdvanceV3 } = await import(
-          "@/server-lib/delivery-loop/v3/kernel"
-        );
-        const { getWorkflowHeadV3 } = await import(
-          "@/server-lib/delivery-loop/v3/store"
-        );
-        const headBefore = await getWorkflowHeadV3({
-          db,
-          workflowId: effectiveLoopId,
-        });
+      // First observed daemon terminal event for a run is an implicit ack.
+      await appendEventAndAdvanceV3({
+        db,
+        workflowId: effectiveLoopId,
+        source: "daemon",
+        idempotencyKey: `ack:${envelopeV2.eventId}:${envelopeV2.runId}`,
+        event: {
+          type: "dispatch_acked",
+          runId: envelopeV2.runId,
+        },
+      });
 
-        // First observed daemon terminal event for a run is an implicit ack.
+      if (daemonRunStatusFromMessages === "completed") {
+        const completedEvent =
+          headBefore?.state === "gating_review"
+            ? ({
+                type: "gate_review_passed",
+                runId: envelopeV2.runId,
+              } as const)
+            : ({
+                type: "run_completed",
+                runId: envelopeV2.runId,
+                headSha: daemonHeadShaAtCompletion,
+              } as const);
         await appendEventAndAdvanceV3({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
-          idempotencyKey: `ack:${envelopeV2.eventId}:${envelopeV2.runId}`,
-          event: {
-            type: "dispatch_acked",
-            runId: envelopeV2.runId,
-          },
+          idempotencyKey: `run-completed:${envelopeV2.eventId}`,
+          event: completedEvent,
         });
-
-        if (daemonRunStatusFromMessages === "completed") {
-          const completedEvent =
-            headBefore?.state === "gating_review"
-              ? ({
-                  type: "gate_review_passed",
-                  runId: envelopeV2.runId,
-                } as const)
-              : ({
-                  type: "run_completed",
-                  runId: envelopeV2.runId,
-                  headSha: daemonHeadShaAtCompletion,
-                } as const);
-          await appendEventAndAdvanceV3({
-            db,
-            workflowId: effectiveLoopId,
-            source: "daemon",
-            idempotencyKey: `run-completed:${envelopeV2.eventId}`,
-            event: completedEvent,
-          });
-        } else if (daemonRunStatusFromMessages === "failed") {
-          const failedEvent =
-            headBefore?.state === "gating_review"
-              ? ({
-                  type: "gate_review_failed",
-                  runId: envelopeV2.runId,
-                  reason:
-                    daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
-                } as const)
-              : ({
-                  type: "run_failed",
-                  runId: envelopeV2.runId,
-                  message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
-                  category: daemonTerminalErrorInfo.errorCategory,
-                } as const);
-          await appendEventAndAdvanceV3({
-            db,
-            workflowId: effectiveLoopId,
-            source: "daemon",
-            idempotencyKey: `run-failed:${envelopeV2.eventId}`,
-            event: failedEvent,
-          });
-        }
-      } catch (v3Err) {
-        console.warn("[daemon-event] v3 kernel bridge failed, continuing", {
-          loopId: effectiveLoopId,
-          runId: envelopeV2?.runId,
-          error: v3Err,
+      } else if (daemonRunStatusFromMessages === "failed") {
+        const failedEvent =
+          headBefore?.state === "gating_review"
+            ? ({
+                type: "gate_review_failed",
+                runId: envelopeV2.runId,
+                reason: daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
+              } as const)
+            : ({
+                type: "run_failed",
+                runId: envelopeV2.runId,
+                message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
+                category: daemonTerminalErrorInfo.errorCategory,
+              } as const);
+        await appendEventAndAdvanceV3({
+          db,
+          workflowId: effectiveLoopId,
+          source: "daemon",
+          idempotencyKey: `run-failed:${envelopeV2.eventId}`,
+          event: failedEvent,
         });
       }
-
-      // Inline work item execution: if the coordinator tick scheduled work
-      // items, claim and run them immediately via waitUntil to avoid up to
-      // 60s cron latency. This is best-effort — the cron is the safety net.
-      if (ingressResult.workItemsScheduled > 0) {
-        const { waitUntil } = await import("@vercel/functions");
-        const wfId = effectiveLoopId!;
-        waitUntil(
-          (async () => {
-            try {
-              const { claimNextWorkItem } = await import(
-                "@terragon/shared/delivery-loop/store/work-queue-store"
-              );
-              const { runDispatchWork } = await import(
-                "@/server-lib/delivery-loop/workers/run-dispatch-work"
-              );
-              const claimToken = `inline:${envelopeV2!.runId}:${crypto.randomUUID()}`;
-              const item = await claimNextWorkItem({
-                db,
-                kind: "dispatch",
-                workflowId: wfId,
-                claimToken,
-              });
-              if (item) {
-                await runDispatchWork({
-                  db,
-                  workItemId: item.id,
-                  claimToken,
-                  payload: item.payloadJson as Parameters<
-                    typeof runDispatchWork
-                  >[0]["payload"],
-                });
-              }
-            } catch (err) {
-              console.warn(
-                "[daemon-event] inline work item execution failed, cron will retry",
-                { workflowId: wfId, error: err },
-              );
-            }
-          })(),
-        );
-      }
-    } catch (error) {
-      console.error("[delivery-loop-v2] handleDaemonIngress failed", {
-        userId,
-        threadId,
-        loopId: effectiveLoopId!,
-        eventId: envelopeV2.eventId,
-        seq: envelopeV2.seq,
-        error,
+    } catch (v3Err) {
+      console.warn("[daemon-event] v3 kernel bridge failed, continuing", {
+        loopId: effectiveLoopId,
+        runId: envelopeV2?.runId,
+        error: v3Err,
       });
-      return new Response(
-        "v2 daemon ingress failed after message persistence",
-        { status: 500 },
-      );
     }
   }
 

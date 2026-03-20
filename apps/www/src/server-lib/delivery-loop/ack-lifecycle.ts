@@ -232,30 +232,7 @@ export function startAckTimeout({
         timeoutMs,
       });
 
-      if (outcome.shouldRetry) {
-        try {
-          const { appendSignalToInbox } = await import(
-            "@terragon/shared/delivery-loop/store/signal-inbox-store"
-          );
-          await appendSignalToInbox({
-            db,
-            loopId,
-            causeType: "timer_dispatch_ack_expired",
-            payload: {
-              kind: "dispatch_ack_expired",
-              consecutiveFailures: outcome.attempt,
-            },
-            canonicalCauseId: `ack-timeout-${runId}`,
-          });
-        } catch (retryErr) {
-          console.error("[ack-lifecycle] failed to signal ack-expired retry", {
-            runId,
-            loopId,
-            threadChatId,
-            error: retryErr,
-          });
-        }
-      } else if (!outcome.shouldRetry) {
+      if (!outcome.shouldRetry) {
         console.warn(
           "[ack-lifecycle] ack timeout retry budget exhausted, no retry scheduled",
           {

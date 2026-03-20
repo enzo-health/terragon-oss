@@ -4,12 +4,15 @@ import {
   failWorkItem,
 } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { stringifyError } from "./resolve-loop";
 import {
   upsertDeliveryCanonicalStatusComment,
   upsertDeliveryCanonicalCheckSummary,
   classifyDeliveryPublicationFailure,
 } from "../publication";
+
+function stringifyError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export type PublicationWorkPayload = {
   target: { kind: "status_comment" } | { kind: "check_run_summary" };

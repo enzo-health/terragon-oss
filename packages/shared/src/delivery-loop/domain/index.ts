@@ -33,15 +33,6 @@ export {
   isHumanWaitState,
 } from "./workflow";
 
-// events.ts
-export {
-  type LoopEvent,
-  type LoopEventContext,
-  type PublicationTarget,
-  type DeliveryWorkflowEvent,
-  type GateVerdict,
-} from "./events";
-
 // signals.ts
 export {
   type DaemonCompletionResult,
@@ -58,19 +49,12 @@ export {
 
 // transitions.ts
 export {
+  type LoopEvent,
+  type LoopEventContext,
   reduceWorkflow,
   shouldResetFixAttemptCount,
   derivePendingAction,
 } from "./transitions";
-
-// work-items.ts
-export {
-  type WorkItemStatus,
-  type SelectedAgent,
-  type TransportMode,
-  type RetryRequest,
-  type DeliveryWorkItem,
-} from "./work-items";
 
 // retry-policy.ts
 export {
@@ -80,28 +64,14 @@ export {
   computeBackoffMs,
 } from "./retry-policy";
 
-// observability.ts
-export {
-  type StuckReason,
-  type DegradedReason,
-  type DeliveryWorkflowHealth,
-  type DeliveryIncident,
-  deriveHealth,
-  shouldOpenIncident,
-  type ReplayEntry,
-} from "./observability";
-
-// correlation.ts
-export { generateCorrelationId } from "./correlation";
-
-// logging.ts
-export { type DeliveryLoopLogContext, buildLogContext } from "./logging";
-
 // failure.ts
 export {
   type DeliveryLoopFailureCategory,
   type DeliveryLoopRetryAction,
   DELIVERY_LOOP_FAILURE_ACTION_TABLE,
+  type DaemonTerminalErrorCategory,
+  classifyDaemonTerminalErrorCategory,
+  mapDaemonTerminalCategoryToFailureCategory,
 } from "./failure";
 
 // failure-signature.ts
@@ -121,26 +91,3 @@ export {
   classifyFailureLane,
   getPolicyForSignature,
 } from "./failure-signature";
-
-// retrospective.ts
-export {
-  type PhaseMetric,
-  type GateMetric,
-  type FailurePattern,
-  type RetryMetric,
-  type WorkflowRetrospective,
-  computeRetrospective,
-} from "./retrospective";
-
-// outcomes.ts
-export {
-  type DaemonTerminalErrorCategory,
-  classifyDaemonTerminalErrorCategory,
-  mapDaemonTerminalCategoryToFailureCategory,
-  type DaemonEnvelopeContext,
-  type DaemonOutcome,
-  type GitHubOutcome,
-  type HumanOutcome,
-  type TimerOutcome,
-  type BabysitOutcome,
-} from "./outcomes";

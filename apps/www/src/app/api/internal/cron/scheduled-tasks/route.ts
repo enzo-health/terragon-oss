@@ -3,170 +3,8 @@ import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
 import { getScheduledThreadChatsDueToRun } from "@terragon/shared/model/threads";
 import { internalPOST } from "@/server-lib/internal-request";
-import type {
-  BabysitWorkPayload,
-  DispatchWorkPayload,
-  PublicationWorkPayload,
-  RetrospectiveWorkPayload,
-  RetryWorkPayload,
-} from "@/server-lib/delivery-loop/workers";
-import type {
-  CorrelationId,
-  WorkflowId,
-} from "@terragon/shared/delivery-loop/domain/workflow";
 
 const BATCH_SIZE = 5;
-const V2_WORK_ITEM_DRAIN_LIMIT = 30;
-
-type V2CoordinatorCatchUpResult = {
-  activeWorkflows: number;
-  ticksCaughtUp: number;
-};
-
-type V2WorkItemDrainResult = {
-  processed: number;
-};
-
-function buildCronCorrelationId(value: string): CorrelationId {
-  return value as CorrelationId;
-}
-
-function asWorkflowId(value: string): WorkflowId {
-  return value as WorkflowId;
-}
-
-async function runV2CoordinatorCatchUp(): Promise<V2CoordinatorCatchUpResult> {
-  const { listActiveWorkflowIds } = await import(
-    "@terragon/shared/delivery-loop/store/workflow-store"
-  );
-  const { runCoordinatorTick } = await import(
-    "@/server-lib/delivery-loop/coordinator/tick"
-  );
-  const activeWorkflows = await listActiveWorkflowIds({
-    db,
-  });
-  let ticksCaughtUp = 0;
-  for (const workflow of activeWorkflows) {
-    try {
-      const tickResult = await runCoordinatorTick({
-        db,
-        workflowId: asWorkflowId(workflow.id),
-        correlationId: buildCronCorrelationId(
-          `cron:v2-catch-up:${workflow.id}:${Date.now()}`,
-        ),
-      });
-      if (
-        tickResult.transitioned ||
-        tickResult.signalsProcessed > 0 ||
-        tickResult.workItemsScheduled > 0
-      ) {
-        ticksCaughtUp += 1;
-      }
-    } catch (error) {
-      console.warn("[cron] v2 coordinator catch-up failed for workflow", {
-        workflowId: workflow.id,
-        error,
-      });
-    }
-  }
-  return { activeWorkflows: activeWorkflows.length, ticksCaughtUp };
-}
-
-async function drainDueV2WorkItems(): Promise<V2WorkItemDrainResult> {
-  const { claimNextWorkItem, failWorkItem } = await import(
-    "@terragon/shared/delivery-loop/store/work-queue-store"
-  );
-  const {
-    runDispatchWork,
-    runPublicationWork,
-    runBabysitWork,
-    runRetryWork,
-    runRetrospectiveWork,
-  } = await import("@/server-lib/delivery-loop/workers");
-  let processed = 0;
-  for (let i = 0; i < V2_WORK_ITEM_DRAIN_LIMIT; i += 1) {
-    const claimToken = `cron:v2-work:${Date.now()}:${crypto.randomUUID()}`;
-    const item = await claimNextWorkItem({
-      db,
-      claimToken,
-    });
-    if (!item) {
-      break;
-    }
-    processed += 1;
-    try {
-      const workflowId = item.workflowId;
-      switch (item.kind) {
-        case "dispatch":
-          await runDispatchWork({
-            db,
-            workItemId: item.id,
-            claimToken,
-            payload: item.payloadJson as DispatchWorkPayload,
-          });
-          break;
-        case "publication":
-          await runPublicationWork({
-            db,
-            workItemId: item.id,
-            claimToken,
-            workflowId,
-            payload: item.payloadJson as PublicationWorkPayload,
-          });
-          break;
-        case "babysit":
-          await runBabysitWork({
-            db,
-            workItemId: item.id,
-            claimToken,
-            payload: item.payloadJson as BabysitWorkPayload,
-          });
-          break;
-        case "retry":
-          await runRetryWork({
-            db,
-            workItemId: item.id,
-            claimToken,
-            correlationId: item.correlationId,
-            payload: item.payloadJson as RetryWorkPayload,
-          });
-          break;
-        case "retrospective":
-          await runRetrospectiveWork({
-            db,
-            workItemId: item.id,
-            claimToken,
-            payload: item.payloadJson as RetrospectiveWorkPayload,
-          });
-          break;
-        default:
-          await failWorkItem({
-            db,
-            workItemId: item.id,
-            claimToken,
-            errorCode: "unknown_work_item_kind",
-            errorMessage: `Unsupported work item kind "${item.kind}"`,
-            terminal: true,
-          });
-          break;
-      }
-    } catch (error) {
-      console.warn("[cron] v2 work item execution failed", {
-        workItemId: item.id,
-        kind: item.kind,
-        error,
-      });
-      await failWorkItem({
-        db,
-        workItemId: item.id,
-        claimToken,
-        errorCode: "cron_work_item_execution_failed",
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  return { processed };
-}
 
 export async function runScheduledTasksCron(): Promise<Response> {
   console.log("Scheduled tasks cron task triggered");
@@ -198,58 +36,6 @@ export async function runScheduledTasksCron(): Promise<Response> {
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-
-    let v2ActiveWorkflows = 0;
-    let v2TicksCaughtUp = 0;
-    let v2WorkItemsProcessed = 0;
-    let ackTimeoutStalledCount = 0;
-    let ackTimeoutProcessedCount = 0;
-    let ackTimeoutRetriedCount = 0;
-    let v2CatchUpError: string | null = null;
-    let v2WorkItemError: string | null = null;
-    let ackTimeoutError: string | null = null;
-    try {
-      const { sweepAckTimeouts } = await import(
-        "@/server-lib/delivery-loop/ack-timeout"
-      );
-      const ackTimeoutResult = await sweepAckTimeouts();
-      ackTimeoutStalledCount = ackTimeoutResult.stalledCount;
-      ackTimeoutProcessedCount = ackTimeoutResult.processedCount;
-      ackTimeoutRetriedCount = ackTimeoutResult.retriedCount;
-      if (ackTimeoutResult.stalledCount > 0) {
-        console.log(
-          "V2 dispatch ack timeout sweep completed",
-          ackTimeoutResult,
-        );
-      }
-    } catch (ackErr) {
-      console.error("V2 dispatch ack timeout sweep failed", ackErr);
-      ackTimeoutError = "v2_ack_timeout_sweep_failed";
-    }
-
-    try {
-      const catchUpResult = await runV2CoordinatorCatchUp();
-      v2ActiveWorkflows = catchUpResult.activeWorkflows;
-      v2TicksCaughtUp = catchUpResult.ticksCaughtUp;
-      console.log("V2 coordinator tick catch-up completed", {
-        activeWorkflows: v2ActiveWorkflows,
-        v2TicksCaughtUp,
-      });
-    } catch (v2TickErr) {
-      console.error("V2 coordinator tick catch-up failed", v2TickErr);
-      v2CatchUpError = "v2_coordinator_tick_failed";
-    }
-
-    try {
-      const workItemResult = await drainDueV2WorkItems();
-      v2WorkItemsProcessed = workItemResult.processed;
-      console.log("V2 delivery loop work items processed", {
-        v2WorkItemsProcessed,
-      });
-    } catch (v2WorkErr) {
-      console.error("V2 delivery loop work item drain failed", v2WorkErr);
-      v2WorkItemError = "v2_work_item_drain_failed";
     }
 
     let v3EffectsProcessed = 0;
@@ -348,19 +134,10 @@ export async function runScheduledTasksCron(): Promise<Response> {
     return Response.json(
       {
         success:
-          !ackTimeoutError &&
-          !v2CatchUpError &&
-          !v2WorkItemError &&
           !v3EffectsError &&
           !v3OutboxError &&
           !v3WorkerError &&
           !v3ReconcileError,
-        v2ActiveWorkflows,
-        v2TicksCaughtUp,
-        v2WorkItemsProcessed,
-        ackTimeoutStalledCount,
-        ackTimeoutProcessedCount,
-        ackTimeoutRetriedCount,
         v3OutboxWorkerProcessed,
         v3OutboxWorkerAcknowledged,
         v3OutboxWorkerDeadLettered,
@@ -371,9 +148,6 @@ export async function runScheduledTasksCron(): Promise<Response> {
         v3OutboxFailed,
         v3ZombieHeadsScanned,
         v3ZombieHeadsReconciled,
-        ...(ackTimeoutError ? { ackTimeoutError } : {}),
-        ...(v2CatchUpError ? { v2CatchUpError } : {}),
-        ...(v2WorkItemError ? { v2WorkItemError } : {}),
         ...(v3EffectsError ? { v3EffectsError } : {}),
         ...(v3OutboxError ? { v3OutboxError } : {}),
         ...(v3WorkerError ? { v3WorkerError } : {}),
@@ -381,13 +155,7 @@ export async function runScheduledTasksCron(): Promise<Response> {
       },
       {
         status:
-          ackTimeoutError ||
-          v2CatchUpError ||
-          v2WorkItemError ||
-          v3EffectsError ||
-          v3OutboxError ||
-          v3WorkerError ||
-          v3ReconcileError
+          v3EffectsError || v3OutboxError || v3WorkerError || v3ReconcileError
             ? 500
             : 200,
       },

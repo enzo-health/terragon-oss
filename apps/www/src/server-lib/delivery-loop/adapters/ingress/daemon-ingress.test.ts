@@ -3,16 +3,8 @@ import type { DaemonEventPayload } from "./daemon-ingress";
 import { normalizeDaemonEvent, handleDaemonIngress } from "./daemon-ingress";
 import type { DB } from "@terragon/shared/db";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
-import type {
-  DaemonOutcome,
-  DaemonEnvelopeContext,
-} from "@terragon/shared/delivery-loop/domain/outcomes";
 
 // ── mocks ──────────────────────────────────────────────────────────────
-vi.mock("@terragon/shared/delivery-loop/store/signal-inbox-store", () => ({
-  appendSignalToInbox: vi.fn().mockResolvedValue([{ id: "sig-1" }]),
-}));
-
 vi.mock("../../v3/store", () => ({
   appendJournalEventV3: vi
     .fn()
@@ -24,14 +16,10 @@ vi.mock("../../v3/store", () => ({
 
 // Lazy imports so mocks are in place
 async function getMocks() {
-  const { appendSignalToInbox } = await import(
-    "@terragon/shared/delivery-loop/store/signal-inbox-store"
-  );
   const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
     "../../v3/store"
   );
   return {
-    appendSignalToInbox: appendSignalToInbox as ReturnType<typeof vi.fn>,
     appendJournalEventV3: appendJournalEventV3 as ReturnType<typeof vi.fn>,
     enqueueOutboxRecordV3: enqueueOutboxRecordV3 as ReturnType<typeof vi.fn>,
   };
@@ -233,22 +221,21 @@ describe("handleDaemonIngress", () => {
     );
   });
 
-  it("completed event → appends signal with daemon_run_completed causeType", async () => {
-    const { appendSignalToInbox } = await getMocks();
+  it("completed event → writes journal with run_completed eventType", async () => {
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload(),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "daemon_run_completed" }),
+    expect(appendJournalEventV3).toHaveBeenCalledOnce();
+    expect(appendJournalEventV3).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "run_completed" }),
     );
   });
 
-  it("writes inbox + journal + outbox in a single transaction", async () => {
-    const { appendSignalToInbox, appendJournalEventV3, enqueueOutboxRecordV3 } =
-      await getMocks();
+  it("writes journal + outbox in a single transaction", async () => {
+    const { appendJournalEventV3, enqueueOutboxRecordV3 } = await getMocks();
     const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
 
     await handleDaemonIngress({
@@ -258,7 +245,6 @@ describe("handleDaemonIngress", () => {
     });
 
     expect(tx.transaction).toHaveBeenCalledOnce();
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
     expect(appendJournalEventV3).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowId,
@@ -289,20 +275,20 @@ describe("handleDaemonIngress", () => {
     expect(enqueueOutboxRecordV3).not.toHaveBeenCalled();
   });
 
-  it("failed event → appends with daemon_run_failed causeType", async () => {
-    const { appendSignalToInbox } = await getMocks();
+  it("failed event → writes journal with run_failed eventType", async () => {
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "failed", exitCode: 1 }),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "daemon_run_failed" }),
+    expect(appendJournalEventV3).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "run_failed" }),
     );
   });
 
-  it("progress event → appends with daemon_progress causeType", async () => {
-    const { appendSignalToInbox } = await getMocks();
+  it("progress event → writes journal with progress_reported eventType", async () => {
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({
@@ -312,25 +298,25 @@ describe("handleDaemonIngress", () => {
       }),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "daemon_progress" }),
+    expect(appendJournalEventV3).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "progress_reported" }),
     );
   });
 
-  it("stopped event → appends with human_stop causeType", async () => {
-    const { appendSignalToInbox } = await getMocks();
+  it("stopped event → writes journal with stop_requested eventType", async () => {
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "stopped" }),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "human_stop" }),
+    expect(appendJournalEventV3).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "stop_requested" }),
     );
   });
 
   it("progress canonical cause ID is dedup-friendly (task snapshot)", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({
@@ -341,12 +327,12 @@ describe("handleDaemonIngress", () => {
       }),
       workflowId,
     });
-    const call = appendSignalToInbox.mock.calls[0]![0];
-    expect(call.canonicalCauseId).toBe("daemon:run-1:progress:2:5:lint");
+    const call = appendJournalEventV3.mock.calls[0]![0];
+    expect(call.idempotencyKey).toBe("daemon:run-1:progress:2:5:lint");
   });
 
   it("progress with missing currentTask uses 'none' in canonical ID", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({
@@ -356,41 +342,41 @@ describe("handleDaemonIngress", () => {
       }),
       workflowId,
     });
-    const call = appendSignalToInbox.mock.calls[0]![0];
-    expect(call.canonicalCauseId).toContain(":none");
+    const call = appendJournalEventV3.mock.calls[0]![0];
+    expect(call.idempotencyKey).toContain(":none");
   });
 
   it("partial completion → canonical cause ID ends with :partial", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ remainingTasks: 2 }),
       workflowId,
     });
-    const call = appendSignalToInbox.mock.calls[0]![0];
-    expect(call.canonicalCauseId).toMatch(/:partial$/);
+    const call = appendJournalEventV3.mock.calls[0]![0];
+    expect(call.idempotencyKey).toMatch(/:partial$/);
   });
 
   it("terminal completion → canonical cause ID ends with :terminal", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ remainingTasks: 0 }),
       workflowId,
     });
-    const call = appendSignalToInbox.mock.calls[0]![0];
-    expect(call.canonicalCauseId).toMatch(/:terminal$/);
+    const call = appendJournalEventV3.mock.calls[0]![0];
+    expect(call.idempotencyKey).toMatch(/:terminal$/);
   });
 
   it("completed with no remainingTasks → canonical cause ID ends with :terminal", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload(), // no remainingTasks field
       workflowId,
     });
-    const call = appendSignalToInbox.mock.calls[0]![0];
-    expect(call.canonicalCauseId).toMatch(/:terminal$/);
+    const call = appendJournalEventV3.mock.calls[0]![0];
+    expect(call.idempotencyKey).toMatch(/:terminal$/);
   });
 
   it("completed events no longer schedule legacy self-dispatch", async () => {
@@ -404,163 +390,32 @@ describe("handleDaemonIngress", () => {
   });
 
   it("does not wake the coordinator for non-completed events (failed)", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "failed" }),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
+    expect(appendJournalEventV3).toHaveBeenCalledOnce();
   });
 
   it("does not wake the coordinator for stopped events", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "stopped" }),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
+    expect(appendJournalEventV3).toHaveBeenCalledOnce();
   });
 
   it("does not wake the coordinator for progress events", async () => {
-    const { appendSignalToInbox } = await getMocks();
+    const { appendJournalEventV3 } = await getMocks();
     await handleDaemonIngress({
       db: fakeDb,
       rawEvent: basePayload({ status: "progress" }),
       workflowId,
     });
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
-  });
-
-  it("passes loopId (not workflowId) as inbox partition key", async () => {
-    const { appendSignalToInbox } = await getMocks();
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({ loopId: "v1-loop-42" }),
-      workflowId,
-    });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ loopId: "v1-loop-42" }),
-    );
-  });
-});
-
-// ════════════════════════════════════════════════════════════════════════
-// Part 4 — DaemonOutcome (backward compatibility & metadata preservation)
-// ════════════════════════════════════════════════════════════════════════
-describe("handleDaemonIngress with DaemonOutcome", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  const baseEnvelope: DaemonEnvelopeContext = {
-    eventId: "evt-1",
-    seq: 3,
-    runId: "run-1",
-    contextUsage: 42000,
-  };
-
-  it("backward compatible — works without outcome parameter", async () => {
-    const { appendSignalToInbox } = await getMocks();
-    const result = await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload(),
-      workflowId,
-    });
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
-    expect(result.selfDispatch).toBeNull();
-  });
-
-  it("accepts completion outcome without changing signal behavior", async () => {
-    const { appendSignalToInbox } = await getMocks();
-    const outcome: DaemonOutcome = {
-      kind: "completion",
-      envelope: baseEnvelope,
-      result: { kind: "success", headSha: "abc", summary: "done" },
-      headSha: "abc",
-      summary: "done",
-    };
-    const result = await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload(),
-      workflowId,
-      outcome,
-    });
-    // Signal still appended normally
-    expect(appendSignalToInbox).toHaveBeenCalledOnce();
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "daemon_run_completed" }),
-    );
-    // Return shape unchanged
-    expect(result).toHaveProperty("selfDispatch");
-    expect(result).toHaveProperty("workItemsScheduled");
-  });
-
-  it("accepts failure outcome without changing signal behavior", async () => {
-    const { appendSignalToInbox } = await getMocks();
-    const outcome: DaemonOutcome = {
-      kind: "failure",
-      envelope: baseEnvelope,
-      errorMessage: "segfault",
-      errorCategory: "daemon_custom_error",
-      failureCategory: "claude_runtime_exit",
-      exitCode: 1,
-    };
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({
-        status: "failed",
-        exitCode: 1,
-        errorMessage: "segfault",
-      }),
-      workflowId,
-      outcome,
-    });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "daemon_run_failed" }),
-    );
-  });
-
-  it("accepts user_stop outcome without changing signal behavior", async () => {
-    const { appendSignalToInbox } = await getMocks();
-    const outcome: DaemonOutcome = {
-      kind: "user_stop",
-      envelope: baseEnvelope,
-    };
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({ status: "stopped" }),
-      workflowId,
-      outcome,
-    });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "human_stop" }),
-    );
-  });
-
-  it("accepts progress outcome without changing signal behavior", async () => {
-    const { appendSignalToInbox } = await getMocks();
-    const outcome: DaemonOutcome = {
-      kind: "progress",
-      envelope: baseEnvelope,
-      completedTasks: 2,
-      totalTasks: 5,
-      currentTask: "lint",
-    };
-    await handleDaemonIngress({
-      db: fakeDb,
-      rawEvent: basePayload({
-        status: "progress",
-        completedTasks: 2,
-        totalTasks: 5,
-        currentTask: "lint",
-      }),
-      workflowId,
-      outcome,
-    });
-    expect(appendSignalToInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ causeType: "daemon_progress" }),
-    );
+    expect(appendJournalEventV3).toHaveBeenCalledOnce();
   });
 });

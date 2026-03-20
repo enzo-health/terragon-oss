@@ -51,3 +51,54 @@ export const DELIVERY_LOOP_FAILURE_ACTION_TABLE: Record<
   config_error: "blocked",
   unknown: "retry_if_budget",
 };
+
+// ── Daemon terminal error classification ─────────────────────────────
+
+export type DaemonTerminalErrorCategory =
+  | "provider_not_configured"
+  | "acp_sse_not_found"
+  | "daemon_custom_error"
+  | "daemon_result_error"
+  | "unknown";
+
+export function classifyDaemonTerminalErrorCategory(
+  errorMessage: string | null,
+): DaemonTerminalErrorCategory {
+  if (!errorMessage) {
+    return "unknown";
+  }
+  if (errorMessage.includes("provider not configured")) {
+    return "provider_not_configured";
+  }
+  if (errorMessage.includes("SSE failed (404")) {
+    return "acp_sse_not_found";
+  }
+  return "daemon_custom_error";
+}
+
+export function mapDaemonTerminalCategoryToFailureCategory(
+  category: DaemonTerminalErrorCategory,
+  errorMessage?: string | null,
+): DeliveryLoopFailureCategory {
+  if (
+    errorMessage &&
+    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
+      errorMessage,
+    )
+  ) {
+    return "config_error";
+  }
+
+  switch (category) {
+    case "provider_not_configured":
+      return "config_error";
+    case "acp_sse_not_found":
+      return "daemon_unreachable";
+    case "daemon_custom_error":
+    case "daemon_result_error":
+      return "claude_runtime_exit";
+    case "unknown":
+      return "unknown";
+  }
+  return "unknown";
+}

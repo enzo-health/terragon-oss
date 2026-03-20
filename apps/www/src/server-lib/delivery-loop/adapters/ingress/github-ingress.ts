@@ -1,8 +1,5 @@
 import type { DB } from "@terragon/shared/db";
-import type {
-  DeliverySignalSourceV3,
-  DeliveryLoopCauseType,
-} from "@terragon/shared/db/types";
+import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
 import type {
   DeliverySignal,
   CiEvaluation,
@@ -186,8 +183,7 @@ export function normalizeGitHubWebhook(
 
 /**
  * Handle an inbound GitHub webhook: normalize to a typed signal,
- * look up the active workflow for the PR, and persist the signal
- * to the inbox plus mirrored v3 records.
+ * look up the active workflow for the PR, and persist journal + outbox records.
  */
 export async function handleGitHubWebhook(params: {
   db: DB;
@@ -210,31 +206,18 @@ export async function handleGitHubWebhook(params: {
   });
   if (!workflowId) return;
 
-  const { appendSignalToInbox } = await import(
-    "@terragon/shared/delivery-loop/store/signal-inbox-store"
-  );
   const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
     "../../v3/store"
   );
 
-  const causeType = mapGitHubSignalToCauseType(signal);
   const now = new Date();
   const canonicalCauseId = buildGitHubCanonicalCauseId(params.rawEvent);
   const v3Source = toV3SignalSource(signal.source);
   const signalPayload = serializeSignalForJournal(signal);
 
-  const writeSignalAndOutbox = async (
+  const writeJournalAndOutbox = async (
     tx: Pick<DB, "insert">,
   ): Promise<void> => {
-    await appendSignalToInbox({
-      db: tx,
-      loopId: params.inboxPartitionKey,
-      causeType,
-      payload: signalPayload,
-      canonicalCauseId,
-      now,
-    });
-
     const journal = await appendJournalEventV3({
       db: tx,
       workflowId,
@@ -273,24 +256,8 @@ export async function handleGitHubWebhook(params: {
     transaction?: <T>(fn: (tx: Pick<DB, "insert">) => Promise<T>) => Promise<T>;
   };
   if (typeof transactionalDb.transaction === "function") {
-    await transactionalDb.transaction(writeSignalAndOutbox);
+    await transactionalDb.transaction(writeJournalAndOutbox);
   } else {
-    await writeSignalAndOutbox(params.db);
-  }
-}
-
-function mapGitHubSignalToCauseType(
-  signal: DeliverySignal,
-): DeliveryLoopCauseType {
-  if (signal.source !== "github") return "github_ci_changed";
-  switch (signal.event.kind) {
-    case "ci_changed":
-      return "github_ci_changed";
-    case "review_changed":
-      return "github_review_changed";
-    case "pr_closed":
-      return "github_pr_closed";
-    case "pr_synchronized":
-      return "github_pr_synchronized";
+    await writeJournalAndOutbox(params.db);
   }
 }

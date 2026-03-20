@@ -10,7 +10,34 @@ import type {
   ResumableWorkflowState,
 } from "./workflow";
 import type { FailureSignatureMap } from "./failure-signature";
-import type { LoopEvent, LoopEventContext } from "./events";
+export type LoopEvent =
+  | "plan_completed"
+  | "implementation_completed"
+  | "redispatch_requested"
+  | "gate_passed"
+  | "gate_blocked"
+  | "pr_linked"
+  | "operator_action_required"
+  | "babysit_passed"
+  | "babysit_blocked"
+  | "blocked_resume"
+  | "manual_stop"
+  | "mark_done"
+  | "exhausted_retries"
+  | "pr_closed"
+  | "pr_merged";
+
+export type LoopEventContext = {
+  gate?: GateKind;
+  hasPrLink?: boolean;
+  resumeTo?: ResumableWorkflowState;
+  headSha?: string;
+  runId?: string | null;
+  prNumber?: number | null;
+  infraRetry?: boolean;
+  reason?: string;
+  incidentId?: string;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers

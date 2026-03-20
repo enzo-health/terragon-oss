@@ -1,5 +1,4 @@
 import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
-import type { NormalizedRunUpdate } from "./types";
 
 /**
  * Classify daemon-level errors shared across all agent runtimes.
@@ -106,29 +105,4 @@ export function classifyDaemonEventError(
   if (/gate.*fail|gate.*block/i.test(errorMessage)) return "gate_failed";
 
   return "unknown";
-}
-
-/**
- * Build a NormalizedRunUpdate with sensible defaults, overridden by the
- * provided partial.
- */
-export function buildRunUpdate(
-  runId: string,
-  overrides: Partial<NormalizedRunUpdate>,
-): NormalizedRunUpdate {
-  return {
-    runId,
-    runStatus: "pending",
-    dispatchStatus: "prepared",
-    firstEventAt: null,
-    completedAt: null,
-    terminalErrorCategory: null,
-    terminalErrorMessage: null,
-    usedSubAgents: false,
-    subAgentFailureCount: 0,
-    sessionId: null,
-    headShaAtCompletion: null,
-    diagnostics: {},
-    ...overrides,
-  };
 }
