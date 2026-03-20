@@ -158,6 +158,7 @@ async function getThreadsInner({
       sourceMetadata: schema.thread.sourceMetadata,
       version: schema.thread.version,
       gitDiffStats: schema.thread.gitDiffStats,
+      messageSeq: schema.thread.messageSeq,
 
       ...(includeUser
         ? {
@@ -641,6 +642,7 @@ export async function getThread({
     sourceType: thread.sourceType,
     sourceMetadata: thread.sourceMetadata,
     version: thread.version,
+    messageSeq: thread.messageSeq,
     isUnread: thread.isUnread,
     threadChats: resolveThreadChatFull(thread, threadChats),
     childThreads,
@@ -728,6 +730,7 @@ type ThreadForThreadChatInfoFull = Pick<
   | "name"
   | "queuedMessages"
   | "messages"
+  | "messageSeq"
 > & {
   isUnread: boolean;
 };
@@ -762,6 +765,7 @@ function createLegacyThreadChatFull(
     reattemptQueueAt: thread.reattemptQueueAt,
     contextLength: thread.contextLength,
     permissionMode: thread.permissionMode ?? "allowAll",
+    messageSeq: thread.messageSeq,
     codexPreviousResponseId: null,
     isUnread: thread.isUnread,
     messages: thread.messages ?? [],
@@ -894,12 +898,14 @@ export async function updateThreadChat({
   threadId,
   threadChatId,
   updates,
+  skipAppendMessagesInBroadcast = false,
 }: {
   db: DB;
   userId: string;
   threadId: string;
   threadChatId: string;
   updates: Omit<ThreadChatInsert, "threadChatId" | "status">;
+  skipAppendMessagesInBroadcast?: boolean;
 }) {
   let updatedAtIsoString: string | undefined;
   let chatSequence: number | undefined;
@@ -927,6 +933,9 @@ export async function updateThreadChat({
         // Sanitize messages to remove null bytes and other invalid JSON characters
         // @ts-expect-error
         updateObject.messages = sql`COALESCE(${schema.thread.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
+        // Atomically increment messageSeq for monotonic chat sequence
+        // @ts-expect-error
+        updateObject.messageSeq = sql`COALESCE(${schema.thread.messageSeq}, 0) + 1`;
       }
       if (appendAndResetQueuedMessages) {
         updateObject.queuedMessages = [];
@@ -959,7 +968,9 @@ export async function updateThreadChat({
         throw new Error("Failed to update thread chat (legacy)");
       }
       updatedAtIsoString = updatedThread.updatedAt.toISOString();
-      chatSequence = updatedThread.updatedAt.getTime();
+      chatSequence = sanitizedAppendMessages
+        ? updatedThread.messageSeq
+        : updatedThread.updatedAt.getTime();
       chatForPatch = {
         updatedAt: updatedAtIsoString,
         ...(updatesWithoutAppends.agent !== undefined
@@ -1017,6 +1028,9 @@ export async function updateThreadChat({
         // Sanitize messages to remove null bytes and other invalid JSON characters
         // @ts-expect-error
         updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
+        // Atomically increment messageSeq for monotonic chat sequence
+        // @ts-expect-error
+        updateObject.messageSeq = sql`COALESCE(${schema.threadChat.messageSeq}, 0) + 1`;
       }
       if (appendAndResetQueuedMessages) {
         updateObject.queuedMessages = [];
@@ -1053,7 +1067,9 @@ export async function updateThreadChat({
         throw new Error("Failed to update thread chat");
       }
       updatedAtIsoString = updatedThreadChat.updatedAt.toISOString();
-      chatSequence = updatedThreadChat.updatedAt.getTime();
+      chatSequence = sanitizedAppendMessages
+        ? updatedThreadChat.messageSeq
+        : updatedThreadChat.updatedAt.getTime();
       chatForPatch = {
         updatedAt: updatedAtIsoString,
         ...(updatesWithoutAppends.agent !== undefined
@@ -1116,8 +1132,12 @@ export async function updateThreadChat({
           op: shouldRefetchChat ? "refetch" : "upsert",
           chatSequence,
           chat: chatForPatch,
-          appendMessages: appendMessagesForPatch,
-          expectedMessageCount,
+          ...(skipAppendMessagesInBroadcast
+            ? {}
+            : {
+                appendMessages: appendMessagesForPatch,
+                expectedMessageCount,
+              }),
           refetch: shouldRefetchChat ? ["chat"] : undefined,
         },
       ],

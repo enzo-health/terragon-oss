@@ -9,6 +9,7 @@ import {
   DaemonMessageSchema,
   FeatureFlags,
   DaemonEventAPIBody,
+  DaemonDelta,
   ClaudeMessage,
   DaemonMessage,
   DAEMON_VERSION,
@@ -316,6 +317,9 @@ type DaemonEventEnvelopePayload = {
 export class TerragonDaemon {
   private startTime: number = 0;
   private messageBuffer: MessageBufferEntry[] = [];
+  private deltaBuffer: Array<
+    DaemonDelta & { threadId: string; threadChatId: string; token: string }
+  > = [];
   private runtime: IDaemonRuntime;
   private mcpConfigPath: string | undefined;
 
@@ -1384,6 +1388,39 @@ export class TerragonDaemon {
             return;
           }
 
+          // Intercept agentMessage deltas before they reach parseCodexLine
+          // (which drops item.updated for agent_message). Route them through
+          // the delta buffer for ephemeral streaming to clients.
+          if (
+            threadEvent.type === "item.updated" &&
+            threadEvent.item &&
+            (threadEvent.item as Record<string, unknown>).type ===
+              "agent_message"
+          ) {
+            const item = threadEvent.item as Record<string, unknown>;
+            const itemId = item.id as string | undefined;
+            const deltaText = item.text as string | undefined;
+            if (itemId && deltaText) {
+              this.deltaBuffer.push({
+                messageId: itemId,
+                partIndex: 0,
+                text: deltaText,
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+              // Trigger a flush so deltas are sent promptly
+              if (!this.isFlushInProgress && !this.messageFlushTimer) {
+                this.messageFlushTimer = setTimeout(() => {
+                  this.flushMessageBuffer();
+                }, 50);
+              }
+            }
+            // Still pass through to parseCodexLine — it will be dropped
+            // (agent_message item.updated is a no-op) but we keep the
+            // pipeline consistent for other side effects.
+          }
+
           const parsedMessages = parseCodexLine({
             line: JSON.stringify(threadEvent),
             runtime: this.runtime,
@@ -1739,6 +1776,11 @@ export class TerragonDaemon {
     let lastEventId: string | null = null;
     const promptPostAbortController = new AbortController();
 
+    // Delta streaming: stable message ID for accumulating text/thinking deltas
+    // on the client. Resets each time a non-text message arrives (tool_use, result).
+    let deltaMessageId: string = randomUUID();
+    let deltaPartIndex = 0;
+
     const createUrl = (bootstrapAgent: boolean): string => {
       const url = new URL(`${baseUrl}/v1/acp/${encodeURIComponent(serverId)}`);
       if (bootstrapAgent) {
@@ -1916,6 +1958,58 @@ export class TerragonDaemon {
             isCompleted: true,
           });
         }
+        // Send text/thinking deltas immediately for token-level streaming.
+        // Terminal messages (result, error, stop) reset the delta ID for the next turn.
+        if (
+          message.type === "result" ||
+          message.type === "custom-error" ||
+          message.type === "custom-stop"
+        ) {
+          deltaMessageId = randomUUID();
+          deltaPartIndex = 0;
+        } else if (message.type === "assistant" && message.message?.content) {
+          const content = message.message.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === "text" && block.text) {
+                this.runtime.serverPostDelta(
+                  {
+                    threadId: input.threadId,
+                    threadChatId: input.threadChatId,
+                    deltas: [
+                      {
+                        messageId: deltaMessageId,
+                        partIndex: deltaPartIndex,
+                        text: block.text,
+                      },
+                    ],
+                  },
+                  input.token,
+                );
+              } else if (block.type === "thinking" && block.thinking) {
+                this.runtime.serverPostDelta(
+                  {
+                    threadId: input.threadId,
+                    threadChatId: input.threadChatId,
+                    deltas: [
+                      {
+                        messageId: deltaMessageId,
+                        partIndex: deltaPartIndex,
+                        text: block.thinking,
+                      },
+                    ],
+                  },
+                  input.token,
+                );
+              }
+            }
+            // If any content block is a tool_use, bump the part index for the next text block
+            if (content.some((b: { type: string }) => b.type === "tool_use")) {
+              deltaPartIndex += 1;
+            }
+          }
+        }
+
         this.addMessageToBuffer({
           agent: input.agent,
           message,
@@ -3602,7 +3696,7 @@ export class TerragonDaemon {
       return;
     }
 
-    if (this.messageBuffer.length === 0) {
+    if (this.messageBuffer.length === 0 && this.deltaBuffer.length === 0) {
       this.maybeCleanupAllDaemonEventRunStates();
       return;
     }
@@ -3724,6 +3818,49 @@ export class TerragonDaemon {
         }
       }
 
+      // Send any remaining deltas that weren't drained by sendMessagesToAPI
+      // (e.g., delta-only flush with no messages for that threadChatId).
+      if (this.deltaBuffer.length > 0) {
+        const deltasByThread = new Map<string, typeof this.deltaBuffer>();
+        for (const d of this.deltaBuffer) {
+          let arr = deltasByThread.get(d.threadChatId);
+          if (!arr) {
+            arr = [];
+            deltasByThread.set(d.threadChatId, arr);
+          }
+          arr.push(d);
+        }
+        this.deltaBuffer = [];
+        for (const [, deltas] of deltasByThread) {
+          const first = deltas[0]!;
+          try {
+            const runState = this.getOrCreateDaemonEventRunState(
+              first.threadChatId,
+            );
+            const deltaPayload: DaemonEventAPIBody = {
+              messages: [],
+              threadId: first.threadId,
+              timezone,
+              threadChatId: first.threadChatId,
+              transportMode: runState.transportMode,
+              protocolVersion: runState.protocolVersion,
+              deltas: deltas.map((d) => ({
+                messageId: d.messageId,
+                partIndex: d.partIndex,
+                text: d.text,
+              })),
+            };
+            await this.runtime.serverPost(deltaPayload, first.token);
+          } catch (error) {
+            // Deltas are ephemeral — log and drop on failure
+            this.runtime.logger.warn("Delta-only flush failed", {
+              threadId: first.threadId,
+              error,
+            });
+          }
+        }
+      }
+
       const unsentEntries = messageBufferCopy.filter(
         (entry) => !handledEntries.has(entry),
       );
@@ -3824,7 +3961,10 @@ export class TerragonDaemon {
       this.isFlushInProgress = false;
     }
     // If new messages arrived while we were flushing, or if we need to retry
-    if (this.pendingFlushRequired && this.messageBuffer.length > 0) {
+    if (
+      this.pendingFlushRequired &&
+      (this.messageBuffer.length > 0 || this.deltaBuffer.length > 0)
+    ) {
       // Compute minimum retry delay across all threads that have pending retries
       let minRetryDelay: number | null = null;
       for (const [, backoff] of this.retryBackoffs) {
@@ -3903,6 +4043,22 @@ export class TerragonDaemon {
           /* no git repo or git not available */
         }
       }
+      // Drain deltas matching this threadChatId
+      const matchingDeltas: DaemonDelta[] = [];
+      const remainingDeltas: typeof this.deltaBuffer = [];
+      for (const d of this.deltaBuffer) {
+        if (d.threadChatId === threadChatId) {
+          matchingDeltas.push({
+            messageId: d.messageId,
+            partIndex: d.partIndex,
+            text: d.text,
+          });
+        } else {
+          remainingDeltas.push(d);
+        }
+      }
+      this.deltaBuffer = remainingDeltas;
+
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -3917,6 +4073,7 @@ export class TerragonDaemon {
           : {}),
         ...(envelopeV2 ?? {}),
         ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
+        ...(matchingDeltas.length > 0 ? { deltas: matchingDeltas } : {}),
       };
 
       const selfDispatchPayload = await this.runtime.serverPost(payload, token);

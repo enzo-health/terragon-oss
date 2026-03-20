@@ -10,9 +10,13 @@ import {
   getBroadcastChannelStr,
 } from "@terragon/types/broadcast";
 import PartySocket from "partysocket";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { publicBroadcastHost } from "@terragon/env/next-public";
 import { SandboxProvider } from "@terragon/types/sandbox";
+
+function isMonotonicSequence(seq: number | null | undefined): boolean {
+  return seq != null && seq < 1_000_000_000;
+}
 
 const usageCountByChannel: Record<string, number> = {};
 const partykitByChannel: Record<string, PartySocket> = {};
@@ -117,9 +121,7 @@ function useRealtimeBase({
     disconnectOnDismount,
   });
 
-  const debouncedOnMessage = useDebouncedCallback(onMessage, debounceMs, {
-    maxWait: 1000,
-  });
+  const debouncedOnMessage = useDebouncedCallback(onMessage, debounceMs);
 
   const onMessageWrapper = useCallback(
     (event: MessageEvent) => {
@@ -225,6 +227,9 @@ export function useRealtimeThread(
   threadId: string,
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
 ) {
+  const lastSeqRef = useRef<number | null>(null);
+  const replayInFlightRef = useRef(false);
+
   useRealtimeUser({
     debounceMs: 0,
     matches: useCallback(
@@ -232,14 +237,76 @@ export function useRealtimeThread(
         getThreadPatches(message).some((patch) => patch.threadId === threadId),
       [threadId],
     ),
-    onMessage: (message) => {
-      const patches = getThreadPatches(message).filter(
-        (patch) => patch.threadId === threadId,
-      );
-      if (patches.length > 0) {
-        onThreadPatches(patches);
-      }
-    },
+    onMessage: useCallback(
+      (message) => {
+        const patches = getThreadPatches(message).filter(
+          (patch) => patch.threadId === threadId,
+        );
+        if (patches.length === 0) return;
+
+        // Check for seq gaps and attempt replay
+        const maxIncomingSeq = patches.reduce<number | null>((max, p) => {
+          if (!isMonotonicSequence(p.chatSequence)) return max;
+          return max === null
+            ? p.chatSequence!
+            : Math.max(max, p.chatSequence!);
+        }, null);
+
+        const lastSeq = lastSeqRef.current;
+        const hasGap =
+          maxIncomingSeq !== null &&
+          lastSeq !== null &&
+          isMonotonicSequence(lastSeq) &&
+          maxIncomingSeq > lastSeq + 1;
+
+        if (hasGap && !replayInFlightRef.current) {
+          replayInFlightRef.current = true;
+          fetch(
+            `/api/thread-replay?threadId=${encodeURIComponent(threadId)}&fromSeq=${lastSeq}`,
+          )
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              if (data?.entries?.length > 0) {
+                // Build synthetic patches from replayed entries
+                const replayPatches: BroadcastThreadPatch[] = data.entries.map(
+                  (entry: { seq: number; messages: unknown[] }) => ({
+                    threadId,
+                    op: "upsert" as const,
+                    chatSequence: entry.seq,
+                    appendMessages: entry.messages,
+                  }),
+                );
+                onThreadPatches(replayPatches);
+              }
+              // Now apply the original patches
+              onThreadPatches(patches);
+            })
+            .catch((error) => {
+              console.warn(
+                "[broadcast] replay fetch failed, applying patches directly",
+                error,
+              );
+              onThreadPatches(patches);
+            })
+            .finally(() => {
+              replayInFlightRef.current = false;
+            });
+        } else if (!hasGap || replayInFlightRef.current) {
+          onThreadPatches(patches);
+        }
+
+        // Update lastSeq tracker
+        if (maxIncomingSeq !== null) {
+          if (
+            lastSeqRef.current === null ||
+            maxIncomingSeq > lastSeqRef.current
+          ) {
+            lastSeqRef.current = maxIncomingSeq;
+          }
+        }
+      },
+      [threadId, onThreadPatches],
+    ),
   });
 }
 

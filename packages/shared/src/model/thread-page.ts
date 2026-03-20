@@ -164,6 +164,7 @@ function createLegacyThreadChatSummary({
     | "reattemptQueueAt"
     | "contextLength"
     | "permissionMode"
+    | "messageSeq"
   >;
   isUnread: boolean;
 }): ThreadPageChatSummaryWithCreatedAt {
@@ -181,6 +182,7 @@ function createLegacyThreadChatSummary({
     reattemptQueueAt: thread.reattemptQueueAt,
     contextLength: thread.contextLength,
     permissionMode: thread.permissionMode ?? "allowAll",
+    messageSeq: thread.messageSeq,
     isUnread,
   };
 }
@@ -201,6 +203,7 @@ function toThreadPageChatSummaryWithCreatedAt(
     | "reattemptQueueAt"
     | "contextLength"
     | "permissionMode"
+    | "messageSeq"
     | "isUnread"
   >,
 ): ThreadPageChatSummaryWithCreatedAt {
@@ -218,6 +221,7 @@ function toThreadPageChatSummaryWithCreatedAt(
     reattemptQueueAt: chat.reattemptQueueAt,
     contextLength: chat.contextLength,
     permissionMode: chat.permissionMode ?? "allowAll",
+    messageSeq: chat.messageSeq,
     isUnread: chat.isUnread,
   };
 }
@@ -250,6 +254,7 @@ function getThreadPageShellSelect() {
     sourceType: schema.thread.sourceType,
     sourceMetadata: schema.thread.sourceMetadata,
     version: schema.thread.version,
+    messageSeq: schema.thread.messageSeq,
     agent: schema.thread.agent,
     agentVersion: schema.thread.agentVersion,
     status: schema.thread.status,
@@ -277,6 +282,7 @@ function getThreadPageShellThreadChatSummarySelect() {
     reattemptQueueAt: schema.threadChat.reattemptQueueAt,
     contextLength: schema.threadChat.contextLength,
     permissionMode: schema.threadChat.permissionMode,
+    messageSeq: schema.threadChat.messageSeq,
   };
 }
 
@@ -299,6 +305,7 @@ function getThreadPageLegacyChatSelect() {
     reattemptQueueAt: schema.thread.reattemptQueueAt,
     contextLength: schema.thread.contextLength,
     permissionMode: schema.thread.permissionMode,
+    messageSeq: schema.thread.messageSeq,
   };
 }
 
@@ -323,6 +330,7 @@ function getThreadPageFullChatSelect() {
     contextLength: schema.threadChat.contextLength,
     permissionMode: schema.threadChat.permissionMode,
     codexPreviousResponseId: schema.threadChat.codexPreviousResponseId,
+    messageSeq: schema.threadChat.messageSeq,
   };
 }
 
@@ -522,6 +530,7 @@ export async function getThreadPageShellWithPermissions({
     sourceType: thread.sourceType,
     sourceMetadata: thread.sourceMetadata,
     version: thread.version,
+    messageSeq: thread.messageSeq,
     isUnread: thread.isUnread,
     childThreads,
     hasGitDiff: thread.hasGitDiff,
@@ -600,12 +609,14 @@ export async function getThreadPageChatWithPermissions({
       reattemptQueueAt: thread.reattemptQueueAt,
       contextLength: thread.contextLength,
       permissionMode: thread.permissionMode ?? "allowAll",
+      messageSeq: thread.messageSeq,
       codexPreviousResponseId: null,
       isUnread: thread.isUnread,
       messages,
       queuedMessages: thread.queuedMessages ?? [],
       messageCount: messages.length,
-      chatSequence: thread.updatedAt.getTime(),
+      chatSequence:
+        thread.messageSeq > 0 ? thread.messageSeq : thread.updatedAt.getTime(),
     };
   }
 
@@ -639,7 +650,10 @@ export async function getThreadPageChatWithPermissions({
   return {
     ...threadChat,
     messageCount: threadChat.messages?.length ?? 0,
-    chatSequence: threadChat.updatedAt.getTime(),
+    chatSequence:
+      threadChat.messageSeq > 0
+        ? threadChat.messageSeq
+        : threadChat.updatedAt.getTime(),
   };
 }
 

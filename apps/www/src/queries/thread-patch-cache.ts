@@ -276,6 +276,14 @@ function usesTimestampChatSequence(
   );
 }
 
+/**
+ * Monotonic integer sequences are always < 1 billion.
+ * Timestamp-based sequences are ~1.7 trillion (milliseconds since epoch).
+ */
+function isMonotonicSequence(seq: number | null | undefined): boolean {
+  return seq != null && seq < 1_000_000_000;
+}
+
 function applyChatFields(
   chat: ThreadPageChat,
   patch: BroadcastThreadPatch,
@@ -288,8 +296,59 @@ function applyChatFields(
     };
   }
 
+  // Delta ops are ephemeral token-level streaming — handled by
+  // delta accumulator in chat components, not the persistent cache.
+  if (patch.op === "delta") {
+    return { chat, shouldInvalidate: false, shouldIgnore: true };
+  }
+
   const incomingSequence = patch.chatSequence;
   const currentSequence = chat.chatSequence;
+
+  // Fast path: monotonic (integer) sequences — no expectedMessageCount or
+  // tailMatchesAppend checks needed, just compare seq numbers.
+  if (
+    isMonotonicSequence(incomingSequence) &&
+    isMonotonicSequence(currentSequence)
+  ) {
+    // Duplicate or stale — ignore
+    if (incomingSequence! <= currentSequence!) {
+      return { chat, shouldInvalidate: false, shouldIgnore: true };
+    }
+    // Gap — request replay / invalidate
+    if (incomingSequence! > currentSequence! + 1) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    // Exactly next in sequence — append directly
+    if (patch.appendMessages !== undefined) {
+      if (!isDbMessageArray(patch.appendMessages)) {
+        return { chat, shouldInvalidate: true, shouldIgnore: false };
+      }
+      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+      return {
+        chat: applyPatchToChatObject(
+          chat,
+          patch,
+          nextMessages,
+          incomingSequence!,
+        ),
+        shouldInvalidate: false,
+        shouldIgnore: false,
+      };
+    }
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        chat.messages ?? [],
+        incomingSequence!,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
+  }
+
+  // Legacy timestamp-based path
   if (
     incomingSequence !== undefined &&
     currentSequence !== null &&
@@ -330,8 +389,26 @@ function applyChatFields(
     nextMessages = [...nextMessages, ...patch.appendMessages];
   }
 
+  return {
+    chat: applyPatchToChatObject(
+      chat,
+      patch,
+      nextMessages,
+      incomingSequence ?? currentSequence,
+    ),
+    shouldInvalidate: false,
+    shouldIgnore: false,
+  };
+}
+
+function applyPatchToChatObject(
+  chat: ThreadPageChat,
+  patch: BroadcastThreadPatch,
+  nextMessages: DBMessage[],
+  chatSequence: number | null,
+): ThreadPageChat {
   const queuedMessages = toDbUserMessages(patch.chat?.queuedMessages);
-  const nextChat: ThreadPageChat = {
+  return {
     ...chat,
     ...(patch.chat?.agent !== undefined ? { agent: patch.chat.agent } : {}),
     ...(patch.chat?.agentVersion !== undefined
@@ -365,13 +442,7 @@ function applyChatFields(
     ...(queuedMessages !== undefined ? { queuedMessages } : {}),
     messages: nextMessages,
     messageCount: nextMessages.length,
-    chatSequence: incomingSequence ?? currentSequence,
-  };
-
-  return {
-    chat: nextChat,
-    shouldInvalidate: false,
-    shouldIgnore: false,
+    chatSequence,
   };
 }
 

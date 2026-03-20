@@ -297,6 +297,7 @@ const threadChatShared = {
   permissionMode: text("permission_mode")
     .$type<"allowAll" | "plan">()
     .default("allowAll"),
+  messageSeq: integer("message_seq").notNull().default(0),
 };
 
 export const thread = pgTable(

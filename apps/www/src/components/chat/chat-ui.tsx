@@ -67,6 +67,7 @@ import { usePlatform } from "@/hooks/use-platform";
 import dynamic from "next/dynamic";
 import { ThreadInfoFull } from "@terragon/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
+import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -276,10 +277,22 @@ function ChatUI({
     threadIsUnread: !!shell?.isUnread,
     isReadOnly,
   });
+  const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
   useRealtimeThread(threadId, (patches) => {
-    patches.forEach((patch) => {
-      applyThreadPatchToQueryClient({ queryClient, patch });
-    });
+    let hasNonDelta = false;
+    for (const patch of patches) {
+      if (patch.op === "delta") {
+        applyDelta(patch);
+      } else {
+        hasNonDelta = true;
+        applyThreadPatchToQueryClient({ queryClient, patch });
+      }
+    }
+    // When a complete message arrives, clear accumulated deltas since the
+    // DB message now contains the full text.
+    if (hasNonDelta) {
+      clearDeltasForThread();
+    }
   });
 
   const chatAgent = ensureAgent(threadChat?.agent);
@@ -378,6 +391,7 @@ function ChatUI({
     agent: chatAgent,
     threadStatus: threadChat?.status,
     cacheKey: threadChatId ?? threadId,
+    deltas,
   });
   const artifactDescriptors = useMemo(
     () =>

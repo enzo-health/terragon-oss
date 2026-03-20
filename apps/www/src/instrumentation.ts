@@ -1,5 +1,11 @@
 export function register() {
-  // No-op for initialization
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const {
+      registerMessageStreamAppend,
+    } = require("@terragon/shared/broadcast-server");
+    const { appendToMessageStream } = require("./lib/message-stream");
+    registerMessageStreamAppend(appendToMessageStream);
+  }
 }
 
 export const onRequestError = async (

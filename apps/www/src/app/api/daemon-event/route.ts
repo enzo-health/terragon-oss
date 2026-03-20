@@ -1,5 +1,6 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
+import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -507,6 +508,27 @@ export async function POST(request: Request) {
   }
   const userId = daemonAuthContext.userId;
   const claims = daemonAuthContext.claims;
+
+  // Broadcast deltas immediately — ephemeral, not persisted, fire-and-forget.
+  const deltas = json.deltas;
+  if (deltas && deltas.length > 0) {
+    for (const delta of deltas) {
+      publishDeltaBroadcast({
+        userId,
+        threadId,
+        threadChatId,
+        messageId: delta.messageId,
+        partIndex: delta.partIndex,
+        text: delta.text,
+      }).catch((error) => {
+        console.warn("[daemon-event] delta broadcast failed", {
+          threadId,
+          messageId: delta.messageId,
+          error,
+        });
+      });
+    }
+  }
 
   if (daemonAdvertisesEnvelopeV2 && !envelopeV2) {
     return Response.json(
