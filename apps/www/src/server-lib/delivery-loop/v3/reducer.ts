@@ -11,6 +11,8 @@ const DISPATCH_COHERENT_STATES = new Set([
   "gating_ci",
 ]);
 
+const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
+
 type InvariantAction = {
   kind: "dispatch_coherence";
   reason: string;
@@ -255,6 +257,16 @@ function dispatchReviewEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
     effectKey: `${head.workflowId}:${head.version + 1}:dispatch_gate_review`,
     dueAt: now,
     payload: { kind: "dispatch_gate_review", gate: "review" },
+  };
+}
+
+function ensurePrEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
+  return {
+    kind: "ensure_pr",
+    effectKey: `${head.workflowId}:${head.version + 1}:ensure_pr`,
+    dueAt: now,
+    maxAttempts: 8,
+    payload: { kind: "ensure_pr" },
   };
 }
 
@@ -599,15 +611,18 @@ export function reduceV3(params: {
             break;
           }
           const next = withVersion(head, now);
+          const hasLinkedPr = typeof event.prNumber === "number";
           result = {
             head: {
               ...next,
-              state: "gating_ci",
-              activeGate: "ci",
+              state: hasLinkedPr ? "gating_ci" : "awaiting_pr",
+              activeGate: hasLinkedPr ? "ci" : null,
               activeRunId: null,
-              blockedReason: null,
+              blockedReason: hasLinkedPr ? null : AWAITING_PR_CREATION_REASON,
             },
-            effects: [publishStatusEffect(next, now)],
+            effects: hasLinkedPr
+              ? [publishStatusEffect(next, now)]
+              : [ensurePrEffect(next, now), publishStatusEffect(next, now)],
             invariantActions: [],
           };
           break;
@@ -714,6 +729,54 @@ export function reduceV3(params: {
             now,
             lane: "agent",
             reason: event.reason ?? "CI gate blocked",
+          });
+          break;
+        }
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
+      }
+      case "awaiting_pr": {
+        if (event.type === "pr_linked") {
+          if (head.blockedReason !== AWAITING_PR_CREATION_REASON) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          if (typeof event.prNumber !== "number") {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "gating_ci",
+              activeGate: "ci",
+              activeRunId: null,
+              blockedReason: null,
+            },
+            effects: [publishStatusEffect(next, now)],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "gate_review_failed") {
+          result = retryToImplementing({
+            head,
+            now,
+            lane: "agent",
+            reason: event.reason ?? "PR linkage failed after review gate",
           });
           break;
         }

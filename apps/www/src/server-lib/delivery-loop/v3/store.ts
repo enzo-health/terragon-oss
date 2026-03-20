@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type {
@@ -96,6 +96,7 @@ const LEGACY_RECONCILABLE_KINDS = [
   "stopped",
   "terminated",
 ] as const;
+const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 export async function reconcileZombieGateHeadsFromLegacy(params: {
   db: DB;
@@ -117,6 +118,7 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
       headVersion: headTable.version,
       headSha: headTable.headSha,
       legacyKind: legacyTable.kind,
+      legacyPrNumber: legacyTable.prNumber,
       legacyHeadSha: legacyTable.headSha,
       legacyBlockedReason: legacyTable.blockedReason,
     })
@@ -137,15 +139,20 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
     if (targetState === "gating_review" || targetState === "gating_ci") {
       continue;
     }
+    const targetVersion = candidate.headVersion + 1;
+    const needsEnsurePr =
+      targetState === "awaiting_pr" && candidate.legacyPrNumber === null;
     const [row] = await params.db
       .update(headTable)
       .set({
-        version: candidate.headVersion + 1,
+        version: targetVersion,
         state: targetState,
         activeGate: null,
         headSha: candidate.legacyHeadSha ?? candidate.headSha,
         activeRunId: null,
-        blockedReason: candidate.legacyBlockedReason ?? null,
+        blockedReason: needsEnsurePr
+          ? AWAITING_PR_CREATION_REASON
+          : (candidate.legacyBlockedReason ?? null),
         updatedAt: now,
         lastActivityAt: now,
       })
@@ -157,11 +164,97 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
       )
       .returning({ workflowId: headTable.workflowId });
     if (row) {
+      if (needsEnsurePr) {
+        await insertEffectsV3({
+          db: params.db,
+          workflowId: candidate.workflowId,
+          workflowVersion: targetVersion,
+          effects: [
+            {
+              kind: "ensure_pr",
+              effectKey: `${candidate.workflowId}:${targetVersion}:ensure_pr`,
+              dueAt: now,
+              maxAttempts: 8,
+              payload: { kind: "ensure_pr" },
+            },
+            {
+              kind: "publish_status",
+              effectKey: `${candidate.workflowId}:${targetVersion}:publish_status`,
+              dueAt: now,
+              payload: { kind: "publish_status" },
+            },
+          ],
+        });
+      }
+      reconciled++;
+    }
+  }
+  const noPrCiCandidates = await params.db
+    .select({
+      workflowId: headTable.workflowId,
+      headVersion: headTable.version,
+    })
+    .from(headTable)
+    .innerJoin(legacyTable, eq(headTable.workflowId, legacyTable.id))
+    .where(
+      and(
+        eq(headTable.state, "gating_ci"),
+        lte(headTable.updatedAt, staleBefore),
+        isNull(legacyTable.prNumber),
+      ),
+    )
+    .limit(maxRows);
+
+  for (const candidate of noPrCiCandidates) {
+    const targetVersion = candidate.headVersion + 1;
+    const [row] = await params.db
+      .update(headTable)
+      .set({
+        version: targetVersion,
+        state: "awaiting_pr",
+        activeGate: null,
+        activeRunId: null,
+        blockedReason: AWAITING_PR_CREATION_REASON,
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+      .where(
+        and(
+          eq(headTable.workflowId, candidate.workflowId),
+          eq(headTable.version, candidate.headVersion),
+        ),
+      )
+      .returning({ workflowId: headTable.workflowId });
+
+    if (row) {
+      await insertEffectsV3({
+        db: params.db,
+        workflowId: candidate.workflowId,
+        workflowVersion: targetVersion,
+        effects: [
+          {
+            kind: "ensure_pr",
+            effectKey: `${candidate.workflowId}:${targetVersion}:ensure_pr`,
+            dueAt: now,
+            maxAttempts: 8,
+            payload: { kind: "ensure_pr" },
+          },
+          {
+            kind: "publish_status",
+            effectKey: `${candidate.workflowId}:${targetVersion}:publish_status`,
+            dueAt: now,
+            payload: { kind: "publish_status" },
+          },
+        ],
+      });
       reconciled++;
     }
   }
 
-  return { scanned: candidates.length, reconciled };
+  return {
+    scanned: candidates.length + noPrCiCandidates.length,
+    reconciled,
+  };
 }
 
 export async function getWorkflowHeadV3(params: {

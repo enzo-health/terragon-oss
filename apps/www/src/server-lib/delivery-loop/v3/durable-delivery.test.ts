@@ -16,6 +16,7 @@ import {
   ensureWorkflowHeadV3,
   enqueueOutboxRecordV3,
   getWorkflowHeadV3,
+  reconcileZombieGateHeadsFromLegacy,
   updateWorkflowHeadV3,
 } from "./store";
 import { buildSignalJournalContractV3 } from "./contracts";
@@ -1108,6 +1109,98 @@ describe("v3 durable delivery loop", () => {
     expect(headAfterCurrent.state).toBe("gating_review");
     expect(headAfterCurrent.activeRunId).toBeNull();
     expect(headAfterCurrent.headSha).toBe("current-head-sha");
+  });
+
+  it("routes review pass to awaiting_pr when no PR is linked", async () => {
+    const workflowId = await createWorkflowFixture();
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `no-pr:${workflowId}:bootstrap`,
+      event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `no-pr:${workflowId}:run-completed`,
+      event: {
+        type: "run_completed",
+        runId: "run-no-pr",
+        headSha: "sha-no-pr",
+      },
+    });
+
+    const reviewPassResult = await appendEventAndAdvanceV3({
+      db,
+      workflowId,
+      source: "daemon",
+      idempotencyKey: `no-pr:${workflowId}:review-passed`,
+      event: {
+        type: "gate_review_passed",
+        runId: null,
+      },
+    });
+    expect(reviewPassResult.stateBefore).toBe("gating_review");
+    expect(reviewPassResult.stateAfter).toBe("awaiting_pr");
+
+    const workflowHead = await getWorkflowHeadV3({ db, workflowId });
+    expect(workflowHead?.state).toBe("awaiting_pr");
+    expect(workflowHead?.activeGate).toBeNull();
+    expect(workflowHead?.blockedReason).toBe("Awaiting PR creation");
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    expect(effectRows.some((row) => row.effectKind === "ensure_pr")).toBe(true);
+  });
+
+  it("reconciles stale gating_ci heads without a linked PR to awaiting_pr", async () => {
+    const workflowId = await createWorkflowFixture();
+    const seeded = await ensureWorkflowHeadV3({ db, workflowId });
+    if (!seeded) {
+      throw new Error("Expected workflow head for no-PR reconcile test");
+    }
+
+    const staleTime = new Date("2026-03-18T10:00:00.000Z");
+    const now = new Date("2026-03-18T10:10:00.000Z");
+
+    const updated = await updateWorkflowHeadV3({
+      db,
+      head: {
+        ...seeded,
+        version: seeded.version + 1,
+        state: "gating_ci",
+        activeGate: "ci",
+        headSha: "sha-no-pr",
+        activeRunId: null,
+        updatedAt: staleTime,
+        lastActivityAt: staleTime,
+      },
+      expectedVersion: seeded.version,
+    });
+    expect(updated).toBe(true);
+
+    const reconcile = await reconcileZombieGateHeadsFromLegacy({
+      db,
+      now,
+      staleMs: 60_000,
+      maxRows: 10,
+    });
+    expect(reconcile.reconciled).toBeGreaterThanOrEqual(1);
+
+    const head = await getWorkflowHeadV3({ db, workflowId });
+    expect(head?.state).toBe("awaiting_pr");
+    expect(head?.activeGate).toBeNull();
+    expect(head?.blockedReason).toBe("Awaiting PR creation");
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    expect(effectRows.some((row) => row.effectKind === "ensure_pr")).toBe(true);
   });
 
   it("rejects stale CAS updates to workflow head", async () => {

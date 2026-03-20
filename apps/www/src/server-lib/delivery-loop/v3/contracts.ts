@@ -128,6 +128,12 @@ export function serializeLoopEventV3(
       return {
         type: event.type,
         runId: event.runId ?? null,
+        prNumber: event.prNumber ?? null,
+      };
+    case "pr_linked":
+      return {
+        type: event.type,
+        prNumber: event.prNumber ?? null,
       };
     case "gate_review_failed":
       return {
@@ -242,9 +248,31 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
       ) {
         return null;
       }
+      if (
+        payload.prNumber !== undefined &&
+        payload.prNumber !== null &&
+        (typeof payload.prNumber !== "number" ||
+          !Number.isInteger(payload.prNumber))
+      ) {
+        return null;
+      }
       return {
         type: "gate_review_passed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        prNumber: (payload.prNumber as number | null | undefined) ?? null,
+      };
+    case "pr_linked":
+      if (
+        payload.prNumber !== undefined &&
+        payload.prNumber !== null &&
+        (typeof payload.prNumber !== "number" ||
+          !Number.isInteger(payload.prNumber))
+      ) {
+        return null;
+      }
+      return {
+        type: "pr_linked",
+        prNumber: (payload.prNumber as number | null | undefined) ?? null,
       };
     case "gate_review_failed":
       if (
@@ -344,6 +372,8 @@ export function serializeEffectPayloadV3(
         runId: payload.runId,
         workflowVersion: payload.workflowVersion,
       };
+    case "ensure_pr":
+      return { kind: payload.kind };
     case "create_plan_artifact":
     case "publish_status":
       return { kind: payload.kind };
@@ -386,6 +416,9 @@ export function parseEffectPayloadV3(payload: unknown): EffectPayloadV3 | null {
   }
   if (payload.kind === "create_plan_artifact") {
     return { kind: "create_plan_artifact" };
+  }
+  if (payload.kind === "ensure_pr") {
+    return { kind: "ensure_pr" };
   }
   if (payload.kind === "publish_status") {
     return { kind: "publish_status" };

@@ -347,6 +347,7 @@ describe("reduceV3", () => {
       event: {
         type: "gate_review_passed",
         runId: "run-review",
+        prNumber: 42,
       },
       now,
     });
@@ -354,6 +355,109 @@ describe("reduceV3", () => {
     expect(result.head.state).toBe("gating_ci");
     expect(result.head.activeGate).toBe("ci");
     expect(result.head.activeRunId).toBeNull();
+  });
+
+  it("gate_review_passed without linked PR transitions to awaiting_pr", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("gating_review"),
+        activeGate: "review",
+        activeRunId: "run-review",
+      },
+      event: {
+        type: "gate_review_passed",
+        runId: "run-review",
+        prNumber: null,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.activeGate).toBeNull();
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.blockedReason).toBe("Awaiting PR creation");
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]).toMatchObject({
+      kind: "ensure_pr",
+      payload: { kind: "ensure_pr" },
+    });
+    expect(result.effects[1]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
+  });
+
+  it("awaiting_pr with PR-creation marker re-enters CI gate on pr_linked", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("awaiting_pr"),
+        blockedReason: "Awaiting PR creation",
+      },
+      event: {
+        type: "pr_linked",
+        prNumber: 42,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_ci");
+    expect(result.head.activeGate).toBe("ci");
+    expect(result.head.blockedReason).toBeNull();
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
+  });
+
+  it("awaiting_pr without PR-creation marker ignores pr_linked", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("awaiting_pr"),
+        blockedReason: null,
+      },
+      event: {
+        type: "pr_linked",
+        prNumber: 42,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.effects).toHaveLength(0);
+  });
+
+  it("awaiting_pr retries implementing when PR linkage fails", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduceV3({
+      head: {
+        ...head("awaiting_pr"),
+        blockedReason: "Awaiting PR creation",
+      },
+      event: {
+        type: "gate_review_failed",
+        reason: "No code changes detected to open PR",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.fixAttemptCount).toBe(1);
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]).toMatchObject({
+      kind: "dispatch_implementing",
+      payload: {
+        kind: "dispatch_implementing",
+        executionClass: "implementation_runtime",
+      },
+    });
+    expect(result.effects[1]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
   });
 
   it("dispatch coherence clears stale activeRunId in non-dispatch state", () => {

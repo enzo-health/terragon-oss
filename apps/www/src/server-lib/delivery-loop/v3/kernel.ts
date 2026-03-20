@@ -1,5 +1,7 @@
 import type { DB } from "@terragon/shared/db";
 import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
+import * as schema from "@terragon/shared/db/schema";
+import { eq } from "drizzle-orm";
 import { reduceV3, type InvariantActionV3 } from "./reducer";
 import type { LoopEventV3 } from "./types";
 import { buildSignalJournalContractV3 } from "./contracts";
@@ -91,11 +93,17 @@ export async function appendEventAndAdvanceV3(params: {
       };
     }
 
+    const event = await enrichEventWithWorkflowContext({
+      db: tx,
+      workflowId: params.workflowId,
+      event: params.event,
+    });
+
     const signal = buildSignalJournalContractV3({
       workflowId: params.workflowId,
       source: params.source,
       idempotencyKey: params.idempotencyKey,
-      event: params.event,
+      event,
       occurredAt: now,
     });
 
@@ -121,7 +129,7 @@ export async function appendEventAndAdvanceV3(params: {
 
     const reduced = reduceV3({
       head,
-      event: params.event,
+      event,
       now,
     });
 
@@ -186,6 +194,33 @@ export async function appendEventAndAdvanceV3(params: {
   }
 
   return result;
+}
+
+async function enrichEventWithWorkflowContext(params: {
+  db: Pick<DB, "query">;
+  workflowId: string;
+  event: LoopEventV3;
+}): Promise<LoopEventV3> {
+  if (
+    params.event.type !== "gate_review_passed" &&
+    params.event.type !== "pr_linked"
+  ) {
+    return params.event;
+  }
+
+  if (params.event.prNumber !== undefined) {
+    return params.event;
+  }
+
+  const workflow = await params.db.query.deliveryWorkflow.findFirst({
+    columns: { prNumber: true },
+    where: eq(schema.deliveryWorkflow.id, params.workflowId),
+  });
+
+  return {
+    ...params.event,
+    prNumber: workflow?.prNumber ?? null,
+  };
 }
 
 function gateBypassEvent(state: string | null): LoopEventV3 | null {

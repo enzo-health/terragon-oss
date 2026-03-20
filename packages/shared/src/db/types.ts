@@ -85,6 +85,7 @@ export type DeliveryEffectKindV3 =
   | "dispatch_implementing"
   | "dispatch_gate_review"
   | "ack_timeout_check"
+  | "ensure_pr"
   | "create_plan_artifact"
   | "publish_status";
 

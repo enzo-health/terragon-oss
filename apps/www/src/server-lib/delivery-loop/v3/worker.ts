@@ -257,8 +257,22 @@ function parseLegacySignalEnvelopeToLoopEvent(
         },
       };
     }
+    case "pr_synchronized": {
+      if (
+        typeof rawEvent.prNumber !== "number" ||
+        !Number.isInteger(rawEvent.prNumber)
+      ) {
+        return { kind: "invalid" };
+      }
+      return {
+        kind: "event",
+        event: {
+          type: "pr_linked",
+          prNumber: rawEvent.prNumber,
+        },
+      };
+    }
     case "progress_reported":
-    case "pr_synchronized":
     case "bypass_requested":
     case "mark_done_requested":
     case "operator_action_required":
@@ -527,6 +541,7 @@ function isDeliveryEffectKind(
     kind === "dispatch_implementing" ||
     kind === "dispatch_gate_review" ||
     kind === "ack_timeout_check" ||
+    kind === "ensure_pr" ||
     kind === "create_plan_artifact" ||
     kind === "publish_status"
   );

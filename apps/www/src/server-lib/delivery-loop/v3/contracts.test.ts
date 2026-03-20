@@ -78,6 +78,34 @@ describe("v3 contracts", () => {
     });
   });
 
+  it("round-trips gate_review_passed with optional PR context", () => {
+    const serialized = serializeLoopEventV3({
+      type: "gate_review_passed",
+      runId: "run-review-1",
+      prNumber: 123,
+    });
+    const parsed = parseLoopEventV3(serialized);
+
+    expect(parsed).toEqual({
+      type: "gate_review_passed",
+      runId: "run-review-1",
+      prNumber: 123,
+    });
+  });
+
+  it("round-trips pr_linked with optional PR context", () => {
+    const serialized = serializeLoopEventV3({
+      type: "pr_linked",
+      prNumber: 456,
+    });
+    const parsed = parseLoopEventV3(serialized);
+
+    expect(parsed).toEqual({
+      type: "pr_linked",
+      prNumber: 456,
+    });
+  });
+
   it("rejects malformed CI gate correlation payloads", () => {
     expect(
       parseLoopEventV3({
@@ -90,6 +118,18 @@ describe("v3 contracts", () => {
       parseLoopEventV3({
         type: "gate_ci_failed",
         runId: 123,
+      }),
+    ).toBeNull();
+    expect(
+      parseLoopEventV3({
+        type: "gate_review_passed",
+        prNumber: 1.5,
+      }),
+    ).toBeNull();
+    expect(
+      parseLoopEventV3({
+        type: "pr_linked",
+        prNumber: 1.5,
       }),
     ).toBeNull();
   });
@@ -119,6 +159,17 @@ describe("v3 contracts", () => {
     expect(parsed).toEqual({
       kind: "dispatch_implementing",
       executionClass: "implementation_runtime_fallback",
+    });
+  });
+
+  it("round-trips ensure_pr effect payload", () => {
+    const serialized = serializeEffectPayloadV3({
+      kind: "ensure_pr",
+    });
+    const parsed = parseEffectPayloadV3(serialized);
+
+    expect(parsed).toEqual({
+      kind: "ensure_pr",
     });
   });
 

@@ -279,6 +279,17 @@ async function loadWorkflowDiagnostics(params: {
     exists: string | null;
   }>("select to_regclass('public.delivery_timer_ledger_v3') as exists");
   const timerLedgerExists = Boolean(timerLedgerExistsResult.rows[0]?.exists);
+  const legacySignalInboxExistsResult = await params.client.query<{
+    exists: string | null;
+  }>("select to_regclass('public.sdlc_loop_signal_inbox') as exists");
+  const deliverySignalInboxExistsResult = await params.client.query<{
+    exists: string | null;
+  }>("select to_regclass('public.delivery_signal_inbox') as exists");
+  const signalInboxTable = legacySignalInboxExistsResult.rows[0]?.exists
+    ? "sdlc_loop_signal_inbox"
+    : deliverySignalInboxExistsResult.rows[0]?.exists
+      ? "delivery_signal_inbox"
+      : null;
   const [
     thread,
     workflow,
@@ -341,22 +352,24 @@ async function loadWorkflowDiagnostics(params: {
       [params.workflowId],
     ),
     params.client.query<SnapshotRow>(
-      `select id, cause_type as "causeType",
-                canonical_cause_id as "canonicalCauseId",
-                signal_head_sha_or_null as "signalHeadShaOrNull",
-                processed_at as "processedAt",
-                dead_lettered_at as "deadLetteredAt",
-                dead_letter_reason as "deadLetterReason",
-                processing_attempt_count as "processingAttemptCount",
-                claim_token as "claimToken",
-                claimed_at as "claimedAt",
-                committed_at as "committedAt",
-                received_at as "receivedAt"
-           from sdlc_loop_signal_inbox
-          where loop_id = $1
-          order by received_at desc
-          limit 20`,
-      [params.workflowId],
+      signalInboxTable
+        ? `select id, cause_type as "causeType",
+                  canonical_cause_id as "canonicalCauseId",
+                  signal_head_sha_or_null as "signalHeadShaOrNull",
+                  processed_at as "processedAt",
+                  dead_lettered_at as "deadLetteredAt",
+                  dead_letter_reason as "deadLetterReason",
+                  processing_attempt_count as "processingAttemptCount",
+                  claim_token as "claimToken",
+                  claimed_at as "claimedAt",
+                  committed_at as "committedAt",
+                  received_at as "receivedAt"
+             from ${signalInboxTable}
+            where loop_id = $1
+            order by received_at desc
+            limit 20`
+        : `select null::text as id where false`,
+      signalInboxTable ? [params.workflowId] : [],
     ),
     params.client.query<SnapshotRow>(
       `select workflow_id, thread_id, generation, version, state,

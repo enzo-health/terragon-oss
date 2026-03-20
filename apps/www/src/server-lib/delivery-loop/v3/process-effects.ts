@@ -37,6 +37,7 @@ import {
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 
 const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
+const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 /**
  * Execute the `dispatch_gate_review` effect natively — resolves the workflow
@@ -301,6 +302,164 @@ async function processPublishStatusEffect(params: {
   });
 }
 
+async function processEnsurePrEffect(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  leaseOwner: string;
+}): Promise<void> {
+  const workflow = await getWorkflow({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (!workflow) {
+    await markEffectSucceededV3({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+    });
+    return;
+  }
+
+  const head = await getWorkflowHeadV3({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (
+    !head ||
+    head.state !== "awaiting_pr" ||
+    head.blockedReason !== AWAITING_PR_CREATION_REASON
+  ) {
+    await markEffectSucceededV3({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+    });
+    return;
+  }
+
+  if (typeof workflow.prNumber !== "number") {
+    const [{ withThreadSandboxSession }, { openPullRequestForThread }] =
+      await Promise.all([
+        import("@/agent/thread-resource"),
+        import("@/agent/pull-request"),
+      ]);
+    const thread = await params.db.query.thread.findFirst({
+      where: eq(schema.thread.id, workflow.threadId),
+      columns: {
+        gitDiff: true,
+        gitDiffStats: true,
+      },
+    });
+    const diffStats =
+      thread?.gitDiffStats &&
+      typeof thread.gitDiffStats === "object" &&
+      thread.gitDiffStats !== null
+        ? (thread.gitDiffStats as { files?: unknown })
+        : null;
+    const diffFileCount =
+      typeof diffStats?.files === "number" ? diffStats.files : null;
+    if (diffFileCount === 0 && thread?.gitDiff !== "too-large") {
+      await appendEventAndAdvanceV3({
+        db: params.db,
+        workflowId: params.effect.workflowId,
+        source: "system",
+        idempotencyKey: `ensure-pr:${params.effect.id}:no-diff`,
+        event: {
+          type: "gate_review_failed",
+          reason: "No code changes detected to open a PR",
+        },
+      });
+      await markEffectSucceededV3({
+        db: params.db,
+        effectId: params.effect.id,
+        leaseOwner: params.leaseOwner,
+        leaseEpoch: params.effect.leaseEpoch,
+      });
+      return;
+    }
+
+    let prType: "draft" | "ready" = "draft";
+    if (workflow.userId) {
+      const { getUserSettings } = await import("@terragon/shared/model/user");
+      const userSettings = await getUserSettings({
+        db: params.db,
+        userId: workflow.userId,
+      });
+      prType = userSettings.prType;
+    }
+    const latestThreadChat = await params.db.query.threadChat.findFirst({
+      where: eq(schema.threadChat.threadId, workflow.threadId),
+      columns: { id: true },
+      orderBy: [desc(schema.threadChat.createdAt)],
+    });
+    let surfacedError: Error | null = null;
+
+    const didOpenPr = await withThreadSandboxSession({
+      label: "delivery-loop-v3-ensure-pr",
+      threadId: workflow.threadId,
+      threadChatId: latestThreadChat?.id ?? null,
+      userId: workflow.userId,
+      onError: async (error) => {
+        surfacedError = error;
+      },
+      execOrThrow: async ({ session }) => {
+        if (!session) {
+          throw new Error(
+            `No sandbox session available for thread ${workflow.threadId}`,
+          );
+        }
+        await openPullRequestForThread({
+          threadId: workflow.threadId,
+          userId: workflow.userId,
+          threadChatId: latestThreadChat?.id ?? null,
+          skipCommitAndPush: false,
+          prType,
+          session,
+        });
+        return true;
+      },
+    });
+    if (!didOpenPr) {
+      throw (
+        surfacedError ??
+        new Error(
+          `openPullRequestForThread did not complete for thread ${workflow.threadId}`,
+        )
+      );
+    }
+  }
+
+  const refreshedWorkflow = await getWorkflow({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (!refreshedWorkflow || typeof refreshedWorkflow.prNumber !== "number") {
+    throw new Error(
+      `PR linkage missing after ensure_pr for workflow ${params.effect.workflowId}`,
+    );
+  }
+
+  await appendEventAndAdvanceV3({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+    source: "system",
+    idempotencyKey: `ensure-pr:${params.effect.id}:pr-linked`,
+    event: {
+      type: "pr_linked",
+      prNumber: refreshedWorkflow.prNumber,
+    },
+  });
+
+  await markEffectSucceededV3({
+    db: params.db,
+    effectId: params.effect.id,
+    leaseOwner: params.leaseOwner,
+    leaseEpoch: params.effect.leaseEpoch,
+  });
+}
+
 async function processSingleEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
@@ -350,6 +509,15 @@ async function processSingleEffect(params: {
         leaseOwner: params.leaseOwner,
         gate: payload.gate,
         now: params.now,
+      });
+      return;
+    }
+
+    if (payload.kind === "ensure_pr") {
+      await processEnsurePrEffect({
+        db: params.db,
+        effect: params.effect,
+        leaseOwner: params.leaseOwner,
       });
       return;
     }

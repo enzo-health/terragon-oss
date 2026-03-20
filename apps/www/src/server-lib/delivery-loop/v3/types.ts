@@ -30,7 +30,12 @@ export type LoopEventV3 =
       category: string | null;
       lane?: FailureLane;
     }
-  | { type: "gate_review_passed"; runId?: string | null }
+  | {
+      type: "gate_review_passed";
+      runId?: string | null;
+      prNumber?: number | null;
+    }
+  | { type: "pr_linked"; prNumber?: number | null }
   | {
       type: "gate_review_failed";
       runId?: string | null;
@@ -66,6 +71,7 @@ export type EffectPayloadV3 =
       runId: string;
       workflowVersion: number;
     }
+  | { kind: "ensure_pr" }
   | { kind: "create_plan_artifact" }
   | { kind: "publish_status" };
 

@@ -205,4 +205,178 @@ describe("drainDueV3Effects", () => {
       .delete(schema.deliveryEffectLedgerV3)
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
   });
+
+  it("treats ensure_pr as link signal when PR already exists", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({ db, userId: user.id });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      userId: user.id,
+      kind: "planning",
+      stateJson: { state: "planning" },
+      prNumber: 987,
+    });
+
+    const seededHead = await ensureWorkflowHeadV3({
+      db,
+      workflowId: workflow.id,
+    });
+    if (!seededHead) {
+      throw new Error("Expected workflow head for ensure_pr test");
+    }
+
+    const moved = await updateWorkflowHeadV3({
+      db,
+      head: {
+        ...seededHead,
+        version: seededHead.version + 1,
+        state: "awaiting_pr",
+        activeGate: null,
+        activeRunId: null,
+        blockedReason: "Awaiting PR creation",
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: seededHead.version,
+    });
+    expect(moved).toBe(true);
+
+    const inserted = await insertEffectsV3({
+      db,
+      workflowId: workflow.id,
+      workflowVersion: seededHead.version + 1,
+      effects: [
+        {
+          kind: "ensure_pr",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:ensure-pr`,
+          dueAt: now,
+          payload: { kind: "ensure_pr" },
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueV3Effects({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const head = await getWorkflowHeadV3({ db, workflowId: workflow.id });
+    expect(head).not.toBeNull();
+    if (!head) {
+      throw new Error("Expected workflow head after ensure_pr drain");
+    }
+    expect(head.state).toBe("gating_ci");
+    expect(head.activeGate).toBe("ci");
+    expect(head.blockedReason).toBeNull();
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflow.id),
+    });
+    const ensurePrEffect = effectRows.find(
+      (row) => row.effectKind === "ensure_pr",
+    );
+    if (!ensurePrEffect) {
+      throw new Error("Expected ensure_pr effect row");
+    }
+    expect(ensurePrEffect.status).toBe("succeeded");
+  });
+
+  it("routes no-diff ensure_pr attempts back to implementing", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({ db, userId: user.id });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      userId: user.id,
+      kind: "planning",
+      stateJson: { state: "planning" },
+      prNumber: null,
+    });
+    await db
+      .update(schema.thread)
+      .set({
+        gitDiff: null,
+        gitDiffStats: {
+          files: 0,
+          additions: 0,
+          deletions: 0,
+        },
+      })
+      .where(eq(schema.thread.id, threadId));
+
+    const seededHead = await ensureWorkflowHeadV3({
+      db,
+      workflowId: workflow.id,
+    });
+    if (!seededHead) {
+      throw new Error("Expected workflow head for no-diff ensure_pr test");
+    }
+
+    const moved = await updateWorkflowHeadV3({
+      db,
+      head: {
+        ...seededHead,
+        version: seededHead.version + 1,
+        state: "awaiting_pr",
+        activeGate: null,
+        activeRunId: null,
+        blockedReason: "Awaiting PR creation",
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: seededHead.version,
+    });
+    expect(moved).toBe(true);
+
+    const inserted = await insertEffectsV3({
+      db,
+      workflowId: workflow.id,
+      workflowVersion: seededHead.version + 1,
+      effects: [
+        {
+          kind: "ensure_pr",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:ensure-pr-no-diff`,
+          dueAt: now,
+          payload: { kind: "ensure_pr" },
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueV3Effects({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const head = await getWorkflowHeadV3({ db, workflowId: workflow.id });
+    expect(head).not.toBeNull();
+    if (!head) {
+      throw new Error("Expected workflow head after no-diff ensure_pr drain");
+    }
+    expect(head.state).toBe("implementing");
+    expect(head.fixAttemptCount).toBe(1);
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflow.id),
+    });
+    const ensurePrEffect = effectRows.find(
+      (row) => row.effectKind === "ensure_pr",
+    );
+    if (!ensurePrEffect) {
+      throw new Error("Expected ensure_pr effect row for no-diff test");
+    }
+    expect(ensurePrEffect.status).toBe("succeeded");
+  });
 });
