@@ -18,7 +18,8 @@
     "eval:capture": "pnpm -C packages/eval capture",
     "eval:replay": "pnpm -C packages/eval replay",
     "eval:analyze": "pnpm -C packages/eval analyze",
-    "eval:report": "pnpm -C packages/eval report"
+    "eval:report": "pnpm -C packages/eval report",
+    "build-sandbox-image": "pnpm -C packages/sandbox-image build:local"
   },
   "keywords": [],
   "packageManager": "pnpm@10.14.0",

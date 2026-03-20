@@ -23,7 +23,8 @@
     "create-template:daytona:small": "NODE_ENV=production tsx scripts/create-template.ts --size=small --provider=daytona",
     "create-template:daytona:large": "NODE_ENV=production tsx scripts/create-template.ts --size=large --provider=daytona",
     "create-template:all": "pnpm create-template:e2b:small && pnpm create-template:e2b:large && pnpm create-template:daytona:small && pnpm create-template:daytona:large",
-    "update-dockerfile-versions": "bun scripts/update-dockerfile-versions.ts"
+    "update-dockerfile-versions": "bun scripts/update-dockerfile-versions.ts",
+    "build:local": "docker build -t ghcr.io/terragon-labs/containers-test:local -f Dockerfile.daytona ."
   },
   "devDependencies": {
     "@e2b/cli": "^1.5.1",
