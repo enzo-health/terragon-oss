@@ -160,20 +160,6 @@ function ChatUI({
         })),
     enabled: threadChatId !== undefined,
   });
-  const shouldLoadDiff = Boolean(
-    shell?.hasGitDiff &&
-      (isSecondaryPanelOpen ||
-        (shouldAutoOpenSecondaryPanel && platform === "desktop")),
-  );
-  const shouldRenderSecondaryPanel =
-    isSecondaryPanelOpen ||
-    (platform === "desktop" &&
-      shouldAutoOpenSecondaryPanel &&
-      Boolean(shell?.hasGitDiff));
-  const { data: threadDiff } = useQuery({
-    ...threadDiffQueryOptions(threadId),
-    enabled: shouldLoadDiff,
-  });
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -186,6 +172,24 @@ function ChatUI({
         : null,
     [threadChat?.queuedMessages],
   );
+  const hasLiveDiffSignal = Boolean(
+    shell?.hasGitDiff || (shell?.gitDiffStats?.files ?? 0) > 0,
+  );
+  const shouldLoadDiff = Boolean(
+    isSecondaryPanelOpen ||
+      (platform === "desktop" &&
+        shouldAutoOpenSecondaryPanel &&
+        hasLiveDiffSignal),
+  );
+  const shouldRenderSecondaryPanel =
+    isSecondaryPanelOpen ||
+    (platform === "desktop" &&
+      shouldAutoOpenSecondaryPanel &&
+      hasLiveDiffSignal);
+  const { data: threadDiff } = useQuery({
+    ...threadDiffQueryOptions(threadId),
+    enabled: shouldLoadDiff,
+  });
 
   const threadPreviewChat = useMemo<ThreadChatInfoFull | null>(() => {
     if (!shell) {
@@ -228,31 +232,37 @@ function ChatUI({
     return {
       ...threadShell,
       gitDiff: threadDiff?.gitDiff ?? null,
+      gitDiffStats:
+        threadDiff?.gitDiffStats ?? threadShell.gitDiffStats ?? null,
       threadChats: [threadPreviewChat],
       childThreads: shell.childThreads,
       parentThreadName: shell.parentThreadName,
     };
   }, [shell, threadDiff, threadPreviewChat]);
 
-  const isSdlcLoopOptedIn =
+  const isDeliveryLoopOptedIn =
     shell?.sourceType === "www" &&
     shell.sourceMetadata?.type === "www" &&
-    shell.sourceMetadata.sdlcLoopOptIn;
-  const shouldShowSdlcLoopStatus =
-    Boolean(isSdlcLoopOptedIn) || Boolean(shell?.githubPRNumber);
+    shell.sourceMetadata.deliveryLoopOptIn;
+  const shouldShowDeliveryLoopStatus =
+    Boolean(isDeliveryLoopOptedIn) || Boolean(shell?.githubPRNumber);
+  const hasAnyDiffSignal = hasLiveDiffSignal;
 
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
   // This will set the cookie if the panel is opened automatically
   useEffect(() => {
-    if (isSecondaryPanelOpen) return;
-    if (shell?.hasGitDiff && shouldAutoOpenSecondaryPanel) {
+    if (
+      hasAnyDiffSignal &&
+      shouldAutoOpenSecondaryPanel &&
+      !isSecondaryPanelOpen
+    ) {
       setIsSecondaryPanelOpen(true);
     }
   }, [
-    shell?.hasGitDiff,
-    shouldAutoOpenSecondaryPanel,
-    setIsSecondaryPanelOpen,
+    hasAnyDiffSignal,
     isSecondaryPanelOpen,
+    setIsSecondaryPanelOpen,
+    shouldAutoOpenSecondaryPanel,
   ]);
   useThreadDocumentTitleAndFavicon({
     name: shell?.name ?? "",
@@ -354,7 +364,6 @@ function ChatUI({
     [
       dbMessages,
       isReadOnly,
-      promptBoxRef,
       shell?.childThreads,
       thread?.branchName,
       thread?.githubRepoFullName,
@@ -557,7 +566,7 @@ function ChatUI({
           onHeaderClick={platform === "mobile" ? scrollToTop : undefined}
           onTerminalClick={() => setShowTerminal(true)}
         />
-        {shouldShowSdlcLoopStatus ? (
+        {shouldShowDeliveryLoopStatus ? (
           <DeliveryLoopTopProgressStepper
             threadId={threadId}
             threadChatId={threadChatId ?? null}

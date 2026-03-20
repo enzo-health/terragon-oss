@@ -58,12 +58,16 @@ import { createHash, randomUUID } from "node:crypto";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
-const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 10;
+const ACP_SSE_MAX_CONSECUTIVE_FAILURES = 50;
+const ACP_SSE_STARTUP_GRACE_MS = 60_000;
+const ACP_SSE_STARTUP_404_BACKOFF_MS = 400;
 const ACP_REQUEST_TIMEOUT_MS = 120_000;
 const ACP_SSE_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 min of SSE silence
 const ACP_INACTIVITY_CHECK_INTERVAL_MS = 30_000; // check every 30s
 const ACP_TERMINAL_QUIESCENCE_MS = 300;
 const ACP_TERMINAL_MAX_WAIT_MS = 2_500;
+const ACP_POST_INIT_INTERNAL_ERROR_GRACE_MS = 90_000;
+const ACP_POST_INIT_INTERNAL_ERROR_SUPPRESS_LIMIT = 5;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const APP_SERVER_TURN_WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 30_000;
@@ -84,6 +88,16 @@ type AcpResponseEnvelope = {
   result?: unknown;
   error?: unknown;
 };
+
+class AcpSseHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly statusText: string,
+  ) {
+    super(`ACP SSE failed (${status} ${statusText})`);
+    this.name = "AcpSseHttpError";
+  }
+}
 
 function formatError(error: unknown): object {
   if (error instanceof Error) {
@@ -275,7 +289,6 @@ type AppServerRunContext = {
 type DaemonEventRunState = {
   runId: string;
   nextSeq: number;
-  coordinatorRoutingEnabled: boolean;
   transportMode: DaemonTransportMode;
   protocolVersion: number;
   acpServerId: string | null;
@@ -681,15 +694,12 @@ export class TerragonDaemon {
 
   private initializeDaemonEventRunStateForNewRun({
     input,
-    coordinatorRoutingEnabled,
   }: {
     input: DaemonMessageClaude;
-    coordinatorRoutingEnabled: boolean;
   }): void {
     this.daemonEventRunStates.set(input.threadChatId, {
       runId: input.runId ?? randomUUID(),
       nextSeq: 0,
-      coordinatorRoutingEnabled,
       transportMode: input.transportMode ?? "legacy",
       protocolVersion: input.protocolVersion ?? 1,
       acpServerId: input.acpServerId ?? null,
@@ -806,12 +816,8 @@ export class TerragonDaemon {
         },
       );
     }
-    const coordinatorRoutingEnabled = this.getFeatureFlag(
-      "sdlcLoopCoordinatorRouting",
-    );
     this.initializeDaemonEventRunStateForNewRun({
       input,
-      coordinatorRoutingEnabled,
     });
     if (input.transportMode === "codex-app-server") {
       if (input.agent !== "codex") {
@@ -846,11 +852,6 @@ export class TerragonDaemon {
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.startHeartbeat(input.threadChatId);
     if (input.transportMode === "acp") {
-      if (!this.getFeatureFlag("sandboxAgentAcpTransport")) {
-        throw new Error(
-          "ACP transport requested but sandboxAgentAcpTransport feature flag is disabled",
-        );
-      }
       try {
         await this.runAcpTransportCommand(input);
       } catch (error) {
@@ -1263,6 +1264,49 @@ export class TerragonDaemon {
     let processHealthInterval: NodeJS.Timeout | null = null;
 
     try {
+      // Update MCP config with current env vars so the MCP server subprocess
+      // can reach the Terragon API (env vars change per dispatch).
+      if (this.mcpConfigPath) {
+        try {
+          const raw = this.runtime.readFileSync(this.mcpConfigPath);
+          const mcpConfig = JSON.parse(raw);
+          if (mcpConfig?.mcpServers?.terry) {
+            mcpConfig.mcpServers.terry.env = {
+              ...mcpConfig.mcpServers.terry.env,
+              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+              DAEMON_TOKEN: input.token,
+              TERRAGON_THREAD_ID: input.threadId,
+              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+            };
+            this.runtime.writeFileSync(
+              this.mcpConfigPath,
+              JSON.stringify(mcpConfig, null, 2),
+            );
+          }
+        } catch {
+          this.runtime.logger.warn(
+            "Failed to update MCP config with env vars for app-server",
+          );
+        }
+      }
+
+      // Write env vars to a well-known file so the MCP server can read them
+      // even when spawned by codex app-server (which reads ~/.codex/config.toml
+      // and doesn't pass env vars from the JSON MCP config).
+      try {
+        this.runtime.writeFileSync(
+          "/tmp/terragon-mcp-env.json",
+          JSON.stringify({
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            DAEMON_TOKEN: input.token,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+          }),
+        );
+      } catch {
+        this.runtime.logger.warn("Failed to write MCP env file for app-server");
+      }
+
       await this.applyAppServerRespawnBackoff();
       await manager.restartIfTokenChanged(input.token);
       await manager.ensureReady();
@@ -1761,6 +1805,9 @@ export class TerragonDaemon {
       }
       for (const message of messages) {
         lastAcpMessageAtMs = Date.now();
+        if (message.type === "assistant" || message.type === "user") {
+          sawAssistantOrUserMessage = true;
+        }
         if (
           (message.type === "assistant" || message.type === "user") &&
           message.session_id
@@ -1775,6 +1822,55 @@ export class TerragonDaemon {
           message.type === "custom-error" ||
           message.type === "custom-stop"
         ) {
+          // Before ACP init succeeds, error envelopes like "Internal error" are
+          // expected — sandbox-agent hasn't registered ACP endpoints yet. Suppress
+          // them so the SSE loop doesn't prematurely kill the run while initialize
+          // is still retrying.
+          if (message.type === "custom-error" && !acpInitialized) {
+            this.runtime.logger.debug(
+              "Suppressing pre-init SSE error envelope (not terminal)",
+              {
+                threadChatId: input.threadChatId,
+                errorInfo:
+                  "error_info" in message ? message.error_info : undefined,
+              },
+            );
+            return;
+          }
+          if (message.type === "custom-error" && acpInitialized) {
+            const errorInfo =
+              "error_info" in message ? message.error_info : undefined;
+            const isInternalError =
+              typeof errorInfo === "string" &&
+              errorInfo.trim() === "Internal error";
+            const postInitGraceActive =
+              promptIssuedAtMs > 0 &&
+              Date.now() - promptIssuedAtMs <=
+                ACP_POST_INIT_INTERNAL_ERROR_GRACE_MS &&
+              !sawAssistantOrUserMessage;
+            if (
+              isInternalError &&
+              postInitGraceActive &&
+              suppressedPostInitInternalErrors <
+                ACP_POST_INIT_INTERNAL_ERROR_SUPPRESS_LIMIT
+            ) {
+              suppressedPostInitInternalErrors += 1;
+              this.runtime.logger.debug(
+                "Suppressing early post-init Internal error envelope (not terminal)",
+                {
+                  threadChatId: input.threadChatId,
+                  suppressedCount: suppressedPostInitInternalErrors,
+                  suppressLimit: ACP_POST_INIT_INTERNAL_ERROR_SUPPRESS_LIMIT,
+                  graceRemainingMs: Math.max(
+                    0,
+                    ACP_POST_INIT_INTERNAL_ERROR_GRACE_MS -
+                      (Date.now() - promptIssuedAtMs),
+                  ),
+                },
+              );
+              continue;
+            }
+          }
           sawTerminalEventFromStream = true;
           resolveSseTerminal?.();
           this.updateActiveProcessState(input.threadChatId, {
@@ -2042,13 +2138,29 @@ export class TerragonDaemon {
     // inherit the updated process.env before spawning the agent.
     await this.ensureSandboxAgentHasToken(baseUrl, input);
 
+    // Wait for ACP endpoints to register after health passes. sandbox-agent's
+    // /v1/health responds before ACP endpoints are ready (~15s gap). This delay
+    // avoids burning retry budget on guaranteed-to-fail requests.
+    await new Promise((r) => setTimeout(r, 5_000));
+
     // Track that we just restarted so we can suppress expected initial SSE 404s
     let justRestarted = true;
+    // Track whether initialize + session/new have succeeded. Before this is set,
+    // SSE error envelopes (e.g. "Internal error") must NOT be treated as terminal
+    // because they're expected during the ACP registration window.
+    let acpInitialized = false;
+    // Track the post-prompt bootstrap window where ACP can emit transient
+    // "Internal error" envelopes before the first meaningful stream message.
+    let promptIssuedAtMs = 0;
+    let sawAssistantOrUserMessage = false;
+    let suppressedPostInitInternalErrors = 0;
 
     const sseLoop = (async () => {
-      // Brief settle after sandbox-agent restart — ACP endpoints need time to register
-      await abortableSleep(300);
+      // Settle after sandbox-agent restart — ACP endpoints need ~15s to register
+      // after /v1/health passes. A longer initial delay reduces SSE failure budget burn.
+      await abortableSleep(2_000);
       let consecutiveSseFailures = 0;
+      const sseStartupAtMs = Date.now();
       while (!sseAbortController.signal.aborted) {
         try {
           const sseHeaders: Record<string, string> = {
@@ -2063,9 +2175,7 @@ export class TerragonDaemon {
             signal: sseAbortController.signal,
           });
           if (!response.ok) {
-            throw new Error(
-              `ACP SSE failed (${response.status} ${response.statusText})`,
-            );
+            throw new AcpSseHttpError(response.status, response.statusText);
           }
           if (!response.body) {
             throw new Error("ACP SSE response has no body");
@@ -2084,15 +2194,44 @@ export class TerragonDaemon {
           if (sseAbortController.signal.aborted) {
             return;
           }
-          consecutiveSseFailures++;
-          // Suppress expected 404s right after sandbox-agent restart
-          if (justRestarted && consecutiveSseFailures <= 3) {
+          // During startup grace we expect intermittent 404s while ACP routes
+          // are still registering behind /v1/health.
+          const startupGraceActive =
+            justRestarted &&
+            Date.now() - sseStartupAtMs <= ACP_SSE_STARTUP_GRACE_MS;
+          if (
+            startupGraceActive &&
+            error instanceof AcpSseHttpError &&
+            error.status === 404
+          ) {
             this.runtime.logger.debug(
               "ACP SSE not yet available after restart (expected)",
               {
                 threadChatId: input.threadChatId,
                 serverId,
+                startupGraceRemainingMs: Math.max(
+                  0,
+                  ACP_SSE_STARTUP_GRACE_MS - (Date.now() - sseStartupAtMs),
+                ),
+              },
+            );
+            await abortableSleep(ACP_SSE_STARTUP_404_BACKOFF_MS);
+            continue;
+          }
+
+          consecutiveSseFailures++;
+          if (startupGraceActive) {
+            this.runtime.logger.debug(
+              "ACP SSE loop error during startup grace",
+              {
+                threadChatId: input.threadChatId,
+                serverId,
+                error: formatError(error),
                 consecutiveSseFailures,
+                startupGraceRemainingMs: Math.max(
+                  0,
+                  ACP_SSE_STARTUP_GRACE_MS - (Date.now() - sseStartupAtMs),
+                ),
               },
             );
           } else {
@@ -2135,44 +2274,83 @@ export class TerragonDaemon {
     };
 
     try {
-      const initializeResponse = await postEnvelope({
-        method: "initialize",
-        params: {
-          protocolVersion: 1,
-          clientInfo: {
-            name: "terragon-daemon",
-            version: DAEMON_VERSION,
-          },
-        },
-        bootstrap: true,
-      });
-      if (toObject(initializeResponse.error)) {
+      // Retry initialize — ACP endpoints may not be registered yet even
+      // though /v1/health passed. Typically ready within ~15s of restart.
+      // Use 20 attempts with exponential backoff (2s base, 5s cap) to
+      // tolerate variance in sandbox-agent startup time.
+      const ACP_INIT_MAX_ATTEMPTS = 20;
+      let initializeResponse: AcpResponseEnvelope | undefined;
+      for (let attempt = 0; attempt < ACP_INIT_MAX_ATTEMPTS; attempt++) {
+        try {
+          initializeResponse = await postEnvelope({
+            method: "initialize",
+            params: {
+              protocolVersion: 1,
+              clientInfo: {
+                name: "terragon-daemon",
+                version: DAEMON_VERSION,
+              },
+            },
+            bootstrap: true,
+          });
+          if (!toObject(initializeResponse.error)) break;
+        } catch (err) {
+          if (attempt >= ACP_INIT_MAX_ATTEMPTS - 1) throw err;
+          this.runtime.logger.debug(
+            `ACP initialize attempt ${attempt + 1} failed, retrying`,
+            { error: formatError(err) },
+          );
+        }
+        const backoff = Math.min(2_000 * 1.5 ** attempt, 5_000);
+        await new Promise((r) => setTimeout(r, backoff));
+      }
+      if (toObject(initializeResponse?.error)) {
         throw new Error(
-          `ACP initialize failed: ${JSON.stringify(initializeResponse.error)}`,
+          `ACP initialize failed: ${JSON.stringify(initializeResponse?.error)}`,
         );
       }
 
-      let sessionId = input.acpSessionId ?? input.sessionId;
-      if (!sessionId) {
-        const newSessionResponse = await postEnvelope({
-          method: "session/new",
-          params: {
-            cwd: process.cwd(),
-            mcpServers: [],
-          },
-        });
-        if (toObject(newSessionResponse.error)) {
+      // Always create a fresh session — sandbox-agent was just restarted
+      // so any previous acpSessionId is stale and meaningless.
+      let sessionId: string | undefined;
+      {
+        let newSessionResponse: AcpResponseEnvelope | undefined;
+        for (let attempt = 0; attempt < ACP_INIT_MAX_ATTEMPTS; attempt++) {
+          try {
+            newSessionResponse = await postEnvelope({
+              method: "session/new",
+              params: {
+                cwd: process.cwd(),
+                mcpServers: [],
+              },
+            });
+            if (!toObject(newSessionResponse.error)) break;
+          } catch (err) {
+            if (attempt >= ACP_INIT_MAX_ATTEMPTS - 1) throw err;
+            this.runtime.logger.debug(
+              `ACP session/new attempt ${attempt + 1} failed, retrying`,
+              { error: formatError(err) },
+            );
+          }
+          const backoff = Math.min(2_000 * 1.5 ** attempt, 5_000);
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+        if (toObject(newSessionResponse?.error)) {
           throw new Error(
-            `ACP session/new failed: ${JSON.stringify(newSessionResponse.error)}`,
+            `ACP session/new failed: ${JSON.stringify(newSessionResponse?.error)}`,
           );
         }
-        const result = toObject(newSessionResponse.result);
+        const result = toObject(newSessionResponse?.result);
         const newSessionId = result?.sessionId;
         if (typeof newSessionId !== "string" || newSessionId.length === 0) {
           throw new Error("ACP session/new returned invalid sessionId");
         }
         sessionId = newSessionId;
       }
+
+      // Mark ACP as initialized — SSE error envelopes are now treated as
+      // terminal (before this point they were suppressed as startup noise).
+      acpInitialized = true;
 
       this.updateActiveProcessState(input.threadChatId, {
         sessionId,
@@ -2188,6 +2366,9 @@ export class TerragonDaemon {
       // Fire POST as trigger only — don't use response for completion.
       // The POST holds the connection open for the entire agent turn (5-30+ min).
       // HTTP proxies/LBs may kill it, so SSE terminal event is the sole completion signal.
+      promptIssuedAtMs = Date.now();
+      suppressedPostInitInternalErrors = 0;
+      sawAssistantOrUserMessage = false;
       postEnvelope({
         method: "session/prompt",
         params: {
@@ -2475,12 +2656,8 @@ export class TerragonDaemon {
     );
   }
 
-  private shouldEmitDaemonEventEnvelopeV2(threadChatId: string): boolean {
-    const runState = this.daemonEventRunStates.get(threadChatId);
-    if (runState) {
-      return runState.coordinatorRoutingEnabled;
-    }
-    return this.getFeatureFlag("sdlcLoopCoordinatorRouting");
+  private shouldEmitDaemonEventEnvelopeV2(_threadChatId: string): boolean {
+    return true;
   }
 
   private getMessageFingerprint(messages: ClaudeMessage[]): string {
@@ -2497,9 +2674,6 @@ export class TerragonDaemon {
     const created: DaemonEventRunState = {
       runId: randomUUID(),
       nextSeq: 0,
-      coordinatorRoutingEnabled: this.getFeatureFlag(
-        "sdlcLoopCoordinatorRouting",
-      ),
       transportMode: "legacy",
       protocolVersion: 1,
       acpServerId: null,
@@ -2849,6 +3023,47 @@ export class TerragonDaemon {
         },
       });
 
+      // Update MCP config with current env vars so the MCP server subprocess
+      // can reach the Terragon API (env vars change per dispatch).
+      if (this.mcpConfigPath) {
+        try {
+          const raw = this.runtime.readFileSync(this.mcpConfigPath);
+          const mcpConfig = JSON.parse(raw);
+          if (mcpConfig?.mcpServers?.terry) {
+            mcpConfig.mcpServers.terry.env = {
+              ...mcpConfig.mcpServers.terry.env,
+              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+              DAEMON_TOKEN: input.token,
+              TERRAGON_THREAD_ID: input.threadId,
+              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+            };
+            this.runtime.writeFileSync(
+              this.mcpConfigPath,
+              JSON.stringify(mcpConfig, null, 2),
+            );
+          }
+        } catch {
+          this.runtime.logger.warn("Failed to update MCP config with env vars");
+        }
+      }
+
+      // Write env vars to a well-known file so the MCP server can read them
+      // even when spawned by codex app-server (which reads ~/.codex/config.toml
+      // and doesn't pass env vars from the JSON MCP config).
+      try {
+        this.runtime.writeFileSync(
+          "/tmp/terragon-mcp-env.json",
+          JSON.stringify({
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            DAEMON_TOKEN: input.token,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
+          }),
+        );
+      } catch {
+        this.runtime.logger.warn("Failed to write MCP env file");
+      }
+
       const { processId, pollInterval } = this.runtime.spawnCommandLine(
         command,
         {
@@ -2856,6 +3071,9 @@ export class TerragonDaemon {
             ...process.env,
             ...env,
             DAEMON_TOKEN: input.token,
+            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            TERRAGON_THREAD_ID: input.threadId,
+            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
           },
           onStdoutLine: (line) => {
             this.runtime.logger.debug("Agent output", { processId, line });
@@ -3627,6 +3845,25 @@ export class TerragonDaemon {
           })
         : null;
       const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+      const hasTerminalMessage = messages.some(
+        (m) =>
+          m.type === "result" ||
+          m.type === "custom-error" ||
+          m.type === "custom-stop",
+      );
+      let headShaAtCompletion: string | null = null;
+      if (hasTerminalMessage) {
+        try {
+          const sha = this.runtime
+            .execSync("git rev-parse HEAD 2>/dev/null")
+            .trim();
+          if (/^[0-9a-f]{40}$/i.test(sha)) {
+            headShaAtCompletion = sha;
+          }
+        } catch {
+          /* no git repo or git not available */
+        }
+      }
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -3640,6 +3877,7 @@ export class TerragonDaemon {
           ? { codexPreviousResponseId }
           : {}),
         ...(envelopeV2 ?? {}),
+        ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
       };
 
       const selfDispatchPayload = await this.runtime.serverPost(payload, token);

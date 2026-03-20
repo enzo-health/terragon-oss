@@ -3,8 +3,14 @@ import {
   markDispatchIntentAcknowledged,
   markDispatchIntentFailed,
   getDispatchIntentByRunId,
-} from "@terragon/shared/model/delivery-loop";
-import { updateDispatchIntent, buildDispatchIntentId } from "./dispatch-intent";
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { updateThreadChatStatusAtomic } from "@terragon/shared/model/threads";
+import {
+  updateDispatchIntent,
+  buildDispatchIntentId,
+  getActiveDispatchIntent,
+} from "./dispatch-intent";
 import { evaluateRetryDecision, resetRetryCounter } from "./retry-policy";
 
 // ---------------------------------------------------------------------------
@@ -12,14 +18,15 @@ import { evaluateRetryDecision, resetRetryCounter } from "./retry-policy";
 // ---------------------------------------------------------------------------
 
 /** Default timeout before a dispatched intent is considered timed out. */
-export const DEFAULT_ACK_TIMEOUT_MS = 30_000; // 30 seconds
+export const DEFAULT_ACK_TIMEOUT_MS = 90_000; // 90 seconds — allows Docker cold starts
 
 // ---------------------------------------------------------------------------
 // handleAckReceived
 // ---------------------------------------------------------------------------
 
 /**
- * Called when the first daemon event for a given runId arrives (seq === 1).
+ * Called when the first daemon event for a given runId arrives (v2 seq starts
+ * at 0, so this must be status-based and idempotent rather than seq-based).
  *
  * 1. Updates the Redis dispatch intent to "acknowledged" (real-time tracking).
  * 2. Updates the DB dispatch intent to "acknowledged" (durable record).
@@ -38,13 +45,25 @@ export async function handleAckReceived({
   threadChatId: string;
 }): Promise<void> {
   const intentId = buildDispatchIntentId(loopId, runId);
-  await Promise.all([
-    updateDispatchIntent(intentId, threadChatId, {
-      status: "acknowledged",
-    }),
+  const [activeIntent, dbTransitioned] = await Promise.all([
+    getActiveDispatchIntent(threadChatId),
     markDispatchIntentAcknowledged(db, runId),
-    resetRetryCounter(threadChatId),
   ]);
+
+  const shouldUpdateRealtimeIntent =
+    activeIntent?.id === intentId &&
+    activeIntent.runId === runId &&
+    (activeIntent.status === "dispatched" ||
+      activeIntent.status === "prepared");
+  if (shouldUpdateRealtimeIntent) {
+    await updateDispatchIntent(intentId, threadChatId, {
+      status: "acknowledged",
+    });
+  }
+
+  if (dbTransitioned || shouldUpdateRealtimeIntent) {
+    await resetRetryCounter(threadChatId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -72,11 +91,15 @@ export async function handleAckTimeout({
   db,
   runId,
   threadChatId,
+  userId,
+  threadId,
   timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
 }: {
   db: DB;
   runId: string;
   threadChatId: string;
+  userId?: string;
+  threadId?: string;
   timeoutMs?: number;
 }): Promise<AckTimeoutOutcome> {
   await markDispatchIntentFailed(
@@ -85,6 +108,47 @@ export async function handleAckTimeout({
     "dispatch_ack_timeout",
     `No daemon event received within ${timeoutMs}ms of dispatch`,
   );
+  if (userId) {
+    try {
+      await updateAgentRunContext({
+        db,
+        runId,
+        userId,
+        updates: { status: "failed" },
+      });
+    } catch (error) {
+      console.warn("[ack-lifecycle] failed to mark run context failed", {
+        runId,
+        threadChatId,
+        userId,
+        error,
+      });
+    }
+  }
+
+  if (userId && threadId) {
+    try {
+      await updateThreadChatStatusAtomic({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+        fromStatus: "booting",
+        toStatus: "complete",
+      });
+    } catch (error) {
+      console.warn(
+        "[ack-lifecycle] failed to transition booting chat to complete on ack timeout",
+        {
+          runId,
+          threadId,
+          threadChatId,
+          userId,
+          error,
+        },
+      );
+    }
+  }
 
   const decision = await evaluateRetryDecision({
     threadChatId,
@@ -140,12 +204,16 @@ export function startAckTimeout({
   runId,
   loopId,
   threadChatId,
+  userId,
+  threadId,
   timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
 }: {
   db: DB;
   runId: string;
   loopId: string;
   threadChatId: string;
+  userId?: string;
+  threadId?: string;
   timeoutMs?: number;
 }): () => void {
   const timer = setTimeout(async () => {
@@ -155,7 +223,25 @@ export function startAckTimeout({
       if (!intent) return;
       if (intent.status !== "dispatched") return; // Already acked/failed/completed
 
-      await handleAckTimeout({ db, runId, threadChatId, timeoutMs });
+      const outcome = await handleAckTimeout({
+        db,
+        runId,
+        threadChatId,
+        userId,
+        threadId,
+        timeoutMs,
+      });
+
+      if (!outcome.shouldRetry) {
+        console.warn(
+          "[ack-lifecycle] ack timeout retry budget exhausted, no retry scheduled",
+          {
+            runId,
+            threadChatId,
+            attempt: outcome.attempt,
+          },
+        );
+      }
     } catch (error) {
       console.error("[ack-lifecycle] startAckTimeout handler failed", {
         runId,

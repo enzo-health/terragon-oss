@@ -110,6 +110,7 @@ function AddApiKeyDialog({
     resetForm();
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetForm is stable via React Compiler
   useEffect(() => {
     if (!open) {
       resetForm();
@@ -304,6 +305,7 @@ export function AddClaudeCredentialDialog({
     resetForm();
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetForm is stable via React Compiler
   useEffect(() => {
     if (!open) {
       resetForm();
@@ -490,6 +492,7 @@ export function AddCodexCredentialDialog({
     resetForm();
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetForm is stable via React Compiler
   useEffect(() => {
     if (!open) {
       resetForm();

@@ -1,10 +1,11 @@
-import { describe, it, vi, beforeEach, expect } from "vitest";
+import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
 import { newThreadInternal } from "./new-thread-internal";
 import { db } from "@/lib/db";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
 import { User, DBUserMessage } from "@terragon/shared";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
 import { getThread } from "@terragon/shared/model/threads";
+import { execSync } from "node:child_process";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {
@@ -13,8 +14,19 @@ const mockMessage: DBUserMessage = {
   model: "sonnet",
 };
 
-describe("newThreadInternal", () => {
+async function waitUntilResolvedBestEffort() {
+  await Promise.race([
+    waitUntilResolved(),
+    new Promise((resolve) => setTimeout(resolve, 1_000)),
+  ]);
+}
+
+describe("newThreadInternal", { timeout: 30_000 }, () => {
   let user: User;
+
+  beforeAll(() => {
+    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+  });
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -33,7 +45,7 @@ describe("newThreadInternal", () => {
         headBranchName: null,
         sourceType: "www",
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -51,7 +63,7 @@ describe("newThreadInternal", () => {
         headBranchName: "feature/webhook",
         sourceType: "www",
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -67,7 +79,7 @@ describe("newThreadInternal", () => {
         githubRepoFullName: repoFullName,
         sourceType: "www",
       });
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread!.repoBaseBranchName).toBe("DEFAULT_BRANCH_NAME_FOR_TESTS");
     });

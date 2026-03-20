@@ -48,6 +48,7 @@ describe("queueFollowUpInternal", () => {
     threadMocks.updateThreadChat.mockResolvedValue(undefined);
     queueMocks.maybeProcessFollowUpQueue.mockResolvedValue({
       processed: false,
+      dispatchLaunched: false,
       reason: "no_queued_messages",
     });
   });

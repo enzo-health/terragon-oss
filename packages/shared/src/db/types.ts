@@ -50,25 +50,17 @@ export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
-export type SdlcLoop = typeof schema.sdlcLoop.$inferSelect;
-export type SdlcLoopInsert = typeof schema.sdlcLoop.$inferInsert;
-export type SdlcPhaseArtifact = typeof schema.sdlcPhaseArtifact.$inferSelect;
-export type SdlcPhaseArtifactInsert =
-  typeof schema.sdlcPhaseArtifact.$inferInsert;
-export type SdlcPlanTask = typeof schema.sdlcPlanTask.$inferSelect;
-export type SdlcPlanTaskInsert = typeof schema.sdlcPlanTask.$inferInsert;
-export type SdlcLoopLease = typeof schema.sdlcLoopLease.$inferSelect;
-export type SdlcLoopLeaseInsert = typeof schema.sdlcLoopLease.$inferInsert;
-export type SdlcLoopSignalInbox =
-  typeof schema.sdlcLoopSignalInbox.$inferSelect;
-export type SdlcLoopSignalInboxInsert =
-  typeof schema.sdlcLoopSignalInbox.$inferInsert;
-export type SdlcLoopOutbox = typeof schema.sdlcLoopOutbox.$inferSelect;
-export type SdlcLoopOutboxInsert = typeof schema.sdlcLoopOutbox.$inferInsert;
-export type SdlcLoopOutboxAttempt =
-  typeof schema.sdlcLoopOutboxAttempt.$inferSelect;
-export type SdlcLoopOutboxAttemptInsert =
-  typeof schema.sdlcLoopOutboxAttempt.$inferInsert;
+export type DeliveryLoopSignalInbox =
+  typeof schema.deliverySignalInbox.$inferSelect;
+export type DeliveryLoopSignalInboxInsert =
+  typeof schema.deliverySignalInbox.$inferInsert;
+export type DeliveryPhaseArtifact =
+  typeof schema.deliveryPhaseArtifact.$inferSelect;
+export type DeliveryPhaseArtifactInsert =
+  typeof schema.deliveryPhaseArtifact.$inferInsert;
+export type DeliveryPlanTask = typeof schema.deliveryPlanTask.$inferSelect;
+export type DeliveryPlanTaskInsert =
+  typeof schema.deliveryPlanTask.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =
@@ -81,6 +73,89 @@ export type DeliveryLoopDispatchIntentRow =
   typeof schema.deliveryLoopDispatchIntent.$inferSelect;
 export type DeliveryLoopDispatchIntentInsert =
   typeof schema.deliveryLoopDispatchIntent.$inferInsert;
+
+export type DeliverySignalSourceV3 =
+  | "daemon"
+  | "github"
+  | "human"
+  | "timer"
+  | "system";
+
+export type DeliveryEffectKindV3 =
+  | "dispatch_implementing"
+  | "dispatch_gate_review"
+  | "ack_timeout_check"
+  | "ensure_pr"
+  | "create_plan_artifact"
+  | "publish_status";
+
+export type DeliveryEffectStatusV3 =
+  | "planned"
+  | "running"
+  | "succeeded"
+  | "cancelled"
+  | "dead_letter";
+
+export type DeliveryTimerKindV3 = "dispatch_ack_timeout";
+
+export type DeliveryTimerStatusV3 =
+  | "planned"
+  | "running"
+  | "fired"
+  | "cancelled"
+  | "dead_letter";
+
+export type DeliveryOutboxTopicV3 = "signal" | "effect" | "timer";
+
+export type DeliveryOutboxStatusV3 =
+  | "pending"
+  | "publishing"
+  | "published"
+  | "cancelled"
+  | "dead_letter";
+
+// Delivery Loop v2 tables
+export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
+export type DeliveryWorkflowInsert =
+  typeof schema.deliveryWorkflow.$inferInsert;
+export type DeliveryWorkflowEventRow =
+  typeof schema.deliveryWorkflowEvent.$inferSelect;
+export type DeliveryWorkflowEventInsert =
+  typeof schema.deliveryWorkflowEvent.$inferInsert;
+export type DeliveryWorkItemRow = typeof schema.deliveryWorkItem.$inferSelect;
+export type DeliveryWorkItemInsert =
+  typeof schema.deliveryWorkItem.$inferInsert;
+export type DeliveryLoopIncidentRow =
+  typeof schema.deliveryLoopIncident.$inferSelect;
+export type DeliveryLoopIncidentInsert =
+  typeof schema.deliveryLoopIncident.$inferInsert;
+export type DeliveryLoopRuntimeStatusRow =
+  typeof schema.deliveryLoopRuntimeStatus.$inferSelect;
+export type DeliveryLoopRuntimeStatusInsert =
+  typeof schema.deliveryLoopRuntimeStatus.$inferInsert;
+export type DeliveryWorkflowRetrospectiveRow =
+  typeof schema.deliveryWorkflowRetrospective.$inferSelect;
+export type DeliveryWorkflowRetrospectiveInsert =
+  typeof schema.deliveryWorkflowRetrospective.$inferInsert;
+export type DeliveryWorkflowHeadV3Row =
+  typeof schema.deliveryWorkflowHeadV3.$inferSelect;
+export type DeliveryWorkflowHeadV3Insert =
+  typeof schema.deliveryWorkflowHeadV3.$inferInsert;
+export type DeliveryLoopJournalV3Row =
+  typeof schema.deliveryLoopJournalV3.$inferSelect;
+export type DeliveryLoopJournalV3Insert =
+  typeof schema.deliveryLoopJournalV3.$inferInsert;
+export type DeliveryEffectLedgerV3Row =
+  typeof schema.deliveryEffectLedgerV3.$inferSelect;
+export type DeliveryEffectLedgerV3Insert =
+  typeof schema.deliveryEffectLedgerV3.$inferInsert;
+export type DeliveryTimerLedgerV3Row =
+  typeof schema.deliveryTimerLedgerV3.$inferSelect;
+export type DeliveryTimerLedgerV3Insert =
+  typeof schema.deliveryTimerLedgerV3.$inferInsert;
+export type DeliveryOutboxV3Row = typeof schema.deliveryOutboxV3.$inferSelect;
+export type DeliveryOutboxV3Insert =
+  typeof schema.deliveryOutboxV3.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;
@@ -146,8 +221,12 @@ export type ThreadSource =
 export type ThreadSourceMetadata =
   | {
       type: "www";
-      sdlcLoopOptIn: boolean;
-      sdlcPlanApprovalPolicy?: SdlcPlanApprovalPolicy;
+      deliveryLoopOptIn: boolean;
+      deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
+      /** @deprecated Backward compat — old DB rows may still carry this key */
+      sdlcLoopOptIn?: boolean;
+      /** @deprecated Backward compat — old DB rows may still carry this key */
+      sdlcPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
     }
   | {
       type: "github-mention";
@@ -582,7 +661,7 @@ export type AgentProviderMetadata =
   | ClaudeAgentProviderMetadata
   | OpenAIProviderMetadata;
 
-export type SdlcLoopState =
+export type DeliveryLoopState =
   | "planning"
   | "implementing"
   | "review_gate"
@@ -596,7 +675,7 @@ export type SdlcLoopState =
   | "done"
   | "stopped";
 
-export type SdlcPhase =
+export type DeliveryPhase =
   | "planning"
   | "implementing"
   | "review_gate"
@@ -605,7 +684,7 @@ export type SdlcPhase =
   | "awaiting_pr_link"
   | "babysitting";
 
-export type SdlcArtifactType =
+export type DeliveryArtifactType =
   | "plan_spec"
   | "implementation_snapshot"
   | "review_bundle"
@@ -614,53 +693,53 @@ export type SdlcArtifactType =
   | "babysit_evaluation"
   | "human_intervention";
 
-export type SdlcArtifactStatus =
+export type DeliveryArtifactStatus =
   | "generated"
   | "approved"
   | "accepted"
   | "rejected"
   | "superseded";
 
-export type SdlcArtifactGeneratedBy = "agent" | "system" | "human";
+export type DeliveryArtifactGeneratedBy = "agent" | "system" | "human";
 
-export type SdlcPlanTaskStatus =
+export type DeliveryPlanTaskStatus =
   | "todo"
   | "in_progress"
   | "done"
   | "blocked"
   | "skipped";
 
-export type SdlcPlanTaskCompletedBy = "agent" | "verifier" | "human";
+export type DeliveryPlanTaskCompletedBy = "agent" | "verifier" | "human";
 
-export type SdlcPlanApprovalPolicy = "auto" | "human_required";
+export type DeliveryPlanApprovalPolicy = "auto" | "human_required";
 
-export type SdlcPlanTaskDefinition = {
+export type DeliveryPlanTaskDefinition = {
   stableTaskId: string;
   title: string;
   description?: string | null;
   acceptance: string[];
 };
 
-export type SdlcPlanSpecPayload = {
+export type DeliveryPlanSpecPayload = {
   planText: string;
-  tasks: SdlcPlanTaskDefinition[];
+  tasks: DeliveryPlanTaskDefinition[];
   source: "exit_plan_mode" | "write_tool" | "agent_text" | "system";
 };
 
-export type SdlcPlanTaskCompletionEvidence = {
+export type DeliveryPlanTaskCompletionEvidence = {
   headSha: string;
   note?: string | null;
   changedFiles?: string[] | null;
 };
 
-export type SdlcImplementationSnapshotPayload = {
+export type DeliveryImplementationSnapshotPayload = {
   headSha: string;
   summary: string;
   changedFiles: string[];
   completedTaskIds: string[];
 };
 
-export type SdlcReviewBundlePayload = {
+export type DeliveryReviewBundlePayload = {
   headSha: string;
   deepRunId?: string | null;
   carmackRunId?: string | null;
@@ -670,7 +749,7 @@ export type SdlcReviewBundlePayload = {
   summary: string;
 };
 
-export type SdlcUiSmokePayload = {
+export type DeliveryUiSmokePayload = {
   headSha: string;
   gatePassed: boolean;
   summary: string;
@@ -678,14 +757,14 @@ export type SdlcUiSmokePayload = {
   changedFiles: string[];
 };
 
-export type SdlcPrLinkPayload = {
+export type DeliveryPrLinkPayload = {
   repoFullName: string;
   prNumber: number;
   pullRequestUrl: string;
   operation: "created" | "updated" | "linked";
 };
 
-export type SdlcBabysitEvaluationPayload = {
+export type DeliveryBabysitEvaluationPayload = {
   headSha: string;
   requiredCiPassed: boolean;
   unresolvedReviewThreads: number;
@@ -694,7 +773,7 @@ export type SdlcBabysitEvaluationPayload = {
   allRequiredGatesPassed: boolean;
 };
 
-export type SdlcLoopCauseType =
+export type DeliveryLoopCauseType =
   | "daemon_terminal"
   | "check_run.completed"
   | "check_suite.completed"
@@ -704,67 +783,93 @@ export type SdlcLoopCauseType =
   | "pull_request.edited"
   | "pull_request_review"
   | "pull_request_review_comment"
-  | "review-thread-poll-synthetic";
+  | "review-thread-poll-synthetic"
+  // v2 delivery loop cause types
+  | "daemon_run_completed"
+  | "daemon_run_failed"
+  | "daemon_progress"
+  | "github_ci_changed"
+  | "github_review_changed"
+  | "github_pr_closed"
+  | "github_pr_synchronized"
+  | "human_resume"
+  | "human_bypass"
+  | "human_stop"
+  | "human_mark_done"
+  | "human_operator_action_required"
+  | "babysit_recheck"
+  | "babysit_recheck_passed"
+  | "babysit_recheck_blocked"
+  | "timer_dispatch_ack_expired"
+  | "timer_babysit_due"
+  | "timer_heartbeat";
 
-export type SdlcLoopOutboxActionType =
+export type DeliveryLoopOutboxActionType =
   | "publish_status_comment"
   | "publish_check_summary"
   | "enqueue_fix_task"
   | "publish_video_link"
   | "emit_telemetry";
 
-export type SdlcLoopOutboxSupersessionGroup =
+export type DeliveryLoopOutboxSupersessionGroup =
   | "publication_status"
   | "fix_task_enqueue"
   | "publication_video"
   | "telemetry";
 
-export type SdlcLoopOutboxStatus =
+export type DeliveryLoopOutboxStatus =
   | "pending"
   | "running"
   | "completed"
   | "failed"
   | "canceled";
 
-export type SdlcOutboxAttemptStatus =
+export type DeliveryOutboxAttemptStatus =
   | "completed"
   | "retry_scheduled"
   | "failed";
 
-export type SdlcDeepReviewSeverity = "critical" | "high" | "medium" | "low";
+export type DeliveryDeepReviewSeverity = "critical" | "high" | "medium" | "low";
 
-export type SdlcDeepReviewStatus = "passed" | "blocked" | "invalid_output";
+export type DeliveryDeepReviewStatus = "passed" | "blocked" | "invalid_output";
 
-export type SdlcCarmackReviewSeverity = "critical" | "high" | "medium" | "low";
+export type DeliveryCarmackReviewSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low";
 
-export type SdlcCarmackReviewStatus = "passed" | "blocked" | "invalid_output";
+export type DeliveryCarmackReviewStatus =
+  | "passed"
+  | "blocked"
+  | "invalid_output";
 
-export type SdlcCiCapabilityState =
+export type DeliveryCiCapabilityState =
   | "supported"
   | "forbidden"
   | "unsupported"
   | "transient_error";
 
-export type SdlcCiGateStatus = "passed" | "blocked" | "capability_error";
+export type DeliveryCiGateStatus = "passed" | "blocked" | "capability_error";
 
-export type SdlcCiRequiredCheckSource =
+export type DeliveryCiRequiredCheckSource =
   | "ruleset"
   | "branch_protection"
   | "allowlist"
   | "no_required";
 
-export type SdlcReviewThreadGateStatus =
+export type DeliveryReviewThreadGateStatus =
   | "passed"
   | "blocked"
   | "transient_error";
 
-export type SdlcReviewThreadEvaluationSource = "webhook" | "polling";
+export type DeliveryReviewThreadEvaluationSource = "webhook" | "polling";
 
-export type SdlcVideoCaptureStatus = "not_started" | "captured" | "failed";
+export type DeliveryVideoCaptureStatus = "not_started" | "captured" | "failed";
 
-export type SdlcVideoFailureClass = "auth" | "quota" | "script" | "infra";
+export type DeliveryVideoFailureClass = "auth" | "quota" | "script" | "infra";
 
-export type SdlcParityTargetClass = "coordinator";
+export type DeliveryParityTargetClass = "coordinator";
 
 export type DispatchIntentStatus =
   | "pending"
@@ -775,6 +880,7 @@ export type DispatchIntentStatus =
 
 export type DispatchIntentExecutionClass =
   | "implementation_runtime"
+  | "implementation_runtime_fallback"
   | "gate_runtime";
 
 export type DispatchIntentDispatchMechanism =

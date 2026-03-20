@@ -1,5 +1,5 @@
 import { ThreadErrorType } from "@terragon/shared";
-import { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 
 export class ThreadError extends Error {
   type: ThreadErrorType;

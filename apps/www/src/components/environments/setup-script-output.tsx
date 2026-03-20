@@ -22,6 +22,7 @@ export function SetupScriptOutput({
   const { resolvedTheme } = useTheme();
   const theme = resolvedTheme === "light" ? "light" : "dark";
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when new output is added
   useEffect(() => {
     // Auto-scroll to bottom when new output is added
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

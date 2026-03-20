@@ -30,11 +30,50 @@
     "./*": {
       "import": "./src/*.ts"
     },
+    "./automations/*": {
+      "import": "./src/automations/*.ts"
+    },
     "./automations": {
       "import": "./src/automations/index.ts"
     },
+    "./broadcast-server": {
+      "import": "./src/broadcast-server.ts"
+    },
+    "./db/*": {
+      "import": "./src/db/*.ts"
+    },
+    "./db/schema": {
+      "import": "./src/db/schema.ts"
+    },
     "./db": {
       "import": "./src/db/index.ts"
+    },
+    "./delivery-loop/domain/*": {
+      "import": "./src/delivery-loop/domain/*.ts"
+    },
+    "./delivery-loop/store/*": {
+      "import": "./src/delivery-loop/store/*.ts"
+    },
+    "./delivery-loop/*": {
+      "import": "./src/delivery-loop/*.ts"
+    },
+    "./github-api/*": {
+      "import": "./src/github-api/*.ts"
+    },
+    "./model/*": {
+      "import": "./src/model/*.ts"
+    },
+    "./model/threads": {
+      "import": "./src/model/threads.ts"
+    },
+    "./model": {
+      "import": "./src/model/index.ts"
+    },
+    "./utils/*": {
+      "import": "./src/utils/*.ts"
+    },
+    "./utils": {
+      "import": "./src/utils.ts"
     }
   },
   "keywords": [],

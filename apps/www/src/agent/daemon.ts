@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { AIAgent } from "@terragon/agent/types";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
-import { DeliveryLoopFailureCategory } from "@terragon/shared/model/delivery-loop";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends any
   ? Omit<T, K>

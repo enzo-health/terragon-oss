@@ -1,14 +1,10 @@
 import { db } from "@/lib/db";
-import {
-  enrollSdlcLoopForThread,
-  getActiveSdlcLoopForThread,
-  getPreferredActiveSdlcLoopForGithubPRAndUser,
-  linkSdlcLoopToGithubPRForThread,
-} from "@terragon/shared/model/delivery-loop";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
-import { SdlcPlanApprovalPolicy } from "@terragon/shared/db/types";
+import { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
+import { enrollV3Workflow } from "./v3/enrollment";
+import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
-export function isSdlcLoopEnrollmentAllowedForThread({
+export function isDeliveryLoopEnrollmentAllowedForThread({
   sourceType,
   sourceMetadata,
 }: {
@@ -21,49 +17,22 @@ export function isSdlcLoopEnrollmentAllowedForThread({
 
   // Dashboard-created web tasks must explicitly opt in.
   if (sourceType === "www") {
-    return sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn;
+    return sourceMetadata?.type === "www" && sourceMetadata.deliveryLoopOptIn;
   }
 
-  // GitHub webhook/automation-driven tasks keep existing auto-enrollment behavior.
-  if (sourceType === "github-mention" || sourceType === "automation") {
+  // GitHub webhook/automation-driven tasks and CLI tasks keep existing auto-enrollment behavior.
+  if (
+    sourceType === "github-mention" ||
+    sourceType === "automation" ||
+    sourceType === "cli"
+  ) {
     return true;
   }
 
   return false;
 }
 
-export async function getActiveSdlcLoopForGithubPRIfEnabled({
-  userId,
-  repoFullName,
-  prNumber,
-}: {
-  userId: string;
-  repoFullName: string;
-  prNumber: number;
-}) {
-  return await getPreferredActiveSdlcLoopForGithubPRAndUser({
-    db,
-    userId,
-    repoFullName,
-    prNumber,
-  });
-}
-
-export async function getActiveSdlcLoopForThreadIfEnabled({
-  userId,
-  threadId,
-}: {
-  userId: string;
-  threadId: string;
-}) {
-  return await getActiveSdlcLoopForThread({
-    db,
-    userId,
-    threadId,
-  });
-}
-
-export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
+export async function ensureDeliveryLoopEnrollmentForThreadIfEnabled({
   userId,
   repoFullName,
   threadId,
@@ -72,18 +41,20 @@ export async function ensureSdlcLoopEnrollmentForThreadIfEnabled({
   userId: string;
   repoFullName: string;
   threadId: string;
-  planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
-  return await enrollSdlcLoopForThread({
+  await enrollV3Workflow({
     db,
+    threadId,
     userId,
     repoFullName,
-    threadId,
     planApprovalPolicy,
   });
+
+  return null;
 }
 
-export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+export async function ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
   userId,
   repoFullName,
   prNumber,
@@ -94,62 +65,21 @@ export async function ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
   repoFullName: string;
   prNumber: number;
   threadId: string;
-  planApprovalPolicy?: SdlcPlanApprovalPolicy;
+  planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
-  const enrolled = await enrollSdlcLoopForThread({
+  const result = await enrollV3Workflow({
     db,
+    threadId,
     userId,
     repoFullName,
-    threadId,
     planApprovalPolicy,
   });
-  const linked = await linkSdlcLoopToGithubPRForThread({
+
+  await updateWorkflowPR({
     db,
-    userId,
-    repoFullName,
-    threadId,
+    workflowId: result.workflowId,
     prNumber,
   });
-  const activeLoop = linked ?? enrolled;
-  if (
-    activeLoop &&
-    [
-      "planning",
-      "implementing",
-      "review_gate",
-      "ci_gate",
-      "ui_gate",
-      "babysitting",
-      "blocked",
-    ].includes(activeLoop.state)
-  ) {
-    return activeLoop;
-  }
-
-  const refreshedActiveLoop =
-    await getPreferredActiveSdlcLoopForGithubPRAndUser({
-      db,
-      userId,
-      repoFullName,
-      prNumber,
-    });
-  if (refreshedActiveLoop) {
-    return refreshedActiveLoop;
-  }
-
-  if (activeLoop) {
-    console.warn(
-      "[delivery-loop enrollment] enrollment did not yield an active loop; returning null",
-      {
-        userId,
-        repoFullName,
-        prNumber,
-        threadId,
-        enrollmentId: activeLoop.id,
-        enrollmentState: activeLoop.state,
-      },
-    );
-  }
 
   return null;
 }

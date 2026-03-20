@@ -4,34 +4,38 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
-  buildSdlcLoopStatusChecks,
+  buildDeliveryLoopStatusChecks,
+  buildSnapshotFromV2Workflow,
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
-  type SdlcLoopStatusCheck,
-  type SdlcLoopStatusCheckKey,
+  getV2StopReason,
+  mapV2KindToDeliveryLoopState,
+  type DeliveryLoopStatusCheck,
+  type DeliveryLoopStatusCheckKey,
 } from "@/lib/delivery-loop-status";
 import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
-import type { SdlcLoopState } from "@terragon/shared/db/types";
+import type { DeliveryLoopState } from "@terragon/shared/db/types";
 import {
-  activeSdlcLoopStateSet,
-  buildPersistedDeliveryLoopSnapshot,
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/store/gate-persistence";
+import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 
-type SdlcCiGateRun = typeof schema.sdlcCiGateRun.$inferSelect;
-type SdlcReviewThreadGateRun =
-  typeof schema.sdlcReviewThreadGateRun.$inferSelect;
-type SdlcLoopStatusBlocker = {
+type DeliveryCiGateRun = typeof schema.deliveryCiGateRun.$inferSelect;
+type DeliveryReviewThreadGateRun =
+  typeof schema.deliveryReviewThreadGateRun.$inferSelect;
+type DeliveryLoopStatusBlocker = {
   title: string;
-  source: SdlcLoopStatusCheckKey | "human_feedback";
+  source: DeliveryLoopStatusCheckKey | "human_feedback";
 };
-type SdlcPlannedTask = {
+type DeliveryPlannedTask = {
   stableTaskId: string;
   title: string;
   description: string | null;
@@ -39,9 +43,9 @@ type SdlcPlannedTask = {
   status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
 };
 
-type SdlcLoopStatus = {
+type DeliveryLoopStatus = {
   loopId: string;
-  state: SdlcLoopState;
+  state: DeliveryLoopState;
   planApprovalPolicy: "auto" | "human_required";
   stateLabel: string;
   explanation: string;
@@ -52,11 +56,11 @@ type SdlcLoopStatus = {
     canApprovePlan: boolean;
   };
   phases: DeliveryLoopTopProgressPhase[];
-  checks: SdlcLoopStatusCheck[];
+  checks: DeliveryLoopStatusCheck[];
   needsAttention: {
     isBlocked: boolean;
     blockerCount: number;
-    topBlockers: SdlcLoopStatusBlocker[];
+    topBlockers: DeliveryLoopStatusBlocker[];
   };
   links: {
     pullRequestUrl: string | null;
@@ -81,7 +85,7 @@ type SdlcLoopStatus = {
       done: number;
       remaining: number;
     };
-    plannedTasks: SdlcPlannedTask[];
+    plannedTasks: DeliveryPlannedTask[];
   };
   updatedAtIso: string;
 };
@@ -182,13 +186,11 @@ const deliveryLoopStatusSchema = z.object({
 });
 
 type NeedsAttentionInput = {
-  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
-  ciRun: SdlcCiGateRun | null;
-  reviewThreadRun: SdlcReviewThreadGateRun | null;
+  loopSnapshot: DeliveryLoopSnapshot;
+  ciRun: DeliveryCiGateRun | null;
+  reviewThreadRun: DeliveryReviewThreadGateRun | null;
   unresolvedDeepFindingTitles: string[];
   unresolvedCarmackFindingTitles: string[];
-  videoCaptureStatus: (typeof schema.sdlcLoop.$inferSelect)["videoCaptureStatus"];
-  videoFailureMessage: string | null;
 };
 
 function buildDeliveryLoopActions({
@@ -197,8 +199,8 @@ function buildDeliveryLoopActions({
   planApprovalPolicy,
   planningArtifactStatus,
 }: {
-  loopState: SdlcLoopState;
-  loopSnapshot: ReturnType<typeof buildPersistedDeliveryLoopSnapshot>;
+  loopState: DeliveryLoopState;
+  loopSnapshot: DeliveryLoopSnapshot;
   planApprovalPolicy: "auto" | "human_required";
   planningArtifactStatus:
     | "generated"
@@ -210,8 +212,7 @@ function buildDeliveryLoopActions({
 }) {
   return {
     canResume: loopSnapshot.kind === "blocked",
-    canBypassOnce:
-      loopSnapshot.kind === "blocked" || loopSnapshot.kind === "implementing",
+    canBypassOnce: loopSnapshot.kind === "blocked",
     canApprovePlan:
       loopState === "planning" &&
       planApprovalPolicy === "human_required" &&
@@ -225,14 +226,12 @@ function buildNeedsAttention({
   reviewThreadRun,
   unresolvedDeepFindingTitles,
   unresolvedCarmackFindingTitles,
-  videoCaptureStatus,
-  videoFailureMessage,
 }: NeedsAttentionInput): {
   isBlocked: boolean;
   blockerCount: number;
-  topBlockers: SdlcLoopStatusBlocker[];
+  topBlockers: DeliveryLoopStatusBlocker[];
 } {
-  const blockers: SdlcLoopStatusBlocker[] = [
+  const blockers: DeliveryLoopStatusBlocker[] = [
     ...unresolvedDeepFindingTitles.map((title) => ({
       title,
       source: "deep_review" as const,
@@ -262,14 +261,6 @@ function buildNeedsAttention({
           },
         ]
       : []),
-    ...(videoCaptureStatus === "failed"
-      ? [
-          {
-            title: videoFailureMessage ?? "Video capture failed",
-            source: "video" as const,
-          },
-        ]
-      : []),
     ...(loopSnapshot.kind === "blocked"
       ? [
           {
@@ -280,13 +271,6 @@ function buildNeedsAttention({
       : []),
   ];
 
-  if (blockers.length === 0 && loopSnapshot.kind === "blocked") {
-    blockers.push({
-      title: getDeliveryLoopBlockedAttentionTitle(loopSnapshot),
-      source: "human_feedback",
-    });
-  }
-
   return {
     isBlocked: blockers.length > 0,
     blockerCount: blockers.length,
@@ -294,11 +278,368 @@ function buildNeedsAttention({
   };
 }
 
+/**
+ * Reconstruct the v2 DeliveryWorkflow aggregate from the DB row.
+ * The DB stores `kind` + `stateJson`; we merge them into the
+ * discriminated union the domain layer expects.
+ */
+function hydrateV2Workflow(
+  row: Awaited<ReturnType<typeof getActiveWorkflowForThread>>,
+): DeliveryWorkflow | null {
+  if (!row) return null;
+  const base = {
+    workflowId:
+      row.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
+    threadId:
+      row.threadId as import("@terragon/shared/delivery-loop/domain/workflow").ThreadId,
+    generation: row.generation,
+    version: row.version,
+    fixAttemptCount: row.fixAttemptCount,
+    infraRetryCount: row.infraRetryCount ?? 0,
+    maxFixAttempts: row.maxFixAttempts,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastActivityAt: row.lastActivityAt,
+  };
+  const state = row.stateJson as Record<string, unknown>;
+  // Merge the common fields with the state-specific fields
+  return { ...base, kind: row.kind, ...state } as unknown as DeliveryWorkflow;
+}
+
+/**
+ * Fetches gate runs, artifacts, planned tasks, review findings from the DB
+ * and assembles the common status data structure from the v2 workflow.
+ */
+async function assembleLoopStatusData(params: {
+  loopId: string;
+  loopSnapshot: DeliveryLoopSnapshot;
+  currentHeadSha: string | null;
+  repoFullName: string;
+  prNumber: number | null;
+  canonicalStatusCommentId: string | null;
+  canonicalCheckRunId: number | null;
+}): Promise<{
+  ciRun: DeliveryCiGateRun | null;
+  reviewThreadRun: DeliveryReviewThreadGateRun | null;
+  checks: DeliveryLoopStatusCheck[];
+  phases: DeliveryLoopTopProgressPhase[];
+  needsAttention: ReturnType<typeof buildNeedsAttention>;
+  pullRequestUrl: string | null;
+  links: DeliveryLoopStatus["links"];
+  artifacts: DeliveryLoopStatus["artifacts"];
+}> {
+  const { loopId, loopSnapshot, currentHeadSha } = params;
+
+  const [ciRun, reviewThreadRun, deepReviewRun, carmackReviewRun] =
+    await Promise.all([
+      currentHeadSha
+        ? db.query.deliveryCiGateRun
+            .findFirst({
+              where: and(
+                eq(schema.deliveryCiGateRun.loopId, loopId),
+                eq(schema.deliveryCiGateRun.headSha, currentHeadSha),
+              ),
+              orderBy: [
+                desc(schema.deliveryCiGateRun.updatedAt),
+                desc(schema.deliveryCiGateRun.createdAt),
+              ],
+            })
+            .then((run) => run ?? null)
+        : Promise.resolve(null),
+      currentHeadSha
+        ? db.query.deliveryReviewThreadGateRun
+            .findFirst({
+              where: and(
+                eq(schema.deliveryReviewThreadGateRun.loopId, loopId),
+                eq(schema.deliveryReviewThreadGateRun.headSha, currentHeadSha),
+              ),
+              orderBy: [
+                desc(schema.deliveryReviewThreadGateRun.updatedAt),
+                desc(schema.deliveryReviewThreadGateRun.createdAt),
+              ],
+            })
+            .then((run) => run ?? null)
+        : Promise.resolve(null),
+      currentHeadSha
+        ? db.query.deliveryDeepReviewRun
+            .findFirst({
+              where: and(
+                eq(schema.deliveryDeepReviewRun.loopId, loopId),
+                eq(schema.deliveryDeepReviewRun.headSha, currentHeadSha),
+              ),
+              orderBy: [
+                desc(schema.deliveryDeepReviewRun.updatedAt),
+                desc(schema.deliveryDeepReviewRun.createdAt),
+              ],
+            })
+            .then((run) => run ?? null)
+        : Promise.resolve(null),
+      currentHeadSha
+        ? db.query.deliveryCarmackReviewRun
+            .findFirst({
+              where: and(
+                eq(schema.deliveryCarmackReviewRun.loopId, loopId),
+                eq(schema.deliveryCarmackReviewRun.headSha, currentHeadSha),
+              ),
+              orderBy: [
+                desc(schema.deliveryCarmackReviewRun.updatedAt),
+                desc(schema.deliveryCarmackReviewRun.createdAt),
+              ],
+            })
+            .then((run) => run ?? null)
+        : Promise.resolve(null),
+    ]);
+
+  const implementationArtifactFallbackWhere = currentHeadSha
+    ? and(
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "implementing"),
+        eq(schema.deliveryPhaseArtifact.headSha, currentHeadSha),
+      )
+    : and(
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "implementing"),
+        isNull(schema.deliveryPhaseArtifact.headSha),
+      );
+
+  const [planningArtifact, implementationArtifact] = await Promise.all([
+    db.query.deliveryPhaseArtifact.findFirst({
+      where: and(
+        eq(schema.deliveryPhaseArtifact.loopId, loopId),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
+      ),
+      orderBy: [
+        desc(schema.deliveryPhaseArtifact.updatedAt),
+        desc(schema.deliveryPhaseArtifact.createdAt),
+      ],
+      columns: {
+        id: true,
+        status: true,
+        updatedAt: true,
+        payload: true,
+      },
+    }),
+    db.query.deliveryPhaseArtifact.findFirst({
+      where: implementationArtifactFallbackWhere,
+      orderBy: [
+        desc(schema.deliveryPhaseArtifact.updatedAt),
+        desc(schema.deliveryPhaseArtifact.createdAt),
+      ],
+      columns: {
+        id: true,
+        status: true,
+        headSha: true,
+        updatedAt: true,
+      },
+    }),
+  ]);
+
+  const plannedTasks = planningArtifact
+    ? await db.query.deliveryPlanTask.findMany({
+        where: and(
+          eq(schema.deliveryPlanTask.loopId, loopId),
+          eq(schema.deliveryPlanTask.artifactId, planningArtifact.id),
+        ),
+        columns: {
+          status: true,
+          stableTaskId: true,
+          title: true,
+          description: true,
+          acceptance: true,
+        },
+      })
+    : [];
+  const plannedTaskTotal = plannedTasks.length;
+  const plannedTaskDone = plannedTasks.filter(
+    (task) => task.status === "done" || task.status === "skipped",
+  ).length;
+  const plannedTaskRemaining = Math.max(0, plannedTaskTotal - plannedTaskDone);
+
+  const unresolvedDeepFindings = currentHeadSha
+    ? await getUnresolvedBlockingDeepReviewFindings({
+        db,
+        loopId,
+        headSha: currentHeadSha,
+      })
+    : [];
+  const unresolvedCarmackFindings = currentHeadSha
+    ? await getUnresolvedBlockingCarmackReviewFindings({
+        db,
+        loopId,
+        headSha: currentHeadSha,
+      })
+    : [];
+
+  const checks = buildDeliveryLoopStatusChecks({
+    loopSnapshot,
+    currentHeadSha,
+    ciRun,
+    reviewThreadRun,
+    deepReviewRun,
+    carmackReviewRun,
+    unresolvedDeepFindingCount: unresolvedDeepFindings.length,
+    unresolvedCarmackFindingCount: unresolvedCarmackFindings.length,
+    videoCaptureStatus: "not_started",
+    videoFailureMessage: null,
+  });
+  const phases = buildDeliveryLoopTopProgressPhases({
+    loopSnapshot,
+    checks,
+  });
+
+  const needsAttention = buildNeedsAttention({
+    loopSnapshot,
+    ciRun,
+    reviewThreadRun,
+    unresolvedDeepFindingTitles: unresolvedDeepFindings.map((finding) =>
+      finding.title.trim(),
+    ),
+    unresolvedCarmackFindingTitles: unresolvedCarmackFindings.map((finding) =>
+      finding.title.trim(),
+    ),
+  });
+
+  const linkRepoFullName = params.repoFullName;
+  const linkPrNumber = params.prNumber;
+  const canonicalStatusCommentId = params.canonicalStatusCommentId;
+  const canonicalCheckRunId = params.canonicalCheckRunId;
+
+  const pullRequestUrl =
+    linkPrNumber === null
+      ? null
+      : `https://github.com/${linkRepoFullName}/pull/${linkPrNumber}`;
+
+  return {
+    ciRun,
+    reviewThreadRun,
+    checks,
+    phases,
+    needsAttention,
+    pullRequestUrl,
+    links: {
+      pullRequestUrl,
+      statusCommentUrl:
+        pullRequestUrl && canonicalStatusCommentId
+          ? `${pullRequestUrl}#issuecomment-${canonicalStatusCommentId}`
+          : null,
+      checkRunUrl:
+        pullRequestUrl && canonicalCheckRunId
+          ? `https://github.com/${linkRepoFullName}/runs/${canonicalCheckRunId}?check_suite_focus=true`
+          : null,
+    },
+    artifacts: {
+      planningArtifact: planningArtifact
+        ? {
+            id: planningArtifact.id,
+            status: planningArtifact.status,
+            updatedAtIso: planningArtifact.updatedAt.toISOString(),
+            planText:
+              typeof planningArtifact.payload === "object" &&
+              planningArtifact.payload !== null &&
+              "planText" in planningArtifact.payload &&
+              typeof planningArtifact.payload.planText === "string"
+                ? planningArtifact.payload.planText
+                : null,
+          }
+        : null,
+      implementationArtifact: implementationArtifact
+        ? {
+            id: implementationArtifact.id,
+            status: implementationArtifact.status,
+            headSha: implementationArtifact.headSha ?? null,
+            updatedAtIso: implementationArtifact.updatedAt.toISOString(),
+          }
+        : null,
+      plannedTaskSummary: {
+        total: plannedTaskTotal,
+        done: plannedTaskDone,
+        remaining: plannedTaskRemaining,
+      },
+      plannedTasks: plannedTasks.map((t) => ({
+        stableTaskId: t.stableTaskId,
+        title: t.title,
+        description: t.description ?? null,
+        acceptance:
+          Array.isArray(t.acceptance) &&
+          t.acceptance.every((item) => typeof item === "string")
+            ? t.acceptance
+            : [],
+        status: t.status ?? "todo",
+      })),
+    },
+  };
+}
+
+/**
+ * Build the full DeliveryLoopStatus from a v2 delivery workflow.
+ */
+async function buildStatusFromV2Workflow(params: {
+  workflow: DeliveryWorkflow;
+  workflowRow: NonNullable<
+    Awaited<ReturnType<typeof getActiveWorkflowForThread>>
+  >;
+}): Promise<DeliveryLoopStatus> {
+  const { workflow, workflowRow } = params;
+
+  const loopSnapshot = buildSnapshotFromV2Workflow(workflow);
+  const v2State = mapV2KindToDeliveryLoopState(workflow);
+  const currentHeadSha =
+    ("headSha" in workflow && typeof workflow.headSha === "string"
+      ? workflow.headSha
+      : null) ??
+    workflowRow.currentHeadSha ??
+    null;
+
+  const assembled = await assembleLoopStatusData({
+    loopId: workflowRow.id,
+    loopSnapshot,
+    currentHeadSha,
+    repoFullName: workflowRow.repoFullName,
+    prNumber: workflowRow.prNumber ?? null,
+    canonicalStatusCommentId: workflowRow.canonicalStatusCommentId ?? null,
+    canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
+  });
+
+  const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
+  const v2StopReason = getV2StopReason(workflow);
+  const explanation = v2StopReason
+    ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
+    : stateSummary.explanation;
+
+  // Derive plan approval policy — v2 awaiting_plan_approval implies human_required
+  const planApprovalPolicy: "auto" | "human_required" =
+    workflow.kind === "awaiting_plan_approval"
+      ? "human_required"
+      : (workflowRow.planApprovalPolicy as "auto" | "human_required");
+
+  return {
+    loopId: workflowRow.id,
+    state: v2State,
+    planApprovalPolicy,
+    stateLabel: stateSummary.stateLabel,
+    explanation,
+    progressPercent: stateSummary.progressPercent,
+    actions: buildDeliveryLoopActions({
+      loopState: v2State,
+      loopSnapshot,
+      planApprovalPolicy,
+      planningArtifactStatus:
+        assembled.artifacts.planningArtifact?.status ?? null,
+    }),
+    phases: assembled.phases,
+    checks: assembled.checks,
+    needsAttention: assembled.needsAttention,
+    links: assembled.links,
+    artifacts: assembled.artifacts,
+    updatedAtIso: workflow.updatedAt.toISOString(),
+  };
+}
+
 export const getDeliveryLoopStatusAction = userOnlyAction(
   async function getDeliveryLoopStatusAction(
     userId: string,
     threadId: string,
-  ): Promise<SdlcLoopStatus | null> {
+  ): Promise<DeliveryLoopStatus | null> {
     const thread = await db.query.thread.findFirst({
       columns: {
         id: true,
@@ -320,312 +661,21 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       }
     }
 
-    const threadLoops = await db.query.sdlcLoop.findMany({
-      where: eq(schema.sdlcLoop.threadId, threadId),
-      orderBy: [desc(schema.sdlcLoop.updatedAt), desc(schema.sdlcLoop.id)],
-      limit: 20,
-    });
-    const loop =
-      threadLoops.find((candidate) =>
-        activeSdlcLoopStateSet.has(candidate.state),
-      ) ??
-      threadLoops[0] ??
-      null;
-    if (!loop) {
+    const v2Row = await getActiveWorkflowForThread({ db, threadId });
+    if (!v2Row) {
       return null;
     }
 
-    const currentHeadSha = loop.currentHeadSha ?? null;
+    const workflow = hydrateV2Workflow(v2Row);
+    if (!workflow) {
+      return null;
+    }
 
-    const [ciRun, reviewThreadRun, deepReviewRun, carmackReviewRun] =
-      await Promise.all([
-        currentHeadSha
-          ? db.query.sdlcCiGateRun
-              .findFirst({
-                where: and(
-                  eq(schema.sdlcCiGateRun.loopId, loop.id),
-                  eq(schema.sdlcCiGateRun.headSha, currentHeadSha),
-                ),
-                orderBy: [
-                  desc(schema.sdlcCiGateRun.updatedAt),
-                  desc(schema.sdlcCiGateRun.createdAt),
-                ],
-              })
-              .then((run) => run ?? null)
-          : Promise.resolve(null),
-        currentHeadSha
-          ? db.query.sdlcReviewThreadGateRun
-              .findFirst({
-                where: and(
-                  eq(schema.sdlcReviewThreadGateRun.loopId, loop.id),
-                  eq(schema.sdlcReviewThreadGateRun.headSha, currentHeadSha),
-                ),
-                orderBy: [
-                  desc(schema.sdlcReviewThreadGateRun.updatedAt),
-                  desc(schema.sdlcReviewThreadGateRun.createdAt),
-                ],
-              })
-              .then((run) => run ?? null)
-          : Promise.resolve(null),
-        currentHeadSha
-          ? db.query.sdlcDeepReviewRun
-              .findFirst({
-                where: and(
-                  eq(schema.sdlcDeepReviewRun.loopId, loop.id),
-                  eq(schema.sdlcDeepReviewRun.headSha, currentHeadSha),
-                ),
-                orderBy: [
-                  desc(schema.sdlcDeepReviewRun.updatedAt),
-                  desc(schema.sdlcDeepReviewRun.createdAt),
-                ],
-              })
-              .then((run) => run ?? null)
-          : Promise.resolve(null),
-        currentHeadSha
-          ? db.query.sdlcCarmackReviewRun
-              .findFirst({
-                where: and(
-                  eq(schema.sdlcCarmackReviewRun.loopId, loop.id),
-                  eq(schema.sdlcCarmackReviewRun.headSha, currentHeadSha),
-                ),
-                orderBy: [
-                  desc(schema.sdlcCarmackReviewRun.updatedAt),
-                  desc(schema.sdlcCarmackReviewRun.createdAt),
-                ],
-              })
-              .then((run) => run ?? null)
-          : Promise.resolve(null),
-      ]);
-
-    const implementationArtifactFallbackWhere = currentHeadSha
-      ? and(
-          eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-          eq(schema.sdlcPhaseArtifact.phase, "implementing"),
-          eq(schema.sdlcPhaseArtifact.headSha, currentHeadSha),
-        )
-      : and(
-          eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-          eq(schema.sdlcPhaseArtifact.phase, "implementing"),
-          isNull(schema.sdlcPhaseArtifact.headSha),
-        );
-
-    const [planningArtifact, implementationArtifact] = await Promise.all([
-      loop.activePlanArtifactId
-        ? db.query.sdlcPhaseArtifact.findFirst({
-            where: and(
-              eq(schema.sdlcPhaseArtifact.id, loop.activePlanArtifactId),
-              eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-            ),
-            columns: {
-              id: true,
-              status: true,
-              updatedAt: true,
-              payload: true,
-            },
-          })
-        : db.query.sdlcPhaseArtifact.findFirst({
-            where: and(
-              eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-              eq(schema.sdlcPhaseArtifact.phase, "planning"),
-            ),
-            orderBy: [
-              desc(schema.sdlcPhaseArtifact.updatedAt),
-              desc(schema.sdlcPhaseArtifact.createdAt),
-            ],
-            columns: {
-              id: true,
-              status: true,
-              updatedAt: true,
-              payload: true,
-            },
-          }),
-      loop.activeImplementationArtifactId
-        ? db.query.sdlcPhaseArtifact.findFirst({
-            where: and(
-              eq(
-                schema.sdlcPhaseArtifact.id,
-                loop.activeImplementationArtifactId,
-              ),
-              eq(schema.sdlcPhaseArtifact.loopId, loop.id),
-            ),
-            columns: {
-              id: true,
-              status: true,
-              headSha: true,
-              updatedAt: true,
-            },
-          })
-        : db.query.sdlcPhaseArtifact.findFirst({
-            where: implementationArtifactFallbackWhere,
-            orderBy: [
-              desc(schema.sdlcPhaseArtifact.updatedAt),
-              desc(schema.sdlcPhaseArtifact.createdAt),
-            ],
-            columns: {
-              id: true,
-              status: true,
-              headSha: true,
-              updatedAt: true,
-            },
-          }),
-    ]);
-
-    const plannedTasks = planningArtifact
-      ? await db.query.sdlcPlanTask.findMany({
-          where: and(
-            eq(schema.sdlcPlanTask.loopId, loop.id),
-            eq(schema.sdlcPlanTask.artifactId, planningArtifact.id),
-          ),
-          columns: {
-            status: true,
-            stableTaskId: true,
-            title: true,
-            description: true,
-            acceptance: true,
-          },
-        })
-      : [];
-    const plannedTaskTotal = plannedTasks.length;
-    const plannedTaskDone = plannedTasks.filter(
-      (task) => task.status === "done" || task.status === "skipped",
-    ).length;
-    const plannedTaskRemaining = Math.max(
-      0,
-      plannedTaskTotal - plannedTaskDone,
-    );
-
-    const unresolvedDeepFindings = currentHeadSha
-      ? await getUnresolvedBlockingDeepReviewFindings({
-          db,
-          loopId: loop.id,
-          headSha: currentHeadSha,
-        })
-      : [];
-    const unresolvedCarmackFindings = currentHeadSha
-      ? await getUnresolvedBlockingCarmackReviewFindings({
-          db,
-          loopId: loop.id,
-          headSha: currentHeadSha,
-        })
-      : [];
-
-    const loopSnapshot = buildPersistedDeliveryLoopSnapshot({
-      state: loop.state,
-      blockedFromState: loop.blockedFromState,
+    const response = await buildStatusFromV2Workflow({
+      workflow,
+      workflowRow: v2Row,
     });
-
-    const checks = buildSdlcLoopStatusChecks({
-      loopSnapshot,
-      currentHeadSha,
-      ciRun,
-      reviewThreadRun,
-      deepReviewRun,
-      carmackReviewRun,
-      unresolvedDeepFindingCount: unresolvedDeepFindings.length,
-      unresolvedCarmackFindingCount: unresolvedCarmackFindings.length,
-      videoCaptureStatus: loop.videoCaptureStatus,
-      videoFailureMessage: loop.latestVideoFailureMessage ?? null,
-    });
-    const phases = buildDeliveryLoopTopProgressPhases({
-      loopSnapshot,
-      checks,
-    });
-
-    const needsAttention = buildNeedsAttention({
-      loopSnapshot,
-      ciRun,
-      reviewThreadRun,
-      unresolvedDeepFindingTitles: unresolvedDeepFindings.map((finding) =>
-        finding.title.trim(),
-      ),
-      unresolvedCarmackFindingTitles: unresolvedCarmackFindings.map((finding) =>
-        finding.title.trim(),
-      ),
-      videoCaptureStatus: loop.videoCaptureStatus,
-      videoFailureMessage: loop.latestVideoFailureMessage ?? null,
-    });
-
-    const pullRequestUrl =
-      loop.prNumber === null
-        ? null
-        : `https://github.com/${loop.repoFullName}/pull/${loop.prNumber}`;
-    const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-    const explanation =
-      loop.state === "stopped" && loop.stopReason
-        ? `${stateSummary.explanation} Reason: ${loop.stopReason}.`
-        : stateSummary.explanation;
-
-    const response: SdlcLoopStatus = {
-      loopId: loop.id,
-      state: loop.state as SdlcLoopState,
-      planApprovalPolicy: loop.planApprovalPolicy,
-      stateLabel: stateSummary.stateLabel,
-      explanation,
-      progressPercent: stateSummary.progressPercent,
-      actions: buildDeliveryLoopActions({
-        loopState: loop.state,
-        loopSnapshot,
-        planApprovalPolicy: loop.planApprovalPolicy,
-        planningArtifactStatus: planningArtifact?.status ?? null,
-      }),
-      phases,
-      checks,
-      needsAttention,
-      links: {
-        pullRequestUrl,
-        statusCommentUrl:
-          pullRequestUrl && loop.canonicalStatusCommentId
-            ? `${pullRequestUrl}#issuecomment-${loop.canonicalStatusCommentId}`
-            : null,
-        checkRunUrl:
-          pullRequestUrl && loop.canonicalCheckRunId
-            ? `https://github.com/${loop.repoFullName}/runs/${loop.canonicalCheckRunId}?check_suite_focus=true`
-            : null,
-      },
-      artifacts: {
-        planningArtifact: planningArtifact
-          ? {
-              id: planningArtifact.id,
-              status: planningArtifact.status,
-              updatedAtIso: planningArtifact.updatedAt.toISOString(),
-              planText:
-                typeof planningArtifact.payload === "object" &&
-                planningArtifact.payload !== null &&
-                "planText" in planningArtifact.payload &&
-                typeof planningArtifact.payload.planText === "string"
-                  ? planningArtifact.payload.planText
-                  : null,
-            }
-          : null,
-        implementationArtifact: implementationArtifact
-          ? {
-              id: implementationArtifact.id,
-              status: implementationArtifact.status,
-              headSha: implementationArtifact.headSha ?? null,
-              updatedAtIso: implementationArtifact.updatedAt.toISOString(),
-            }
-          : null,
-        plannedTaskSummary: {
-          total: plannedTaskTotal,
-          done: plannedTaskDone,
-          remaining: plannedTaskRemaining,
-        },
-        plannedTasks: plannedTasks.map((t) => ({
-          stableTaskId: t.stableTaskId,
-          title: t.title,
-          description: t.description ?? null,
-          acceptance:
-            Array.isArray(t.acceptance) &&
-            t.acceptance.every((item) => typeof item === "string")
-              ? t.acceptance
-              : [],
-          status: t.status ?? "todo",
-        })),
-      },
-      updatedAtIso: loop.updatedAt.toISOString(),
-    };
-
-    return deliveryLoopStatusSchema.parse(response) as SdlcLoopStatus;
+    return deliveryLoopStatusSchema.parse(response) as DeliveryLoopStatus;
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },
 );

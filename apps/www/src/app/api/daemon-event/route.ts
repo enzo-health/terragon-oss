@@ -2,64 +2,43 @@ import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
   type SdlcSelfDispatchPayload,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
-import type { ThreadStatus } from "@terragon/shared/db/types";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
-  getActiveSdlcLoopForThread,
-  SDLC_CAUSE_IDENTITY_VERSION,
-  type DeliveryLoopSelectedAgent,
-  createDispatchIntent as createDurableDispatchIntent,
-  markDispatchIntentDispatched,
-  markDispatchIntentFailed as markDurableDispatchIntentFailed,
-} from "@terragon/shared/model/delivery-loop";
+  markDispatchIntentCompleted,
+  markDispatchIntentFailed,
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import {
+  type DaemonTerminalErrorCategory,
+  classifyDaemonTerminalErrorCategory,
+  mapDaemonTerminalCategoryToFailureCategory,
+} from "@terragon/shared/delivery-loop/domain/failure";
 import {
   buildDispatchIntentId,
-  completeDispatchIntent,
-  createDispatchIntent,
   getReplayableSelfDispatch,
-  storeSelfDispatchReplay,
   updateDispatchIntent,
 } from "@/server-lib/delivery-loop/dispatch-intent";
-import {
-  handleAckReceived,
-  startAckTimeout,
-} from "@/server-lib/delivery-loop/ack-lifecycle";
+import { handleAckReceived } from "@/server-lib/delivery-loop/ack-lifecycle";
 import {
   getAgentRunContextByRunId,
-  upsertAgentRunContext,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { and, eq, isNull, sql } from "drizzle-orm";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
-import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { waitUntil } from "@vercel/functions";
-import { redis } from "@/lib/redis";
-import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { and, eq } from "drizzle-orm";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
-  getThreadChat,
-  getThreadMinimal,
-  updateThreadChat,
-  updateThreadChatStatusAtomic,
-} from "@terragon/shared/model/threads";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import {
-  normalizedModelForDaemon,
-  getDefaultModelForAgent,
-  shouldUseCredits,
-} from "@terragon/agent/utils";
-import { getUserCredentials } from "@/server-lib/user-credentials";
-import { randomUUID } from "node:crypto";
+  isLocalRedisHttpMode,
+  isRedisTransportParseError,
+  redis,
+} from "@/lib/redis";
+import { appendEventAndAdvanceV3 } from "@/server-lib/delivery-loop/v3/kernel";
+import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { drainDueV3Effects } from "@/server-lib/delivery-loop/v3/process-effects";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -68,47 +47,8 @@ type DaemonEventEnvelopeV2 = {
   seq: number;
 };
 
-type DaemonEventClaimResult =
-  | {
-      claimed: true;
-      signalInboxId: string;
-    }
-  | {
-      claimed: false;
-      reason:
-        | "claim_in_progress"
-        | "duplicate_event"
-        | "out_of_order_or_duplicate_seq";
-    };
-
-type DaemonEventCommitResult =
-  | {
-      committed: true;
-      state: "committed_now" | "already_committed_or_processed";
-    }
-  | {
-      committed: false;
-      state: "claim_lost";
-    };
-
-const DAEMON_EVENT_CLAIM_STALE_MS = 5 * 60 * 1000;
-const SDLC_DAEMON_RECOVERY_TTL_SECONDS = 30 * 60;
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
-
-/**
- * Circuit breaker: maximum number of consecutive auto-dispatched follow-up
- * runs (daemon_terminal with daemonRunStatus=completed) before we stop
- * auto-dispatching to prevent infinite loops.
- */
-const MAX_CONSECUTIVE_AUTO_DISPATCHES = 10;
-
-type DaemonTerminalErrorCategory =
-  | "provider_not_configured"
-  | "acp_sse_not_found"
-  | "daemon_custom_error"
-  | "daemon_result_error"
-  | "unknown";
 
 type DaemonProcessingEventClaimResult =
   | {
@@ -163,62 +103,6 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
   );
 }
 
-/**
- * Count trailing consecutive auto-dispatched daemon_terminal signals with
- * daemonRunStatus=completed for this loop. Any non-completed signal
- * (failed, stopped, or non-daemon_terminal cause) resets the streak,
- * so failures unblock the breaker.
- *
- * Only counts runs that have a matching dispatch intent in the DB
- * (deliveryLoopDispatchIntent), which excludes human-started runs
- * that go through startAgentMessage directly.
- */
-async function countConsecutiveCompletedAutoDispatches({
-  loopId,
-}: {
-  loopId: string;
-}): Promise<number> {
-  // Count trailing completed daemon_terminal signals that were auto-dispatched
-  // (have a matching dispatch intent). Joins against deliveryLoopDispatchIntent
-  // on the signal's payload->>'runId' to filter out human-started runs.
-  //
-  // The streak-reset subquery finds the most recent signal that is NOT an
-  // auto-dispatched completed run. This includes:
-  //   - Non-daemon_terminal signals (PR reviews, check runs, etc.)
-  //   - Failed/stopped daemon_terminal signals
-  //   - Human-started completed daemon_terminal signals (no dispatch intent)
-  const result = await db.execute(sql`
-    SELECT count(*) AS count
-    FROM ${schema.sdlcLoopSignalInbox} s
-    INNER JOIN ${schema.deliveryLoopDispatchIntent} di
-      ON di.run_id = s.payload->>'runId'
-      AND di.loop_id = s.loop_id
-    WHERE s.loop_id = ${loopId}
-      AND s.cause_type = 'daemon_terminal'
-      AND s.processed_at IS NOT NULL
-      AND s.payload->>'daemonRunStatus' = 'completed'
-      AND s.processed_at > COALESCE(
-        (SELECT s2.processed_at
-         FROM ${schema.sdlcLoopSignalInbox} s2
-         LEFT JOIN ${schema.deliveryLoopDispatchIntent} di2
-           ON di2.run_id = s2.payload->>'runId'
-           AND di2.loop_id = s2.loop_id
-         WHERE s2.loop_id = ${loopId}
-           AND s2.processed_at IS NOT NULL
-           AND NOT (
-             s2.cause_type = 'daemon_terminal'
-             AND s2.payload->>'daemonRunStatus' = 'completed'
-             AND di2.id IS NOT NULL
-           )
-         ORDER BY s2.processed_at DESC
-         LIMIT 1),
-        '1970-01-01'::timestamp
-      )
-  `);
-  const rows = result as unknown as Array<{ count: string | number }>;
-  return Number(rows[0]?.count ?? 0);
-}
-
 function getDaemonProcessingEventClaimKey({
   loopId,
   eventId,
@@ -239,6 +123,45 @@ function getDaemonProcessingEventCommittedKey({
   return `sdlc:daemon-processing-event:committed:${loopId}:${eventId}`;
 }
 
+async function persistDaemonTerminalDispatchStatus(params: {
+  loopId: string;
+  threadChatId: string;
+  runId: string;
+  daemonRunStatus: "completed" | "failed" | "stopped";
+  daemonErrorMessage: string | null;
+  daemonErrorCategory: DaemonTerminalErrorCategory;
+}): Promise<void> {
+  const intentId = buildDispatchIntentId(params.loopId, params.runId);
+  if (params.daemonRunStatus === "completed") {
+    await Promise.all([
+      updateDispatchIntent(intentId, params.threadChatId, {
+        status: "completed",
+        lastError: null,
+        lastFailureCategory: null,
+      }),
+      markDispatchIntentCompleted(db, params.runId),
+    ]);
+    return;
+  }
+
+  const failureMessage =
+    params.daemonErrorMessage ??
+    `daemon terminal status: ${params.daemonRunStatus}`;
+  const failureCategory = mapDaemonTerminalCategoryToFailureCategory(
+    params.daemonErrorCategory,
+    params.daemonErrorMessage,
+  );
+
+  await Promise.all([
+    updateDispatchIntent(intentId, params.threadChatId, {
+      status: "failed",
+      lastError: failureMessage,
+      lastFailureCategory: failureCategory,
+    }),
+    markDispatchIntentFailed(db, params.runId, failureCategory, failureMessage),
+  ]);
+}
+
 async function claimEnrolledLoopProcessingEvent({
   loopId,
   envelope,
@@ -246,6 +169,13 @@ async function claimEnrolledLoopProcessingEvent({
   loopId: string;
   envelope: DaemonEventEnvelopeV2;
 }): Promise<DaemonProcessingEventClaimResult> {
+  if (isLocalRedisHttpMode()) {
+    // Local redis-http can intermittently fail JSON decoding on basic
+    // commands. Allow local daemon retries to keep flowing and rely on
+    // reducer idempotency for duplicate tolerance.
+    return { claimed: true };
+  }
+
   const claimKey = getDaemonProcessingEventClaimKey({
     loopId,
     eventId: envelope.eventId,
@@ -255,31 +185,45 @@ async function claimEnrolledLoopProcessingEvent({
     eventId: envelope.eventId,
   });
 
-  const alreadyCommitted = await redis.get<string>(committedKey);
-  if (alreadyCommitted) {
+  try {
+    const alreadyCommitted = await redis.get<string>(committedKey);
+    if (alreadyCommitted) {
+      return {
+        claimed: false,
+        reason: "duplicate_event",
+      };
+    }
+
+    const claimed = await redis.set(claimKey, new Date().toISOString(), {
+      nx: true,
+      ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
+    });
+    if (claimed === "OK") {
+      return {
+        claimed: true,
+      };
+    }
+
+    const committedAfterClaimFailure = await redis.get<string>(committedKey);
     return {
       claimed: false,
-      reason: "duplicate_event",
+      reason: committedAfterClaimFailure
+        ? "duplicate_event"
+        : "claim_in_progress",
     };
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[daemon-event] local redis claim parse failure, bypassing claim",
+        {
+          loopId,
+          eventId: envelope.eventId,
+        },
+      );
+      return { claimed: true };
+    }
+    throw error;
   }
-
-  const claimed = await redis.set(claimKey, new Date().toISOString(), {
-    nx: true,
-    ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
-  });
-  if (claimed === "OK") {
-    return {
-      claimed: true,
-    };
-  }
-
-  const committedAfterClaimFailure = await redis.get<string>(committedKey);
-  return {
-    claimed: false,
-    reason: committedAfterClaimFailure
-      ? "duplicate_event"
-      : "claim_in_progress",
-  };
 }
 
 async function commitEnrolledLoopProcessingEvent({
@@ -289,6 +233,10 @@ async function commitEnrolledLoopProcessingEvent({
   loopId: string;
   envelope: DaemonEventEnvelopeV2;
 }): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
+
   const claimKey = getDaemonProcessingEventClaimKey({
     loopId,
     eventId: envelope.eventId,
@@ -297,12 +245,26 @@ async function commitEnrolledLoopProcessingEvent({
     loopId,
     eventId: envelope.eventId,
   });
-  const pipeline = redis.pipeline();
-  pipeline.set(committedKey, new Date().toISOString(), {
-    ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
-  });
-  pipeline.del(claimKey);
-  await pipeline.exec();
+  try {
+    const pipeline = redis.pipeline();
+    pipeline.set(committedKey, new Date().toISOString(), {
+      ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
+    });
+    pipeline.del(claimKey);
+    await pipeline.exec();
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[daemon-event] local redis commit parse failure, skipping commit",
+        {
+          loopId,
+          eventId: envelope.eventId,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 async function rollbackEnrolledLoopProcessingEventClaim({
@@ -312,25 +274,29 @@ async function rollbackEnrolledLoopProcessingEventClaim({
   loopId: string;
   envelope: DaemonEventEnvelopeV2;
 }): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
+
   const claimKey = getDaemonProcessingEventClaimKey({
     loopId,
     eventId: envelope.eventId,
   });
-  await redis.del(claimKey);
-}
-
-function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
-  const iterationCount =
-    typeof loopVersion === "number" && Number.isFinite(loopVersion)
-      ? Math.max(loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: false,
-    cooldownUntil: null,
-    maxIterations: 15,
-    manualIntentAllowed: true,
-    iterationCount,
-  };
+  try {
+    await redis.del(claimKey);
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[daemon-event] local redis rollback parse failure, skipping rollback",
+        {
+          loopId,
+          eventId: envelope.eventId,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 function getDaemonEventEnvelopeV2(
@@ -394,21 +360,6 @@ function deriveRunStatusFromMessages(
   return "processing";
 }
 
-function classifyDaemonTerminalErrorCategory(
-  errorMessage: string | null,
-): DaemonTerminalErrorCategory {
-  if (!errorMessage) {
-    return "unknown";
-  }
-  if (errorMessage.includes("provider not configured")) {
-    return "provider_not_configured";
-  }
-  if (errorMessage.includes("SSE failed (404")) {
-    return "acp_sse_not_found";
-  }
-  return "daemon_custom_error";
-}
-
 function deriveDaemonTerminalErrorInfo(
   messages: DaemonEventAPIBody["messages"],
 ): { errorMessage: string | null; errorCategory: DaemonTerminalErrorCategory } {
@@ -435,20 +386,6 @@ function deriveDaemonTerminalErrorInfo(
     errorMessage: null,
     errorCategory: "unknown",
   };
-}
-
-function getDeliveryLoopDaemonRecoveryKey({
-  loopId,
-  loopVersion,
-}: {
-  loopId: string;
-  loopVersion: number;
-}) {
-  return `sdlc-daemon-follow-up-recovery:${loopId}:${loopVersion}`;
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseDaemonCapabilitiesHeader(
@@ -484,268 +421,6 @@ function hasRequiredThreadChatIdForNonLegacyPayload(
   );
 }
 
-async function claimEnrolledLoopDaemonEvent({
-  loopId,
-  threadId,
-  threadChatId,
-  envelope,
-  daemonRunStatus,
-  daemonErrorMessage,
-  daemonErrorCategory,
-}: {
-  loopId: string;
-  threadId: string;
-  threadChatId: string;
-  envelope: DaemonEventEnvelopeV2;
-  daemonRunStatus: "processing" | "completed" | "failed" | "stopped";
-  daemonErrorMessage: string | null;
-  daemonErrorCategory: DaemonTerminalErrorCategory;
-}): Promise<DaemonEventClaimResult> {
-  return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${loopId}), hashtext(${envelope.runId}))`,
-    );
-
-    const existingSignal = await tx
-      .select({
-        id: schema.sdlcLoopSignalInbox.id,
-        receivedAt: schema.sdlcLoopSignalInbox.receivedAt,
-        committedAt: schema.sdlcLoopSignalInbox.committedAt,
-        processedAt: schema.sdlcLoopSignalInbox.processedAt,
-      })
-      .from(schema.sdlcLoopSignalInbox)
-      .where(
-        and(
-          eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-          eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-          eq(schema.sdlcLoopSignalInbox.canonicalCauseId, envelope.eventId),
-          eq(
-            schema.sdlcLoopSignalInbox.causeIdentityVersion,
-            SDLC_CAUSE_IDENTITY_VERSION,
-          ),
-        ),
-      );
-
-    if (existingSignal.length > 0) {
-      const existing = existingSignal[0]!;
-      if (existing.processedAt || existing.committedAt) {
-        return {
-          claimed: false,
-          reason: "duplicate_event",
-        };
-      }
-
-      const claimAgeMs = Math.max(
-        0,
-        Date.now() - existing.receivedAt.getTime(),
-      );
-      if (claimAgeMs < DAEMON_EVENT_CLAIM_STALE_MS) {
-        return {
-          claimed: false,
-          reason: "claim_in_progress",
-        };
-      }
-
-      // Recovery path: stale unprocessed claims are reclaimed so the daemon
-      // event can be safely replayed and committed by the current worker.
-      const staleReclaim = await tx
-        .delete(schema.sdlcLoopSignalInbox)
-        .where(
-          and(
-            eq(schema.sdlcLoopSignalInbox.id, existing.id),
-            eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-            eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-            eq(schema.sdlcLoopSignalInbox.canonicalCauseId, envelope.eventId),
-            eq(
-              schema.sdlcLoopSignalInbox.causeIdentityVersion,
-              SDLC_CAUSE_IDENTITY_VERSION,
-            ),
-            isNull(schema.sdlcLoopSignalInbox.committedAt),
-            isNull(schema.sdlcLoopSignalInbox.processedAt),
-          ),
-        )
-        .returning({ id: schema.sdlcLoopSignalInbox.id });
-      if (staleReclaim.length > 0) {
-        console.warn(
-          "[sdlc-loop] reclaimed stale daemon signal claim for replay",
-          {
-            loopId,
-            threadId,
-            eventId: envelope.eventId,
-            seq: envelope.seq,
-            claimAgeMs,
-          },
-        );
-      } else {
-        return {
-          claimed: false,
-          reason: "claim_in_progress",
-        };
-      }
-    }
-
-    const [sequenceState] = await tx
-      .select({
-        maxSeq: sql<
-          number | null
-        >`max(((${schema.sdlcLoopSignalInbox.payload} ->> 'seq')::bigint))`,
-      })
-      .from(schema.sdlcLoopSignalInbox)
-      .where(
-        and(
-          eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-          eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-          sql`${schema.sdlcLoopSignalInbox.payload} ->> 'runId' = ${envelope.runId}`,
-        ),
-      );
-
-    const maxSeq =
-      sequenceState?.maxSeq == null ? null : Number(sequenceState.maxSeq);
-    if (maxSeq !== null && Number.isFinite(maxSeq) && envelope.seq <= maxSeq) {
-      return {
-        claimed: false,
-        reason: "out_of_order_or_duplicate_seq",
-      };
-    }
-
-    if (daemonRunStatus === "processing") {
-      return {
-        claimed: false,
-        reason: "duplicate_event",
-      };
-    }
-
-    const inserted = await tx
-      .insert(schema.sdlcLoopSignalInbox)
-      .values({
-        loopId,
-        causeType: "daemon_terminal",
-        canonicalCauseId: envelope.eventId,
-        signalHeadShaOrNull: null,
-        causeIdentityVersion: SDLC_CAUSE_IDENTITY_VERSION,
-        payload: {
-          eventType: "daemon_terminal",
-          payloadVersion: envelope.payloadVersion,
-          eventId: envelope.eventId,
-          runId: envelope.runId,
-          seq: envelope.seq,
-          threadId,
-          threadChatId,
-          daemonRunStatus,
-          daemonErrorMessage,
-          daemonErrorCategory,
-        },
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.sdlcLoopSignalInbox.id });
-
-    if (inserted.length > 0) {
-      return {
-        claimed: true,
-        signalInboxId: inserted[0]!.id,
-      };
-    }
-
-    return {
-      claimed: false,
-      reason: "duplicate_event",
-    };
-  });
-}
-
-async function rollbackEnrolledLoopDaemonEventClaim({
-  signalInboxId,
-  loopId,
-  eventId,
-}: {
-  signalInboxId: string;
-  loopId: string;
-  eventId: string;
-}): Promise<boolean> {
-  const rolledBack = await db
-    .delete(schema.sdlcLoopSignalInbox)
-    .where(
-      and(
-        eq(schema.sdlcLoopSignalInbox.id, signalInboxId),
-        eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        eq(schema.sdlcLoopSignalInbox.canonicalCauseId, eventId),
-        eq(
-          schema.sdlcLoopSignalInbox.causeIdentityVersion,
-          SDLC_CAUSE_IDENTITY_VERSION,
-        ),
-        isNull(schema.sdlcLoopSignalInbox.committedAt),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
-      ),
-    )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
-  return rolledBack.length > 0;
-}
-
-async function commitEnrolledLoopDaemonEventClaim({
-  signalInboxId,
-  loopId,
-  eventId,
-}: {
-  signalInboxId: string;
-  loopId: string;
-  eventId: string;
-}): Promise<DaemonEventCommitResult> {
-  const committedAt = new Date();
-  const committed = await db
-    .update(schema.sdlcLoopSignalInbox)
-    .set({ committedAt })
-    .where(
-      and(
-        eq(schema.sdlcLoopSignalInbox.id, signalInboxId),
-        eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-        eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-        eq(schema.sdlcLoopSignalInbox.canonicalCauseId, eventId),
-        eq(
-          schema.sdlcLoopSignalInbox.causeIdentityVersion,
-          SDLC_CAUSE_IDENTITY_VERSION,
-        ),
-        isNull(schema.sdlcLoopSignalInbox.committedAt),
-        isNull(schema.sdlcLoopSignalInbox.processedAt),
-      ),
-    )
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
-  if (committed.length > 0) {
-    return {
-      committed: true,
-      state: "committed_now",
-    };
-  }
-
-  const existing = await db.query.sdlcLoopSignalInbox.findFirst({
-    where: and(
-      eq(schema.sdlcLoopSignalInbox.loopId, loopId),
-      eq(schema.sdlcLoopSignalInbox.causeType, "daemon_terminal"),
-      eq(schema.sdlcLoopSignalInbox.canonicalCauseId, eventId),
-      eq(
-        schema.sdlcLoopSignalInbox.causeIdentityVersion,
-        SDLC_CAUSE_IDENTITY_VERSION,
-      ),
-    ),
-    columns: {
-      id: true,
-      committedAt: true,
-      processedAt: true,
-    },
-  });
-  if (existing?.committedAt || existing?.processedAt) {
-    return {
-      committed: true,
-      state: "already_committed_or_processed",
-    };
-  }
-
-  return {
-    committed: false,
-    state: "claim_lost",
-  };
-}
-
 export async function POST(request: Request) {
   const json: DaemonEventAPIBody = await request.json();
   const daemonVersionHeader =
@@ -766,6 +441,11 @@ export async function POST(request: Request) {
     transportMode = "legacy",
     protocolVersion = 1,
   } = json;
+  const daemonHeadShaAtCompletion =
+    typeof json.headShaAtCompletion === "string" &&
+    json.headShaAtCompletion.length > 0
+      ? json.headShaAtCompletion
+      : null;
   const rawThreadChatId = json.threadChatId;
   const threadChatId =
     typeof rawThreadChatId === "string" && rawThreadChatId.length > 0
@@ -975,7 +655,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // Heartbeat shortcut: empty messages skip SDLC loop, envelope validation, and
+  // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
   // run-context status transitions — just extend sandbox life + refresh updatedAt.
   if (messages.length === 0) {
     const result = await handleDaemonEvent({
@@ -995,26 +675,28 @@ export async function POST(request: Request) {
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
 
-  const enrolledLoop = await getActiveSdlcLoopForThread({
-    db,
-    userId,
-    threadId,
-  });
+  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+  const effectiveLoopId = v2Workflow?.id ?? null;
 
-  // Acknowledge dispatch intent on first event for this run.
-  // Updates both Redis (real-time) and DB (durable) intent records,
-  // and resets the retry counter since the dispatch succeeded.
-  if (enrolledLoop && envelopeV2 && envelopeV2.seq === 0) {
+  // Acknowledge dispatch intent once the run context is still in a
+  // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
+  // status-based (idempotent), not seq-based.
+  if (
+    effectiveLoopId &&
+    envelopeV2 &&
+    runContext &&
+    (runContext.status === "pending" || runContext.status === "dispatched")
+  ) {
     try {
       await handleAckReceived({
         db,
         runId: envelopeV2.runId,
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         threadChatId,
       });
     } catch (ackError) {
       console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         threadId,
         threadChatId,
         runId: envelopeV2.runId,
@@ -1023,598 +705,16 @@ export async function POST(request: Request) {
     }
   }
 
-  let claimedSignalInboxId: string | null = null;
   let claimedProcessingEvent = false;
 
-  const rollbackClaimedSignal = async ({
-    reason,
-    error,
-  }: {
-    reason: string;
-    error?: unknown;
-  }) => {
-    if (!enrolledLoop || !envelopeV2 || !claimedSignalInboxId) {
-      return;
-    }
-    try {
-      const rolledBack = await rollbackEnrolledLoopDaemonEventClaim({
-        signalInboxId: claimedSignalInboxId,
-        loopId: enrolledLoop.id,
-        eventId: envelopeV2.eventId,
-      });
-      if (!rolledBack) {
-        console.warn(
-          "[sdlc-loop] failed to rollback daemon signal claim after downstream failure",
-          {
-            userId,
-            threadId,
-            loopId: enrolledLoop.id,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-            reason,
-            error,
-          },
-        );
-      }
-    } catch (rollbackError) {
-      console.error(
-        "[sdlc-loop] daemon signal claim rollback threw after downstream failure",
-        {
-          userId,
-          threadId,
-          loopId: enrolledLoop.id,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          reason,
-          error,
-          rollbackError,
-        },
-      );
-    }
-  };
-
-  const maybeProcessDaemonTerminalFollowUp = async ({
-    tickResult,
-    loopId,
-    loopVersion,
-    sourceRunId,
-    eventId,
-    seq,
-  }: {
-    tickResult: Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>;
-    loopId: string;
-    loopVersion: number;
-    sourceRunId: string;
-    eventId: string;
-    seq: number;
-  }) => {
-    if (
-      !tickResult.processed ||
-      tickResult.causeType !== "daemon_terminal" ||
-      tickResult.runtimeAction !== "feedback_follow_up_queued"
-    ) {
-      return;
-    }
-
-    // Circuit breaker: prevent infinite consecutive auto-dispatch loops.
-    const completedCount = await countConsecutiveCompletedAutoDispatches({
-      loopId,
-    });
-    if (completedCount >= MAX_CONSECUTIVE_AUTO_DISPATCHES) {
-      console.warn(
-        "[sdlc-loop] circuit breaker: too many consecutive auto-dispatches, skipping follow-up",
-        {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          completedCount,
-          threshold: MAX_CONSECUTIVE_AUTO_DISPATCHES,
-          eventId,
-          seq,
-        },
-      );
-      // Surface to the user so the task doesn't look finished while
-      // queued work is stranded.
-      await updateThreadChat({
-        db,
-        userId,
-        threadId,
-        threadChatId,
-        updates: {
-          errorMessage: "unknown-error",
-          errorMessageInfo: `Auto-dispatch circuit breaker triggered after ${completedCount} consecutive runs. Send a message to continue.`,
-        },
-      }).catch((err) =>
-        console.error("[sdlc-loop] failed to surface circuit breaker to user", {
-          loopId,
-          err,
-        }),
-      );
-      return;
-    }
-
-    // Check if daemon supports self-dispatch.
-    const daemonSupportsSelfDispatch = daemonCapabilities.has(
-      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
-    );
-
-    if (daemonSupportsSelfDispatch) {
-      // Complete the previous run's Redis dispatch intent so the next
-      // createDispatchIntent call doesn't hit the "active intent exists" guard.
-      const completingIntentId = buildDispatchIntentId(loopId, sourceRunId);
-      await completeDispatchIntent(completingIntentId, threadChatId).catch(
-        (err) =>
-          console.warn(
-            "[sdlc-loop] failed to complete previous dispatch intent",
-            { loopId, sourceRunId, err },
-          ),
-      );
-
-      const userFeatureFlags = await getFeatureFlagsForUser({ db, userId });
-      let preparedDispatch: { intentId: string; runId: string } | null = null;
-      let preTransitionStatus: string | null = null;
-      let postTransitionStatus: string | null = null;
-      try {
-        // Use the queued message directly from the tick result to avoid
-        // a race with handleThreadFinish's maybeProcessFollowUpQueue which
-        // can consume queued messages from the DB before we read them.
-        const feedbackMsg = tickResult.feedbackQueuedMessage;
-        if (!feedbackMsg) {
-          console.warn(
-            "[sdlc-loop] self-dispatch: no feedback message from tick result, falling back",
-            { userId, threadId, threadChatId, loopId },
-          );
-          // Fall through to existing path
-        } else {
-          // Also need thread chat for agent info
-          const [threadChatForDispatch, threadForDispatch] = await Promise.all([
-            getThreadChat({ db, userId, threadId, threadChatId }),
-            getThreadMinimal({ db, threadId, userId }),
-          ]);
-          if (!threadChatForDispatch) {
-            console.warn(
-              "[sdlc-loop] self-dispatch: thread chat not found, falling back",
-              { userId, threadId, threadChatId, loopId },
-            );
-          } else if (!threadForDispatch || !threadForDispatch.codesandboxId) {
-            console.warn(
-              "[sdlc-loop] self-dispatch: thread or sandbox not found, falling back",
-              { userId, threadId, loopId },
-            );
-          } else {
-            // Build prompt from the feedback message (text parts only).
-            // If any non-text parts exist, fall back to the queue path
-            // which handles the full message format.
-            const queuedMessages = [feedbackMsg];
-            const promptParts: string[] = [];
-            let hasNonTextParts = false;
-            for (const qMsg of queuedMessages) {
-              if ("parts" in qMsg && Array.isArray(qMsg.parts)) {
-                for (const part of qMsg.parts) {
-                  if (
-                    part &&
-                    typeof part === "object" &&
-                    "text" in part &&
-                    typeof part.text === "string"
-                  ) {
-                    promptParts.push(part.text);
-                  } else if (part && typeof part === "object") {
-                    hasNonTextParts = true;
-                  }
-                }
-              }
-            }
-
-            if (hasNonTextParts) {
-              console.warn(
-                "[sdlc-loop] self-dispatch: non-text message parts detected, falling back",
-                { userId, threadId, threadChatId, loopId },
-              );
-            } else if (!promptParts.join("\n\n").trim()) {
-              console.warn(
-                "[sdlc-loop] self-dispatch: empty prompt from queued messages, falling back",
-                { userId, threadId, threadChatId, loopId },
-              );
-            } else {
-              const prompt = promptParts.join("\n\n");
-              // Capture pre-transition status for rollback on failure.
-              preTransitionStatus = threadChatForDispatch.status;
-              // Transition status first WITHOUT chat updates to avoid clearing
-              // queued messages on failure (chatUpdates apply unconditionally).
-              const { didUpdateStatus, updatedStatus } =
-                await updateThreadChatWithTransition({
-                  userId,
-                  threadId,
-                  threadChatId,
-                  eventType: "user.message",
-                });
-              if (didUpdateStatus && updatedStatus) {
-                postTransitionStatus = updatedStatus;
-              }
-
-              if (!didUpdateStatus) {
-                console.warn(
-                  "[sdlc-loop] self-dispatch: status transition failed, falling back",
-                  { userId, threadId, threadChatId, loopId },
-                );
-              } else {
-                const newRunId = randomUUID();
-                const newTokenNonce = randomUUID();
-                const agent = threadChatForDispatch.agent;
-                const agentVersion = threadChatForDispatch.agentVersion;
-                const model = normalizedModelForDaemon(
-                  getDefaultModelForAgent({ agent, agentVersion }),
-                );
-                const sandboxId = threadForDispatch.codesandboxId;
-
-                // SDLC follow-ups always use allowAll — same as startAgentMessage
-                // which forces allowAll when activeSdlcLoop is true.
-                const effectivePermissionMode = "allowAll" as const;
-                const supportsAcp =
-                  agent === "codex" || agent === "amp" || agent === "opencode";
-                const shouldUseCodexAppServerTransport =
-                  agent === "codex" && userFeatureFlags.codexAppServerTransport;
-                const shouldUseAcpTransport =
-                  !shouldUseCodexAppServerTransport &&
-                  userFeatureFlags.sandboxAgentAcpTransport &&
-                  supportsAcp;
-                const transportMode = shouldUseCodexAppServerTransport
-                  ? ("codex-app-server" as const)
-                  : shouldUseAcpTransport
-                    ? ("acp" as const)
-                    : ("legacy" as const);
-                const protocolVersion: 1 | 2 = transportMode === "acp" ? 2 : 1;
-
-                // Create run context
-                await upsertAgentRunContext({
-                  db,
-                  runId: newRunId,
-                  userId,
-                  threadId,
-                  threadChatId,
-                  sandboxId,
-                  transportMode,
-                  protocolVersion,
-                  agent,
-                  permissionMode: effectivePermissionMode,
-                  requestedSessionId: null,
-                  resolvedSessionId: null,
-                  status: "pending",
-                  tokenNonce: newTokenNonce,
-                  daemonTokenKeyId: null,
-                });
-
-                // Create API key
-                const { token } = await createDaemonRunCredentials({
-                  userId,
-                  threadId,
-                  threadChatId,
-                  sandboxId,
-                  runId: newRunId,
-                  tokenNonce: newTokenNonce,
-                  agent,
-                  transportMode,
-                  protocolVersion,
-                });
-
-                await updateThreadChat({
-                  db,
-                  userId,
-                  threadId,
-                  threadChatId,
-                  updates: {
-                    errorMessage: null,
-                    errorMessageInfo: null,
-                  },
-                });
-
-                // Persist dispatch intent in Redis first (realtime), then DB (durable).
-                // Sequential to allow cleanup of Redis if DB write fails.
-                const dispatchIntentParams = {
-                  loopId,
-                  threadId,
-                  threadChatId,
-                  targetPhase: "implementing" as const,
-                  selectedAgent: agent as DeliveryLoopSelectedAgent,
-                  executionClass: "implementation_runtime" as const,
-                  dispatchMechanism: "self_dispatch" as const,
-                  runId: newRunId,
-                };
-                const dispatchIntent = await createDispatchIntent({
-                  ...dispatchIntentParams,
-                  maxRetries: 3,
-                });
-                try {
-                  await createDurableDispatchIntent(db, dispatchIntentParams);
-                } catch (durableError) {
-                  // Clean up the Redis intent so subsequent self-dispatches
-                  // don't hit the "active intent exists" guard.
-                  await completeDispatchIntent(
-                    dispatchIntent.id,
-                    threadChatId,
-                  ).catch(() => {});
-                  throw durableError;
-                }
-                preparedDispatch = {
-                  intentId: dispatchIntent.id,
-                  runId: newRunId,
-                };
-
-                const userCredentials = await getUserCredentials({ userId });
-                const useCredits = shouldUseCredits(agent, userCredentials);
-
-                const preparedSelfDispatchPayload = {
-                  token,
-                  prompt,
-                  runId: newRunId,
-                  tokenNonce: newTokenNonce,
-                  model,
-                  agent,
-                  agentVersion,
-                  sessionId: null,
-                  featureFlags: userFeatureFlags,
-                  permissionMode: effectivePermissionMode,
-                  transportMode,
-                  protocolVersion,
-                  threadId,
-                  threadChatId,
-                  useCredits: useCredits || undefined,
-                };
-                await storeSelfDispatchReplay({
-                  threadChatId,
-                  sourceEventId: eventId,
-                  sourceSeq: seq,
-                  sourceRunId,
-                  dispatchIntentId: dispatchIntent.id,
-                  destinationRunId: newRunId,
-                  payload: preparedSelfDispatchPayload,
-                });
-                // Mark intent as dispatched in both Redis and DB.
-                await Promise.all([
-                  updateDispatchIntent(dispatchIntent.id, threadChatId, {
-                    status: "dispatched",
-                  }),
-                  markDispatchIntentDispatched(db, newRunId),
-                ]);
-                // Clear the consumed queued follow-up so duplicate terminal
-                // events or later queue drains don't dispatch it again.
-                // Must succeed before arming selfDispatchPayload and the
-                // ack timeout to prevent returning a dispatch payload for
-                // a run that's only partially prepared.
-                await updateThreadChat({
-                  db,
-                  userId,
-                  threadId,
-                  threadChatId,
-                  updates: { replaceQueuedMessages: [] },
-                });
-                // Arm ack timeout only after all preparatory writes succeed.
-                startAckTimeout({
-                  db,
-                  runId: newRunId,
-                  loopId,
-                  threadChatId,
-                });
-                selfDispatchPayload = preparedSelfDispatchPayload;
-
-                console.log("[sdlc-loop] self-dispatch payload prepared", {
-                  userId,
-                  threadId,
-                  threadChatId,
-                  loopId,
-                  runId: newRunId,
-                  eventId,
-                  seq,
-                });
-                return; // Skip maybeProcessFollowUpQueue
-              }
-            }
-          }
-        }
-      } catch (error) {
-        // Roll back the status transition so the fallback queue path can
-        // process correctly instead of seeing a busy/queued status with no
-        // live daemon run.
-        if (preTransitionStatus && postTransitionStatus) {
-          try {
-            await updateThreadChatStatusAtomic({
-              db,
-              userId,
-              threadId,
-              threadChatId,
-              fromStatus: postTransitionStatus as ThreadStatus,
-              toStatus: preTransitionStatus as ThreadStatus,
-            });
-          } catch (rollbackError) {
-            console.error(
-              "[sdlc-loop] failed to roll back status after self-dispatch failure",
-              {
-                userId,
-                threadId,
-                threadChatId,
-                loopId,
-                preTransitionStatus,
-                rollbackError,
-              },
-            );
-          }
-        }
-        if (preparedDispatch) {
-          const failureMsg =
-            error instanceof Error
-              ? error.message
-              : "self-dispatch preparation failed";
-          try {
-            await Promise.all([
-              updateDispatchIntent(preparedDispatch.intentId, threadChatId, {
-                status: "failed",
-                lastError: failureMsg,
-                lastFailureCategory: "config_error",
-              }),
-              markDurableDispatchIntentFailed(
-                db,
-                preparedDispatch.runId,
-                "config_error",
-                failureMsg,
-              ),
-              updateAgentRunContext({
-                db,
-                runId: preparedDispatch.runId,
-                userId,
-                updates: {
-                  status: "failed",
-                },
-              }),
-            ]);
-          } catch (cleanupError) {
-            console.error(
-              "[sdlc-loop] failed to clean up abandoned self-dispatch run",
-              {
-                userId,
-                threadId,
-                threadChatId,
-                loopId,
-                runId: preparedDispatch.runId,
-                cleanupError,
-              },
-            );
-          }
-        }
-        console.error(
-          "[sdlc-loop] self-dispatch preparation failed, falling back to queue",
-          {
-            userId,
-            threadId,
-            threadChatId,
-            loopId,
-            eventId,
-            seq,
-            error,
-          },
-        );
-      }
-    }
-
-    // Existing fallback path
-    let followUpResult = await maybeProcessFollowUpQueue({
-      threadId,
-      threadChatId,
-      userId,
-      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-    });
-    console.log(
-      "[sdlc-loop] daemon terminal follow-up queue processing completed",
-      {
-        userId,
-        threadId,
-        threadChatId,
-        loopId,
-        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-        eventId,
-        seq,
-        runtimeRouting: tickResult.runtimeRouting ?? null,
-        followUpResult,
-      },
-    );
-
-    if (
-      !followUpResult.processed &&
-      followUpResult.reason === "no_queued_messages" &&
-      tickResult.feedbackQueuedMessage
-    ) {
-      console.warn(
-        "[sdlc-loop] daemon terminal follow-up invariant violated; re-enqueueing feedback message",
-        {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-          eventId,
-          seq,
-        },
-      );
-      await queueFollowUpInternal({
-        userId,
-        threadId,
-        threadChatId,
-        messages: [tickResult.feedbackQueuedMessage],
-        appendOrReplace: "append",
-        source: "github",
-      });
-      followUpResult = await maybeProcessFollowUpQueue({
-        threadId,
-        threadChatId,
-        userId,
-        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-      });
-      console.log(
-        "[sdlc-loop] daemon terminal follow-up queue recovery completed",
-        {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-          eventId,
-          seq,
-          followUpResult,
-        },
-      );
-    }
-
-    if (
-      followUpResult.processed ||
-      followUpResult.reason !== "status_transition_noop_busy"
-    ) {
-      return;
-    }
-
-    const recoveryKey = getDeliveryLoopDaemonRecoveryKey({
-      loopId,
-      loopVersion,
-    });
-    const didScheduleRecovery = await redis.set(recoveryKey, "1", {
-      nx: true,
-      ex: SDLC_DAEMON_RECOVERY_TTL_SECONDS,
-    });
-    if (didScheduleRecovery !== "OK") {
-      return;
-    }
-
-    waitUntil(
-      (async () => {
-        await sleep(1_500);
-        const retryResult = await maybeProcessFollowUpQueue({
-          threadId,
-          threadChatId,
-          userId,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-        });
-        console.log("[sdlc-loop] daemon follow-up recovery retry completed", {
-          userId,
-          threadId,
-          threadChatId,
-          loopId,
-          loopVersion,
-          runId: runContext?.runId ?? envelopeV2?.runId ?? null,
-          eventId,
-          seq,
-          retryResult,
-        });
-      })(),
-    );
-  };
-
-  if (enrolledLoop) {
+  if (effectiveLoopId) {
     if (!envelopeV2) {
       console.error(
-        "[sdlc-loop] rejecting daemon event for enrolled loop without v2 envelope",
+        "[delivery-loop] rejecting daemon event for enrolled loop without v2 envelope",
         {
           userId,
           threadId,
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
           daemonVersionHeader,
           daemonCapabilitiesHeader,
           payloadVersion: json.payloadVersion ?? null,
@@ -1624,7 +724,7 @@ export async function POST(request: Request) {
         {
           success: false,
           error: "enrolled_loop_requires_v2_envelope",
-          loopId: enrolledLoop.id,
+          loopId: effectiveLoopId!,
         },
         { status: 409 },
       );
@@ -1632,7 +732,7 @@ export async function POST(request: Request) {
 
     if (envelopeV2 && daemonRunStatusFromMessages === "processing") {
       const processingClaimResult = await claimEnrolledLoopProcessingEvent({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         envelope: envelopeV2,
       });
       if (!processingClaimResult.claimed) {
@@ -1641,7 +741,7 @@ export async function POST(request: Request) {
             {
               success: false,
               error: "daemon_event_claim_in_progress",
-              loopId: enrolledLoop.id,
+              loopId: effectiveLoopId!,
             },
             { status: 409 },
           );
@@ -1651,7 +751,7 @@ export async function POST(request: Request) {
             success: true,
             deduplicated: true,
             reason: processingClaimResult.reason,
-            loopId: enrolledLoop.id,
+            loopId: effectiveLoopId!,
             acknowledgedEventId: envelopeV2.eventId,
             acknowledgedSeq: envelopeV2.seq,
           },
@@ -1659,109 +759,6 @@ export async function POST(request: Request) {
         );
       }
       claimedProcessingEvent = true;
-    } else if (envelopeV2) {
-      const claimResult = await claimEnrolledLoopDaemonEvent({
-        loopId: enrolledLoop.id,
-        threadId,
-        threadChatId,
-        envelope: envelopeV2,
-        daemonRunStatus: daemonRunStatusFromMessages,
-        daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-        daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-      });
-      if (!claimResult.claimed) {
-        if (claimResult.reason === "claim_in_progress") {
-          return Response.json(
-            {
-              success: false,
-              error: "daemon_event_claim_in_progress",
-              loopId: enrolledLoop.id,
-            },
-            { status: 409 },
-          );
-        }
-        if (claimResult.reason === "duplicate_event") {
-          try {
-            const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-              enrolledLoop.loopVersion,
-            );
-            const signalTickResult = await runBestEffortSdlcSignalInboxTick({
-              db,
-              loopId: enrolledLoop.id,
-              leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-              guardrailRuntime,
-              includeRuntimeRouting: true,
-            });
-            await maybeProcessDaemonTerminalFollowUp({
-              tickResult: signalTickResult,
-              loopId: enrolledLoop.id,
-              loopVersion: enrolledLoop.loopVersion,
-              sourceRunId: envelopeV2.runId,
-              eventId: envelopeV2.eventId,
-              seq: envelopeV2.seq,
-            });
-            await runBestEffortSdlcPublicationCoordinator({
-              db,
-              loopId: enrolledLoop.id,
-              leaseOwnerToken: `daemon-event-dedup:${envelopeV2.eventId}:${envelopeV2.seq}`,
-              guardrailRuntime,
-            });
-            const duplicateThreadChat = await getThreadChat({
-              db,
-              userId,
-              threadId,
-              threadChatId,
-            });
-            if ((duplicateThreadChat?.queuedMessages?.length ?? 0) > 0) {
-              waitUntil(
-                maybeProcessFollowUpQueue({
-                  threadId,
-                  threadChatId,
-                  userId,
-                  runId: runContext?.runId ?? envelopeV2.runId,
-                }),
-              );
-            }
-          } catch (error) {
-            console.error(
-              "[sdlc-loop] duplicate daemon event dedupe tick failed",
-              {
-                userId,
-                threadId,
-                loopId: enrolledLoop.id,
-                eventId: envelopeV2.eventId,
-                seq: envelopeV2.seq,
-                reason: claimResult.reason,
-                error,
-              },
-            );
-            return new Response(
-              "failed to process deduplicated daemon event signal",
-              { status: 500 },
-            );
-          }
-        }
-        const replayedSelfDispatch = await getReplayableSelfDispatch({
-          threadChatId,
-          sourceEventId: envelopeV2.eventId,
-          sourceSeq: envelopeV2.seq,
-          sourceRunId: envelopeV2.runId,
-        });
-        return jsonTerminalAckResponse(
-          buildTerminalAckState(
-            {
-              status: 202,
-              deduplicated: true,
-              reason: claimResult.reason,
-              loopId: enrolledLoop.id,
-              acknowledgedEventId: envelopeV2.eventId,
-              acknowledgedSeq: envelopeV2.seq,
-            },
-            replayedSelfDispatch,
-          ),
-        );
-      }
-      claimedSignalInboxId = claimResult.signalInboxId;
     }
   }
 
@@ -1812,6 +809,10 @@ export async function POST(request: Request) {
       runId: runContext?.runId ?? envelopeV2?.runId ?? null,
     });
   } catch (error) {
+    console.error(
+      "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
+      error,
+    );
     if (runContext) {
       await updateAgentRunContext({
         db,
@@ -1822,16 +823,12 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
       await rollbackEnrolledLoopProcessingEventClaim({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         envelope: envelopeV2,
       });
     }
-    await rollbackClaimedSignal({
-      reason: "handle_daemon_event_threw",
-      error,
-    });
     throw error;
   }
 
@@ -1846,39 +843,68 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
+    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
       await rollbackEnrolledLoopProcessingEventClaim({
-        loopId: enrolledLoop.id,
+        loopId: effectiveLoopId!,
         envelope: envelopeV2,
       });
     }
-    await rollbackClaimedSignal({
-      reason: "handle_daemon_event_failed",
-      error: result.error,
-    });
     return new Response(result.error, { status: result.status || 500 });
-  }
-
-  if (enrolledLoop && envelopeV2 && claimedProcessingEvent) {
-    await commitEnrolledLoopProcessingEvent({
-      loopId: enrolledLoop.id,
-      envelope: envelopeV2,
-    });
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
   const resolvedStatus = daemonRunStatusFromMessages;
 
-  if (runContext) {
-    await updateAgentRunContext({
-      db,
-      userId,
-      runId: runContext.runId,
-      updates: {
-        resolvedSessionId,
-        status: resolvedStatus,
-      },
-    });
+  // Processing event commit and run context update are independent — batch them.
+  // Best-effort: if these fail, the signal claim commit and coordinator tick
+  // must still proceed. A failure here previously stranded the claim in
+  // "claimed" state until stale-claim timeout, blocking daemon retries.
+  {
+    const postHandleOps: Array<Promise<unknown>> = [];
+    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
+      postHandleOps.push(
+        commitEnrolledLoopProcessingEvent({
+          loopId: effectiveLoopId!,
+          envelope: envelopeV2,
+        }),
+      );
+    }
+    if (runContext) {
+      // Only update resolvedSessionId here. Terminal status (completed/
+      // failed/stopped) is deferred until after the coordinator tick
+      // succeeds — if the tick fails and we return 500, the run must
+      // stay non-terminal so the daemon retry re-enters the main path.
+      postHandleOps.push(
+        updateAgentRunContext({
+          db,
+          userId,
+          runId: runContext.runId,
+          updates: {
+            resolvedSessionId,
+            ...(resolvedStatus === "processing"
+              ? { status: "processing" as const }
+              : {}),
+          },
+        }),
+      );
+    }
+    if (postHandleOps.length > 0) {
+      try {
+        await Promise.all(postHandleOps);
+      } catch (postHandleErr) {
+        // Non-fatal — processing event commit and resolvedSessionId are
+        // bookkeeping, not critical path. Log and continue to claim commit
+        // + coordinator tick so the daemon retry doesn't hit stale claim.
+        console.warn(
+          "[daemon-event] postHandleOps best-effort failure, continuing",
+          {
+            userId,
+            threadId,
+            error: postHandleErr,
+          },
+        );
+      }
+    }
   }
 
   if (resolvedStatus === "failed") {
@@ -1900,143 +926,191 @@ export async function POST(request: Request) {
       json.codexPreviousResponseId !== null &&
       typeof json.codexPreviousResponseId !== "string"
     ) {
-      await rollbackClaimedSignal({
-        reason: "invalid_codex_previous_response_id",
-        error: json.codexPreviousResponseId,
-      });
-      return Response.json(
-        {
-          success: false,
-          error: "invalid_codex_previous_response_id",
-        },
-        { status: 400 },
-      );
-    }
-
-    const shouldPersistCodexPreviousResponseId =
-      transportMode === "codex-app-server" ||
-      json.codexPreviousResponseId === null;
-    if (shouldPersistCodexPreviousResponseId) {
-      try {
-        await db
-          .update(schema.threadChat)
-          .set({
-            codexPreviousResponseId: json.codexPreviousResponseId,
-          })
-          .where(
-            and(
-              eq(schema.threadChat.userId, userId),
-              eq(schema.threadChat.threadId, threadId),
-              eq(schema.threadChat.id, threadChatId),
-            ),
-          );
-      } catch (error) {
-        console.error(
-          "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
-          {
-            userId,
-            threadId,
-            threadChatId,
-            transportMode,
-            codexPreviousResponseId: json.codexPreviousResponseId,
-            error,
-          },
-        );
-      }
-    }
-  }
-
-  if (enrolledLoop && envelopeV2 && claimedSignalInboxId) {
-    const commitResult = await commitEnrolledLoopDaemonEventClaim({
-      signalInboxId: claimedSignalInboxId,
-      loopId: enrolledLoop.id,
-      eventId: envelopeV2.eventId,
-    });
-    if (!commitResult.committed) {
-      console.error(
-        "[sdlc-loop] failed to mark daemon signal claim as committed",
-        {
-          userId,
-          threadId,
-          loopId: enrolledLoop.id,
-          signalInboxId: claimedSignalInboxId,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          commitState: commitResult.state,
-        },
-      );
-      return new Response("failed to commit daemon event claim", {
-        status: 500,
-      });
-    }
-    if (commitResult.state === "already_committed_or_processed") {
+      // Invalid type — skip codex persistence but do NOT rollback claimed
+      // signal. Rolling back after terminal side effects would permanently
+      // lose the daemon completion signal for enrolled loops.
       console.warn(
-        "[sdlc-loop] daemon signal claim already committed or processed before commit step",
+        "[daemon-event] invalid codexPreviousResponseId type, skipping persistence",
         {
           userId,
           threadId,
-          loopId: enrolledLoop.id,
-          signalInboxId: claimedSignalInboxId,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
+          threadChatId,
+          codexPreviousResponseId: json.codexPreviousResponseId,
         },
       );
+    } else {
+      const shouldPersistCodexPreviousResponseId =
+        transportMode === "codex-app-server" ||
+        json.codexPreviousResponseId === null;
+      if (shouldPersistCodexPreviousResponseId) {
+        try {
+          await db
+            .update(schema.threadChat)
+            .set({
+              codexPreviousResponseId: json.codexPreviousResponseId,
+            })
+            .where(
+              and(
+                eq(schema.threadChat.userId, userId),
+                eq(schema.threadChat.threadId, threadId),
+                eq(schema.threadChat.id, threadChatId),
+              ),
+            );
+        } catch (error) {
+          console.error(
+            "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
+            {
+              userId,
+              threadId,
+              threadChatId,
+              transportMode,
+              codexPreviousResponseId: json.codexPreviousResponseId,
+              error,
+            },
+          );
+        }
+      }
     }
   }
 
-  if (enrolledLoop && envelopeV2) {
+  // V3 kernel bridge: mirror terminal daemon outcomes into the
+  // Postgres-canonical journal/effect-ledger runtime.
+  if (
+    effectiveLoopId &&
+    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
     try {
-      const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-        enrolledLoop.loopVersion,
-      );
-      const signalTickResult = await runBestEffortSdlcSignalInboxTick({
+      // First observed daemon terminal event for a run is an implicit ack.
+      await appendEventAndAdvanceV3({
         db,
-        loopId: enrolledLoop.id,
-        leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-        guardrailRuntime,
-        includeRuntimeRouting: true,
-      });
-      await maybeProcessDaemonTerminalFollowUp({
-        tickResult: signalTickResult,
-        loopId: enrolledLoop.id,
-        loopVersion: enrolledLoop.loopVersion,
-        sourceRunId: envelopeV2.runId,
-        eventId: envelopeV2.eventId,
-        seq: envelopeV2.seq,
-      });
-      if (!signalTickResult.processed) {
-        console.log(
-          "[sdlc-loop] daemon event tick skipped follow-up dispatch",
-          {
-            userId,
-            threadId,
-            threadChatId,
-            loopId: enrolledLoop.id,
-            eventId: envelopeV2.eventId,
-            seq: envelopeV2.seq,
-            reason: signalTickResult.reason,
-          },
-        );
-      }
-
-      await runBestEffortSdlcPublicationCoordinator({
-        db,
-        loopId: enrolledLoop.id,
-        leaseOwnerToken: `daemon-event:${envelopeV2.eventId}:${envelopeV2.seq}`,
-        guardrailRuntime,
-      });
-    } catch (error) {
-      console.error(
-        "[sdlc-loop] best-effort publication coordinator tick failed",
-        {
-          userId,
-          threadId,
-          loopId: enrolledLoop.id,
-          eventId: envelopeV2.eventId,
-          seq: envelopeV2.seq,
-          error,
+        workflowId: effectiveLoopId,
+        source: "daemon",
+        idempotencyKey: `ack:${envelopeV2.eventId}:${envelopeV2.runId}`,
+        event: {
+          type: "dispatch_acked",
+          runId: envelopeV2.runId,
         },
+      });
+
+      // Read head AFTER the ack so it reflects post-ack state.
+      const headAfterAck = await getWorkflowHeadV3({
+        db,
+        workflowId: effectiveLoopId,
+      });
+
+      if (daemonRunStatusFromMessages === "completed") {
+        const completedEvent =
+          headAfterAck?.state === "gating_review"
+            ? ({
+                type: "gate_review_passed",
+                runId: envelopeV2.runId,
+              } as const)
+            : ({
+                type: "run_completed",
+                runId: envelopeV2.runId,
+                headSha: daemonHeadShaAtCompletion,
+              } as const);
+        await appendEventAndAdvanceV3({
+          db,
+          workflowId: effectiveLoopId,
+          source: "daemon",
+          idempotencyKey: `run-completed:${envelopeV2.eventId}`,
+          event: completedEvent,
+        });
+      } else if (daemonRunStatusFromMessages === "failed") {
+        const failedEvent =
+          headAfterAck?.state === "gating_review"
+            ? ({
+                type: "gate_review_failed",
+                runId: envelopeV2.runId,
+                reason: daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
+              } as const)
+            : ({
+                type: "run_failed",
+                runId: envelopeV2.runId,
+                message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
+                category: daemonTerminalErrorInfo.errorCategory,
+              } as const);
+        await appendEventAndAdvanceV3({
+          db,
+          workflowId: effectiveLoopId,
+          source: "daemon",
+          idempotencyKey: `run-failed:${envelopeV2.eventId}`,
+          event: failedEvent,
+        });
+      }
+    } catch (v3Err) {
+      console.error("[daemon-event] v3 kernel bridge failed, continuing", {
+        loopId: effectiveLoopId,
+        runId: envelopeV2?.runId,
+        error: v3Err,
+      });
+    }
+
+    // Inline effect drain to avoid cron latency
+    try {
+      await drainDueV3Effects({
+        db,
+        workflowId: effectiveLoopId,
+        maxItems: 5,
+        leaseOwnerPrefix: "inline:daemon-event",
+      });
+    } catch (err) {
+      console.error("[daemon-event] inline effect drain failed", {
+        error: err,
+      });
+    }
+  }
+
+  // Now that the coordinator tick succeeded, finalize the terminal run status.
+  // This was deferred from the postHandleOps block so that a tick failure
+  // keeps the run non-terminal and allows daemon retries to re-enter the
+  // main processing path. Both writes are awaited to prevent silent drops.
+  {
+    const terminalOps: Array<Promise<unknown>> = [];
+    if (runContext && resolvedStatus !== "processing") {
+      terminalOps.push(
+        updateAgentRunContext({
+          db,
+          userId,
+          runId: runContext.runId,
+          updates: { status: resolvedStatus },
+        }),
       );
+    }
+    if (
+      effectiveLoopId &&
+      envelopeV2 &&
+      daemonRunStatusFromMessages !== "processing"
+    ) {
+      terminalOps.push(
+        persistDaemonTerminalDispatchStatus({
+          loopId: effectiveLoopId!,
+          threadChatId,
+          runId: envelopeV2.runId,
+          daemonRunStatus: daemonRunStatusFromMessages,
+          daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+          daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+        }),
+      );
+    }
+    if (terminalOps.length > 0) {
+      const results = await Promise.allSettled(terminalOps);
+      for (const r of results) {
+        if (r.status === "rejected") {
+          // Non-blocking: handleDaemonEvent already committed thread
+          // side effects (messages, tool results). Returning 500 here
+          // would cause the daemon to retry and duplicate those effects.
+          // Terminal run-status staleness is acceptable — the cron sweep
+          // and ack timeout will eventually reconcile.
+          console.warn("[daemon-event] terminal state persistence failed", {
+            runId: runContext?.runId ?? envelopeV2?.runId,
+            enrolled: !!effectiveLoopId,
+            error: r.reason,
+          });
+        }
+      }
     }
   }
 

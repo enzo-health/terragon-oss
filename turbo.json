@@ -9,7 +9,9 @@
       "persistent": true,
       "cache": false
     },
-    "lint": {},
+    "lint": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/biome.json"]
+    },
     "format": {
       "inputs": [
         "$TURBO_DEFAULT$",

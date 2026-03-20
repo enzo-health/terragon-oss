@@ -24,7 +24,7 @@ import { getDiffContextStr } from "./utils";
 import { createAutomation } from "@terragon/shared/model/automations";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { redis } from "@/lib/redis";
-import { enrollSdlcLoopForGithubPR } from "@terragon/shared/model/delivery-loop";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import * as threadModel from "@terragon/shared/model/threads";
 
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -63,7 +63,14 @@ describe("handleAppMention", () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.sdlcLoop);
+    // Scope deletion to this test file's user to avoid cross-test-file interference
+    // when the test DB is shared across concurrent Vitest workers.
+    if (user?.id) {
+      const { eq } = await import("drizzle-orm");
+      await db
+        .delete(schema.deliveryWorkflow)
+        .where(eq(schema.deliveryWorkflow.userId, user.id));
+    }
 
     // Clear Redis batch keys to ensure test isolation
     const keys = await redis.keys("thread-batch:*");
@@ -173,19 +180,15 @@ describe("handleAppMention", () => {
   });
 
   it("routes to enrolled SDLC loop thread and suppresses sibling thread creation", async () => {
-    await setFeatureFlagOverrideForTest({
+    await createWorkflow({
       db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
-
-    await enrollSdlcLoopForGithubPR({
-      db,
-      userId: user.id,
+      threadId: threadIdWithPR,
+      generation: 1,
+      kind: "planning",
+      stateJson: {},
       repoFullName: pr.repoFullName,
       prNumber: pr.number,
-      threadId: threadIdWithPR,
+      userId: user.id,
     });
 
     await handleAppMention({
@@ -209,12 +212,6 @@ describe("handleAppMention", () => {
   });
 
   it("enrolls an existing PR thread into SDLC loop when coordinator routing is enabled", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
     await updateUserSettings({
       db,
       userId: user.id,
@@ -249,21 +246,15 @@ describe("handleAppMention", () => {
       commentGitHubAccountId: githubAccountId,
     });
 
-    const enrolledLoop = await db.query.sdlcLoop.findFirst({
-      where: (loop, { and, eq }) =>
-        and(
-          eq(loop.userId, user.id),
-          eq(loop.repoFullName, isolatedPr.repoFullName),
-          eq(loop.prNumber, isolatedPr.number),
-        ),
+    // V2 workflow should be created (no v1 sdlcLoop)
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: (wf, { eq }) => eq(wf.threadId, mentionThread.threadId),
     });
 
-    expect(enrolledLoop).toMatchObject({
-      userId: user.id,
-      repoFullName: isolatedPr.repoFullName,
-      prNumber: isolatedPr.number,
+    expect(workflow).toMatchObject({
       threadId: mentionThread.threadId,
-      state: "planning",
+      kind: "planning",
+      prNumber: isolatedPr.number,
     });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -275,12 +266,6 @@ describe("handleAppMention", () => {
   });
 
   it("does not enroll an opted-out dashboard thread when reusing single-thread mention routing", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
     await updateUserSettings({
       db,
       userId: user.id,
@@ -297,7 +282,7 @@ describe("handleAppMention", () => {
         githubRepoFullName: isolatedPr.repoFullName,
         githubPRNumber: isolatedPr.number,
         sourceType: "www",
-        sourceMetadata: { type: "www", sdlcLoopOptIn: false },
+        sourceMetadata: { type: "www", deliveryLoopOptIn: false },
       },
     });
 
@@ -311,16 +296,16 @@ describe("handleAppMention", () => {
       commentGitHubAccountId: githubAccountId,
     });
 
-    const enrolledLoop = await db.query.sdlcLoop.findFirst({
-      where: (loop, { and, eq }) =>
+    const enrolledWorkflow = await db.query.deliveryWorkflow.findFirst({
+      where: (wf, { and, eq }) =>
         and(
-          eq(loop.userId, user.id),
-          eq(loop.repoFullName, isolatedPr.repoFullName),
-          eq(loop.prNumber, isolatedPr.number),
+          eq(wf.userId, user.id),
+          eq(wf.repoFullName, isolatedPr.repoFullName),
+          eq(wf.prNumber, isolatedPr.number),
         ),
     });
 
-    expect(enrolledLoop).toBeUndefined();
+    expect(enrolledWorkflow).toBeUndefined();
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: optedOutThread.threadId,
@@ -331,12 +316,6 @@ describe("handleAppMention", () => {
   });
 
   it("falls back to standard routing when enrolled loop thread is not routable", async () => {
-    await setFeatureFlagOverrideForTest({
-      db,
-      userId: user.id,
-      name: "sdlcLoopCoordinatorRouting",
-      value: true,
-    });
     await setFeatureFlagOverrideForTest({
       db,
       userId: user.id,
@@ -361,12 +340,15 @@ describe("handleAppMention", () => {
       },
     });
 
-    await enrollSdlcLoopForGithubPR({
+    await createWorkflow({
       db,
-      userId: user.id,
+      threadId: isolatedThread.threadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: {},
       repoFullName: isolatedPr.repoFullName,
       prNumber: isolatedPr.number,
-      threadId: isolatedThread.threadId,
+      userId: user.id,
     });
     const getThreadSpy = vi
       .spyOn(threadModel, "getThread")

@@ -1,14 +1,20 @@
+import type {
+  DispatchablePhase,
+  DispatchIntent,
+  DispatchIntentStatus,
+  SelectedAgent,
+} from "@terragon/shared/delivery-loop/domain/dispatch-types";
+import type {
+  DispatchMechanism,
+  ExecutionClass,
+} from "@terragon/shared/delivery-loop/domain/workflow";
+import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
+import type { DeliveryLoopSelfDispatchPayload } from "@terragon/daemon/shared";
 import {
-  type DeliveryLoopDispatchablePhase,
-  DeliveryLoopDispatchIntent,
-  DeliveryLoopDispatchMechanism,
-  DeliveryLoopDispatchStatus,
-  DeliveryLoopExecutionClass,
-  DeliveryLoopFailureCategory,
-  DeliveryLoopSelectedAgent,
-} from "@terragon/shared/model/delivery-loop";
-import type { SdlcSelfDispatchPayload } from "@terragon/daemon/shared";
-import { redis } from "@/lib/redis";
+  isLocalRedisHttpMode,
+  isRedisTransportParseError,
+  redis,
+} from "@/lib/redis";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -23,9 +29,13 @@ const ACTIVE_TTL_SECONDS = 60 * 60;
 const SELF_DISPATCH_REPLAY_TTL_SECONDS = 60 * 60 * 24;
 
 /** Statuses that represent a finished intent (safe to overwrite). */
-const TERMINAL_DISPATCH_STATUSES = new Set<DeliveryLoopDispatchStatus>([
+const TERMINAL_DISPATCH_STATUSES = new Set<DispatchIntentStatus>([
   "completed",
   "failed",
+]);
+const REPLAY_ELIGIBLE_DESTINATION_STATUSES = new Set<DispatchIntentStatus>([
+  "prepared",
+  "dispatched",
 ]);
 
 /** Short TTL for completed intents — 5 minutes for post-completion inspection. */
@@ -40,10 +50,10 @@ export type SelfDispatchReplayState =
       sourceEventId: string;
       sourceSeq: number;
       sourceRunId: string;
-      payload: SdlcSelfDispatchPayload;
+      payload: DeliveryLoopSelfDispatchPayload;
     };
 
-export type RealtimeDispatchIntent = DeliveryLoopDispatchIntent & {
+export type RealtimeDispatchIntent = DispatchIntent & {
   selfDispatchReplay: SelfDispatchReplayState;
 };
 
@@ -58,7 +68,7 @@ type SelfDispatchReplayRecord =
       sourceRunId: string;
       dispatchIntentId: string;
       destinationRunId: string;
-      payload: SdlcSelfDispatchPayload;
+      payload: DeliveryLoopSelfDispatchPayload;
       createdAt: string;
     };
 
@@ -105,6 +115,8 @@ function serializeIntent(
     updatedAt: intent.updatedAt.toISOString(),
     lastError: intent.lastError ?? "",
     lastFailureCategory: intent.lastFailureCategory ?? "",
+    gate: intent.gate ?? "",
+    headSha: intent.headSha ?? "",
   };
 
   if (intent.selfDispatchReplay.kind === "none") {
@@ -152,7 +164,7 @@ function deserializeSelfDispatchReplayState(
 
   try {
     const payload = JSON.parse(raw.selfDispatchReplayPayloadJson);
-    if (!isSdlcSelfDispatchPayload(payload)) {
+    if (!isDeliveryLoopSelfDispatchPayload(payload)) {
       return { kind: "none" };
     }
     return {
@@ -211,7 +223,7 @@ function deserializeSelfDispatchReplayRecord(
 
   try {
     const payload = JSON.parse(raw.payloadJson);
-    if (!isSdlcSelfDispatchPayload(payload)) {
+    if (!isDeliveryLoopSelfDispatchPayload(payload)) {
       return { kind: "none" };
     }
     if (payload.runId !== raw.destinationRunId) {
@@ -232,9 +244,9 @@ function deserializeSelfDispatchReplayRecord(
   }
 }
 
-function isSdlcSelfDispatchPayload(
+function isDeliveryLoopSelfDispatchPayload(
   value: unknown,
-): value is SdlcSelfDispatchPayload {
+): value is DeliveryLoopSelfDispatchPayload {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -268,16 +280,14 @@ function deserializeIntent(
     loopId: raw.loopId ?? "",
     threadId: raw.threadId ?? "",
     threadChatId: raw.threadChatId ?? "",
-    targetPhase: (raw.targetPhase ??
-      "implementing") as DeliveryLoopDispatchablePhase,
-    selectedAgent: (raw.selectedAgent ??
-      "claudeCode") as DeliveryLoopSelectedAgent,
+    targetPhase: (raw.targetPhase ?? "implementing") as DispatchablePhase,
+    selectedAgent: (raw.selectedAgent ?? "claudeCode") as SelectedAgent,
     executionClass: (raw.executionClass ??
-      "implementation_runtime") as DeliveryLoopExecutionClass,
+      "implementation_runtime") as ExecutionClass,
     dispatchMechanism: (raw.dispatchMechanism ??
-      "self_dispatch") as DeliveryLoopDispatchMechanism,
+      "self_dispatch") as DispatchMechanism,
     runId: raw.runId ?? "",
-    status: (raw.status ?? "prepared") as DeliveryLoopDispatchStatus,
+    status: (raw.status ?? "prepared") as DispatchIntentStatus,
     retryCount: Number(raw.retryCount ?? 0),
     maxRetries: Number(raw.maxRetries ?? 0),
     createdAt: new Date(raw.createdAt ?? 0),
@@ -285,6 +295,8 @@ function deserializeIntent(
     lastError: raw.lastError || null,
     lastFailureCategory:
       (raw.lastFailureCategory as DeliveryLoopFailureCategory) || null,
+    gate: raw.gate || undefined,
+    headSha: raw.headSha || undefined,
     selfDispatchReplay: deserializeSelfDispatchReplayState(raw),
   };
 }
@@ -297,12 +309,14 @@ export type CreateDispatchIntentParams = {
   loopId: string;
   threadId: string;
   threadChatId: string;
-  targetPhase: DeliveryLoopDispatchablePhase;
-  selectedAgent: DeliveryLoopSelectedAgent;
-  executionClass: DeliveryLoopExecutionClass;
-  dispatchMechanism: DeliveryLoopDispatchMechanism;
+  targetPhase: DispatchablePhase;
+  selectedAgent: SelectedAgent;
+  executionClass: ExecutionClass;
+  dispatchMechanism: DispatchMechanism;
   runId: string;
   maxRetries: number;
+  gate?: string;
+  headSha?: string;
 };
 
 /**
@@ -312,22 +326,6 @@ export type CreateDispatchIntentParams = {
 export async function createDispatchIntent(
   params: CreateDispatchIntentParams,
 ): Promise<RealtimeDispatchIntent> {
-  // Guard: prevent overwriting an active (non-terminal) intent.
-  // Only fetch the status field to avoid deserializing the full intent on the hot path.
-  const key = redisKey(params.threadChatId);
-  const existingStatus = await redis.hget<string>(key, "status");
-  if (
-    existingStatus &&
-    !TERMINAL_DISPATCH_STATUSES.has(
-      existingStatus as DeliveryLoopDispatchStatus,
-    )
-  ) {
-    const existingId = await redis.hget<string>(key, "id");
-    throw new Error(
-      `Cannot create dispatch intent: active intent "${existingId}" exists for threadChat "${params.threadChatId}" with status "${existingStatus}"`,
-    );
-  }
-
   const now = new Date();
   const intent: RealtimeDispatchIntent = {
     id: buildDispatchIntentId(params.loopId, params.runId),
@@ -346,43 +344,81 @@ export async function createDispatchIntent(
     updatedAt: now,
     lastError: null,
     lastFailureCategory: null,
+    gate: params.gate,
+    headSha: params.headSha,
     selfDispatchReplay: {
       kind: "none",
     },
   };
 
-  await redis.hset(key, serializeIntent(intent));
-  await redis.expire(key, ACTIVE_TTL_SECONDS);
+  if (isLocalRedisHttpMode()) {
+    return intent;
+  }
+
+  const key = redisKey(params.threadChatId);
+  // Guard: prevent overwriting an active (non-terminal) intent.
+  // Only fetch the status field to avoid deserializing the full intent on the hot path.
+  const existingStatus = await redis.hget<string>(key, "status");
+  if (
+    existingStatus &&
+    !TERMINAL_DISPATCH_STATUSES.has(existingStatus as DispatchIntentStatus)
+  ) {
+    const existingId = await redis.hget<string>(key, "id");
+    throw new Error(
+      `Cannot create dispatch intent: active intent "${existingId}" exists for threadChat "${params.threadChatId}" with status "${existingStatus}"`,
+    );
+  }
+
+  try {
+    await redis.hset(key, serializeIntent(intent));
+    await redis.expire(key, ACTIVE_TTL_SECONDS);
+  } catch (error) {
+    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis create parse failure, skipping cache write",
+        { threadChatId: params.threadChatId, intentId: intent.id },
+      );
+      return intent;
+    }
+    throw error;
+  }
 
   return intent;
 }
 
 /**
  * Partially update an existing dispatch intent in Redis.
- * Validates that the stored intent id matches to prevent stale
- * ack/failure events from mutating a newer intent.
  */
 export async function updateDispatchIntent(
   id: string,
   threadChatId: string,
   updates: Partial<
     Pick<
-      DeliveryLoopDispatchIntent,
+      DispatchIntent,
       "status" | "retryCount" | "lastError" | "lastFailureCategory"
     >
   >,
 ): Promise<void> {
-  const key = redisKey(threadChatId);
-
-  // Guard: verify the stored intent matches the requested id.
-  const storedId = await redis.hget<string>(key, "id");
-  if (storedId && storedId !== id) {
-    console.warn(
-      `[dispatch-intent] updateDispatchIntent: id mismatch (requested=${id}, stored=${storedId}), skipping update`,
-    );
+  if (isLocalRedisHttpMode()) {
     return;
   }
-
+  const key = redisKey(threadChatId);
+  let existingId: string | null = null;
+  try {
+    existingId = await redis.hget<string>(key, "id");
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis update parse failure while reading id, skipping",
+        { threadChatId, intentId: id },
+      );
+      return;
+    }
+    throw error;
+  }
+  if (!existingId || existingId !== id) {
+    return;
+  }
   const patch: Record<string, string> = {
     updatedAt: new Date().toISOString(),
   };
@@ -395,7 +431,18 @@ export async function updateDispatchIntent(
   if (updates.lastFailureCategory !== undefined)
     patch.lastFailureCategory = updates.lastFailureCategory ?? "";
 
-  await redis.hset(key, patch);
+  try {
+    await redis.hset(key, patch);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis update parse failure while writing patch, skipping",
+        { threadChatId, intentId: id },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -405,8 +452,23 @@ export async function updateDispatchIntent(
 export async function getActiveDispatchIntent(
   threadChatId: string,
 ): Promise<RealtimeDispatchIntent | null> {
+  if (isLocalRedisHttpMode()) {
+    return null;
+  }
   const key = redisKey(threadChatId);
-  const raw = await redis.hgetall(key);
+  let raw: unknown;
+  try {
+    raw = await redis.hgetall(key);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis read parse failure, treating as empty",
+        { threadChatId },
+      );
+      return null;
+    }
+    throw error;
+  }
   if (!raw || Object.keys(raw).length === 0) return null;
   return deserializeIntent(raw as Record<string, string | undefined>);
 }
@@ -418,23 +480,42 @@ export async function storeSelfDispatchReplay(params: {
   sourceRunId: string;
   dispatchIntentId: string;
   destinationRunId: string;
-  payload: SdlcSelfDispatchPayload;
+  payload: DeliveryLoopSelfDispatchPayload;
 }): Promise<void> {
+  if (isLocalRedisHttpMode()) {
+    return;
+  }
   const key = selfDispatchReplayRedisKey(params);
-  await redis.hset(
-    key,
-    serializeSelfDispatchReplayRecord({
-      kind: "ready",
-      sourceEventId: params.sourceEventId,
-      sourceSeq: params.sourceSeq,
-      sourceRunId: params.sourceRunId,
-      dispatchIntentId: params.dispatchIntentId,
-      destinationRunId: params.destinationRunId,
-      payload: params.payload,
-      createdAt: new Date().toISOString(),
-    }),
-  );
-  await redis.expire(key, SELF_DISPATCH_REPLAY_TTL_SECONDS);
+  try {
+    await redis.hset(
+      key,
+      serializeSelfDispatchReplayRecord({
+        kind: "ready",
+        sourceEventId: params.sourceEventId,
+        sourceSeq: params.sourceSeq,
+        sourceRunId: params.sourceRunId,
+        dispatchIntentId: params.dispatchIntentId,
+        destinationRunId: params.destinationRunId,
+        payload: params.payload,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    await redis.expire(key, SELF_DISPATCH_REPLAY_TTL_SECONDS);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis replay-store parse failure, skipping",
+        {
+          threadChatId: params.threadChatId,
+          sourceEventId: params.sourceEventId,
+          sourceSeq: params.sourceSeq,
+          sourceRunId: params.sourceRunId,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function getReplayableSelfDispatch(params: {
@@ -442,9 +523,29 @@ export async function getReplayableSelfDispatch(params: {
   sourceEventId: string;
   sourceSeq: number;
   sourceRunId: string;
-}): Promise<SdlcSelfDispatchPayload | null> {
+}): Promise<DeliveryLoopSelfDispatchPayload | null> {
+  if (isLocalRedisHttpMode()) {
+    return null;
+  }
   const key = selfDispatchReplayRedisKey(params);
-  const raw = await redis.hgetall(key);
+  let raw: unknown;
+  try {
+    raw = await redis.hgetall(key);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis replay-read parse failure, treating as empty",
+        {
+          threadChatId: params.threadChatId,
+          sourceEventId: params.sourceEventId,
+          sourceSeq: params.sourceSeq,
+          sourceRunId: params.sourceRunId,
+        },
+      );
+      return null;
+    }
+    throw error;
+  }
   if (!raw || Object.keys(raw).length === 0) {
     return null;
   }
@@ -454,13 +555,17 @@ export async function getReplayableSelfDispatch(params: {
   if (replayRecord.kind !== "ready") {
     return null;
   }
-  const activeIntent = await getActiveDispatchIntent(params.threadChatId);
+  const destinationIntent = await getActiveDispatchIntent(params.threadChatId);
+  if (!destinationIntent) {
+    return null;
+  }
   if (
-    !activeIntent ||
-    activeIntent.id !== replayRecord.dispatchIntentId ||
-    activeIntent.runId !== replayRecord.destinationRunId ||
-    TERMINAL_DISPATCH_STATUSES.has(activeIntent.status)
+    destinationIntent.id !== replayRecord.dispatchIntentId ||
+    destinationIntent.runId !== replayRecord.destinationRunId
   ) {
+    return null;
+  }
+  if (!REPLAY_ELIGIBLE_DESTINATION_STATUSES.has(destinationIntent.status)) {
     return null;
   }
   return replayRecord.payload;
@@ -468,24 +573,30 @@ export async function getReplayableSelfDispatch(params: {
 
 /**
  * Mark a dispatch intent as completed. Redis entry gets a short TTL (5 minutes)
- * for post-completion inspection. Verifies the stored intent id matches the
- * requested id to prevent accidentally completing a newer active intent.
+ * for post-completion inspection.
  */
 export async function completeDispatchIntent(
   id: string,
   threadChatId: string,
 ): Promise<void> {
-  const key = redisKey(threadChatId);
-  const storedId = await redis.hget<string>(key, "id");
-  if (storedId && storedId !== id) {
-    console.warn(
-      `[dispatch-intent] completeDispatchIntent: id mismatch (requested=${id}, stored=${storedId}), skipping`,
-    );
+  if (isLocalRedisHttpMode()) {
     return;
   }
-  await redis.hset(key, {
-    status: "completed",
-    updatedAt: new Date().toISOString(),
-  });
-  await redis.expire(key, COMPLETED_TTL_SECONDS);
+  const key = redisKey(threadChatId);
+  try {
+    await redis.hset(key, {
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+    });
+    await redis.expire(key, COMPLETED_TTL_SECONDS);
+  } catch (error) {
+    if (isRedisTransportParseError(error)) {
+      console.warn(
+        "[dispatch-intent] local redis complete parse failure, skipping",
+        { threadChatId, intentId: id },
+      );
+      return;
+    }
+    throw error;
+  }
 }

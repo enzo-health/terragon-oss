@@ -138,17 +138,19 @@ async function probeSandboxAgentEndpoint({
   session: ISandboxSession;
   options: CreateSandboxOptions;
 }) {
-  if (!options.featureFlags.sandboxAgentAcpTransport) {
-    return;
-  }
   const baseUrl = getSandboxAgentBaseUrl(options);
   if (!baseUrl) {
-    throw new Error(
-      "sandboxAgentAcpTransport is enabled but SANDBOX_AGENT_BASE_URL is missing",
-    );
+    return;
   }
+  const healthMaxRetries = options.sandboxProvider === "docker" ? 30 : 12;
+  const healthRetryDelayMs = options.sandboxProvider === "docker" ? 750 : 500;
   await ensureSandboxAgentRunning({ session, baseUrl });
-  await waitForSandboxAgentHealth({ session, baseUrl });
+  await waitForSandboxAgentHealth({
+    session,
+    baseUrl,
+    maxRetries: healthMaxRetries,
+    retryDelayMs: healthRetryDelayMs,
+  });
   try {
     await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`, {
       cwd: "/",

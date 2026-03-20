@@ -14,7 +14,7 @@ import {
   getGithubPRChecksStatus,
 } from "@terragon/shared/github-api/helpers";
 import { getInstallationToken } from "@terragon/shared/github-app";
-import { symmetricEncrypt } from "better-auth/crypto";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
 import { decryptTokenWithBackwardsCompatibility } from "@terragon/utils/encryption";
 import { getPostHogServer } from "./posthog-server";
@@ -249,9 +249,85 @@ export async function getOctokitForApp({
 
 const GITHUB_OAUTH_TOKEN_REGEX =
   /^(gh[oprsu]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)$/;
+const BETTER_AUTH_ENCRYPTED_TOKEN_REGEX = /^[a-f0-9]{64,}$/i;
 
 function isLikelyGitHubOAuthToken(token: string): boolean {
   return GITHUB_OAUTH_TOKEN_REGEX.test(token);
+}
+
+async function tryDecryptBetterAuthToken({
+  token,
+  key,
+}: {
+  token: string;
+  key: string;
+}): Promise<string | null> {
+  if (!key || key.trim().length === 0) {
+    return null;
+  }
+  try {
+    return await symmetricDecrypt({
+      key,
+      data: token,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function decodeGitHubOAuthToken(
+  rawToken: string,
+): Promise<string | null> {
+  if (isLikelyGitHubOAuthToken(rawToken)) {
+    return rawToken;
+  }
+
+  if (BETTER_AUTH_ENCRYPTED_TOKEN_REGEX.test(rawToken)) {
+    const betterAuthToken = await tryDecryptBetterAuthToken({
+      token: rawToken,
+      key: env.BETTER_AUTH_SECRET,
+    });
+    if (betterAuthToken && isLikelyGitHubOAuthToken(betterAuthToken)) {
+      return betterAuthToken;
+    }
+  }
+
+  const legacyToken = decryptTokenWithBackwardsCompatibility(
+    rawToken,
+    env.ENCRYPTION_MASTER_KEY,
+  );
+  if (isLikelyGitHubOAuthToken(legacyToken)) {
+    return legacyToken;
+  }
+
+  const betterAuthToken = await tryDecryptBetterAuthToken({
+    token: rawToken,
+    key: env.BETTER_AUTH_SECRET,
+  });
+  if (betterAuthToken && isLikelyGitHubOAuthToken(betterAuthToken)) {
+    return betterAuthToken;
+  }
+
+  return null;
+}
+
+async function getDirectGitHubAccessTokenFromAccount(params: {
+  userId: string;
+}): Promise<string | null> {
+  const githubAccount = await db.query.account.findFirst({
+    where: and(
+      eq(schema.account.userId, params.userId),
+      eq(schema.account.providerId, "github"),
+    ),
+    columns: {
+      accessToken: true,
+    },
+  });
+  const rawToken = githubAccount?.accessToken;
+  if (!rawToken) {
+    return null;
+  }
+  return await decodeGitHubOAuthToken(rawToken);
 }
 
 async function tryMigrateLegacyGitHubOAuthTokens({
@@ -332,10 +408,13 @@ export async function getGitHubUserAccessToken({
     const result = await auth.api.getAccessToken({
       body: { providerId: "github", userId },
     });
-    return result?.accessToken ?? null;
+    if (result?.accessToken) {
+      return result.accessToken;
+    }
+    return await getDirectGitHubAccessTokenFromAccount({ userId });
   } catch (error) {
     console.error(
-      `[github-oauth] Failed to get GitHub access token for user ${userId}`,
+      `[github-oauth] Failed to get/refresh GitHub access token for user ${userId}`,
       error,
     );
     try {
@@ -343,18 +422,21 @@ export async function getGitHubUserAccessToken({
         userId,
       });
       if (!migratedLegacyTokens) {
-        return null;
+        return await getDirectGitHubAccessTokenFromAccount({ userId });
       }
       const retryResult = await auth.api.getAccessToken({
         body: { providerId: "github", userId },
       });
-      return retryResult?.accessToken ?? null;
+      if (retryResult?.accessToken) {
+        return retryResult.accessToken;
+      }
+      return await getDirectGitHubAccessTokenFromAccount({ userId });
     } catch (migrationError) {
       console.error(
         `[github-oauth] Failed to recover GitHub OAuth tokens for user ${userId}`,
         migrationError,
       );
-      return null;
+      return await getDirectGitHubAccessTokenFromAccount({ userId });
     }
   }
 }
@@ -548,19 +630,23 @@ export async function getExistingPRForBranch({
   repoFullName,
   headBranchName,
   baseBranchName,
+  userId,
 }: {
   repoFullName: string;
   headBranchName: string;
   baseBranchName: string;
+  userId?: string;
 }) {
   const [owner, repo] = parseRepoFullName(repoFullName);
-  const octokit = await getOctokitForApp({ owner, repo });
   try {
+    const userOctokit = userId ? await getOctokitForUser({ userId }) : null;
+    const octokit = userOctokit ?? (await getOctokitForApp({ owner, repo }));
+
     const existingPr = await octokit.rest.pulls.list({
       owner,
       repo,
       state: "open",
-      head: headBranchName,
+      head: `${owner}:${headBranchName}`,
       base: baseBranchName,
     });
     // Filter for exact branch match
@@ -570,6 +656,7 @@ export async function getExistingPRForBranch({
     return exactMatchPr || null;
   } catch (error) {
     console.error("Error finding associated PR:", error);
+    return null;
   }
 }
 
@@ -597,6 +684,7 @@ export async function findAndAssociatePR({
     repoFullName,
     headBranchName,
     baseBranchName,
+    userId,
   });
   if (!existingPr) {
     return null;

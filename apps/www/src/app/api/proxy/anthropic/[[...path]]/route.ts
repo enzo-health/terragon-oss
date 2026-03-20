@@ -19,7 +19,7 @@ const ANTHROPIC_API_ORIGIN = new URL(ANTHROPIC_API_BASE).origin;
 
 export const dynamic = "force-dynamic";
 
-type HandlerArgs = { params: { path?: string[] } };
+type HandlerArgs = { params: Promise<{ path?: string[] }> };
 type AuthContext = { userId: string };
 
 type StreamEvent = {

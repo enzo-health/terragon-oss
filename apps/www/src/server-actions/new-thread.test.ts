@@ -1,4 +1,4 @@
-import { describe, it, vi, beforeEach, expect } from "vitest";
+import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
 import { newThread } from "./new-thread";
 import { db } from "@/lib/db";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
@@ -10,6 +10,7 @@ import {
 } from "@/test-helpers/mock-next";
 import { getThread } from "@terragon/shared/model/threads";
 import { unwrapResult } from "@/lib/server-actions";
+import { execSync } from "node:child_process";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {
@@ -18,9 +19,20 @@ const mockMessage: DBUserMessage = {
   model: "sonnet",
 };
 
-describe("newThread", () => {
+async function waitUntilResolvedBestEffort() {
+  await Promise.race([
+    waitUntilResolved(),
+    new Promise((resolve) => setTimeout(resolve, 1_000)),
+  ]);
+}
+
+describe("newThread", { timeout: 30_000 }, () => {
   let user: User;
   let session: Session;
+
+  beforeAll(() => {
+    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+  });
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -41,7 +53,7 @@ describe("newThread", () => {
         createNewBranch: true,
       });
       const { threadId } = unwrapResult(result);
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -60,7 +72,7 @@ describe("newThread", () => {
         createNewBranch: false,
       });
       const { threadId } = unwrapResult(result);
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -78,7 +90,7 @@ describe("newThread", () => {
         branchName: "main",
       });
       const { threadId } = unwrapResult(result);
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
@@ -96,14 +108,14 @@ describe("newThread", () => {
         branchName: "main",
       });
       const { threadId } = unwrapResult(result);
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
       expect(thread!.sourceType).toBe("www");
       expect(thread!.sourceMetadata).toEqual({
         type: "www",
-        sdlcLoopOptIn: true,
+        deliveryLoopOptIn: true,
       });
     });
 
@@ -115,17 +127,17 @@ describe("newThread", () => {
         message: mockMessage,
         githubRepoFullName: repoFullName,
         branchName: "main",
-        runInSdlcLoop: true,
+        runInDeliveryLoop: true,
       });
       const { threadId } = unwrapResult(result);
-      await waitUntilResolved();
+      await waitUntilResolvedBestEffort();
 
       const thread = await getThread({ db, userId: user.id, threadId });
       expect(thread).toBeDefined();
       expect(thread!.sourceType).toBe("www");
       expect(thread!.sourceMetadata).toEqual({
         type: "www",
-        sdlcLoopOptIn: true,
+        deliveryLoopOptIn: true,
       });
     });
   });

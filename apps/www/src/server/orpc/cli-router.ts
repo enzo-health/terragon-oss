@@ -39,6 +39,31 @@ const os = implement(cliAPIContract)
     });
   });
 
+export function resolveCreateThreadBranchNames({
+  repoBaseBranchName,
+  createNewBranch = true,
+}: {
+  repoBaseBranchName?: string | null;
+  createNewBranch?: boolean;
+}): {
+  baseBranchName: string | null;
+  headBranchName: string | null;
+} {
+  const normalizedRepoBaseBranchName = repoBaseBranchName?.trim() || null;
+
+  if (createNewBranch) {
+    return {
+      baseBranchName: normalizedRepoBaseBranchName,
+      headBranchName: null,
+    };
+  }
+
+  return {
+    baseBranchName: null,
+    headBranchName: normalizedRepoBaseBranchName,
+  };
+}
+
 // Create procedures
 const listThreads = os.threads.list.handler(async ({ input, context }) => {
   console.log("cli list threads", {
@@ -129,7 +154,7 @@ const createThread = os.threads.create.handler(
     const {
       message,
       githubRepoFullName,
-      repoBaseBranchName = "main",
+      repoBaseBranchName,
       createNewBranch = true,
       mode,
       model,
@@ -151,24 +176,27 @@ const createThread = os.threads.create.handler(
     }
 
     // Check if GitHub App is installed on the repository
-    try {
-      const isInstalled = await isAppInstalledOnRepo(owner, repo);
-      if (!isInstalled) {
+    // Skip in development — GitHub App credentials are typically not configured locally.
+    if (process.env.NODE_ENV !== "development") {
+      try {
+        const isInstalled = await isAppInstalledOnRepo(owner, repo);
+        if (!isInstalled) {
+          throw errors.INTERNAL_ERROR({
+            message: `GitHub App is not installed on repository ${githubRepoFullName}. Please install the Terragon GitHub App on this repository first.`,
+          });
+        }
+      } catch (error) {
+        // If the error is already about the app not being installed, re-throw it
+        if (error instanceof Error && error.message.includes("not installed")) {
+          throw errors.INTERNAL_ERROR({
+            message: error.message,
+          });
+        }
+        // Otherwise, the repository might not exist or there's a GitHub API issue
         throw errors.INTERNAL_ERROR({
-          message: `GitHub App is not installed on repository ${githubRepoFullName}. Please install the Terragon GitHub App on this repository first.`,
+          message: `Unable to access repository ${githubRepoFullName}. Please ensure the repository exists and you have access to it.`,
         });
       }
-    } catch (error) {
-      // If the error is already about the app not being installed, re-throw it
-      if (error instanceof Error && error.message.includes("not installed")) {
-        throw errors.INTERNAL_ERROR({
-          message: error.message,
-        });
-      }
-      // Otherwise, the repository might not exist or there's a GitHub API issue
-      throw errors.INTERNAL_ERROR({
-        message: `Unable to access repository ${githubRepoFullName}. Please ensure the repository exists and you have access to it.`,
-      });
     }
 
     // Exhaustive mapping from CLI mode -> permissionMode used by agent
@@ -198,8 +226,10 @@ const createThread = os.threads.create.handler(
       permissionMode: toPermissionMode(mode),
     };
 
-    let baseBranchName = createNewBranch ? repoBaseBranchName : null;
-    let headBranchName = createNewBranch ? null : repoBaseBranchName;
+    const { baseBranchName, headBranchName } = resolveCreateThreadBranchNames({
+      repoBaseBranchName,
+      createNewBranch,
+    });
     try {
       const { threadId } = await newThreadInternal({
         userId: context.userId,

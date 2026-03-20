@@ -1,38 +1,15 @@
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { publicAppUrl } from "@terragon/env/next-public";
+import { type DeliveryOutboxErrorClass } from "@terragon/shared/delivery-loop/store/outbox-types";
 import {
-  acquireSdlcLoopLease,
-  claimNextSdlcOutboxActionForExecution,
-  clearSdlcCanonicalStatusCommentReference,
-  completeSdlcOutboxActionExecution,
-  evaluateSdlcLoopGuardrails,
-  persistSdlcCanonicalCheckRunReference,
-  persistSdlcCanonicalStatusCommentReference,
-  releaseSdlcLoopLease,
-  terminalSdlcLoopStateList,
-  terminalSdlcLoopStateSet,
-  type ClaimedSdlcOutboxAction,
-  type SdlcOutboxErrorClass,
-} from "@terragon/shared/model/delivery-loop";
+  persistWorkflowStatusCommentReference,
+  clearWorkflowStatusCommentReference,
+  persistWorkflowCheckRunReference,
+} from "@terragon/shared/delivery-loop/store/workflow-github-refs";
 import type { DB } from "@terragon/shared/db";
-import {
-  and,
-  eq,
-  inArray,
-  isNull,
-  lte,
-  notInArray,
-  or,
-  sql,
-} from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import { z } from "zod/v4";
-
-const STATUS_COMMENT_PAYLOAD_SCHEMA = z.object({
-  repoFullName: z.string().min(1),
-  prNumber: z.number().int().positive(),
-  body: z.string().min(1),
-});
 
 const CHECK_SUMMARY_PAYLOAD_SCHEMA = z.object({
   repoFullName: z.string().min(1),
@@ -58,17 +35,6 @@ const CHECK_SUMMARY_PAYLOAD_SCHEMA = z.object({
 
 const SDLC_STATUS_COMMENT_MARKER_PREFIX = "terragon-sdlc-loop-status-comment:";
 const SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX = "terragon-sdlc-loop-check-run:";
-const SDLC_PUBLICATION_LEASE_TTL_MS = 30_000;
-const SDLC_PUBLICATION_DURABLE_DRAIN_MAX_LOOPS = 20;
-const SDLC_PUBLICATION_DURABLE_DRAIN_MAX_ACTIONS_TOTAL = 50;
-const SDLC_PUBLICATION_DURABLE_DRAIN_MAX_ACTIONS_PER_LOOP = 5;
-export type SdlcPublicationGuardrailRuntimeInput = {
-  killSwitchEnabled?: boolean;
-  cooldownUntil?: Date | null;
-  maxIterations?: number | null;
-  manualIntentAllowed?: boolean;
-  iterationCount?: number;
-};
 
 function getErrorStatus(error: unknown): number | null {
   if (!error || typeof error !== "object" || !("status" in error)) {
@@ -103,25 +69,25 @@ async function buildReviewerSafeVideoArtifactLink(
   return `🎥 [Session video artifact (view in Terragon)](${publicAppUrl()}/task/${threadId})`;
 }
 
-function getSdlcStatusCommentMarker(loopId: string): string {
+function getDeliveryStatusCommentMarker(loopId: string): string {
   return `<!-- ${SDLC_STATUS_COMMENT_MARKER_PREFIX}${loopId} -->`;
 }
 
-function appendSdlcStatusCommentMarker({
+function appendDeliveryStatusCommentMarker({
   body,
   loopId,
 }: {
   body: string;
   loopId: string;
 }): string {
-  const marker = getSdlcStatusCommentMarker(loopId);
+  const marker = getDeliveryStatusCommentMarker(loopId);
   if (body.includes(marker)) {
     return body;
   }
   return `${body}\n\n${marker}`;
 }
 
-function getSdlcCheckRunExternalId(loopId: string): string {
+function getDeliveryCheckRunExternalId(loopId: string): string {
   return `${SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX}${loopId}`;
 }
 
@@ -138,7 +104,7 @@ async function findReconciledCanonicalStatusComment({
   prNumber: number;
   loopId: string;
 }) {
-  const marker = getSdlcStatusCommentMarker(loopId);
+  const marker = getDeliveryStatusCommentMarker(loopId);
   for (let page = 1; page <= 10; page += 1) {
     const comments = await octokit.rest.issues.listComments({
       owner,
@@ -179,7 +145,7 @@ async function findReconciledCanonicalCheckRun({
   loopId: string;
   checkName: string;
 }) {
-  const externalId = getSdlcCheckRunExternalId(loopId);
+  const externalId = getDeliveryCheckRunExternalId(loopId);
   for (let page = 1; page <= 10; page += 1) {
     const runs = await octokit.rest.checks.listForRef({
       owner,
@@ -202,32 +168,37 @@ async function findReconciledCanonicalCheckRun({
   return null;
 }
 
-export async function upsertSdlcCanonicalStatusComment({
+export async function upsertDeliveryCanonicalStatusComment({
   db,
-  loopId,
+  workflowId,
   repoFullName,
   prNumber,
   body,
 }: {
   db: DB;
-  loopId: string;
+  workflowId: string;
   repoFullName: string;
   prNumber: number;
   body: string;
 }) {
-  const loop = await db.query.sdlcLoop.findFirst({
-    where: eq(schema.sdlcLoop.id, loopId),
+  const workflow = await db.query.deliveryWorkflow.findFirst({
+    where: eq(schema.deliveryWorkflow.id, workflowId),
   });
 
-  if (!loop) {
-    throw new Error(`Delivery Loop not found: ${loopId}`);
+  if (!workflow) {
+    throw new Error(`Delivery Workflow not found: ${workflowId}`);
   }
 
   const [owner, repo] = parseRepoFullName(repoFullName);
   const octokit = await getOctokitForApp({ owner, repo });
-  const canonicalBody = appendSdlcStatusCommentMarker({ body, loopId });
+  const canonicalBody = appendDeliveryStatusCommentMarker({
+    body,
+    loopId: workflowId,
+  });
 
-  const existingCommentId = parseGitHubNumericId(loop.canonicalStatusCommentId);
+  const existingCommentId = parseGitHubNumericId(
+    workflow.canonicalStatusCommentId,
+  );
   if (existingCommentId) {
     try {
       const updatedComment = await octokit.rest.issues.updateComment({
@@ -237,9 +208,9 @@ export async function upsertSdlcCanonicalStatusComment({
         body: canonicalBody,
       });
 
-      await persistSdlcCanonicalStatusCommentReference({
+      await persistWorkflowStatusCommentReference({
         db,
-        loopId,
+        workflowId,
         commentId: String(updatedComment.data.id),
         commentNodeId: updatedComment.data.node_id,
       });
@@ -254,7 +225,7 @@ export async function upsertSdlcCanonicalStatusComment({
         throw error;
       }
 
-      await clearSdlcCanonicalStatusCommentReference({ db, loopId });
+      await clearWorkflowStatusCommentReference({ db, workflowId });
     }
   }
 
@@ -263,7 +234,7 @@ export async function upsertSdlcCanonicalStatusComment({
     owner,
     repo,
     prNumber,
-    loopId,
+    loopId: workflowId,
   });
   if (reconciledComment) {
     const refreshedComment = await octokit.rest.issues.updateComment({
@@ -273,9 +244,9 @@ export async function upsertSdlcCanonicalStatusComment({
       body: canonicalBody,
     });
 
-    await persistSdlcCanonicalStatusCommentReference({
+    await persistWorkflowStatusCommentReference({
       db,
-      loopId,
+      workflowId,
       commentId: String(refreshedComment.data.id),
       commentNodeId: refreshedComment.data.node_id,
     });
@@ -294,9 +265,9 @@ export async function upsertSdlcCanonicalStatusComment({
     body: canonicalBody,
   });
 
-  await persistSdlcCanonicalStatusCommentReference({
+  await persistWorkflowStatusCommentReference({
     db,
-    loopId,
+    workflowId,
     commentId: String(createdComment.data.id),
     commentNodeId: createdComment.data.node_id,
   });
@@ -308,41 +279,41 @@ export async function upsertSdlcCanonicalStatusComment({
   };
 }
 
-export async function upsertSdlcCanonicalCheckSummary({
+export async function upsertDeliveryCanonicalCheckSummary({
   db,
-  loopId,
+  workflowId,
   payload,
 }: {
   db: DB;
-  loopId: string;
+  workflowId: string;
   payload: z.infer<typeof CHECK_SUMMARY_PAYLOAD_SCHEMA>;
 }) {
-  const loop = await db.query.sdlcLoop.findFirst({
-    where: eq(schema.sdlcLoop.id, loopId),
+  const workflow = await db.query.deliveryWorkflow.findFirst({
+    where: eq(schema.deliveryWorkflow.id, workflowId),
   });
 
-  if (!loop) {
-    throw new Error(`Delivery Loop not found: ${loopId}`);
+  if (!workflow) {
+    throw new Error(`Delivery Workflow not found: ${workflowId}`);
   }
 
   const [owner, repo] = parseRepoFullName(payload.repoFullName);
   const octokit = await getOctokitForApp({ owner, repo });
-  const checkRunExternalId = getSdlcCheckRunExternalId(loopId);
+  const checkRunExternalId = getDeliveryCheckRunExternalId(workflowId);
 
   const artifactLink = await buildReviewerSafeVideoArtifactLink(
     payload.artifactR2Key,
-    loop.threadId,
+    workflow.threadId,
   );
   const summaryWithArtifactLink = artifactLink
     ? `${payload.summary}\n\n---\n${artifactLink}`
     : payload.summary;
 
-  if (loop.canonicalCheckRunId) {
+  if (workflow.canonicalCheckRunId) {
     try {
       await octokit.rest.checks.update({
         owner,
         repo,
-        check_run_id: loop.canonicalCheckRunId,
+        check_run_id: workflow.canonicalCheckRunId,
         external_id: checkRunExternalId,
         status: payload.status,
         conclusion: payload.conclusion,
@@ -353,14 +324,14 @@ export async function upsertSdlcCanonicalCheckSummary({
         },
       });
 
-      await persistSdlcCanonicalCheckRunReference({
+      await persistWorkflowCheckRunReference({
         db,
-        loopId,
-        checkRunId: loop.canonicalCheckRunId,
+        workflowId,
+        checkRunId: workflow.canonicalCheckRunId,
       });
 
       return {
-        checkRunId: loop.canonicalCheckRunId,
+        checkRunId: workflow.canonicalCheckRunId,
         wasCreated: false,
       };
     } catch (error) {
@@ -382,7 +353,7 @@ export async function upsertSdlcCanonicalCheckSummary({
     owner,
     repo,
     headSha,
-    loopId,
+    loopId: workflowId,
     checkName: payload.title,
   });
   if (reconciledCheckRun) {
@@ -400,9 +371,9 @@ export async function upsertSdlcCanonicalCheckSummary({
       },
     });
 
-    await persistSdlcCanonicalCheckRunReference({
+    await persistWorkflowCheckRunReference({
       db,
-      loopId,
+      workflowId,
       checkRunId: refreshedCheckRun.data.id,
     });
 
@@ -427,9 +398,9 @@ export async function upsertSdlcCanonicalCheckSummary({
     },
   });
 
-  await persistSdlcCanonicalCheckRunReference({
+  await persistWorkflowCheckRunReference({
     db,
-    loopId,
+    workflowId,
     checkRunId: checkRun.data.id,
   });
 
@@ -439,8 +410,8 @@ export async function upsertSdlcCanonicalCheckSummary({
   };
 }
 
-export function classifySdlcPublicationFailure(error: unknown): {
-  errorClass: SdlcOutboxErrorClass;
+export function classifyDeliveryPublicationFailure(error: unknown): {
+  errorClass: DeliveryOutboxErrorClass;
   errorCode: string;
   retriable: boolean;
   message: string;
@@ -493,342 +464,4 @@ export function classifySdlcPublicationFailure(error: unknown): {
     retriable: true,
     message,
   };
-}
-
-function resolvePublicationGuardrailInputs({
-  loop,
-  runtimeInput,
-}: {
-  loop: {
-    loopVersion: number;
-  };
-  runtimeInput: SdlcPublicationGuardrailRuntimeInput | undefined;
-}) {
-  const defaultIterationCount =
-    typeof loop.loopVersion === "number" && Number.isFinite(loop.loopVersion)
-      ? Math.max(loop.loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: runtimeInput?.killSwitchEnabled ?? false,
-    cooldownUntil: runtimeInput?.cooldownUntil ?? null,
-    maxIterations: runtimeInput?.maxIterations ?? null,
-    manualIntentAllowed: runtimeInput?.manualIntentAllowed ?? false,
-    iterationCount: runtimeInput?.iterationCount ?? defaultIterationCount,
-  };
-}
-
-function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
-  const iterationCount =
-    typeof loopVersion === "number" && Number.isFinite(loopVersion)
-      ? Math.max(loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: false,
-    cooldownUntil: null,
-    maxIterations: null,
-    manualIntentAllowed: true,
-    iterationCount,
-  };
-}
-
-async function executeClaimedPublicationAction({
-  db,
-  claimedAction,
-}: {
-  db: DB;
-  claimedAction: ClaimedSdlcOutboxAction;
-}) {
-  if (claimedAction.actionType === "publish_status_comment") {
-    const payload = STATUS_COMMENT_PAYLOAD_SCHEMA.parse(claimedAction.payload);
-    await upsertSdlcCanonicalStatusComment({
-      db,
-      loopId: claimedAction.loopId,
-      repoFullName: payload.repoFullName,
-      prNumber: payload.prNumber,
-      body: payload.body,
-    });
-    return;
-  }
-
-  if (claimedAction.actionType === "publish_check_summary") {
-    const payload = CHECK_SUMMARY_PAYLOAD_SCHEMA.parse(claimedAction.payload);
-    await upsertSdlcCanonicalCheckSummary({
-      db,
-      loopId: claimedAction.loopId,
-      payload,
-    });
-    return;
-  }
-
-  throw new Error(
-    `Unsupported Delivery Loop publication action: ${claimedAction.actionType}`,
-  );
-}
-
-export async function executeNextSdlcOutboxPublicationAction({
-  db,
-  loopId,
-  leaseOwner,
-  leaseEpoch,
-  now = new Date(),
-}: {
-  db: DB;
-  loopId: string;
-  leaseOwner: string;
-  leaseEpoch: number;
-  now?: Date;
-}) {
-  const claimedAction = await claimNextSdlcOutboxActionForExecution({
-    db,
-    loopId,
-    leaseOwner,
-    leaseEpoch,
-    allowedActionTypes: ["publish_status_comment", "publish_check_summary"],
-    now,
-  });
-
-  if (!claimedAction) {
-    return {
-      executed: false as const,
-      reason: "no_eligible_action" as const,
-    };
-  }
-
-  try {
-    await executeClaimedPublicationAction({ db, claimedAction });
-    const completion = await completeSdlcOutboxActionExecution({
-      db,
-      outboxId: claimedAction.id,
-      leaseOwner,
-      succeeded: true,
-      now,
-    });
-
-    return {
-      executed: true as const,
-      outboxId: claimedAction.id,
-      completion,
-    };
-  } catch (error) {
-    const classified = classifySdlcPublicationFailure(error);
-    const completion = await completeSdlcOutboxActionExecution({
-      db,
-      outboxId: claimedAction.id,
-      leaseOwner,
-      succeeded: false,
-      retriable: classified.retriable,
-      errorClass: classified.errorClass,
-      errorCode: classified.errorCode,
-      errorMessage: classified.message,
-      now,
-    });
-
-    return {
-      executed: true as const,
-      outboxId: claimedAction.id,
-      completion,
-      publicationError: classified,
-    };
-  }
-}
-
-export type SdlcDurablePublicationDrainResult = {
-  dueLoopCount: number;
-  visitedLoopCount: number;
-  loopsWithExecutedActions: number;
-  executedActionCount: number;
-  reachedActionLimit: boolean;
-};
-
-export async function drainDueSdlcPublicationOutboxActions({
-  db,
-  now = new Date(),
-  leaseOwnerTokenPrefix,
-  maxLoops = SDLC_PUBLICATION_DURABLE_DRAIN_MAX_LOOPS,
-  maxActionsTotal = SDLC_PUBLICATION_DURABLE_DRAIN_MAX_ACTIONS_TOTAL,
-  maxActionsPerLoop = SDLC_PUBLICATION_DURABLE_DRAIN_MAX_ACTIONS_PER_LOOP,
-}: {
-  db: DB;
-  now?: Date;
-  leaseOwnerTokenPrefix: string;
-  maxLoops?: number;
-  maxActionsTotal?: number;
-  maxActionsPerLoop?: number;
-}): Promise<SdlcDurablePublicationDrainResult> {
-  const boundedMaxLoops = Math.max(0, Math.trunc(maxLoops));
-  const boundedMaxActionsTotal = Math.max(0, Math.trunc(maxActionsTotal));
-  const boundedMaxActionsPerLoop = Math.max(0, Math.trunc(maxActionsPerLoop));
-
-  if (
-    boundedMaxLoops === 0 ||
-    boundedMaxActionsTotal === 0 ||
-    boundedMaxActionsPerLoop === 0
-  ) {
-    return {
-      dueLoopCount: 0,
-      visitedLoopCount: 0,
-      loopsWithExecutedActions: 0,
-      executedActionCount: 0,
-      reachedActionLimit: false,
-    };
-  }
-
-  const dueRows = await db
-    .select({
-      loopId: schema.sdlcLoopOutbox.loopId,
-    })
-    .from(schema.sdlcLoopOutbox)
-    .innerJoin(
-      schema.sdlcLoop,
-      eq(schema.sdlcLoop.id, schema.sdlcLoopOutbox.loopId),
-    )
-    .where(
-      and(
-        notInArray(schema.sdlcLoop.state, terminalSdlcLoopStateList),
-        eq(schema.sdlcLoopOutbox.status, "pending"),
-        inArray(schema.sdlcLoopOutbox.actionType, [
-          "publish_status_comment",
-          "publish_check_summary",
-        ]),
-        or(
-          isNull(schema.sdlcLoopOutbox.nextRetryAt),
-          lte(schema.sdlcLoopOutbox.nextRetryAt, now),
-        ),
-      ),
-    )
-    .groupBy(schema.sdlcLoopOutbox.loopId)
-    .orderBy(
-      sql`min(${schema.sdlcLoopOutbox.nextRetryAt})`,
-      sql`min(${schema.sdlcLoopOutbox.transitionSeq})`,
-      sql`min(${schema.sdlcLoopOutbox.createdAt})`,
-    )
-    .limit(boundedMaxLoops);
-
-  const dueLoopIds: string[] = [];
-  for (const row of dueRows) {
-    dueLoopIds.push(row.loopId);
-  }
-
-  let visitedLoopCount = 0;
-  let loopsWithExecutedActions = 0;
-  let executedActionCount = 0;
-
-  for (const loopId of dueLoopIds) {
-    if (executedActionCount >= boundedMaxActionsTotal) {
-      break;
-    }
-    visitedLoopCount += 1;
-    let executedForLoop = 0;
-
-    while (
-      executedForLoop < boundedMaxActionsPerLoop &&
-      executedActionCount < boundedMaxActionsTotal
-    ) {
-      const tick = await runBestEffortSdlcPublicationCoordinator({
-        db,
-        loopId,
-        leaseOwnerToken: `${leaseOwnerTokenPrefix}:${loopId}:${executedForLoop + 1}`,
-        now,
-        guardrailRuntime: buildCoordinatorGuardrailRuntime(0),
-      });
-      if (!tick.executed) {
-        break;
-      }
-      executedForLoop += 1;
-      executedActionCount += 1;
-    }
-
-    if (executedForLoop > 0) {
-      loopsWithExecutedActions += 1;
-    }
-  }
-
-  return {
-    dueLoopCount: dueLoopIds.length,
-    visitedLoopCount,
-    loopsWithExecutedActions,
-    executedActionCount,
-    reachedActionLimit: executedActionCount >= boundedMaxActionsTotal,
-  };
-}
-
-export async function runBestEffortSdlcPublicationCoordinator({
-  db,
-  loopId,
-  leaseOwnerToken,
-  now = new Date(),
-  guardrailRuntime,
-}: {
-  db: DB;
-  loopId: string;
-  leaseOwnerToken: string;
-  now?: Date;
-  guardrailRuntime?: SdlcPublicationGuardrailRuntimeInput;
-}) {
-  const loop = await db.query.sdlcLoop.findFirst({
-    where: eq(schema.sdlcLoop.id, loopId),
-  });
-  if (!loop) {
-    return { executed: false as const, reason: "loop_not_found" as const };
-  }
-  if (terminalSdlcLoopStateSet.has(loop.state)) {
-    return { executed: false as const, reason: "terminal_state" as const };
-  }
-
-  const leaseOwner = `sdlc-publication:${leaseOwnerToken}`;
-  const lease = await acquireSdlcLoopLease({
-    db,
-    loopId,
-    leaseOwner,
-    leaseTtlMs: SDLC_PUBLICATION_LEASE_TTL_MS,
-    now,
-  });
-  if (!lease.acquired) {
-    return { executed: false as const, reason: "lease_held" as const };
-  }
-
-  const guardrailInputs = resolvePublicationGuardrailInputs({
-    loop,
-    runtimeInput: guardrailRuntime,
-  });
-  const guardrailDecision = evaluateSdlcLoopGuardrails({
-    killSwitchEnabled: guardrailInputs.killSwitchEnabled,
-    isTerminalState: terminalSdlcLoopStateSet.has(loop.state),
-    hasValidLease: true,
-    cooldownUntil: guardrailInputs.cooldownUntil,
-    iterationCount: guardrailInputs.iterationCount,
-    maxIterations: guardrailInputs.maxIterations,
-    manualIntentAllowed: guardrailInputs.manualIntentAllowed,
-    now,
-  });
-  if (!guardrailDecision.allowed) {
-    await releaseSdlcLoopLease({ db, loopId, leaseOwner, now });
-    return {
-      executed: false as const,
-      reason: guardrailDecision.reasonCode,
-    };
-  }
-
-  try {
-    return await executeNextSdlcOutboxPublicationAction({
-      db,
-      loopId,
-      leaseOwner,
-      leaseEpoch: lease.leaseEpoch,
-      now,
-    });
-  } finally {
-    const released = await releaseSdlcLoopLease({
-      db,
-      loopId,
-      leaseOwner,
-      now,
-    });
-    if (!released) {
-      console.warn("[sdlc publication] failed to release coordinator lease", {
-        loopId,
-        leaseOwner,
-      });
-    }
-  }
 }

@@ -10,6 +10,14 @@ import childProcess from "child_process";
 const devDefaultAppUrl = "http://localhost:3000";
 const devDefaultInternalSharedSecret = "123456";
 
+function getNonEmptyEnvValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 function cleanLine(line: string) {
   line = stripAnsi(line);
   line = line.trim();
@@ -23,8 +31,10 @@ function main() {
       ...process.env,
       NODE_ENV: process.env.NODE_ENV ?? "development",
       INTERNAL_SHARED_SECRET:
-        process.env.INTERNAL_SHARED_SECRET ?? devDefaultInternalSharedSecret,
-      BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? devDefaultAppUrl,
+        getNonEmptyEnvValue(process.env.INTERNAL_SHARED_SECRET) ??
+        devDefaultInternalSharedSecret,
+      BETTER_AUTH_URL:
+        getNonEmptyEnvValue(process.env.BETTER_AUTH_URL) ?? devDefaultAppUrl,
     },
     stdio: ["pipe", "pipe", "pipe"],
   });

@@ -2,7 +2,7 @@ import {
   DELIVERY_LOOP_FAILURE_ACTION_TABLE,
   type DeliveryLoopFailureCategory,
   type DeliveryLoopRetryAction,
-} from "@terragon/shared/model/delivery-loop";
+} from "@terragon/shared/delivery-loop/domain/failure";
 import { redis } from "@/lib/redis";
 
 // ---------------------------------------------------------------------------

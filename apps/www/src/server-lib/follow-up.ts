@@ -14,7 +14,10 @@ import {
   getThreadMinimal,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
-import { maybeProcessFollowUpQueue } from "./process-follow-up-queue";
+import {
+  ensureDispatchRetryPersistenceOwnership,
+  maybeProcessFollowUpQueue,
+} from "./process-follow-up-queue";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getDefaultModelForAgent, modelToAgent } from "@terragon/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
@@ -164,6 +167,17 @@ export async function queueFollowUpInternal({
     threadChat.status === "working-done" ||
     threadChat.status === "working-error";
   if (shouldProcessImmediately) {
-    waitUntil(maybeProcessFollowUpQueue({ userId, threadId, threadChatId }));
+    waitUntil(
+      maybeProcessFollowUpQueue({ userId, threadId, threadChatId }).then(
+        (result) =>
+          ensureDispatchRetryPersistenceOwnership({
+            owner: "follow-up",
+            userId,
+            threadId,
+            threadChatId,
+            result,
+          }),
+      ),
+    );
   }
 }

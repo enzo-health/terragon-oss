@@ -37,7 +37,6 @@ import { ThreadMenuDropdown } from "../thread-menu-dropdown";
 import { publicDocsUrl } from "@terragon/env/next-public";
 import { useAtomValue } from "jotai";
 import { userSettingsAtom } from "@/atoms/user";
-import posthog from "posthog-js";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { useSecondaryPanel } from "./hooks";
 import { ARTIFACT_WORKSPACE_PANEL_ID } from "./secondary-panel";
@@ -219,12 +218,6 @@ function CodeButton({
               className="flex items-center bg-muted rounded-md font-mono text-sm cursor-pointer hover:bg-muted/80 transition-colors"
               onClick={() => {
                 copyToClipboard(pullCommand, "Copied pull command", "terry");
-                posthog.capture("terry_pull_command_copied", {
-                  threadId: thread.id,
-                  agent,
-                  withResume: isClaudeCodeAgent && openClaude,
-                  hasDiff: !!thread.gitDiff,
-                });
               }}
             >
               <div className="flex-1 overflow-x-auto p-2 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
@@ -282,11 +275,6 @@ function CodeButton({
                 }
                 const patchCommand = `git apply - <<'PATCH'\n${gitDiff}\nPATCH`;
                 copyToClipboard(patchCommand, "Copied patch command", "patch");
-                posthog.capture("git_patch_copied", {
-                  threadId: thread.id,
-                  agent,
-                  hasDiff: !!gitDiff,
-                });
               }}
             >
               <Copy className="h-4 w-4 mr-2" />
@@ -418,12 +406,6 @@ function ShareButton({
       <Popover
         open={isOpen}
         onOpenChange={(open: boolean) => {
-          if (open) {
-            posthog.capture("share_button_clicked", {
-              threadId: thread.id,
-              currentVisibility: thread.visibility,
-            });
-          }
           setIsOpen(open);
         }}
       >
@@ -619,10 +601,6 @@ function ShareDrawer({
       await navigator.clipboard.writeText(url);
       toast.success("Task link copied");
       setCopied(true);
-      posthog.capture("task_link_copied", {
-        threadId: thread.id,
-        visibility: thread.visibility,
-      });
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error("Failed to copy link", err);

@@ -29,7 +29,7 @@ export type DashboardPromptBoxHandleSubmit = (
     disableGitCheckpointing: boolean;
     skipSetup: boolean;
     createNewBranch: boolean;
-    runInSdlcLoop: boolean;
+    runInDeliveryLoop: boolean;
   },
 ) => Promise<void>;
 
@@ -47,7 +47,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const [repoFullName, setRepoFullName] = useSelectedRepo();
   const [branchName, setBranchName] = useSelectedBranch();
   const [isRecording, setIsRecording] = useState(false);
-  const [runInSdlcLoop, setRunInSdlcLoop] = useState(true);
+  const [runInDeliveryLoop, setRunInDeliveryLoop] = useState(true);
   const onRepoBranchChange = useCallback(
     (repo: string | null, branch: string | null) => {
       setRepoFullName(repo);
@@ -99,10 +99,16 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         disableGitCheckpointing,
         skipSetup,
         createNewBranch,
-        runInSdlcLoop,
+        runInDeliveryLoop,
       });
     },
-    [props, disableGitCheckpointing, skipSetup, createNewBranch, runInSdlcLoop],
+    [
+      props,
+      disableGitCheckpointing,
+      skipSetup,
+      createNewBranch,
+      runInDeliveryLoop,
+    ],
   );
 
   const {
@@ -203,10 +209,10 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
           createNewBranchValue={createNewBranch}
           onCreateNewBranchChange={setCreateNewBranch}
           createNewBranchDisabled={!repoFullName}
-          showSdlcLoopOptIn={true}
-          sdlcLoopOptInValue={runInSdlcLoop}
-          onSdlcLoopOptInChange={setRunInSdlcLoop}
-          sdlcLoopOptInDisabled={!repoFullName}
+          showDeliveryLoopOptIn={true}
+          deliveryLoopOptInValue={runInDeliveryLoop}
+          onDeliveryLoopOptInChange={setRunInDeliveryLoop}
+          deliveryLoopOptInDisabled={!repoFullName}
         />
       </div>
     </div>

@@ -4,14 +4,27 @@ import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
-import { getThreadChat } from "@terragon/shared/model/threads";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import {
+  getThreadChat,
+  getThreadMinimal,
+} from "@terragon/shared/model/threads";
+import {
+  getAgentRunContextByRunId,
+  getLatestAgentRunContextForThreadChat,
+} from "@terragon/shared/model/agent-run-context";
 import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
 import type {
   DBMessage,
   DBSystemMessage,
   DBUserMessage,
 } from "@terragon/shared";
+
+const ACTIVE_AGENT_RUN_STATUSES = new Set([
+  "pending",
+  "dispatched",
+  "processing",
+]);
+const RECENT_TERMINAL_RUN_WINDOW_MS = 120_000;
 
 async function checkNoopBusy({
   threadId,
@@ -32,18 +45,49 @@ async function checkNoopBusy({
     latestThreadChat &&
     FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
   ) {
+    let dispatchLaunched = false;
+    try {
+      const latestRunContext = await getLatestAgentRunContextForThreadChat({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+      });
+      if (latestRunContext) {
+        if (ACTIVE_AGENT_RUN_STATUSES.has(latestRunContext.status)) {
+          dispatchLaunched = true;
+        } else {
+          const updatedAt = latestRunContext.updatedAt?.getTime() ?? 0;
+          dispatchLaunched =
+            Date.now() - updatedAt <= RECENT_TERMINAL_RUN_WINDOW_MS;
+        }
+      }
+    } catch (runContextError) {
+      console.warn(
+        "Failed to infer launch from latest run context during stale busy CAS",
+        { threadId, threadChatId, runContextError },
+      );
+    }
     console.warn(
       "Skipping follow-up dispatch after noop status transition; chat is already active",
       { threadId, threadChatId, status: latestThreadChat.status },
     );
-    return { processed: false, reason: "status_transition_noop_busy" };
+    return {
+      processed: false,
+      dispatchLaunched,
+      reason: "stale_cas_busy",
+    };
   }
   if (latestThreadChat?.status === "scheduled") {
     console.warn(
       "Skipping follow-up dispatch after noop status transition; chat remains scheduled",
       { threadId, threadChatId, status: latestThreadChat.status },
     );
-    return { processed: false, reason: "scheduled_not_runnable" };
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "invalid_event",
+    };
   }
   if (latestThreadChat) {
     console.warn(
@@ -51,7 +95,11 @@ async function checkNoopBusy({
       { threadId, threadChatId, status: latestThreadChat.status },
     );
   }
-  return { processed: false, reason: "status_transition_noop" };
+  return {
+    processed: false,
+    dispatchLaunched: false,
+    reason: "stale_cas",
+  };
 }
 
 const MAX_FOLLOW_UP_RETRIES = 3;
@@ -70,6 +118,7 @@ const FOLLOW_UP_ACTIVE_PROCESSING_STATUSES = new Set([
 
 export type FollowUpQueueProcessingResult = {
   processed: boolean;
+  dispatchLaunched: boolean;
   reason:
     | "missing_run_context"
     | "run_context_mismatch"
@@ -78,15 +127,92 @@ export type FollowUpQueueProcessingResult = {
     | "agent_rate_limited"
     | "no_queued_messages"
     | "scheduled_not_runnable"
-    | "status_transition_noop"
-    | "status_transition_noop_busy"
+    | "stale_cas"
+    | "stale_cas_busy"
+    | "invalid_event"
     | "dispatch_started_slash"
     | "dispatch_started_batch"
+    | "dispatch_not_started"
     | "dispatch_retry_scheduled"
+    | "dispatch_retry_persistence_failed"
     | "dispatch_retry_exhausted";
   retryCount?: number;
   maxRetries?: number;
 };
+
+type RetryPersistenceOwner =
+  | "follow-up"
+  | "startAgentMessage"
+  | "process-follow-up-queue";
+
+function retryDelayMsForAttempt(dispatchAttempt: number): number {
+  return (
+    FOLLOW_UP_RETRY_BASE_DELAY_MS *
+    2 ** Math.max(0, Math.trunc(dispatchAttempt) - 1)
+  );
+}
+
+export async function ensureDispatchRetryPersistenceOwnership({
+  owner,
+  userId,
+  threadId,
+  threadChatId,
+  result,
+}: {
+  owner: RetryPersistenceOwner;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  result: FollowUpQueueProcessingResult;
+}): Promise<FollowUpQueueProcessingResult> {
+  if (result.reason !== "dispatch_retry_persistence_failed") {
+    return result;
+  }
+
+  const retryCount = Math.max(1, result.retryCount ?? 1);
+  const maxRetries = result.maxRetries ?? MAX_FOLLOW_UP_RETRIES;
+  const runAt = new Date(Date.now() + retryDelayMsForAttempt(retryCount));
+
+  try {
+    await scheduleFollowUpRetryJob({
+      userId,
+      threadId,
+      threadChatId,
+      dispatchAttempt: retryCount,
+      deferCount: 0,
+      runAt,
+    });
+    console.warn("Recovered follow-up retry persistence via owner fallback", {
+      owner,
+      threadId,
+      threadChatId,
+      retryCount,
+      runAt: runAt.toISOString(),
+    });
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_scheduled",
+      retryCount,
+      maxRetries,
+    };
+  } catch (fallbackError) {
+    console.error("Follow-up retry persistence fallback failed", {
+      owner,
+      threadId,
+      threadChatId,
+      retryCount,
+      fallbackError,
+    });
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_persistence_failed",
+      retryCount,
+      maxRetries,
+    };
+  }
+}
 
 /**
  * Shared retry handler for follow-up processing failures.
@@ -128,6 +254,7 @@ async function handleFollowUpFailure({
   retriesUsed: number;
   exhausted: boolean;
   retryAt: Date | null;
+  retryPersisted: boolean;
 }> {
   const formattedError = formatFollowUpError(error);
   console.error("handleFollowUpFailure invoked", {
@@ -140,13 +267,13 @@ async function handleFollowUpFailure({
     (m): m is DBSystemMessage =>
       m.type === "system" && m.message_type === "follow-up-retry-failed",
   ).length;
+  const retriesUsed = existingRetries + 1;
+  const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
+  const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
+  const retryAt = exhausted ? null : new Date(Date.now() + retryDelayMs);
+  let retryPersisted = exhausted;
 
   try {
-    const retriesUsed = existingRetries + 1;
-    const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
-    const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
-    const retryAt = exhausted ? null : new Date(Date.now() + retryDelayMs);
-
     if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
       await updateThreadChatWithTransition({
         userId,
@@ -182,9 +309,11 @@ async function handleFollowUpFailure({
         userId,
         threadId,
         threadChatId,
-        attempt: retriesUsed,
+        dispatchAttempt: retriesUsed,
+        deferCount: 0,
         runAt: retryAt,
       });
+      retryPersisted = true;
       await updateThreadChatWithTransition({
         userId,
         threadId,
@@ -212,6 +341,7 @@ async function handleFollowUpFailure({
       retriesUsed,
       exhausted,
       retryAt,
+      retryPersisted,
     };
   } catch (updateError) {
     console.error("Failed to record follow-up retry failure", {
@@ -220,14 +350,10 @@ async function handleFollowUpFailure({
       updateError,
     });
     return {
-      retriesUsed: existingRetries + 1,
-      exhausted: existingRetries >= MAX_FOLLOW_UP_RETRIES - 1,
-      retryAt:
-        existingRetries >= MAX_FOLLOW_UP_RETRIES - 1
-          ? null
-          : new Date(
-              Date.now() + FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries,
-            ),
+      retriesUsed,
+      exhausted,
+      retryAt,
+      retryPersisted,
     };
   }
 }
@@ -253,6 +379,12 @@ export async function maybeProcessFollowUpQueue({
     threadChatId,
     userId,
   });
+  const thread = await getThreadMinimal({
+    db,
+    threadId,
+    userId,
+  });
+  const threadBranchName = thread?.branchName ?? undefined;
   if (runId) {
     const runContext = await getAgentRunContextByRunId({
       db,
@@ -265,7 +397,11 @@ export async function maybeProcessFollowUpQueue({
         threadChatId,
         runId,
       });
-      return { processed: false, reason: "missing_run_context" };
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "missing_run_context",
+      };
     }
     if (
       runContext.threadId !== threadId ||
@@ -281,7 +417,11 @@ export async function maybeProcessFollowUpQueue({
           runContextThreadChatId: runContext.threadChatId,
         },
       );
-      return { processed: false, reason: "run_context_mismatch" };
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "run_context_mismatch",
+      };
     }
     if (runContext.status !== "completed" && runContext.status !== "failed") {
       console.log("Skipping follow-up queue: run not terminal yet", {
@@ -290,7 +430,52 @@ export async function maybeProcessFollowUpQueue({
         runId,
         runStatus: runContext.status,
       });
-      return { processed: false, reason: "run_not_terminal" };
+      const hasQueuedMessages = !!(
+        threadChat?.queuedMessages && threadChat.queuedMessages.length > 0
+      );
+      if (hasQueuedMessages) {
+        const retryCount = 1;
+        const runAt = new Date(Date.now() + retryDelayMsForAttempt(retryCount));
+        try {
+          await scheduleFollowUpRetryJob({
+            userId,
+            threadId,
+            threadChatId,
+            dispatchAttempt: retryCount,
+            deferCount: 0,
+            runAt,
+          });
+          return {
+            processed: false,
+            dispatchLaunched: false,
+            reason: "dispatch_retry_scheduled",
+            retryCount,
+            maxRetries: MAX_FOLLOW_UP_RETRIES,
+          };
+        } catch (retryError) {
+          console.error(
+            "Failed to persist retry while waiting for terminal run status",
+            {
+              threadId,
+              threadChatId,
+              runId,
+              retryError,
+            },
+          );
+          return {
+            processed: false,
+            dispatchLaunched: false,
+            reason: "dispatch_retry_persistence_failed",
+            retryCount,
+            maxRetries: MAX_FOLLOW_UP_RETRIES,
+          };
+        }
+      }
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "run_not_terminal",
+      };
     }
   }
   if (!threadChat) {
@@ -298,7 +483,11 @@ export async function maybeProcessFollowUpQueue({
       threadId,
       threadChatId,
     });
-    return { processed: false, reason: "thread_chat_not_found" };
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "thread_chat_not_found",
+    };
   }
   // Don't process follow up messages if the thread is rate limited by the agent.
   if (threadChat.status === "queued-agent-rate-limit") {
@@ -309,17 +498,29 @@ export async function maybeProcessFollowUpQueue({
         threadChatId: threadChat.id,
       },
     );
-    return { processed: false, reason: "agent_rate_limited" };
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "agent_rate_limited",
+    };
   }
   if (threadChat.status === "scheduled") {
     console.log("Skipping follow-up queue processing: chat is scheduled", {
       threadId,
       threadChatId,
     });
-    return { processed: false, reason: "scheduled_not_runnable" };
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "scheduled_not_runnable",
+    };
   }
   if (!threadChat.queuedMessages || threadChat.queuedMessages.length === 0) {
-    return { processed: false, reason: "no_queued_messages" };
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    };
   }
   console.log("Processing queued follow up messages on thread", {
     threadId,
@@ -327,13 +528,18 @@ export async function maybeProcessFollowUpQueue({
   });
   const queuedMessagesSnapshot = [...threadChat.queuedMessages];
 
-  // If the first queued message is a slash command, send it to the agent separately.
-  // TODO: If there's slash commands in side of the queued messages and the slash command
-  // is not first, things still do not work great since we concat all messages into one prompt
-  // and send it to the agent inside of startAgentMessage.
-  const firstQueuedMessage = threadChat.queuedMessages[0]!;
-  if (getSlashCommandOrNull(firstQueuedMessage)) {
-    const restQueuedMessages = threadChat.queuedMessages.slice(1);
+  // Slash commands must be processed standalone. We intentionally scan the queue
+  // instead of requiring index 0 so delayed/racy queue writes still route slash
+  // commands through the deterministic slash handler path.
+  const slashCommandIndex = threadChat.queuedMessages.findIndex(
+    (queuedMessage) => !!getSlashCommandOrNull(queuedMessage),
+  );
+  if (slashCommandIndex !== -1) {
+    const slashCommandMessage = threadChat.queuedMessages[slashCommandIndex]!;
+    const restQueuedMessages = threadChat.queuedMessages.filter(
+      (_, index) => index !== slashCommandIndex,
+    );
+
     // Remove the slash command from the queued messages.
     const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
@@ -354,9 +560,9 @@ export async function maybeProcessFollowUpQueue({
       if (noopResult) return noopResult;
     }
     const messageWithModel = {
-      ...firstQueuedMessage,
+      ...slashCommandMessage,
       model:
-        firstQueuedMessage.model ??
+        slashCommandMessage.model ??
         getLastUserMessageModel(threadChat.messages ?? []) ??
         getDefaultModelForAgent({
           agent: threadChat.agent,
@@ -369,15 +575,21 @@ export async function maybeProcessFollowUpQueue({
       queuedMessageCount: threadChat.queuedMessages?.length ?? 0,
     });
     try {
-      await startAgentMessage({
+      const result = await startAgentMessage({
         db,
         userId,
         message: messageWithModel,
         threadId,
         threadChatId,
         isNewThread: false,
+        createNewBranch: false,
+        branchName: threadBranchName,
       });
-      return { processed: true, reason: "dispatch_started_slash" };
+      return {
+        processed: true,
+        dispatchLaunched: result.dispatchLaunched,
+        reason: "dispatch_started_slash",
+      };
     } catch (error) {
       console.error("Follow-up processing failed", {
         threadId,
@@ -392,14 +604,26 @@ export async function maybeProcessFollowUpQueue({
         queuedMessagesForRetry: queuedMessagesSnapshot,
         error,
       });
-      return {
-        processed: false,
-        reason: failure.exhausted
-          ? "dispatch_retry_exhausted"
-          : "dispatch_retry_scheduled",
-        retryCount: failure.retriesUsed,
-        maxRetries: MAX_FOLLOW_UP_RETRIES,
-      };
+      let failureReason: FollowUpQueueProcessingResult["reason"] =
+        "dispatch_retry_persistence_failed";
+      if (failure.exhausted) {
+        failureReason = "dispatch_retry_exhausted";
+      } else if (failure.retryPersisted) {
+        failureReason = "dispatch_retry_scheduled";
+      }
+      return ensureDispatchRetryPersistenceOwnership({
+        owner: "process-follow-up-queue",
+        userId,
+        threadId,
+        threadChatId,
+        result: {
+          processed: false,
+          dispatchLaunched: false,
+          reason: failureReason,
+          retryCount: failure.retriesUsed,
+          maxRetries: MAX_FOLLOW_UP_RETRIES,
+        },
+      });
     }
   }
 
@@ -423,14 +647,27 @@ export async function maybeProcessFollowUpQueue({
     queuedMessageCount: threadChat.queuedMessages?.length ?? 0,
   });
   try {
-    await startAgentMessage({
+    const result = await startAgentMessage({
       db,
       userId,
       threadId,
       threadChatId,
       isNewThread: false,
+      createNewBranch: false,
+      branchName: threadBranchName,
     });
-    return { processed: true, reason: "dispatch_started_batch" };
+    if (result.dispatchLaunched) {
+      return {
+        processed: true,
+        dispatchLaunched: true,
+        reason: "dispatch_started_batch",
+      };
+    }
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_not_started",
+    };
   } catch (error) {
     console.error("Follow-up processing failed", {
       threadId,
@@ -445,13 +682,25 @@ export async function maybeProcessFollowUpQueue({
       queuedMessagesForRetry: queuedMessagesSnapshot,
       error,
     });
-    return {
-      processed: false,
-      reason: failure.exhausted
-        ? "dispatch_retry_exhausted"
-        : "dispatch_retry_scheduled",
-      retryCount: failure.retriesUsed,
-      maxRetries: MAX_FOLLOW_UP_RETRIES,
-    };
+    let failureReason: FollowUpQueueProcessingResult["reason"] =
+      "dispatch_retry_persistence_failed";
+    if (failure.exhausted) {
+      failureReason = "dispatch_retry_exhausted";
+    } else if (failure.retryPersisted) {
+      failureReason = "dispatch_retry_scheduled";
+    }
+    return ensureDispatchRetryPersistenceOwnership({
+      owner: "process-follow-up-queue",
+      userId,
+      threadId,
+      threadChatId,
+      result: {
+        processed: false,
+        dispatchLaunched: false,
+        reason: failureReason,
+        retryCount: failure.retriesUsed,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      },
+    });
   }
 }

@@ -137,15 +137,15 @@ const TextPart = memo(function TextPart({
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
-  const sdlcPlanReviewCard = useFeatureFlag("sdlcPlanReviewCard");
+  const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
   const parsedPlan = useMemo(() => {
-    if (!sdlcPlanReviewCard) {
+    if (!deliveryPlanReviewCard) {
       return null;
     }
     return parsePlanSpecViewModelFromText(text);
-  }, [sdlcPlanReviewCard, text]);
+  }, [deliveryPlanReviewCard, text]);
 
   const processedText = normalizeBoldHeaders(
     convertCitationsToGitHubLinks(
@@ -188,10 +188,23 @@ const TextPart = memo(function TextPart({
     runScan();
 
     // Observe for new code blocks rendered asynchronously (Suspense, lazy highlight)
-    const observer = new MutationObserver(runScan);
+    // Throttle via requestAnimationFrame to avoid running scanForCodeBlocks
+    // hundreds of times per second during agent streaming
+    let rafId: number | null = null;
+    const throttledScan = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        runScan();
+      });
+    };
+    const observer = new MutationObserver(throttledScan);
     observer.observe(container, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [processedText]);
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   // Apply collapse styles imperatively to code-block-body elements
   useEffect(() => {

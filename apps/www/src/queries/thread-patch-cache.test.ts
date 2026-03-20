@@ -53,7 +53,7 @@ function createThreadShell(): ThreadPageShell {
     sourceType: "www",
     sourceMetadata: {
       type: "www",
-      sdlcLoopOptIn: false,
+      deliveryLoopOptIn: false,
     },
     version: 1,
     isUnread: false,
@@ -255,6 +255,56 @@ describe("applyThreadPatchToQueryClient", () => {
     expect(invalidateQueriesSpy).not.toHaveBeenCalled();
   });
 
+  it("still invalidates diff when a stale chat patch is ignored", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(threadQueryKeys.chat("thread-1", "chat-1"), {
+      ...createThreadChat(),
+      status: "working" as const,
+    });
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: STALE_CHAT_SEQUENCE,
+        diffChanged: true,
+        chat: {
+          status: "complete",
+          updatedAt: STALE_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.diff("thread-1"),
+    });
+  });
+
+  it("invalidates diff when patch requests explicit diff refetch", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.shell("thread-1"),
+      createThreadShell(),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        op: "upsert",
+        refetch: ["diff"],
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.diff("thread-1"),
+    });
+  });
+
   it("invalidates duplicate append patches once message counts no longer line up", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
@@ -392,6 +442,64 @@ describe("applyThreadPatchToQueryClient", () => {
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
     });
+  });
+
+  it("invalidates when tail of cached messages matches appendMessages (duplicate delivery)", () => {
+    const queryClient = createQueryClient();
+    const agentMsg = {
+      type: "agent" as const,
+      parent_tool_use_id: null,
+      parts: [{ type: "text" as const, text: "Working on it" }],
+    };
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "Initial prompt" }],
+          },
+          agentMsg,
+        ],
+        messageCount: 2,
+        updatedAt: new Date(NEXT_CHAT_UPDATED_AT),
+        chatSequence: NEXT_CHAT_SEQUENCE,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // Send the same message as an append — should detect tail-overlap duplicate
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: NEXT_CHAT_SEQUENCE,
+        expectedMessageCount: 1,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Working on it" }],
+          },
+        ],
+        chat: {
+          updatedAt: NEXT_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    // Should invalidate (refetch) rather than appending a duplicate
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+    // Message count should remain 2, not grow to 3
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(nextChat?.messages).toHaveLength(2);
   });
 
   it("invalidates explicit chat refetch patches without mutating the cache", () => {
@@ -594,7 +702,7 @@ describe("applyThreadPatchToListQueries", () => {
           sourceType: "www",
           sourceMetadata: {
             type: "www",
-            sdlcLoopOptIn: false,
+            deliveryLoopOptIn: false,
           },
           visibility: "private",
           archived: true,

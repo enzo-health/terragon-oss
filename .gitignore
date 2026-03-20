@@ -57,3 +57,7 @@ output.txt
 
 # vscode-extension local workspace settings
 apps/vscode-extension/.vscode/
+.env*.local
+
+# Eval raw dumps
+eval-dumps/

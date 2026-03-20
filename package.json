@@ -11,9 +11,14 @@
     "format-check": "turbo format-check",
     "prepare": "husky",
     "install-cli:dev": "cd apps/cli && ./scripts/install-cli-dev.sh",
+    "delivery-loop:local": "pnpm -C apps/www exec tsx ../../scripts/delivery-loop-local-framework.ts",
     "worktree:new": "bun scripts/new-worktree.ts",
     "worktree:cleanup": "bun scripts/cleanup-worktree.ts",
-    "worktree:list": "bun scripts/cleanup-worktree.ts --list"
+    "worktree:list": "bun scripts/cleanup-worktree.ts --list",
+    "eval:capture": "pnpm -C packages/eval capture",
+    "eval:replay": "pnpm -C packages/eval replay",
+    "eval:analyze": "pnpm -C packages/eval analyze",
+    "eval:report": "pnpm -C packages/eval report"
   },
   "keywords": [],
   "packageManager": "pnpm@10.14.0",
@@ -23,6 +28,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.1.0",
     "prettier": "^3.5.3",
+    "@biomejs/biome": "2.4.6",
     "turbo": "^2.5.4"
   },
   "pnpm": {

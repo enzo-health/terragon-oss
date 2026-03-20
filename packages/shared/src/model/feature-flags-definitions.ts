@@ -129,29 +129,16 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
-  sdlcLoopCoordinatorRouting: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Routes GitHub webhook feedback for enrolled PR loops to the Delivery Loop coordinator instead of direct follow-up queueing.",
-  },
-  sandboxAgentAcpTransport: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Enables sandbox-agent ACP transport metadata and sandbox capability probing for daemon runs.",
-  },
-  codexAppServerTransport: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Enables codex app-server JSON-RPC transport mode for Codex agent runs.",
-  },
-  sdlcPlanReviewCard: {
+  deliveryPlanReviewCard: {
     defaultValue: false,
     enabledForPreview: false,
     description:
       "Renders Delivery Loop plans from agent output in a structured review card in chat and stepper views.",
+  },
+  skipDeliveryLoopGates: {
+    defaultValue: false,
+    description:
+      "Auto-bypass all delivery loop gates (review, CI, UI) so workflows skip directly to awaiting_pr or babysitting.",
   },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 

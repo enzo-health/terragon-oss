@@ -38,9 +38,9 @@ import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
 import { getSandboxSizeForUser } from "@/lib/subscription-tiers";
 import { getThreadChatHistory } from "./compact";
 import {
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  ensureSdlcLoopEnrollmentForThreadIfEnabled,
-  isSdlcLoopEnrollmentAllowedForThread,
+  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
+  ensureDeliveryLoopEnrollmentForThreadIfEnabled,
+  isDeliveryLoopEnrollmentAllowedForThread,
 } from "./delivery-loop/enrollment";
 
 export interface CreateThreadOptions {
@@ -59,7 +59,7 @@ export interface CreateThreadOptions {
   scheduleAt?: number | null;
   disableGitCheckpointing?: boolean;
   skipSetup?: boolean;
-  runInSdlcLoop?: boolean;
+  runInDeliveryLoop?: boolean;
   sourceType: ThreadSource;
   sourceMetadata?: ThreadSourceMetadata;
   delayMs?: number;
@@ -85,7 +85,7 @@ export async function createNewThread({
   scheduleAt = null,
   disableGitCheckpointing = false,
   skipSetup = false,
-  runInSdlcLoop = false,
+  runInDeliveryLoop = false,
   sourceType,
   sourceMetadata,
   delayMs = 0,
@@ -216,25 +216,26 @@ export async function createNewThread({
     enableThreadChatCreation: true,
   });
 
-  const enrollmentAllowedForThread = isSdlcLoopEnrollmentAllowedForThread({
+  const enrollmentAllowedForThread = isDeliveryLoopEnrollmentAllowedForThread({
     sourceType,
     sourceMetadata: sourceMetadata ?? null,
   });
-  const shouldEnrollSdlcLoop =
+  const shouldEnrollDeliveryLoop =
     enrollmentAllowedForThread &&
-    (runInSdlcLoop ||
+    (runInDeliveryLoop ||
       sourceType === "automation" ||
       sourceType === "github-mention" ||
-      (sourceMetadata?.type === "www" && sourceMetadata.sdlcLoopOptIn));
+      sourceType === "cli" ||
+      (sourceMetadata?.type === "www" && sourceMetadata.deliveryLoopOptIn));
   const planApprovalPolicy =
     sourceMetadata?.type === "www"
-      ? (sourceMetadata.sdlcPlanApprovalPolicy ?? "auto")
+      ? (sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
       : "auto";
-  const ensureThreadScopedSdlcEnrollment = async () => {
-    if (!shouldEnrollSdlcLoop) {
+  const ensureThreadScopedDeliveryEnrollment = async () => {
+    if (!shouldEnrollDeliveryLoop) {
       return;
     }
-    await ensureSdlcLoopEnrollmentForThreadIfEnabled({
+    await ensureDeliveryLoopEnrollmentForThreadIfEnabled({
       userId,
       repoFullName: githubRepoFullName,
       threadId,
@@ -243,9 +244,9 @@ export async function createNewThread({
   };
   // If saving as draft, update the thread with the user message
   if (saveAsDraft) {
-    if (shouldEnrollSdlcLoop) {
+    if (shouldEnrollDeliveryLoop) {
       waitUntil(
-        ensureThreadScopedSdlcEnrollment().catch((error) => {
+        ensureThreadScopedDeliveryEnrollment().catch((error) => {
           console.warn(
             "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
             {
@@ -270,12 +271,12 @@ export async function createNewThread({
   }
 
   const updateThreadMetadata = () => {
-    const maybeEnsureSdlcLoopEnrollment = async (prNumber: number) => {
-      if (!shouldEnrollSdlcLoop) {
+    const maybeEnsureDeliveryLoopEnrollment = async (prNumber: number) => {
+      if (!shouldEnrollDeliveryLoop) {
         return;
       }
       try {
-        await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
+        await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
           userId,
           repoFullName: githubRepoFullName,
           prNumber,
@@ -313,7 +314,7 @@ export async function createNewThread({
             prNumber: githubPRNumber,
             createIfNotFound: true,
           });
-          await maybeEnsureSdlcLoopEnrollment(githubPRNumber);
+          await maybeEnsureDeliveryLoopEnrollment(githubPRNumber);
         })(),
       );
     } else if (headBranchName) {
@@ -327,7 +328,7 @@ export async function createNewThread({
             baseBranchName,
           });
           if (associatedPrNumber) {
-            await maybeEnsureSdlcLoopEnrollment(associatedPrNumber);
+            await maybeEnsureDeliveryLoopEnrollment(associatedPrNumber);
           }
         })(),
       );
@@ -353,9 +354,9 @@ export async function createNewThread({
         ],
       },
     });
-    if (shouldEnrollSdlcLoop) {
+    if (shouldEnrollDeliveryLoop) {
       waitUntil(
-        ensureThreadScopedSdlcEnrollment().catch((error) => {
+        ensureThreadScopedDeliveryEnrollment().catch((error) => {
           console.warn(
             "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
             {
@@ -403,9 +404,9 @@ export async function createNewThread({
     });
   }
 
-  if (shouldEnrollSdlcLoop) {
+  if (shouldEnrollDeliveryLoop) {
     try {
-      await ensureThreadScopedSdlcEnrollment();
+      await ensureThreadScopedDeliveryEnrollment();
     } catch (error) {
       console.warn(
         "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
@@ -429,7 +430,9 @@ export async function createNewThread({
       threadChatId,
       isNewThread: true,
       createNewBranch: effectiveCreateNewBranch,
-      branchName: headBranchName || baseBranchName,
+      branchName: effectiveCreateNewBranch
+        ? undefined
+        : headBranchName || baseBranchName,
       delayMs,
     }).catch((error) => {
       console.error("Error in startAgentMessage:", error);

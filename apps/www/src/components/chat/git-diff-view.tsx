@@ -2,10 +2,10 @@
 
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  AnnotationSide,
+  PatchDiff,
+  type AnnotationSide,
   type DiffLineEventBaseProps,
   type DiffLineAnnotation,
-  PatchDiff,
 } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
 import {
@@ -441,7 +441,9 @@ function FileDiffWrapper({
                 onLineClick: enableComments ? handleLineClick : undefined,
               }}
               lineAnnotations={lineAnnotations}
-              renderAnnotation={(annotation) => (
+              renderAnnotation={(
+                annotation: DiffLineAnnotation<CommentWidgetData>,
+              ) => (
                 <CommentWidget
                   side={annotation.side === "additions" ? 2 : 1}
                   lineNumber={annotation.lineNumber}
@@ -727,12 +729,12 @@ export function GitDiffView({
   }, []);
 
   // Collapse file tree by default when first becoming small screen
+  // Only run when isSmallScreen changes, not when showFileTree changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally only react to isSmallScreen
   React.useEffect(() => {
     if (isSmallScreen && showFileTree) {
       setShowFileTree(false);
     }
-    // Only run when isSmallScreen changes, not when showFileTree changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSmallScreen]);
 
   // Auto-switch to split mode on wide screens (unless manually selected unified)

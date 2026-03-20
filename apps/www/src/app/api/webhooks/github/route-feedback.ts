@@ -1,39 +1,21 @@
-import {
-  DBUserMessage,
-  ThreadSource,
-  ThreadSourceMetadata,
-} from "@terragon/shared";
+import { DBUserMessage, ThreadSource } from "@terragon/shared";
 import { db } from "@/lib/db";
 import {
   getGithubPR,
   getThreadForGithubPRAndUser,
   getThreadsForGithubPR,
 } from "@terragon/shared/model/github";
-import { getThread } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import * as schema from "@terragon/shared/db/schema";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { maybeBatchThreads } from "@/lib/batch-threads";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { getPostHogServer } from "@/lib/posthog-server";
-import {
-  ensureSdlcLoopEnrollmentForGithubPRIfEnabled,
-  getActiveSdlcLoopForGithubPRIfEnabled,
-  isSdlcLoopEnrollmentAllowedForThread,
-} from "@/server-lib/delivery-loop/enrollment";
-import { buildSdlcCanonicalCause } from "@terragon/shared/model/delivery-loop";
-import {
-  SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED,
-  runBestEffortSdlcSignalInboxTick,
-} from "@/server-lib/delivery-loop/signal-inbox";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
 
 export type FeedbackRoutingMode =
   | "reused_existing"
   | "spawned_new"
-  | "suppressed_enrolled_loop"
   | "noop_owner_unresolved";
 
 export type FeedbackRoutingResult =
@@ -42,12 +24,6 @@ export type FeedbackRoutingResult =
       threadChatId: string;
       mode: Extract<FeedbackRoutingMode, "reused_existing" | "spawned_new">;
       reason?: string;
-    }
-  | {
-      mode: "suppressed_enrolled_loop";
-      reason: "sdlc-loop-enrolled";
-      sdlcLoopId: string;
-      threadId: string;
     }
   | {
       mode: "noop_owner_unresolved";
@@ -94,19 +70,6 @@ type PullRequestContext = {
   headBranchName: string;
   authorGitHubAccountId: number | null;
 };
-
-function getPrimaryThreadChatIdOrNull(
-  threadOrNull: Awaited<ReturnType<typeof getThread>>,
-): string | null {
-  if (!threadOrNull) {
-    return null;
-  }
-  try {
-    return getPrimaryThreadChat(threadOrNull).id;
-  } catch (_error) {
-    return null;
-  }
-}
 
 const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
 const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
@@ -514,26 +477,7 @@ function buildOwnerResolutionFailureLogProperties({
   };
 }
 
-type CanonicalFeedbackSignal = ReturnType<typeof buildSdlcCanonicalCause> & {
-  payload: Record<string, unknown>;
-};
-
-class EnrolledLoopSignalInboxRetryError extends Error {}
 class RetryableOwnerResolutionError extends Error {}
-
-function buildCoordinatorGuardrailRuntime(loopVersion: unknown) {
-  const iterationCount =
-    typeof loopVersion === "number" && Number.isFinite(loopVersion)
-      ? Math.max(loopVersion, 0)
-      : 0;
-  return {
-    killSwitchEnabled: false,
-    cooldownUntil: null,
-    maxIterations: null,
-    manualIntentAllowed: true,
-    iterationCount,
-  };
-}
 
 function buildIdentityValueOrFallback({
   identityValue,
@@ -567,177 +511,64 @@ function buildDeliveryIdOrFallback({
 function buildFeedbackDeliveryMarker(
   input: GithubFeedbackInput,
 ): string | null {
-  const canonicalSignal = buildCanonicalFeedbackSignal(input);
-  if (!canonicalSignal) {
-    return null;
-  }
-  return `<!-- ${GITHUB_FEEDBACK_DELIVERY_MARKER_PREFIX}${canonicalSignal.canonicalCauseId} -->`;
-}
-
-function buildCanonicalFeedbackSignal(
-  input: GithubFeedbackInput,
-): CanonicalFeedbackSignal | null {
+  let causeId: string | null = null;
   switch (input.eventType) {
     case "check_run.completed": {
-      const checkRunIdentity = buildIdentityValueOrFallback({
+      const id = buildIdentityValueOrFallback({
         identityValue: input.checkRunId,
         fallback: `${input.repoFullName}:${input.prNumber}:check-run`,
       });
-      const canonicalCause = buildSdlcCanonicalCause({
-        causeType: "check_run.completed",
-        deliveryId: buildDeliveryIdOrFallback({
-          deliveryId: input.deliveryId,
-          fallbackScope: `check-run:${checkRunIdentity}`,
-        }),
-        checkRunId: checkRunIdentity,
+      const delivery = buildDeliveryIdOrFallback({
+        deliveryId: input.deliveryId,
+        fallbackScope: `check-run:${id}`,
       });
-      return {
-        ...canonicalCause,
-        payload: {
-          eventType: input.eventType,
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          checkRunId: checkRunIdentity,
-          checkName: input.checkName ?? null,
-          checkOutcome: input.checkOutcome ?? null,
-          headSha: input.headSha ?? null,
-          checkSummary: input.checkSummary ?? null,
-          failureDetails: input.failureDetails ?? null,
-          ciSnapshotSource: input.ciSnapshotSource ?? null,
-          ciSnapshotCheckNames: input.ciSnapshotCheckNames ?? null,
-          ciSnapshotFailingChecks: input.ciSnapshotFailingChecks ?? null,
-          ciSnapshotComplete: input.ciSnapshotComplete ?? null,
-          sourceType: input.sourceType ?? "automation",
-        },
-      };
+      causeId = `${delivery}:${id}`;
+      break;
     }
     case "check_suite.completed": {
-      const checkSuiteIdentity = buildIdentityValueOrFallback({
+      const id = buildIdentityValueOrFallback({
         identityValue: input.checkSuiteId,
         fallback: `${input.repoFullName}:${input.prNumber}:check-suite`,
       });
-      const canonicalCause = buildSdlcCanonicalCause({
-        causeType: "check_suite.completed",
-        deliveryId: buildDeliveryIdOrFallback({
-          deliveryId: input.deliveryId,
-          fallbackScope: `check-suite:${checkSuiteIdentity}`,
-        }),
-        checkSuiteId: checkSuiteIdentity,
+      const delivery = buildDeliveryIdOrFallback({
+        deliveryId: input.deliveryId,
+        fallbackScope: `check-suite:${id}`,
       });
-      return {
-        ...canonicalCause,
-        payload: {
-          eventType: input.eventType,
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          checkSuiteId: checkSuiteIdentity,
-          checkOutcome: input.checkOutcome ?? null,
-          headSha: input.headSha ?? null,
-          checkSummary: input.checkSummary ?? null,
-          failureDetails: input.failureDetails ?? null,
-          ciSnapshotSource: input.ciSnapshotSource ?? null,
-          ciSnapshotCheckNames: input.ciSnapshotCheckNames ?? null,
-          ciSnapshotFailingChecks: input.ciSnapshotFailingChecks ?? null,
-          ciSnapshotComplete: input.ciSnapshotComplete ?? null,
-          sourceType: input.sourceType ?? "automation",
-        },
-      };
+      causeId = `${delivery}:${id}`;
+      break;
     }
     case "pull_request_review.submitted": {
-      const reviewIdentity = buildIdentityValueOrFallback({
+      const id = buildIdentityValueOrFallback({
         identityValue: input.reviewId ?? input.commentId,
         fallback: `${input.repoFullName}:${input.prNumber}:review`,
       });
-      const reviewState = buildIdentityValueOrFallback({
+      const state = buildIdentityValueOrFallback({
         identityValue: input.reviewState,
         fallback: "unknown",
       });
-      const canonicalCause = buildSdlcCanonicalCause({
-        causeType: "pull_request_review",
-        deliveryId: buildDeliveryIdOrFallback({
-          deliveryId: input.deliveryId,
-          fallbackScope: `review:${reviewIdentity}:${reviewState}`,
-        }),
-        reviewId: reviewIdentity,
-        reviewState,
+      const delivery = buildDeliveryIdOrFallback({
+        deliveryId: input.deliveryId,
+        fallbackScope: `review:${id}:${state}`,
       });
-      return {
-        ...canonicalCause,
-        payload: {
-          eventType: input.eventType,
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          reviewId: reviewIdentity,
-          reviewState,
-          unresolvedThreadCount: input.unresolvedThreadCount ?? null,
-          unresolvedThreadCountSource:
-            input.unresolvedThreadCountSource ?? null,
-          headSha: input.headSha ?? null,
-          reviewBody: input.reviewBody ?? null,
-          sourceType: input.sourceType ?? "automation",
-        },
-      };
+      causeId = `${delivery}:${id}:${state}`;
+      break;
     }
     case "pull_request_review_comment.created": {
-      const commentIdentity = buildIdentityValueOrFallback({
+      const id = buildIdentityValueOrFallback({
         identityValue: input.commentId,
         fallback: `${input.repoFullName}:${input.prNumber}:review-comment`,
       });
-      const canonicalCause = buildSdlcCanonicalCause({
-        causeType: "pull_request_review_comment",
-        deliveryId: buildDeliveryIdOrFallback({
-          deliveryId: input.deliveryId,
-          fallbackScope: `review-comment:${commentIdentity}`,
-        }),
-        commentId: commentIdentity,
+      const delivery = buildDeliveryIdOrFallback({
+        deliveryId: input.deliveryId,
+        fallbackScope: `review-comment:${id}`,
       });
-      return {
-        ...canonicalCause,
-        payload: {
-          eventType: input.eventType,
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          commentId: commentIdentity,
-          unresolvedThreadCount: input.unresolvedThreadCount ?? null,
-          unresolvedThreadCountSource:
-            input.unresolvedThreadCountSource ?? null,
-          headSha: input.headSha ?? null,
-          reviewBody: input.reviewBody ?? null,
-          sourceType: input.sourceType ?? "automation",
-        },
-      };
+      causeId = `${delivery}:${id}`;
+      break;
     }
     default:
       return null;
   }
-}
-
-async function enqueueCanonicalSignalForEnrolledLoop({
-  loopId,
-  input,
-}: {
-  loopId: string;
-  input: GithubFeedbackInput;
-}): Promise<"enqueued" | "deduplicated" | "unsupported"> {
-  const canonicalSignal = buildCanonicalFeedbackSignal(input);
-  if (!canonicalSignal) {
-    return "unsupported";
-  }
-
-  const inserted = await db
-    .insert(schema.sdlcLoopSignalInbox)
-    .values({
-      loopId,
-      causeType: canonicalSignal.causeType,
-      canonicalCauseId: canonicalSignal.canonicalCauseId,
-      signalHeadShaOrNull: canonicalSignal.signalHeadShaOrNull,
-      causeIdentityVersion: canonicalSignal.causeIdentityVersion,
-      payload: canonicalSignal.payload,
-    })
-    .onConflictDoNothing()
-    .returning({ id: schema.sdlcLoopSignalInbox.id });
-
-  return inserted.length > 0 ? "enqueued" : "deduplicated";
+  return `<!-- ${GITHUB_FEEDBACK_DELIVERY_MARKER_PREFIX}${causeId} -->`;
 }
 
 export async function routeGithubFeedbackOrSpawnThread(
@@ -871,32 +702,6 @@ export async function routeGithubFeedbackOrSpawnThread(
           appendOrReplace: "append",
           source: "github",
         });
-        if (
-          isSdlcLoopEnrollmentAllowedForThread({
-            sourceType: fallbackThread.sourceType,
-            sourceMetadata: fallbackThread.sourceMetadata ?? null,
-          })
-        ) {
-          try {
-            await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
-              userId: canonicalFallbackThreadMeta.userId,
-              repoFullName: input.repoFullName,
-              prNumber: input.prNumber,
-              threadId: fallbackThread.id,
-            });
-          } catch (error) {
-            console.warn(
-              "[github feedback routing] failed to ensure SDLC enrollment for owner-resolution fallback thread",
-              {
-                userId: canonicalFallbackThreadMeta.userId,
-                repoFullName: input.repoFullName,
-                prNumber: input.prNumber,
-                threadId: fallbackThread.id,
-                error,
-              },
-            );
-          }
-        }
         captureFeedbackRouting({
           userId: canonicalFallbackThreadMeta.userId,
           input,
@@ -931,172 +736,6 @@ export async function routeGithubFeedbackOrSpawnThread(
   }
 
   const userId = ownerResolution.userId;
-  const maybeEnsureSdlcEnrollmentForFeedbackThread = async (
-    threadId: string,
-    threadSource: {
-      sourceType: ThreadSource | null;
-      sourceMetadata: ThreadSourceMetadata | null;
-    },
-  ) => {
-    if (
-      !isSdlcLoopEnrollmentAllowedForThread({
-        sourceType: threadSource.sourceType,
-        sourceMetadata: threadSource.sourceMetadata,
-      })
-    ) {
-      return;
-    }
-    try {
-      await ensureSdlcLoopEnrollmentForGithubPRIfEnabled({
-        userId,
-        repoFullName: input.repoFullName,
-        prNumber: input.prNumber,
-        threadId,
-      });
-    } catch (error) {
-      console.warn(
-        "[github feedback routing] failed to ensure SDLC enrollment for routed feedback thread",
-        {
-          userId,
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          threadId,
-          error,
-        },
-      );
-    }
-  };
-
-  const activeSdlcLoop = await getActiveSdlcLoopForGithubPRIfEnabled({
-    userId,
-    repoFullName: input.repoFullName,
-    prNumber: input.prNumber,
-  });
-  if (activeSdlcLoop) {
-    const enrolledThread = await getThread({
-      db,
-      userId,
-      threadId: activeSdlcLoop.threadId,
-    });
-    const enrolledThreadChatId = getPrimaryThreadChatIdOrNull(enrolledThread);
-
-    if (enrolledThreadChatId) {
-      const guardrailRuntime = buildCoordinatorGuardrailRuntime(
-        activeSdlcLoop.loopVersion,
-      );
-      const signalOutcome = await enqueueCanonicalSignalForEnrolledLoop({
-        loopId: activeSdlcLoop.id,
-        input,
-      });
-      if (signalOutcome === "unsupported") {
-        console.warn(
-          "[github feedback routing] enrolled SDLC loop suppression skipped canonical signal enqueue due to unsupported feedback event type",
-          {
-            userId,
-            repoFullName: input.repoFullName,
-            prNumber: input.prNumber,
-            eventType: input.eventType,
-            sdlcLoopId: activeSdlcLoop.id,
-          },
-        );
-      } else {
-        console.log(
-          "[github feedback routing] canonical SDLC signal queued for enrolled loop",
-          {
-            userId,
-            repoFullName: input.repoFullName,
-            prNumber: input.prNumber,
-            eventType: input.eventType,
-            sdlcLoopId: activeSdlcLoop.id,
-            signalOutcome,
-          },
-        );
-      }
-
-      if (signalOutcome !== "unsupported") {
-        const leaseOwnerToken = `github-feedback:${input.eventType}:${input.deliveryId ?? "no-delivery"}:${input.prNumber}`;
-        try {
-          const signalInboxTickResult = await runBestEffortSdlcSignalInboxTick({
-            db,
-            loopId: activeSdlcLoop.id,
-            leaseOwnerToken,
-            guardrailRuntime,
-          });
-          if (
-            !signalInboxTickResult.processed &&
-            signalInboxTickResult.reason ===
-              SDLC_SIGNAL_INBOX_NOOP_FEEDBACK_FOLLOW_UP_ENQUEUE_FAILED
-          ) {
-            throw new EnrolledLoopSignalInboxRetryError(
-              `Failed to enqueue enrolled-loop feedback follow-up for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
-            );
-          }
-        } catch (error) {
-          if (error instanceof EnrolledLoopSignalInboxRetryError) {
-            throw error;
-          }
-          console.error(
-            "[github feedback routing] SDLC signal inbox tick failed after feedback enqueue",
-            {
-              userId,
-              repoFullName: input.repoFullName,
-              prNumber: input.prNumber,
-              eventType: input.eventType,
-              loopId: activeSdlcLoop.id,
-              error,
-            },
-          );
-          throw new EnrolledLoopSignalInboxRetryError(
-            `Failed to process enrolled-loop signal inbox tick for ${input.repoFullName}#${input.prNumber}; retrying GitHub delivery`,
-          );
-        }
-        try {
-          await runBestEffortSdlcPublicationCoordinator({
-            db,
-            loopId: activeSdlcLoop.id,
-            leaseOwnerToken,
-            guardrailRuntime,
-          });
-        } catch (error) {
-          console.error(
-            "[github feedback routing] SDLC publication coordinator failed after feedback enqueue",
-            {
-              userId,
-              repoFullName: input.repoFullName,
-              prNumber: input.prNumber,
-              eventType: input.eventType,
-              loopId: activeSdlcLoop.id,
-              error,
-            },
-          );
-        }
-      }
-      captureFeedbackRouting({
-        userId,
-        input,
-        mode: "suppressed_enrolled_loop",
-        reason: "sdlc-loop-enrolled",
-        threadId: activeSdlcLoop.threadId,
-      });
-      return {
-        mode: "suppressed_enrolled_loop",
-        reason: "sdlc-loop-enrolled",
-        sdlcLoopId: activeSdlcLoop.id,
-        threadId: activeSdlcLoop.threadId,
-      };
-    }
-
-    console.warn(
-      "[github feedback routing] enrolled SDLC loop thread is not routable; falling back to direct routing",
-      {
-        userId,
-        repoFullName: input.repoFullName,
-        prNumber: input.prNumber,
-        sdlcLoopId: activeSdlcLoop.id,
-        sdlcLoopThreadId: activeSdlcLoop.threadId,
-      },
-    );
-  }
 
   const existingThread = await getThreadForGithubPRAndUser({
     db,
@@ -1136,10 +775,6 @@ export async function routeGithubFeedbackOrSpawnThread(
         messages: [feedbackMessage],
         appendOrReplace: "append",
         source: "github",
-      });
-      await maybeEnsureSdlcEnrollmentForFeedbackThread(existingThread.id, {
-        sourceType: existingThread.sourceType,
-        sourceMetadata: existingThread.sourceMetadata ?? null,
       });
       captureFeedbackRouting({
         userId,
@@ -1209,16 +844,6 @@ export async function routeGithubFeedbackOrSpawnThread(
     const reason = didCreateNewThread
       ? ownerResolution.reason
       : "batched-existing-thread";
-    await maybeEnsureSdlcEnrollmentForFeedbackThread(threadId, {
-      sourceType,
-      sourceMetadata:
-        getSourceMetadataForFeedback({
-          sourceType,
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          commentId: input.commentId,
-        }) ?? null,
-    });
     captureFeedbackRouting({
       userId,
       input,

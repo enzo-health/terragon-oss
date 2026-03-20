@@ -22,7 +22,6 @@ import {
 } from "@terragon/shared";
 import { useRealtimeUser } from "@/hooks/useRealtime";
 import { useAtom, useSetAtom } from "jotai";
-import posthog from "posthog-js";
 import {
   userCredentialsAtom,
   userCredentialsRefetchAtom,
@@ -86,13 +85,5 @@ export function UserAtomsHydrator({
     matches: (message) => !!message.data.userCredentials,
     onMessage: () => refetchUserCredentials(),
   });
-  useEffect(() => {
-    if (user) {
-      posthog.identify(user.id, {
-        name: user.name,
-        email: user.email,
-      });
-    }
-  }, [user]);
   return children;
 }

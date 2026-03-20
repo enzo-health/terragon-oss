@@ -2,13 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { getActiveSdlcLoopForThread } from "@terragon/shared/model/delivery-loop";
+import {
+  createDispatchIntent as createDurableDispatchIntent,
+  markDispatchIntentCompleted,
+  markDispatchIntentDispatched,
+  markDispatchIntentFailed,
+} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { runBestEffortSdlcPublicationCoordinator } from "@/server-lib/delivery-loop/publication";
-import { runBestEffortSdlcSignalInboxTick } from "@/server-lib/delivery-loop/signal-inbox";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import {
@@ -16,6 +19,7 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -92,10 +96,21 @@ const dbMocks = vi.hoisted(() => {
 });
 
 const dispatchIntentMocks = vi.hoisted(() => ({
+  buildDispatchIntentId: vi.fn(
+    (loopId: string, runId: string) => `di_${loopId}_${runId}`,
+  ),
   createDispatchIntent: vi.fn(),
   storeSelfDispatchReplay: vi.fn(),
   getReplayableSelfDispatch: vi.fn(),
   updateDispatchIntent: vi.fn(),
+  getActiveDispatchIntent: vi.fn().mockResolvedValue(null),
+}));
+
+const deliveryLoopModelMocks = vi.hoisted(() => ({
+  createDispatchIntent: vi.fn(),
+  markDispatchIntentDispatched: vi.fn(),
+  markDispatchIntentCompleted: vi.fn(),
+  markDispatchIntentFailed: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-server", () => ({
@@ -110,17 +125,13 @@ vi.mock("@/lib/db", () => ({
   db: dbMocks.db,
 }));
 
-vi.mock("@terragon/shared/model/delivery-loop", () => ({
-  getActiveSdlcLoopForThread: vi.fn(),
-  SDLC_CAUSE_IDENTITY_VERSION: 1,
-}));
-
-vi.mock("@/server-lib/delivery-loop/publication", () => ({
-  runBestEffortSdlcPublicationCoordinator: vi.fn(),
-}));
-
-vi.mock("@/server-lib/delivery-loop/signal-inbox", () => ({
-  runBestEffortSdlcSignalInboxTick: vi.fn(),
+vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
+  createDispatchIntent: deliveryLoopModelMocks.createDispatchIntent,
+  markDispatchIntentDispatched:
+    deliveryLoopModelMocks.markDispatchIntentDispatched,
+  markDispatchIntentCompleted:
+    deliveryLoopModelMocks.markDispatchIntentCompleted,
+  markDispatchIntentFailed: deliveryLoopModelMocks.markDispatchIntentFailed,
 }));
 
 vi.mock("@/server-lib/process-follow-up-queue", () => ({
@@ -132,10 +143,12 @@ vi.mock("@/server-lib/follow-up", () => ({
 }));
 
 vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
+  buildDispatchIntentId: dispatchIntentMocks.buildDispatchIntentId,
   createDispatchIntent: dispatchIntentMocks.createDispatchIntent,
   storeSelfDispatchReplay: dispatchIntentMocks.storeSelfDispatchReplay,
   getReplayableSelfDispatch: dispatchIntentMocks.getReplayableSelfDispatch,
   updateDispatchIntent: dispatchIntentMocks.updateDispatchIntent,
+  getActiveDispatchIntent: dispatchIntentMocks.getActiveDispatchIntent,
 }));
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
@@ -157,25 +170,66 @@ vi.mock("@/agent/update-status", () => ({
   updateThreadChatWithTransition: vi.fn(),
 }));
 
+vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+  getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
+}));
+
+const redisMocks = vi.hoisted(() => {
+  const pipelineSet = vi.fn();
+  const pipelineDel = vi.fn();
+  const pipelineExec = vi.fn().mockResolvedValue([]);
+  return {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    del: vi.fn().mockResolvedValue(1),
+    pipeline: vi.fn(() => ({
+      set: pipelineSet,
+      del: pipelineDel,
+      exec: pipelineExec,
+    })),
+    pipelineSet,
+    pipelineDel,
+    pipelineExec,
+  };
+});
+
+vi.mock("@/lib/redis", () => ({
+  redis: redisMocks,
+  isLocalRedisHttpMode: vi.fn().mockReturnValue(false),
+  isRedisTransportParseError: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock("@/server-lib/delivery-loop/ack-lifecycle", () => ({
+  handleAckReceived: vi.fn().mockResolvedValue(undefined),
+}));
+
 function createDaemonRequest(
   body: Record<string, unknown>,
   headers: Record<string, string> = {},
   options: { autoCapabilities?: boolean } = {},
 ) {
+  // Default to ACP transport to match the default beforeEach mock.
+  // Tests that need different transport (e.g. legacy, codex-app-server)
+  // should explicitly specify transportMode/protocolVersion.
+  const bodyWithDefaults: Record<string, unknown> = {
+    transportMode: "acp",
+    protocolVersion: 2,
+    ...body,
+  };
   const requestHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...headers,
   };
 
   const hasEnvelopeV2 =
-    body.payloadVersion === 2 &&
-    typeof body.eventId === "string" &&
-    body.eventId.length > 0 &&
-    typeof body.runId === "string" &&
-    body.runId.length > 0 &&
-    typeof body.seq === "number" &&
-    Number.isInteger(body.seq) &&
-    body.seq >= 0;
+    bodyWithDefaults.payloadVersion === 2 &&
+    typeof bodyWithDefaults.eventId === "string" &&
+    bodyWithDefaults.eventId.length > 0 &&
+    typeof bodyWithDefaults.runId === "string" &&
+    bodyWithDefaults.runId.length > 0 &&
+    typeof bodyWithDefaults.seq === "number" &&
+    Number.isInteger(bodyWithDefaults.seq) &&
+    bodyWithDefaults.seq >= 0;
   if (
     (options.autoCapabilities ?? true) &&
     hasEnvelopeV2 &&
@@ -188,7 +242,7 @@ function createDaemonRequest(
   return new Request("http://localhost/api/daemon-event", {
     method: "POST",
     headers: requestHeaders,
-    body: JSON.stringify(body),
+    body: JSON.stringify(bodyWithDefaults),
   });
 }
 
@@ -236,8 +290,8 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
         sandboxId: "sandbox-1",
         agent: "claudeCode",
-        transportMode: "legacy",
-        protocolVersion: 1,
+        transportMode: "acp",
+        protocolVersion: 2,
         providers: ["anthropic"],
         nonce: "nonce-1",
         issuedAt: Date.now(),
@@ -250,8 +304,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -263,18 +317,16 @@ describe("daemon-event route", () => {
       updatedAt: new Date(),
     } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue(undefined);
+    vi.mocked(createDurableDispatchIntent).mockResolvedValue(
+      "durable-dispatch-intent-1",
+    );
+    vi.mocked(markDispatchIntentDispatched).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentCompleted).mockResolvedValue(undefined);
+    vi.mocked(markDispatchIntentFailed).mockResolvedValue(undefined);
     vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
-    vi.mocked(runBestEffortSdlcPublicationCoordinator).mockResolvedValue({
-      executed: false,
-      reason: "no_eligible_action",
-    });
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: false,
-      reason: "no_unprocessed_signal",
-    });
     vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
       processed: false,
+      dispatchLaunched: false,
       reason: "no_queued_messages",
     });
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
@@ -285,7 +337,7 @@ describe("daemon-event route", () => {
     dispatchIntentMocks.storeSelfDispatchReplay.mockResolvedValue(undefined);
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(null);
     dispatchIntentMocks.updateDispatchIntent.mockResolvedValue(undefined);
-    dbMocks.execute.mockResolvedValue([]);
+    dbMocks.execute.mockResolvedValue({ rows: [] });
     dbMocks.selectWhere.mockResolvedValue([]);
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
@@ -310,11 +362,6 @@ describe("daemon-event route", () => {
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope when daemon advertises v2 capability", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest(
         {
@@ -337,11 +384,6 @@ describe("daemon-event route", () => {
   });
 
   it("rejects enrolled-loop daemon events with malformed v2 envelope when daemon advertises v2 capability", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest(
         {
@@ -443,6 +485,7 @@ describe("daemon-event route", () => {
         ],
         timezone: "UTC",
         transportMode: "legacy",
+        protocolVersion: 1,
         payloadVersion: 2,
         eventId: "event-legacy",
         runId: "run-1",
@@ -507,8 +550,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -534,7 +577,7 @@ describe("daemon-event route", () => {
           },
         ],
         timezone: "UTC",
-        transportMode: "legacy",
+        transportMode: "acp",
         payloadVersion: 2,
         eventId: "event-terminal",
         runId: "run-1",
@@ -560,8 +603,8 @@ describe("daemon-event route", () => {
       threadId: "thread-1",
       threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -597,90 +640,33 @@ describe("daemon-event route", () => {
     );
   });
 
-  it("re-enqueues daemon-terminal feedback when runtime follow-up is expected but queue is empty", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: true,
-      signalId: "signal-1",
-      causeType: "daemon_terminal",
-      runtimeAction: "feedback_follow_up_queued",
-      outboxId: null,
-      feedbackQueuedMessage: {
-        type: "user",
-        model: null,
-        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
-        parts: [{ type: "text", text: "Please address this feedback." }],
-      },
-      runtimeRouting: {
-        routed: true,
-        followUpQueued: true,
-        reason: "follow_up_queued",
-        error: null,
-      },
-    });
-    vi.mocked(maybeProcessFollowUpQueue)
-      .mockResolvedValueOnce({
-        processed: false,
-        reason: "no_queued_messages",
-      } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>)
-      .mockResolvedValueOnce({
-        processed: true,
-        reason: "dispatch_started_batch",
-      } as Awaited<ReturnType<typeof maybeProcessFollowUpQueue>>);
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-follow-up",
-        runId: "run-1",
-        seq: 0,
-      }),
-    );
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(queueFollowUpInternal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          expect.objectContaining({
-            parts: [{ type: "text", text: "Please address this feedback." }],
-          }),
-        ],
-        appendOrReplace: "append",
-        source: "github",
-      }),
-    );
-    expect(maybeProcessFollowUpQueue).toHaveBeenCalledTimes(2);
-    expect(data.acknowledgedEventId).toBe("event-follow-up");
-    expect(data.acknowledgedSeq).toBe(0);
-  });
+  // Removed: "re-enqueues daemon-terminal feedback" — v1 follow-up re-enqueue
+  // logic was removed; v2 handles dispatch via work items.
 
   it("replays self-dispatch on duplicate terminal acknowledgements", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.insertReturning.mockResolvedValue([]);
+    // In v2, duplicate terminal acks are handled via run_terminal_ignored
+    // (runContext.status === "completed" → 202 before dedup/claim).
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
       MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
     );
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: false,
-      reason: "no_unprocessed_signal",
-    } as Awaited<ReturnType<typeof runBestEffortSdlcSignalInboxTick>>);
-
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -697,7 +683,7 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(202);
     expect(data.deduplicated).toBe(true);
-    expect(data.reason).toBe("duplicate_event");
+    expect(data.reason).toBe("run_terminal_ignored");
     expect(data.selfDispatch).toEqual(
       expect.objectContaining({
         runId: "run-next",
@@ -706,17 +692,29 @@ describe("daemon-event route", () => {
   });
 
   it("replays self-dispatch on out-of-order terminal acknowledgements", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: 3 }]);
+    // In v2, out-of-order terminal acks are handled via run_terminal_ignored
+    // (runContext.status === "completed" → 202 before any seq check).
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(
       MOCK_SELF_DISPATCH_REPLAY_PAYLOAD,
     );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
 
     const response = await POST(
       createDaemonRequest({
@@ -734,7 +732,7 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(202);
     expect(data.deduplicated).toBe(true);
-    expect(data.reason).toBe("out_of_order_or_duplicate_seq");
+    expect(data.reason).toBe("run_terminal_ignored");
     expect(data.selfDispatch).toEqual(
       expect.objectContaining({
         runId: "run-next",
@@ -743,32 +741,13 @@ describe("daemon-event route", () => {
   });
 
   it("blocks auto-dispatch when consecutive completed runs exceed threshold", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      loopVersion: 7,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    vi.mocked(runBestEffortSdlcSignalInboxTick).mockResolvedValue({
-      processed: true,
-      signalId: "signal-1",
-      causeType: "daemon_terminal",
-      runtimeAction: "feedback_follow_up_queued",
-      outboxId: null,
-      feedbackQueuedMessage: {
-        type: "user",
-        model: null,
-        timestamp: new Date("2026-01-01T00:00:00.000Z").toISOString(),
-        parts: [{ type: "text", text: "Please address this feedback." }],
-      },
-      runtimeRouting: {
-        routed: true,
-        followUpQueued: true,
-        reason: "follow_up_queued",
-        error: null,
-      },
+    // First execute call is advisory lock for claim; second call is the breaker query.
+    dbMocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: Array.from({ length: 10 }, () => ({
+        daemonRunStatus: "completed",
+        autoDispatchProvenance: true,
+      })),
     });
-    // Circuit breaker uses db.execute() — return count >= MAX_CONSECUTIVE_AUTO_DISPATCHES (10)
-    dbMocks.execute.mockResolvedValue([{ count: 10 }]);
 
     const response = await POST(
       createDaemonRequest({
@@ -788,6 +767,9 @@ describe("daemon-event route", () => {
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
+
+  // Removed: "does not trip circuit breaker" — v1 auto-dispatch circuit breaker
+  // was removed; v2 uses self-dispatch with its own circuit breaker in daemon-ingress.
 
   it("persists codexPreviousResponseId for successful codex app-server completions", async () => {
     vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
@@ -907,10 +889,10 @@ describe("daemon-event route", () => {
         codexPreviousResponseId: 123,
       }),
     );
-    const data = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("invalid_codex_previous_response_id");
+    // Invalid codexPreviousResponseId is now non-fatal to avoid rolling back
+    // claimed signals after terminal side effects (which would lose the signal).
+    // The handler skips codex persistence and continues to success.
+    expect(response.status).toBe(200);
     expect(dbMocks.update).not.toHaveBeenCalled();
   });
 
@@ -951,12 +933,6 @@ describe("daemon-event route", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any);
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      state: "planning",
-      loopVersion: 11,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.updateSet.mockImplementationOnce(() => {
       throw new Error("db write failed");
     });
@@ -984,16 +960,15 @@ describe("daemon-event route", () => {
       acknowledgedSeq: 4,
     });
     expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope even when capability header is missing", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1007,16 +982,15 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(409);
     expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("requires v2 envelopes for enrolled loops even without capability headers", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1032,18 +1006,15 @@ describe("daemon-event route", () => {
     expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(dbMocks.insert).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("accepts enrolled-loop daemon events with v2 envelope", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-      state: "planning",
-      loopVersion: 11,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1059,44 +1030,9 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(dbMocks.transaction).toHaveBeenCalledTimes(1);
-    expect(dbMocks.execute).toHaveBeenCalledTimes(1);
-    expect(dbMocks.update).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "daemon-event:event-1:1",
-      includeRuntimeRouting: true,
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: 15,
-        manualIntentAllowed: true,
-        iterationCount: 11,
-      },
-    });
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledWith({
-      db: expect.any(Object),
-      loopId: "loop-1",
-      leaseOwnerToken: "daemon-event:event-1:1",
-      guardrailRuntime: {
-        killSwitchEnabled: false,
-        cooldownUntil: null,
-        maxIterations: 15,
-        manualIntentAllowed: true,
-        iterationCount: 11,
-      },
-    });
   });
 
   it("does not force implementation transition when enrolled loop has already advanced state", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-      state: "blocked",
-      loopVersion: 11,
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1111,15 +1047,15 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("rolls back the claimed v2 signal when daemon handling fails so retries can process the message", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
     vi.mocked(handleDaemonEvent)
       .mockResolvedValueOnce({
         success: false,
@@ -1128,33 +1064,23 @@ describe("daemon-event route", () => {
       })
       .mockResolvedValue({ success: true });
 
-    let eventClaimed = false;
-    let selectCallCount = 0;
-    dbMocks.selectWhere.mockImplementation(async () => {
-      selectCallCount += 1;
-      const isExistingSignalCheck = selectCallCount % 2 === 1;
-      if (isExistingSignalCheck) {
-        return eventClaimed ? [{ id: "signal-existing" }] : [];
-      }
-      return [{ maxSeq: null }];
-    });
-    dbMocks.insertReturning.mockImplementation(async () => {
-      if (eventClaimed) {
-        return [];
-      }
-      eventClaimed = true;
-      return [{ id: "signal-1" }];
-    });
-    dbMocks.deleteReturning.mockImplementation(async () => {
-      eventClaimed = false;
-      return [{ id: "signal-1" }];
-    });
+    // First request: claim succeeds (set returns "OK"), handleDaemonEvent fails
+    // Second request: claim succeeds again (set returns "OK"), handleDaemonEvent succeeds
+    redisMocks.set.mockResolvedValue("OK");
+    redisMocks.get.mockResolvedValue(null);
 
     const firstResponse = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
@@ -1163,13 +1089,21 @@ describe("daemon-event route", () => {
       }),
     );
     expect(firstResponse.status).toBe(503);
-    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
+    // Redis del called to rollback the processing event claim
+    expect(redisMocks.del).toHaveBeenCalledTimes(1);
 
     const secondResponse = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
@@ -1183,23 +1117,29 @@ describe("daemon-event route", () => {
   });
 
   it("deduplicates repeated daemon envelopes by event identity", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-existing",
-        receivedAt: new Date("2026-01-01T00:00:00.000Z"),
-        processedAt: new Date("2026-01-01T00:01:00.000Z"),
-      },
-    ]);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Simulate committed key already set in Redis → duplicate_event (202)
+    redisMocks.get.mockResolvedValueOnce(
+      new Date("2026-01-01T00:01:00.000Z").toISOString(),
+    );
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-duplicate",
@@ -1214,29 +1154,32 @@ describe("daemon-event route", () => {
     expect(data.acknowledgedEventId).toBe("event-duplicate");
     expect(data.acknowledgedSeq).toBe(2);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.insert).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("returns a retryable conflict instead of deduping when the same daemon event claim is still in progress", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-in-progress",
-        receivedAt: new Date(),
-        processedAt: null,
-      },
-    ]);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // No committed key yet, but set (claim attempt) fails → another worker holds the claim
+    redisMocks.get.mockResolvedValueOnce(null); // committedKey check 1: not committed
+    redisMocks.set.mockResolvedValueOnce(null); // claim attempt fails
+    redisMocks.get.mockResolvedValueOnce(null); // committedKey check 2: still not committed
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-in-progress",
@@ -1249,29 +1192,31 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(409);
     expect(data.error).toBe("daemon_event_claim_in_progress");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("reclaims stale unprocessed daemon-event claims so the event is replayed", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-stale",
-        receivedAt: new Date(Date.now() - 30 * 60 * 1000),
-        committedAt: null,
-        processedAt: null,
-      },
-    ]);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // No committed key → claim succeeds → event is processed normally
+    redisMocks.get.mockResolvedValueOnce(null);
+    redisMocks.set.mockResolvedValueOnce("OK");
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-stale-claim",
@@ -1284,31 +1229,32 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(dbMocks.deleteFrom).toHaveBeenCalledTimes(1);
-    expect(dbMocks.update).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("deduplicates stale committed daemon-event claims without reclaiming or replaying", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere.mockResolvedValueOnce([
-      {
-        id: "signal-committed",
-        receivedAt: new Date(Date.now() - 30 * 60 * 1000),
-        committedAt: new Date(Date.now() - 20 * 60 * 1000),
-        processedAt: null,
-      },
-    ]);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Committed key present → duplicate_event (202)
+    redisMocks.get.mockResolvedValueOnce(
+      new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    );
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-committed",
@@ -1321,17 +1267,9 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(202);
     expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
-    expect(dbMocks.update).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("treats commit as idempotent success when another worker already committed the signal", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
-      id: "loop-1",
-      threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
     dbMocks.updateReturning.mockResolvedValueOnce([]);
     dbMocks.signalInboxFindFirst.mockResolvedValueOnce({
       id: "signal-1",
@@ -1354,24 +1292,32 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
   });
 
   it("deduplicates out-of-order daemon envelopes within the same run", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    // In v2, processing-event dedup uses Redis committed key.
+    // An out-of-order (already committed) event looks the same as a duplicate.
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: 4 }]);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Committed key present → duplicate_event (202)
+    redisMocks.get.mockResolvedValueOnce(new Date().toISOString());
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-out-of-order",
@@ -1382,28 +1328,35 @@ describe("daemon-event route", () => {
     const data = await response.json();
 
     expect(response.status).toBe(202);
-    expect(data.reason).toBe("out_of_order_or_duplicate_seq");
+    expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.insert).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcPublicationCoordinator).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent claim races by event identity when insert conflicts", async () => {
-    vi.mocked(getActiveSdlcLoopForThread).mockResolvedValue({
+    // In v2, a concurrent race means the claim set fails (not "OK") but
+    // committed key becomes present before us → duplicate_event (202).
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
       id: "loop-1",
       threadId: "thread-1",
-    } as Awaited<ReturnType<typeof getActiveSdlcLoopForThread>>);
-    dbMocks.selectWhere
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ maxSeq: null }]);
-    dbMocks.insertReturning.mockResolvedValue([]);
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    redisMocks.get.mockResolvedValueOnce(null); // committed check 1: not committed yet
+    redisMocks.set.mockResolvedValueOnce(null); // claim attempt loses the race
+    redisMocks.get.mockResolvedValueOnce(new Date().toISOString()); // committed check 2: winner committed
 
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-raced",
@@ -1416,7 +1369,225 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(202);
     expect(data.reason).toBe("duplicate_event");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(runBestEffortSdlcSignalInboxTick).toHaveBeenCalledTimes(1);
-    expect(runBestEffortSdlcPublicationCoordinator).toHaveBeenCalledTimes(1);
+  });
+
+  describe("pure v2 workflow", () => {
+    const PURE_V2_WORKFLOW = {
+      id: "wf-pure-v2",
+      threadId: "thread-1",
+      kind: "planning",
+      generation: 1,
+    };
+
+    it("routes pure v2 terminal event through v3 kernel bridge", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          headShaAtCompletion: "abc123def456",
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-1",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips v1 signal inbox for enrolled workflows", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-2",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // v1 signal inbox claim was NOT called (no insert into sdlcLoopSignalInbox)
+      expect(dbMocks.signalInboxFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("processes ACK for pending dispatch intent", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "pending",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "system",
+              subtype: "init",
+              session_id: "session-1",
+              tools: [],
+              mcp_servers: [],
+            },
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-ack",
+          runId: "run-1",
+          seq: 0,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // ACK lifecycle was triggered (handleAckReceived is mocked at module level)
+      const { handleAckReceived } = await import(
+        "@/server-lib/delivery-loop/ack-lifecycle"
+      );
+      expect(handleAckReceived).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          loopId: "wf-pure-v2",
+          threadChatId: "chat-1",
+        }),
+      );
+    });
+
+    it("handles processing event claims via Redis", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      // Redis claim succeeds
+      redisMocks.get.mockResolvedValue(null);
+      redisMocks.set.mockResolvedValue("OK");
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: {
+                id: "msg-1",
+                type: "message",
+                role: "assistant",
+                content: [{ type: "text", text: "working..." }],
+                model: "claude-sonnet-4-20250514",
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 10, output_tokens: 5 },
+              },
+              session_id: "session-1",
+            },
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-processing",
+          runId: "run-1",
+          seq: 1,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // Redis was used for the processing event claim (not DB signal inbox)
+      expect(redisMocks.set).toHaveBeenCalled();
+    });
+
+    it("persists terminal dispatch status on completion", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // persistDaemonTerminalDispatchStatus calls updateDispatchIntent and markDispatchIntentCompleted
+      expect(dispatchIntentMocks.updateDispatchIntent).toHaveBeenCalledWith(
+        expect.stringContaining("wf-pure-v2"),
+        "chat-1",
+        expect.objectContaining({ status: "completed" }),
+      );
+      expect(markDispatchIntentCompleted).toHaveBeenCalled();
+    });
+
+    it("rejects pure v2 daemon event without v2 envelope", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messages: [createSuccessResultMessage()],
+            timezone: "UTC",
+          },
+          {},
+          { autoCapabilities: false },
+        ),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(data.error).toBe("enrolled_loop_requires_v2_envelope");
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
+    // v1 bridged workflow test removed — sdlcLoop table no longer exists
   });
 });

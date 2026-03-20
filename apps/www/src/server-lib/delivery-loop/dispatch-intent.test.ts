@@ -9,19 +9,28 @@ const mockRedis = vi.hoisted(() => ({
 
 vi.mock("@/lib/redis", () => ({
   redis: mockRedis,
+  isLocalRedisHttpMode: vi.fn().mockReturnValue(false),
+  isRedisTransportParseError: vi.fn().mockReturnValue(false),
 }));
 
-import {
-  createDispatchIntent,
-  buildDispatchIntentId,
-  updateDispatchIntent,
-  getActiveDispatchIntent,
-  completeDispatchIntent,
-  getReplayableSelfDispatch,
-  storeSelfDispatchReplay,
-} from "./dispatch-intent";
+let createDispatchIntent: typeof import("./dispatch-intent").createDispatchIntent;
+let buildDispatchIntentId: typeof import("./dispatch-intent").buildDispatchIntentId;
+let updateDispatchIntent: typeof import("./dispatch-intent").updateDispatchIntent;
+let getActiveDispatchIntent: typeof import("./dispatch-intent").getActiveDispatchIntent;
+let completeDispatchIntent: typeof import("./dispatch-intent").completeDispatchIntent;
+let getReplayableSelfDispatch: typeof import("./dispatch-intent").getReplayableSelfDispatch;
+let storeSelfDispatchReplay: typeof import("./dispatch-intent").storeSelfDispatchReplay;
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
+  const dispatchIntentModule = await import("./dispatch-intent");
+  createDispatchIntent = dispatchIntentModule.createDispatchIntent;
+  buildDispatchIntentId = dispatchIntentModule.buildDispatchIntentId;
+  updateDispatchIntent = dispatchIntentModule.updateDispatchIntent;
+  getActiveDispatchIntent = dispatchIntentModule.getActiveDispatchIntent;
+  completeDispatchIntent = dispatchIntentModule.completeDispatchIntent;
+  getReplayableSelfDispatch = dispatchIntentModule.getReplayableSelfDispatch;
+  storeSelfDispatchReplay = dispatchIntentModule.storeSelfDispatchReplay;
   vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-03-09T12:00:00.000Z"));
@@ -100,6 +109,7 @@ describe("createDispatchIntent", () => {
 
 describe("updateDispatchIntent", () => {
   it("merges partial updates and bumps updatedAt", async () => {
+    mockRedis.hget.mockResolvedValue("di_loop-1_run-1");
     mockRedis.hset.mockResolvedValue("OK");
 
     await updateDispatchIntent("di_loop-1_run-1", "tc-1", {
@@ -115,6 +125,7 @@ describe("updateDispatchIntent", () => {
   });
 
   it("serializes null lastError as empty string", async () => {
+    mockRedis.hget.mockResolvedValue("di_loop-1_run-1");
     mockRedis.hset.mockResolvedValue("OK");
 
     await updateDispatchIntent("di_loop-1_run-1", "tc-1", {
@@ -131,6 +142,7 @@ describe("updateDispatchIntent", () => {
   });
 
   it("serializes error details", async () => {
+    mockRedis.hget.mockResolvedValue("di_loop-1_run-1");
     mockRedis.hset.mockResolvedValue("OK");
 
     await updateDispatchIntent("di_loop-1_run-1", "tc-1", {
@@ -373,6 +385,67 @@ describe("self-dispatch replay", () => {
         dispatchMechanism: "self_dispatch",
         runId: "run-next",
         status: "completed",
+        retryCount: "0",
+        maxRetries: "3",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        updatedAt: "2026-03-09T12:00:00.000Z",
+        lastError: "",
+        lastFailureCategory: "",
+        selfDispatchReplayKind: "none",
+        selfDispatchReplaySourceEventId: "",
+        selfDispatchReplaySourceSeq: "",
+        selfDispatchReplaySourceRunId: "",
+        selfDispatchReplayPayloadJson: "",
+      });
+
+    await expect(
+      getReplayableSelfDispatch({
+        threadChatId: "tc-1",
+        sourceEventId: "event-1",
+        sourceSeq: 3,
+        sourceRunId: "run-1",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("does not replay when active intent no longer matches replay destination", async () => {
+    mockRedis.hgetall
+      .mockResolvedValueOnce({
+        kind: "ready",
+        sourceEventId: "event-1",
+        sourceSeq: "3",
+        sourceRunId: "run-1",
+        dispatchIntentId: "di_loop-1_run-next",
+        destinationRunId: "run-next",
+        payloadJson: JSON.stringify({
+          token: "token-1",
+          prompt: "Please address this feedback.",
+          runId: "run-next",
+          tokenNonce: "nonce-next",
+          model: "gpt-5.3-codex",
+          agent: "codex",
+          agentVersion: 2,
+          sessionId: null,
+          featureFlags: {},
+          permissionMode: "allowAll",
+          transportMode: "codex-app-server",
+          protocolVersion: 1,
+          threadId: "thread-1",
+          threadChatId: "tc-1",
+        }),
+        createdAt: "2026-03-09T12:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
+        id: "di_loop-1_run-other",
+        loopId: "loop-1",
+        threadId: "thread-1",
+        threadChatId: "tc-1",
+        targetPhase: "implementing",
+        selectedAgent: "codex",
+        executionClass: "implementation_runtime",
+        dispatchMechanism: "self_dispatch",
+        runId: "run-other",
+        status: "prepared",
         retryCount: "0",
         maxRetries: "3",
         createdAt: "2026-03-09T12:00:00.000Z",

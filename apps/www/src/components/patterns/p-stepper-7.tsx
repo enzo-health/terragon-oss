@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { SdlcLoopStatusCheckStatus } from "@/lib/delivery-loop-status";
+import type {
+  DeliveryLoopStatusCheck,
+  DeliveryLoopStatusCheckKey,
+  DeliveryLoopStatusCheckStatus,
+} from "@/lib/delivery-loop-status";
 import { cn } from "@/lib/utils";
 import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
@@ -20,6 +24,11 @@ import {
 } from "@/lib/delivery-loop-plan-view-model";
 import { DeliveryLoopPlanReviewCard } from "./delivery-loop-plan-review-card";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Stepper,
   StepperIndicator,
   StepperItem,
@@ -33,17 +42,42 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CircleIcon,
+  ExternalLinkIcon,
+  GitPullRequestIcon,
+  InfoIcon,
   LoaderCircleIcon,
 } from "lucide-react";
 
-type SdlcPhaseKey =
+type DeliveryPhaseKey =
   | "planning"
   | "implementing"
   | "reviewing"
   | "ci"
   | "ui_testing";
 
-function getCheckStatusLabel(status: SdlcLoopStatusCheckStatus): string {
+// ---------------------------------------------------------------------------
+// Check key → phase key mapping
+// ---------------------------------------------------------------------------
+const CHECK_TO_PHASE: Record<DeliveryLoopStatusCheckKey, DeliveryPhaseKey> = {
+  ci: "ci",
+  review_threads: "reviewing",
+  deep_review: "reviewing",
+  architecture_carmack: "reviewing",
+  video: "ui_testing",
+};
+
+function getChecksForPhase(
+  checks: DeliveryLoopStatusCheck[],
+  phaseKey: DeliveryPhaseKey,
+): DeliveryLoopStatusCheck[] {
+  return checks.filter((c) => CHECK_TO_PHASE[c.key] === phaseKey);
+}
+
+// ---------------------------------------------------------------------------
+// Status helpers
+// ---------------------------------------------------------------------------
+
+function getCheckStatusLabel(status: DeliveryLoopStatusCheckStatus): string {
   switch (status) {
     case "passed":
       return "Passed";
@@ -58,7 +92,7 @@ function getCheckStatusLabel(status: SdlcLoopStatusCheckStatus): string {
   }
 }
 
-function getStatusBadgeClass(status: SdlcLoopStatusCheckStatus): string {
+function getStatusBadgeClass(status: DeliveryLoopStatusCheckStatus): string {
   switch (status) {
     case "passed":
       return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -73,21 +107,70 @@ function getStatusBadgeClass(status: SdlcLoopStatusCheckStatus): string {
   }
 }
 
+function getGateDotColor(status: DeliveryLoopStatusCheckStatus): string {
+  switch (status) {
+    case "passed":
+      return "bg-emerald-500";
+    case "blocked":
+      return "bg-red-500";
+    case "degraded":
+      return "bg-amber-500";
+    case "not_started":
+      return "bg-muted-foreground/30";
+    default:
+      return "bg-sky-500";
+  }
+}
+
 function getCurrentStep(
-  phases: ReadonlyArray<{ status: SdlcLoopStatusCheckStatus }>,
+  phases: ReadonlyArray<{ status: DeliveryLoopStatusCheckStatus }>,
 ): number {
   const blockedIndex = phases.findIndex((phase) => phase.status === "blocked");
-  if (blockedIndex >= 0) {
-    return blockedIndex + 1;
-  }
-
+  if (blockedIndex >= 0) return blockedIndex + 1;
   const firstIncompleteIndex = phases.findIndex(
     (phase) => phase.status !== "passed" && phase.status !== "degraded",
   );
   return firstIncompleteIndex === -1 ? phases.length : firstIncompleteIndex + 1;
 }
 
-type SdlcPlannedTask = {
+// ---------------------------------------------------------------------------
+// Gate tooltip content (shows sub-checks for a phase on hover)
+// ---------------------------------------------------------------------------
+
+function GateTooltipContent({
+  gateChecks,
+}: {
+  gateChecks: DeliveryLoopStatusCheck[];
+}) {
+  return (
+    <div className="space-y-1.5 text-left">
+      {gateChecks.map((check) => (
+        <div key={check.key} className="flex items-start gap-1.5">
+          <div
+            className={cn(
+              "mt-1 size-1.5 shrink-0 rounded-full",
+              getGateDotColor(check.status),
+            )}
+          />
+          <div>
+            <span className="font-medium">{check.label}</span>
+            <span className="mx-1 text-primary-foreground/60">·</span>
+            <span className="text-primary-foreground/80">
+              {getCheckStatusLabel(check.status)}
+            </span>
+            <p className="text-primary-foreground/60">{check.detail}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Plan task list
+// ---------------------------------------------------------------------------
+
+type DeliveryPlannedTask = {
   stableTaskId: string;
   title: string;
   description: string | null;
@@ -95,7 +178,11 @@ type SdlcPlannedTask = {
   status: "todo" | "in_progress" | "done" | "blocked" | "skipped";
 };
 
-function PlanTaskStatusIcon({ status }: { status: SdlcPlannedTask["status"] }) {
+function PlanTaskStatusIcon({
+  status,
+}: {
+  status: DeliveryPlannedTask["status"];
+}) {
   switch (status) {
     case "done":
     case "skipped":
@@ -113,14 +200,14 @@ function PlanTaskStatusIcon({ status }: { status: SdlcPlannedTask["status"] }) {
   }
 }
 
-function SdlcPlanTaskList({
+function DeliveryPlanTaskList({
   tasks,
   taskSummary,
   showApprove,
   threadId,
   threadChatId,
 }: {
-  tasks: SdlcPlannedTask[];
+  tasks: DeliveryPlannedTask[];
   taskSummary: { total: number; done: number; remaining: number };
   showApprove: boolean;
   threadId: string;
@@ -174,7 +261,11 @@ function SdlcPlanTaskList({
   );
 }
 
-function SdlcInterventionControls({
+// ---------------------------------------------------------------------------
+// Intervention controls
+// ---------------------------------------------------------------------------
+
+function DeliveryInterventionControls({
   threadId,
   threadChatId,
   canResume,
@@ -223,6 +314,10 @@ function SdlcInterventionControls({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function DeliveryLoopTopProgressStepper({
   threadId,
   threadChatId,
@@ -232,62 +327,46 @@ export function DeliveryLoopTopProgressStepper({
   threadChatId: string | null;
   enabled: boolean;
 }) {
-  const [expandedPhase, setExpandedPhase] = useState<SdlcPhaseKey | null>(null);
+  const [expandedPhase, setExpandedPhase] = useState<DeliveryPhaseKey | null>(
+    null,
+  );
   const { data, isLoading, isError } = useDeliveryLoopStatusQuery({
     threadId,
     enabled,
   });
-  const sdlcPlanReviewCard = useFeatureFlag("sdlcPlanReviewCard");
+  const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
 
-  if (!enabled || isError) {
-    return null;
-  }
+  if (!enabled || isError) return null;
 
   const phases =
     data?.phases ??
     (isLoading
       ? ([
-          {
-            key: "planning",
-            label: "Planning",
-            status: "pending",
-          },
-          {
-            key: "implementing",
-            label: "Implementing",
-            status: "not_started",
-          },
-          {
-            key: "reviewing",
-            label: "Reviewing",
-            status: "not_started",
-          },
-          {
-            key: "ci",
-            label: "CI",
-            status: "not_started",
-          },
-          {
-            key: "ui_testing",
-            label: "UI Testing",
-            status: "not_started",
-          },
+          { key: "planning", label: "Planning", status: "pending" },
+          { key: "implementing", label: "Implementing", status: "not_started" },
+          { key: "reviewing", label: "Reviewing", status: "not_started" },
+          { key: "ci", label: "CI", status: "not_started" },
+          { key: "ui_testing", label: "UI Testing", status: "not_started" },
         ] satisfies ReadonlyArray<{
-          key: SdlcPhaseKey;
+          key: DeliveryPhaseKey;
           label: string;
-          status: SdlcLoopStatusCheckStatus;
+          status: DeliveryLoopStatusCheckStatus;
         }>)
       : []);
+
   const currentStep = getCurrentStep(phases);
   const progressPercent = data?.progressPercent ?? 0;
   const stateLabel = data?.stateLabel ?? "Waiting to Start";
-  const needsAttention = data?.needsAttention.isBlocked ?? false;
-  const blockerCount = data?.needsAttention.blockerCount ?? 0;
+  const explanation = data?.explanation ?? null;
+  const needsAttention = data?.needsAttention ?? null;
+  const checks = data?.checks ?? [];
+  const links = data?.links ?? null;
   const showInterventionControls =
     (data?.actions.canResume ?? false) ||
     (data?.actions.canBypassOnce ?? false);
+
   const planCardModel =
-    data && sdlcPlanReviewCard
+    data && deliveryPlanReviewCard
       ? buildArtifactFallbackPlanSpecViewModel({
           summary:
             data.artifacts.planningArtifact?.planText ??
@@ -304,44 +383,86 @@ export function DeliveryLoopTopProgressStepper({
   return (
     <div className="w-full border-b border-border/70 bg-gradient-to-b from-background to-muted/20">
       <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-3 px-4 py-3">
+        {/* Header row */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Delivery Loop
             </p>
-            <p className="truncate text-sm font-semibold text-foreground">
-              {stateLabel}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-foreground">
+                {stateLabel}
+              </p>
+              {explanation && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <InfoIcon className="size-3.5 shrink-0 cursor-help text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-[280px]">
+                    {explanation}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
 
-          <div className="ml-auto flex min-w-[220px] items-center gap-2 sm:min-w-[300px]">
-            <Progress
-              value={progressPercent}
-              className="h-1.5 flex-1 bg-muted [&>div]:bg-foreground"
-            />
-            <span className="text-xs font-semibold tabular-nums text-muted-foreground">
-              {isLoading ? "--" : `${progressPercent}%`}
-            </span>
-            {needsAttention ? (
-              <Badge variant="destructive" className="text-[11px]">
-                {blockerCount} blocker{blockerCount === 1 ? "" : "s"}
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="text-[11px]">
-                On Track
-              </Badge>
+          <div className="ml-auto flex items-center gap-2">
+            {links?.pullRequestUrl && (
+              <a
+                href={links.pullRequestUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <GitPullRequestIcon className="size-3" />
+                PR
+                <ExternalLinkIcon className="size-2.5" />
+              </a>
             )}
+            <div className="flex min-w-[220px] items-center gap-2 sm:min-w-[300px]">
+              <Progress
+                value={progressPercent}
+                className="h-1.5 flex-1 bg-muted [&>div]:bg-foreground"
+              />
+              <span className="text-xs font-semibold tabular-nums text-muted-foreground">
+                {isLoading ? "--" : `${progressPercent}%`}
+              </span>
+            </div>
+            <span aria-live="polite">
+              {needsAttention?.isBlocked ? (
+                <Badge variant="destructive" className="text-[11px]">
+                  {needsAttention.blockerCount} blocker
+                  {needsAttention.blockerCount === 1 ? "" : "s"}
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-[11px]">
+                  On Track
+                </Badge>
+              )}
+            </span>
           </div>
         </div>
-        {showInterventionControls && data ? (
-          <SdlcInterventionControls
+
+        {/* Blocker summary — compact inline list */}
+        {needsAttention?.isBlocked && needsAttention.topBlockers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-red-200 bg-red-50/50 px-2.5 py-1.5 text-[11px] text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
+            <AlertTriangleIcon className="size-3 shrink-0" />
+            {needsAttention.topBlockers.map((b, i) => (
+              <span key={i}>{b.title}</span>
+            ))}
+          </div>
+        )}
+
+        {showInterventionControls && data && (
+          <DeliveryInterventionControls
             threadId={threadId}
             threadChatId={threadChatId}
             canResume={data.actions.canResume}
             canBypassOnce={data.actions.canBypassOnce}
           />
-        ) : null}
+        )}
 
+        {/* Horizontal stepper */}
         <Stepper
           value={currentStep}
           indicators={{
@@ -350,18 +471,23 @@ export function DeliveryLoopTopProgressStepper({
           }}
           className="w-full"
         >
-          <StepperNav className="gap-3 overflow-x-auto pb-1">
+          <StepperNav
+            aria-label="Delivery loop progress"
+            className="gap-3 overflow-x-auto pb-1"
+          >
             {phases.map((phase, index) => {
               const isStepDone =
                 phase.status === "passed" || phase.status === "degraded";
               const isStepBlocked = phase.status === "blocked";
               const isStepLoading = phase.status === "pending";
+              const phaseChecks = getChecksForPhase(checks, phase.key);
+              const hasGateChecks = phaseChecks.length > 0;
               const isExpandable =
                 phase.key === "planning" &&
                 (data?.artifacts?.plannedTasks?.length ?? 0) > 0;
               const isExpanded = expandedPhase === phase.key;
 
-              return (
+              const stepContent = (
                 <StepperItem
                   key={phase.key}
                   step={index + 1}
@@ -375,9 +501,9 @@ export function DeliveryLoopTopProgressStepper({
                   <StepperTrigger
                     disabled={!isExpandable}
                     className={cn(
-                      "h-auto items-start gap-2 rounded-lg px-1 py-1 disabled:opacity-100",
+                      "h-auto items-start gap-2 rounded-lg px-1.5 py-1.5 transition-colors duration-150 disabled:opacity-100",
                       isExpandable
-                        ? "cursor-pointer hover:bg-muted/50"
+                        ? "cursor-pointer hover:bg-muted/50 active:bg-muted/70"
                         : "cursor-default",
                     )}
                     onClick={
@@ -391,7 +517,7 @@ export function DeliveryLoopTopProgressStepper({
                   >
                     <StepperIndicator
                       className={cn(
-                        "size-8 border text-[11px] font-semibold",
+                        "size-8 border text-[11px] font-semibold shadow-sm",
                         isStepDone
                           ? "data-[state=completed]:border-emerald-600 data-[state=completed]:bg-emerald-600 data-[state=completed]:text-white"
                           : "",
@@ -419,47 +545,88 @@ export function DeliveryLoopTopProgressStepper({
                           />
                         )}
                       </StepperTitle>
-                      <span
-                        className={cn(
-                          "inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none",
-                          getStatusBadgeClass(phase.status),
-                        )}
-                      >
-                        {getCheckStatusLabel(phase.status)}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none transition-colors duration-200",
+                            getStatusBadgeClass(phase.status),
+                          )}
+                        >
+                          {getCheckStatusLabel(phase.status)}
+                        </span>
+                        {/* Gate dots — compact sub-check indicators */}
+                        {hasGateChecks &&
+                          phase.status !== "not_started" &&
+                          phaseChecks.length > 1 && (
+                            <div
+                              className="flex items-center gap-0.5"
+                              role="group"
+                              aria-label={`${phase.label} sub-checks`}
+                            >
+                              {phaseChecks.map((check) => (
+                                <div
+                                  key={check.key}
+                                  className={cn(
+                                    "size-1.5 rounded-full transition-colors duration-200",
+                                    getGateDotColor(check.status),
+                                  )}
+                                  role="img"
+                                  aria-label={`${check.label}: ${getCheckStatusLabel(check.status)}`}
+                                />
+                              ))}
+                            </div>
+                          )}
+                      </div>
                     </div>
                   </StepperTrigger>
 
                   {isExpanded &&
                     phase.key === "planning" &&
                     data?.artifacts?.plannedTasks && (
-                      <>
+                      <div className="animate-in fade-in slide-in-from-top-1 duration-200">
                         {planCardModel ? (
                           <DeliveryLoopPlanReviewCard
                             plan={planCardModel}
                             className="mt-1.5"
                           />
                         ) : null}
-                        <SdlcPlanTaskList
+                        <DeliveryPlanTaskList
                           tasks={data.artifacts.plannedTasks}
                           taskSummary={data.artifacts.plannedTaskSummary}
                           showApprove={data.actions.canApprovePlan}
                           threadId={threadId}
                           threadChatId={threadChatId}
                         />
-                      </>
+                      </div>
                     )}
 
                   {phases.length > index + 1 ? (
                     <StepperSeparator
                       className={cn(
-                        "mx-2",
-                        isStepDone ? "bg-emerald-600" : "bg-border",
+                        "mx-2 h-0.5",
+                        isStepDone ? "bg-emerald-600" : "bg-border/60",
                       )}
                     />
                   ) : null}
                 </StepperItem>
               );
+
+              // Wrap phases that have gate checks in a tooltip
+              if (hasGateChecks && phase.status !== "not_started") {
+                return (
+                  <Tooltip key={phase.key}>
+                    <TooltipTrigger asChild>{stepContent}</TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      className="max-w-[300px] p-3 text-xs"
+                    >
+                      <GateTooltipContent gateChecks={phaseChecks} />
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+
+              return stepContent;
             })}
           </StepperNav>
         </Stepper>

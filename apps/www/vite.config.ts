@@ -16,6 +16,14 @@ export default defineConfig({
   },
   test: {
     silent: "passed-only",
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    poolOptions: {
+      threads: {
+        minThreads: 1,
+        maxThreads: 1,
+      },
+    },
     env: {
       GITHUB_CLIENT_ID: "GITHUB_CLIENT_ID_TEST",
       GITHUB_CLIENT_SECRET: "GITHUB_CLIENT_SECRET_TEST",

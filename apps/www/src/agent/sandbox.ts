@@ -32,6 +32,7 @@ import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
 } from "@terragon/sandbox";
+import { bashQuote } from "@terragon/sandbox/utils";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -56,6 +57,42 @@ type SandboxResumeMetadataCacheEntry = {
   repositoryEnvironment: Awaited<ReturnType<typeof getOrCreateEnvironment>>;
 };
 
+export type SandboxBranchReconciliationResult = {
+  session: ISandboxSession;
+  reconciled: boolean;
+  restarted: boolean;
+  currentBranchName: string | null;
+};
+
+function normalizeBranchName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function resolveExpectedBranchForReconciliation(params: {
+  createNewBranch: boolean;
+  requestedBranchName: string | null | undefined;
+  threadBranchName: string | null | undefined;
+  repoBaseBranchName: string | null | undefined;
+}): string | null {
+  const threadBranchName = normalizeBranchName(params.threadBranchName);
+  if (threadBranchName) {
+    return threadBranchName;
+  }
+
+  const requestedBranchName = normalizeBranchName(params.requestedBranchName);
+  const repoBaseBranchName = normalizeBranchName(params.repoBaseBranchName);
+
+  if (params.createNewBranch) {
+    if (requestedBranchName && requestedBranchName !== repoBaseBranchName) {
+      return requestedBranchName;
+    }
+    return null;
+  }
+
+  return requestedBranchName ?? repoBaseBranchName;
+}
+
 function getSandboxResumeContextCacheKey({
   userId,
   threadId,
@@ -73,11 +110,10 @@ async function getCachedSandboxResumeContext({
   userId: string;
   threadId: string;
 }): Promise<SandboxResumeMetadataCacheEntry | null> {
-  let raw: string | null = null;
+  const cacheKey = getSandboxResumeContextCacheKey({ userId, threadId });
+  let raw: unknown = null;
   try {
-    raw = await redis.get<string>(
-      getSandboxResumeContextCacheKey({ userId, threadId }),
-    );
+    raw = await redis.get(cacheKey);
   } catch (error) {
     console.warn("Failed to read sandbox resume context cache", {
       userId,
@@ -86,7 +122,27 @@ async function getCachedSandboxResumeContext({
     });
     return null;
   }
-  if (!raw) {
+  if (raw == null) {
+    return null;
+  }
+  if (typeof raw === "object") {
+    return raw as SandboxResumeMetadataCacheEntry;
+  }
+  if (typeof raw !== "string") {
+    console.warn("Unexpected sandbox resume context cache payload type", {
+      userId,
+      threadId,
+      type: typeof raw,
+    });
+    try {
+      await redis.del(cacheKey);
+    } catch (deleteError) {
+      console.warn("Failed to clear sandbox resume context cache", {
+        userId,
+        threadId,
+        deleteError,
+      });
+    }
     return null;
   }
   try {
@@ -97,7 +153,15 @@ async function getCachedSandboxResumeContext({
       threadId,
       error,
     });
-    await redis.del(getSandboxResumeContextCacheKey({ userId, threadId }));
+    try {
+      await redis.del(cacheKey);
+    } catch (deleteError) {
+      console.warn("Failed to clear sandbox resume context cache", {
+        userId,
+        threadId,
+        deleteError,
+      });
+    }
     return null;
   }
 }
@@ -144,6 +208,229 @@ async function getOrCreateSandboxWithTimeout(
     throw new Error("Sandbox creation timed out. Please try again later.");
   }
   return result;
+}
+
+async function readCurrentBranchNameOrNull(
+  session: ISandboxSession,
+): Promise<string | null> {
+  try {
+    const branchName = await session.runCommand(
+      "git rev-parse --abbrev-ref HEAD",
+      {
+        cwd: session.repoDir,
+      },
+    );
+    const trimmedBranchName = branchName.trim();
+    return trimmedBranchName.length > 0 ? trimmedBranchName : null;
+  } catch (error) {
+    console.warn("[sandbox] Failed to read current branch name", {
+      sandboxId: session.sandboxId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+async function checkoutExpectedBranchWithRecovery(params: {
+  session: ISandboxSession;
+  expectedBranchName: string;
+  baseBranchName?: string | null;
+}): Promise<string | null> {
+  const checkoutCommand = `git checkout ${bashQuote(params.expectedBranchName)}`;
+
+  try {
+    await params.session.runCommand(checkoutCommand, {
+      cwd: params.session.repoDir,
+    });
+    const checkedOutBranchName = await readCurrentBranchNameOrNull(
+      params.session,
+    );
+    if (checkedOutBranchName === params.expectedBranchName) {
+      return checkedOutBranchName;
+    }
+  } catch (error) {
+    console.warn("[sandbox] Failed to checkout expected branch", {
+      sandboxId: params.session.sandboxId,
+      repoDir: params.session.repoDir,
+      expectedBranchName: params.expectedBranchName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  try {
+    await params.session.runCommand(
+      `git fetch origin ${bashQuote(params.expectedBranchName)}:${bashQuote(params.expectedBranchName)}`,
+      {
+        cwd: params.session.repoDir,
+      },
+    );
+    await params.session.runCommand(checkoutCommand, {
+      cwd: params.session.repoDir,
+    });
+    const fetchedBranchName = await readCurrentBranchNameOrNull(params.session);
+    if (fetchedBranchName === params.expectedBranchName) {
+      return fetchedBranchName;
+    }
+  } catch (error) {
+    console.warn("[sandbox] Failed to fetch expected branch from origin", {
+      sandboxId: params.session.sandboxId,
+      repoDir: params.session.repoDir,
+      expectedBranchName: params.expectedBranchName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const baseCandidates = Array.from(
+    new Set(
+      [params.baseBranchName?.trim(), "main", "master"].filter(
+        (candidate): candidate is string => !!candidate && candidate.length > 0,
+      ),
+    ),
+  );
+
+  for (const baseBranchName of baseCandidates) {
+    try {
+      await params.session.runCommand(
+        `git fetch origin ${bashQuote(baseBranchName)}`,
+        {
+          cwd: params.session.repoDir,
+        },
+      );
+      await params.session.runCommand(
+        `git checkout -B ${bashQuote(params.expectedBranchName)} ${bashQuote(`origin/${baseBranchName}`)}`,
+        {
+          cwd: params.session.repoDir,
+        },
+      );
+      const recreatedBranchName = await readCurrentBranchNameOrNull(
+        params.session,
+      );
+      if (recreatedBranchName === params.expectedBranchName) {
+        console.warn("[sandbox] Recreated missing expected branch from base", {
+          sandboxId: params.session.sandboxId,
+          repoDir: params.session.repoDir,
+          expectedBranchName: params.expectedBranchName,
+          baseBranchName,
+        });
+        return recreatedBranchName;
+      }
+    } catch (error) {
+      console.warn("[sandbox] Failed to recreate expected branch from base", {
+        sandboxId: params.session.sandboxId,
+        repoDir: params.session.repoDir,
+        expectedBranchName: params.expectedBranchName,
+        baseBranchName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return null;
+}
+
+export async function reconcileSandboxBranchForThread(params: {
+  session: ISandboxSession;
+  expectedBranchName: string | null | undefined;
+  baseBranchName?: string | null;
+  restartSandbox: () => Promise<ISandboxSession>;
+}): Promise<SandboxBranchReconciliationResult> {
+  const expectedBranchName = params.expectedBranchName?.trim() ?? "";
+  const currentBranchName = await readCurrentBranchNameOrNull(params.session);
+
+  if (!expectedBranchName) {
+    return {
+      session: params.session,
+      reconciled: false,
+      restarted: false,
+      currentBranchName,
+    };
+  }
+
+  if (!currentBranchName) {
+    console.warn(
+      "[sandbox] Skipping branch drift reconciliation: branch unknown",
+      {
+        sandboxId: params.session.sandboxId,
+        repoDir: params.session.repoDir,
+        expectedBranchName,
+      },
+    );
+    return {
+      session: params.session,
+      reconciled: false,
+      restarted: false,
+      currentBranchName: null,
+    };
+  }
+
+  if (currentBranchName === expectedBranchName) {
+    return {
+      session: params.session,
+      reconciled: false,
+      restarted: false,
+      currentBranchName,
+    };
+  }
+
+  console.warn("[sandbox] Detected branch drift before dispatch", {
+    sandboxId: params.session.sandboxId,
+    repoDir: params.session.repoDir,
+    expectedBranchName,
+    currentBranchName,
+  });
+
+  const checkedOutBranchName = await checkoutExpectedBranchWithRecovery({
+    session: params.session,
+    expectedBranchName,
+    baseBranchName: params.baseBranchName,
+  });
+  if (checkedOutBranchName === expectedBranchName) {
+    return {
+      session: params.session,
+      reconciled: true,
+      restarted: false,
+      currentBranchName: checkedOutBranchName,
+    };
+  }
+
+  let restartedSession: ISandboxSession;
+  try {
+    restartedSession = await params.restartSandbox();
+  } catch (error) {
+    throw wrapError("sandbox-resume-failed", error, "daemon_spawn_failed");
+  }
+  const restartedBranchName =
+    await readCurrentBranchNameOrNull(restartedSession);
+  if (restartedBranchName === expectedBranchName) {
+    return {
+      session: restartedSession,
+      reconciled: true,
+      restarted: true,
+      currentBranchName: restartedBranchName,
+    };
+  }
+
+  const finalBranchName = await checkoutExpectedBranchWithRecovery({
+    session: restartedSession,
+    expectedBranchName,
+    baseBranchName: params.baseBranchName,
+  });
+  if (finalBranchName === expectedBranchName) {
+    return {
+      session: restartedSession,
+      reconciled: true,
+      restarted: true,
+      currentBranchName: finalBranchName,
+    };
+  }
+
+  throw wrapError(
+    "sandbox-resume-failed",
+    new Error(
+      `Sandbox branch drift could not be reconciled to ${expectedBranchName}`,
+    ),
+    "daemon_spawn_failed",
+  );
 }
 
 export async function getSandboxForThreadOrNull({
@@ -245,10 +532,6 @@ async function getOrCreateSandboxForThread({
   const applyAcpTransportDefaults = (
     variables: Array<{ key: string; value: string }>,
   ): Array<{ key: string; value: string }> => {
-    if (!userFeatureFlags.sandboxAgentAcpTransport) {
-      return variables;
-    }
-
     return variables.some(
       (entry) =>
         entry.key === "SANDBOX_AGENT_BASE_URL" && entry.value.trim().length > 0,
@@ -424,6 +707,15 @@ async function getOrCreateSandboxForThread({
   const buildSandboxOptions = (
     context: BootstrapContext,
   ): CreateSandboxOptions => {
+    const shouldAutoSkipSetupInLocalDocker =
+      process.env.NODE_ENV === "development" &&
+      thread.sandboxProvider === "docker";
+    const localDockerPublicUrl = "http://host.docker.internal:3000";
+    const resolvedPublicUrl =
+      process.env.NODE_ENV === "development" &&
+      thread.sandboxProvider === "docker"
+        ? localDockerPublicUrl
+        : nonLocalhostPublicAppUrl();
     const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
     const setupScriptHash = getSetupScriptHash(context.resolvedSetupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
@@ -464,11 +756,45 @@ async function getOrCreateSandboxForThread({
       customSystemPrompt: context.customSystemPrompt,
       skipLocalQualityChecks: env.SKIP_LOCAL_QUALITY_CHECKS,
       setupScript: context.resolvedSetupScript,
-      skipSetupScript: thread.skipSetup,
+      // Local docker sandboxes can OOM on monorepo `pnpm install` during first
+      // boot; skip setup script by default in local dev unless explicitly needed.
+      skipSetupScript: thread.skipSetup || shouldAutoSkipSetupInLocalDocker,
       snapshotTemplateId: snapshot?.snapshotName ?? undefined,
-      publicUrl: nonLocalhostPublicAppUrl(),
+      publicUrl: resolvedPublicUrl,
       featureFlags: userFeatureFlags,
       generateBranchName: context.generateBranchNameWithPrefix,
+      onSandboxAllocated: async ({ sandboxId, isCreatingSandbox }) => {
+        const updates: { codesandboxId?: string; sandboxSize?: SandboxSize } =
+          {};
+        if (thread.codesandboxId !== sandboxId) {
+          updates.codesandboxId = sandboxId;
+        }
+        if (thread.sandboxSize !== sandboxSize) {
+          updates.sandboxSize = sandboxSize;
+        }
+        if (Object.keys(updates).length === 0) {
+          return;
+        }
+        try {
+          await updateThread({
+            db,
+            userId,
+            threadId,
+            updates,
+          });
+        } catch (error) {
+          console.warn(
+            "[sandbox] failed to persist allocated sandbox id before setup",
+            {
+              threadId,
+              sandboxId,
+              isCreatingSandbox,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+          throw error;
+        }
+      },
       onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
         if (sandboxId && bootingStatus === "provisioning-done") {
           getPostHogServer().capture({
@@ -495,9 +821,9 @@ async function getOrCreateSandboxForThread({
   const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
   const startTime = Date.now();
   const bootstrap = await getBootstrapContext();
+  const bootstrapOptions = buildSandboxOptions(bootstrap);
   let session: ISandboxSession;
   try {
-    const bootstrapOptions = buildSandboxOptions(bootstrap);
     session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
       ...bootstrapOptions,
       fastResume: shouldFastResume,
@@ -523,6 +849,33 @@ async function getOrCreateSandboxForThread({
     }
   }
 
+  const expectedBranchName = resolveExpectedBranchForReconciliation({
+    createNewBranch,
+    requestedBranchName: branchName,
+    threadBranchName: thread.branchName,
+    repoBaseBranchName: thread.repoBaseBranchName,
+  });
+  const reconciliation = await reconcileSandboxBranchForThread({
+    session,
+    expectedBranchName,
+    baseBranchName: thread.repoBaseBranchName?.trim() || null,
+    restartSandbox: () =>
+      getOrCreateSandboxWithTimeout(null, {
+        ...bootstrapOptions,
+        fastResume: false,
+      }),
+  });
+  session = reconciliation.session;
+  if (reconciliation.reconciled) {
+    console.warn("[sandbox] Branch reconciliation completed before dispatch", {
+      threadId,
+      sandboxId: session.sandboxId,
+      expectedBranchName,
+      currentBranchName: reconciliation.currentBranchName,
+      restarted: reconciliation.restarted,
+    });
+  }
+
   if (
     !thread.codesandboxId ||
     thread.codesandboxId !== session.sandboxId ||
@@ -531,11 +884,19 @@ async function getOrCreateSandboxForThread({
     const updates: {
       codesandboxId?: string;
       sandboxSize: SandboxSize;
+      branchName?: string;
     } = {
       sandboxSize,
     };
     if (!thread.codesandboxId || thread.codesandboxId !== session.sandboxId) {
       updates.codesandboxId = session.sandboxId;
+    }
+    const inferredBranchName =
+      createNewBranch && !thread.branchName
+        ? normalizeBranchName(reconciliation.currentBranchName)
+        : null;
+    if (inferredBranchName) {
+      updates.branchName = inferredBranchName;
     }
     await updateThread({
       db,

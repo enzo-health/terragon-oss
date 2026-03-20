@@ -22,14 +22,21 @@ export async function publishBroadcastUserMessage(
     type: "user",
     id: message.id,
   };
-  await fetch(
-    `${partySocketUrl}/parties/main/${getBroadcastChannelStr(channel)}`,
-    {
-      method: "POST",
-      body: JSON.stringify(message),
-      headers: {
-        "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET!,
+  try {
+    await fetch(
+      `${partySocketUrl}/parties/main/${getBroadcastChannelStr(channel)}`,
+      {
+        method: "POST",
+        body: JSON.stringify(message),
+        headers: {
+          "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET!,
+        },
       },
-    },
-  );
+    );
+  } catch (error) {
+    console.warn("Broadcast publish failed", {
+      channel,
+      error,
+    });
+  }
 }
