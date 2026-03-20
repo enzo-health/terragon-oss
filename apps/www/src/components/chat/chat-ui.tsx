@@ -215,6 +215,7 @@ function ChatUI({
       contextLength: shell.primaryThreadChat.contextLength,
       permissionMode: shell.primaryThreadChat.permissionMode,
       codexPreviousResponseId: null,
+      messageSeq: 0,
       isUnread: shell.primaryThreadChat.isUnread,
     };
   }, [shell]);

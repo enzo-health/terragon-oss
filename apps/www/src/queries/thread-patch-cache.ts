@@ -409,6 +409,7 @@ function threadShellToListThread(shell: ThreadPageShell): ThreadInfo {
     prChecksStatus: shell.prChecksStatus,
     visibility: shell.visibility,
     isUnread: shell.isUnread,
+    messageSeq: shell.messageSeq,
     threadChats: [
       {
         id: shell.primaryThreadChat.id,
@@ -501,6 +502,7 @@ function threadPatchToListThread(
       shell.prChecksStatus ?? fallbackThread?.prChecksStatus ?? null,
     visibility: shell.visibility ?? fallbackThread?.visibility ?? null,
     isUnread: shell.isUnread ?? fallbackThread?.isUnread ?? false,
+    messageSeq: fallbackThread?.messageSeq ?? 0,
     threadChats,
   };
 }

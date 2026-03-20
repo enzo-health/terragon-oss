@@ -57,6 +57,7 @@ function createThreadShell(): ThreadPageShell {
     },
     version: 1,
     isUnread: false,
+    messageSeq: 0,
     childThreads: [],
     hasGitDiff: false,
     primaryThreadChatId: "chat-1",
@@ -73,6 +74,7 @@ function createThreadShell(): ThreadPageShell {
       contextLength: null,
       permissionMode: "allowAll",
       isUnread: false,
+      messageSeq: 0,
       updatedAt: new Date(INITIAL_CHAT_UPDATED_AT),
     },
   };
@@ -100,6 +102,7 @@ function createThreadChat(
     permissionMode: "allowAll",
     codexPreviousResponseId: null,
     isUnread: false,
+    messageSeq: 0,
     messages: [
       {
         type: "user",
@@ -149,6 +152,7 @@ function createThreadListEntry(): ThreadInfo {
     prChecksStatus: shell.prChecksStatus,
     visibility: shell.visibility,
     isUnread: shell.isUnread,
+    messageSeq: shell.messageSeq,
     threadChats: [
       {
         id: shell.primaryThreadChat.id,
