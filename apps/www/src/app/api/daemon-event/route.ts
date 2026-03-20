@@ -1001,16 +1001,18 @@ export async function POST(request: Request) {
 
       if (daemonRunStatusFromMessages === "completed") {
         const completedEvent =
-          headAfterAck?.state === "gating_review"
-            ? ({
-                type: "gate_review_passed",
-                runId: envelopeV2.runId,
-              } as const)
-            : ({
-                type: "run_completed",
-                runId: envelopeV2.runId,
-                headSha: daemonHeadShaAtCompletion,
-              } as const);
+          headAfterAck?.state === "planning"
+            ? ({ type: "plan_completed" } as const)
+            : headAfterAck?.state === "gating_review"
+              ? ({
+                  type: "gate_review_passed",
+                  runId: envelopeV2.runId,
+                } as const)
+              : ({
+                  type: "run_completed",
+                  runId: envelopeV2.runId,
+                  headSha: daemonHeadShaAtCompletion,
+                } as const);
         await appendEventAndAdvanceV3({
           db,
           workflowId: effectiveLoopId,
