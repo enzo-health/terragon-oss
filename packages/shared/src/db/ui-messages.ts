@@ -60,7 +60,8 @@ export type UIPart =
   | UIImagePart
   | UIRichTextPart
   | UIPdfPart
-  | UITextFilePart;
+  | UITextFilePart
+  | UIPlanPart;
 
 export type UIStopPart = {
   type: "stop";
@@ -108,6 +109,13 @@ export type UIGitDiffPart = {
   diffStats?: GitDiffStats;
   timestamp?: string;
   description?: string;
+};
+
+export type UIPlanPart = {
+  type: "plan";
+  planText: string;
+  title?: string;
+  taskCount?: number;
 };
 
 export type AllToolParts =

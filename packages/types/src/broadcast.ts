@@ -170,8 +170,10 @@ export type BroadcastActiveChatRealtimeFields = z.infer<
 const BroadcastThreadPatchSchema = z.object({
   threadId: z.string(),
   threadChatId: z.string().optional(),
-  op: z.enum(["upsert", "delete", "refetch"]),
+  op: z.enum(["upsert", "delete", "refetch", "delta"]),
   chatSequence: z.number().int().nonnegative().optional(),
+  messageSeq: z.number().int().nonnegative().optional(),
+  patchVersion: z.number().int().nonnegative().optional(),
   shell: BroadcastThreadShellRealtimeFieldsSchema.optional(),
   chat: BroadcastActiveChatRealtimeFieldsSchema.optional(),
   appendMessages: z.array(z.unknown()).optional(),
@@ -183,6 +185,10 @@ const BroadcastThreadPatchSchema = z.object({
     })
     .optional(),
   refetch: z.array(z.enum(["shell", "chat", "diff", "list"])).optional(),
+  // Delta fields — ephemeral token-level streaming, not persisted or replayed
+  messageId: z.string().optional(),
+  partIndex: z.number().int().nonnegative().optional(),
+  text: z.string().optional(),
 });
 
 export type BroadcastThreadPatch = z.infer<typeof BroadcastThreadPatchSchema>;

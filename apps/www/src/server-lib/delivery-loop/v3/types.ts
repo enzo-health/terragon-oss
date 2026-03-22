@@ -18,6 +18,7 @@ export type WorkflowStateV3 =
 
 export type LoopEventV3 =
   | { type: "bootstrap" }
+  | { type: "planning_run_completed" }
   | { type: "plan_completed" }
   | { type: "dispatch_sent"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_acked"; runId: string }

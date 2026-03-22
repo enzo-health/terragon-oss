@@ -359,6 +359,91 @@ describe("parsePlanSpec", () => {
     });
   });
 
+  describe("duplicate JSON block parsing (Codex double-output)", () => {
+    it("deduplicates identical fenced JSON blocks separated by six-backtick boundary", () => {
+      const block = JSON.stringify({
+        planText: "test",
+        tasks: [
+          {
+            stableTaskId: "t1",
+            title: "Task 1",
+            description: "desc",
+            acceptance: ["done"],
+          },
+        ],
+      });
+      const input = [
+        "Here is the plan:",
+        "",
+        "```json",
+        block,
+        "``````json",
+        block,
+        "```",
+      ].join("\n");
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(1);
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("t1");
+    });
+
+    it("handles six-backtick boundary with space between fences", () => {
+      const block = JSON.stringify({
+        planText: "test",
+        tasks: [
+          {
+            stableTaskId: "t1",
+            title: "Task 1",
+            description: "desc",
+            acceptance: ["done"],
+          },
+        ],
+      });
+      const input = ["```json", block, "```", "```json", block, "```"].join(
+        "\n",
+      );
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(1);
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("t1");
+    });
+
+    it("uses first block when duplicate blocks have different content", () => {
+      const block1 = JSON.stringify({
+        planText: "first",
+        tasks: [
+          {
+            stableTaskId: "t1",
+            title: "First Task",
+            description: "first desc",
+            acceptance: ["first criterion"],
+          },
+        ],
+      });
+      const block2 = JSON.stringify({
+        planText: "second",
+        tasks: [
+          {
+            stableTaskId: "t2",
+            title: "Second Task",
+            description: "second desc",
+            acceptance: ["second criterion"],
+          },
+        ],
+      });
+      const input = ["```json", block1, "``````json", block2, "```"].join("\n");
+      const result = parsePlanSpec(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.tasks).toHaveLength(1);
+      expect(result.plan.tasks[0]!.stableTaskId).toBe("t1");
+      expect(result.plan.tasks[0]!.title).toBe("First Task");
+      expect(result.plan.planText).toBe("first");
+    });
+  });
+
   describe("no cross-field ambiguity", () => {
     it("summary resolves to planText, not task title", () => {
       const input = JSON.stringify({

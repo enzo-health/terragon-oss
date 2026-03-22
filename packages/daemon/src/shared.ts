@@ -226,6 +226,12 @@ export type DeliveryLoopSelfDispatchPayload = {
 /** @deprecated Use DeliveryLoopSelfDispatchPayload */
 export type SdlcSelfDispatchPayload = DeliveryLoopSelfDispatchPayload;
 
+export type DaemonDelta = {
+  messageId: string;
+  partIndex: number;
+  text: string;
+};
+
 export type DaemonEventAPIBody = {
   threadId: string;
   threadChatId: string;
@@ -242,4 +248,6 @@ export type DaemonEventAPIBody = {
   seq?: number;
   /** Git HEAD sha captured after the agent turn completes, before sending terminal message. */
   headShaAtCompletion?: string | null;
+  /** Ephemeral token-level deltas for streaming text to clients. Not persisted. */
+  deltas?: DaemonDelta[];
 };

@@ -11,6 +11,7 @@
  *   introduced here.
  */
 
+import type { AIAgent } from "@terragon/agent/types";
 import type { DeliveryLoopFailureCategory } from "./failure";
 import type { ExecutionClass, DispatchMechanism } from "./workflow";
 
@@ -29,6 +30,11 @@ export type DispatchablePhase =
  * Maps directly to the v1 `DeliveryLoopSelectedAgent`.
  */
 export type SelectedAgent = "codex" | "claudeCode";
+
+export function toSelectedAgent(agent: AIAgent): SelectedAgent {
+  if (agent === "codex") return "codex";
+  return "claudeCode";
+}
 
 /**
  * Lifecycle status of a single dispatch intent record.

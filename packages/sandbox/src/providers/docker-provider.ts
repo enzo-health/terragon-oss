@@ -12,7 +12,17 @@ import { nanoid } from "nanoid/non-secure";
 const HOME_DIR = "root";
 const DEFAULT_DIR = `/${HOME_DIR}`;
 const REPO_DIR = "repo";
-const BASE_IMAGE = "ghcr.io/terragon-labs/containers-test";
+const BASE_IMAGE = (() => {
+  try {
+    execSync(
+      "docker image inspect ghcr.io/terragon-labs/containers-test:local",
+      { stdio: "ignore" },
+    );
+    return "ghcr.io/terragon-labs/containers-test:local";
+  } catch {
+    return "ghcr.io/terragon-labs/containers-test";
+  }
+})();
 const SLEEP_MS = 60 * 60 * 1000; // 1 hour
 
 const CONTAINER_PREFIX = "terragon-sandbox";
@@ -288,7 +298,7 @@ export class DockerProvider implements ISandboxProvider {
     const containerName = `${prefix}-${dateStr}-${timeStr}-${nanoid()}`;
     try {
       // Create and start container
-      const createCommand = `docker run -d --name ${containerName} --memory=${memoryLimit} --cpus=${cpuLimit} ${envFlags} -w ${DEFAULT_DIR} ${BASE_IMAGE} tail -f /dev/null`;
+      const createCommand = `docker run -d --name ${containerName} --memory=${memoryLimit} --cpus=${cpuLimit} ${envFlags} -w ${DEFAULT_DIR} --entrypoint "" ${BASE_IMAGE} tail -f /dev/null`;
       const containerId = execSync(createCommand, { encoding: "utf8" }).trim();
       const dockerSession = new DockerSession(containerId);
       return dockerSession;

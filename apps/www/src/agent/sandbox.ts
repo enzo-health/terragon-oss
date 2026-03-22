@@ -531,7 +531,14 @@ async function getOrCreateSandboxForThread({
 
   const applyAcpTransportDefaults = (
     variables: Array<{ key: string; value: string }>,
+    agent: AIAgent | null,
   ): Array<{ key: string; value: string }> => {
+    // Codex uses app-server directly, not sandbox-agent/ACP
+    if (agent === "codex") {
+      return variables.filter(
+        (entry) => entry.key !== "SANDBOX_AGENT_BASE_URL",
+      );
+    }
     return variables.some(
       (entry) =>
         entry.key === "SANDBOX_AGENT_BASE_URL" && entry.value.trim().length > 0,
@@ -644,6 +651,7 @@ async function getOrCreateSandboxForThread({
     );
     const normalizedEnvironmentVariables = applyAcpTransportDefaults(
       mergedEnvironmentEntries,
+      agentOrNull,
     );
     const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
 

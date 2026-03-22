@@ -1,12 +1,16 @@
+import net from "node:net";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
+import WebSocket from "ws";
 import {
   codexAppServerStartCommand,
   createCodexParserState,
   type CodexParserState,
 } from "./codex";
 import type { Logger } from "./logger";
+
+export type CodexAppServerTransport = "stdio" | "websocket";
 
 export type JsonRpcRequestEnvelope = {
   jsonrpc: "2.0";
@@ -107,6 +111,14 @@ const EMPTY_USAGE: Usage = {
   cached_input_tokens: 0,
   output_tokens: 0,
 };
+
+/**
+ * Item types that Codex may send but that we intentionally do not map to a
+ * ThreadItem.  `normalizeThreadItemType` returns `null` for these, so
+ * `extractThreadEvent` will also return `null`.  Callers (e.g. the daemon
+ * notification handler) can check this set to suppress "unknown type" warnings.
+ */
+export const SILENTLY_IGNORED_ITEM_TYPES = new Set(["userMessage"]);
 
 const METHOD_TO_THREAD_EVENT_TYPE: Partial<
   Record<string, ThreadEvent["type"]>
@@ -543,6 +555,26 @@ function extractThreadEventFromMethod({
   method: string;
   params: Record<string, unknown>;
 }): ThreadEvent | null {
+  // Handle agentMessage/delta — incremental text for an in-progress agent
+  // message.  We synthesize an item.updated ThreadEvent so the downstream
+  // pipeline (parseCodexItem) can process it like any other item update.
+  if (method === "item/agentMessage/delta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const delta = readString(params, "delta") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "agent_message",
+        text: delta,
+      },
+    };
+  }
+
   const eventType = METHOD_TO_THREAD_EVENT_TYPE[method];
   if (!eventType) {
     return null;
@@ -781,6 +813,9 @@ export type CodexAppServerManagerOptions = {
   requestTimeoutMs?: number;
   handshakeTimeoutMs?: number;
   spawnProcess?: CodexAppServerSpawn;
+  transport?: CodexAppServerTransport;
+  wsPort?: number;
+  createWebSocket?: (url: string) => WebSocket;
 };
 
 export class CodexAppServerManager {
@@ -795,9 +830,13 @@ export class CodexAppServerManager {
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly notificationHandlers =
     new Set<CodexAppServerNotificationHandler>();
+  private readonly transport: CodexAppServerTransport;
+  private readonly createWebSocket: (url: string) => WebSocket;
 
   private process: CodexAppServerProcess | null = null;
   private stdoutInterface: readline.Interface | null = null;
+  private ws: WebSocket | null = null;
+  private wsPort: number | undefined;
   private nextRequestId = 1;
   private pendingRequests = new Map<number, PendingRequest>();
   private pendingThreadStarts: PendingThreadStart[] = [];
@@ -816,6 +855,9 @@ export class CodexAppServerManager {
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     handshakeTimeoutMs = DEFAULT_HANDSHAKE_TIMEOUT_MS,
     spawnProcess = defaultSpawnProcess,
+    transport = "stdio",
+    wsPort,
+    createWebSocket = (url: string) => new WebSocket(url),
   }: CodexAppServerManagerOptions) {
     this.logger = logger;
     this.model = model;
@@ -825,6 +867,9 @@ export class CodexAppServerManager {
     this.requestTimeoutMs = requestTimeoutMs;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
     this.spawnProcess = spawnProcess;
+    this.transport = transport;
+    this.wsPort = wsPort;
+    this.createWebSocket = createWebSocket;
   }
 
   spawn(): void {
@@ -832,9 +877,14 @@ export class CodexAppServerManager {
       return;
     }
 
+    const listenAddress =
+      this.transport === "websocket"
+        ? `ws://127.0.0.1:${this.wsPort}`
+        : undefined;
     const [command, args] = codexAppServerStartCommand({
       model: this.model,
       useCredits: this.useCredits,
+      listenAddress,
     });
     const spawnEnv: NodeJS.ProcessEnv = {
       ...this.baseEnv,
@@ -870,8 +920,14 @@ export class CodexAppServerManager {
     }
 
     this.readyPromise = (async () => {
+      if (this.transport === "websocket" && this.wsPort === undefined) {
+        this.wsPort = await getAvailablePort();
+      }
       if (!this.isAlive()) {
         this.spawn();
+      }
+      if (this.transport === "websocket" && !this.ws) {
+        await this.connectWebSocket();
       }
       await this.sendRequestInternal({
         method: "initialize",
@@ -912,7 +968,15 @@ export class CodexAppServerManager {
     if (!this.process) {
       return false;
     }
-    return this.process.exitCode === null && !this.process.killed;
+    const processAlive = this.process.exitCode === null && !this.process.killed;
+    if (
+      this.transport === "websocket" &&
+      processAlive &&
+      this.ws?.readyState !== WebSocket.OPEN
+    ) {
+      return false;
+    }
+    return processAlive;
   }
 
   getThreadState(threadId: string): CodexAppServerThreadState | null {
@@ -966,6 +1030,11 @@ export class CodexAppServerManager {
   }
 
   async kill(): Promise<void> {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
     const processHandle = this.process;
     if (!processHandle) {
       return;
@@ -1019,13 +1088,15 @@ export class CodexAppServerManager {
       );
     };
 
-    this.stdoutInterface = readline.createInterface({
-      input: processHandle.stdout,
-      crlfDelay: Infinity,
-    });
-    this.stdoutInterface.on("line", (line) => {
-      this.handleStdoutLine(line);
-    });
+    if (this.transport === "stdio") {
+      this.stdoutInterface = readline.createInterface({
+        input: processHandle.stdout,
+        crlfDelay: Infinity,
+      });
+      this.stdoutInterface.on("line", (line) => {
+        this.handleIncomingMessage(line);
+      });
+    }
 
     processHandle.stderr.on("data", (chunk: unknown) => {
       const stderrOutput =
@@ -1038,7 +1109,8 @@ export class CodexAppServerManager {
       if (!trimmed) {
         return;
       }
-      this.logger.warn("codex app-server stderr", {
+      const level = trimmed.includes("failed to load skill") ? "debug" : "warn";
+      this.logger[level]("codex app-server stderr", {
         line: trimmed,
       });
     });
@@ -1070,7 +1142,7 @@ export class CodexAppServerManager {
     });
   }
 
-  private handleStdoutLine(line: string): void {
+  private handleIncomingMessage(line: string): void {
     const trimmedLine = line.trim();
     if (!trimmedLine) {
       return;
@@ -1258,6 +1330,23 @@ export class CodexAppServerManager {
   }
 
   private async writeJsonLine(payload: Record<string, unknown>): Promise<void> {
+    if (this.transport === "websocket" && this.ws) {
+      const data = JSON.stringify(payload);
+      await this.withWriteLock(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            this.ws!.send(data, (error) => {
+              if (error) {
+                reject(error);
+                return;
+              }
+              resolve();
+            });
+          }),
+      );
+      return;
+    }
+
     const line = `${JSON.stringify(payload)}\n`;
     await this.withWriteLock(
       () =>
@@ -1346,4 +1435,80 @@ export class CodexAppServerManager {
 
     return responsePromise;
   }
+
+  private async connectWebSocket(): Promise<void> {
+    const port = this.wsPort;
+    if (port === undefined) {
+      throw new Error("wsPort must be set before connecting WebSocket");
+    }
+
+    const url = `ws://127.0.0.1:${port}`;
+    const startTime = Date.now();
+    const timeout = this.handshakeTimeoutMs;
+    const perAttemptTimeout = 5_000;
+
+    // Retry WebSocket connection until the server is listening (bounded by timeout).
+    // We connect directly instead of polling /readyz because production Codex
+    // app-server versions do not always serve that HTTP endpoint.
+    while (Date.now() - startTime < timeout) {
+      try {
+        const ws = this.createWebSocket(url);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            ws.close();
+            reject(new Error("ws connect timeout"));
+          }, perAttemptTimeout);
+          ws.on("open", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          ws.on("error", (err) => {
+            clearTimeout(timer);
+            ws.close();
+            reject(err);
+          });
+        });
+
+        // Connection succeeded — wire up handlers
+        ws.on("message", (data) => {
+          const line = typeof data === "string" ? data : data.toString();
+          this.handleIncomingMessage(line);
+        });
+
+        ws.on("close", () => {
+          this.ws = null;
+          this.ready = false;
+          this.rejectPendingRequests(
+            new Error("WebSocket connection closed unexpectedly"),
+          );
+        });
+
+        ws.on("error", (error) => {
+          this.logger.error("WebSocket error", { message: error.message });
+        });
+
+        this.ws = ws;
+        return;
+      } catch {
+        // Connection failed — retry after short delay
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    }
+
+    throw new Error(
+      `codex app-server WebSocket connect timeout after ${timeout}ms`,
+    );
+  }
+}
+
+async function getAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      server.close(() => resolve(port));
+    });
+    server.on("error", reject);
+  });
 }

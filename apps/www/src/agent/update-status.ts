@@ -20,6 +20,7 @@ export async function updateThreadChatWithTransition({
   updates,
   chatUpdates,
   requireStatusTransitionForChatUpdates = false,
+  skipAppendMessagesInBroadcast = false,
 }: {
   threadId: string;
   userId: string;
@@ -33,6 +34,7 @@ export async function updateThreadChatWithTransition({
     "threadChatId" | "status" | "reattemptQueueAt"
   >;
   requireStatusTransitionForChatUpdates?: boolean;
+  skipAppendMessagesInBroadcast?: boolean;
 }): Promise<{
   didUpdateStatus: boolean;
   updatedStatus: ThreadStatus | undefined;
@@ -94,6 +96,7 @@ export async function updateThreadChatWithTransition({
       threadId,
       threadChatId,
       updates: chatUpdates,
+      skipAppendMessagesInBroadcast,
     });
   }
   if (didUpdateStatus && (updates || chatUpdates)) {

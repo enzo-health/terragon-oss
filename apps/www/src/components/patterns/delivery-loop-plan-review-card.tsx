@@ -1,12 +1,15 @@
 import { cn } from "@/lib/utils";
+import { ExternalLink } from "lucide-react";
 import type { PlanSpecViewModel } from "@/lib/delivery-loop-plan-view-model";
 
 export function DeliveryLoopPlanReviewCard({
   plan,
   className,
+  onOpenInArtifactWorkspace,
 }: {
   plan: PlanSpecViewModel;
   className?: string;
+  onOpenInArtifactWorkspace?: () => void;
 }) {
   return (
     <section
@@ -17,9 +20,21 @@ export function DeliveryLoopPlanReviewCard({
       )}
     >
       <header className="space-y-1">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Plan Review
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Plan Review
+          </p>
+          {onOpenInArtifactWorkspace && (
+            <button
+              onClick={onOpenInArtifactWorkspace}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
+              title="Open in side panel"
+              aria-label="Open plan in side panel"
+            >
+              <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+            </button>
+          )}
+        </div>
         <h3 className="text-sm font-semibold leading-tight">{plan.title}</h3>
         <p className="text-xs text-muted-foreground whitespace-pre-wrap">
           {plan.summary}

@@ -1,6 +1,7 @@
 import type { DB } from "@terragon/shared/db";
 import type { DBUserMessage } from "@terragon/shared/db/db-message";
 import type { ExecutionClass } from "@terragon/shared/delivery-loop/domain/workflow";
+import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import {
   completeWorkItem,
   failWorkItem,
@@ -226,7 +227,7 @@ export async function runDispatchWork(params: {
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-      selectedAgent: "claudeCode",
+      selectedAgent: toSelectedAgent(threadChat.agent),
       executionClass: params.payload.executionClass,
       dispatchMechanism: "self_dispatch",
       runId,
@@ -281,7 +282,7 @@ export async function runDispatchWork(params: {
         threadChatId: threadChat.id,
         runId,
         targetPhase: targetPhase as CreateDispatchIntentParams["targetPhase"],
-        selectedAgent: "claudeCode",
+        selectedAgent: toSelectedAgent(threadChat.agent),
         executionClass: params.payload.executionClass,
         dispatchMechanism: "self_dispatch",
       });

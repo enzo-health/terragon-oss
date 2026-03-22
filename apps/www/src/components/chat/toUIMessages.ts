@@ -9,6 +9,7 @@ import type {
   UIGitDiffPart,
   ThreadStatus,
 } from "@terragon/shared";
+import type { DeltaAccumulator } from "@/hooks/useDeltaAccumulator";
 
 type UIMessageRange = {
   startDbIndex: number;
@@ -56,11 +57,13 @@ export function useIncrementalUIMessages({
   agent,
   threadStatus,
   cacheKey,
+  deltas,
 }: {
   dbMessages: DBMessage[];
   agent: AIAgent;
   threadStatus?: ThreadStatus | null;
   cacheKey: string;
+  deltas?: DeltaAccumulator;
 }) {
   const cacheRef = useRef<IncrementalUIMessagesCache | null>(null);
 
@@ -74,8 +77,14 @@ export function useIncrementalUIMessages({
       cacheKey,
     });
     cacheRef.current = nextState;
+
+    // If there are accumulated deltas, append a synthetic agent message
+    if (deltas && deltas.size > 0) {
+      return appendDeltaMessages(nextState.messages, agent, deltas);
+    }
+
     return nextState.messages;
-  }, [agent, cacheKey, dbMessages, threadStatus]);
+  }, [agent, cacheKey, dbMessages, threadStatus, deltas]);
 }
 
 function buildIncrementalUIMessages({
@@ -447,6 +456,39 @@ function buildUIMessagesWithRanges({
     messages: uiMessages,
     ranges,
   };
+}
+
+/**
+ * Appends a synthetic agent message from accumulated delta text.
+ * Delta parts are grouped into a single trailing agent message so Streamdown
+ * can render them as incrementally growing markdown.
+ */
+function appendDeltaMessages(
+  messages: UIMessage[],
+  agent: AIAgent,
+  deltas: DeltaAccumulator,
+): UIMessage[] {
+  // Sort by partIndex so text parts render in order
+  const sorted = Array.from(deltas.entries()).sort((a, b) => {
+    const aIdx = parseInt(a[0].split(":")[1]!, 10);
+    const bIdx = parseInt(b[0].split(":")[1]!, 10);
+    return aIdx - bIdx;
+  });
+
+  const parts: UIPart[] = sorted.map(([, text]) => ({
+    type: "text" as const,
+    text,
+  }));
+
+  if (parts.length === 0) return messages;
+
+  const deltaMessage: UIAgentMessage = {
+    role: "agent",
+    agent,
+    parts,
+  };
+
+  return [...messages, deltaMessage];
 }
 
 /**

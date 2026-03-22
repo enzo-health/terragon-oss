@@ -430,6 +430,7 @@ export type ThreadPageChatSummary = Pick<
   | "permissionMode"
   | "isUnread"
   | "updatedAt"
+  | "messageSeq"
 >;
 
 export type ThreadPageShell = Omit<
@@ -444,6 +445,7 @@ export type ThreadPageShell = Omit<
 export type ThreadPageChat = ThreadChatInfoFull & {
   messageCount: number;
   chatSequence: number | null;
+  patchVersion: number | null;
 };
 
 export type ThreadPageDiff = Pick<
