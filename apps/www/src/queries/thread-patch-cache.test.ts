@@ -5,7 +5,6 @@ import type {
   ThreadPageChat,
   ThreadPageShell,
 } from "@terragon/shared";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import {
   applyThreadPatchToListQueries,
   applyThreadPatchToQueryClient,
@@ -17,7 +16,6 @@ const NEXT_CHAT_UPDATED_AT = "2026-03-09T00:00:05.000Z";
 const STALE_CHAT_UPDATED_AT = "2026-03-08T23:59:55.000Z";
 const INITIAL_CHAT_SEQUENCE = new Date(INITIAL_CHAT_UPDATED_AT).getTime();
 const NEXT_CHAT_SEQUENCE = new Date(NEXT_CHAT_UPDATED_AT).getTime();
-const STALE_CHAT_SEQUENCE = new Date(STALE_CHAT_UPDATED_AT).getTime();
 
 function createThreadShell(): ThreadPageShell {
   return {
@@ -113,6 +111,7 @@ function createThreadChat(
     queuedMessages: [],
     messageCount: 1,
     chatSequence: INITIAL_CHAT_SEQUENCE,
+    patchVersion: 0,
     ...overrides,
   };
 }
@@ -722,9 +721,8 @@ describe("seq-based fast path", () => {
     });
   });
 
-  it("skips expectedMessageCount and tailMatchesAppend checks for seq-based patches", () => {
+  it("appends messages on next-in-sequence regardless of expectedMessageCount", () => {
     const queryClient = createQueryClient();
-    // Set up with messageCount=2 but seq=1
     queryClient.setQueryData(
       threadQueryKeys.chat("thread-1", "chat-1"),
       createThreadChat({
@@ -747,7 +745,6 @@ describe("seq-based fast path", () => {
     );
     const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-    // Send with wrong expectedMessageCount — seq path should ignore it
     applyThreadPatchToQueryClient({
       queryClient,
       patch: {
@@ -755,7 +752,7 @@ describe("seq-based fast path", () => {
         threadChatId: "chat-1",
         op: "upsert",
         chatSequence: 2,
-        expectedMessageCount: 999, // would fail in timestamp path
+        expectedMessageCount: 999,
         appendMessages: [
           {
             type: "agent",
@@ -772,7 +769,6 @@ describe("seq-based fast path", () => {
     );
     expect(nextChat?.messageCount).toBe(3);
     expect(nextChat?.chatSequence).toBe(2);
-    // Should NOT have invalidated — seq fast path bypasses expectedMessageCount
     expect(invalidateQueriesSpy).not.toHaveBeenCalled();
   });
 });

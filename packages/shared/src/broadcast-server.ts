@@ -23,20 +23,49 @@ export function registerMessageStreamAppend(fn: MessageStreamAppendFn): void {
   messageStreamAppendFn = fn;
 }
 
+export type PatchVersionProviderFn = (threadChatId: string) => Promise<number>;
+
+let patchVersionProviderFn: PatchVersionProviderFn | undefined;
+
+/**
+ * Register a callback to get the next patch version for a thread chat.
+ * Uses Redis INCR for monotonic, ephemeral versioning.
+ * Called by apps/www at startup.
+ */
+export function registerPatchVersionProvider(fn: PatchVersionProviderFn): void {
+  patchVersionProviderFn = fn;
+}
+
+/**
+ * Get the next patch version for a thread chat.
+ * Returns 0 if no provider is registered (e.g., in tests).
+ */
+export async function getNextPatchVersion(
+  threadChatId: string,
+): Promise<number> {
+  if (!patchVersionProviderFn) return 0;
+  try {
+    return await patchVersionProviderFn(threadChatId);
+  } catch (error) {
+    console.warn("Failed to get patch version", { threadChatId, error });
+    return 0;
+  }
+}
+
 async function appendToStreamIfRegistered(
   patches: BroadcastThreadPatch[] | undefined,
 ): Promise<void> {
   if (!messageStreamAppendFn || !patches) return;
   for (const patch of patches) {
     if (
-      patch.chatSequence !== undefined &&
+      (patch.messageSeq ?? patch.chatSequence) !== undefined &&
       patch.appendMessages &&
       patch.appendMessages.length > 0
     ) {
       try {
         await messageStreamAppendFn(
           patch.threadId,
-          patch.chatSequence,
+          patch.messageSeq ?? patch.chatSequence!,
           patch.appendMessages,
         );
       } catch (error) {

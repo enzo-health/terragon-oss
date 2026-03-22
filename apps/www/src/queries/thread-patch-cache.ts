@@ -256,20 +256,154 @@ function applyChatFields(
     return { chat, shouldInvalidate: false, shouldIgnore: true };
   }
 
-  const incomingSequence = patch.chatSequence;
-  const currentSequence = chat.chatSequence;
+  const incomingMessageSeq = patch.messageSeq;
+  const incomingPatchVersion = patch.patchVersion;
+  const currentMessageSeq = chat.messageSeq;
+  const currentPatchVersion = chat.patchVersion;
 
-  // Confirmation patch: monotonic seq present, no messages to append.
-  // This is the post-DB-write confirmation after an optimistic pre-broadcast.
-  // Accept if seq >= current (catching up), ignore if stale.
-  // Must be checked BEFORE the gap detection which would reject it.
-  if (
-    isMonotonicSequence(incomingSequence) &&
-    (patch.appendMessages === undefined || patch.appendMessages.length === 0)
-  ) {
+  // --- Legacy fallback: no dual seqs, use chatSequence ---
+  if (incomingMessageSeq === undefined && incomingPatchVersion === undefined) {
+    const incomingSequence = patch.chatSequence;
+    const currentSequence = chat.chatSequence;
+
+    // Optimistic pre-broadcast: no chatSequence means preview before DB write.
+    // Always append without safety checks.
     if (
-      isMonotonicSequence(currentSequence) &&
-      incomingSequence! < currentSequence!
+      incomingSequence === undefined &&
+      patch.appendMessages !== undefined &&
+      isDbMessageArray(patch.appendMessages) &&
+      patch.appendMessages.length > 0
+    ) {
+      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+      return {
+        chat: applyPatchToChatObject(
+          chat,
+          patch,
+          nextMessages,
+          currentSequence ?? 0,
+          currentMessageSeq ?? null,
+          currentPatchVersion ?? null,
+        ),
+        shouldInvalidate: false,
+        shouldIgnore: false,
+      };
+    }
+
+    // Legacy monotonic chatSequence handling
+    if (
+      isMonotonicSequence(incomingSequence) &&
+      isMonotonicSequence(currentSequence)
+    ) {
+      // Confirmation patch (no messages)
+      if (
+        patch.appendMessages === undefined ||
+        patch.appendMessages.length === 0
+      ) {
+        if (incomingSequence! < currentSequence!) {
+          return { chat, shouldInvalidate: false, shouldIgnore: true };
+        }
+        return {
+          chat: applyPatchToChatObject(
+            chat,
+            patch,
+            chat.messages ?? [],
+            incomingSequence!,
+            currentMessageSeq ?? null,
+            currentPatchVersion ?? null,
+          ),
+          shouldInvalidate: false,
+          shouldIgnore: false,
+        };
+      }
+      if (incomingSequence! <= currentSequence!) {
+        return { chat, shouldInvalidate: false, shouldIgnore: true };
+      }
+      if (incomingSequence! > currentSequence! + 1) {
+        return { chat, shouldInvalidate: true, shouldIgnore: false };
+      }
+      if (!isDbMessageArray(patch.appendMessages!)) {
+        return { chat, shouldInvalidate: true, shouldIgnore: false };
+      }
+      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages!];
+      return {
+        chat: applyPatchToChatObject(
+          chat,
+          patch,
+          nextMessages,
+          incomingSequence!,
+          currentMessageSeq ?? null,
+          currentPatchVersion ?? null,
+        ),
+        shouldInvalidate: false,
+        shouldIgnore: false,
+      };
+    }
+
+    // Unrecognized legacy state — invalidate
+    return { chat, shouldInvalidate: true, shouldIgnore: false };
+  }
+
+  // --- Dual-seq path ---
+
+  // 1. Message-carrying patch: use messageSeq for ordering
+  if (
+    patch.appendMessages !== undefined &&
+    patch.appendMessages.length > 0 &&
+    incomingMessageSeq !== undefined
+  ) {
+    // Duplicate or stale message
+    if (currentMessageSeq != null && incomingMessageSeq <= currentMessageSeq) {
+      // Still apply metadata if patchVersion is newer
+      if (
+        incomingPatchVersion !== undefined &&
+        (currentPatchVersion == null ||
+          incomingPatchVersion > currentPatchVersion)
+      ) {
+        return {
+          chat: applyPatchToChatObject(
+            chat,
+            patch,
+            chat.messages ?? [],
+            patch.chatSequence ?? chat.chatSequence,
+            currentMessageSeq,
+            incomingPatchVersion,
+          ),
+          shouldInvalidate: false,
+          shouldIgnore: false,
+        };
+      }
+      return { chat, shouldInvalidate: false, shouldIgnore: true };
+    }
+    // Gap detection
+    if (
+      currentMessageSeq != null &&
+      incomingMessageSeq > currentMessageSeq + 1
+    ) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    if (!isDbMessageArray(patch.appendMessages)) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
+    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        nextMessages,
+        patch.chatSequence ?? chat.chatSequence,
+        incomingMessageSeq,
+        incomingPatchVersion ?? currentPatchVersion ?? null,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
+  }
+
+  // 2. Metadata-only patch (status updates): use patchVersion for freshness
+  if (incomingPatchVersion !== undefined) {
+    if (
+      currentPatchVersion != null &&
+      incomingPatchVersion <= currentPatchVersion
     ) {
       return { chat, shouldInvalidate: false, shouldIgnore: true };
     }
@@ -278,63 +412,32 @@ function applyChatFields(
         chat,
         patch,
         chat.messages ?? [],
-        incomingSequence!,
+        patch.chatSequence ?? chat.chatSequence,
+        incomingMessageSeq ?? currentMessageSeq ?? null,
+        incomingPatchVersion,
       ),
       shouldInvalidate: false,
       shouldIgnore: false,
     };
   }
 
-  // Fast path: monotonic sequences with messages — seq ordering checks.
-  if (
-    isMonotonicSequence(incomingSequence) &&
-    isMonotonicSequence(currentSequence)
-  ) {
-    if (incomingSequence! <= currentSequence!) {
-      return { chat, shouldInvalidate: false, shouldIgnore: true };
-    }
-    if (incomingSequence! > currentSequence! + 1) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    if (!isDbMessageArray(patch.appendMessages!)) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages!];
+  // 3. Confirmation patch with messageSeq but no patchVersion (edge case)
+  if (incomingMessageSeq !== undefined) {
     return {
       chat: applyPatchToChatObject(
         chat,
         patch,
-        nextMessages,
-        incomingSequence!,
+        chat.messages ?? [],
+        patch.chatSequence ?? chat.chatSequence,
+        incomingMessageSeq,
+        currentPatchVersion ?? null,
       ),
       shouldInvalidate: false,
       shouldIgnore: false,
     };
   }
 
-  // Optimistic pre-broadcast: no chatSequence means this is a preview
-  // before DB write. Always append without safety checks — the confirmation
-  // patch (with chatSequence, no messages) will follow after DB write.
-  if (
-    incomingSequence === undefined &&
-    patch.appendMessages !== undefined &&
-    isDbMessageArray(patch.appendMessages) &&
-    patch.appendMessages.length > 0
-  ) {
-    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
-    return {
-      chat: applyPatchToChatObject(
-        chat,
-        patch,
-        nextMessages,
-        currentSequence ?? 0,
-      ),
-      shouldInvalidate: false,
-      shouldIgnore: false,
-    };
-  }
-
-  // Fallback: unrecognized sequence state — invalidate to force refetch
+  // Fallback
   return { chat, shouldInvalidate: true, shouldIgnore: false };
 }
 
@@ -343,6 +446,8 @@ function applyPatchToChatObject(
   patch: BroadcastThreadPatch,
   nextMessages: DBMessage[],
   chatSequence: number | null,
+  messageSeq: number | null,
+  patchVersion: number | null,
 ): ThreadPageChat {
   const queuedMessages = toDbUserMessages(patch.chat?.queuedMessages);
   return {
@@ -380,6 +485,8 @@ function applyPatchToChatObject(
     messages: nextMessages,
     messageCount: nextMessages.length,
     chatSequence,
+    messageSeq: messageSeq ?? 0,
+    patchVersion,
   };
 }
 

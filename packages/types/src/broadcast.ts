@@ -172,6 +172,8 @@ const BroadcastThreadPatchSchema = z.object({
   threadChatId: z.string().optional(),
   op: z.enum(["upsert", "delete", "refetch", "delta"]),
   chatSequence: z.number().int().nonnegative().optional(),
+  messageSeq: z.number().int().nonnegative().optional(),
+  patchVersion: z.number().int().nonnegative().optional(),
   shell: BroadcastThreadShellRealtimeFieldsSchema.optional(),
   chat: BroadcastActiveChatRealtimeFieldsSchema.optional(),
   appendMessages: z.array(z.unknown()).optional(),

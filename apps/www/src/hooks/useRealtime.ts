@@ -227,7 +227,7 @@ export function useRealtimeThread(
   threadId: string,
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
 ) {
-  const lastSeqRef = useRef<number | null>(null);
+  const lastMessageSeqRef = useRef<number | null>(null);
   const replayInFlightRef = useRef(false);
 
   useRealtimeUser({
@@ -246,13 +246,14 @@ export function useRealtimeThread(
 
         // Check for seq gaps and attempt replay
         const maxIncomingSeq = patches.reduce<number | null>((max, p) => {
-          if (!isMonotonicSequence(p.chatSequence)) return max;
-          return max === null
-            ? p.chatSequence!
-            : Math.max(max, p.chatSequence!);
+          const seq =
+            p.messageSeq ??
+            (isMonotonicSequence(p.chatSequence) ? p.chatSequence! : null);
+          if (seq == null) return max;
+          return max === null ? seq : Math.max(max, seq);
         }, null);
 
-        const lastSeq = lastSeqRef.current;
+        const lastSeq = lastMessageSeqRef.current;
         const hasGap =
           maxIncomingSeq !== null &&
           lastSeq !== null &&
@@ -273,6 +274,7 @@ export function useRealtimeThread(
                     threadId,
                     op: "upsert" as const,
                     chatSequence: entry.seq,
+                    messageSeq: entry.seq,
                     appendMessages: entry.messages,
                   }),
                 );
@@ -295,13 +297,13 @@ export function useRealtimeThread(
           onThreadPatches(patches);
         }
 
-        // Update lastSeq tracker
+        // Update lastMessageSeq tracker
         if (maxIncomingSeq !== null) {
           if (
-            lastSeqRef.current === null ||
-            maxIncomingSeq > lastSeqRef.current
+            lastMessageSeqRef.current === null ||
+            maxIncomingSeq > lastMessageSeqRef.current
           ) {
-            lastSeqRef.current = maxIncomingSeq;
+            lastMessageSeqRef.current = maxIncomingSeq;
           }
         }
       },

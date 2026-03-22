@@ -17,7 +17,10 @@ import {
   isNotNull,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { publishBroadcastUserMessage } from "../broadcast-server";
+import {
+  publishBroadcastUserMessage,
+  getNextPatchVersion,
+} from "../broadcast-server";
 import { AGENT_VERSION } from "@terragon/agent/versions";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import {
@@ -909,6 +912,7 @@ export async function updateThreadChat({
 }) {
   let updatedAtIsoString: string | undefined;
   let chatSequence: number | undefined;
+  let patchVersion: number | undefined;
   let chatForPatch: BroadcastThreadPatch["chat"] | undefined;
   let appendMessagesForPatch: unknown[] | undefined;
   let expectedMessageCount: number | undefined;
@@ -1117,6 +1121,7 @@ export async function updateThreadChat({
       }
     }
   });
+  patchVersion = await getNextPatchVersion(threadChatId);
   await publishBroadcastUserMessage({
     type: "user",
     id: userId,
@@ -1127,6 +1132,8 @@ export async function updateThreadChat({
           threadChatId,
           op: shouldRefetchChat ? "refetch" : "upsert",
           chatSequence,
+          messageSeq: chatSequence,
+          patchVersion,
           chat: chatForPatch,
           ...(skipAppendMessagesInBroadcast
             ? {}
@@ -1320,6 +1327,7 @@ export async function updateThreadChatStatusAtomic({
   }
 
   if (didUpdateStatus) {
+    const patchVersion = await getNextPatchVersion(threadChatId);
     await publishBroadcastUserMessage({
       type: "user",
       id: userId,
@@ -1332,6 +1340,7 @@ export async function updateThreadChatStatusAtomic({
             chatSequence: updatedAtIsoString
               ? new Date(updatedAtIsoString).getTime()
               : undefined,
+            patchVersion,
             chat: {
               status: toStatus,
               reattemptQueueAt:
