@@ -941,3 +941,317 @@ describe("optimistic rendering (pre-broadcast + confirmation)", () => {
     expect(invalidateQueriesSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("dual-seq (messageSeq + patchVersion)", () => {
+  it("status-only patch with patchVersion applies metadata without invalidating messages", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 1,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "msg2" }],
+          },
+        ],
+        messageCount: 2,
+        status: "working" as any,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        patchVersion: 2,
+        chat: {
+          status: "complete",
+          updatedAt: NEXT_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.status).toBe("complete");
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.messages).toHaveLength(2);
+    expect(chat?.patchVersion).toBe(2);
+    expect(chat?.messageSeq).toBe(5);
+    expect(
+      queryClient.getQueryState(threadQueryKeys.chat("thread-1", "chat-1"))
+        ?.isInvalidated,
+    ).toBe(false);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("message patch with messageSeq appends and updates both seqs", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 1,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 6,
+        patchVersion: 2,
+        chatSequence: 6,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "response" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.messages?.at(-1)).toMatchObject({
+      type: "agent",
+      parts: [{ type: "text", text: "response" }],
+    });
+    expect(chat?.messageSeq).toBe(6);
+    expect(chat?.patchVersion).toBe(2);
+  });
+
+  it("stale patchVersion is ignored", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 5,
+        status: "working" as any,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        patchVersion: 3,
+        chat: {
+          status: "complete",
+          updatedAt: STALE_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.status).toBe("working");
+    expect(chat?.patchVersion).toBe(5);
+  });
+
+  it("messageSeq gap triggers invalidation", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 1,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 7,
+        patchVersion: 2,
+        chatSequence: 7,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "skipped seq 6" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("duplicate messageSeq is ignored", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 5,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 5,
+        patchVersion: 5,
+        chatSequence: 5,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "duplicate" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(1);
+    expect(chat?.messageSeq).toBe(5);
+  });
+
+  it("full flow: optimistic → confirmation → status update", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 0,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "initial" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    // Phase 1: Optimistic pre-broadcast (no messageSeq, no patchVersion)
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "optimistic" }],
+          },
+        ],
+      },
+    });
+
+    let chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.messageSeq).toBe(5); // unchanged
+    expect(chat?.patchVersion).toBe(0); // unchanged
+
+    // Phase 2: Confirmation (messageSeq=6, patchVersion=1, no appendMessages)
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 6,
+        patchVersion: 1,
+        chatSequence: 6,
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2); // no duplicate
+    expect(chat?.messageSeq).toBe(6);
+    expect(chat?.patchVersion).toBe(1);
+
+    // Phase 3: Status-only (patchVersion=2, no messageSeq, no appendMessages)
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        patchVersion: 2,
+        chat: {
+          status: "complete",
+          updatedAt: NEXT_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.status).toBe("complete");
+    expect(chat?.messageCount).toBe(2); // messages preserved
+    expect(chat?.messageSeq).toBe(6); // unchanged
+    expect(chat?.patchVersion).toBe(2);
+  });
+});
