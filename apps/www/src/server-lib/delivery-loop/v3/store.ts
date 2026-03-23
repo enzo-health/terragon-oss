@@ -8,7 +8,11 @@ import type {
   DeliveryWorkflowHeadV3Row,
   DeliveryTimerLedgerV3Row,
 } from "@terragon/shared/db/types";
-import type { EffectSpec, WorkflowHead } from "./types";
+import {
+  AWAITING_PR_CREATION_REASON,
+  type EffectSpec,
+  type WorkflowHead,
+} from "./types";
 import {
   buildEffectLedgerContract,
   serializeEffectPayload,
@@ -96,7 +100,6 @@ const LEGACY_RECONCILABLE_KINDS = [
   "stopped",
   "terminated",
 ] as const;
-const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 export async function reconcileZombieGateHeadsFromLegacy(params: {
   db: DB;

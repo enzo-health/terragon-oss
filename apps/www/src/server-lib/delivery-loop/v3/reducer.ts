@@ -1,4 +1,5 @@
 import {
+  AWAITING_PR_CREATION_REASON,
   classifyFailureLane,
   type EffectSpec,
   type LoopEvent,
@@ -10,8 +11,6 @@ const DISPATCH_COHERENT_STATES = new Set([
   "gating_review",
   "gating_ci",
 ]);
-
-const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 type InvariantAction = {
   kind: "dispatch_coherence";

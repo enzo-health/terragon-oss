@@ -35,9 +35,13 @@ import {
 } from "@/server-lib/delivery-loop/dispatch-intent";
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
-import type { EffectResult, LoopEvent } from "./types";
-
-const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
+import {
+  AWAITING_PR_CREATION_REASON,
+  isTerminalState,
+  type EffectResult,
+  type LoopEvent,
+  type WorkflowState,
+} from "./types";
 
 /**
  * Pure mapping from effect result to the LoopEvent that should be fired.
@@ -473,10 +477,7 @@ async function processPublishStatusEffect(params: {
   });
   const currentState = head?.state ?? workflow.kind;
   const body = formatStatusBodyV3(currentState);
-  const isTerminal =
-    currentState === "done" ||
-    currentState === "stopped" ||
-    currentState === "terminated";
+  const isTerminal = isTerminalState(currentState as WorkflowState);
 
   try {
     await upsertDeliveryCanonicalStatusComment({
@@ -752,10 +753,10 @@ async function handleAckTimeoutCheck(params: {
   effect: DeliveryEffectLedgerV3Row;
   payload: { runId: string; workflowVersion: number };
 }): Promise<EffectResult> {
-  const head = await getWorkflowHead({
-    db: params.db,
-    workflowId: params.effect.workflowId,
-  });
+  const [head, workflow] = await Promise.all([
+    getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
+    getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),
+  ]);
   if (!head || head.version !== params.payload.workflowVersion) {
     return { kind: "ack_timeout_check", outcome: "stale" };
   }
@@ -764,10 +765,6 @@ async function handleAckTimeoutCheck(params: {
   // the ack timeout is a false alarm. Don't fire it, or we'll create a
   // phantom dispatch that poisons the activeRunId and causes the real
   // run_completed to be silently dropped as "out of order".
-  const workflow = await getWorkflow({
-    db: params.db,
-    workflowId: params.effect.workflowId,
-  });
   if (workflow) {
     const activeThreadChat = await params.db.query.threadChat.findFirst({
       where: and(

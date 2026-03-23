@@ -336,7 +336,7 @@ export const ChatMessage = memo(function ChatMessage({
 }: ChatMessageProps) {
   // Prefer thread-global occurrences from parent; fall back to per-message.
   const perMessagePlanOccurrences = useMemo(
-    () => buildPlanOccurrenceMap(message.parts),
+    () => buildPlanOccurrenceMap(message.parts as UIPart[]),
     [message.parts],
   );
   const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
