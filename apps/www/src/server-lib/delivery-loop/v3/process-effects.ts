@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryEffectLedgerV3Row } from "@terragon/shared/db/types";
-import { enqueueWorkItem } from "@terragon/shared/delivery-loop/store/work-queue-store";
 import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
@@ -38,7 +37,6 @@ import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import type { EffectResultV3, LoopEventV3 } from "./types";
 
-const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
 const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 /**
@@ -76,6 +74,21 @@ export function effectResultToEvent(
         return { type: "pr_linked", prNumber: result.prNumber };
       return { type: "gate_review_failed", reason: result.reason };
 
+    case "dispatch_implementing":
+      if (result.outcome === "dispatched")
+        return {
+          type: "dispatch_sent",
+          runId: result.runId,
+          ackDeadlineAt: result.ackDeadlineAt,
+        };
+      return {
+        type: "run_failed",
+        runId: `impl-dispatch-failed-${Date.now()}`,
+        message: result.reason,
+        category: "effect_failure",
+        lane: "infra",
+      };
+
     case "ack_timeout_check":
       if (result.outcome === "fired")
         return { type: "dispatch_ack_timeout", runId: result.runId };
@@ -111,6 +124,9 @@ async function executeStateBlockingEffect(params: {
         break;
       case "ensure_pr":
         result = { kind: "ensure_pr", outcome: "failed", reason };
+        break;
+      case "dispatch_implementing":
+        result = { kind: "dispatch_implementing", outcome: "failed", reason };
         break;
       case "ack_timeout_check":
         result = { kind: "ack_timeout_check", outcome: "stale" };
@@ -282,6 +298,150 @@ async function processGateReviewEffect(params: {
 
   return {
     kind: "dispatch_gate_review",
+    outcome: "failed",
+    reason: "Follow-up queue did not launch dispatch",
+  };
+}
+
+/**
+ * Execute the `dispatch_implementing` effect natively — resolves the workflow
+ * context, creates a dispatch intent for the implementation sandbox run,
+ * triggers the follow-up queue, and emits `dispatch_sent` into the v3 kernel.
+ *
+ * This replaces the v2 work-queue bridge, keeping the full lifecycle within
+ * the v3 effect ledger.
+ */
+async function processImplementingDispatchEffect(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  leaseOwner: string;
+  executionClass: "implementation_runtime" | "implementation_runtime_fallback";
+  now: Date;
+}): Promise<EffectResultV3> {
+  const workflowId = params.effect.workflowId;
+
+  const workflow = await getWorkflow({ db: params.db, workflowId });
+  if (!workflow) {
+    return {
+      kind: "dispatch_implementing",
+      outcome: "failed",
+      reason: "Workflow not found",
+    };
+  }
+
+  // Resolve threadChat (prefer active, fall back to most-recent)
+  const threadChat =
+    (await params.db.query.threadChat.findFirst({
+      where: and(
+        eq(schema.threadChat.threadId, workflow.threadId),
+        ne(schema.threadChat.status, "complete"),
+      ),
+      orderBy: [desc(schema.threadChat.createdAt)],
+    })) ??
+    (await params.db.query.threadChat.findFirst({
+      where: eq(schema.threadChat.threadId, workflow.threadId),
+      orderBy: [desc(schema.threadChat.createdAt)],
+    }));
+
+  if (!threadChat) {
+    throw new Error(`No threadChat for threadId ${workflow.threadId}`);
+  }
+
+  const runId = randomUUID();
+
+  // Create Redis dispatch intent
+  const intentParams: CreateDispatchIntentParams = {
+    loopId: workflowId,
+    threadId: workflow.threadId,
+    threadChatId: threadChat.id,
+    targetPhase: "implementing",
+    selectedAgent: toSelectedAgent(threadChat.agent),
+    executionClass: params.executionClass,
+    dispatchMechanism: "self_dispatch",
+    runId,
+    maxRetries: 3,
+    headSha: workflow.headSha ?? undefined,
+  };
+
+  try {
+    await createDispatchIntent(intentParams);
+  } catch (intentErr) {
+    if (
+      intentErr instanceof Error &&
+      intentErr.message.includes("active intent")
+    ) {
+      return {
+        kind: "dispatch_implementing",
+        outcome: "failed",
+        reason: "Active dispatch intent already exists",
+      };
+    }
+    throw intentErr;
+  }
+
+  // Persist durable dispatch intent in DB
+  try {
+    await createDbDispatchIntent(params.db, {
+      loopId: workflowId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      runId,
+      targetPhase: "implementing",
+      selectedAgent: toSelectedAgent(threadChat.agent),
+      executionClass: params.executionClass,
+      dispatchMechanism: "self_dispatch",
+    });
+    await markDispatchIntentDispatched(params.db, runId);
+  } catch {
+    // Non-fatal: Redis intent + cron sweep handle recovery
+  }
+
+  // Queue a "Continue implementation." message for the follow-up queue
+  const { updateThreadChat } = await import("@terragon/shared/model/threads");
+  await updateThreadChat({
+    db: params.db,
+    userId: workflow.userId,
+    threadId: workflow.threadId,
+    threadChatId: threadChat.id,
+    updates: {
+      appendQueuedMessages: [
+        {
+          type: "user" as const,
+          model: null,
+          timestamp: new Date().toISOString(),
+          parts: [{ type: "text" as const, text: "Continue implementation." }],
+        },
+      ],
+    },
+  });
+
+  // Trigger the follow-up queue to launch the sandbox run
+  let dispatchLaunched = false;
+  try {
+    const { maybeProcessFollowUpQueue } = await import(
+      "@/server-lib/process-follow-up-queue"
+    );
+    const followUpResult = await maybeProcessFollowUpQueue({
+      userId: workflow.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+    });
+    dispatchLaunched = followUpResult.dispatchLaunched;
+  } catch {
+    // Non-fatal: cron will pick up pending follow-ups
+  }
+
+  if (dispatchLaunched) {
+    return {
+      kind: "dispatch_implementing",
+      outcome: "dispatched",
+      runId,
+      ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
+    };
+  }
+
+  return {
+    kind: "dispatch_implementing",
     outcome: "failed",
     reason: "Follow-up queue did not launch dispatch",
   };
@@ -646,22 +806,18 @@ async function processSingleEffect(params: {
 
   try {
     if (payload.kind === "dispatch_implementing") {
-      await enqueueWorkItem({
+      await executeStateBlockingEffect({
         db: params.db,
-        workflowId: params.effect.workflowId,
-        correlationId: `v3:dispatch:impl:${params.effect.id}`,
-        kind: "dispatch",
-        payloadJson: {
-          executionClass: payload.executionClass,
-          workflowId: params.effect.workflowId,
-        },
-        maxAttempts: DISPATCH_WORK_ITEM_MAX_ATTEMPTS,
-      });
-      await markEffectSucceededV3({
-        db: params.db,
-        effectId: params.effect.id,
+        effect: params.effect,
         leaseOwner: params.leaseOwner,
-        leaseEpoch: params.effect.leaseEpoch,
+        handler: () =>
+          processImplementingDispatchEffect({
+            db: params.db,
+            effect: params.effect,
+            leaseOwner: params.leaseOwner,
+            executionClass: payload.executionClass,
+            now: params.now,
+          }),
       });
       return;
     }

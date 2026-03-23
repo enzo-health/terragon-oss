@@ -110,6 +110,14 @@ export type EffectResultV3 =
   | { kind: "ensure_pr"; outcome: "linked"; prNumber: number }
   | { kind: "ensure_pr"; outcome: "no_diff"; reason: string }
   | { kind: "ensure_pr"; outcome: "failed"; reason: string }
+  // dispatch_implementing results
+  | {
+      kind: "dispatch_implementing";
+      outcome: "dispatched";
+      runId: string;
+      ackDeadlineAt: Date;
+    }
+  | { kind: "dispatch_implementing"; outcome: "failed"; reason: string }
   // ack_timeout_check results
   | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
   | { kind: "ack_timeout_check"; outcome: "stale" };
