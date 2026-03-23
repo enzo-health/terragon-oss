@@ -298,7 +298,7 @@ describe("reduce", () => {
     });
   });
 
-  it("ignores stale implementing run_failed for previous run", () => {
+  it("implementing run_failed with mismatched runId still triggers retry", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -315,12 +315,11 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head).toMatchObject({
-      state: "implementing",
-      activeRunId: "run-current",
-      fixAttemptCount: 2,
-    });
-    expect(result.effects).toHaveLength(0);
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.fixAttemptCount).toBe(3);
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
   it("ignores stale review gate verdict for non-current run", () => {
@@ -636,5 +635,60 @@ describe("reduce", () => {
     expect(result.head.state).toBe("stopped");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
+  });
+
+  describe("implementing state accepts mismatched runIds", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+
+    it("run_completed with different runId transitions to gating_review", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "r-different",
+          headSha: "abc123",
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("gating_review");
+    });
+
+    it("dispatch_acked with different runId updates activeRunId", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: { type: "dispatch_acked", runId: "r-2" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.activeRunId).toBe("r-2");
+    });
+
+    it("run_failed with different runId triggers retry", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_failed",
+          runId: "r-different",
+          message: "crash",
+          category: null,
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+    });
+
+    it("dispatch_ack_timeout with different runId is ignored (stale)", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: { type: "dispatch_ack_timeout", runId: "r-old" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.version).toBe(h.version);
+    });
   });
 });

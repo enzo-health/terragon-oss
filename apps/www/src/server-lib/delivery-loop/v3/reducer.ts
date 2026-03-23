@@ -493,14 +493,6 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_acked") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
           const next = withVersion(head, now);
           result = {
             head: { ...next, activeRunId: event.runId },
@@ -510,14 +502,6 @@ export function reduce(params: {
           break;
         }
         if (event.type === "run_completed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
           const completedHeadSha = event.headSha ?? head.headSha;
           if (!completedHeadSha) {
             result = retryToImplementing({
@@ -564,14 +548,6 @@ export function reduce(params: {
           break;
         }
         if (event.type === "run_failed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
           const lane =
             event.lane ??
             classifyFailureLane({
