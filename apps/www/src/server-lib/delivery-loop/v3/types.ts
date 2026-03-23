@@ -1,4 +1,7 @@
-import type { DeliveryEffectKindV3 } from "@terragon/shared/db/types";
+import type {
+  DeliveryEffectKindV3,
+  DeliveryLoopState,
+} from "@terragon/shared/db/types";
 import {
   type FailureLane,
   classifyFailureLane as classifyFailureLaneShared,
@@ -140,6 +143,32 @@ export type WorkflowHeadV3 = {
   updatedAt: Date;
   lastActivityAt: Date | null;
 };
+
+export function v3StateToDeliveryLoopState(
+  state: WorkflowStateV3,
+): DeliveryLoopState {
+  switch (state) {
+    case "planning":
+      return "planning";
+    case "implementing":
+      return "implementing";
+    case "gating_review":
+      return "review_gate";
+    case "gating_ci":
+      return "ci_gate";
+    case "awaiting_pr":
+      return "awaiting_pr_link";
+    case "awaiting_manual_fix":
+    case "awaiting_operator_action":
+      return "blocked";
+    case "done":
+      return "done";
+    case "stopped":
+      return "stopped";
+    case "terminated":
+      return "terminated_pr_closed";
+  }
+}
 
 export function isTerminalStateV3(state: WorkflowStateV3): boolean {
   return state === "done" || state === "stopped" || state === "terminated";

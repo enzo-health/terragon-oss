@@ -17,6 +17,8 @@ import {
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
+import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { v3StateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -590,9 +592,17 @@ export async function startAgentMessage({
               null,
             );
           }
-          const effectiveState: DeliveryLoopState | null = v2Workflow
-            ? workflowRowKindToState(v2Workflow.kind, v2Workflow.stateJson)
-            : null;
+          // Prefer v3 head state over stale legacy delivery_workflow.kind
+          let effectiveState: DeliveryLoopState | null = null;
+          if (v2Workflow) {
+            const v3Head = await getWorkflowHeadV3({
+              db,
+              workflowId: v2Workflow.id,
+            });
+            effectiveState = v3Head
+              ? v3StateToDeliveryLoopState(v3Head.state)
+              : workflowRowKindToState(v2Workflow.kind, v2Workflow.stateJson);
+          }
           let planContext: {
             planText: string;
             tasks: Array<{
@@ -602,7 +612,7 @@ export async function startAgentMessage({
             }>;
           } | null = null;
           const effectiveLoopId = v2Workflow?.id;
-          if (v2Workflow?.kind === "implementing" && effectiveLoopId) {
+          if (effectiveState === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
                 "@terragon/shared/delivery-loop/store/artifact-store"
