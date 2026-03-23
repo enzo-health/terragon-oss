@@ -7,6 +7,7 @@ import { getThreadChat } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
@@ -40,8 +41,10 @@ export const approvePlan = userOnlyAction(
       );
     }
 
-    // Validate v2 state — plan approval only valid in planning or awaiting_plan_approval
-    if (v2Row.kind !== "planning" && v2Row.kind !== "awaiting_plan_approval") {
+    // Validate state — plan approval only valid in planning
+    const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
+    const currentState = v3Head?.state ?? v2Row.kind;
+    if (currentState !== "planning") {
       throw new UserFacingError(
         "Plan can only be approved while the Delivery Loop is in planning phase",
       );

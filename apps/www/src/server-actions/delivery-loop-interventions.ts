@@ -7,7 +7,11 @@ import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { DBUserMessage } from "@terragon/shared";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
-import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
+import type {
+  GateKind,
+  WorkflowId,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 
 function buildResumeFollowUpMessage(): DBUserMessage {
   return {
@@ -52,12 +56,13 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       );
     }
 
-    const blockedKinds = new Set([
-      "awaiting_plan_approval",
+    const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
+    const currentState = v3Head?.state ?? v2Row.kind;
+    const blockedStates = new Set([
       "awaiting_manual_fix",
       "awaiting_operator_action",
     ]);
-    if (!blockedKinds.has(v2Row.kind)) {
+    if (!blockedStates.has(currentState)) {
       throw new UserFacingError(
         "Delivery Loop is not blocked on human feedback",
       );
@@ -106,26 +111,25 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
       );
     }
 
-    const bypassableKinds = new Set([
+    const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
+    const currentState = v3Head?.state ?? v2Row.kind;
+    const bypassableStates = new Set([
       "implementing",
-      "gating",
+      "gating_review",
+      "gating_ci",
       "awaiting_manual_fix",
       "awaiting_operator_action",
+      // Legacy fallback
+      "gating",
     ]);
-    if (!bypassableKinds.has(v2Row.kind)) {
+    if (!bypassableStates.has(currentState)) {
       throw new UserFacingError(
         "Delivery Loop bypass is only available while implementing or blocked",
       );
     }
 
-    // Determine gate target from v2 state
-    const stateJson = v2Row.stateJson as Record<string, unknown> | null;
-    const gate =
-      v2Row.kind === "gating" && stateJson
-        ? (((stateJson as { gate?: { kind?: string } }).gate?.kind as
-            | import("@terragon/shared/delivery-loop/domain/workflow").GateKind
-            | undefined) ?? "ci")
-        : "ci";
+    // Gate extraction — use v3 head's activeGate directly
+    const gate: GateKind = (v3Head?.activeGate as GateKind | null) ?? "ci";
 
     await handleHumanAction({
       db,

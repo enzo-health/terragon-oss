@@ -24,6 +24,7 @@ import {
 } from "@terragon/shared/delivery-loop/store/gate-persistence";
 import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
@@ -606,9 +607,14 @@ async function buildStatusFromV2Workflow(params: {
     ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
     : stateSummary.explanation;
 
-  // Derive plan approval policy — v2 awaiting_plan_approval implies human_required
+  // Derive plan approval policy — v3 uses planning state + planApprovalPolicy column
+  const v3Head = await getWorkflowHeadV3({
+    db,
+    workflowId: workflow.workflowId,
+  });
+  const currentState = v3Head?.state ?? workflow.kind;
   const planApprovalPolicy: "auto" | "human_required" =
-    workflow.kind === "awaiting_plan_approval"
+    currentState === "planning" && workflowRow.planApprovalPolicy === "human"
       ? "human_required"
       : (workflowRow.planApprovalPolicy as "auto" | "human_required");
 
