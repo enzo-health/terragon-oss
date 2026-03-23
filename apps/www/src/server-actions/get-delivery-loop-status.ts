@@ -601,18 +601,18 @@ async function buildStatusFromV2Workflow(params: {
     canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
   });
 
-  const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-  const v2StopReason = getV2StopReason(workflow);
-  const explanation = v2StopReason
-    ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
-    : stateSummary.explanation;
-
-  // Derive plan approval policy — v3 uses planning state + planApprovalPolicy column
+  // Derive v3 head — used for stop reason, plan approval policy, and state
   const v3Head = await getWorkflowHeadV3({
     db,
     workflowId: workflow.workflowId,
   });
   const currentState = v3Head?.state ?? workflow.kind;
+
+  const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
+  const v2StopReason = v3Head?.blockedReason ?? getV2StopReason(workflow);
+  const explanation = v2StopReason
+    ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
+    : stateSummary.explanation;
   const planApprovalPolicy: "auto" | "human_required" =
     currentState === "planning" && workflowRow.planApprovalPolicy === "human"
       ? "human_required"

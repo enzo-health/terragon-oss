@@ -59,11 +59,14 @@ import {
 } from "@/server-lib/delivery-loop/retry-policy";
 import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
 
-/** V2 workflow states eligible for auto-retry on generic agent error. */
+/** Workflow states eligible for auto-retry on generic agent error (v2 + v3). */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<string> = new Set([
   "implementing",
   "gating",
   "babysitting",
+  // v3 state names
+  "gating_review",
+  "gating_ci",
 ]);
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
@@ -653,7 +656,17 @@ export async function handleDaemonEvent({
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
       const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-      const sdlcPhase = v2Workflow?.kind ?? null;
+      let sdlcPhase: string | null = null;
+      if (v2Workflow) {
+        const { getWorkflowHeadV3 } = await import(
+          "@/server-lib/delivery-loop/v3/store"
+        );
+        const v3Head = await getWorkflowHeadV3({
+          db,
+          workflowId: v2Workflow.id,
+        });
+        sdlcPhase = v3Head?.state ?? v2Workflow.kind;
+      }
 
       const failureCategory = classifyDaemonEventError(customErrorMessage);
 
