@@ -14,7 +14,7 @@ import {
   insertEffectsV3,
   updateWorkflowHeadV3,
 } from "./store";
-import { drainDueV3Effects } from "./process-effects";
+import { drainDueV3Effects, effectResultToEvent } from "./process-effects";
 import type { EffectSpecV3 } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
@@ -32,6 +32,118 @@ async function createWorkflowFixture(): Promise<string> {
   });
   return workflow.id;
 }
+
+describe("effectResultToEvent", () => {
+  // create_plan_artifact
+  it("plan artifact created with auto policy → plan_completed", () => {
+    const result = effectResultToEvent({
+      kind: "create_plan_artifact",
+      outcome: "created",
+      approvalPolicy: "auto",
+    });
+    expect(result).toEqual({ type: "plan_completed" });
+  });
+
+  it("plan artifact created with human policy → null (awaits UI approval)", () => {
+    const result = effectResultToEvent({
+      kind: "create_plan_artifact",
+      outcome: "created",
+      approvalPolicy: "human",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("plan artifact failed → plan_failed", () => {
+    const result = effectResultToEvent({
+      kind: "create_plan_artifact",
+      outcome: "failed",
+      reason: "parse error",
+    });
+    expect(result).toEqual({ type: "plan_failed", reason: "parse error" });
+  });
+
+  // dispatch_gate_review
+  it("gate review dispatched → dispatch_sent", () => {
+    const ackDeadline = new Date("2030-01-01");
+    const result = effectResultToEvent({
+      kind: "dispatch_gate_review",
+      outcome: "dispatched",
+      runId: "r-1",
+      ackDeadlineAt: ackDeadline,
+    });
+    expect(result).toEqual({
+      type: "dispatch_sent",
+      runId: "r-1",
+      ackDeadlineAt: ackDeadline,
+    });
+  });
+
+  it("gate review failed → run_failed with infra lane", () => {
+    const result = effectResultToEvent({
+      kind: "dispatch_gate_review",
+      outcome: "failed",
+      reason: "no sandbox",
+    });
+    expect(result).toMatchObject({
+      type: "run_failed",
+      message: "no sandbox",
+      category: "effect_failure",
+      lane: "infra",
+    });
+  });
+
+  // ensure_pr
+  it("PR linked → pr_linked", () => {
+    const result = effectResultToEvent({
+      kind: "ensure_pr",
+      outcome: "linked",
+      prNumber: 42,
+    });
+    expect(result).toEqual({ type: "pr_linked", prNumber: 42 });
+  });
+
+  it("no diff → gate_review_failed", () => {
+    const result = effectResultToEvent({
+      kind: "ensure_pr",
+      outcome: "no_diff",
+      reason: "No code changes",
+    });
+    expect(result).toEqual({
+      type: "gate_review_failed",
+      reason: "No code changes",
+    });
+  });
+
+  it("PR creation failed → gate_review_failed", () => {
+    const result = effectResultToEvent({
+      kind: "ensure_pr",
+      outcome: "failed",
+      reason: "sandbox error",
+    });
+    expect(result).toEqual({
+      type: "gate_review_failed",
+      reason: "sandbox error",
+    });
+  });
+
+  // ack_timeout_check
+  it("ack timeout fired → dispatch_ack_timeout", () => {
+    const result = effectResultToEvent({
+      kind: "ack_timeout_check",
+      outcome: "fired",
+      runId: "r-1",
+    });
+    expect(result).toEqual({ type: "dispatch_ack_timeout", runId: "r-1" });
+  });
+
+  it("ack timeout stale → null", () => {
+    const result = effectResultToEvent({
+      kind: "ack_timeout_check",
+      outcome: "stale",
+    });
+    expect(result).toBeNull();
+  });
+});
 
 describe("drainDueV3Effects", () => {
   it("skips timer effects until they are due", async () => {
