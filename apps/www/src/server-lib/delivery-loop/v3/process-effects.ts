@@ -759,6 +759,32 @@ async function handleAckTimeoutCheck(params: {
   if (!head || head.version !== params.payload.workflowVersion) {
     return { kind: "ack_timeout_check", outcome: "stale" };
   }
+
+  // If the thread is actively working, the daemon has started processing —
+  // the ack timeout is a false alarm. Don't fire it, or we'll create a
+  // phantom dispatch that poisons the activeRunId and causes the real
+  // run_completed to be silently dropped as "out of order".
+  const workflow = await getWorkflow({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (workflow) {
+    const activeThreadChat = await params.db.query.threadChat.findFirst({
+      where: and(
+        eq(schema.threadChat.threadId, workflow.threadId),
+        ne(schema.threadChat.status, "complete"),
+      ),
+      columns: { status: true },
+      orderBy: [desc(schema.threadChat.createdAt)],
+    });
+    if (
+      activeThreadChat?.status === "working" ||
+      activeThreadChat?.status === "working-done"
+    ) {
+      return { kind: "ack_timeout_check", outcome: "stale" };
+    }
+  }
+
   return {
     kind: "ack_timeout_check",
     outcome: "fired",
