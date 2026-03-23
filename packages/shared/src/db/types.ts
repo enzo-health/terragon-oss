@@ -87,7 +87,8 @@ export type DeliveryEffectKindV3 =
   | "ack_timeout_check"
   | "ensure_pr"
   | "create_plan_artifact"
-  | "publish_status";
+  | "publish_status"
+  | "gate_staleness_check";
 
 export type DeliveryEffectStatusV3 =
   | "planned"
