@@ -14,6 +14,7 @@ import type {
   DeliveryWorkflow,
   GateKind,
 } from "@terragon/shared/delivery-loop/domain/workflow";
+import type { WorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/types";
 export type DeliveryLoopStatusCheckKey =
   | "ci"
   | "review_threads"
@@ -941,5 +942,104 @@ export function mapV2KindToDeliveryLoopState(
         ? "terminated_pr_merged"
         : "terminated_pr_closed";
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// V3 workflow head -> V1 DeliveryLoopSnapshot adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps a v3 WorkflowHeadV3 to the v1 DeliveryLoopSnapshot shape consumed by
+ * the UI status builder functions. Preferred over buildSnapshotFromV2Workflow
+ * when a v3 head row exists.
+ */
+export function buildSnapshotFromV3Head(
+  head: WorkflowHeadV3,
+): DeliveryLoopSnapshot {
+  switch (head.state) {
+    case "planning":
+      return {
+        kind: "planning",
+        selectedAgent: null,
+        nextPhaseTarget: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: head.activeRunId ?? null,
+        lastFailureCategory: null,
+      };
+
+    case "implementing":
+      return {
+        kind: "implementing",
+        execution: {
+          kind: "implementation",
+          selectedAgent: null,
+          dispatchStatus: null,
+          dispatchAttemptCount: 0,
+          activeRunId: head.activeRunId ?? null,
+          lastFailureCategory: null,
+        },
+      };
+
+    case "gating_review":
+      return {
+        kind: "review_gate",
+        gate: {
+          gateRunId: head.activeRunId ?? null,
+          lastFailureCategory: null,
+        },
+      };
+
+    case "gating_ci":
+      return {
+        kind: "ci_gate",
+        gate: {
+          gateRunId: head.activeRunId ?? null,
+          lastFailureCategory: null,
+        },
+      };
+
+    case "awaiting_pr":
+      return {
+        kind: "awaiting_pr_link",
+        selectedAgent: null,
+        lastFailureCategory: null,
+      };
+
+    case "awaiting_manual_fix":
+      return {
+        kind: "blocked",
+        from: "implementing",
+        reason: "runtime_failure",
+        selectedAgent: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: head.activeRunId ?? null,
+        activeGateRunId: null,
+        lastFailureCategory: null,
+      };
+
+    case "awaiting_operator_action":
+      return {
+        kind: "blocked",
+        from: "implementing",
+        reason: "external_dependency",
+        selectedAgent: null,
+        dispatchStatus: null,
+        dispatchAttemptCount: 0,
+        activeRunId: head.activeRunId ?? null,
+        activeGateRunId: null,
+        lastFailureCategory: null,
+      };
+
+    case "done":
+      return { kind: "done" };
+
+    case "stopped":
+      return { kind: "stopped" };
+
+    case "terminated":
+      return { kind: "terminated_pr_closed" };
   }
 }

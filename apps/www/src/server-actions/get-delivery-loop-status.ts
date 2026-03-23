@@ -6,6 +6,7 @@ import {
   buildDeliveryLoopTopProgressPhases,
   buildDeliveryLoopStatusChecks,
   buildSnapshotFromV2Workflow,
+  buildSnapshotFromV3Head,
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
@@ -17,6 +18,7 @@ import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
+import { v3StateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
@@ -581,9 +583,24 @@ async function buildStatusFromV2Workflow(params: {
 }): Promise<DeliveryLoopStatus> {
   const { workflow, workflowRow } = params;
 
-  const loopSnapshot = buildSnapshotFromV2Workflow(workflow);
-  const v2State = mapV2KindToDeliveryLoopState(workflow);
+  // Derive v3 head — preferred source for state, snapshot, and blocked reason
+  const v3Head = await getWorkflowHeadV3({
+    db,
+    workflowId: workflow.workflowId,
+  });
+
+  // Prefer v3-native snapshot; fall back to v2→v1 adapter
+  const loopSnapshot = v3Head
+    ? buildSnapshotFromV3Head(v3Head)
+    : buildSnapshotFromV2Workflow(workflow);
+
+  // Prefer v3-derived state; fall back to v2 mapping
+  const loopState: DeliveryLoopState = v3Head
+    ? v3StateToDeliveryLoopState(v3Head.state)
+    : mapV2KindToDeliveryLoopState(workflow);
+
   const currentHeadSha =
+    v3Head?.headSha ??
     ("headSha" in workflow && typeof workflow.headSha === "string"
       ? workflow.headSha
       : null) ??
@@ -600,17 +617,11 @@ async function buildStatusFromV2Workflow(params: {
     canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
   });
 
-  // Derive v3 head — used for stop reason, plan approval policy, and state
-  const v3Head = await getWorkflowHeadV3({
-    db,
-    workflowId: workflow.workflowId,
-  });
   const currentState = v3Head?.state ?? workflow.kind;
-
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-  const v2StopReason = v3Head?.blockedReason ?? null;
-  const explanation = v2StopReason
-    ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
+  const blockedReason = v3Head?.blockedReason ?? null;
+  const explanation = blockedReason
+    ? `${stateSummary.explanation} Reason: ${blockedReason}.`
     : stateSummary.explanation;
   const planApprovalPolicy: "auto" | "human_required" =
     currentState === "planning" && workflowRow.planApprovalPolicy === "human"
@@ -619,13 +630,13 @@ async function buildStatusFromV2Workflow(params: {
 
   return {
     loopId: workflowRow.id,
-    state: v2State,
+    state: loopState,
     planApprovalPolicy,
     stateLabel: stateSummary.stateLabel,
     explanation,
     progressPercent: stateSummary.progressPercent,
     actions: buildDeliveryLoopActions({
-      loopState: v2State,
+      loopState,
       loopSnapshot,
       planApprovalPolicy,
       planningArtifactStatus:
@@ -636,7 +647,7 @@ async function buildStatusFromV2Workflow(params: {
     needsAttention: assembled.needsAttention,
     links: assembled.links,
     artifacts: assembled.artifacts,
-    updatedAtIso: workflow.updatedAt.toISOString(),
+    updatedAtIso: (v3Head?.updatedAt ?? workflow.updatedAt).toISOString(),
   };
 }
 
