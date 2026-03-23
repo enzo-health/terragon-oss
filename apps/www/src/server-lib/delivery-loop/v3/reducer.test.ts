@@ -431,10 +431,42 @@ describe("reduce", () => {
     expect(result.head.state).toBe("gating_ci");
     expect(result.head.activeGate).toBe("ci");
     expect(result.head.blockedReason).toBeNull();
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
+      kind: "gate_staleness_check",
+      payload: { kind: "gate_staleness_check" },
+    });
+    expect(result.effects[1]).toMatchObject({
       kind: "publish_status",
       payload: { kind: "publish_status" },
+    });
+  });
+
+  it("gating_ci entry emits gate_staleness_check with 5-minute dueAt", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("awaiting_pr"),
+        blockedReason: "Awaiting PR creation",
+      },
+      event: {
+        type: "pr_linked",
+        prNumber: 99,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_ci");
+    const stalenessEffect = result.effects.find(
+      (e) => e.kind === "gate_staleness_check",
+    );
+    expect(stalenessEffect).toBeDefined();
+    expect(stalenessEffect!.dueAt).toEqual(
+      new Date("2026-03-18T01:05:00.000Z"),
+    );
+    expect(stalenessEffect).toMatchObject({
+      kind: "gate_staleness_check",
+      payload: { kind: "gate_staleness_check" },
     });
   });
 
