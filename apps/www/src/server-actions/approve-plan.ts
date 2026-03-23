@@ -43,7 +43,10 @@ export const approvePlan = userOnlyAction(
 
     // Validate state — plan approval only valid in planning
     const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
-    const currentState = v3Head?.state ?? v2Row.kind;
+    if (!v3Head) {
+      throw new Error(`No v3 head for workflow ${v2Row.id}`);
+    }
+    const currentState = v3Head.state;
     if (currentState !== "planning") {
       throw new UserFacingError(
         "Plan can only be approved while the Delivery Loop is in planning phase",

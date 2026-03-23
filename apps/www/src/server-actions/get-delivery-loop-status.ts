@@ -5,12 +5,10 @@ import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
   buildDeliveryLoopStatusChecks,
-  buildSnapshotFromV2Workflow,
   buildSnapshotFromV3Head,
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
-  mapV2KindToDeliveryLoopState,
   type DeliveryLoopStatusCheck,
   type DeliveryLoopStatusCheckKey,
 } from "@/lib/delivery-loop-status";
@@ -583,29 +581,20 @@ async function buildStatusFromV2Workflow(params: {
 }): Promise<DeliveryLoopStatus> {
   const { workflow, workflowRow } = params;
 
-  // Derive v3 head — preferred source for state, snapshot, and blocked reason
+  // Derive v3 head — sole source for state, snapshot, and blocked reason
   const v3Head = await getWorkflowHeadV3({
     db,
     workflowId: workflow.workflowId,
   });
 
-  // Prefer v3-native snapshot; fall back to v2→v1 adapter
-  const loopSnapshot = v3Head
-    ? buildSnapshotFromV3Head(v3Head)
-    : buildSnapshotFromV2Workflow(workflow);
+  if (!v3Head) {
+    throw new Error(`No v3 head for workflow ${workflow.workflowId}`);
+  }
 
-  // Prefer v3-derived state; fall back to v2 mapping
-  const loopState: DeliveryLoopState = v3Head
-    ? v3StateToDeliveryLoopState(v3Head.state)
-    : mapV2KindToDeliveryLoopState(workflow);
+  const loopSnapshot = buildSnapshotFromV3Head(v3Head);
+  const loopState = v3StateToDeliveryLoopState(v3Head.state);
 
-  const currentHeadSha =
-    v3Head?.headSha ??
-    ("headSha" in workflow && typeof workflow.headSha === "string"
-      ? workflow.headSha
-      : null) ??
-    workflowRow.currentHeadSha ??
-    null;
+  const currentHeadSha = v3Head.headSha ?? workflowRow.currentHeadSha ?? null;
 
   const assembled = await assembleLoopStatusData({
     loopId: workflowRow.id,
@@ -617,9 +606,9 @@ async function buildStatusFromV2Workflow(params: {
     canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
   });
 
-  const currentState = v3Head?.state ?? workflow.kind;
+  const currentState = v3Head.state;
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-  const blockedReason = v3Head?.blockedReason ?? null;
+  const blockedReason = v3Head.blockedReason ?? null;
   const explanation = blockedReason
     ? `${stateSummary.explanation} Reason: ${blockedReason}.`
     : stateSummary.explanation;
@@ -647,7 +636,7 @@ async function buildStatusFromV2Workflow(params: {
     needsAttention: assembled.needsAttention,
     links: assembled.links,
     artifacts: assembled.artifacts,
-    updatedAtIso: (v3Head?.updatedAt ?? workflow.updatedAt).toISOString(),
+    updatedAtIso: v3Head.updatedAt.toISOString(),
   };
 }
 

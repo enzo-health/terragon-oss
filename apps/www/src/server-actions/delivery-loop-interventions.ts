@@ -57,7 +57,10 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
     }
 
     const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
-    const currentState = v3Head?.state ?? v2Row.kind;
+    if (!v3Head) {
+      throw new Error(`No v3 head for workflow ${v2Row.id}`);
+    }
+    const currentState = v3Head.state;
     const blockedStates = new Set([
       "awaiting_manual_fix",
       "awaiting_operator_action",
@@ -112,15 +115,16 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
     }
 
     const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
-    const currentState = v3Head?.state ?? v2Row.kind;
+    if (!v3Head) {
+      throw new Error(`No v3 head for workflow ${v2Row.id}`);
+    }
+    const currentState = v3Head.state;
     const bypassableStates = new Set([
       "implementing",
       "gating_review",
       "gating_ci",
       "awaiting_manual_fix",
       "awaiting_operator_action",
-      // Legacy fallback
-      "gating",
     ]);
     if (!bypassableStates.has(currentState)) {
       throw new UserFacingError(

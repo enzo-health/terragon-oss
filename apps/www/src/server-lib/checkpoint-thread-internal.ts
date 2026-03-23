@@ -466,7 +466,10 @@ export async function checkpointThreadAndPush({
         db,
         workflowId: v2Workflow.id,
       });
-      const currentState = v3Head?.state ?? v2Workflow.kind;
+      if (!v3Head) {
+        throw new Error(`No v3 head for workflow ${v2Workflow.id}`);
+      }
+      const currentState = v3Head.state;
       if (currentState !== "planning" && currentState !== "implementing") {
         return;
       }

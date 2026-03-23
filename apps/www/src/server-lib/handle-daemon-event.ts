@@ -665,7 +665,10 @@ export async function handleDaemonEvent({
           db,
           workflowId: v2Workflow.id,
         });
-        sdlcPhase = v3Head?.state ?? v2Workflow.kind;
+        if (!v3Head) {
+          throw new Error(`No v3 head for workflow ${v2Workflow.id}`);
+        }
+        sdlcPhase = v3Head.state;
       }
 
       const failureCategory = classifyDaemonEventError(customErrorMessage);
