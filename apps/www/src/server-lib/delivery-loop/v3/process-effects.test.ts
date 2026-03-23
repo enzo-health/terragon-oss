@@ -143,6 +143,36 @@ describe("effectResultToEvent", () => {
     });
     expect(result).toBeNull();
   });
+
+  // dispatch_implementing
+  it("implementing dispatch dispatched → dispatch_sent", () => {
+    const ackDeadline = new Date("2030-01-01");
+    const result = effectResultToEvent({
+      kind: "dispatch_implementing",
+      outcome: "dispatched",
+      runId: "r-impl-1",
+      ackDeadlineAt: ackDeadline,
+    });
+    expect(result).toEqual({
+      type: "dispatch_sent",
+      runId: "r-impl-1",
+      ackDeadlineAt: ackDeadline,
+    });
+  });
+
+  it("implementing dispatch failed → run_failed with infra lane", () => {
+    const result = effectResultToEvent({
+      kind: "dispatch_implementing",
+      outcome: "failed",
+      reason: "sandbox unavailable",
+    });
+    expect(result).toMatchObject({
+      type: "run_failed",
+      message: "sandbox unavailable",
+      category: "effect_failure",
+      lane: "infra",
+    });
+  });
 });
 
 describe("drainDueV3Effects", () => {
