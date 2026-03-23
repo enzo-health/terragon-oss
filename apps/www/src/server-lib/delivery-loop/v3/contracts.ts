@@ -384,6 +384,8 @@ export function serializeEffectPayload(
     case "create_plan_artifact":
     case "publish_status":
       return { kind: payload.kind };
+    case "gate_staleness_check":
+      return { kind: payload.kind, workflowVersion: payload.workflowVersion };
     default:
       throw new Error(
         `Unhandled effect kind ${(payload as { kind: string }).kind}`,
@@ -429,6 +431,15 @@ export function parseEffectPayload(payload: unknown): EffectPayload | null {
   }
   if (payload.kind === "publish_status") {
     return { kind: "publish_status" };
+  }
+  if (
+    payload.kind === "gate_staleness_check" &&
+    typeof payload.workflowVersion === "number"
+  ) {
+    return {
+      kind: "gate_staleness_check",
+      workflowVersion: payload.workflowVersion,
+    };
   }
   return null;
 }

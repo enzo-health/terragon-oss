@@ -78,7 +78,8 @@ export type EffectPayload =
     }
   | { kind: "ensure_pr" }
   | { kind: "create_plan_artifact" }
-  | { kind: "publish_status" };
+  | { kind: "publish_status" }
+  | { kind: "gate_staleness_check"; workflowVersion: number };
 
 export type EffectSpec = {
   kind: EffectKind;
@@ -123,7 +124,17 @@ export type EffectResult =
   | { kind: "dispatch_implementing"; outcome: "failed"; reason: string }
   // ack_timeout_check results
   | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
-  | { kind: "ack_timeout_check"; outcome: "stale" };
+  | { kind: "ack_timeout_check"; outcome: "stale" }
+  // gate_staleness_check results
+  | { kind: "gate_staleness_check"; outcome: "ci_passed"; headSha: string }
+  | {
+      kind: "gate_staleness_check";
+      outcome: "ci_failed";
+      headSha: string;
+      reason: string;
+    }
+  | { kind: "gate_staleness_check"; outcome: "pending" }
+  | { kind: "gate_staleness_check"; outcome: "stale" };
 
 export type WorkflowHead = {
   workflowId: string;

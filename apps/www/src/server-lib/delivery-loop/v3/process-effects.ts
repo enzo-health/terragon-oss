@@ -18,6 +18,7 @@ import { appendEventAndAdvance } from "./kernel";
 import {
   claimNextEffect,
   getWorkflowHead,
+  insertEffects,
   markEffectFailed,
   markEffectSucceeded,
 } from "./store";
@@ -95,6 +96,17 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
       if (result.outcome === "fired")
         return { type: "dispatch_ack_timeout", runId: result.runId };
       return null; // Stale timeout, version already advanced
+
+    case "gate_staleness_check":
+      if (result.outcome === "ci_passed")
+        return { type: "gate_ci_passed", headSha: result.headSha };
+      if (result.outcome === "ci_failed")
+        return {
+          type: "gate_ci_failed",
+          headSha: result.headSha,
+          reason: result.reason,
+        };
+      return null; // pending or stale — no state transition yet
   }
 }
 
@@ -132,6 +144,9 @@ async function executeStateBlockingEffect(params: {
         break;
       case "ack_timeout_check":
         result = { kind: "ack_timeout_check", outcome: "stale" };
+        break;
+      case "gate_staleness_check":
+        result = { kind: "gate_staleness_check", outcome: "stale" };
         break;
       default:
         throw error; // Unknown effect kind, let outer catch handle
@@ -789,6 +804,99 @@ async function handleAckTimeoutCheck(params: {
   };
 }
 
+async function handleGateStalenessCheck(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  payload: { workflowVersion: number };
+  now: Date;
+}): Promise<EffectResult> {
+  const [head, workflow] = await Promise.all([
+    getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
+    getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),
+  ]);
+
+  if (!head || head.version !== params.payload.workflowVersion) {
+    return { kind: "gate_staleness_check", outcome: "stale" };
+  }
+  if (!workflow || !head.headSha) {
+    return { kind: "gate_staleness_check", outcome: "stale" };
+  }
+
+  const repoFullName = workflow.repoFullName;
+  if (!repoFullName) {
+    return { kind: "gate_staleness_check", outcome: "stale" };
+  }
+
+  try {
+    const { fetchCiSignalSnapshotForHeadSha } = await import(
+      "@/app/api/webhooks/github/handlers"
+    );
+    const snapshot = await fetchCiSignalSnapshotForHeadSha({
+      repoFullName,
+      headSha: head.headSha,
+    });
+
+    if (!snapshot) {
+      // No check runs yet — re-enqueue for another poll in 5 min
+      await insertEffects({
+        db: params.db,
+        workflowId: params.effect.workflowId,
+        workflowVersion: head.version,
+        effects: [
+          {
+            kind: "gate_staleness_check",
+            effectKey: `${params.effect.workflowId}:${head.version}:gate_staleness_check:${Date.now()}`,
+            dueAt: new Date(params.now.getTime() + 5 * 60 * 1000),
+            payload: {
+              kind: "gate_staleness_check",
+              workflowVersion: head.version,
+            },
+          },
+        ],
+      });
+      return { kind: "gate_staleness_check", outcome: "pending" };
+    }
+
+    if (snapshot.failingChecks.length > 0) {
+      return {
+        kind: "gate_staleness_check",
+        outcome: "ci_failed",
+        headSha: head.headSha,
+        reason: `CI checks failed: ${snapshot.failingChecks.join(", ")}`,
+      };
+    }
+
+    if (snapshot.complete) {
+      return {
+        kind: "gate_staleness_check",
+        outcome: "ci_passed",
+        headSha: head.headSha,
+      };
+    }
+
+    // Still pending — re-enqueue for another poll in 5 min
+    await insertEffects({
+      db: params.db,
+      workflowId: params.effect.workflowId,
+      workflowVersion: head.version,
+      effects: [
+        {
+          kind: "gate_staleness_check",
+          effectKey: `${params.effect.workflowId}:${head.version}:gate_staleness_check:${Date.now()}`,
+          dueAt: new Date(params.now.getTime() + 5 * 60 * 1000),
+          payload: {
+            kind: "gate_staleness_check",
+            workflowVersion: head.version,
+          },
+        },
+      ],
+    });
+    return { kind: "gate_staleness_check", outcome: "pending" };
+  } catch {
+    return { kind: "gate_staleness_check", outcome: "stale" };
+  }
+}
+
 async function processSingleEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
@@ -895,6 +1003,22 @@ async function processSingleEffect(params: {
             db: params.db,
             effect: params.effect,
             payload,
+          }),
+      });
+      return;
+    }
+
+    if (payload.kind === "gate_staleness_check") {
+      await executeStateBlockingEffect({
+        db: params.db,
+        effect: params.effect,
+        leaseOwner: params.leaseOwner,
+        handler: () =>
+          handleGateStalenessCheck({
+            db: params.db,
+            effect: params.effect,
+            payload,
+            now: params.now,
           }),
       });
       return;

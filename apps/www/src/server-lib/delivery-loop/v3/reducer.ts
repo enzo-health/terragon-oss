@@ -269,6 +269,18 @@ function ensurePrEffect(head: WorkflowHead, now: Date): EffectSpec {
   };
 }
 
+function gateStalenessEffect(head: WorkflowHead, now: Date): EffectSpec {
+  return {
+    kind: "gate_staleness_check",
+    effectKey: `${head.workflowId}:${head.version + 1}:gate_staleness_check`,
+    dueAt: new Date(now.getTime() + 5 * 60 * 1000), // 5 minutes
+    payload: {
+      kind: "gate_staleness_check",
+      workflowVersion: head.version + 1,
+    },
+  };
+}
+
 function retryToImplementing(params: {
   head: WorkflowHead;
   now: Date;
@@ -626,7 +638,7 @@ export function reduce(params: {
               blockedReason: hasLinkedPr ? null : AWAITING_PR_CREATION_REASON,
             },
             effects: hasLinkedPr
-              ? [publishStatusEffect(next, now)]
+              ? [gateStalenessEffect(next, now), publishStatusEffect(next, now)]
               : [ensurePrEffect(next, now), publishStatusEffect(next, now)],
             invariantActions: [],
           };
@@ -771,7 +783,10 @@ export function reduce(params: {
               activeRunId: null,
               blockedReason: null,
             },
-            effects: [publishStatusEffect(next, now)],
+            effects: [
+              gateStalenessEffect(next, now),
+              publishStatusEffect(next, now),
+            ],
             invariantActions: [],
           };
           break;
