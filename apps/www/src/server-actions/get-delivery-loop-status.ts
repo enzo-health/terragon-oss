@@ -9,7 +9,6 @@ import {
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
-  getV2StopReason,
   mapV2KindToDeliveryLoopState,
   type DeliveryLoopStatusCheck,
   type DeliveryLoopStatusCheckKey,
@@ -609,7 +608,7 @@ async function buildStatusFromV2Workflow(params: {
   const currentState = v3Head?.state ?? workflow.kind;
 
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-  const v2StopReason = v3Head?.blockedReason ?? getV2StopReason(workflow);
+  const v2StopReason = v3Head?.blockedReason ?? null;
   const explanation = v2StopReason
     ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
     : stateSummary.explanation;

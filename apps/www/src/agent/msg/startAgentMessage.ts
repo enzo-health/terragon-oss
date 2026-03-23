@@ -891,6 +891,7 @@ function buildDeliveryLoopPhasePromptPrefix(
   }
 
   switch (state) {
+    // v3-reachable: planning
     case "planning":
       return [
         "Delivery Loop phase: planning. Generate an implementation plan only.",
@@ -907,6 +908,7 @@ function buildDeliveryLoopPhasePromptPrefix(
         "Required: tasks[] with at least one task. Each task needs title.",
         "Do not edit files, run mutating commands, or open/update a PR.",
       ].join("\n");
+    // v3-reachable: implementing
     case "implementing": {
       const lines: string[] = ["Delivery Loop phase: implementing."];
       if (planContext?.planText) {
@@ -945,38 +947,33 @@ function buildDeliveryLoopPhasePromptPrefix(
       lines.push("", "Do not skip directly to PR babysitting in this phase.");
       return lines.join("\n");
     }
+    // v3-reachable: review_gate (mapped from "gating_review")
     case "review_gate":
       return [
         "Delivery Loop phase: review_gate.",
         "Perform deep bug review and architecture review until there are zero blocking findings.",
         "If findings exist, fix them before proceeding.",
       ].join(" ");
+    // v3-reachable: ci_gate (mapped from "gating_ci")
     case "ci_gate":
       return [
         "Delivery Loop phase: ci_gate.",
         "Run lint, typecheck, and tests. Fix any failures before proceeding.",
       ].join(" ");
-    case "ui_gate":
-      return [
-        "Delivery Loop phase: ui_gate.",
-        "Run browser smoke tests against the changed UI paths and fix any blocking issues.",
-      ].join(" ");
+    // v3-reachable: awaiting_pr_link (mapped from "awaiting_pr")
     case "awaiting_pr_link":
       return [
         "Delivery Loop phase: awaiting_pr_link.",
         "Create or link a pull request, then signal phaseComplete: true.",
       ].join(" ");
-    case "babysitting":
-      return [
-        "Delivery Loop phase: babysitting.",
-        "Focus on CI and review feedback resolution until required CI passes and blockers are zero.",
-      ].join(" ");
+    // v3-reachable: blocked (mapped from awaiting_manual_fix / awaiting_operator_action)
     case "blocked":
       return [
         "Delivery Loop phase: blocked.",
         "Wait for explicit human feedback before making additional loop progression decisions.",
         "Use explicit human-triggered controls to resume or bypass.",
       ].join(" ");
+    // v3-reachable: done, stopped, terminated_pr_closed (v3 maps "terminated" → "terminated_pr_closed")
     case "done":
     case "stopped":
     case "terminated_pr_closed":
