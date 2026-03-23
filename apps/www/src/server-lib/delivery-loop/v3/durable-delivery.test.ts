@@ -924,11 +924,6 @@ describe("v3 durable delivery loop", () => {
       retried: 0,
     });
 
-    const journalsAfterRecovery = await db.query.deliveryLoopJournalV3.findMany(
-      {
-        where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
-      },
-    );
     const effectsAfterRecovery = await db.query.deliveryEffectLedgerV3.findMany(
       {
         where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
