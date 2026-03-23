@@ -334,6 +334,13 @@ export const ChatMessage = memo(function ChatMessage({
   onOpenArtifact = () => {},
   planOccurrences: planOccurrencesProp,
 }: ChatMessageProps) {
+  // Prefer thread-global occurrences from parent; fall back to per-message.
+  const perMessagePlanOccurrences = useMemo(
+    () => buildPlanOccurrenceMap(message.parts),
+    [message.parts],
+  );
+  const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
+
   if (message.role === "system") {
     return (
       <SystemMessage
@@ -351,12 +358,6 @@ export const ChatMessage = memo(function ChatMessage({
     isAgentWorking,
   });
   const lastGroupIndex = groups.length - 1;
-  // Prefer thread-global occurrences from parent; fall back to per-message.
-  const perMessagePlanOccurrences = useMemo(
-    () => buildPlanOccurrenceMap(message.parts),
-    [message.parts],
-  );
-  const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
   return (
     <div
       style={{ overflowAnchor: "none" }}
