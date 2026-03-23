@@ -193,6 +193,25 @@ export async function appendEventAndAdvance(params: {
     }
   }
 
+  // Eagerly drain effects inline instead of waiting for the cron.
+  // The effect ledger + cron is the fallback safety net; this is the fast path.
+  if (result.effectsInserted > 0) {
+    setImmediate(() => {
+      import("./process-effects")
+        .then(({ drainDueEffects }) =>
+          drainDueEffects({
+            db: params.db,
+            workflowId: params.workflowId,
+            maxItems: 5,
+            leaseOwnerPrefix: "inline",
+          }),
+        )
+        .catch(() => {
+          // Non-fatal: cron will pick up any effects we missed
+        });
+    });
+  }
+
   return result;
 }
 
