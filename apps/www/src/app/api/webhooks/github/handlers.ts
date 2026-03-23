@@ -283,8 +283,13 @@ export async function fetchCiSignalSnapshotForHeadSha({
         }
       }
       if (allCheckRuns.length < totalCheckRunCount) {
+        // GitHub's total_count can be stale or include runs not yet returned
+        // (e.g. an off-by-one between total_count and actual results). Log the
+        // discrepancy but still build the snapshot from what we have — returning
+        // null here would cause handleGateStalenessCheck to loop forever as
+        // "pending" even when all fetched runs are already completed+passing.
         console.warn(
-          "[github webhook] CI signal snapshot pagination incomplete",
+          "[github webhook] CI signal snapshot pagination incomplete — proceeding with fetched runs",
           {
             repoFullName,
             headSha,
@@ -292,7 +297,6 @@ export async function fetchCiSignalSnapshotForHeadSha({
             fetchedCheckRunCount: allCheckRuns.length,
           },
         );
-        return null;
       }
       return buildCiSignalSnapshotFromCheckRuns(allCheckRuns);
     }
