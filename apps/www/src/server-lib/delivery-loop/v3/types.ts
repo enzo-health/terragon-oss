@@ -7,7 +7,7 @@ import {
   classifyFailureLane as classifyFailureLaneShared,
 } from "@terragon/shared/delivery-loop/domain/failure-signature";
 
-export type WorkflowStateV3 =
+export type WorkflowState =
   | "planning"
   | "implementing"
   | "gating_review"
@@ -130,7 +130,7 @@ export type WorkflowHead = {
   threadId: string;
   generation: number;
   version: number;
-  state: WorkflowStateV3;
+  state: WorkflowState;
   activeGate: string | null;
   headSha: string | null;
   activeRunId: string | null;
@@ -145,7 +145,7 @@ export type WorkflowHead = {
 };
 
 export function stateToDeliveryLoopState(
-  state: WorkflowStateV3,
+  state: WorkflowState,
 ): DeliveryLoopState {
   switch (state) {
     case "planning":
@@ -170,7 +170,9 @@ export function stateToDeliveryLoopState(
   }
 }
 
-export function isTerminalState(state: WorkflowStateV3): boolean {
+export const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
+
+export function isTerminalState(state: WorkflowState): boolean {
   return state === "done" || state === "stopped" || state === "terminated";
 }
 

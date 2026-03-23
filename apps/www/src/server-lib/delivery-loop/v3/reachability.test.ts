@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reduce } from "./reducer";
-import type { WorkflowHead, LoopEvent, WorkflowStateV3 } from "./types";
+import type { WorkflowHead, LoopEvent, WorkflowState } from "./types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -8,7 +8,7 @@ import type { WorkflowHead, LoopEvent, WorkflowStateV3 } from "./types";
 
 const NOW = new Date("2026-03-18T00:00:00.000Z");
 
-function makeHead(state: WorkflowStateV3): WorkflowHead {
+function makeHead(state: WorkflowState): WorkflowHead {
   const base: WorkflowHead = {
     workflowId: "wf-1",
     threadId: "thread-1",
@@ -55,7 +55,7 @@ function makeHead(state: WorkflowStateV3): WorkflowHead {
   }
 }
 
-const ALL_STATES: WorkflowStateV3[] = [
+const ALL_STATES: WorkflowState[] = [
   "planning",
   "implementing",
   "gating_review",
@@ -68,7 +68,7 @@ const ALL_STATES: WorkflowStateV3[] = [
   "terminated",
 ];
 
-const NON_TERMINAL_STATES: WorkflowStateV3[] = [
+const NON_TERMINAL_STATES: WorkflowState[] = [
   "planning",
   "implementing",
   "gating_review",
@@ -78,7 +78,7 @@ const NON_TERMINAL_STATES: WorkflowStateV3[] = [
   "awaiting_operator_action",
 ];
 
-const TERMINAL_STATES = new Set<WorkflowStateV3>([
+const TERMINAL_STATES = new Set<WorkflowState>([
   "done",
   "stopped",
   "terminated",
@@ -112,7 +112,7 @@ const ALL_CANONICAL_EVENTS: LoopEvent[] = [
 // Suite 1: BFS Reachability
 // ---------------------------------------------------------------------------
 
-function canReachTerminal(startState: WorkflowStateV3): {
+function canReachTerminal(startState: WorkflowState): {
   reachable: boolean;
   path: string[];
 } {
@@ -154,7 +154,7 @@ describe("BFS reachability", () => {
 // ---------------------------------------------------------------------------
 
 describe("terminal state absorption", () => {
-  for (const state of ["done", "stopped", "terminated"] as WorkflowStateV3[]) {
+  for (const state of ["done", "stopped", "terminated"] as WorkflowState[]) {
     it(`${state} absorbs all events`, () => {
       for (const event of ALL_CANONICAL_EVENTS) {
         const result = reduce({ head: makeHead(state), event, now: NOW });
@@ -170,12 +170,12 @@ describe("terminal state absorption", () => {
 
 // "noop" = state unchanged AND version unchanged (event fully ignored)
 // "stay"  = state unchanged but version bumped (event acknowledged)
-// WorkflowStateV3 = transitions to that state
-type Expectation = WorkflowStateV3 | "noop" | "stay";
+// WorkflowState = transitions to that state
+type Expectation = WorkflowState | "noop" | "stay";
 
 const EVENT_TYPES = ALL_CANONICAL_EVENTS.map((e) => e.type);
 
-const EXPECTED: Record<WorkflowStateV3, Record<string, Expectation>> = {
+const EXPECTED: Record<WorkflowState, Record<string, Expectation>> = {
   // -- planning --
   planning: {
     bootstrap: "implementing",
