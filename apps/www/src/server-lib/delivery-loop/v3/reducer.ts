@@ -272,11 +272,11 @@ function ensurePrEffect(head: WorkflowHead, now: Date): EffectSpec {
 function gateStalenessEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "gate_staleness_check",
-    effectKey: `${head.workflowId}:${head.version + 1}:gate_staleness_check`,
+    effectKey: `${head.workflowId}:${head.version}:gate_staleness_check`,
     dueAt: new Date(now.getTime() + 5 * 60 * 1000), // 5 minutes
     payload: {
       kind: "gate_staleness_check",
-      workflowVersion: head.version + 1,
+      workflowVersion: head.version,
     },
   };
 }

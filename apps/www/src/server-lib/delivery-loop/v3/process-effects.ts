@@ -892,7 +892,11 @@ async function handleGateStalenessCheck(params: {
       ],
     });
     return { kind: "gate_staleness_check", outcome: "pending" };
-  } catch {
+  } catch (err) {
+    console.error(
+      `[handleGateStalenessCheck] Unexpected error for workflow ${params.effect.workflowId} (version ${params.payload.workflowVersion}):`,
+      err,
+    );
     return { kind: "gate_staleness_check", outcome: "stale" };
   }
 }
