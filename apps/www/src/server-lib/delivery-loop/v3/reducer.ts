@@ -428,6 +428,20 @@ export function reduceV3(params: {
           };
           break;
         }
+        if (event.type === "plan_failed") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "awaiting_manual_fix",
+              activeGate: null,
+              blockedReason: event.reason,
+            },
+            effects: [publishStatusEffect(next, now)],
+            invariantActions: [],
+          };
+          break;
+        }
         if (event.type !== "plan_completed" && event.type !== "bootstrap") {
           result = {
             head,

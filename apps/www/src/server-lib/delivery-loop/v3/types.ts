@@ -20,6 +20,7 @@ export type LoopEventV3 =
   | { type: "bootstrap" }
   | { type: "planning_run_completed" }
   | { type: "plan_completed" }
+  | { type: "plan_failed"; reason: string }
   | { type: "dispatch_sent"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_acked"; runId: string }
   | { type: "dispatch_ack_timeout"; runId: string }

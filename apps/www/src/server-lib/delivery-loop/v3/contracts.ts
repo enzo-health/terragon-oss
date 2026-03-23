@@ -99,6 +99,8 @@ export function serializeLoopEventV3(
     case "resume_requested":
     case "stop_requested":
       return { type: event.type };
+    case "plan_failed":
+      return { type: event.type, reason: event.reason };
     case "dispatch_sent":
       return {
         type: event.type,
@@ -175,6 +177,11 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
     case "resume_requested":
     case "stop_requested":
       return { type: payload.type };
+    case "plan_failed":
+      if (typeof payload.reason !== "string") {
+        return null;
+      }
+      return { type: "plan_failed", reason: payload.reason };
     case "dispatch_sent": {
       if (typeof payload.runId !== "string") {
         return null;
