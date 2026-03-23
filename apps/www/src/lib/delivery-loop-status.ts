@@ -945,7 +945,10 @@ export function mapV2KindToDeliveryLoopState(
 }
 
 /**
- * Maps a v2 workflow state to a human-readable stop reason, or null.
+ * @deprecated v2 fallback only — v3 stores stop reasons in `blockedReason` on
+ * the workflow head row. Only caller (get-delivery-loop-status.ts:612) already
+ * prefers `v3Head.blockedReason`; this remains as a null-coalesce fallback for
+ * rows that pre-date the v3 migration. Remove once all legacy rows are drained.
  */
 export function getV2StopReason(workflow: DeliveryWorkflow): string | null {
   if (workflow.kind === "stopped") {

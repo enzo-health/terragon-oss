@@ -592,7 +592,7 @@ export async function startAgentMessage({
               null,
             );
           }
-          // Prefer v3 head state over stale legacy delivery_workflow.kind
+          // Read authoritative state from v3 head
           let effectiveState: DeliveryLoopState | null = null;
           if (v2Workflow) {
             const v3Head = await getWorkflowHeadV3({
@@ -601,7 +601,7 @@ export async function startAgentMessage({
             });
             effectiveState = v3Head
               ? v3StateToDeliveryLoopState(v3Head.state)
-              : workflowRowKindToState(v2Workflow.kind, v2Workflow.stateJson);
+              : null;
           }
           let planContext: {
             planText: string;
@@ -873,41 +873,6 @@ async function preparePromptForModel({
     }
   }
   return { prompt };
-}
-
-/**
- * Maps a v2 workflow DB row's kind + stateJson to the v1 DeliveryLoopState
- * string used by the prompt prefix builder.
- */
-function workflowRowKindToState(
-  kind: string,
-  stateJson: unknown,
-): DeliveryLoopState {
-  if (kind === "gating") {
-    const gate = (stateJson as Record<string, unknown> | null)?.gate as
-      | { kind?: string }
-      | null
-      | undefined;
-    if (gate?.kind === "review") return "review_gate";
-    if (gate?.kind === "ui") return "ui_gate";
-    return "ci_gate";
-  }
-  if (kind === "terminated") {
-    const reason = (stateJson as Record<string, unknown> | null)?.reason as
-      | { kind?: string }
-      | null
-      | undefined;
-    if (reason?.kind === "pr_merged") return "terminated_pr_merged";
-    return "terminated_pr_closed";
-  }
-  if (
-    kind === "awaiting_plan_approval" ||
-    kind === "awaiting_manual_fix" ||
-    kind === "awaiting_operator_action"
-  )
-    return "blocked";
-  if (kind === "awaiting_pr") return "awaiting_pr_link";
-  return kind as DeliveryLoopState;
 }
 
 function buildDeliveryLoopPhasePromptPrefix(
