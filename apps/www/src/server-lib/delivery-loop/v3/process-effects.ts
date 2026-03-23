@@ -269,35 +269,27 @@ async function processGateReviewEffect(params: {
     },
   });
 
-  // Trigger the follow-up queue to launch the sandbox run
-  let dispatchLaunched = false;
+  // Trigger the follow-up queue to launch the sandbox run.
+  // This is best-effort — the dispatch intent + queued message are already
+  // persisted, so the cron will pick them up even if this fails.
   try {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    const followUpResult = await maybeProcessFollowUpQueue({
+    await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
     });
-    dispatchLaunched = followUpResult.dispatchLaunched;
   } catch {
     // Non-fatal: cron will pick up pending follow-ups
   }
 
-  if (dispatchLaunched) {
-    return {
-      kind: "dispatch_gate_review",
-      outcome: "dispatched",
-      runId,
-      ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
-    };
-  }
-
   return {
     kind: "dispatch_gate_review",
-    outcome: "failed",
-    reason: "Follow-up queue did not launch dispatch",
+    outcome: "dispatched",
+    runId,
+    ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
   };
 }
 
@@ -413,35 +405,27 @@ async function processImplementingDispatchEffect(params: {
     },
   });
 
-  // Trigger the follow-up queue to launch the sandbox run
-  let dispatchLaunched = false;
+  // Trigger the follow-up queue to launch the sandbox run.
+  // This is best-effort — the dispatch intent + queued message are already
+  // persisted, so the cron will pick them up even if this fails.
   try {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    const followUpResult = await maybeProcessFollowUpQueue({
+    await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
     });
-    dispatchLaunched = followUpResult.dispatchLaunched;
   } catch {
     // Non-fatal: cron will pick up pending follow-ups
   }
 
-  if (dispatchLaunched) {
-    return {
-      kind: "dispatch_implementing",
-      outcome: "dispatched",
-      runId,
-      ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
-    };
-  }
-
   return {
     kind: "dispatch_implementing",
-    outcome: "failed",
-    reason: "Follow-up queue did not launch dispatch",
+    outcome: "dispatched",
+    runId,
+    ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
   };
 }
 
