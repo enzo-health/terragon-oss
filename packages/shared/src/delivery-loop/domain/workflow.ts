@@ -211,38 +211,3 @@ export type DeliveryWorkflow =
     })
   | (WorkflowCommon & { kind: "stopped"; reason: StopReason })
   | (WorkflowCommon & { kind: "terminated"; reason: TerminationReason });
-
-// Terminal state check
-const TERMINAL_STATES: ReadonlySet<WorkflowState> = new Set([
-  "done",
-  "stopped",
-  "terminated",
-]);
-export function isTerminalState(state: WorkflowState): boolean {
-  return TERMINAL_STATES.has(state);
-}
-
-// Active state check
-const ACTIVE_STATES: ReadonlySet<WorkflowState> = new Set([
-  "planning",
-  "implementing",
-  "gating",
-  "awaiting_pr",
-  "babysitting",
-  "awaiting_plan_approval",
-  "awaiting_manual_fix",
-  "awaiting_operator_action",
-]);
-export function isActiveState(state: WorkflowState): boolean {
-  return ACTIVE_STATES.has(state);
-}
-
-// Human wait state check
-const HUMAN_WAIT_STATES: ReadonlySet<WorkflowState> = new Set([
-  "awaiting_plan_approval",
-  "awaiting_manual_fix",
-  "awaiting_operator_action",
-]);
-export function isHumanWaitState(state: WorkflowState): boolean {
-  return HUMAN_WAIT_STATES.has(state);
-}
