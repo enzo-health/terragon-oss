@@ -913,6 +913,7 @@ async function applySignalMessage(params: {
       source: journal.source,
       idempotencyKey: params.message.idempotencyKey,
       event,
+      eagerDrain: true,
     });
     return;
   }
@@ -941,6 +942,7 @@ async function applySignalMessage(params: {
     source: journal.source,
     idempotencyKey: params.message.idempotencyKey,
     event: legacyEvent.event,
+    eagerDrain: true,
   });
 }
 

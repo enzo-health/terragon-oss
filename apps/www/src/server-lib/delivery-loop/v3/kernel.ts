@@ -69,6 +69,8 @@ export async function appendEventAndAdvance(params: {
   now?: Date;
   /** When true, auto-injects bypass events for gating states (edge-triggered). */
   skipGates?: boolean;
+  /** When true, awaits inline effect drain instead of fire-and-forget setImmediate. */
+  eagerDrain?: boolean;
 }): Promise<{
   inserted: boolean;
   transitioned: boolean;
@@ -196,20 +198,32 @@ export async function appendEventAndAdvance(params: {
   // Eagerly drain effects inline instead of waiting for the cron.
   // The effect ledger + cron is the fallback safety net; this is the fast path.
   if (result.effectsInserted > 0) {
-    setImmediate(() => {
-      import("./process-effects")
-        .then(({ drainDueEffects }) =>
-          drainDueEffects({
-            db: params.db,
-            workflowId: params.workflowId,
-            maxItems: 5,
-            leaseOwnerPrefix: "inline",
-          }),
-        )
-        .catch(() => {
-          // Non-fatal: cron will pick up any effects we missed
+    if (params.eagerDrain) {
+      try {
+        const { drainDueEffects } = await import("./process-effects");
+        await drainDueEffects({
+          db: params.db,
+          workflowId: params.workflowId,
+          maxItems: 5,
+          leaseOwnerPrefix: "eager",
         });
-    });
+      } catch {
+        // Non-fatal: cron fallback
+      }
+    } else {
+      setImmediate(() => {
+        import("./process-effects")
+          .then(({ drainDueEffects }) =>
+            drainDueEffects({
+              db: params.db,
+              workflowId: params.workflowId,
+              maxItems: 5,
+              leaseOwnerPrefix: "inline",
+            }),
+          )
+          .catch(() => {});
+      });
+    }
   }
 
   return result;

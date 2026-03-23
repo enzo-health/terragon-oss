@@ -18,7 +18,7 @@ import { evaluateRetryDecision, resetRetryCounter } from "./retry-policy";
 // ---------------------------------------------------------------------------
 
 /** Default timeout before a dispatched intent is considered timed out. */
-export const DEFAULT_ACK_TIMEOUT_MS = 90_000; // 90 seconds — allows Docker cold starts
+export const DEFAULT_ACK_TIMEOUT_MS = 180_000; // 180 seconds — allows slow sandbox cold starts
 
 // ---------------------------------------------------------------------------
 // handleAckReceived
