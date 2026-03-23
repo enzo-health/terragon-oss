@@ -13,13 +13,13 @@ import {
   markDispatchIntentDispatched,
 } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { addMilliseconds } from "date-fns";
-import { parseEffectPayloadV3 } from "./contracts";
-import { appendEventAndAdvanceV3 } from "./kernel";
+import { parseEffectPayload } from "./contracts";
+import { appendEventAndAdvance } from "./kernel";
 import {
-  claimNextEffectV3,
-  getWorkflowHeadV3,
-  markEffectFailedV3,
-  markEffectSucceededV3,
+  claimNextEffect,
+  getWorkflowHead,
+  markEffectFailed,
+  markEffectSucceeded,
 } from "./store";
 import {
   upsertDeliveryCanonicalStatusComment,
@@ -35,18 +35,16 @@ import {
 } from "@/server-lib/delivery-loop/dispatch-intent";
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
-import type { EffectResultV3, LoopEventV3 } from "./types";
+import type { EffectResult, LoopEvent } from "./types";
 
 const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 /**
- * Pure mapping from effect result to the LoopEventV3 that should be fired.
+ * Pure mapping from effect result to the LoopEvent that should be fired.
  * Returns null for results that don't require a state transition (e.g., human
  * approval pending, stale ack timeout).
  */
-export function effectResultToEvent(
-  result: EffectResultV3,
-): LoopEventV3 | null {
+export function effectResultToEvent(result: EffectResult): LoopEvent | null {
   switch (result.kind) {
     case "create_plan_artifact":
       if (result.outcome === "created" && result.approvalPolicy === "auto")
@@ -99,22 +97,22 @@ export function effectResultToEvent(
 /**
  * Framework wrapper for state-blocking effects. Guarantees that every
  * handler execution produces exactly one event (or null for expected
- * no-transition cases). Handlers return EffectResultV3; they never
- * call appendEventAndAdvanceV3 directly.
+ * no-transition cases). Handlers return EffectResult; they never
+ * call appendEventAndAdvance directly.
  */
 async function executeStateBlockingEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
   leaseOwner: string;
-  handler: () => Promise<EffectResultV3>;
+  handler: () => Promise<EffectResult>;
 }): Promise<void> {
-  let result: EffectResultV3;
+  let result: EffectResult;
   try {
     result = await params.handler();
   } catch (error) {
     // Handler threw — create a typed failure result based on effect kind
     const reason = error instanceof Error ? error.message : String(error);
-    const kind = parseEffectPayloadV3(params.effect.payloadJson)?.kind;
+    const kind = parseEffectPayload(params.effect.payloadJson)?.kind;
     switch (kind) {
       case "create_plan_artifact":
         result = { kind: "create_plan_artifact", outcome: "failed", reason };
@@ -137,7 +135,7 @@ async function executeStateBlockingEffect(params: {
   }
 
   // Mark effect succeeded — the effect did its work regardless of outcome
-  await markEffectSucceededV3({
+  await markEffectSucceeded({
     db: params.db,
     effectId: params.effect.id,
     leaseOwner: params.leaseOwner,
@@ -147,7 +145,7 @@ async function executeStateBlockingEffect(params: {
   // Map result to event and fire if non-null
   const event = effectResultToEvent(result);
   if (event) {
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db: params.db,
       workflowId: params.effect.workflowId,
       source: "system",
@@ -171,7 +169,7 @@ async function processGateReviewEffect(params: {
   leaseOwner: string;
   gate: string;
   now: Date;
-}): Promise<EffectResultV3> {
+}): Promise<EffectResult> {
   const workflowId = params.effect.workflowId;
 
   const workflow = await getWorkflow({ db: params.db, workflowId });
@@ -317,7 +315,7 @@ async function processImplementingDispatchEffect(params: {
   leaseOwner: string;
   executionClass: "implementation_runtime" | "implementation_runtime_fallback";
   now: Date;
-}): Promise<EffectResultV3> {
+}): Promise<EffectResult> {
   const workflowId = params.effect.workflowId;
 
   const workflow = await getWorkflow({ db: params.db, workflowId });
@@ -476,7 +474,7 @@ async function processPublishStatusEffect(params: {
     workflowId: params.effect.workflowId,
   });
   if (!workflow || typeof workflow.prNumber !== "number") {
-    await markEffectSucceededV3({
+    await markEffectSucceeded({
       db: params.db,
       effectId: params.effect.id,
       leaseOwner: params.leaseOwner,
@@ -485,7 +483,7 @@ async function processPublishStatusEffect(params: {
     return;
   }
 
-  const head = await getWorkflowHeadV3({
+  const head = await getWorkflowHead({
     db: params.db,
     workflowId: params.effect.workflowId,
   });
@@ -524,7 +522,7 @@ async function processPublishStatusEffect(params: {
   } catch (pubErr) {
     const classified = classifyDeliveryPublicationFailure(pubErr);
     if (!classified.retriable) {
-      await markEffectSucceededV3({
+      await markEffectSucceeded({
         db: params.db,
         effectId: params.effect.id,
         leaseOwner: params.leaseOwner,
@@ -535,7 +533,7 @@ async function processPublishStatusEffect(params: {
     throw pubErr;
   }
 
-  await markEffectSucceededV3({
+  await markEffectSucceeded({
     db: params.db,
     effectId: params.effect.id,
     leaseOwner: params.leaseOwner,
@@ -547,7 +545,7 @@ async function processEnsurePrEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
   leaseOwner: string;
-}): Promise<EffectResultV3> {
+}): Promise<EffectResult> {
   const workflow = await getWorkflow({
     db: params.db,
     workflowId: params.effect.workflowId,
@@ -560,7 +558,7 @@ async function processEnsurePrEffect(params: {
     };
   }
 
-  const head = await getWorkflowHeadV3({
+  const head = await getWorkflowHead({
     db: params.db,
     workflowId: params.effect.workflowId,
   });
@@ -683,8 +681,8 @@ async function handleCreatePlanArtifact(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
   now: Date;
-}): Promise<EffectResultV3> {
-  const head = await getWorkflowHeadV3({
+}): Promise<EffectResult> {
+  const head = await getWorkflowHead({
     db: params.db,
     workflowId: params.effect.workflowId,
   });
@@ -769,8 +767,8 @@ async function handleAckTimeoutCheck(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
   payload: { runId: string; workflowVersion: number };
-}): Promise<EffectResultV3> {
-  const head = await getWorkflowHeadV3({
+}): Promise<EffectResult> {
+  const head = await getWorkflowHead({
     db: params.db,
     workflowId: params.effect.workflowId,
   });
@@ -790,9 +788,9 @@ async function processSingleEffect(params: {
   leaseOwner: string;
   now: Date;
 }) {
-  const payload = parseEffectPayloadV3(params.effect.payloadJson);
+  const payload = parseEffectPayload(params.effect.payloadJson);
   if (!payload) {
-    await markEffectFailedV3({
+    await markEffectFailed({
       db: params.db,
       effectId: params.effect.id,
       leaseOwner: params.leaseOwner,
@@ -895,7 +893,7 @@ async function processSingleEffect(params: {
       return;
     }
   } catch (error) {
-    await markEffectFailedV3({
+    await markEffectFailed({
       db: params.db,
       effectId: params.effect.id,
       leaseOwner: params.leaseOwner,
@@ -907,7 +905,7 @@ async function processSingleEffect(params: {
   }
 }
 
-export async function drainDueV3Effects(params: {
+export async function drainDueEffects(params: {
   db: DB;
   workflowId?: string;
   maxItems?: number;
@@ -921,7 +919,7 @@ export async function drainDueV3Effects(params: {
   let processed = 0;
   for (let i = 0; i < maxItems; i++) {
     const leaseOwner = `${leaseOwnerPrefix}:${crypto.randomUUID()}`;
-    const effect = await claimNextEffectV3({
+    const effect = await claimNextEffect({
       db: params.db,
       leaseOwner,
       workflowId: params.workflowId,

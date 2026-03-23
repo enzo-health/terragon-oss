@@ -7,7 +7,7 @@ import { getThreadChat } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
@@ -42,7 +42,7 @@ export const approvePlan = userOnlyAction(
     }
 
     // Validate state — plan approval only valid in planning
-    const v3Head = await getWorkflowHeadV3({ db, workflowId: v2Row.id });
+    const v3Head = await getWorkflowHead({ db, workflowId: v2Row.id });
     if (!v3Head) {
       throw new Error(`No v3 head for workflow ${v2Row.id}`);
     }

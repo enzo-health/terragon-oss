@@ -1,8 +1,8 @@
 import {
   classifyFailureLane,
-  type EffectSpecV3,
-  type LoopEventV3,
-  type WorkflowHeadV3,
+  type EffectSpec,
+  type LoopEvent,
+  type WorkflowHead,
 } from "./types";
 
 const DISPATCH_COHERENT_STATES = new Set([
@@ -30,19 +30,19 @@ type BranchInvariantAction = {
 export type InvariantActionV3 = InvariantAction | BranchInvariantAction;
 
 type ReduceResult = {
-  head: WorkflowHeadV3;
-  effects: EffectSpecV3[];
+  head: WorkflowHead;
+  effects: EffectSpec[];
   invariantActions: InvariantActionV3[];
 };
 
 type ApplyInvariantResult = {
-  head: WorkflowHeadV3;
+  head: WorkflowHead;
   invariantActions: InvariantActionV3[];
 };
 
 function withInvariantActions(params: {
-  head: WorkflowHeadV3;
-  effects: EffectSpecV3[];
+  head: WorkflowHead;
+  effects: EffectSpec[];
   invariantActions: InvariantActionV3[];
 }): ReduceResult {
   if (params.invariantActions.length === 0) {
@@ -54,7 +54,7 @@ function withInvariantActions(params: {
   }
 
   const invariants = params.invariantActions;
-  const nextHead = invariants.reduce<WorkflowHeadV3>((acc, action) => {
+  const nextHead = invariants.reduce<WorkflowHead>((acc, action) => {
     if (action.kind === "dispatch_coherence") {
       return {
         ...acc,
@@ -75,7 +75,7 @@ function withInvariantActions(params: {
 }
 
 function applyDispatchCoherence(params: {
-  head: WorkflowHeadV3;
+  head: WorkflowHead;
 }): ApplyInvariantResult {
   const beforeActiveRunId = params.head.activeRunId;
   if (
@@ -104,7 +104,7 @@ function applyDispatchCoherence(params: {
   };
 }
 
-function expectedBranchForState(state: WorkflowHeadV3["state"]): string | null {
+function expectedBranchForState(state: WorkflowHead["state"]): string | null {
   if (state === "gating_review") {
     return "review";
   }
@@ -115,7 +115,7 @@ function expectedBranchForState(state: WorkflowHeadV3["state"]): string | null {
 }
 
 function applyBranchCoherence(params: {
-  head: WorkflowHeadV3;
+  head: WorkflowHead;
 }): ApplyInvariantResult {
   const beforeActiveGate = params.head.activeGate;
   const expectedActiveGate = expectedBranchForState(params.head.state);
@@ -143,8 +143,8 @@ function applyBranchCoherence(params: {
 }
 
 function applyInvariantMiddleware(params: {
-  head: WorkflowHeadV3;
-  effects: EffectSpecV3[];
+  head: WorkflowHead;
+  effects: EffectSpec[];
 }): ReduceResult {
   const dispatchResult = applyDispatchCoherence({ head: params.head });
   const branchResult = applyBranchCoherence({
@@ -164,7 +164,7 @@ function applyInvariantMiddleware(params: {
 }
 
 function isOutOfOrderRunSignal(params: {
-  head: WorkflowHeadV3;
+  head: WorkflowHead;
   runId: string | null | undefined;
 }): boolean {
   if (params.head.activeRunId == null) {
@@ -178,8 +178,8 @@ function isOutOfOrderRunSignal(params: {
 }
 
 function isOutOfOrderCiSignal(params: {
-  head: WorkflowHeadV3;
-  event: Extract<LoopEventV3, { type: "gate_ci_passed" | "gate_ci_failed" }>;
+  head: WorkflowHead;
+  event: Extract<LoopEvent, { type: "gate_ci_passed" | "gate_ci_failed" }>;
 }): boolean {
   const signalHeadSha = params.event.headSha ?? null;
   if (!signalHeadSha) {
@@ -202,7 +202,7 @@ function isOutOfOrderCiSignal(params: {
   return signalRunId !== params.head.activeRunId;
 }
 
-function withVersion(head: WorkflowHeadV3, now: Date): WorkflowHeadV3 {
+function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
   return {
     ...head,
     version: head.version + 1,
@@ -211,7 +211,7 @@ function withVersion(head: WorkflowHeadV3, now: Date): WorkflowHeadV3 {
   };
 }
 
-function publishStatusEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
+function publishStatusEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "publish_status",
     effectKey: `${head.workflowId}:${head.version + 1}:publish_status`,
@@ -229,12 +229,12 @@ function computeRetryBackoffMs(attempt: number): number {
 }
 
 function dispatchImplementingEffect(
-  head: WorkflowHeadV3,
+  head: WorkflowHead,
   now: Date,
   lane: "agent" | "infra",
   infraRetryCount: number,
   retryAttempt?: number,
-): EffectSpecV3 {
+): EffectSpec {
   const executionClass =
     lane === "infra" && infraRetryCount > 0
       ? "implementation_runtime_fallback"
@@ -251,7 +251,7 @@ function dispatchImplementingEffect(
   };
 }
 
-function dispatchReviewEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
+function dispatchReviewEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "dispatch_gate_review",
     effectKey: `${head.workflowId}:${head.version + 1}:dispatch_gate_review`,
@@ -260,7 +260,7 @@ function dispatchReviewEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
   };
 }
 
-function ensurePrEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
+function ensurePrEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "ensure_pr",
     effectKey: `${head.workflowId}:${head.version + 1}:ensure_pr`,
@@ -271,7 +271,7 @@ function ensurePrEffect(head: WorkflowHeadV3, now: Date): EffectSpecV3 {
 }
 
 function retryToImplementing(params: {
-  head: WorkflowHeadV3;
+  head: WorkflowHead;
   now: Date;
   lane: "agent" | "infra";
   reason: string | null;
@@ -340,9 +340,9 @@ function retryToImplementing(params: {
   };
 }
 
-export function reduceV3(params: {
-  head: WorkflowHeadV3;
-  event: LoopEventV3;
+export function reduce(params: {
+  head: WorkflowHead;
+  event: LoopEvent;
   now?: Date;
 }): ReduceResult {
   const now = params.now ?? new Date();

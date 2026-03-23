@@ -1,8 +1,8 @@
 import { and, asc, eq, gt, or } from "drizzle-orm";
-import { parseLoopEventV3 } from "./contracts";
-import { appendEventAndAdvanceV3 } from "./kernel";
-import { type OutboxPayloadV3 } from "./contracts";
-import type { LoopEventV3 } from "./types";
+import { parseLoopEvent } from "./contracts";
+import { appendEventAndAdvance } from "./kernel";
+import { type OutboxPayload } from "./contracts";
+import type { LoopEvent } from "./types";
 import { env } from "@terragon/env/apps-www";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -38,7 +38,7 @@ export type OutboxWorkerMessage = {
   outboxId: string;
   workflowId: string;
   topic: DeliveryOutboxTopicV3;
-  payload: OutboxPayloadV3;
+  payload: OutboxPayload;
   dedupeKey: string;
   idempotencyKey: string;
 };
@@ -97,7 +97,7 @@ type DeadLetterPayload = Pick<
 };
 
 type LegacySignalEnvelopeParseResult =
-  | { kind: "event"; event: LoopEventV3 }
+  | { kind: "event"; event: LoopEvent }
   | { kind: "noop"; reason: string }
   | { kind: "invalid" };
 
@@ -417,7 +417,7 @@ function parseXAutoClaimResponse(raw: unknown): ParsedXAutoClaimResult {
   };
 }
 
-function parseOutboxPayload(rawPayload: unknown): OutboxPayloadV3 | null {
+function parseOutboxPayload(rawPayload: unknown): OutboxPayload | null {
   let parsed: unknown = rawPayload;
   if (typeof rawPayload === "string") {
     try {
@@ -552,8 +552,8 @@ function isDeliveryTimerKind(kind: string | null): kind is DeliveryTimerKindV3 {
 }
 
 function isSignalPayload(
-  payload: OutboxPayloadV3,
-): payload is Extract<OutboxPayloadV3, { kind: "signal" }> {
+  payload: OutboxPayload,
+): payload is Extract<OutboxPayload, { kind: "signal" }> {
   return payload.kind === "signal";
 }
 
@@ -905,9 +905,9 @@ async function applySignalMessage(params: {
     );
   }
 
-  const event = parseLoopEventV3(journal.payloadJson);
+  const event = parseLoopEvent(journal.payloadJson);
   if (event) {
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db: params.db,
       workflowId: params.message.workflowId,
       source: journal.source,
@@ -935,7 +935,7 @@ async function applySignalMessage(params: {
     );
   }
 
-  await appendEventAndAdvanceV3({
+  await appendEventAndAdvance({
     db: params.db,
     workflowId: params.message.workflowId,
     source: journal.source,
@@ -1183,7 +1183,7 @@ async function processPublishedOutboxRows(params: {
   return consumed;
 }
 
-export async function drainOutboxV3Worker(
+export async function drainOutboxWorker(
   params: OutboxWorkerOptions,
 ): Promise<OutboxWorkerResult> {
   const streamKey = params.streamKey ?? getOutboxRelayStreamKey();

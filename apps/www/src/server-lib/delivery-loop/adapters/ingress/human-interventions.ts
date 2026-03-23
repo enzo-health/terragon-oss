@@ -99,7 +99,7 @@ export async function handleHumanAction(params: {
     gate: params.gate,
   });
 
-  const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
+  const { appendJournalEvent, enqueueOutboxRecord } = await import(
     "../../v3/store"
   );
 
@@ -111,7 +111,7 @@ export async function handleHumanAction(params: {
   const writeJournalAndOutbox = async (
     tx: Pick<DB, "insert">,
   ): Promise<void> => {
-    const journal = await appendJournalEventV3({
+    const journal = await appendJournalEvent({
       db: tx,
       workflowId: params.workflowId,
       source: v3Source,
@@ -125,7 +125,7 @@ export async function handleHumanAction(params: {
       return;
     }
 
-    await enqueueOutboxRecordV3({
+    await enqueueOutboxRecord({
       db: tx,
       outbox: {
         workflowId: params.workflowId,

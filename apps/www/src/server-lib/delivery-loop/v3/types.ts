@@ -19,7 +19,7 @@ export type WorkflowStateV3 =
   | "stopped"
   | "terminated";
 
-export type LoopEventV3 =
+export type LoopEvent =
   | { type: "bootstrap" }
   | { type: "planning_run_completed" }
   | { type: "plan_completed" }
@@ -61,9 +61,9 @@ export type LoopEventV3 =
   | { type: "stop_requested" }
   | { type: "pr_closed"; merged: boolean };
 
-export type EffectKindV3 = DeliveryEffectKindV3;
+export type EffectKind = DeliveryEffectKindV3;
 
-export type EffectPayloadV3 =
+export type EffectPayload =
   | {
       kind: "dispatch_implementing";
       executionClass:
@@ -80,20 +80,20 @@ export type EffectPayloadV3 =
   | { kind: "create_plan_artifact" }
   | { kind: "publish_status" };
 
-export type EffectSpecV3 = {
-  kind: EffectKindV3;
+export type EffectSpec = {
+  kind: EffectKind;
   effectKey: string;
   dueAt: Date;
   maxAttempts?: number;
-  payload: EffectPayloadV3;
+  payload: EffectPayload;
 };
 
 /**
  * Typed result returned by state-blocking effect handlers.
- * The framework maps these to LoopEventV3 via effectResultToEvent().
- * Handlers return data; they never call appendEventAndAdvanceV3 directly.
+ * The framework maps these to LoopEvent via effectResultToEvent().
+ * Handlers return data; they never call appendEventAndAdvance directly.
  */
-export type EffectResultV3 =
+export type EffectResult =
   // create_plan_artifact results
   | {
       kind: "create_plan_artifact";
@@ -125,7 +125,7 @@ export type EffectResultV3 =
   | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
   | { kind: "ack_timeout_check"; outcome: "stale" };
 
-export type WorkflowHeadV3 = {
+export type WorkflowHead = {
   workflowId: string;
   threadId: string;
   generation: number;
@@ -144,7 +144,7 @@ export type WorkflowHeadV3 = {
   lastActivityAt: Date | null;
 };
 
-export function v3StateToDeliveryLoopState(
+export function stateToDeliveryLoopState(
   state: WorkflowStateV3,
 ): DeliveryLoopState {
   switch (state) {
@@ -170,7 +170,7 @@ export function v3StateToDeliveryLoopState(
   }
 }
 
-export function isTerminalStateV3(state: WorkflowStateV3): boolean {
+export function isTerminalState(state: WorkflowStateV3): boolean {
   return state === "done" || state === "stopped" || state === "terminated";
 }
 

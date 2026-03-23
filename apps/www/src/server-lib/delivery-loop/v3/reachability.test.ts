@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reduceV3 } from "./reducer";
-import type { WorkflowHeadV3, LoopEventV3, WorkflowStateV3 } from "./types";
+import { reduce } from "./reducer";
+import type { WorkflowHead, LoopEvent, WorkflowStateV3 } from "./types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -8,8 +8,8 @@ import type { WorkflowHeadV3, LoopEventV3, WorkflowStateV3 } from "./types";
 
 const NOW = new Date("2026-03-18T00:00:00.000Z");
 
-function makeHead(state: WorkflowStateV3): WorkflowHeadV3 {
-  const base: WorkflowHeadV3 = {
+function makeHead(state: WorkflowStateV3): WorkflowHead {
+  const base: WorkflowHead = {
     workflowId: "wf-1",
     threadId: "thread-1",
     generation: 1,
@@ -84,7 +84,7 @@ const TERMINAL_STATES = new Set<WorkflowStateV3>([
   "terminated",
 ]);
 
-const ALL_CANONICAL_EVENTS: LoopEventV3[] = [
+const ALL_CANONICAL_EVENTS: LoopEvent[] = [
   { type: "bootstrap" },
   { type: "planning_run_completed" },
   { type: "plan_completed" },
@@ -116,7 +116,7 @@ function canReachTerminal(startState: WorkflowStateV3): {
   reachable: boolean;
   path: string[];
 } {
-  const queue: { head: WorkflowHeadV3; path: string[] }[] = [
+  const queue: { head: WorkflowHead; path: string[] }[] = [
     { head: makeHead(startState), path: [startState] },
   ];
   const visited = new Set<string>();
@@ -128,7 +128,7 @@ function canReachTerminal(startState: WorkflowStateV3): {
     visited.add(head.state);
 
     for (const event of ALL_CANONICAL_EVENTS) {
-      const result = reduceV3({ head: makeHead(head.state), event, now: NOW });
+      const result = reduce({ head: makeHead(head.state), event, now: NOW });
       if (result.head.state !== head.state) {
         queue.push({
           head: result.head,
@@ -157,7 +157,7 @@ describe("terminal state absorption", () => {
   for (const state of ["done", "stopped", "terminated"] as WorkflowStateV3[]) {
     it(`${state} absorbs all events`, () => {
       for (const event of ALL_CANONICAL_EVENTS) {
-        const result = reduceV3({ head: makeHead(state), event, now: NOW });
+        const result = reduce({ head: makeHead(state), event, now: NOW });
         expect(result.head.state).toBe(state);
       }
     });
@@ -339,7 +339,7 @@ describe("exhaustive (state x event) transition table", () => {
         const expected = expectations[event.type];
         it(`${event.type} -> ${expected}`, () => {
           const head = makeHead(state);
-          const result = reduceV3({ head, event, now: NOW });
+          const result = reduce({ head, event, now: NOW });
 
           if (expected === "noop") {
             // Fully ignored: same state, same version

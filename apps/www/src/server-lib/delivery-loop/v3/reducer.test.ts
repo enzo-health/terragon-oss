@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { reduceV3 } from "./reducer";
-import type { WorkflowHeadV3 } from "./types";
+import { reduce } from "./reducer";
+import type { WorkflowHead } from "./types";
 
-function head(state: WorkflowHeadV3["state"]): WorkflowHeadV3 {
+function head(state: WorkflowHead["state"]): WorkflowHead {
   const now = new Date("2026-03-18T00:00:00.000Z");
   return {
     workflowId: "wf-1",
@@ -24,10 +24,10 @@ function head(state: WorkflowHeadV3["state"]): WorkflowHeadV3 {
   };
 }
 
-describe("reduceV3", () => {
+describe("reduce", () => {
   it("planning bootstrap schedules implementation dispatch without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: { type: "bootstrap" },
       now,
@@ -50,7 +50,7 @@ describe("reduceV3", () => {
 
   it("plan_completed transitions to implementing without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: { type: "plan_completed" },
       now,
@@ -72,7 +72,7 @@ describe("reduceV3", () => {
 
   it("planning_run_completed stays in planning and emits create_plan_artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: { type: "planning_run_completed" },
       now,
@@ -92,7 +92,7 @@ describe("reduceV3", () => {
 
   it("planning_run_completed is idempotent (no-op from non-planning state)", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("implementing"),
       event: { type: "planning_run_completed" },
       now,
@@ -105,7 +105,7 @@ describe("reduceV3", () => {
   it("planning dispatch_sent implicitly enters implementing and arms ack timeout", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: {
         type: "dispatch_sent",
@@ -131,7 +131,7 @@ describe("reduceV3", () => {
   it("gating_review dispatch_sent arms ack timeout check", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -158,7 +158,7 @@ describe("reduceV3", () => {
 
   it("review failure transitions back to implementing and increments fix attempts", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -180,7 +180,7 @@ describe("reduceV3", () => {
 
   it("review dispatch ack timeout uses infra retry lane", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -200,7 +200,7 @@ describe("reduceV3", () => {
 
   it("implementing run_completed without head SHA retries implementation", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("implementing"),
       event: {
         type: "run_completed",
@@ -224,7 +224,7 @@ describe("reduceV3", () => {
 
   it("implementing run_completed without activeRunId still resolves to gate_review", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("implementing"),
         activeRunId: null,
@@ -247,7 +247,7 @@ describe("reduceV3", () => {
 
   it("implementing run_failed without activeRunId still retries", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("implementing"),
         activeRunId: null,
@@ -274,7 +274,7 @@ describe("reduceV3", () => {
 
   it("infra run_failed from planning/implementing falls back to secondary runtime", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -300,7 +300,7 @@ describe("reduceV3", () => {
 
   it("ignores stale implementing run_failed for previous run", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("implementing"),
         activeRunId: "run-current",
@@ -325,7 +325,7 @@ describe("reduceV3", () => {
 
   it("ignores stale review gate verdict for non-current run", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -346,7 +346,7 @@ describe("reduceV3", () => {
 
   it("ignores review gate verdicts without runId while a run is active", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -365,7 +365,7 @@ describe("reduceV3", () => {
 
   it("gate_review_passed clears active run before entering CI gate", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -386,7 +386,7 @@ describe("reduceV3", () => {
 
   it("gate_review_passed without linked PR transitions to awaiting_pr", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -417,7 +417,7 @@ describe("reduceV3", () => {
 
   it("awaiting_pr with PR-creation marker re-enters CI gate on pr_linked", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_pr"),
         blockedReason: "Awaiting PR creation",
@@ -441,7 +441,7 @@ describe("reduceV3", () => {
 
   it("awaiting_pr without PR-creation marker ignores pr_linked", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_pr"),
         blockedReason: null,
@@ -459,7 +459,7 @@ describe("reduceV3", () => {
 
   it("awaiting_pr retries implementing when PR linkage fails", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_pr"),
         blockedReason: "Awaiting PR creation",
@@ -489,7 +489,7 @@ describe("reduceV3", () => {
 
   it("dispatch coherence clears stale activeRunId in non-dispatch state", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_manual_fix"),
         activeRunId: "run-stale",
@@ -515,7 +515,7 @@ describe("reduceV3", () => {
 
   it("branch coherence normalizes unexpected gate in gating_review", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "ci",
@@ -539,7 +539,7 @@ describe("reduceV3", () => {
 
   it("ignores stale CI verdicts with mismatched headSha", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "ci",
@@ -559,7 +559,7 @@ describe("reduceV3", () => {
 
   it("ignores uncorrelated CI verdicts when headSha is missing", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "ci",
@@ -578,7 +578,7 @@ describe("reduceV3", () => {
 
   it("accepts correlated CI pass and transitions to awaiting_pr", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "ci",
@@ -598,7 +598,7 @@ describe("reduceV3", () => {
 
   it("normalizes terminal states through invariants", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("done"),
         activeGate: "ci",
@@ -620,7 +620,7 @@ describe("reduceV3", () => {
 
   it("normalizes stop_requested terminal transition", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "review",

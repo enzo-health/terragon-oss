@@ -4,21 +4,17 @@ import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow"
 import { handleHumanAction, normalizeHumanAction } from "./human-interventions";
 
 vi.mock("../../v3/store", () => ({
-  appendJournalEventV3: vi
-    .fn()
-    .mockResolvedValue({ inserted: true, id: "j-1" }),
-  enqueueOutboxRecordV3: vi
-    .fn()
-    .mockResolvedValue({ inserted: true, id: "o-1" }),
+  appendJournalEvent: vi.fn().mockResolvedValue({ inserted: true, id: "j-1" }),
+  enqueueOutboxRecord: vi.fn().mockResolvedValue({ inserted: true, id: "o-1" }),
 }));
 
 async function getMocks() {
-  const { appendJournalEventV3, enqueueOutboxRecordV3 } = await import(
+  const { appendJournalEvent, enqueueOutboxRecord } = await import(
     "../../v3/store"
   );
   return {
-    appendJournalEventV3: appendJournalEventV3 as ReturnType<typeof vi.fn>,
-    enqueueOutboxRecordV3: enqueueOutboxRecordV3 as ReturnType<typeof vi.fn>,
+    appendJournalEvent: appendJournalEvent as ReturnType<typeof vi.fn>,
+    enqueueOutboxRecord: enqueueOutboxRecord as ReturnType<typeof vi.fn>,
   };
 }
 
@@ -56,7 +52,7 @@ describe("handleHumanAction", () => {
   });
 
   it("writes journal + outbox in one transaction", async () => {
-    const { appendJournalEventV3, enqueueOutboxRecordV3 } = await getMocks();
+    const { appendJournalEvent, enqueueOutboxRecord } = await getMocks();
 
     await handleHumanAction({
       db: fakeDb,
@@ -69,7 +65,7 @@ describe("handleHumanAction", () => {
 
     const tx = fakeDb as unknown as { transaction: ReturnType<typeof vi.fn> };
     expect(tx.transaction).toHaveBeenCalledOnce();
-    expect(appendJournalEventV3).toHaveBeenCalledWith(
+    expect(appendJournalEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowId,
         source: "human",
@@ -77,7 +73,7 @@ describe("handleHumanAction", () => {
         idempotencyKey: "human:wf-human:resume:req-1",
       }),
     );
-    expect(enqueueOutboxRecordV3).toHaveBeenCalledWith(
+    expect(enqueueOutboxRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         outbox: expect.objectContaining({
           workflowId,
@@ -89,8 +85,8 @@ describe("handleHumanAction", () => {
   });
 
   it("does not enqueue outbox when journal insert is deduped", async () => {
-    const { appendJournalEventV3, enqueueOutboxRecordV3 } = await getMocks();
-    appendJournalEventV3.mockResolvedValueOnce({ inserted: false, id: null });
+    const { appendJournalEvent, enqueueOutboxRecord } = await getMocks();
+    appendJournalEvent.mockResolvedValueOnce({ inserted: false, id: null });
 
     await handleHumanAction({
       db: fakeDb,
@@ -101,6 +97,6 @@ describe("handleHumanAction", () => {
       idempotencyKey: "req-2",
     });
 
-    expect(enqueueOutboxRecordV3).not.toHaveBeenCalled();
+    expect(enqueueOutboxRecord).not.toHaveBeenCalled();
   });
 });

@@ -31,7 +31,7 @@ import {
 } from "@/server-lib/automations";
 import { Automation } from "@terragon/shared/db/types";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
-import type { LoopEventV3 } from "@/server-lib/delivery-loop/v3/types";
+import type { LoopEvent } from "@/server-lib/delivery-loop/v3/types";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -122,7 +122,7 @@ async function appendV3EventForWorkflowIds(params: {
   workflowIds: string[];
   deliveryId?: string;
   idempotencyScope: string;
-  event: LoopEventV3;
+  event: LoopEvent;
 }): Promise<void> {
   const workflowIds = [...new Set(params.workflowIds)];
   if (workflowIds.length === 0) {
@@ -130,12 +130,12 @@ async function appendV3EventForWorkflowIds(params: {
   }
 
   try {
-    const { appendEventAndAdvanceV3 } = await import(
+    const { appendEventAndAdvance } = await import(
       "@/server-lib/delivery-loop/v3/kernel"
     );
     await Promise.all(
       workflowIds.map(async (workflowId) => {
-        await appendEventAndAdvanceV3({
+        await appendEventAndAdvance({
           db,
           workflowId,
           source: "github",
@@ -883,7 +883,7 @@ export async function handlePullRequestReviewEvent(
       prNumber,
     });
     const normalizedReviewState = event.review.state.trim().toLowerCase();
-    let v3ReviewEvent: LoopEventV3 | null = null;
+    let v3ReviewEvent: LoopEvent | null = null;
     if (normalizedReviewState === "changes_requested") {
       v3ReviewEvent = {
         type: "gate_review_failed",
@@ -1115,7 +1115,7 @@ export async function handleCheckRunEvent(
               repoFullName,
               prNumber,
             });
-            const v3CiEvent: LoopEventV3 =
+            const v3CiEvent: LoopEvent =
               signalOutcome === "pass"
                 ? {
                     type: "gate_ci_passed",
@@ -1258,7 +1258,7 @@ export async function handleCheckSuiteEvent(
               repoFullName,
               prNumber,
             });
-            const v3CiEvent: LoopEventV3 =
+            const v3CiEvent: LoopEvent =
               signalOutcome === "pass"
                 ? {
                     type: "gate_ci_passed",

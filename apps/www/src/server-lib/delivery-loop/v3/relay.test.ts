@@ -49,7 +49,7 @@ async function createOutboxRecord(params: {
   workflowId: string;
   outboxIdPrefix: string;
 }): Promise<string> {
-  const outbox = await store.enqueueOutboxRecordV3({
+  const outbox = await store.enqueueOutboxRecord({
     db,
     outbox: {
       workflowId: params.workflowId,
@@ -108,7 +108,7 @@ async function drainRelayWithRetry(params: {
     failed: 0,
   };
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    lastResult = await relay.drainOutboxV3Relay({
+    lastResult = await relay.drainOutboxRelay({
       db,
       workflowId: params.workflowId,
       maxItems: params.maxItems,
@@ -148,7 +148,7 @@ describeRelay("v3 outbox relay", () => {
     const outbox = await getOutboxRow(outboxId);
     const streamKey = `dl3:test:relay:${nanoid()}`;
     const dedupeIndexKey = `dl3:test:relay:dedupe:${nanoid()}`;
-    const expectedRelayMessageId = await relay.publishOutboxRecordV3({
+    const expectedRelayMessageId = await relay.publishOutboxRecord({
       outbox,
       streamKey,
       dedupeIndexKey,
@@ -189,12 +189,12 @@ describeRelay("v3 outbox relay", () => {
     const streamKey = `dl3:test:relay:${nanoid()}`;
     const dedupeIndexKey = `dl3:test:relay:dedupe:${nanoid()}`;
 
-    const firstMessageId = await relay.publishOutboxRecordV3({
+    const firstMessageId = await relay.publishOutboxRecord({
       outbox,
       streamKey,
       dedupeIndexKey,
     });
-    const secondMessageId = await relay.publishOutboxRecordV3({
+    const secondMessageId = await relay.publishOutboxRecord({
       outbox,
       streamKey,
       dedupeIndexKey,
@@ -235,7 +235,7 @@ describeRelay("v3 outbox relay", () => {
     const dedupeIndexKey = streamKey;
     await redis.set(dedupeIndexKey, "seed");
 
-    const result = await relay.drainOutboxV3Relay({
+    const result = await relay.drainOutboxRelay({
       db,
       workflowId,
       maxItems: 1,
@@ -271,11 +271,11 @@ describeRelay("v3 outbox relay", () => {
     const streamKey = `dl3:test:relay:${nanoid()}`;
     const dedupeIndexKey = `dl3:test:relay:dedupe:${nanoid()}`;
     const markPublishedSpy = vi
-      .spyOn(store, "markOutboxPublishedV3")
+      .spyOn(store, "markOutboxPublished")
       .mockResolvedValueOnce(false);
 
     try {
-      const result = await relay.drainOutboxV3Relay({
+      const result = await relay.drainOutboxRelay({
         db,
         workflowId,
         maxItems: 1,
@@ -315,7 +315,7 @@ describeRelay("v3 outbox relay", () => {
     const streamKey = `dl3:test:relay:${nanoid()}`;
     const dedupeIndexKey = `dl3:test:relay:dedupe:${nanoid()}`;
     const outbox = await getOutboxRow(outboxId);
-    const publishedMessageId = await relay.publishOutboxRecordV3({
+    const publishedMessageId = await relay.publishOutboxRecord({
       outbox,
       streamKey,
       dedupeIndexKey,
@@ -335,7 +335,7 @@ describeRelay("v3 outbox relay", () => {
       })
       .where(eq(schema.deliveryOutboxV3.id, outboxId));
 
-    const result = await relay.drainOutboxV3Relay({
+    const result = await relay.drainOutboxRelay({
       db,
       workflowId,
       now: new Date("2026-03-18T10:00:00.000Z"),

@@ -10,7 +10,7 @@ import type {
   DeliveryLoopBlockedState,
   DeliveryLoopSnapshot,
 } from "@terragon/shared/delivery-loop/domain/snapshot-types";
-import type { WorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/types";
+import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
 export type DeliveryLoopStatusCheckKey =
   | "ci"
   | "review_threads"
@@ -704,11 +704,11 @@ export function buildDeliveryLoopStatusChecks({
 // ---------------------------------------------------------------------------
 
 /**
- * Maps a v3 WorkflowHeadV3 to the DeliveryLoopSnapshot shape consumed by
+ * Maps a v3 WorkflowHead to the DeliveryLoopSnapshot shape consumed by
  * the UI status builder functions.
  */
 export function buildSnapshotFromV3Head(
-  head: WorkflowHeadV3,
+  head: WorkflowHead,
 ): DeliveryLoopSnapshot {
   switch (head.state) {
     case "planning":

@@ -459,10 +459,10 @@ export async function checkpointThreadAndPush({
     );
     const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
     if (v2Workflow) {
-      const { getWorkflowHeadV3 } = await import(
+      const { getWorkflowHead } = await import(
         "@/server-lib/delivery-loop/v3/store"
       );
-      const v3Head = await getWorkflowHeadV3({
+      const v3Head = await getWorkflowHead({
         db,
         workflowId: v2Workflow.id,
       });

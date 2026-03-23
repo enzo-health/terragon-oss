@@ -17,8 +17,8 @@ import {
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
-import { v3StateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -595,12 +595,12 @@ export async function startAgentMessage({
           // Read authoritative state from v3 head
           let effectiveState: DeliveryLoopState | null = null;
           if (v2Workflow) {
-            const v3Head = await getWorkflowHeadV3({
+            const v3Head = await getWorkflowHead({
               db,
               workflowId: v2Workflow.id,
             });
             effectiveState = v3Head
-              ? v3StateToDeliveryLoopState(v3Head.state)
+              ? stateToDeliveryLoopState(v3Head.state)
               : null;
           }
           let planContext: {

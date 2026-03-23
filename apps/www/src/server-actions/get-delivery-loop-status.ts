@@ -16,14 +16,14 @@ import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { v3StateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
+import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
 } from "@terragon/shared/delivery-loop/store/gate-persistence";
 import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
@@ -582,7 +582,7 @@ async function buildStatusFromV2Workflow(params: {
   const { workflow, workflowRow } = params;
 
   // Derive v3 head — sole source for state, snapshot, and blocked reason
-  const v3Head = await getWorkflowHeadV3({
+  const v3Head = await getWorkflowHead({
     db,
     workflowId: workflow.workflowId,
   });
@@ -592,7 +592,7 @@ async function buildStatusFromV2Workflow(params: {
   }
 
   const loopSnapshot = buildSnapshotFromV3Head(v3Head);
-  const loopState = v3StateToDeliveryLoopState(v3Head.state);
+  const loopState = stateToDeliveryLoopState(v3Head.state);
 
   const currentHeadSha = v3Head.headSha ?? workflowRow.currentHeadSha ?? null;
 

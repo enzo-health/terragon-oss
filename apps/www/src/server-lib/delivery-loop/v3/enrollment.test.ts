@@ -6,8 +6,8 @@ import {
   createTestUser,
   createTestThread,
 } from "@terragon/shared/model/test-helpers";
-import { enrollV3Workflow } from "./enrollment";
-import { getWorkflowHeadV3 } from "./store";
+import { enrollWorkflow } from "./enrollment";
+import { getWorkflowHead } from "./store";
 
 let testUserId: string;
 let testThreadId: string;
@@ -19,9 +19,9 @@ beforeEach(async () => {
   testThreadId = threadId;
 });
 
-describe("enrollV3Workflow", () => {
+describe("enrollWorkflow", () => {
   it("creates a delivery_workflow row in planning state", async () => {
-    const result = await enrollV3Workflow({
+    const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
@@ -40,14 +40,14 @@ describe("enrollV3Workflow", () => {
   });
 
   it("creates a v3 head row that transitions to implementing after bootstrap", async () => {
-    const result = await enrollV3Workflow({
+    const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
       repoFullName: "test-org/test-repo",
     });
 
-    const head = await getWorkflowHeadV3({
+    const head = await getWorkflowHead({
       db,
       workflowId: result.workflowId,
     });
@@ -58,7 +58,7 @@ describe("enrollV3Workflow", () => {
   });
 
   it("inserts a bootstrap journal event", async () => {
-    const result = await enrollV3Workflow({
+    const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
@@ -76,7 +76,7 @@ describe("enrollV3Workflow", () => {
   });
 
   it("creates a dispatch_implementing effect", async () => {
-    const result = await enrollV3Workflow({
+    const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
@@ -95,14 +95,14 @@ describe("enrollV3Workflow", () => {
   });
 
   it("is idempotent — returns existing workflow on re-enrollment", async () => {
-    const first = await enrollV3Workflow({
+    const first = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
       repoFullName: "test-org/test-repo",
     });
 
-    const second = await enrollV3Workflow({
+    const second = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
@@ -123,7 +123,7 @@ describe("enrollV3Workflow", () => {
   });
 
   it("respects planApprovalPolicy", async () => {
-    const result = await enrollV3Workflow({
+    const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
@@ -139,7 +139,7 @@ describe("enrollV3Workflow", () => {
 
   it("increments generation for the same thread", async () => {
     // Enroll, then terminate, then re-enroll
-    const first = await enrollV3Workflow({
+    const first = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,
@@ -152,7 +152,7 @@ describe("enrollV3Workflow", () => {
       .set({ kind: "terminated" })
       .where(eq(schema.deliveryWorkflow.id, first.workflowId));
 
-    const second = await enrollV3Workflow({
+    const second = await enrollWorkflow({
       db,
       threadId: testThreadId,
       userId: testUserId,

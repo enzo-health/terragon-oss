@@ -9,13 +9,13 @@ import {
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
-  ensureWorkflowHeadV3,
-  getWorkflowHeadV3,
-  insertEffectsV3,
-  updateWorkflowHeadV3,
+  ensureWorkflowHead,
+  getWorkflowHead,
+  insertEffects,
+  updateWorkflowHead,
 } from "./store";
-import { drainDueV3Effects, effectResultToEvent } from "./process-effects";
-import type { EffectSpecV3 } from "./types";
+import { drainDueEffects, effectResultToEvent } from "./process-effects";
+import type { EffectSpec } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
 
@@ -175,16 +175,16 @@ describe("effectResultToEvent", () => {
   });
 });
 
-describe("drainDueV3Effects", () => {
+describe("drainDueEffects", () => {
   it("skips timer effects until they are due", async () => {
     const now = new Date("2026-03-18T10:05:00.000Z");
     const workflowId = await createWorkflowFixture();
-    const head = await ensureWorkflowHeadV3({ db, workflowId });
+    const head = await ensureWorkflowHead({ db, workflowId });
     if (!head) {
       throw new Error("Expected workflow head for timer test");
     }
 
-    const updated = await updateWorkflowHeadV3({
+    const updated = await updateWorkflowHead({
       db,
       head: {
         ...head,
@@ -200,7 +200,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(updated).toBe(true);
 
-    const effect: EffectSpecV3 = {
+    const effect: EffectSpec = {
       kind: "ack_timeout_check",
       effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:ack`,
       dueAt: new Date("2026-03-18T10:10:00.000Z"),
@@ -211,7 +211,7 @@ describe("drainDueV3Effects", () => {
       },
     };
 
-    const inserted = await insertEffectsV3({
+    const inserted = await insertEffects({
       db,
       workflowId,
       workflowVersion: head.version + 1,
@@ -219,7 +219,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(inserted).toBe(1);
 
-    const beforeDrain = await drainDueV3Effects({
+    const beforeDrain = await drainDueEffects({
       db,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
@@ -247,13 +247,13 @@ describe("drainDueV3Effects", () => {
   it("drains due ack timeout effects into replayable retry transitions", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
-    const head = await ensureWorkflowHeadV3({ db, workflowId });
+    const head = await ensureWorkflowHead({ db, workflowId });
     if (!head) {
       throw new Error("Expected workflow head for timer replay test");
     }
 
     const dispatchRunId = `run-${nanoid()}`;
-    const hydrated = await updateWorkflowHeadV3({
+    const hydrated = await updateWorkflowHead({
       db,
       head: {
         ...head,
@@ -270,7 +270,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(hydrated).toBe(true);
 
-    const effect: EffectSpecV3 = {
+    const effect: EffectSpec = {
       kind: "ack_timeout_check",
       effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:due`,
       dueAt: new Date("2026-03-18T10:00:00.000Z"),
@@ -281,7 +281,7 @@ describe("drainDueV3Effects", () => {
       },
     };
 
-    const inserted = await insertEffectsV3({
+    const inserted = await insertEffects({
       db,
       workflowId,
       workflowVersion: head.version + 1,
@@ -289,7 +289,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(inserted).toBe(1);
 
-    const firstDrain = await drainDueV3Effects({
+    const firstDrain = await drainDueEffects({
       db,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
@@ -298,7 +298,7 @@ describe("drainDueV3Effects", () => {
 
     expect(firstDrain.processed).toBe(1);
 
-    const afterDrain = await getWorkflowHeadV3({ db, workflowId });
+    const afterDrain = await getWorkflowHead({ db, workflowId });
     if (!afterDrain) {
       throw new Error("Expected workflow head after draining timer");
     }
@@ -335,7 +335,7 @@ describe("drainDueV3Effects", () => {
       .delete(schema.deliveryEffectLedgerV3)
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
 
-    const secondDrain = await drainDueV3Effects({
+    const secondDrain = await drainDueEffects({
       db,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
@@ -362,7 +362,7 @@ describe("drainDueV3Effects", () => {
       prNumber: 987,
     });
 
-    const seededHead = await ensureWorkflowHeadV3({
+    const seededHead = await ensureWorkflowHead({
       db,
       workflowId: workflow.id,
     });
@@ -370,7 +370,7 @@ describe("drainDueV3Effects", () => {
       throw new Error("Expected workflow head for ensure_pr test");
     }
 
-    const moved = await updateWorkflowHeadV3({
+    const moved = await updateWorkflowHead({
       db,
       head: {
         ...seededHead,
@@ -386,7 +386,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(moved).toBe(true);
 
-    const inserted = await insertEffectsV3({
+    const inserted = await insertEffects({
       db,
       workflowId: workflow.id,
       workflowVersion: seededHead.version + 1,
@@ -401,7 +401,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(inserted).toBe(1);
 
-    const drain = await drainDueV3Effects({
+    const drain = await drainDueEffects({
       db,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
@@ -409,7 +409,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(drain.processed).toBe(1);
 
-    const head = await getWorkflowHeadV3({ db, workflowId: workflow.id });
+    const head = await getWorkflowHead({ db, workflowId: workflow.id });
     expect(head).not.toBeNull();
     if (!head) {
       throw new Error("Expected workflow head after ensure_pr drain");
@@ -455,7 +455,7 @@ describe("drainDueV3Effects", () => {
       })
       .where(eq(schema.thread.id, threadId));
 
-    const seededHead = await ensureWorkflowHeadV3({
+    const seededHead = await ensureWorkflowHead({
       db,
       workflowId: workflow.id,
     });
@@ -463,7 +463,7 @@ describe("drainDueV3Effects", () => {
       throw new Error("Expected workflow head for no-diff ensure_pr test");
     }
 
-    const moved = await updateWorkflowHeadV3({
+    const moved = await updateWorkflowHead({
       db,
       head: {
         ...seededHead,
@@ -479,7 +479,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(moved).toBe(true);
 
-    const inserted = await insertEffectsV3({
+    const inserted = await insertEffects({
       db,
       workflowId: workflow.id,
       workflowVersion: seededHead.version + 1,
@@ -494,7 +494,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(inserted).toBe(1);
 
-    const drain = await drainDueV3Effects({
+    const drain = await drainDueEffects({
       db,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
@@ -502,7 +502,7 @@ describe("drainDueV3Effects", () => {
     });
     expect(drain.processed).toBe(1);
 
-    const head = await getWorkflowHeadV3({ db, workflowId: workflow.id });
+    const head = await getWorkflowHead({ db, workflowId: workflow.id });
     expect(head).not.toBeNull();
     if (!head) {
       throw new Error("Expected workflow head after no-diff ensure_pr drain");

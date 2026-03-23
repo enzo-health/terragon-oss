@@ -12,20 +12,20 @@ import {
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
-  appendJournalEventV3,
-  ensureWorkflowHeadV3,
-  enqueueOutboxRecordV3,
-  getWorkflowHeadV3,
+  appendJournalEvent,
+  ensureWorkflowHead,
+  enqueueOutboxRecord,
+  getWorkflowHead,
   reconcileZombieGateHeadsFromLegacy,
-  updateWorkflowHeadV3,
+  updateWorkflowHead,
 } from "./store";
-import { buildSignalJournalContractV3 } from "./contracts";
+import { buildSignalJournalContract } from "./contracts";
 import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
-import type { LoopEventV3 } from "./types";
+import type { LoopEvent } from "./types";
 import * as relay from "./relay";
 import * as store from "./store";
-import { drainOutboxV3Worker } from "./worker";
-import { appendEventAndAdvanceV3 } from "./kernel";
+import { drainOutboxWorker } from "./worker";
+import { appendEventAndAdvance } from "./kernel";
 
 const TEST_STREAM_KEY_PREFIX = "dl3:test:v3-durable:stream";
 const TEST_DEDUPE_KEY_PREFIX = "dl3:test:v3-durable:dedupe";
@@ -64,10 +64,10 @@ async function createSignalJournal(params: {
   workflowId: string;
   source: DeliverySignalSourceV3;
   idempotencyKey: string;
-  event: LoopEventV3;
+  event: LoopEvent;
   occurredAt?: Date;
 }): Promise<string> {
-  const contract = buildSignalJournalContractV3({
+  const contract = buildSignalJournalContract({
     workflowId: params.workflowId,
     source: params.source,
     idempotencyKey: params.idempotencyKey,
@@ -75,7 +75,7 @@ async function createSignalJournal(params: {
     occurredAt: params.occurredAt ?? new Date("2026-03-18T10:00:00.000Z"),
   });
 
-  const result = await appendJournalEventV3({
+  const result = await appendJournalEvent({
     db,
     workflowId: contract.workflowId,
     source: contract.source,
@@ -118,7 +118,7 @@ async function createLegacySignalEnvelopeJournal(params: {
   occurredAt?: Date;
 }): Promise<string> {
   const occurredAt = params.occurredAt ?? new Date("2026-03-18T10:00:00.000Z");
-  const result = await appendJournalEventV3({
+  const result = await appendJournalEvent({
     db,
     workflowId: params.workflowId,
     source: params.source,
@@ -177,7 +177,7 @@ async function createSignalOutboxRecordForEvent(params: {
   source: DeliverySignalSourceV3;
   eventType: string;
 }): Promise<string> {
-  const result = await enqueueOutboxRecordV3({
+  const result = await enqueueOutboxRecord({
     db,
     outbox: {
       workflowId: params.workflowId,
@@ -313,7 +313,7 @@ describe("v3 durable delivery loop", () => {
     });
     expect(duplicateOutbox).toBe(outboxId);
 
-    const relayResult = await relay.drainOutboxV3Relay({
+    const relayResult = await relay.drainOutboxRelay({
       db,
       workflowId,
       maxItems: 10,
@@ -328,7 +328,7 @@ describe("v3 durable delivery loop", () => {
       failed: 0,
     });
 
-    const workerResult = await drainOutboxV3Worker({
+    const workerResult = await drainOutboxWorker({
       db,
       streamKey: keys.streamKey,
       groupName: keys.workerGroupName,
@@ -381,7 +381,7 @@ describe("v3 durable delivery loop", () => {
     const runId = `run-${nanoid()}`;
     const keyPrefix = `durable-concurrent-${nanoid()}`;
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -389,7 +389,7 @@ describe("v3 durable delivery loop", () => {
       event: { type: "bootstrap" },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -421,7 +421,7 @@ describe("v3 durable delivery loop", () => {
     });
     const outbox = await getOutboxRow(outboxId);
 
-    const relayResult = await relay.drainOutboxV3Relay({
+    const relayResult = await relay.drainOutboxRelay({
       db,
       workflowId,
       maxItems: 1,
@@ -443,7 +443,7 @@ describe("v3 durable delivery loop", () => {
     expect(messageIds).toHaveLength(2);
 
     const [firstWorker, secondWorker] = await Promise.all([
-      drainOutboxV3Worker({
+      drainOutboxWorker({
         db,
         streamKey: keys.streamKey,
         groupName: keys.workerGroupName,
@@ -457,7 +457,7 @@ describe("v3 durable delivery loop", () => {
         deadLetterStreamKey: keys.workerDlqStream,
         heartbeatKey: keys.workerHeartbeat,
       }),
-      drainOutboxV3Worker({
+      drainOutboxWorker({
         db,
         streamKey: keys.streamKey,
         groupName: keys.workerGroupName,
@@ -510,7 +510,7 @@ describe("v3 durable delivery loop", () => {
     const runIdStale = `run-${nanoid()}`;
     const currentPrefix = `durable-oof-${nanoid()}`;
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -518,7 +518,7 @@ describe("v3 durable delivery loop", () => {
       event: { type: "bootstrap" },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -530,7 +530,7 @@ describe("v3 durable delivery loop", () => {
       },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -580,7 +580,7 @@ describe("v3 durable delivery loop", () => {
     });
     const currentOutbox = await getOutboxRow(currentOutboxId);
 
-    const relayResult = await relay.drainOutboxV3Relay({
+    const relayResult = await relay.drainOutboxRelay({
       db,
       workflowId,
       maxItems: 2,
@@ -609,7 +609,7 @@ describe("v3 durable delivery loop", () => {
     expect(currentMessageIds).toHaveLength(2);
 
     const [firstWorker, secondWorker] = await Promise.all([
-      drainOutboxV3Worker({
+      drainOutboxWorker({
         db,
         streamKey: keys.streamKey,
         groupName: keys.workerGroupName,
@@ -623,7 +623,7 @@ describe("v3 durable delivery loop", () => {
         deadLetterStreamKey: keys.workerDlqStream,
         heartbeatKey: keys.workerHeartbeat,
       }),
-      drainOutboxV3Worker({
+      drainOutboxWorker({
         db,
         streamKey: keys.streamKey,
         groupName: keys.workerGroupName,
@@ -668,7 +668,7 @@ describe("v3 durable delivery loop", () => {
     const runId = `run-${nanoid()}`;
     const keyPrefix = `durable-legacy-envelope-${nanoid()}`;
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -676,7 +676,7 @@ describe("v3 durable delivery loop", () => {
       event: { type: "bootstrap" },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -711,7 +711,7 @@ describe("v3 durable delivery loop", () => {
     });
     const outbox = await getOutboxRow(outboxId);
 
-    const relayResult = await relay.drainOutboxV3Relay({
+    const relayResult = await relay.drainOutboxRelay({
       db,
       workflowId,
       maxItems: 1,
@@ -732,7 +732,7 @@ describe("v3 durable delivery loop", () => {
     });
     expect(messageIds).toHaveLength(1);
 
-    const workerResult = await drainOutboxV3Worker({
+    const workerResult = await drainOutboxWorker({
       db,
       streamKey: keys.streamKey,
       groupName: keys.workerGroupName,
@@ -783,11 +783,11 @@ describe("v3 durable delivery loop", () => {
     });
 
     const markPublishedSpy = vi
-      .spyOn(store, "markOutboxPublishedV3")
+      .spyOn(store, "markOutboxPublished")
       .mockResolvedValue(false);
 
     try {
-      const firstRelayResult = await relay.drainOutboxV3Relay({
+      const firstRelayResult = await relay.drainOutboxRelay({
         db,
         workflowId,
         maxItems: 1,
@@ -810,7 +810,7 @@ describe("v3 durable delivery loop", () => {
 
       markPublishedSpy.mockRestore();
 
-      const secondRelayResult = await relay.drainOutboxV3Relay({
+      const secondRelayResult = await relay.drainOutboxRelay({
         db,
         workflowId,
         maxItems: 1,
@@ -856,7 +856,7 @@ describe("v3 durable delivery loop", () => {
       keyPrefix,
     });
 
-    const relayResult = await relay.drainOutboxV3Relay({
+    const relayResult = await relay.drainOutboxRelay({
       db,
       workflowId,
       maxItems: 1,
@@ -870,7 +870,7 @@ describe("v3 durable delivery loop", () => {
       failed: 0,
     });
 
-    const crashedFirstAttempt = await drainOutboxV3Worker({
+    const crashedFirstAttempt = await drainOutboxWorker({
       db,
       streamKey: keys.streamKey,
       groupName: keys.workerGroupName,
@@ -900,7 +900,7 @@ describe("v3 durable delivery loop", () => {
     });
     expect(journalsAfterCrash).toHaveLength(1);
 
-    const recoveredWorkerResult = await drainOutboxV3Worker({
+    const recoveredWorkerResult = await drainOutboxWorker({
       db,
       streamKey: keys.streamKey,
       groupName: keys.workerGroupName,
@@ -955,7 +955,7 @@ describe("v3 durable delivery loop", () => {
     const workflowId = await createWorkflowFixture();
     const runId = `run-${nanoid()}`;
 
-    const bootstrapResult = await appendEventAndAdvanceV3({
+    const bootstrapResult = await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -964,7 +964,7 @@ describe("v3 durable delivery loop", () => {
     });
     expect(bootstrapResult.transitioned).toBe(true);
 
-    const dispatchResult = await appendEventAndAdvanceV3({
+    const dispatchResult = await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -979,9 +979,9 @@ describe("v3 durable delivery loop", () => {
 
     const applyRunCompleted = async (
       idempotencyKey: string,
-      event: LoopEventV3,
-    ): Promise<Awaited<ReturnType<typeof appendEventAndAdvanceV3>>> => {
-      return appendEventAndAdvanceV3({
+      event: LoopEvent,
+    ): Promise<Awaited<ReturnType<typeof appendEventAndAdvance>>> => {
+      return appendEventAndAdvance({
         db,
         workflowId,
         source: "daemon",
@@ -1028,7 +1028,7 @@ describe("v3 durable delivery loop", () => {
     const staleRunId = `run-${nanoid()}`;
     const currentRunId = `run-${nanoid()}`;
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -1036,7 +1036,7 @@ describe("v3 durable delivery loop", () => {
       event: { type: "bootstrap" },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -1048,7 +1048,7 @@ describe("v3 durable delivery loop", () => {
       },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -1060,7 +1060,7 @@ describe("v3 durable delivery loop", () => {
       },
     });
 
-    const staleRunCompleted = await appendEventAndAdvanceV3({
+    const staleRunCompleted = await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -1083,7 +1083,7 @@ describe("v3 durable delivery loop", () => {
     expect(headAfterStale.state).toBe("implementing");
     expect(headAfterStale.activeRunId).toBe(currentRunId);
 
-    const currentRunCompleted = await appendEventAndAdvanceV3({
+    const currentRunCompleted = await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -1111,7 +1111,7 @@ describe("v3 durable delivery loop", () => {
   it("routes review pass to awaiting_pr when no PR is linked", async () => {
     const workflowId = await createWorkflowFixture();
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "system",
@@ -1119,7 +1119,7 @@ describe("v3 durable delivery loop", () => {
       event: { type: "bootstrap" },
     });
 
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -1131,7 +1131,7 @@ describe("v3 durable delivery loop", () => {
       },
     });
 
-    const reviewPassResult = await appendEventAndAdvanceV3({
+    const reviewPassResult = await appendEventAndAdvance({
       db,
       workflowId,
       source: "daemon",
@@ -1144,7 +1144,7 @@ describe("v3 durable delivery loop", () => {
     expect(reviewPassResult.stateBefore).toBe("gating_review");
     expect(reviewPassResult.stateAfter).toBe("awaiting_pr");
 
-    const workflowHead = await getWorkflowHeadV3({ db, workflowId });
+    const workflowHead = await getWorkflowHead({ db, workflowId });
     expect(workflowHead?.state).toBe("awaiting_pr");
     expect(workflowHead?.activeGate).toBeNull();
     expect(workflowHead?.blockedReason).toBe("Awaiting PR creation");
@@ -1157,7 +1157,7 @@ describe("v3 durable delivery loop", () => {
 
   it("reconciles stale gating_ci heads without a linked PR to awaiting_pr", async () => {
     const workflowId = await createWorkflowFixture();
-    const seeded = await ensureWorkflowHeadV3({ db, workflowId });
+    const seeded = await ensureWorkflowHead({ db, workflowId });
     if (!seeded) {
       throw new Error("Expected workflow head for no-PR reconcile test");
     }
@@ -1165,7 +1165,7 @@ describe("v3 durable delivery loop", () => {
     const staleTime = new Date("2026-03-18T10:00:00.000Z");
     const now = new Date("2026-03-18T10:10:00.000Z");
 
-    const updated = await updateWorkflowHeadV3({
+    const updated = await updateWorkflowHead({
       db,
       head: {
         ...seeded,
@@ -1189,7 +1189,7 @@ describe("v3 durable delivery loop", () => {
     });
     expect(reconcile.reconciled).toBeGreaterThanOrEqual(1);
 
-    const head = await getWorkflowHeadV3({ db, workflowId });
+    const head = await getWorkflowHead({ db, workflowId });
     expect(head?.state).toBe("awaiting_pr");
     expect(head?.activeGate).toBeNull();
     expect(head?.blockedReason).toBe("Awaiting PR creation");
@@ -1202,12 +1202,12 @@ describe("v3 durable delivery loop", () => {
 
   it("rejects stale CAS updates to workflow head", async () => {
     const workflowId = await createWorkflowFixture();
-    const head = await ensureWorkflowHeadV3({ db, workflowId });
+    const head = await ensureWorkflowHead({ db, workflowId });
     if (!head) {
       throw new Error("Expected workflow head for CAS test");
     }
 
-    const updated = await updateWorkflowHeadV3({
+    const updated = await updateWorkflowHead({
       db,
       head: {
         ...head,
@@ -1217,7 +1217,7 @@ describe("v3 durable delivery loop", () => {
     });
     expect(updated).toBe(false);
 
-    const current = await getWorkflowHeadV3({ db, workflowId });
+    const current = await getWorkflowHead({ db, workflowId });
     expect(current).not.toBeNull();
     if (!current) {
       throw new Error("Expected workflow head after stale CAS update");

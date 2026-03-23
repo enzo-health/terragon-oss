@@ -37,9 +37,9 @@ import {
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
-import { appendEventAndAdvanceV3 } from "@/server-lib/delivery-loop/v3/kernel";
-import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
-import { drainDueV3Effects } from "@/server-lib/delivery-loop/v3/process-effects";
+import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { drainDueEffects } from "@/server-lib/delivery-loop/v3/process-effects";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -1052,7 +1052,7 @@ export async function POST(request: Request) {
   ) {
     try {
       // First observed daemon terminal event for a run is an implicit ack.
-      await appendEventAndAdvanceV3({
+      await appendEventAndAdvance({
         db,
         workflowId: effectiveLoopId,
         source: "daemon",
@@ -1064,13 +1064,13 @@ export async function POST(request: Request) {
       });
 
       // Read head AFTER the ack so it reflects post-ack state.
-      const headAfterAck = await getWorkflowHeadV3({
+      const headAfterAck = await getWorkflowHead({
         db,
         workflowId: effectiveLoopId,
       });
 
       if (daemonRunStatusFromMessages === "completed") {
-        await appendEventAndAdvanceV3({
+        await appendEventAndAdvance({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
@@ -1082,7 +1082,7 @@ export async function POST(request: Request) {
           ),
         });
       } else if (daemonRunStatusFromMessages === "failed") {
-        await appendEventAndAdvanceV3({
+        await appendEventAndAdvance({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
@@ -1106,7 +1106,7 @@ export async function POST(request: Request) {
 
     // Inline effect drain to avoid cron latency
     try {
-      await drainDueV3Effects({
+      await drainDueEffects({
         db,
         workflowId: effectiveLoopId,
         maxItems: 5,

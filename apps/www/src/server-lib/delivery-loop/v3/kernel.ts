@@ -2,14 +2,14 @@ import type { DB } from "@terragon/shared/db";
 import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
 import * as schema from "@terragon/shared/db/schema";
 import { eq } from "drizzle-orm";
-import { reduceV3, type InvariantActionV3 } from "./reducer";
-import type { LoopEventV3 } from "./types";
-import { buildSignalJournalContractV3 } from "./contracts";
+import { reduce, type InvariantActionV3 } from "./reducer";
+import type { LoopEvent } from "./types";
+import { buildSignalJournalContract } from "./contracts";
 import {
-  appendJournalEventV3,
-  ensureWorkflowHeadV3,
-  insertEffectsV3,
-  updateWorkflowHeadV3,
+  appendJournalEvent,
+  ensureWorkflowHead,
+  insertEffects,
+  updateWorkflowHead,
 } from "./store";
 
 function serializeInvariantAction(params: {
@@ -41,7 +41,7 @@ async function appendInvariantJournalActions(params: {
   if (params.actions.length === 0) return;
 
   for (const action of params.actions) {
-    await appendJournalEventV3({
+    await appendJournalEvent({
       db: params.db,
       workflowId: params.workflowId,
       source: "system",
@@ -60,12 +60,12 @@ async function appendInvariantJournalActions(params: {
   }
 }
 
-export async function appendEventAndAdvanceV3(params: {
+export async function appendEventAndAdvance(params: {
   db: DB;
   workflowId: string;
   source: DeliverySignalSourceV3;
   idempotencyKey: string;
-  event: LoopEventV3;
+  event: LoopEvent;
   now?: Date;
   /** When true, auto-injects bypass events for gating states (edge-triggered). */
   skipGates?: boolean;
@@ -79,7 +79,7 @@ export async function appendEventAndAdvanceV3(params: {
   const now = params.now ?? new Date();
 
   const result = await params.db.transaction(async (tx) => {
-    const head = await ensureWorkflowHeadV3({
+    const head = await ensureWorkflowHead({
       db: tx,
       workflowId: params.workflowId,
     });
@@ -99,7 +99,7 @@ export async function appendEventAndAdvanceV3(params: {
       event: params.event,
     });
 
-    const signal = buildSignalJournalContractV3({
+    const signal = buildSignalJournalContract({
       workflowId: params.workflowId,
       source: params.source,
       idempotencyKey: params.idempotencyKey,
@@ -107,7 +107,7 @@ export async function appendEventAndAdvanceV3(params: {
       occurredAt: now,
     });
 
-    const journal = await appendJournalEventV3({
+    const journal = await appendJournalEvent({
       db: tx,
       workflowId: signal.workflowId,
       source: signal.source,
@@ -127,13 +127,13 @@ export async function appendEventAndAdvanceV3(params: {
       };
     }
 
-    const reduced = reduceV3({
+    const reduced = reduce({
       head,
       event,
       now,
     });
 
-    const updated = await updateWorkflowHeadV3({
+    const updated = await updateWorkflowHead({
       db: tx,
       head: reduced.head,
       expectedVersion: head.version,
@@ -149,7 +149,7 @@ export async function appendEventAndAdvanceV3(params: {
       };
     }
 
-    const effectsInserted = await insertEffectsV3({
+    const effectsInserted = await insertEffects({
       db: tx,
       workflowId: params.workflowId,
       workflowVersion: reduced.head.version,
@@ -181,7 +181,7 @@ export async function appendEventAndAdvanceV3(params: {
   if (params.skipGates && result.transitioned) {
     const bypassEvent = gateBypassEvent(result.stateAfter);
     if (bypassEvent) {
-      await appendEventAndAdvanceV3({
+      await appendEventAndAdvance({
         db: params.db,
         workflowId: params.workflowId,
         source: "system",
@@ -199,8 +199,8 @@ export async function appendEventAndAdvanceV3(params: {
 async function enrichEventWithWorkflowContext(params: {
   db: Pick<DB, "query">;
   workflowId: string;
-  event: LoopEventV3;
-}): Promise<LoopEventV3> {
+  event: LoopEvent;
+}): Promise<LoopEvent> {
   if (
     params.event.type !== "gate_review_passed" &&
     params.event.type !== "pr_linked"
@@ -223,7 +223,7 @@ async function enrichEventWithWorkflowContext(params: {
   };
 }
 
-function gateBypassEvent(state: string | null): LoopEventV3 | null {
+function gateBypassEvent(state: string | null): LoopEvent | null {
   if (state === "gating_review") {
     return { type: "gate_review_passed" };
   }
