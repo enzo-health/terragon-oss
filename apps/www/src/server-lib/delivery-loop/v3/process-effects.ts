@@ -36,9 +36,110 @@ import {
 } from "@/server-lib/delivery-loop/dispatch-intent";
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
+import type { EffectResultV3, LoopEventV3 } from "./types";
 
 const DISPATCH_WORK_ITEM_MAX_ATTEMPTS = 25;
 const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
+
+/**
+ * Pure mapping from effect result to the LoopEventV3 that should be fired.
+ * Returns null for results that don't require a state transition (e.g., human
+ * approval pending, stale ack timeout).
+ */
+export function effectResultToEvent(
+  result: EffectResultV3,
+): LoopEventV3 | null {
+  switch (result.kind) {
+    case "create_plan_artifact":
+      if (result.outcome === "created" && result.approvalPolicy === "auto")
+        return { type: "plan_completed" };
+      if (result.outcome === "created") return null; // Human approval — UI fires plan_completed
+      return { type: "plan_failed", reason: result.reason };
+
+    case "dispatch_gate_review":
+      if (result.outcome === "dispatched")
+        return {
+          type: "dispatch_sent",
+          runId: result.runId,
+          ackDeadlineAt: result.ackDeadlineAt,
+        };
+      return {
+        type: "run_failed",
+        runId: `gate-dispatch-failed-${Date.now()}`,
+        message: result.reason,
+        category: "effect_failure",
+        lane: "infra",
+      };
+
+    case "ensure_pr":
+      if (result.outcome === "linked")
+        return { type: "pr_linked", prNumber: result.prNumber };
+      return { type: "gate_review_failed", reason: result.reason };
+
+    case "ack_timeout_check":
+      if (result.outcome === "fired")
+        return { type: "dispatch_ack_timeout", runId: result.runId };
+      return null; // Stale timeout, version already advanced
+  }
+}
+
+/**
+ * Framework wrapper for state-blocking effects. Guarantees that every
+ * handler execution produces exactly one event (or null for expected
+ * no-transition cases). Handlers return EffectResultV3; they never
+ * call appendEventAndAdvanceV3 directly.
+ */
+async function executeStateBlockingEffect(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  leaseOwner: string;
+  handler: () => Promise<EffectResultV3>;
+}): Promise<void> {
+  let result: EffectResultV3;
+  try {
+    result = await params.handler();
+  } catch (error) {
+    // Handler threw — create a typed failure result based on effect kind
+    const reason = error instanceof Error ? error.message : String(error);
+    const kind = parseEffectPayloadV3(params.effect.payloadJson)?.kind;
+    switch (kind) {
+      case "create_plan_artifact":
+        result = { kind: "create_plan_artifact", outcome: "failed", reason };
+        break;
+      case "dispatch_gate_review":
+        result = { kind: "dispatch_gate_review", outcome: "failed", reason };
+        break;
+      case "ensure_pr":
+        result = { kind: "ensure_pr", outcome: "failed", reason };
+        break;
+      case "ack_timeout_check":
+        result = { kind: "ack_timeout_check", outcome: "stale" };
+        break;
+      default:
+        throw error; // Unknown effect kind, let outer catch handle
+    }
+  }
+
+  // Mark effect succeeded — the effect did its work regardless of outcome
+  await markEffectSucceededV3({
+    db: params.db,
+    effectId: params.effect.id,
+    leaseOwner: params.leaseOwner,
+    leaseEpoch: params.effect.leaseEpoch,
+  });
+
+  // Map result to event and fire if non-null
+  const event = effectResultToEvent(result);
+  if (event) {
+    await appendEventAndAdvanceV3({
+      db: params.db,
+      workflowId: params.effect.workflowId,
+      source: "system",
+      idempotencyKey: `effect-result:${params.effect.id}`,
+      event,
+    });
+  }
+}
 
 /**
  * Execute the `dispatch_gate_review` effect natively — resolves the workflow
@@ -54,18 +155,16 @@ async function processGateReviewEffect(params: {
   leaseOwner: string;
   gate: string;
   now: Date;
-}): Promise<void> {
+}): Promise<EffectResultV3> {
   const workflowId = params.effect.workflowId;
 
   const workflow = await getWorkflow({ db: params.db, workflowId });
   if (!workflow) {
-    await markEffectSucceededV3({
-      db: params.db,
-      effectId: params.effect.id,
-      leaseOwner: params.leaseOwner,
-      leaseEpoch: params.effect.leaseEpoch,
-    });
-    return;
+    return {
+      kind: "dispatch_gate_review",
+      outcome: "failed",
+      reason: "Workflow not found",
+    };
   }
 
   // Resolve threadChat (prefer active, fall back to most-recent)
@@ -83,16 +182,7 @@ async function processGateReviewEffect(params: {
     }));
 
   if (!threadChat) {
-    await markEffectFailedV3({
-      db: params.db,
-      effectId: params.effect.id,
-      leaseOwner: params.leaseOwner,
-      leaseEpoch: params.effect.leaseEpoch,
-      errorCode: "thread_chat_not_found",
-      errorMessage: `No threadChat for threadId ${workflow.threadId}`,
-      retryAt: addMilliseconds(params.now, 10_000),
-    });
-    return;
+    throw new Error(`No threadChat for threadId ${workflow.threadId}`);
   }
 
   const runId = randomUUID();
@@ -120,14 +210,11 @@ async function processGateReviewEffect(params: {
       intentErr instanceof Error &&
       intentErr.message.includes("active intent")
     ) {
-      // Prior attempt already created the intent — complete silently
-      await markEffectSucceededV3({
-        db: params.db,
-        effectId: params.effect.id,
-        leaseOwner: params.leaseOwner,
-        leaseEpoch: params.effect.leaseEpoch,
-      });
-      return;
+      return {
+        kind: "dispatch_gate_review",
+        outcome: "failed",
+        reason: "Active dispatch intent already exists",
+      };
     }
     throw intentErr;
   }
@@ -184,27 +271,20 @@ async function processGateReviewEffect(params: {
     // Non-fatal: cron will pick up pending follow-ups
   }
 
-  // Emit dispatch_sent into v3 kernel if a run was launched
   if (dispatchLaunched) {
-    await appendEventAndAdvanceV3({
-      db: params.db,
-      workflowId,
-      source: "system",
-      idempotencyKey: `dispatch-sent:${runId}`,
-      event: {
-        type: "dispatch_sent",
-        runId,
-        ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
-      },
-    });
+    return {
+      kind: "dispatch_gate_review",
+      outcome: "dispatched",
+      runId,
+      ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
+    };
   }
 
-  await markEffectSucceededV3({
-    db: params.db,
-    effectId: params.effect.id,
-    leaseOwner: params.leaseOwner,
-    leaseEpoch: params.effect.leaseEpoch,
-  });
+  return {
+    kind: "dispatch_gate_review",
+    outcome: "failed",
+    reason: "Follow-up queue did not launch dispatch",
+  };
 }
 
 const STATE_LABELS: Record<string, string> = {
@@ -307,19 +387,17 @@ async function processEnsurePrEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
   leaseOwner: string;
-}): Promise<void> {
+}): Promise<EffectResultV3> {
   const workflow = await getWorkflow({
     db: params.db,
     workflowId: params.effect.workflowId,
   });
   if (!workflow) {
-    await markEffectSucceededV3({
-      db: params.db,
-      effectId: params.effect.id,
-      leaseOwner: params.leaseOwner,
-      leaseEpoch: params.effect.leaseEpoch,
-    });
-    return;
+    return {
+      kind: "ensure_pr",
+      outcome: "failed",
+      reason: "Workflow not found",
+    };
   }
 
   const head = await getWorkflowHeadV3({
@@ -331,105 +409,97 @@ async function processEnsurePrEffect(params: {
     head.state !== "awaiting_pr" ||
     head.blockedReason !== AWAITING_PR_CREATION_REASON
   ) {
-    await markEffectSucceededV3({
-      db: params.db,
-      effectId: params.effect.id,
-      leaseOwner: params.leaseOwner,
-      leaseEpoch: params.effect.leaseEpoch,
-    });
-    return;
+    return {
+      kind: "ensure_pr",
+      outcome: "failed",
+      reason: "Workflow not in awaiting_pr state",
+    };
   }
 
-  if (typeof workflow.prNumber !== "number") {
-    const [{ withThreadSandboxSession }, { openPullRequestForThread }] =
-      await Promise.all([
-        import("@/agent/thread-resource"),
-        import("@/agent/pull-request"),
-      ]);
-    const thread = await params.db.query.thread.findFirst({
-      where: eq(schema.thread.id, workflow.threadId),
-      columns: {
-        gitDiff: true,
-        gitDiffStats: true,
-      },
-    });
-    const diffStats =
-      thread?.gitDiffStats &&
-      typeof thread.gitDiffStats === "object" &&
-      thread.gitDiffStats !== null
-        ? (thread.gitDiffStats as { files?: unknown })
-        : null;
-    const diffFileCount =
-      typeof diffStats?.files === "number" ? diffStats.files : null;
-    if (diffFileCount === 0 && thread?.gitDiff !== "too-large") {
-      await appendEventAndAdvanceV3({
-        db: params.db,
-        workflowId: params.effect.workflowId,
-        source: "system",
-        idempotencyKey: `ensure-pr:${params.effect.id}:no-diff`,
-        event: {
-          type: "gate_review_failed",
-          reason: "No code changes detected to open a PR",
-        },
-      });
-      await markEffectSucceededV3({
-        db: params.db,
-        effectId: params.effect.id,
-        leaseOwner: params.leaseOwner,
-        leaseEpoch: params.effect.leaseEpoch,
-      });
-      return;
-    }
+  if (typeof workflow.prNumber === "number") {
+    return {
+      kind: "ensure_pr",
+      outcome: "linked",
+      prNumber: workflow.prNumber,
+    };
+  }
 
-    let prType: "draft" | "ready" = "draft";
-    if (workflow.userId) {
-      const { getUserSettings } = await import("@terragon/shared/model/user");
-      const userSettings = await getUserSettings({
-        db: params.db,
-        userId: workflow.userId,
-      });
-      prType = userSettings.prType;
-    }
-    const latestThreadChat = await params.db.query.threadChat.findFirst({
-      where: eq(schema.threadChat.threadId, workflow.threadId),
-      columns: { id: true },
-      orderBy: [desc(schema.threadChat.createdAt)],
-    });
-    let surfacedError: Error | null = null;
+  const [{ withThreadSandboxSession }, { openPullRequestForThread }] =
+    await Promise.all([
+      import("@/agent/thread-resource"),
+      import("@/agent/pull-request"),
+    ]);
+  const thread = await params.db.query.thread.findFirst({
+    where: eq(schema.thread.id, workflow.threadId),
+    columns: {
+      gitDiff: true,
+      gitDiffStats: true,
+    },
+  });
+  const diffStats =
+    thread?.gitDiffStats &&
+    typeof thread.gitDiffStats === "object" &&
+    thread.gitDiffStats !== null
+      ? (thread.gitDiffStats as { files?: unknown })
+      : null;
+  const diffFileCount =
+    typeof diffStats?.files === "number" ? diffStats.files : null;
+  if (diffFileCount === 0 && thread?.gitDiff !== "too-large") {
+    return {
+      kind: "ensure_pr",
+      outcome: "no_diff",
+      reason: "No code changes detected to open a PR",
+    };
+  }
 
-    const didOpenPr = await withThreadSandboxSession({
-      label: "delivery-loop-v3-ensure-pr",
-      threadId: workflow.threadId,
-      threadChatId: latestThreadChat?.id ?? null,
+  let prType: "draft" | "ready" = "draft";
+  if (workflow.userId) {
+    const { getUserSettings } = await import("@terragon/shared/model/user");
+    const userSettings = await getUserSettings({
+      db: params.db,
       userId: workflow.userId,
-      onError: async (error) => {
-        surfacedError = error;
-      },
-      execOrThrow: async ({ session }) => {
-        if (!session) {
-          throw new Error(
-            `No sandbox session available for thread ${workflow.threadId}`,
-          );
-        }
-        await openPullRequestForThread({
-          threadId: workflow.threadId,
-          userId: workflow.userId,
-          threadChatId: latestThreadChat?.id ?? null,
-          skipCommitAndPush: false,
-          prType,
-          session,
-        });
-        return true;
-      },
     });
-    if (!didOpenPr) {
-      throw (
-        surfacedError ??
-        new Error(
-          `openPullRequestForThread did not complete for thread ${workflow.threadId}`,
-        )
-      );
-    }
+    prType = userSettings.prType;
+  }
+  const latestThreadChat = await params.db.query.threadChat.findFirst({
+    where: eq(schema.threadChat.threadId, workflow.threadId),
+    columns: { id: true },
+    orderBy: [desc(schema.threadChat.createdAt)],
+  });
+  let surfacedError: Error | null = null;
+
+  const didOpenPr = await withThreadSandboxSession({
+    label: "delivery-loop-v3-ensure-pr",
+    threadId: workflow.threadId,
+    threadChatId: latestThreadChat?.id ?? null,
+    userId: workflow.userId,
+    onError: async (error) => {
+      surfacedError = error;
+    },
+    execOrThrow: async ({ session }) => {
+      if (!session) {
+        throw new Error(
+          `No sandbox session available for thread ${workflow.threadId}`,
+        );
+      }
+      await openPullRequestForThread({
+        threadId: workflow.threadId,
+        userId: workflow.userId,
+        threadChatId: latestThreadChat?.id ?? null,
+        skipCommitAndPush: false,
+        prType,
+        session,
+      });
+      return true;
+    },
+  });
+  if (!didOpenPr) {
+    throw (
+      surfacedError ??
+      new Error(
+        `openPullRequestForThread did not complete for thread ${workflow.threadId}`,
+      )
+    );
   }
 
   const refreshedWorkflow = await getWorkflow({
@@ -442,23 +512,116 @@ async function processEnsurePrEffect(params: {
     );
   }
 
-  await appendEventAndAdvanceV3({
+  return {
+    kind: "ensure_pr",
+    outcome: "linked",
+    prNumber: refreshedWorkflow.prNumber,
+  };
+}
+
+async function handleCreatePlanArtifact(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  now: Date;
+}): Promise<EffectResultV3> {
+  const head = await getWorkflowHeadV3({
     db: params.db,
     workflowId: params.effect.workflowId,
-    source: "system",
-    idempotencyKey: `ensure-pr:${params.effect.id}:pr-linked`,
-    event: {
-      type: "pr_linked",
-      prNumber: refreshedWorkflow.prNumber,
-    },
+  });
+  if (!head) {
+    return {
+      kind: "create_plan_artifact",
+      outcome: "failed",
+      reason: "Workflow head not found",
+    };
+  }
+
+  const threadChat = await params.db.query.threadChat.findFirst({
+    where: eq(schema.threadChat.threadId, head.threadId),
+    columns: { messages: true },
+    orderBy: [desc(schema.threadChat.createdAt)],
   });
 
-  await markEffectSucceededV3({
+  if (!threadChat?.messages) {
+    return {
+      kind: "create_plan_artifact",
+      outcome: "failed",
+      reason: "No thread chat messages found",
+    };
+  }
+
+  const extracted = extractLatestPlanText(
+    threadChat.messages as Parameters<typeof extractLatestPlanText>[0],
+  );
+  if (!extracted) {
+    return {
+      kind: "create_plan_artifact",
+      outcome: "failed",
+      reason: "No plan text found in messages",
+    };
+  }
+
+  const parseResult = parsePlanSpec(extracted.text);
+  if (!parseResult.ok) {
+    return {
+      kind: "create_plan_artifact",
+      outcome: "failed",
+      reason: "Plan parsing failed",
+    };
+  }
+
+  const planPayload = {
+    planText: parseResult.plan.planText,
+    tasks: parseResult.plan.tasks,
+    source: (extracted.source as PlanSpecSource) ?? "system",
+  };
+  const artifact = await createPlanArtifact({
     db: params.db,
-    effectId: params.effect.id,
-    leaseOwner: params.leaseOwner,
-    leaseEpoch: params.effect.leaseEpoch,
+    loopId: params.effect.workflowId,
+    loopVersion: head.version,
+    status: "accepted",
+    generatedBy: "agent",
+    workflowId: params.effect.workflowId,
+    payload: planPayload,
+    now: params.now,
   });
+  await replacePlanTasksForArtifact({
+    db: params.db,
+    loopId: params.effect.workflowId,
+    artifactId: artifact.id,
+    tasks: parseResult.plan.tasks,
+    now: params.now,
+  });
+
+  const workflow = await getWorkflow({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  return {
+    kind: "create_plan_artifact",
+    outcome: "created",
+    approvalPolicy:
+      (workflow?.planApprovalPolicy as "auto" | "human") ?? "auto",
+  };
+}
+
+async function handleAckTimeoutCheck(params: {
+  db: DB;
+  effect: DeliveryEffectLedgerV3Row;
+  payload: { runId: string; workflowVersion: number };
+}): Promise<EffectResultV3> {
+  const head = await getWorkflowHeadV3({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (!head || head.version !== params.payload.workflowVersion) {
+    return { kind: "ack_timeout_check", outcome: "stale" };
+  }
+  return {
+    kind: "ack_timeout_check",
+    outcome: "fired",
+    runId: params.payload.runId,
+  };
 }
 
 async function processSingleEffect(params: {
@@ -504,21 +667,33 @@ async function processSingleEffect(params: {
     }
 
     if (payload.kind === "dispatch_gate_review") {
-      await processGateReviewEffect({
+      await executeStateBlockingEffect({
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
-        gate: payload.gate,
-        now: params.now,
+        handler: () =>
+          processGateReviewEffect({
+            db: params.db,
+            effect: params.effect,
+            leaseOwner: params.leaseOwner,
+            gate: payload.gate,
+            now: params.now,
+          }),
       });
       return;
     }
 
     if (payload.kind === "ensure_pr") {
-      await processEnsurePrEffect({
+      await executeStateBlockingEffect({
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        handler: () =>
+          processEnsurePrEffect({
+            db: params.db,
+            effect: params.effect,
+            leaseOwner: params.leaseOwner,
+          }),
       });
       return;
     }
@@ -534,120 +709,35 @@ async function processSingleEffect(params: {
     }
 
     if (payload.kind === "create_plan_artifact") {
-      const head = await getWorkflowHeadV3({
+      await executeStateBlockingEffect({
         db: params.db,
-        workflowId: params.effect.workflowId,
-      });
-      if (!head) {
-        await markEffectSucceededV3({
-          db: params.db,
-          effectId: params.effect.id,
-          leaseOwner: params.leaseOwner,
-          leaseEpoch: params.effect.leaseEpoch,
-        });
-        return;
-      }
-
-      const threadChat = await params.db.query.threadChat.findFirst({
-        where: eq(schema.threadChat.threadId, head.threadId),
-        columns: { messages: true },
-        orderBy: [desc(schema.threadChat.createdAt)],
-      });
-
-      let artifactCreated = false;
-      if (threadChat?.messages) {
-        const extracted = extractLatestPlanText(
-          threadChat.messages as Parameters<typeof extractLatestPlanText>[0],
-        );
-        if (extracted) {
-          const parseResult = parsePlanSpec(extracted.text);
-          if (parseResult.ok) {
-            const planPayload = {
-              planText: parseResult.plan.planText,
-              tasks: parseResult.plan.tasks,
-              source: (extracted.source as PlanSpecSource) ?? "system",
-            };
-            const artifact = await createPlanArtifact({
-              db: params.db,
-              loopId: params.effect.workflowId,
-              loopVersion: head.version,
-              status: "accepted",
-              generatedBy: "agent",
-              workflowId: params.effect.workflowId,
-              payload: planPayload,
-              now: params.now,
-            });
-            await replacePlanTasksForArtifact({
-              db: params.db,
-              loopId: params.effect.workflowId,
-              artifactId: artifact.id,
-              tasks: parseResult.plan.tasks,
-              now: params.now,
-            });
-            artifactCreated = true;
-          }
-        }
-      }
-
-      await markEffectSucceededV3({
-        db: params.db,
-        effectId: params.effect.id,
+        effect: params.effect,
         leaseOwner: params.leaseOwner,
-        leaseEpoch: params.effect.leaseEpoch,
+        handler: () =>
+          handleCreatePlanArtifact({
+            db: params.db,
+            effect: params.effect,
+            now: params.now,
+          }),
       });
-
-      // Auto-approve plan if policy allows — fire plan_completed to
-      // transition planning → implementing.  When human approval is
-      // required the approve-plan UI fires plan_completed instead.
-      const workflow = await getWorkflow({
-        db: params.db,
-        workflowId: params.effect.workflowId,
-      });
-      const approvalPolicy = workflow?.planApprovalPolicy ?? "auto";
-      if (artifactCreated && approvalPolicy === "auto") {
-        await appendEventAndAdvanceV3({
-          db: params.db,
-          workflowId: params.effect.workflowId,
-          source: "system",
-          idempotencyKey: `plan-auto-approve:${params.effect.workflowId}:${params.effect.id}`,
-          event: { type: "plan_completed" },
-        });
-      }
-
       return;
     }
 
     // ack_timeout_check
-    const head = await getWorkflowHeadV3({
-      db: params.db,
-      workflowId: params.effect.workflowId,
-    });
-    if (!head || head.version !== payload.workflowVersion) {
-      await markEffectSucceededV3({
+    if (payload.kind === "ack_timeout_check") {
+      await executeStateBlockingEffect({
         db: params.db,
-        effectId: params.effect.id,
+        effect: params.effect,
         leaseOwner: params.leaseOwner,
-        leaseEpoch: params.effect.leaseEpoch,
+        handler: () =>
+          handleAckTimeoutCheck({
+            db: params.db,
+            effect: params.effect,
+            payload,
+          }),
       });
       return;
     }
-
-    await appendEventAndAdvanceV3({
-      db: params.db,
-      workflowId: params.effect.workflowId,
-      source: "timer",
-      idempotencyKey: `ack-timeout:${payload.runId}:${params.effect.id}`,
-      event: {
-        type: "dispatch_ack_timeout",
-        runId: payload.runId,
-      },
-    });
-    await markEffectSucceededV3({
-      db: params.db,
-      effectId: params.effect.id,
-      leaseOwner: params.leaseOwner,
-      leaseEpoch: params.effect.leaseEpoch,
-    });
   } catch (error) {
     await markEffectFailedV3({
       db: params.db,

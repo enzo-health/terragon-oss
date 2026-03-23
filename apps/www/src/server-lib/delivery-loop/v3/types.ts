@@ -85,6 +85,35 @@ export type EffectSpecV3 = {
   payload: EffectPayloadV3;
 };
 
+/**
+ * Typed result returned by state-blocking effect handlers.
+ * The framework maps these to LoopEventV3 via effectResultToEvent().
+ * Handlers return data; they never call appendEventAndAdvanceV3 directly.
+ */
+export type EffectResultV3 =
+  // create_plan_artifact results
+  | {
+      kind: "create_plan_artifact";
+      outcome: "created";
+      approvalPolicy: "auto" | "human";
+    }
+  | { kind: "create_plan_artifact"; outcome: "failed"; reason: string }
+  // dispatch_gate_review results
+  | {
+      kind: "dispatch_gate_review";
+      outcome: "dispatched";
+      runId: string;
+      ackDeadlineAt: Date;
+    }
+  | { kind: "dispatch_gate_review"; outcome: "failed"; reason: string }
+  // ensure_pr results
+  | { kind: "ensure_pr"; outcome: "linked"; prNumber: number }
+  | { kind: "ensure_pr"; outcome: "no_diff"; reason: string }
+  | { kind: "ensure_pr"; outcome: "failed"; reason: string }
+  // ack_timeout_check results
+  | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
+  | { kind: "ack_timeout_check"; outcome: "stale" };
+
 export type WorkflowHeadV3 = {
   workflowId: string;
   threadId: string;
