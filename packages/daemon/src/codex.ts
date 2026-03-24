@@ -493,13 +493,7 @@ export function codexAppServerStartCommand({
   listenAddress?: string;
 }): [command: string, args: string[]] {
   const resolvedModel = resolveCodexModel(model);
-  const args = [
-    "app-server",
-    "-c",
-    `model="${resolvedModel.modelName}"`,
-    "-c",
-    'model_providers.openai.name="openai"',
-  ];
+  const args = ["app-server", "-c", `model="${resolvedModel.modelName}"`];
   if (resolvedModel.reasoningEffort) {
     args.push(
       "-c",

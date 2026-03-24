@@ -1151,8 +1151,6 @@ describe("codexAppServerStartCommand", () => {
       "-c",
       'model="gpt-5.1-codex-max"',
       "-c",
-      'model_providers.openai.name="openai"',
-      "-c",
       'model_reasoning_effort="xhigh"',
     ]);
   });
@@ -1168,8 +1166,6 @@ describe("codexAppServerStartCommand", () => {
       "app-server",
       "-c",
       'model="gpt-5"',
-      "-c",
-      'model_providers.openai.name="openai"',
       "-c",
       'model_provider="terry"',
     ]);

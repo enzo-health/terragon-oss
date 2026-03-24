@@ -321,8 +321,6 @@ describe("CodexAppServerManager", () => {
         "-c",
         'model="gpt-5.3-codex"',
         "-c",
-        'model_providers.openai.name="openai"',
-        "-c",
         'model_reasoning_effort="medium"',
       ],
     });
