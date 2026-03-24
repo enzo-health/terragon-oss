@@ -71,57 +71,6 @@ export async function createWorkflow(params: {
   return row!;
 }
 
-export async function updateWorkflowState(params: {
-  db: Pick<DB, "update">;
-  workflowId: string;
-  expectedVersion: number;
-  kind: string;
-  stateJson: Record<string, unknown>;
-  fixAttemptCount?: number;
-  infraRetryCount?: number;
-  headSha?: string | null;
-  reviewSurfaceJson?: Record<string, unknown> | null;
-  now?: Date;
-}): Promise<
-  | { updated: true; newVersion: number }
-  | { updated: false; reason: "version_conflict" }
-> {
-  const now = params.now ?? new Date();
-  const newVersion = params.expectedVersion + 1;
-
-  const result = await params.db
-    .update(schema.deliveryWorkflow)
-    .set({
-      kind: params.kind,
-      version: newVersion,
-      stateJson: params.stateJson,
-      ...(params.fixAttemptCount !== undefined && {
-        fixAttemptCount: params.fixAttemptCount,
-      }),
-      ...(params.infraRetryCount !== undefined && {
-        infraRetryCount: params.infraRetryCount,
-      }),
-      ...(params.headSha !== undefined && { headSha: params.headSha }),
-      ...(params.reviewSurfaceJson !== undefined && {
-        reviewSurfaceJson: params.reviewSurfaceJson,
-      }),
-      updatedAt: now,
-      lastActivityAt: now,
-    })
-    .where(
-      and(
-        eq(schema.deliveryWorkflow.id, params.workflowId),
-        eq(schema.deliveryWorkflow.version, params.expectedVersion),
-      ),
-    )
-    .returning({ version: schema.deliveryWorkflow.version });
-
-  if (result[0]) {
-    return { updated: true, newVersion: result[0].version };
-  }
-  return { updated: false, reason: "version_conflict" };
-}
-
 export async function getActiveWorkflowForGithubPR(params: {
   db: Pick<DB, "query">;
   repoFullName: string;

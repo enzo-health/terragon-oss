@@ -3,9 +3,9 @@ import { redis } from "@/lib/redis";
 import type { DB } from "@terragon/shared/db";
 import type { DeliveryOutboxV3Row } from "@terragon/shared/db/types";
 import {
-  claimNextOutboxRecordV3,
-  markOutboxFailedV3,
-  markOutboxPublishedV3,
+  claimNextOutboxRecord,
+  markOutboxFailed,
+  markOutboxPublished,
 } from "./store";
 
 const OUTBOX_RELAY_STREAM_KEY = "dl3:outbox:stream";
@@ -99,7 +99,7 @@ function coerceRedisMessageId(messageId: unknown): string {
   throw new Error("Failed to publish outbox record: invalid stream message id");
 }
 
-export async function publishOutboxRecordV3(params: {
+export async function publishOutboxRecord(params: {
   outbox: DeliveryOutboxV3Row;
   streamKey?: string;
   dedupeIndexKey?: string;
@@ -132,7 +132,7 @@ export async function publishOutboxRecordV3(params: {
   return coerceRedisMessageId(messageId);
 }
 
-export async function markOutboxRecordFailedV3(params: {
+export async function markOutboxRecordFailed(params: {
   db: DB;
   outbox: DeliveryOutboxV3Row;
   leaseOwner: string;
@@ -141,7 +141,7 @@ export async function markOutboxRecordFailedV3(params: {
   errorMessage: string;
   retryAt: Date;
 }): Promise<void> {
-  await markOutboxFailedV3({
+  await markOutboxFailed({
     db: params.db,
     outboxId: params.outbox.id,
     leaseOwner: params.leaseOwner,
@@ -152,7 +152,7 @@ export async function markOutboxRecordFailedV3(params: {
   });
 }
 
-export async function drainOutboxV3Relay(
+export async function drainOutboxRelay(
   params: OutboxRelayOptions,
 ): Promise<OutboxRelayResult> {
   const maxItems = params.maxItems ?? OUTBOX_RELAY_MAX_ITEMS;
@@ -168,7 +168,7 @@ export async function drainOutboxV3Relay(
 
   for (let i = 0; i < maxItems; i += 1) {
     const leaseOwner = `${leaseOwnerPrefix}:${crypto.randomUUID()}`;
-    const outbox = await claimNextOutboxRecordV3({
+    const outbox = await claimNextOutboxRecord({
       db: params.db,
       leaseOwner,
       workflowId: params.workflowId,
@@ -181,13 +181,13 @@ export async function drainOutboxV3Relay(
     processed += 1;
 
     try {
-      const relayMessageId = await publishOutboxRecordV3({
+      const relayMessageId = await publishOutboxRecord({
         outbox,
         streamKey,
         dedupeIndexKey,
       });
 
-      const markedPublished = await markOutboxPublishedV3({
+      const markedPublished = await markOutboxPublished({
         db: params.db,
         outboxId: outbox.id,
         leaseOwner,
@@ -209,7 +209,7 @@ export async function drainOutboxV3Relay(
       );
 
       try {
-        await markOutboxRecordFailedV3({
+        await markOutboxRecordFailed({
           db: params.db,
           outbox,
           leaseOwner,

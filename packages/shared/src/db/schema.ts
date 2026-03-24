@@ -297,6 +297,7 @@ const threadChatShared = {
   permissionMode: text("permission_mode")
     .$type<"allowAll" | "plan">()
     .default("allowAll"),
+  messageSeq: integer("message_seq").notNull().default(0),
 };
 
 export const thread = pgTable(
@@ -1900,85 +1901,6 @@ export const deliveryWorkflow = pgTable(
   ],
 );
 
-export const deliveryWorkflowEvent = pgTable(
-  "delivery_workflow_event",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workflowId: text("workflow_id")
-      .notNull()
-      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
-    seq: integer("seq").notNull(),
-    correlationId: text("correlation_id").notNull(),
-    eventKind: text("event_kind").notNull(),
-    stateBefore: text("state_before").notNull(),
-    stateAfter: text("state_after"),
-    gateBefore: text("gate_before"),
-    gateAfter: text("gate_after"),
-    payloadJson: jsonb("payload_json"),
-    signalId: text("signal_id"),
-    triggerSource: text("trigger_source").notNull(),
-    headSha: text("head_sha"),
-    previousPhaseDurationMs: integer("previous_phase_duration_ms"),
-    occurredAt: timestamp("occurred_at", { mode: "date" })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("delivery_workflow_event_seq_unique").on(
-      table.workflowId,
-      table.seq,
-    ),
-    index("delivery_workflow_event_occurred_index").on(
-      table.workflowId,
-      table.occurredAt,
-    ),
-    index("delivery_workflow_event_correlation_index").on(table.correlationId),
-  ],
-);
-
-export const deliveryWorkItem = pgTable(
-  "delivery_work_item",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workflowId: text("workflow_id")
-      .notNull()
-      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
-    correlationId: text("correlation_id").notNull(),
-    kind: text("kind").notNull(),
-    status: text("status").notNull().default("pending"),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    maxAttempts: integer("max_attempts").notNull().default(5),
-    scheduledAt: timestamp("scheduled_at", { mode: "date" })
-      .notNull()
-      .defaultNow(),
-    claimedAt: timestamp("claimed_at", { mode: "date" }),
-    claimToken: text("claim_token"),
-    payloadJson: jsonb("payload_json").notNull(),
-    lastErrorCode: text("last_error_code"),
-    lastErrorMessage: text("last_error_message"),
-    completedAt: timestamp("completed_at", { mode: "date" }),
-    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    index("delivery_work_item_workflow_status_index").on(
-      table.workflowId,
-      table.status,
-    ),
-    index("delivery_work_item_claimable_index")
-      .on(table.status, table.scheduledAt)
-      .where(sql`${table.status} = 'pending'`),
-    index("delivery_work_item_correlation_index").on(table.correlationId),
-  ],
-);
-
 export const deliveryLoopIncident = pgTable(
   "delivery_loop_incident",
   {
@@ -2006,29 +1928,6 @@ export const deliveryLoopIncident = pgTable(
       table.status,
     ),
   ],
-);
-
-export const deliveryLoopRuntimeStatus = pgTable(
-  "delivery_loop_runtime_status",
-  {
-    workflowId: text("workflow_id")
-      .primaryKey()
-      .references(() => deliveryWorkflow.id, { onDelete: "cascade" }),
-    state: text("state").notNull(),
-    gate: text("gate"),
-    pendingActionKind: text("pending_action_kind"),
-    health: text("health").notNull().default("healthy"),
-    lastSignalAt: timestamp("last_signal_at", { mode: "date" }),
-    lastTransitionAt: timestamp("last_transition_at", { mode: "date" }),
-    lastDispatchAt: timestamp("last_dispatch_at", { mode: "date" }),
-    oldestUnprocessedSignalAgeMs: integer("oldest_unprocessed_signal_age_ms"),
-    fixAttemptCount: integer("fix_attempt_count"),
-    openIncidentCount: integer("open_incident_count"),
-    updatedAt: timestamp("updated_at", { mode: "date" })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
 );
 
 export const deliveryWorkflowRetrospective = pgTable(

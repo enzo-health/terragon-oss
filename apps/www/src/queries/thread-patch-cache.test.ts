@@ -5,7 +5,6 @@ import type {
   ThreadPageChat,
   ThreadPageShell,
 } from "@terragon/shared";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import {
   applyThreadPatchToListQueries,
   applyThreadPatchToQueryClient,
@@ -17,7 +16,6 @@ const NEXT_CHAT_UPDATED_AT = "2026-03-09T00:00:05.000Z";
 const STALE_CHAT_UPDATED_AT = "2026-03-08T23:59:55.000Z";
 const INITIAL_CHAT_SEQUENCE = new Date(INITIAL_CHAT_UPDATED_AT).getTime();
 const NEXT_CHAT_SEQUENCE = new Date(NEXT_CHAT_UPDATED_AT).getTime();
-const STALE_CHAT_SEQUENCE = new Date(STALE_CHAT_UPDATED_AT).getTime();
 
 function createThreadShell(): ThreadPageShell {
   return {
@@ -57,6 +55,7 @@ function createThreadShell(): ThreadPageShell {
     },
     version: 1,
     isUnread: false,
+    messageSeq: 0,
     childThreads: [],
     hasGitDiff: false,
     primaryThreadChatId: "chat-1",
@@ -73,6 +72,7 @@ function createThreadShell(): ThreadPageShell {
       contextLength: null,
       permissionMode: "allowAll",
       isUnread: false,
+      messageSeq: 0,
       updatedAt: new Date(INITIAL_CHAT_UPDATED_AT),
     },
   };
@@ -100,6 +100,7 @@ function createThreadChat(
     permissionMode: "allowAll",
     codexPreviousResponseId: null,
     isUnread: false,
+    messageSeq: 0,
     messages: [
       {
         type: "user",
@@ -110,6 +111,7 @@ function createThreadChat(
     queuedMessages: [],
     messageCount: 1,
     chatSequence: INITIAL_CHAT_SEQUENCE,
+    patchVersion: 0,
     ...overrides,
   };
 }
@@ -149,6 +151,7 @@ function createThreadListEntry(): ThreadInfo {
     prChecksStatus: shell.prChecksStatus,
     visibility: shell.visibility,
     isUnread: shell.isUnread,
+    messageSeq: shell.messageSeq,
     threadChats: [
       {
         id: shell.primaryThreadChat.id,
@@ -182,107 +185,6 @@ function setThreadListData(
 }
 
 describe("applyThreadPatchToQueryClient", () => {
-  it("appends timestamp-sequenced messages to the active chat cache", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      threadQueryKeys.shell("thread-1"),
-      createThreadShell(),
-    );
-    queryClient.setQueryData(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-      createThreadChat(),
-    );
-
-    const patch: BroadcastThreadPatch = {
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-      op: "upsert",
-      chatSequence: NEXT_CHAT_SEQUENCE,
-      expectedMessageCount: 1,
-      appendMessages: [
-        {
-          type: "agent",
-          parent_tool_use_id: null,
-          parts: [{ type: "text", text: "Working on it" }],
-        },
-      ],
-      chat: {
-        updatedAt: NEXT_CHAT_UPDATED_AT,
-      },
-    };
-
-    applyThreadPatchToQueryClient({ queryClient, patch });
-
-    const nextChat = queryClient.getQueryData<ThreadPageChat>(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-    );
-
-    expect(nextChat?.messageCount).toBe(2);
-    expect(nextChat?.messages?.at(-1)).toMatchObject({
-      type: "agent",
-    });
-    expect(nextChat?.chatSequence).toBe(NEXT_CHAT_SEQUENCE);
-  });
-
-  it("ignores stale chat patches with an older timestamp sequence", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(threadQueryKeys.chat("thread-1", "chat-1"), {
-      ...createThreadChat(),
-      status: "working" as const,
-    });
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "upsert",
-        chatSequence: STALE_CHAT_SEQUENCE,
-        chat: {
-          status: "complete",
-          updatedAt: STALE_CHAT_UPDATED_AT,
-        },
-      },
-    });
-
-    const nextChat = queryClient.getQueryData<ThreadPageChat>(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-    );
-
-    expect(nextChat?.status).toBe("working");
-    expect(nextChat?.chatSequence).toBe(INITIAL_CHAT_SEQUENCE);
-    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
-  });
-
-  it("still invalidates diff when a stale chat patch is ignored", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(threadQueryKeys.chat("thread-1", "chat-1"), {
-      ...createThreadChat(),
-      status: "working" as const,
-    });
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "upsert",
-        chatSequence: STALE_CHAT_SEQUENCE,
-        diffChanged: true,
-        chat: {
-          status: "complete",
-          updatedAt: STALE_CHAT_UPDATED_AT,
-        },
-      },
-    });
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: threadQueryKeys.diff("thread-1"),
-    });
-  });
-
   it("invalidates diff when patch requests explicit diff refetch", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
@@ -305,57 +207,7 @@ describe("applyThreadPatchToQueryClient", () => {
     });
   });
 
-  it("invalidates duplicate append patches once message counts no longer line up", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-      createThreadChat({
-        updatedAt: new Date(NEXT_CHAT_UPDATED_AT),
-        chatSequence: NEXT_CHAT_SEQUENCE,
-        messages: [
-          {
-            type: "user",
-            model: null,
-            parts: [{ type: "text", text: "Initial prompt" }],
-          },
-          {
-            type: "agent",
-            parent_tool_use_id: null,
-            parts: [{ type: "text", text: "Working on it" }],
-          },
-        ],
-        messageCount: 2,
-      }),
-    );
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "upsert",
-        chatSequence: NEXT_CHAT_SEQUENCE,
-        expectedMessageCount: 1,
-        appendMessages: [
-          {
-            type: "agent",
-            parent_tool_use_id: null,
-            parts: [{ type: "text", text: "Duplicate append" }],
-          },
-        ],
-        chat: {
-          updatedAt: NEXT_CHAT_UPDATED_AT,
-        },
-      },
-    });
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
-    });
-  });
-
-  it("invalidates counter-style sequence gaps", () => {
+  it("accepts seq-only patches that jump ahead (confirmation after optimistic)", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
       threadQueryKeys.chat("thread-1", "chat-1"),
@@ -377,129 +229,15 @@ describe("applyThreadPatchToQueryClient", () => {
       },
     });
 
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+    // Seq-only patches (no messages) are confirmations — accepted, not invalidated
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
     });
-  });
-
-  it("applies timestamp-sequenced status updates incrementally", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-      createThreadChat(),
-    );
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "upsert",
-        chatSequence: NEXT_CHAT_SEQUENCE,
-        chat: {
-          status: "working",
-          updatedAt: NEXT_CHAT_UPDATED_AT,
-        },
-      },
-    });
-
-    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+    const chat = queryClient.getQueryData<ThreadPageChat>(
       threadQueryKeys.chat("thread-1", "chat-1"),
     );
-
-    expect(nextChat?.status).toBe("working");
-    expect(nextChat?.chatSequence).toBe(NEXT_CHAT_SEQUENCE);
-    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
-  });
-
-  it("invalidates the active chat when append counts do not line up", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-      createThreadChat(),
-    );
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "upsert",
-        chatSequence: NEXT_CHAT_SEQUENCE,
-        expectedMessageCount: 0,
-        appendMessages: [
-          {
-            type: "agent",
-            parent_tool_use_id: null,
-            parts: [{ type: "text", text: "Out of sync" }],
-          },
-        ],
-      },
-    });
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
-    });
-  });
-
-  it("invalidates when tail of cached messages matches appendMessages (duplicate delivery)", () => {
-    const queryClient = createQueryClient();
-    const agentMsg = {
-      type: "agent" as const,
-      parent_tool_use_id: null,
-      parts: [{ type: "text" as const, text: "Working on it" }],
-    };
-    queryClient.setQueryData(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-      createThreadChat({
-        messages: [
-          {
-            type: "user",
-            model: null,
-            parts: [{ type: "text", text: "Initial prompt" }],
-          },
-          agentMsg,
-        ],
-        messageCount: 2,
-        updatedAt: new Date(NEXT_CHAT_UPDATED_AT),
-        chatSequence: NEXT_CHAT_SEQUENCE,
-      }),
-    );
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    // Send the same message as an append — should detect tail-overlap duplicate
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "upsert",
-        chatSequence: NEXT_CHAT_SEQUENCE,
-        expectedMessageCount: 1,
-        appendMessages: [
-          {
-            type: "agent",
-            parent_tool_use_id: null,
-            parts: [{ type: "text", text: "Working on it" }],
-          },
-        ],
-        chat: {
-          updatedAt: NEXT_CHAT_UPDATED_AT,
-        },
-      },
-    });
-
-    // Should invalidate (refetch) rather than appending a duplicate
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
-    });
-    // Message count should remain 2, not grow to 3
-    const nextChat = queryClient.getQueryData<ThreadPageChat>(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-    );
-    expect(nextChat?.messages).toHaveLength(2);
+    expect(chat?.chatSequence).toBe(7);
+    expect(chat?.status).toBe("working");
   });
 
   it("invalidates explicit chat refetch patches without mutating the cache", () => {
@@ -798,5 +536,722 @@ describe("applyThreadPatchToListQueries", () => {
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
       queryKey: threadQueryKeys.list(null),
     });
+  });
+});
+
+describe("seq-based fast path", () => {
+  it("appends messages when seq is exactly next in sequence", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({ chatSequence: 3, messageSeq: 3 }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 4,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Seq 4 message" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(nextChat?.messageCount).toBe(2);
+    expect(nextChat?.messages?.at(-1)).toMatchObject({ type: "agent" });
+    expect(nextChat?.chatSequence).toBe(4);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
+  });
+
+  it("applies rapid consecutive patches without invalidation", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({ chatSequence: 1, messageSeq: 1 }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // Seq 2
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 2,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Message 2" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    // Seq 3
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 3,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Message 3" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(nextChat?.messageCount).toBe(3);
+    expect(nextChat?.chatSequence).toBe(3);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
+  });
+
+  it("ignores duplicate seq-based patches", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({ chatSequence: 5, messageSeq: 5 }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 5,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Duplicate" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    // Should not have appended
+    expect(nextChat?.messageCount).toBe(1);
+    expect(nextChat?.chatSequence).toBe(5);
+  });
+
+  it("ignores stale seq-based patches", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        status: "working" as any,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 3,
+        chat: { status: "complete", updatedAt: STALE_CHAT_UPDATED_AT },
+      },
+    });
+
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(nextChat?.status).toBe("working");
+  });
+
+  it("invalidates on seq gap (missed messages)", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({ chatSequence: 2, messageSeq: 2 }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 5,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "Skipped seq 3 and 4" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("appends messages on next-in-sequence regardless of expectedMessageCount", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 1,
+        messageSeq: 1,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "msg2" }],
+          },
+        ],
+        messageCount: 2,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 2,
+        expectedMessageCount: 999,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "msg3" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const nextChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(nextChat?.messageCount).toBe(3);
+    expect(nextChat?.chatSequence).toBe(2);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("optimistic rendering (pre-broadcast + confirmation)", () => {
+  it("applies pre-broadcast messages without chatSequence, then confirmation updates seq", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 3,
+        messageSeq: 3,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    // Phase 1: Pre-broadcast — messages with no chatSequence
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "optimistic msg" }],
+          },
+        ],
+      },
+    });
+
+    let chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.chatSequence).toBe(3); // unchanged — no seq in pre-broadcast
+
+    // Phase 2: Confirmation — chatSequence only, no messages
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 4,
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2); // still 2 — no duplicate
+    expect(chat?.chatSequence).toBe(4); // seq updated
+  });
+
+  it("handles error refetch after pre-broadcast by invalidating cache", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    // Phase 1: Pre-broadcast — messages appear optimistically
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "optimistic msg" }],
+          },
+        ],
+      },
+    });
+
+    let chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2);
+
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // Phase 2: Error — DB write failed, server sends refetch
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "refetch",
+        refetch: ["chat"],
+      },
+    });
+
+    // Should trigger invalidation so client re-fetches from DB
+    expect(invalidateQueriesSpy).toHaveBeenCalled();
+  });
+
+  it("pre-broadcast without seq followed by rapid confirmation does not duplicate messages", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 1,
+        messageSeq: 1,
+        messages: [],
+        messageCount: 0,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // Pre-broadcast
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ],
+      },
+    });
+
+    // Confirmation with seq
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 2,
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(1); // exactly 1, not duplicated
+    expect(chat?.chatSequence).toBe(2);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("dual-seq (messageSeq + patchVersion)", () => {
+  it("status-only patch with patchVersion applies metadata without invalidating messages", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 1,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "msg2" }],
+          },
+        ],
+        messageCount: 2,
+        status: "working" as any,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        patchVersion: 2,
+        chat: {
+          status: "complete",
+          updatedAt: NEXT_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.status).toBe("complete");
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.messages).toHaveLength(2);
+    expect(chat?.patchVersion).toBe(2);
+    expect(chat?.messageSeq).toBe(5);
+    expect(
+      queryClient.getQueryState(threadQueryKeys.chat("thread-1", "chat-1"))
+        ?.isInvalidated,
+    ).toBe(false);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("message patch with messageSeq appends and updates both seqs", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 1,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 6,
+        patchVersion: 2,
+        chatSequence: 6,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "response" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.messages?.at(-1)).toMatchObject({
+      type: "agent",
+      parts: [{ type: "text", text: "response" }],
+    });
+    expect(chat?.messageSeq).toBe(6);
+    expect(chat?.patchVersion).toBe(2);
+  });
+
+  it("stale patchVersion is ignored", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 5,
+        status: "working" as any,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        patchVersion: 3,
+        chat: {
+          status: "complete",
+          updatedAt: STALE_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.status).toBe("working");
+    expect(chat?.patchVersion).toBe(5);
+  });
+
+  it("messageSeq gap triggers invalidation", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 1,
+      }),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 7,
+        patchVersion: 2,
+        chatSequence: 7,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "skipped seq 6" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("duplicate messageSeq is ignored", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 5,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "msg1" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 5,
+        patchVersion: 5,
+        chatSequence: 5,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "duplicate" }],
+          },
+        ],
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(1);
+    expect(chat?.messageSeq).toBe(5);
+  });
+
+  it("full flow: optimistic → confirmation → status update", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        chatSequence: 5,
+        messageSeq: 5,
+        patchVersion: 0,
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "initial" }],
+          },
+        ],
+        messageCount: 1,
+      }),
+    );
+
+    // Phase 1: Optimistic pre-broadcast (no messageSeq, no patchVersion)
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "optimistic" }],
+          },
+        ],
+      },
+    });
+
+    let chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2);
+    expect(chat?.messageSeq).toBe(5); // unchanged
+    expect(chat?.patchVersion).toBe(0); // unchanged
+
+    // Phase 2: Confirmation (messageSeq=6, patchVersion=1, no appendMessages)
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 6,
+        patchVersion: 1,
+        chatSequence: 6,
+        chat: { updatedAt: NEXT_CHAT_UPDATED_AT },
+      },
+    });
+
+    chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.messageCount).toBe(2); // no duplicate
+    expect(chat?.messageSeq).toBe(6);
+    expect(chat?.patchVersion).toBe(1);
+
+    // Phase 3: Status-only (patchVersion=2, no messageSeq, no appendMessages)
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        patchVersion: 2,
+        chat: {
+          status: "complete",
+          updatedAt: NEXT_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.status).toBe("complete");
+    expect(chat?.messageCount).toBe(2); // messages preserved
+    expect(chat?.messageSeq).toBe(6); // unchanged
+    expect(chat?.patchVersion).toBe(2);
   });
 });

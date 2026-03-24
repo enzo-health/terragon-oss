@@ -6,11 +6,11 @@ import type {
 } from "@terragon/shared/db/types";
 import { describe, expect, it } from "vitest";
 import {
-  buildEffectLedgerContractV3,
-  parseEffectPayloadV3,
-  parseLoopEventV3,
-  serializeEffectPayloadV3,
-  serializeLoopEventV3,
+  buildEffectLedgerContract,
+  parseEffectPayload,
+  parseLoopEvent,
+  serializeEffectPayload,
+  serializeLoopEvent,
 } from "./contracts";
 
 type RequiresIdempotencyKey<T extends { idempotencyKey: string }> = true;
@@ -27,12 +27,12 @@ const outboxInsertRequiresIdempotency: RequiresIdempotencyKey<DeliveryOutboxV3In
 describe("v3 contracts", () => {
   it("round-trips a dispatch_sent event payload", () => {
     const ackDeadlineAt = new Date("2026-03-18T12:00:45.000Z");
-    const serialized = serializeLoopEventV3({
+    const serialized = serializeLoopEvent({
       type: "dispatch_sent",
       runId: "run-123",
       ackDeadlineAt,
     });
-    const parsed = parseLoopEventV3(serialized);
+    const parsed = parseLoopEvent(serialized);
 
     expect(parsed).toEqual({
       type: "dispatch_sent",
@@ -42,7 +42,7 @@ describe("v3 contracts", () => {
   });
 
   it("rejects invalid loop event payloads", () => {
-    const parsed = parseLoopEventV3({
+    const parsed = parseLoopEvent({
       type: "dispatch_sent",
       runId: "run-123",
       ackDeadlineAt: 123,
@@ -51,25 +51,25 @@ describe("v3 contracts", () => {
   });
 
   it("round-trips correlated CI gate events", () => {
-    const serializedPassed = serializeLoopEventV3({
+    const serializedPassed = serializeLoopEvent({
       type: "gate_ci_passed",
       runId: "run-ci-1",
       headSha: "sha-ci-1",
     });
-    const parsedPassed = parseLoopEventV3(serializedPassed);
+    const parsedPassed = parseLoopEvent(serializedPassed);
     expect(parsedPassed).toEqual({
       type: "gate_ci_passed",
       runId: "run-ci-1",
       headSha: "sha-ci-1",
     });
 
-    const serializedFailed = serializeLoopEventV3({
+    const serializedFailed = serializeLoopEvent({
       type: "gate_ci_failed",
       runId: "run-ci-2",
       headSha: "sha-ci-2",
       reason: "CI checks failed",
     });
-    const parsedFailed = parseLoopEventV3(serializedFailed);
+    const parsedFailed = parseLoopEvent(serializedFailed);
     expect(parsedFailed).toEqual({
       type: "gate_ci_failed",
       runId: "run-ci-2",
@@ -79,12 +79,12 @@ describe("v3 contracts", () => {
   });
 
   it("round-trips gate_review_passed with optional PR context", () => {
-    const serialized = serializeLoopEventV3({
+    const serialized = serializeLoopEvent({
       type: "gate_review_passed",
       runId: "run-review-1",
       prNumber: 123,
     });
-    const parsed = parseLoopEventV3(serialized);
+    const parsed = parseLoopEvent(serialized);
 
     expect(parsed).toEqual({
       type: "gate_review_passed",
@@ -94,11 +94,11 @@ describe("v3 contracts", () => {
   });
 
   it("round-trips pr_linked with optional PR context", () => {
-    const serialized = serializeLoopEventV3({
+    const serialized = serializeLoopEvent({
       type: "pr_linked",
       prNumber: 456,
     });
-    const parsed = parseLoopEventV3(serialized);
+    const parsed = parseLoopEvent(serialized);
 
     expect(parsed).toEqual({
       type: "pr_linked",
@@ -108,26 +108,26 @@ describe("v3 contracts", () => {
 
   it("rejects malformed CI gate correlation payloads", () => {
     expect(
-      parseLoopEventV3({
+      parseLoopEvent({
         type: "gate_ci_passed",
         headSha: 123,
       }),
     ).toBeNull();
 
     expect(
-      parseLoopEventV3({
+      parseLoopEvent({
         type: "gate_ci_failed",
         runId: 123,
       }),
     ).toBeNull();
     expect(
-      parseLoopEventV3({
+      parseLoopEvent({
         type: "gate_review_passed",
         prNumber: 1.5,
       }),
     ).toBeNull();
     expect(
-      parseLoopEventV3({
+      parseLoopEvent({
         type: "pr_linked",
         prNumber: 1.5,
       }),
@@ -135,12 +135,12 @@ describe("v3 contracts", () => {
   });
 
   it("round-trips effect payload contracts", () => {
-    const serialized = serializeEffectPayloadV3({
+    const serialized = serializeEffectPayload({
       kind: "ack_timeout_check",
       runId: "run-ack",
       workflowVersion: 7,
     });
-    const parsed = parseEffectPayloadV3(serialized);
+    const parsed = parseEffectPayload(serialized);
 
     expect(parsed).toEqual({
       kind: "ack_timeout_check",
@@ -150,11 +150,11 @@ describe("v3 contracts", () => {
   });
 
   it("round-trips dispatch_implementing with fallback executionClass", () => {
-    const serialized = serializeEffectPayloadV3({
+    const serialized = serializeEffectPayload({
       kind: "dispatch_implementing",
       executionClass: "implementation_runtime_fallback",
     });
-    const parsed = parseEffectPayloadV3(serialized);
+    const parsed = parseEffectPayload(serialized);
 
     expect(parsed).toEqual({
       kind: "dispatch_implementing",
@@ -163,10 +163,10 @@ describe("v3 contracts", () => {
   });
 
   it("round-trips ensure_pr effect payload", () => {
-    const serialized = serializeEffectPayloadV3({
+    const serialized = serializeEffectPayload({
       kind: "ensure_pr",
     });
-    const parsed = parseEffectPayloadV3(serialized);
+    const parsed = parseEffectPayload(serialized);
 
     expect(parsed).toEqual({
       kind: "ensure_pr",
@@ -174,7 +174,7 @@ describe("v3 contracts", () => {
   });
 
   it("builds effect ledger contracts with canonical idempotency", () => {
-    const contract = buildEffectLedgerContractV3({
+    const contract = buildEffectLedgerContract({
       workflowId: "wf-1",
       workflowVersion: 11,
       effect: {

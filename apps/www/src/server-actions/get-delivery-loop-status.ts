@@ -5,12 +5,10 @@ import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
   buildDeliveryLoopStatusChecks,
-  buildSnapshotFromV2Workflow,
+  buildSnapshotFromV3Head,
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
-  getV2StopReason,
-  mapV2KindToDeliveryLoopState,
   type DeliveryLoopStatusCheck,
   type DeliveryLoopStatusCheckKey,
 } from "@/lib/delivery-loop-status";
@@ -18,12 +16,14 @@ import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
+import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
 } from "@terragon/shared/delivery-loop/store/gate-persistence";
 import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
@@ -581,14 +581,20 @@ async function buildStatusFromV2Workflow(params: {
 }): Promise<DeliveryLoopStatus> {
   const { workflow, workflowRow } = params;
 
-  const loopSnapshot = buildSnapshotFromV2Workflow(workflow);
-  const v2State = mapV2KindToDeliveryLoopState(workflow);
-  const currentHeadSha =
-    ("headSha" in workflow && typeof workflow.headSha === "string"
-      ? workflow.headSha
-      : null) ??
-    workflowRow.currentHeadSha ??
-    null;
+  // Derive v3 head — sole source for state, snapshot, and blocked reason
+  const v3Head = await getWorkflowHead({
+    db,
+    workflowId: workflow.workflowId,
+  });
+
+  if (!v3Head) {
+    throw new Error(`No v3 head for workflow ${workflow.workflowId}`);
+  }
+
+  const loopSnapshot = buildSnapshotFromV3Head(v3Head);
+  const loopState = stateToDeliveryLoopState(v3Head.state);
+
+  const currentHeadSha = v3Head.headSha ?? workflowRow.currentHeadSha ?? null;
 
   const assembled = await assembleLoopStatusData({
     loopId: workflowRow.id,
@@ -600,27 +606,26 @@ async function buildStatusFromV2Workflow(params: {
     canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
   });
 
+  const currentState = v3Head.state;
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
-  const v2StopReason = getV2StopReason(workflow);
-  const explanation = v2StopReason
-    ? `${stateSummary.explanation} Reason: ${v2StopReason}.`
+  const blockedReason = v3Head.blockedReason ?? null;
+  const explanation = blockedReason
+    ? `${stateSummary.explanation} Reason: ${blockedReason}.`
     : stateSummary.explanation;
-
-  // Derive plan approval policy — v2 awaiting_plan_approval implies human_required
   const planApprovalPolicy: "auto" | "human_required" =
-    workflow.kind === "awaiting_plan_approval"
+    currentState === "planning" && workflowRow.planApprovalPolicy === "human"
       ? "human_required"
       : (workflowRow.planApprovalPolicy as "auto" | "human_required");
 
   return {
     loopId: workflowRow.id,
-    state: v2State,
+    state: loopState,
     planApprovalPolicy,
     stateLabel: stateSummary.stateLabel,
     explanation,
     progressPercent: stateSummary.progressPercent,
     actions: buildDeliveryLoopActions({
-      loopState: v2State,
+      loopState,
       loopSnapshot,
       planApprovalPolicy,
       planningArtifactStatus:
@@ -631,7 +636,7 @@ async function buildStatusFromV2Workflow(params: {
     needsAttention: assembled.needsAttention,
     links: assembled.links,
     artifacts: assembled.artifacts,
-    updatedAtIso: workflow.updatedAt.toISOString(),
+    updatedAtIso: v3Head.updatedAt.toISOString(),
   };
 }
 

@@ -1,6 +1,5 @@
 "use client";
 
-import isEqual from "fast-deep-equal";
 import { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
 import {
   DBMessage,
@@ -232,48 +231,11 @@ function applyChatSummaryFields(
 }
 
 /**
- * Returns true if the last `append.length` items in `messages` are
- * structurally identical to `append`, indicating a duplicate delivery.
+ * Monotonic integer sequences are always < 1 billion.
+ * Timestamp-based sequences are ~1.7 trillion (milliseconds since epoch).
  */
-function tailMatchesAppend(messages: unknown[], append: unknown[]): boolean {
-  if (append.length === 0) return false;
-  const offset = messages.length - append.length;
-  if (offset < 0) return false;
-  for (let i = 0; i < append.length; i++) {
-    const cached = messages[offset + i];
-    const incoming = append[i];
-    // Fast path: reference equality (same object from optimistic update)
-    if (cached === incoming) continue;
-    // Deep structural comparison (key-order independent, safe for all types)
-    if (!isEqual(cached, incoming)) return false;
-  }
-  return true;
-}
-
-function sequenceMatchesUpdatedAt(
-  sequence: number | null | undefined,
-  updatedAt: Date | string | null | undefined,
-): boolean {
-  if (sequence == null || updatedAt == null) {
-    return false;
-  }
-
-  const updatedAtTime =
-    typeof updatedAt === "string"
-      ? new Date(updatedAt).getTime()
-      : updatedAt.getTime();
-
-  return Number.isFinite(updatedAtTime) && updatedAtTime === sequence;
-}
-
-function usesTimestampChatSequence(
-  chat: ThreadPageChat,
-  patch: BroadcastThreadPatch,
-): boolean {
-  return (
-    sequenceMatchesUpdatedAt(chat.chatSequence, chat.updatedAt) ||
-    sequenceMatchesUpdatedAt(patch.chatSequence, patch.chat?.updatedAt)
-  );
+function isMonotonicSequence(seq: number | null | undefined): boolean {
+  return seq != null && seq < 1_000_000_000;
 }
 
 function applyChatFields(
@@ -288,50 +250,207 @@ function applyChatFields(
     };
   }
 
-  const incomingSequence = patch.chatSequence;
-  const currentSequence = chat.chatSequence;
-  if (
-    incomingSequence !== undefined &&
-    currentSequence !== null &&
-    incomingSequence < currentSequence
-  ) {
+  // Delta ops are ephemeral token-level streaming — handled by
+  // delta accumulator in chat components, not the persistent cache.
+  if (patch.op === "delta") {
     return { chat, shouldInvalidate: false, shouldIgnore: true };
   }
-  if (
-    incomingSequence !== undefined &&
-    currentSequence !== null &&
-    !usesTimestampChatSequence(chat, patch) &&
-    incomingSequence > currentSequence + 1
-  ) {
+
+  const incomingMessageSeq = patch.messageSeq;
+  const incomingPatchVersion = patch.patchVersion;
+  const currentMessageSeq = chat.messageSeq;
+  const currentPatchVersion = chat.patchVersion;
+
+  // --- Legacy fallback: no dual seqs, use chatSequence ---
+  if (incomingMessageSeq === undefined && incomingPatchVersion === undefined) {
+    const incomingSequence = patch.chatSequence;
+    const currentSequence = chat.chatSequence;
+
+    // Optimistic pre-broadcast: no chatSequence means preview before DB write.
+    // Always append without safety checks.
+    if (
+      incomingSequence === undefined &&
+      patch.appendMessages !== undefined &&
+      isDbMessageArray(patch.appendMessages) &&
+      patch.appendMessages.length > 0
+    ) {
+      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+      return {
+        chat: applyPatchToChatObject(
+          chat,
+          patch,
+          nextMessages,
+          currentSequence ?? 0,
+          currentMessageSeq ?? null,
+          currentPatchVersion ?? null,
+        ),
+        shouldInvalidate: false,
+        shouldIgnore: false,
+      };
+    }
+
+    // Legacy monotonic chatSequence handling
+    if (
+      isMonotonicSequence(incomingSequence) &&
+      isMonotonicSequence(currentSequence)
+    ) {
+      // Confirmation patch (no messages)
+      if (
+        patch.appendMessages === undefined ||
+        patch.appendMessages.length === 0
+      ) {
+        if (incomingSequence! < currentSequence!) {
+          return { chat, shouldInvalidate: false, shouldIgnore: true };
+        }
+        return {
+          chat: applyPatchToChatObject(
+            chat,
+            patch,
+            chat.messages ?? [],
+            incomingSequence!,
+            currentMessageSeq ?? null,
+            currentPatchVersion ?? null,
+          ),
+          shouldInvalidate: false,
+          shouldIgnore: false,
+        };
+      }
+      if (incomingSequence! <= currentSequence!) {
+        return { chat, shouldInvalidate: false, shouldIgnore: true };
+      }
+      if (incomingSequence! > currentSequence! + 1) {
+        return { chat, shouldInvalidate: true, shouldIgnore: false };
+      }
+      if (!isDbMessageArray(patch.appendMessages!)) {
+        return { chat, shouldInvalidate: true, shouldIgnore: false };
+      }
+      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages!];
+      return {
+        chat: applyPatchToChatObject(
+          chat,
+          patch,
+          nextMessages,
+          incomingSequence!,
+          currentMessageSeq ?? null,
+          currentPatchVersion ?? null,
+        ),
+        shouldInvalidate: false,
+        shouldIgnore: false,
+      };
+    }
+
+    // Unrecognized legacy state — invalidate
     return { chat, shouldInvalidate: true, shouldIgnore: false };
   }
 
-  let nextMessages = chat.messages ?? [];
-  if (patch.appendMessages !== undefined) {
+  // --- Dual-seq path ---
+
+  // 1. Message-carrying patch: use messageSeq for ordering
+  if (
+    patch.appendMessages !== undefined &&
+    patch.appendMessages.length > 0 &&
+    incomingMessageSeq !== undefined
+  ) {
+    // Duplicate or stale message
+    if (currentMessageSeq != null && incomingMessageSeq <= currentMessageSeq) {
+      // Still apply metadata if patchVersion is newer
+      if (
+        incomingPatchVersion !== undefined &&
+        (currentPatchVersion == null ||
+          incomingPatchVersion > currentPatchVersion)
+      ) {
+        return {
+          chat: applyPatchToChatObject(
+            chat,
+            patch,
+            chat.messages ?? [],
+            patch.chatSequence ?? chat.chatSequence,
+            currentMessageSeq,
+            incomingPatchVersion,
+          ),
+          shouldInvalidate: false,
+          shouldIgnore: false,
+        };
+      }
+      return { chat, shouldInvalidate: false, shouldIgnore: true };
+    }
+    // Gap detection
+    if (
+      currentMessageSeq != null &&
+      incomingMessageSeq > currentMessageSeq + 1
+    ) {
+      return { chat, shouldInvalidate: true, shouldIgnore: false };
+    }
     if (!isDbMessageArray(patch.appendMessages)) {
       return { chat, shouldInvalidate: true, shouldIgnore: false };
     }
-    if (
-      patch.expectedMessageCount !== undefined &&
-      patch.expectedMessageCount !== nextMessages.length
-    ) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    // Safety net: detect tail-overlap duplicates where the last N cache messages
-    // match the incoming appendMessages (e.g. from WebSocket reconnection replay
-    // or a broadcast arriving after the data was already fetched).
-    if (
-      patch.appendMessages.length > 0 &&
-      nextMessages.length >= patch.appendMessages.length &&
-      tailMatchesAppend(nextMessages, patch.appendMessages)
-    ) {
-      return { chat, shouldInvalidate: true, shouldIgnore: false };
-    }
-    nextMessages = [...nextMessages, ...patch.appendMessages];
+    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        nextMessages,
+        patch.chatSequence ?? chat.chatSequence,
+        incomingMessageSeq,
+        incomingPatchVersion ?? currentPatchVersion ?? null,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
   }
 
+  // 2. Metadata-only patch (status updates): use patchVersion for freshness
+  if (incomingPatchVersion !== undefined) {
+    if (
+      currentPatchVersion != null &&
+      incomingPatchVersion <= currentPatchVersion
+    ) {
+      return { chat, shouldInvalidate: false, shouldIgnore: true };
+    }
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        chat.messages ?? [],
+        patch.chatSequence ?? chat.chatSequence,
+        incomingMessageSeq ?? currentMessageSeq ?? null,
+        incomingPatchVersion,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
+  }
+
+  // 3. Confirmation patch with messageSeq but no patchVersion (edge case)
+  if (incomingMessageSeq !== undefined) {
+    return {
+      chat: applyPatchToChatObject(
+        chat,
+        patch,
+        chat.messages ?? [],
+        patch.chatSequence ?? chat.chatSequence,
+        incomingMessageSeq,
+        currentPatchVersion ?? null,
+      ),
+      shouldInvalidate: false,
+      shouldIgnore: false,
+    };
+  }
+
+  // Fallback
+  return { chat, shouldInvalidate: true, shouldIgnore: false };
+}
+
+function applyPatchToChatObject(
+  chat: ThreadPageChat,
+  patch: BroadcastThreadPatch,
+  nextMessages: DBMessage[],
+  chatSequence: number | null,
+  messageSeq: number | null,
+  patchVersion: number | null,
+): ThreadPageChat {
   const queuedMessages = toDbUserMessages(patch.chat?.queuedMessages);
-  const nextChat: ThreadPageChat = {
+  return {
     ...chat,
     ...(patch.chat?.agent !== undefined ? { agent: patch.chat.agent } : {}),
     ...(patch.chat?.agentVersion !== undefined
@@ -365,13 +484,9 @@ function applyChatFields(
     ...(queuedMessages !== undefined ? { queuedMessages } : {}),
     messages: nextMessages,
     messageCount: nextMessages.length,
-    chatSequence: incomingSequence ?? currentSequence,
-  };
-
-  return {
-    chat: nextChat,
-    shouldInvalidate: false,
-    shouldIgnore: false,
+    chatSequence,
+    messageSeq: messageSeq ?? 0,
+    patchVersion,
   };
 }
 
@@ -409,6 +524,7 @@ function threadShellToListThread(shell: ThreadPageShell): ThreadInfo {
     prChecksStatus: shell.prChecksStatus,
     visibility: shell.visibility,
     isUnread: shell.isUnread,
+    messageSeq: shell.messageSeq,
     threadChats: [
       {
         id: shell.primaryThreadChat.id,
@@ -501,6 +617,7 @@ function threadPatchToListThread(
       shell.prChecksStatus ?? fallbackThread?.prChecksStatus ?? null,
     visibility: shell.visibility ?? fallbackThread?.visibility ?? null,
     isUnread: shell.isUnread ?? fallbackThread?.isUnread ?? false,
+    messageSeq: fallbackThread?.messageSeq ?? 0,
     threadChats,
   };
 }

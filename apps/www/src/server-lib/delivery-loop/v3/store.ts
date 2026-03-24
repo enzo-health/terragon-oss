@@ -8,22 +8,26 @@ import type {
   DeliveryWorkflowHeadV3Row,
   DeliveryTimerLedgerV3Row,
 } from "@terragon/shared/db/types";
-import type { EffectSpecV3, WorkflowHeadV3 } from "./types";
 import {
-  buildEffectLedgerContractV3,
-  serializeEffectPayloadV3,
-  serializeOutboxPayloadV3,
-  serializeTimerPayloadV3,
-  type OutboxWriteContractV3,
-  type SignalJournalWriteContractV3,
-  type TimerLedgerWriteContractV3,
+  AWAITING_PR_CREATION_REASON,
+  type EffectSpec,
+  type WorkflowHead,
+} from "./types";
+import {
+  buildEffectLedgerContract,
+  serializeEffectPayload,
+  serializeOutboxPayload,
+  serializeTimerPayload,
+  type OutboxWriteContract,
+  type SignalJournalWriteContract,
+  type TimerLedgerWriteContract,
 } from "./contracts";
 
 const EFFECT_LEASE_TTL_MS = 2 * 60 * 1000;
 const TIMER_LEASE_TTL_MS = 2 * 60 * 1000;
 const OUTBOX_LEASE_TTL_MS = 2 * 60 * 1000;
 
-function normalizeHeadState(state: string): WorkflowHeadV3["state"] {
+function normalizeHeadState(state: string): WorkflowHead["state"] {
   switch (state) {
     case "planning":
     case "implementing":
@@ -41,7 +45,7 @@ function normalizeHeadState(state: string): WorkflowHeadV3["state"] {
   }
 }
 
-function toWorkflowHeadV3(row: DeliveryWorkflowHeadV3Row): WorkflowHeadV3 {
+function toWorkflowHead(row: DeliveryWorkflowHeadV3Row): WorkflowHead {
   return {
     workflowId: row.workflowId,
     threadId: row.threadId,
@@ -62,7 +66,7 @@ function toWorkflowHeadV3(row: DeliveryWorkflowHeadV3Row): WorkflowHeadV3 {
   };
 }
 
-export function mapLegacyStateToV3(kind: string): WorkflowHeadV3["state"] {
+export function mapLegacyState(kind: string): WorkflowHead["state"] {
   switch (kind) {
     case "planning":
       return "planning";
@@ -96,7 +100,6 @@ const LEGACY_RECONCILABLE_KINDS = [
   "stopped",
   "terminated",
 ] as const;
-const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
 
 export async function reconcileZombieGateHeadsFromLegacy(params: {
   db: DB;
@@ -135,7 +138,7 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
 
   let reconciled = 0;
   for (const candidate of candidates) {
-    const targetState = mapLegacyStateToV3(candidate.legacyKind);
+    const targetState = mapLegacyState(candidate.legacyKind);
     if (targetState === "gating_review" || targetState === "gating_ci") {
       continue;
     }
@@ -165,7 +168,7 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
       .returning({ workflowId: headTable.workflowId });
     if (row) {
       if (needsEnsurePr) {
-        await insertEffectsV3({
+        await insertEffects({
           db: params.db,
           workflowId: candidate.workflowId,
           workflowVersion: targetVersion,
@@ -227,7 +230,7 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
       .returning({ workflowId: headTable.workflowId });
 
     if (row) {
-      await insertEffectsV3({
+      await insertEffects({
         db: params.db,
         workflowId: candidate.workflowId,
         workflowVersion: targetVersion,
@@ -257,21 +260,21 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
   };
 }
 
-export async function getWorkflowHeadV3(params: {
+export async function getWorkflowHead(params: {
   db: Pick<DB, "query">;
   workflowId: string;
-}): Promise<WorkflowHeadV3 | null> {
+}): Promise<WorkflowHead | null> {
   const row = await params.db.query.deliveryWorkflowHeadV3.findFirst({
     where: eq(schema.deliveryWorkflowHeadV3.workflowId, params.workflowId),
   });
-  return row ? toWorkflowHeadV3(row) : null;
+  return row ? toWorkflowHead(row) : null;
 }
 
-export async function ensureWorkflowHeadV3(params: {
+export async function ensureWorkflowHead(params: {
   db: Pick<DB, "query" | "insert">;
   workflowId: string;
-}): Promise<WorkflowHeadV3 | null> {
-  const existing = await getWorkflowHeadV3({
+}): Promise<WorkflowHead | null> {
+  const existing = await getWorkflowHead({
     db: params.db,
     workflowId: params.workflowId,
   });
@@ -289,7 +292,7 @@ export async function ensureWorkflowHeadV3(params: {
       threadId: legacy.threadId,
       generation: legacy.generation,
       version: legacy.version,
-      state: mapLegacyStateToV3(legacy.kind),
+      state: mapLegacyState(legacy.kind),
       activeGate: legacy.kind === "gating" ? "review" : null,
       headSha: legacy.headSha ?? null,
       fixAttemptCount: legacy.fixAttemptCount ?? 0,
@@ -303,18 +306,18 @@ export async function ensureWorkflowHeadV3(params: {
     .returning();
 
   if (inserted) {
-    return toWorkflowHeadV3(inserted);
+    return toWorkflowHead(inserted);
   }
-  return getWorkflowHeadV3({ db: params.db, workflowId: params.workflowId });
+  return getWorkflowHead({ db: params.db, workflowId: params.workflowId });
 }
 
-export async function appendJournalEventV3(params: {
+export async function appendJournalEvent(params: {
   db: Pick<DB, "insert">;
   workflowId: string;
   source: DeliverySignalSourceV3;
-  eventType: SignalJournalWriteContractV3["eventType"];
+  eventType: SignalJournalWriteContract["eventType"];
   idempotencyKey: string;
-  payloadJson: SignalJournalWriteContractV3["payload"];
+  payloadJson: SignalJournalWriteContract["payload"];
   occurredAt?: Date;
 }): Promise<{ inserted: boolean; id: string | null }> {
   const [row] = await params.db
@@ -332,9 +335,9 @@ export async function appendJournalEventV3(params: {
   return { inserted: Boolean(row), id: row?.id ?? null };
 }
 
-export async function updateWorkflowHeadV3(params: {
+export async function updateWorkflowHead(params: {
   db: Pick<DB, "update">;
-  head: WorkflowHeadV3;
+  head: WorkflowHead;
   expectedVersion: number;
 }): Promise<boolean> {
   const [row] = await params.db
@@ -361,15 +364,15 @@ export async function updateWorkflowHeadV3(params: {
   return Boolean(row);
 }
 
-export async function insertEffectsV3(params: {
+export async function insertEffects(params: {
   db: Pick<DB, "insert">;
   workflowId: string;
   workflowVersion: number;
-  effects: EffectSpecV3[];
+  effects: EffectSpec[];
 }): Promise<number> {
   if (params.effects.length === 0) return 0;
   const contracts = params.effects.map((effect) =>
-    buildEffectLedgerContractV3({
+    buildEffectLedgerContract({
       workflowId: params.workflowId,
       workflowVersion: params.workflowVersion,
       effect,
@@ -385,7 +388,7 @@ export async function insertEffectsV3(params: {
         effectKind: effect.effectKind,
         effectKey: effect.effectKey,
         idempotencyKey: effect.idempotencyKey,
-        payloadJson: serializeEffectPayloadV3(effect.payload),
+        payloadJson: serializeEffectPayload(effect.payload),
         dueAt: effect.dueAt,
         maxAttempts: effect.maxAttempts,
       })),
@@ -395,7 +398,7 @@ export async function insertEffectsV3(params: {
   return rows.length;
 }
 
-export async function claimNextEffectV3(params: {
+export async function claimNextEffect(params: {
   db: DB;
   leaseOwner: string;
   workflowId?: string;
@@ -449,7 +452,7 @@ export async function claimNextEffectV3(params: {
   return claimed ?? null;
 }
 
-export async function markEffectSucceededV3(params: {
+export async function markEffectSucceeded(params: {
   db: Pick<DB, "update">;
   effectId: string;
   leaseOwner: string;
@@ -477,7 +480,7 @@ export async function markEffectSucceededV3(params: {
   return Boolean(row);
 }
 
-export async function markEffectFailedV3(params: {
+export async function markEffectFailed(params: {
   db: Pick<DB, "update">;
   effectId: string;
   leaseOwner: string;
@@ -506,7 +509,7 @@ export async function markEffectFailedV3(params: {
     );
 }
 
-export async function cancelEffectByKeyV3(params: {
+export async function cancelEffectByKey(params: {
   db: Pick<DB, "update">;
   effectKey: string;
 }): Promise<void> {
@@ -529,9 +532,9 @@ export async function cancelEffectByKeyV3(params: {
     );
 }
 
-export async function scheduleTimerV3(params: {
+export async function scheduleTimer(params: {
   db: Pick<DB, "insert">;
-  timer: TimerLedgerWriteContractV3;
+  timer: TimerLedgerWriteContract;
 }): Promise<{ inserted: boolean; id: string | null }> {
   const [row] = await params.db
     .insert(schema.deliveryTimerLedgerV3)
@@ -542,7 +545,7 @@ export async function scheduleTimerV3(params: {
       idempotencyKey: params.timer.idempotencyKey,
       sourceSignalId: params.timer.sourceSignalId,
       status: "planned",
-      payloadJson: serializeTimerPayloadV3(params.timer.payload),
+      payloadJson: serializeTimerPayload(params.timer.payload),
       dueAt: params.timer.dueAt,
       maxAttempts: params.timer.maxAttempts,
     })
@@ -551,7 +554,7 @@ export async function scheduleTimerV3(params: {
   return { inserted: Boolean(row), id: row?.id ?? null };
 }
 
-export async function claimNextTimerV3(params: {
+export async function claimNextTimer(params: {
   db: DB;
   leaseOwner: string;
   now?: Date;
@@ -601,7 +604,7 @@ export async function claimNextTimerV3(params: {
   return claimed ?? null;
 }
 
-export async function markTimerFiredV3(params: {
+export async function markTimerFired(params: {
   db: Pick<DB, "update">;
   timerId: string;
   leaseOwner: string;
@@ -629,7 +632,7 @@ export async function markTimerFiredV3(params: {
   return Boolean(row);
 }
 
-export async function markTimerFailedV3(params: {
+export async function markTimerFailed(params: {
   db: Pick<DB, "update">;
   timerId: string;
   leaseOwner: string;
@@ -658,7 +661,7 @@ export async function markTimerFailedV3(params: {
     );
 }
 
-export async function cancelTimerByKeyV3(params: {
+export async function cancelTimerByKey(params: {
   db: Pick<DB, "update">;
   workflowId: string;
   timerKey: string;
@@ -682,9 +685,9 @@ export async function cancelTimerByKeyV3(params: {
     );
 }
 
-export async function enqueueOutboxRecordV3(params: {
+export async function enqueueOutboxRecord(params: {
   db: Pick<DB, "insert">;
-  outbox: OutboxWriteContractV3;
+  outbox: OutboxWriteContract;
 }): Promise<{ inserted: boolean; id: string | null }> {
   const [row] = await params.db
     .insert(schema.deliveryOutboxV3)
@@ -693,7 +696,7 @@ export async function enqueueOutboxRecordV3(params: {
       topic: params.outbox.topic,
       dedupeKey: params.outbox.dedupeKey,
       idempotencyKey: params.outbox.idempotencyKey,
-      payloadJson: serializeOutboxPayloadV3(params.outbox.payload),
+      payloadJson: serializeOutboxPayload(params.outbox.payload),
       status: "pending",
       availableAt: params.outbox.availableAt,
       maxAttempts: params.outbox.maxAttempts,
@@ -703,7 +706,7 @@ export async function enqueueOutboxRecordV3(params: {
   return { inserted: Boolean(row), id: row?.id ?? null };
 }
 
-export async function claimNextOutboxRecordV3(params: {
+export async function claimNextOutboxRecord(params: {
   db: DB;
   leaseOwner: string;
   workflowId?: string;
@@ -761,7 +764,7 @@ export async function claimNextOutboxRecordV3(params: {
   return claimed ?? null;
 }
 
-export async function markOutboxPublishedV3(params: {
+export async function markOutboxPublished(params: {
   db: Pick<DB, "update">;
   outboxId: string;
   leaseOwner: string;
@@ -791,7 +794,7 @@ export async function markOutboxPublishedV3(params: {
   return Boolean(row);
 }
 
-export async function markOutboxFailedV3(params: {
+export async function markOutboxFailed(params: {
   db: Pick<DB, "update">;
   outboxId: string;
   leaseOwner: string;

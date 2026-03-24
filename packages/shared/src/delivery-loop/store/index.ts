@@ -4,18 +4,7 @@ export {
   getActiveWorkflowForThread,
   listActiveWorkflowIds,
   createWorkflow,
-  updateWorkflowState,
 } from "./workflow-store";
-
-// work-queue-store.ts
-export {
-  enqueueWorkItem,
-  WORK_ITEM_CLAIM_TTL_MS,
-  claimNextWorkItem,
-  completeWorkItem,
-  failWorkItem,
-  supersedePendingWorkItems,
-} from "./work-queue-store";
 
 // artifact-store.ts
 export {

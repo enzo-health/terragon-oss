@@ -12,9 +12,9 @@ import {
   createWorkflow,
   getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { appendEventAndAdvanceV3 } from "./kernel";
+import { appendEventAndAdvance } from "./kernel";
 
-export async function enrollV3Workflow(params: {
+export async function enrollWorkflow(params: {
   db: DB;
   threadId: string;
   userId: string;
@@ -57,7 +57,7 @@ export async function enrollV3Workflow(params: {
 
     // 4. Create v3 head row + insert bootstrap journal event.
     //    The kernel reducer handles bootstrap: planning -> implementing + dispatch effect.
-    await appendEventAndAdvanceV3({
+    await appendEventAndAdvance({
       db: params.db,
       workflowId: workflow.id,
       source: "system",

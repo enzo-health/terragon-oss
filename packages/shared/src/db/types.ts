@@ -87,7 +87,8 @@ export type DeliveryEffectKindV3 =
   | "ack_timeout_check"
   | "ensure_pr"
   | "create_plan_artifact"
-  | "publish_status";
+  | "publish_status"
+  | "gate_staleness_check";
 
 export type DeliveryEffectStatusV3 =
   | "planned"
@@ -114,25 +115,14 @@ export type DeliveryOutboxStatusV3 =
   | "cancelled"
   | "dead_letter";
 
-// Delivery Loop v2 tables
+// Delivery Loop tables
 export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
 export type DeliveryWorkflowInsert =
   typeof schema.deliveryWorkflow.$inferInsert;
-export type DeliveryWorkflowEventRow =
-  typeof schema.deliveryWorkflowEvent.$inferSelect;
-export type DeliveryWorkflowEventInsert =
-  typeof schema.deliveryWorkflowEvent.$inferInsert;
-export type DeliveryWorkItemRow = typeof schema.deliveryWorkItem.$inferSelect;
-export type DeliveryWorkItemInsert =
-  typeof schema.deliveryWorkItem.$inferInsert;
 export type DeliveryLoopIncidentRow =
   typeof schema.deliveryLoopIncident.$inferSelect;
 export type DeliveryLoopIncidentInsert =
   typeof schema.deliveryLoopIncident.$inferInsert;
-export type DeliveryLoopRuntimeStatusRow =
-  typeof schema.deliveryLoopRuntimeStatus.$inferSelect;
-export type DeliveryLoopRuntimeStatusInsert =
-  typeof schema.deliveryLoopRuntimeStatus.$inferInsert;
 export type DeliveryWorkflowRetrospectiveRow =
   typeof schema.deliveryWorkflowRetrospective.$inferSelect;
 export type DeliveryWorkflowRetrospectiveInsert =
@@ -430,6 +420,7 @@ export type ThreadPageChatSummary = Pick<
   | "permissionMode"
   | "isUnread"
   | "updatedAt"
+  | "messageSeq"
 >;
 
 export type ThreadPageShell = Omit<
@@ -444,6 +435,7 @@ export type ThreadPageShell = Omit<
 export type ThreadPageChat = ThreadChatInfoFull & {
   messageCount: number;
   chatSequence: number | null;
+  patchVersion: number | null;
 };
 
 export type ThreadPageDiff = Pick<

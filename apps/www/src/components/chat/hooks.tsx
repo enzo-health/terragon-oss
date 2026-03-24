@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useReadThreadMutation } from "@/queries/thread-mutations";
 import { getThreadDocumentTitle } from "@/agent/thread-utils";
 import { useDocumentVisibility } from "@/hooks/useDocumentVisibility";
@@ -8,6 +8,10 @@ import { usePlatform } from "@/hooks/use-platform";
 import { threadQueryKeys } from "@/queries/thread-queries";
 import { ThreadPageChat } from "@terragon/shared/db/types";
 import { useQueryClient } from "@tanstack/react-query";
+import type { DBMessage } from "@terragon/shared";
+import type { PromptBoxRef } from "./thread-context";
+import { approvePlan } from "@/server-actions/approve-plan";
+import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 export function useMarkChatAsRead({
   threadId,
@@ -142,4 +146,78 @@ export function useOptimisticUpdateThreadChat({
     },
     [queryClient, threadId, threadChatId],
   );
+}
+
+export function computeShouldShowApprove({
+  canApprove,
+  toolPartId,
+  messages,
+}: {
+  canApprove: boolean;
+  toolPartId?: string;
+  messages: DBMessage[];
+}): boolean {
+  if (!canApprove || !toolPartId) return false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.type === "user") break;
+    if (msg?.type === "tool-call" && msg.name === "ExitPlanMode") {
+      return msg.id === toolPartId;
+    }
+  }
+  return false;
+}
+
+export function usePlanApproval({
+  threadId,
+  threadChatId,
+  isReadOnly,
+  promptBoxRef,
+  toolPartId,
+  messages,
+}: {
+  threadId: string | undefined;
+  threadChatId: string | undefined;
+  isReadOnly: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  toolPartId?: string;
+  messages: DBMessage[];
+}) {
+  const { mutateAsync, isPending } = useServerActionMutation({
+    mutationFn: approvePlan,
+  });
+  const updateThreadChat = useOptimisticUpdateThreadChat({
+    threadId,
+    threadChatId,
+  });
+
+  const canApprove = !isReadOnly && !!threadId && !!threadChatId;
+
+  const shouldShowApprove = useMemo(
+    () => computeShouldShowApprove({ canApprove, toolPartId, messages }),
+    [canApprove, toolPartId, messages],
+  );
+
+  const handleApprove = useCallback(async () => {
+    if (!canApprove) return;
+    // Optimistic: update UI immediately for responsiveness
+    promptBoxRef?.current?.setPermissionMode("allowAll");
+    updateThreadChat({ permissionMode: "allowAll" });
+    try {
+      await mutateAsync({ threadId, threadChatId });
+    } catch {
+      // Rollback optimistic updates on failure
+      promptBoxRef?.current?.setPermissionMode("plan");
+      updateThreadChat({ permissionMode: "plan" });
+    }
+  }, [
+    canApprove,
+    threadId,
+    threadChatId,
+    promptBoxRef,
+    mutateAsync,
+    updateThreadChat,
+  ]);
+
+  return { handleApprove, isPending, shouldShowApprove };
 }

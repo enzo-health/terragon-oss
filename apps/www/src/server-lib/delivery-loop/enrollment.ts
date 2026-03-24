@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
 import { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
-import { enrollV3Workflow } from "./v3/enrollment";
+import { enrollWorkflow } from "./v3/enrollment";
 import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 export function isDeliveryLoopEnrollmentAllowedForThread({
@@ -43,7 +43,7 @@ export async function ensureDeliveryLoopEnrollmentForThreadIfEnabled({
   threadId: string;
   planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
-  await enrollV3Workflow({
+  await enrollWorkflow({
     db,
     threadId,
     userId,
@@ -67,7 +67,7 @@ export async function ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
   threadId: string;
   planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }) {
-  const result = await enrollV3Workflow({
+  const result = await enrollWorkflow({
     db,
     threadId,
     userId,

@@ -2,6 +2,7 @@ import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { getPendingToolCallErrorMessages } from "@/lib/db-message-helpers";
 import { db } from "@/lib/db";
 import { ClaudeMessage } from "@terragon/daemon/shared";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import {
   DBMessage,
   DBSystemMessage,
@@ -58,11 +59,14 @@ import {
 } from "@/server-lib/delivery-loop/retry-policy";
 import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
 
-/** V2 workflow states eligible for auto-retry on generic agent error. */
+/** Workflow states eligible for auto-retry on generic agent error (v2 + v3). */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<string> = new Set([
   "implementing",
   "gating",
   "babysitting",
+  // v3 state names
+  "gating_review",
+  "gating_ci",
 ]);
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
@@ -652,7 +656,20 @@ export async function handleDaemonEvent({
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
       const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-      const sdlcPhase = v2Workflow?.kind ?? null;
+      let sdlcPhase: string | null = null;
+      if (v2Workflow) {
+        const { getWorkflowHead } = await import(
+          "@/server-lib/delivery-loop/v3/store"
+        );
+        const v3Head = await getWorkflowHead({
+          db,
+          workflowId: v2Workflow.id,
+        });
+        if (!v3Head) {
+          throw new Error(`No v3 head for workflow ${v2Workflow.id}`);
+        }
+        sdlcPhase = v3Head.state;
+      }
 
       const failureCategory = classifyDaemonEventError(customErrorMessage);
 
@@ -784,26 +801,83 @@ export async function handleDaemonEvent({
     );
   }
 
-  const { didUpdateStatus } = await updateThreadChatWithTransition({
-    userId,
-    threadId,
-    threadChatId: threadChat.id,
-    markAsUnread: isDone || isError,
-    updates: { bootingSubstatus: null },
-    chatUpdates: threadChatUpdates,
-    eventType: isStop
-      ? "assistant.message_stop"
-      : isRateLimited && rateLimitResetTime
-        ? "system.agent-rate-limit"
-        : isError
-          ? "assistant.message_error"
-          : isDone && shouldSkipCheckpoint
-            ? "assistant.message_done_skip_checkpoint"
-            : isDone
-              ? "assistant.message_done"
-              : "assistant.message",
-    rateLimitResetTime,
-  });
+  // Pre-broadcast: send messages to clients immediately before DB write.
+  // The confirmation broadcast (with chatSequence) fires after DB write.
+  const hasPreviewMessages =
+    threadChatUpdates.appendMessages &&
+    threadChatUpdates.appendMessages.length > 0;
+  if (hasPreviewMessages) {
+    publishBroadcastUserMessage({
+      type: "user",
+      id: userId,
+      data: {
+        threadPatches: [
+          {
+            threadId,
+            threadChatId: threadChat.id,
+            op: "upsert",
+            appendMessages: threadChatUpdates.appendMessages ?? undefined,
+          },
+        ],
+      },
+    }).catch((error) => {
+      console.warn("[handle-daemon-event] pre-broadcast failed", {
+        threadId,
+        error,
+      });
+    });
+  }
+
+  let didUpdateStatus: boolean;
+  try {
+    const result = await updateThreadChatWithTransition({
+      userId,
+      threadId,
+      threadChatId: threadChat.id,
+      markAsUnread: isDone || isError,
+      updates: { bootingSubstatus: null },
+      chatUpdates: threadChatUpdates,
+      eventType: isStop
+        ? "assistant.message_stop"
+        : isRateLimited && rateLimitResetTime
+          ? "system.agent-rate-limit"
+          : isError
+            ? "assistant.message_error"
+            : isDone && shouldSkipCheckpoint
+              ? "assistant.message_done_skip_checkpoint"
+              : isDone
+                ? "assistant.message_done"
+                : "assistant.message",
+      rateLimitResetTime,
+      skipAppendMessagesInBroadcast: !!hasPreviewMessages,
+    });
+    didUpdateStatus = result.didUpdateStatus;
+  } catch (dbError) {
+    // DB write failed after pre-broadcast — tell client to refetch
+    // so it doesn't keep stale optimistic messages.
+    if (hasPreviewMessages) {
+      publishBroadcastUserMessage({
+        type: "user",
+        id: userId,
+        data: {
+          threadPatches: [
+            {
+              threadId,
+              threadChatId: threadChat.id,
+              op: "refetch",
+              refetch: ["chat"],
+            },
+          ],
+        },
+      }).catch((broadcastError) => {
+        console.warn("[handle-daemon-event] error-refetch broadcast failed", {
+          threadId,
+          broadcastError,
+        });
+      });
+    }
+    throw dbError;
+  }
   if (isThreadFinished && didUpdateStatus) {
     // TODO this should block queueing up new threads.
     waitUntil(

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { reduceV3 } from "./reducer";
-import type { WorkflowHeadV3 } from "./types";
+import { reduce } from "./reducer";
+import type { WorkflowHead } from "./types";
 
-function head(state: WorkflowHeadV3["state"]): WorkflowHeadV3 {
+function head(state: WorkflowHead["state"]): WorkflowHead {
   const now = new Date("2026-03-18T00:00:00.000Z");
   return {
     workflowId: "wf-1",
@@ -24,17 +24,17 @@ function head(state: WorkflowHeadV3["state"]): WorkflowHeadV3 {
   };
 }
 
-describe("reduceV3", () => {
-  it("planning bootstrap schedules implementation dispatch and plan artifact", () => {
+describe("reduce", () => {
+  it("planning bootstrap schedules implementation dispatch without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: { type: "bootstrap" },
       now,
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.effects).toHaveLength(3);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
       payload: {
@@ -43,30 +43,25 @@ describe("reduceV3", () => {
       },
     });
     expect(result.effects[1]).toMatchObject({
-      kind: "create_plan_artifact",
-      payload: { kind: "create_plan_artifact" },
-    });
-    expect(result.effects[2]).toMatchObject({
       kind: "publish_status",
       payload: { kind: "publish_status" },
     });
   });
 
-  it("plan_completed emits create_plan_artifact effect", () => {
+  it("plan_completed transitions to implementing without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: { type: "plan_completed" },
       now,
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.effects).toHaveLength(3);
+    expect(result.effects).toHaveLength(2);
     expect(
-      result.effects.find((e) => e.kind === "create_plan_artifact"),
+      result.effects.find((e) => e.kind === "dispatch_implementing"),
     ).toMatchObject({
-      kind: "create_plan_artifact",
-      payload: { kind: "create_plan_artifact" },
+      kind: "dispatch_implementing",
     });
     expect(
       result.effects.find((e) => e.kind === "publish_status"),
@@ -75,10 +70,42 @@ describe("reduceV3", () => {
     });
   });
 
+  it("planning_run_completed stays in planning and emits create_plan_artifact", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: head("planning"),
+      event: { type: "planning_run_completed" },
+      now,
+    });
+
+    expect(result.head.state).toBe("planning");
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]).toMatchObject({
+      kind: "create_plan_artifact",
+      payload: { kind: "create_plan_artifact" },
+    });
+    expect(result.effects[1]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
+  });
+
+  it("planning_run_completed is idempotent (no-op from non-planning state)", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: head("implementing"),
+      event: { type: "planning_run_completed" },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.effects).toHaveLength(0);
+  });
+
   it("planning dispatch_sent implicitly enters implementing and arms ack timeout", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("planning"),
       event: {
         type: "dispatch_sent",
@@ -104,7 +131,7 @@ describe("reduceV3", () => {
   it("gating_review dispatch_sent arms ack timeout check", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -131,7 +158,7 @@ describe("reduceV3", () => {
 
   it("review failure transitions back to implementing and increments fix attempts", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -153,7 +180,7 @@ describe("reduceV3", () => {
 
   it("review dispatch ack timeout uses infra retry lane", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -173,7 +200,7 @@ describe("reduceV3", () => {
 
   it("implementing run_completed without head SHA retries implementation", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: head("implementing"),
       event: {
         type: "run_completed",
@@ -197,7 +224,7 @@ describe("reduceV3", () => {
 
   it("implementing run_completed without activeRunId still resolves to gate_review", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("implementing"),
         activeRunId: null,
@@ -220,7 +247,7 @@ describe("reduceV3", () => {
 
   it("implementing run_failed without activeRunId still retries", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("implementing"),
         activeRunId: null,
@@ -247,7 +274,7 @@ describe("reduceV3", () => {
 
   it("infra run_failed from planning/implementing falls back to secondary runtime", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -271,9 +298,9 @@ describe("reduceV3", () => {
     });
   });
 
-  it("ignores stale implementing run_failed for previous run", () => {
+  it("implementing run_failed with mismatched runId still triggers retry", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("implementing"),
         activeRunId: "run-current",
@@ -288,17 +315,16 @@ describe("reduceV3", () => {
       now,
     });
 
-    expect(result.head).toMatchObject({
-      state: "implementing",
-      activeRunId: "run-current",
-      fixAttemptCount: 2,
-    });
-    expect(result.effects).toHaveLength(0);
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.fixAttemptCount).toBe(3);
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
   it("ignores stale review gate verdict for non-current run", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -319,7 +345,7 @@ describe("reduceV3", () => {
 
   it("ignores review gate verdicts without runId while a run is active", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -338,7 +364,7 @@ describe("reduceV3", () => {
 
   it("gate_review_passed clears active run before entering CI gate", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -359,7 +385,7 @@ describe("reduceV3", () => {
 
   it("gate_review_passed without linked PR transitions to awaiting_pr", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "review",
@@ -390,7 +416,7 @@ describe("reduceV3", () => {
 
   it("awaiting_pr with PR-creation marker re-enters CI gate on pr_linked", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_pr"),
         blockedReason: "Awaiting PR creation",
@@ -405,16 +431,48 @@ describe("reduceV3", () => {
     expect(result.head.state).toBe("gating_ci");
     expect(result.head.activeGate).toBe("ci");
     expect(result.head.blockedReason).toBeNull();
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
+      kind: "gate_staleness_check",
+      payload: { kind: "gate_staleness_check" },
+    });
+    expect(result.effects[1]).toMatchObject({
       kind: "publish_status",
       payload: { kind: "publish_status" },
     });
   });
 
+  it("gating_ci entry emits gate_staleness_check with 5-minute dueAt", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("awaiting_pr"),
+        blockedReason: "Awaiting PR creation",
+      },
+      event: {
+        type: "pr_linked",
+        prNumber: 99,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_ci");
+    const stalenessEffect = result.effects.find(
+      (e) => e.kind === "gate_staleness_check",
+    );
+    expect(stalenessEffect).toBeDefined();
+    expect(stalenessEffect!.dueAt).toEqual(
+      new Date("2026-03-18T01:05:00.000Z"),
+    );
+    expect(stalenessEffect).toMatchObject({
+      kind: "gate_staleness_check",
+      payload: { kind: "gate_staleness_check" },
+    });
+  });
+
   it("awaiting_pr without PR-creation marker ignores pr_linked", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_pr"),
         blockedReason: null,
@@ -432,7 +490,7 @@ describe("reduceV3", () => {
 
   it("awaiting_pr retries implementing when PR linkage fails", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_pr"),
         blockedReason: "Awaiting PR creation",
@@ -462,7 +520,7 @@ describe("reduceV3", () => {
 
   it("dispatch coherence clears stale activeRunId in non-dispatch state", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("awaiting_manual_fix"),
         activeRunId: "run-stale",
@@ -488,7 +546,7 @@ describe("reduceV3", () => {
 
   it("branch coherence normalizes unexpected gate in gating_review", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_review"),
         activeGate: "ci",
@@ -512,7 +570,7 @@ describe("reduceV3", () => {
 
   it("ignores stale CI verdicts with mismatched headSha", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "ci",
@@ -532,7 +590,7 @@ describe("reduceV3", () => {
 
   it("ignores uncorrelated CI verdicts when headSha is missing", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "ci",
@@ -551,7 +609,7 @@ describe("reduceV3", () => {
 
   it("accepts correlated CI pass and transitions to awaiting_pr", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "ci",
@@ -571,7 +629,7 @@ describe("reduceV3", () => {
 
   it("normalizes terminal states through invariants", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("done"),
         activeGate: "ci",
@@ -593,7 +651,7 @@ describe("reduceV3", () => {
 
   it("normalizes stop_requested terminal transition", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduceV3({
+    const result = reduce({
       head: {
         ...head("gating_ci"),
         activeGate: "review",
@@ -609,5 +667,60 @@ describe("reduceV3", () => {
     expect(result.head.state).toBe("stopped");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
+  });
+
+  describe("implementing state accepts mismatched runIds", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+
+    it("run_completed with different runId transitions to gating_review", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "r-different",
+          headSha: "abc123",
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("gating_review");
+    });
+
+    it("dispatch_acked with different runId is dropped (out-of-order guard)", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: { type: "dispatch_acked", runId: "r-2" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.activeRunId).toBe("r-1");
+    });
+
+    it("run_failed with different runId triggers retry", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_failed",
+          runId: "r-different",
+          message: "crash",
+          category: null,
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+    });
+
+    it("dispatch_ack_timeout with different runId is ignored (stale)", () => {
+      const h = { ...head("implementing"), activeRunId: "r-1" };
+      const result = reduce({
+        head: h,
+        event: { type: "dispatch_ack_timeout", runId: "r-old" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.version).toBe(h.version);
+    });
   });
 });

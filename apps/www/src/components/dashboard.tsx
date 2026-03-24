@@ -84,6 +84,7 @@ export function Dashboard({
         prChecksStatus: null,
         visibility: null,
         isUnread: false,
+        messageSeq: 0,
         threadChats: [
           {
             id: "optimistic-chat",

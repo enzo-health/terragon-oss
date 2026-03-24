@@ -458,12 +458,21 @@ export async function checkpointThreadAndPush({
       "@terragon/shared/delivery-loop/store/workflow-store"
     );
     const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-    if (
-      v2Workflow &&
-      v2Workflow.kind !== "planning" &&
-      v2Workflow.kind !== "implementing"
-    ) {
-      return;
+    if (v2Workflow) {
+      const { getWorkflowHead } = await import(
+        "@/server-lib/delivery-loop/v3/store"
+      );
+      const v3Head = await getWorkflowHead({
+        db,
+        workflowId: v2Workflow.id,
+      });
+      if (!v3Head) {
+        throw new Error(`No v3 head for workflow ${v2Workflow.id}`);
+      }
+      const currentState = v3Head.state;
+      if (currentState !== "planning" && currentState !== "implementing") {
+        return;
+      }
     }
 
     // Non-delivery-loop fallback path:

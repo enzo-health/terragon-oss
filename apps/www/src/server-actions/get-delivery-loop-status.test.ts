@@ -19,6 +19,7 @@ import {
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -149,6 +150,7 @@ describe("getDeliveryLoopStatusAction", () => {
       repoFullName: "owner/repo",
       currentHeadSha: "sha-status-1",
     });
+    await ensureWorkflowHead({ db, workflowId: workflow.id });
 
     const planArtifact = await createPlanArtifact({
       db,
@@ -255,7 +257,7 @@ describe("getDeliveryLoopStatusAction", () => {
     });
     await mockLoggedInUser(session);
 
-    await createWorkflow({
+    const loopBlocked = await createWorkflow({
       db,
       threadId,
       generation: 1,
@@ -265,6 +267,7 @@ describe("getDeliveryLoopStatusAction", () => {
       repoFullName: "owner/repo",
       currentHeadSha: "sha-blocked-1",
     });
+    await ensureWorkflowHead({ db, workflowId: loopBlocked.id });
 
     const status = await getDeliveryLoopStatus(threadId);
 
@@ -321,6 +324,7 @@ describe("getDeliveryLoopStatusAction", () => {
       userId: user.id,
       repoFullName: "owner/repo",
     });
+    await ensureWorkflowHead({ db, workflowId: workflow.id });
     const planArtifact = await createPlanArtifact({
       db,
       loopId: workflow.id,

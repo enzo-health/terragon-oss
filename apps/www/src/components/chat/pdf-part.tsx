@@ -1,12 +1,18 @@
-import { FileText, Download } from "lucide-react";
+import React from "react";
+import { FileText, Download, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface PdfPartProps {
   pdfUrl: string;
   filename?: string;
+  onOpenInArtifactWorkspace?: () => void;
 }
 
-export function PdfPart({ pdfUrl, filename }: PdfPartProps) {
+export function PdfPart({
+  pdfUrl,
+  filename,
+  onOpenInArtifactWorkspace,
+}: PdfPartProps) {
   const displayName = filename || "document.pdf";
 
   const handleDownload = () => {
@@ -27,7 +33,21 @@ export function PdfPart({ pdfUrl, filename }: PdfPartProps) {
       >
         {displayName}
       </span>
+      {onOpenInArtifactWorkspace && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-6 flex-shrink-0"
+          onClick={onOpenInArtifactWorkspace}
+          title="Open in artifact panel"
+          aria-label="Open PDF in artifact panel"
+        >
+          <ExternalLink className="size-3" />
+        </Button>
+      )}
       <Button
+        type="button"
         variant="ghost"
         size="icon"
         className="size-6 flex-shrink-0"

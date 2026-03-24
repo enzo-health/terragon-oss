@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   CodexAppServerManager,
   extractThreadEvent,
+  SILENTLY_IGNORED_ITEM_TYPES,
   type CodexAppServerProcess,
   type CodexAppServerSpawn,
   type CodexAppServerSpawnOptions,
@@ -257,6 +258,44 @@ describe("extractThreadEvent", () => {
   test("returns null for non-thread notifications", () => {
     const event = extractThreadEvent(
       parseJsonObject('{"method":"account/rateLimits/updated","params":{}}'),
+    );
+    expect(event).toBeNull();
+  });
+
+  test("returns null for userMessage items (silently ignored)", () => {
+    const event = extractThreadEvent(
+      parseJsonObject(
+        '{"method":"item/completed","params":{"threadId":"t-1","item":{"id":"msg-u1","type":"userMessage","text":"user input"}}}',
+      ),
+    );
+    expect(event).toBeNull();
+  });
+
+  test("SILENTLY_IGNORED_ITEM_TYPES includes userMessage", () => {
+    expect(SILENTLY_IGNORED_ITEM_TYPES.has("userMessage")).toBe(true);
+  });
+
+  test("converts item/agentMessage/delta into item.updated event", () => {
+    const event = extractThreadEvent(
+      parseJsonObject(
+        '{"method":"item/agentMessage/delta","params":{"threadId":"t-1","itemId":"msg-d1","delta":"hello "}}',
+      ),
+    );
+    expect(event).toEqual({
+      type: "item.updated",
+      item: {
+        id: "msg-d1",
+        type: "agent_message",
+        text: "hello ",
+      },
+    });
+  });
+
+  test("returns null for item/agentMessage/delta without itemId", () => {
+    const event = extractThreadEvent(
+      parseJsonObject(
+        '{"method":"item/agentMessage/delta","params":{"threadId":"t-1","delta":"text"}}',
+      ),
     );
     expect(event).toBeNull();
   });

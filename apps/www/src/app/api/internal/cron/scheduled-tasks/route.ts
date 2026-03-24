@@ -54,10 +54,10 @@ export async function runScheduledTasksCron(): Promise<Response> {
     let v3ReconcileError: string | null = null;
     // V3 effect-ledger processing (Postgres-canonical runtime kernel).
     try {
-      const { drainDueV3Effects } = await import(
+      const { drainDueEffects } = await import(
         "@/server-lib/delivery-loop/v3/process-effects"
       );
-      const v3Result = await drainDueV3Effects({
+      const v3Result = await drainDueEffects({
         db,
         maxItems: 30,
         leaseOwnerPrefix: "cron:v3",
@@ -71,10 +71,10 @@ export async function runScheduledTasksCron(): Promise<Response> {
 
     // V3 outbox relay publishes durable events into Redis for workers.
     try {
-      const { drainOutboxV3Relay } = await import(
+      const { drainOutboxRelay } = await import(
         "@/server-lib/delivery-loop/v3/relay"
       );
-      const v3RelayResult = await drainOutboxV3Relay({
+      const v3RelayResult = await drainOutboxRelay({
         db,
         maxItems: 30,
         leaseOwnerPrefix: "cron:v3-relay",
@@ -89,10 +89,10 @@ export async function runScheduledTasksCron(): Promise<Response> {
     }
 
     try {
-      const { drainOutboxV3Worker } = await import(
+      const { drainOutboxWorker } = await import(
         "@/server-lib/delivery-loop/v3/worker"
       );
-      const v3WorkerResult = await drainOutboxV3Worker({
+      const v3WorkerResult = await drainOutboxWorker({
         db,
         maxItems: 30,
         leaseOwnerPrefix: "cron:v3-worker",

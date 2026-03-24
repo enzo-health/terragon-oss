@@ -1,5 +1,6 @@
 import { memo, useState, useMemo } from "react";
 import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { ThreadInfoFull } from "@terragon/shared";
 import {
   ChevronDown,
@@ -15,15 +16,20 @@ import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { findArtifactDescriptorForPart } from "./secondary-panel";
 
 interface GitDiffPartProps {
   gitDiffPart: UIGitDiffPart;
+  artifactDescriptors?: ArtifactDescriptor[];
+  onOpenArtifact?: (artifactId: string) => void;
   thread?: ThreadInfoFull | null;
   isLatest?: boolean;
 }
 
 export const GitDiffPart = memo(function GitDiffPart({
   gitDiffPart,
+  artifactDescriptors = [],
+  onOpenArtifact,
   thread = null,
   isLatest = false,
 }: GitDiffPartProps) {
@@ -33,6 +39,14 @@ export const GitDiffPart = memo(function GitDiffPart({
   const diffStats = useMemo(
     () => gitDiffPart.diffStats || parseGitDiffStats(gitDiffPart.diff),
     [gitDiffPart.diff, gitDiffPart.diffStats],
+  );
+  const artifactDescriptor = useMemo(
+    () =>
+      findArtifactDescriptorForPart({
+        artifacts: artifactDescriptors,
+        part: gitDiffPart,
+      }),
+    [artifactDescriptors, gitDiffPart],
   );
 
   const diffInstances = useMemo(() => {
@@ -46,10 +60,7 @@ export const GitDiffPart = memo(function GitDiffPart({
     }
   }, [gitDiffPart.diff]);
 
-  // Expand by default if there are less than 5 files (unless secondary panel is enabled)
-  const shouldExpandFiles = false;
-
-  const [isExpanded, setIsExpanded] = useState(shouldExpandFiles);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Record<number, boolean>>(
     () => {
       // Expand by default if there's 1 file with ≤30 total changes
@@ -79,7 +90,11 @@ export const GitDiffPart = memo(function GitDiffPart({
 
   const handleOpenPanel = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setIsSecondaryPanelOpen(true);
+    if (artifactDescriptor && onOpenArtifact) {
+      onOpenArtifact(artifactDescriptor.id);
+    } else {
+      setIsSecondaryPanelOpen(true);
+    }
   };
 
   const toggleFile = (idx: number) => {
@@ -156,7 +171,7 @@ export const GitDiffPart = memo(function GitDiffPart({
               </span>
             </button>
           )}
-          {isLatest && (
+          {(isLatest || artifactDescriptor) && (
             <button
               onClick={handleOpenPanel}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"

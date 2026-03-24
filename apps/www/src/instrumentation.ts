@@ -1,5 +1,15 @@
-export function register() {
-  // No-op for initialization
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { registerMessageStreamAppend, registerPatchVersionProvider } =
+      await import("@terragon/shared/broadcast-server");
+    const { appendToMessageStream } = await import("./lib/message-stream");
+    registerMessageStreamAppend(appendToMessageStream);
+
+    const { redis } = await import("./lib/redis");
+    registerPatchVersionProvider(async (threadChatId: string) => {
+      return redis.incr(`pv:${threadChatId}`);
+    });
+  }
 }
 
 export const onRequestError = async (

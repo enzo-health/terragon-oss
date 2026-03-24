@@ -486,9 +486,11 @@ function resolveCodexModel(model: string): ResolvedCodexModel {
 export function codexAppServerStartCommand({
   model,
   useCredits = false,
+  listenAddress,
 }: {
   model: string;
   useCredits?: boolean;
+  listenAddress?: string;
 }): [command: string, args: string[]] {
   const resolvedModel = resolveCodexModel(model);
   const args = [
@@ -506,6 +508,9 @@ export function codexAppServerStartCommand({
   }
   if (useCredits) {
     args.push("-c", 'model_provider="terry"');
+  }
+  if (listenAddress) {
+    args.push("--listen", listenAddress);
   }
   return ["codex", args];
 }

@@ -1,5 +1,6 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
+import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -36,9 +37,9 @@ import {
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
-import { appendEventAndAdvanceV3 } from "@/server-lib/delivery-loop/v3/kernel";
-import { getWorkflowHeadV3 } from "@/server-lib/delivery-loop/v3/store";
-import { drainDueV3Effects } from "@/server-lib/delivery-loop/v3/process-effects";
+import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { drainDueEffects } from "@/server-lib/delivery-loop/v3/process-effects";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -411,6 +412,59 @@ function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
   );
 }
 
+function buildCompletedEvent(
+  state: string | undefined,
+  runId: string,
+  headSha: string | null | undefined,
+) {
+  switch (state) {
+    case "planning":
+      return { type: "planning_run_completed" as const };
+    case "gating_review":
+      return { type: "gate_review_passed" as const, runId };
+    case "gating_ci":
+      return { type: "gate_ci_passed" as const, runId, headSha };
+    default:
+      return { type: "run_completed" as const, runId, headSha };
+  }
+}
+
+function buildFailedEvent(
+  state: string | undefined,
+  runId: string,
+  headSha: string | null | undefined,
+  errorMessage: string | undefined,
+  errorCategory: string | null,
+) {
+  switch (state) {
+    case "planning":
+      return {
+        type: "plan_failed" as const,
+        reason: errorMessage ?? "Planning run failed",
+      };
+    case "gating_review":
+      return {
+        type: "gate_review_failed" as const,
+        runId,
+        reason: errorMessage ?? "Gate blocked",
+      };
+    case "gating_ci":
+      return {
+        type: "gate_ci_failed" as const,
+        runId,
+        headSha,
+        reason: errorMessage ?? "CI gate blocked",
+      };
+    default:
+      return {
+        type: "run_failed" as const,
+        runId,
+        message: errorMessage ?? "Run failed",
+        category: errorCategory,
+      };
+  }
+}
+
 function hasRequiredThreadChatIdForNonLegacyPayload(
   threadChatId: unknown,
 ): threadChatId is string {
@@ -459,6 +513,27 @@ export async function POST(request: Request) {
   }
   const userId = daemonAuthContext.userId;
   const claims = daemonAuthContext.claims;
+
+  // Broadcast deltas immediately — ephemeral, not persisted, fire-and-forget.
+  const deltas = json.deltas;
+  if (deltas && deltas.length > 0) {
+    for (const delta of deltas) {
+      publishDeltaBroadcast({
+        userId,
+        threadId,
+        threadChatId,
+        messageId: delta.messageId,
+        partIndex: delta.partIndex,
+        text: delta.text,
+      }).catch((error) => {
+        console.warn("[daemon-event] delta broadcast failed", {
+          threadId,
+          messageId: delta.messageId,
+          error,
+        });
+      });
+    }
+  }
 
   if (daemonAdvertisesEnvelopeV2 && !envelopeV2) {
     return Response.json(
@@ -982,7 +1057,7 @@ export async function POST(request: Request) {
   ) {
     try {
       // First observed daemon terminal event for a run is an implicit ack.
-      await appendEventAndAdvanceV3({
+      await appendEventAndAdvance({
         db,
         workflowId: effectiveLoopId,
         source: "daemon",
@@ -994,50 +1069,36 @@ export async function POST(request: Request) {
       });
 
       // Read head AFTER the ack so it reflects post-ack state.
-      const headAfterAck = await getWorkflowHeadV3({
+      const headAfterAck = await getWorkflowHead({
         db,
         workflowId: effectiveLoopId,
       });
 
       if (daemonRunStatusFromMessages === "completed") {
-        const completedEvent =
-          headAfterAck?.state === "gating_review"
-            ? ({
-                type: "gate_review_passed",
-                runId: envelopeV2.runId,
-              } as const)
-            : ({
-                type: "run_completed",
-                runId: envelopeV2.runId,
-                headSha: daemonHeadShaAtCompletion,
-              } as const);
-        await appendEventAndAdvanceV3({
+        await appendEventAndAdvance({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
           idempotencyKey: `run-completed:${envelopeV2.eventId}`,
-          event: completedEvent,
+          event: buildCompletedEvent(
+            headAfterAck?.state,
+            envelopeV2.runId,
+            daemonHeadShaAtCompletion,
+          ),
         });
       } else if (daemonRunStatusFromMessages === "failed") {
-        const failedEvent =
-          headAfterAck?.state === "gating_review"
-            ? ({
-                type: "gate_review_failed",
-                runId: envelopeV2.runId,
-                reason: daemonTerminalErrorInfo.errorMessage ?? "Gate blocked",
-              } as const)
-            : ({
-                type: "run_failed",
-                runId: envelopeV2.runId,
-                message: daemonTerminalErrorInfo.errorMessage ?? "Run failed",
-                category: daemonTerminalErrorInfo.errorCategory,
-              } as const);
-        await appendEventAndAdvanceV3({
+        await appendEventAndAdvance({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
           idempotencyKey: `run-failed:${envelopeV2.eventId}`,
-          event: failedEvent,
+          event: buildFailedEvent(
+            headAfterAck?.state,
+            envelopeV2.runId,
+            daemonHeadShaAtCompletion,
+            daemonTerminalErrorInfo.errorMessage ?? undefined,
+            daemonTerminalErrorInfo.errorCategory,
+          ),
         });
       }
     } catch (v3Err) {
@@ -1050,7 +1111,7 @@ export async function POST(request: Request) {
 
     // Inline effect drain to avoid cron latency
     try {
-      await drainDueV3Effects({
+      await drainDueEffects({
         db,
         workflowId: effectiveLoopId,
         maxItems: 5,

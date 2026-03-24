@@ -28,9 +28,6 @@ export {
   type UiGateSnapshot,
   type WorkflowCommon,
   type DeliveryWorkflow,
-  isTerminalState,
-  isActiveState,
-  isHumanWaitState,
 } from "./workflow";
 
 // signals.ts
@@ -46,15 +43,6 @@ export {
   type TimerSignal,
   type DeliverySignal,
 } from "./signals";
-
-// transitions.ts
-export {
-  type LoopEvent,
-  type LoopEventContext,
-  reduceWorkflow,
-  shouldResetFixAttemptCount,
-  derivePendingAction,
-} from "./transitions";
 
 // retry-policy.ts
 export {

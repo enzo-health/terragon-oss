@@ -254,6 +254,28 @@ export async function restartDaemonIfNotRunning({
     return;
   }
   console.log("Daemon is not ready/running, restarting it...");
+
+  // Check if daemon binary exists — if missing (sandbox recreated), reinstall
+  const daemonExists = (
+    await session.runCommand(
+      `test -f ${DAEMON_FILE_PATH} && echo "exists" || echo "missing"`,
+    )
+  ).trim();
+
+  if (daemonExists === "missing") {
+    console.log("Daemon binary missing, reinstalling...");
+    await installDaemon({
+      session,
+      environmentVariables: options.environmentVariables || [],
+      githubAccessToken: options.githubAccessToken,
+      agentCredentials: options.agentCredentials,
+      userMcpConfig: options.mcpConfig,
+      publicUrl: options.publicUrl,
+      featureFlags: options.featureFlags,
+    });
+    return;
+  }
+
   console.log("Killing existing daemon");
   await sendKillMessage({ session });
   console.log("Starting daemon");

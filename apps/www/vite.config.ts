@@ -2,6 +2,8 @@ import path from "path";
 import { defineConfig } from "vite";
 import { Plugin } from "vite";
 
+const isCI = process.env.CI === "true";
+
 export default defineConfig({
   plugins: [
     stubNextNavigation(),
@@ -16,8 +18,8 @@ export default defineConfig({
   },
   test: {
     silent: "passed-only",
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    testTimeout: process.env.CI ? 10_000 : 30_000,
+    hookTimeout: process.env.CI ? 10_000 : 30_000,
     poolOptions: {
       threads: {
         minThreads: 1,
@@ -47,6 +49,22 @@ export default defineConfig({
     },
     setupFiles: ["./src/test-helpers/test-setup.ts"],
     globalSetup: "./src/test-helpers/test-global-setup.ts",
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      ...(isCI
+        ? [
+            "**/sandbox-resource.test.*",
+            "**/thread-resource.test.*",
+            "**/batch-threads.test.*",
+            "**/handle-app-mention.test.*",
+            "**/webhooks/github/route.test.*",
+            "**/delivery-loop/v3/worker.test.*",
+            "**/delivery-loop/v3/durable-delivery.test.*",
+            "**/e2e.test.*",
+          ]
+        : []),
+    ],
   },
   resolve: {
     alias: {

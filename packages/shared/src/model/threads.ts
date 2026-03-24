@@ -17,7 +17,10 @@ import {
   isNotNull,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { publishBroadcastUserMessage } from "../broadcast-server";
+import {
+  publishBroadcastUserMessage,
+  getNextPatchVersion,
+} from "../broadcast-server";
 import { AGENT_VERSION } from "@terragon/agent/versions";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import {
@@ -158,6 +161,7 @@ async function getThreadsInner({
       sourceMetadata: schema.thread.sourceMetadata,
       version: schema.thread.version,
       gitDiffStats: schema.thread.gitDiffStats,
+      messageSeq: schema.thread.messageSeq,
 
       ...(includeUser
         ? {
@@ -641,6 +645,7 @@ export async function getThread({
     sourceType: thread.sourceType,
     sourceMetadata: thread.sourceMetadata,
     version: thread.version,
+    messageSeq: thread.messageSeq,
     isUnread: thread.isUnread,
     threadChats: resolveThreadChatFull(thread, threadChats),
     childThreads,
@@ -728,6 +733,7 @@ type ThreadForThreadChatInfoFull = Pick<
   | "name"
   | "queuedMessages"
   | "messages"
+  | "messageSeq"
 > & {
   isUnread: boolean;
 };
@@ -762,6 +768,7 @@ function createLegacyThreadChatFull(
     reattemptQueueAt: thread.reattemptQueueAt,
     contextLength: thread.contextLength,
     permissionMode: thread.permissionMode ?? "allowAll",
+    messageSeq: thread.messageSeq,
     codexPreviousResponseId: null,
     isUnread: thread.isUnread,
     messages: thread.messages ?? [],
@@ -894,15 +901,18 @@ export async function updateThreadChat({
   threadId,
   threadChatId,
   updates,
+  skipAppendMessagesInBroadcast = false,
 }: {
   db: DB;
   userId: string;
   threadId: string;
   threadChatId: string;
   updates: Omit<ThreadChatInsert, "threadChatId" | "status">;
+  skipAppendMessagesInBroadcast?: boolean;
 }) {
   let updatedAtIsoString: string | undefined;
   let chatSequence: number | undefined;
+  let patchVersion: number | undefined;
   let chatForPatch: BroadcastThreadPatch["chat"] | undefined;
   let appendMessagesForPatch: unknown[] | undefined;
   let expectedMessageCount: number | undefined;
@@ -927,6 +937,9 @@ export async function updateThreadChat({
         // Sanitize messages to remove null bytes and other invalid JSON characters
         // @ts-expect-error
         updateObject.messages = sql`COALESCE(${schema.thread.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
+        // Atomically increment messageSeq for monotonic chat sequence
+        // @ts-expect-error
+        updateObject.messageSeq = sql`COALESCE(${schema.thread.messageSeq}, 0) + 1`;
       }
       if (appendAndResetQueuedMessages) {
         updateObject.queuedMessages = [];
@@ -959,7 +972,7 @@ export async function updateThreadChat({
         throw new Error("Failed to update thread chat (legacy)");
       }
       updatedAtIsoString = updatedThread.updatedAt.toISOString();
-      chatSequence = updatedThread.updatedAt.getTime();
+      chatSequence = updatedThread.messageSeq ?? 0;
       chatForPatch = {
         updatedAt: updatedAtIsoString,
         ...(updatesWithoutAppends.agent !== undefined
@@ -1017,6 +1030,9 @@ export async function updateThreadChat({
         // Sanitize messages to remove null bytes and other invalid JSON characters
         // @ts-expect-error
         updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
+        // Atomically increment messageSeq for monotonic chat sequence
+        // @ts-expect-error
+        updateObject.messageSeq = sql`COALESCE(${schema.threadChat.messageSeq}, 0) + 1`;
       }
       if (appendAndResetQueuedMessages) {
         updateObject.queuedMessages = [];
@@ -1053,7 +1069,7 @@ export async function updateThreadChat({
         throw new Error("Failed to update thread chat");
       }
       updatedAtIsoString = updatedThreadChat.updatedAt.toISOString();
-      chatSequence = updatedThreadChat.updatedAt.getTime();
+      chatSequence = updatedThreadChat.messageSeq ?? 0;
       chatForPatch = {
         updatedAt: updatedAtIsoString,
         ...(updatesWithoutAppends.agent !== undefined
@@ -1105,6 +1121,7 @@ export async function updateThreadChat({
       }
     }
   });
+  patchVersion = await getNextPatchVersion(threadChatId);
   await publishBroadcastUserMessage({
     type: "user",
     id: userId,
@@ -1115,9 +1132,15 @@ export async function updateThreadChat({
           threadChatId,
           op: shouldRefetchChat ? "refetch" : "upsert",
           chatSequence,
+          messageSeq: chatSequence,
+          patchVersion,
           chat: chatForPatch,
-          appendMessages: appendMessagesForPatch,
-          expectedMessageCount,
+          ...(skipAppendMessagesInBroadcast
+            ? {}
+            : {
+                appendMessages: appendMessagesForPatch,
+                expectedMessageCount,
+              }),
           refetch: shouldRefetchChat ? ["chat"] : undefined,
         },
       ],
@@ -1304,6 +1327,7 @@ export async function updateThreadChatStatusAtomic({
   }
 
   if (didUpdateStatus) {
+    const patchVersion = await getNextPatchVersion(threadChatId);
     await publishBroadcastUserMessage({
       type: "user",
       id: userId,
@@ -1316,6 +1340,7 @@ export async function updateThreadChatStatusAtomic({
             chatSequence: updatedAtIsoString
               ? new Date(updatedAtIsoString).getTime()
               : undefined,
+            patchVersion,
             chat: {
               status: toStatus,
               reattemptQueueAt:

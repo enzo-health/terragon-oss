@@ -9,7 +9,7 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { drainOutboxV3Worker } from "./worker";
+import { drainOutboxWorker } from "./worker";
 
 const OUTBOX_REDIS_KEY_PREFIX = "dl3:test:v3-worker";
 const OUTBOX_WORKER_DLQ_STREAM = `${OUTBOX_REDIS_KEY_PREFIX}:dead-letter`;
@@ -109,7 +109,7 @@ async function cleanupWorkerTestState(): Promise<void> {
 beforeEach(cleanupWorkerTestState);
 afterEach(cleanupWorkerTestState);
 
-describe("drainOutboxV3Worker", () => {
+describe("drainOutboxWorker", () => {
   it("uses the db fallback on local redis-http and retires the row in postgres", async () => {
     const originalRedisUrl = process.env.REDIS_URL;
     process.env.REDIS_URL = "http://localhost:8079";
@@ -135,7 +135,7 @@ describe("drainOutboxV3Worker", () => {
 
       const processMessage = vi.fn(async () => {});
 
-      const first = await drainOutboxV3Worker({
+      const first = await drainOutboxWorker({
         db,
         consumerName: "worker-local-fallback",
         fallbackWorkflowId: workflowId,
@@ -165,7 +165,7 @@ describe("drainOutboxV3Worker", () => {
         lastErrorMessage: null,
       });
 
-      const second = await drainOutboxV3Worker({
+      const second = await drainOutboxWorker({
         db,
         consumerName: "worker-local-fallback",
         fallbackWorkflowId: workflowId,
@@ -225,7 +225,7 @@ describe("drainOutboxV3Worker", () => {
         throw new Error("processor failed");
       });
 
-      const first = await drainOutboxV3Worker({
+      const first = await drainOutboxWorker({
         db,
         consumerName: "worker-local-fallback-fail",
         fallbackWorkflowId: workflowId,
@@ -255,7 +255,7 @@ describe("drainOutboxV3Worker", () => {
         lastErrorMessage: expect.stringContaining("processor failed"),
       });
 
-      const second = await drainOutboxV3Worker({
+      const second = await drainOutboxWorker({
         db,
         consumerName: "worker-local-fallback-fail",
         fallbackWorkflowId: workflowId,
@@ -298,7 +298,7 @@ describe("drainOutboxV3Worker", () => {
     });
 
     const [first, second] = await Promise.all([
-      drainOutboxV3Worker({
+      drainOutboxWorker({
         db,
         streamKey,
         groupName,
@@ -312,7 +312,7 @@ describe("drainOutboxV3Worker", () => {
         heartbeatKey: OUTBOX_WORKER_HEARTBEAT,
         processMessage,
       }),
-      drainOutboxV3Worker({
+      drainOutboxWorker({
         db,
         streamKey,
         groupName,
@@ -346,7 +346,7 @@ describe("drainOutboxV3Worker", () => {
     });
     const secondAttempts = vi.fn();
 
-    const firstResult = await drainOutboxV3Worker({
+    const firstResult = await drainOutboxWorker({
       db,
       streamKey,
       groupName,
@@ -370,7 +370,7 @@ describe("drainOutboxV3Worker", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const secondResult = await drainOutboxV3Worker({
+    const secondResult = await drainOutboxWorker({
       db,
       streamKey,
       groupName,
@@ -403,7 +403,7 @@ describe("drainOutboxV3Worker", () => {
       throw new Error("processor failed");
     });
 
-    const firstAttempt = await drainOutboxV3Worker({
+    const firstAttempt = await drainOutboxWorker({
       db,
       streamKey,
       groupName,
@@ -427,7 +427,7 @@ describe("drainOutboxV3Worker", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const secondAttempt = await drainOutboxV3Worker({
+    const secondAttempt = await drainOutboxWorker({
       db,
       streamKey,
       groupName,
@@ -465,7 +465,7 @@ describe("drainOutboxV3Worker", () => {
       }
     });
 
-    const firstAttempt = await drainOutboxV3Worker({
+    const firstAttempt = await drainOutboxWorker({
       db,
       streamKey,
       groupName,
@@ -492,7 +492,7 @@ describe("drainOutboxV3Worker", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const secondAttempt = await drainOutboxV3Worker({
+    const secondAttempt = await drainOutboxWorker({
       db,
       streamKey,
       groupName,

@@ -17,6 +17,8 @@ import {
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
+import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -590,9 +592,17 @@ export async function startAgentMessage({
               null,
             );
           }
-          const effectiveState: DeliveryLoopState | null = v2Workflow
-            ? workflowRowKindToState(v2Workflow.kind, v2Workflow.stateJson)
-            : null;
+          // Read authoritative state from v3 head
+          let effectiveState: DeliveryLoopState | null = null;
+          if (v2Workflow) {
+            const v3Head = await getWorkflowHead({
+              db,
+              workflowId: v2Workflow.id,
+            });
+            effectiveState = v3Head
+              ? stateToDeliveryLoopState(v3Head.state)
+              : null;
+          }
           let planContext: {
             planText: string;
             tasks: Array<{
@@ -602,7 +612,7 @@ export async function startAgentMessage({
             }>;
           } | null = null;
           const effectiveLoopId = v2Workflow?.id;
-          if (v2Workflow?.kind === "implementing" && effectiveLoopId) {
+          if (effectiveState === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
                 "@terragon/shared/delivery-loop/store/artifact-store"
@@ -865,41 +875,6 @@ async function preparePromptForModel({
   return { prompt };
 }
 
-/**
- * Maps a v2 workflow DB row's kind + stateJson to the v1 DeliveryLoopState
- * string used by the prompt prefix builder.
- */
-function workflowRowKindToState(
-  kind: string,
-  stateJson: unknown,
-): DeliveryLoopState {
-  if (kind === "gating") {
-    const gate = (stateJson as Record<string, unknown> | null)?.gate as
-      | { kind?: string }
-      | null
-      | undefined;
-    if (gate?.kind === "review") return "review_gate";
-    if (gate?.kind === "ui") return "ui_gate";
-    return "ci_gate";
-  }
-  if (kind === "terminated") {
-    const reason = (stateJson as Record<string, unknown> | null)?.reason as
-      | { kind?: string }
-      | null
-      | undefined;
-    if (reason?.kind === "pr_merged") return "terminated_pr_merged";
-    return "terminated_pr_closed";
-  }
-  if (
-    kind === "awaiting_plan_approval" ||
-    kind === "awaiting_manual_fix" ||
-    kind === "awaiting_operator_action"
-  )
-    return "blocked";
-  if (kind === "awaiting_pr") return "awaiting_pr_link";
-  return kind as DeliveryLoopState;
-}
-
 function buildDeliveryLoopPhasePromptPrefix(
   state: DeliveryLoopState | null,
   planContext?: {
@@ -916,6 +891,7 @@ function buildDeliveryLoopPhasePromptPrefix(
   }
 
   switch (state) {
+    // v3-reachable: planning
     case "planning":
       return [
         "Delivery Loop phase: planning. Generate an implementation plan only.",
@@ -932,6 +908,7 @@ function buildDeliveryLoopPhasePromptPrefix(
         "Required: tasks[] with at least one task. Each task needs title.",
         "Do not edit files, run mutating commands, or open/update a PR.",
       ].join("\n");
+    // v3-reachable: implementing
     case "implementing": {
       const lines: string[] = ["Delivery Loop phase: implementing."];
       if (planContext?.planText) {
@@ -970,38 +947,33 @@ function buildDeliveryLoopPhasePromptPrefix(
       lines.push("", "Do not skip directly to PR babysitting in this phase.");
       return lines.join("\n");
     }
+    // v3-reachable: review_gate (mapped from "gating_review")
     case "review_gate":
       return [
         "Delivery Loop phase: review_gate.",
         "Perform deep bug review and architecture review until there are zero blocking findings.",
         "If findings exist, fix them before proceeding.",
       ].join(" ");
+    // v3-reachable: ci_gate (mapped from "gating_ci")
     case "ci_gate":
       return [
         "Delivery Loop phase: ci_gate.",
         "Run lint, typecheck, and tests. Fix any failures before proceeding.",
       ].join(" ");
-    case "ui_gate":
-      return [
-        "Delivery Loop phase: ui_gate.",
-        "Run browser smoke tests against the changed UI paths and fix any blocking issues.",
-      ].join(" ");
+    // v3-reachable: awaiting_pr_link (mapped from "awaiting_pr")
     case "awaiting_pr_link":
       return [
         "Delivery Loop phase: awaiting_pr_link.",
         "Create or link a pull request, then signal phaseComplete: true.",
       ].join(" ");
-    case "babysitting":
-      return [
-        "Delivery Loop phase: babysitting.",
-        "Focus on CI and review feedback resolution until required CI passes and blockers are zero.",
-      ].join(" ");
+    // v3-reachable: blocked (mapped from awaiting_manual_fix / awaiting_operator_action)
     case "blocked":
       return [
         "Delivery Loop phase: blocked.",
         "Wait for explicit human feedback before making additional loop progression decisions.",
         "Use explicit human-triggered controls to resume or bypass.",
       ].join(" ");
+    // v3-reachable: done, stopped, terminated_pr_closed (v3 maps "terminated" → "terminated_pr_closed")
     case "done":
     case "stopped":
     case "terminated_pr_closed":

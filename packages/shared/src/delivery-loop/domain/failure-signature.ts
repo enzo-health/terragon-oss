@@ -52,6 +52,14 @@ const INFRA_FAILURE_MESSAGE_MARKERS = [
   "sandbox-not-found",
   "daemon not running",
   "daemon dead",
+  "sigkill",
+  "sigterm",
+  "pathspec",
+  "daemon failed to start",
+  "module_not_found",
+  "out of memory",
+  "oom",
+  "codex app-server exited unexpectedly",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -183,6 +191,26 @@ export function isInfrastructureFailure(params: FailureClassifyInput): boolean {
   }
 
   if (category === "transport" || category === "infra") {
+    return true;
+  }
+
+  // Sandbox resume / agent crash categories from the daemon
+  if (
+    category === "sandbox-resume-failed" ||
+    category === "sandbox_resume_failed" ||
+    category === "agent-generic-error"
+  ) {
+    return true;
+  }
+
+  // Compound message patterns (multi-keyword)
+  if (message.includes("checkout") && message.includes("failed")) {
+    return true;
+  }
+  if (message.includes("branch") && message.includes("not found")) {
+    return true;
+  }
+  if (message.includes("sandbox") && message.includes("failed")) {
     return true;
   }
 

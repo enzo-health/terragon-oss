@@ -4,9 +4,9 @@ import type {
   DeliverySignalSourceV3,
   DeliveryTimerKindV3,
 } from "@terragon/shared/db/types";
-import type { EffectPayloadV3, EffectSpecV3, LoopEventV3 } from "./types";
+import type { EffectPayload, EffectSpec, LoopEvent } from "./types";
 
-export type SignalJournalWriteContractV3 = {
+export type SignalJournalWriteContract = {
   workflowId: string;
   source: DeliverySignalSourceV3;
   idempotencyKey: string;
@@ -15,7 +15,7 @@ export type SignalJournalWriteContractV3 = {
   occurredAt: Date;
 };
 
-export type EffectLedgerWriteContractV3 = {
+export type EffectLedgerWriteContract = {
   workflowId: string;
   workflowVersion: number;
   effectKind: DeliveryEffectKindV3;
@@ -23,16 +23,16 @@ export type EffectLedgerWriteContractV3 = {
   idempotencyKey: string;
   dueAt: Date;
   maxAttempts: number;
-  payload: EffectPayloadV3;
+  payload: EffectPayload;
 };
 
-export type TimerPayloadV3 = {
+export type TimerPayload = {
   kind: "dispatch_ack_timeout";
   runId: string;
   workflowVersion: number;
 };
 
-export type TimerLedgerWriteContractV3 = {
+export type TimerLedgerWriteContract = {
   workflowId: string;
   timerKind: DeliveryTimerKindV3;
   timerKey: string;
@@ -40,10 +40,10 @@ export type TimerLedgerWriteContractV3 = {
   sourceSignalId: string | null;
   dueAt: Date;
   maxAttempts: number;
-  payload: TimerPayloadV3;
+  payload: TimerPayload;
 };
 
-export type OutboxPayloadV3 =
+export type OutboxPayload =
   | {
       kind: "signal";
       journalId: string;
@@ -64,14 +64,14 @@ export type OutboxPayloadV3 =
       timerKind: DeliveryTimerKindV3;
     };
 
-export type OutboxWriteContractV3 = {
+export type OutboxWriteContract = {
   workflowId: string;
   topic: DeliveryOutboxTopicV3;
   dedupeKey: string;
   idempotencyKey: string;
   availableAt: Date;
   maxAttempts: number;
-  payload: OutboxPayloadV3;
+  payload: OutboxPayload;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,15 +89,16 @@ function toDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export function serializeLoopEventV3(
-  event: LoopEventV3,
-): Record<string, unknown> {
+export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
   switch (event.type) {
     case "bootstrap":
+    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
       return { type: event.type };
+    case "plan_failed":
+      return { type: event.type, reason: event.reason };
     case "dispatch_sent":
       return {
         type: event.type,
@@ -162,17 +163,23 @@ export function serializeLoopEventV3(
   }
 }
 
-export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
+export function parseLoopEvent(payload: unknown): LoopEvent | null {
   if (!isRecord(payload) || typeof payload.type !== "string") {
     return null;
   }
 
   switch (payload.type) {
     case "bootstrap":
+    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
       return { type: payload.type };
+    case "plan_failed":
+      if (typeof payload.reason !== "string") {
+        return null;
+      }
+      return { type: "plan_failed", reason: payload.reason };
     case "dispatch_sent": {
       if (typeof payload.runId !== "string") {
         return null;
@@ -355,8 +362,8 @@ export function parseLoopEventV3(payload: unknown): LoopEventV3 | null {
   }
 }
 
-export function serializeEffectPayloadV3(
-  payload: EffectPayloadV3,
+export function serializeEffectPayload(
+  payload: EffectPayload,
 ): Record<string, unknown> {
   switch (payload.kind) {
     case "dispatch_implementing":
@@ -377,6 +384,8 @@ export function serializeEffectPayloadV3(
     case "create_plan_artifact":
     case "publish_status":
       return { kind: payload.kind };
+    case "gate_staleness_check":
+      return { kind: payload.kind, workflowVersion: payload.workflowVersion };
     default:
       throw new Error(
         `Unhandled effect kind ${(payload as { kind: string }).kind}`,
@@ -384,7 +393,7 @@ export function serializeEffectPayloadV3(
   }
 }
 
-export function parseEffectPayloadV3(payload: unknown): EffectPayloadV3 | null {
+export function parseEffectPayload(payload: unknown): EffectPayload | null {
   if (!isRecord(payload) || typeof payload.kind !== "string") {
     return null;
   }
@@ -423,11 +432,20 @@ export function parseEffectPayloadV3(payload: unknown): EffectPayloadV3 | null {
   if (payload.kind === "publish_status") {
     return { kind: "publish_status" };
   }
+  if (
+    payload.kind === "gate_staleness_check" &&
+    typeof payload.workflowVersion === "number"
+  ) {
+    return {
+      kind: "gate_staleness_check",
+      workflowVersion: payload.workflowVersion,
+    };
+  }
   return null;
 }
 
-export function serializeTimerPayloadV3(
-  payload: TimerPayloadV3,
+export function serializeTimerPayload(
+  payload: TimerPayload,
 ): Record<string, unknown> {
   return {
     kind: payload.kind,
@@ -436,7 +454,7 @@ export function serializeTimerPayloadV3(
   };
 }
 
-export function parseTimerPayloadV3(payload: unknown): TimerPayloadV3 | null {
+export function parseTimerPayload(payload: unknown): TimerPayload | null {
   if (
     isRecord(payload) &&
     payload.kind === "dispatch_ack_timeout" &&
@@ -452,8 +470,8 @@ export function parseTimerPayloadV3(payload: unknown): TimerPayloadV3 | null {
   return null;
 }
 
-export function serializeOutboxPayloadV3(
-  payload: OutboxPayloadV3,
+export function serializeOutboxPayload(
+  payload: OutboxPayload,
 ): Record<string, unknown> {
   switch (payload.kind) {
     case "signal":
@@ -481,28 +499,28 @@ export function serializeOutboxPayloadV3(
   }
 }
 
-export function buildSignalJournalContractV3(params: {
+export function buildSignalJournalContract(params: {
   workflowId: string;
   source: DeliverySignalSourceV3;
   idempotencyKey: string;
-  event: LoopEventV3;
+  event: LoopEvent;
   occurredAt: Date;
-}): SignalJournalWriteContractV3 {
+}): SignalJournalWriteContract {
   return {
     workflowId: params.workflowId,
     source: params.source,
     idempotencyKey: params.idempotencyKey,
     eventType: params.event.type,
-    payload: serializeLoopEventV3(params.event),
+    payload: serializeLoopEvent(params.event),
     occurredAt: params.occurredAt,
   };
 }
 
-export function buildEffectLedgerContractV3(params: {
+export function buildEffectLedgerContract(params: {
   workflowId: string;
   workflowVersion: number;
-  effect: EffectSpecV3;
-}): EffectLedgerWriteContractV3 {
+  effect: EffectSpec;
+}): EffectLedgerWriteContract {
   return {
     workflowId: params.workflowId,
     workflowVersion: params.workflowVersion,

@@ -293,6 +293,123 @@ describe("isInfrastructureFailure", () => {
       }),
     ).toBe(false);
   });
+
+  it("classifies sandbox-resume-failed category as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "sandbox-resume-failed",
+        message: "could not resume sandbox",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies sandbox_resume_failed category as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "sandbox_resume_failed",
+        message: "resume error",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies agent-generic-error category as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "agent-generic-error",
+        message: "codex crashed",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies SIGKILL message as infra (OOM kill)", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "Process exited with SIGKILL",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies SIGTERM message as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "Process terminated by SIGTERM",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies pathspec message as infra (git checkout failure)", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "error: pathspec 'feature/xyz' did not match any file(s)",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies checkout + failed message as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "git checkout failed with exit code 1",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies branch + not found message as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "branch 'feature/abc' not found in remote",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies daemon failed to start message as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "daemon failed to start after 30s",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies sandbox + failed message as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "sandbox setup failed",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies MODULE_NOT_FOUND message as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "Error: Cannot find module MODULE_NOT_FOUND terragon-daemon",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies OOM / out of memory as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "JavaScript heap out of memory",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies codex app-server exited unexpectedly as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "runtime_crash",
+        message: "codex app-server exited unexpectedly with code 137",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("classifyFailureLane", () => {
