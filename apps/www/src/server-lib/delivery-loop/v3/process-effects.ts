@@ -925,12 +925,29 @@ async function handleGateStalenessCheck(params: {
       `[handleGateStalenessCheck] Unexpected error for workflow ${params.effect.workflowId} (version ${params.payload.workflowVersion}):`,
       err,
     );
-    const staleOutcome = {
+    // Re-enqueue on transient errors rather than treating as stale
+    await insertEffects({
+      db: params.db,
+      workflowId: params.effect.workflowId,
+      workflowVersion: params.payload.workflowVersion,
+      effects: [
+        {
+          kind: "gate_staleness_check",
+          effectKey: `${params.effect.workflowId}:${params.payload.workflowVersion}:gate_staleness_check:${Date.now()}`,
+          dueAt: new Date(params.now.getTime() + 5 * 60 * 1000),
+          payload: {
+            kind: "gate_staleness_check",
+            workflowVersion: params.payload.workflowVersion,
+          },
+        },
+      ],
+    });
+    const pendingOutcome = {
       kind: "gate_staleness_check",
-      outcome: "stale",
+      outcome: "pending",
     } as const;
-    console.log("[gate_staleness_check] returning:", staleOutcome);
-    return staleOutcome;
+    console.log("[gate_staleness_check] returning:", pendingOutcome);
+    return pendingOutcome;
   }
 }
 

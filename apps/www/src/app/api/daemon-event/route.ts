@@ -437,6 +437,11 @@ function buildFailedEvent(
   errorCategory: string | null,
 ) {
   switch (state) {
+    case "planning":
+      return {
+        type: "plan_failed" as const,
+        reason: errorMessage ?? "Planning run failed",
+      };
     case "gating_review":
       return {
         type: "gate_review_failed" as const,

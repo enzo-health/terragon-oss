@@ -504,6 +504,10 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_acked") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = { head, effects: [], invariantActions: [] };
+            break;
+          }
           const next = withVersion(head, now);
           result = {
             head: { ...next, activeRunId: event.runId },

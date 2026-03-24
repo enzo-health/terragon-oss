@@ -543,7 +543,8 @@ function isDeliveryEffectKind(
     kind === "ack_timeout_check" ||
     kind === "ensure_pr" ||
     kind === "create_plan_artifact" ||
-    kind === "publish_status"
+    kind === "publish_status" ||
+    kind === "gate_staleness_check"
   );
 }
 

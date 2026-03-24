@@ -686,7 +686,7 @@ describe("reduce", () => {
       expect(result.head.state).toBe("gating_review");
     });
 
-    it("dispatch_acked with different runId updates activeRunId", () => {
+    it("dispatch_acked with different runId is dropped (out-of-order guard)", () => {
       const h = { ...head("implementing"), activeRunId: "r-1" };
       const result = reduce({
         head: h,
@@ -694,7 +694,7 @@ describe("reduce", () => {
         now: NOW,
       });
       expect(result.head.state).toBe("implementing");
-      expect(result.head.activeRunId).toBe("r-2");
+      expect(result.head.activeRunId).toBe("r-1");
     });
 
     it("run_failed with different runId triggers retry", () => {
