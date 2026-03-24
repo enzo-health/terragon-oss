@@ -269,24 +269,33 @@ async function processGateReviewEffect(params: {
     // Non-fatal: Redis intent + cron sweep handle recovery
   }
 
-  // Queue a "Continue gate check" message for the follow-up queue
-  const { updateThreadChat } = await import("@terragon/shared/model/threads");
-  await updateThreadChat({
-    db: params.db,
-    userId: workflow.userId,
-    threadId: workflow.threadId,
-    threadChatId: threadChat.id,
-    updates: {
-      appendQueuedMessages: [
-        {
-          type: "user" as const,
-          model: null,
-          timestamp: new Date().toISOString(),
-          parts: [{ type: "text" as const, text: "Continue gate check." }],
-        },
-      ],
-    },
-  });
+  // Queue a "Continue gate check." message for the follow-up queue,
+  // but only on retries — on the first gate run the prior context is sufficient.
+  const head = await getWorkflowHead({ db: params.db, workflowId });
+  const isRetry =
+    !!head &&
+    (head.fixAttemptCount > 0 ||
+      head.infraRetryCount > 0 ||
+      head.generation > 1);
+  if (isRetry) {
+    const { updateThreadChat } = await import("@terragon/shared/model/threads");
+    await updateThreadChat({
+      db: params.db,
+      userId: workflow.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      updates: {
+        appendQueuedMessages: [
+          {
+            type: "user" as const,
+            model: null,
+            timestamp: new Date().toISOString(),
+            parts: [{ type: "text" as const, text: "Continue gate check." }],
+          },
+        ],
+      },
+    });
+  }
 
   // Trigger the follow-up queue to launch the sandbox run.
   // This is best-effort — the dispatch intent + queued message are already
@@ -405,24 +414,35 @@ async function processImplementingDispatchEffect(params: {
     // Non-fatal: Redis intent + cron sweep handle recovery
   }
 
-  // Queue a "Continue implementation." message for the follow-up queue
-  const { updateThreadChat } = await import("@terragon/shared/model/threads");
-  await updateThreadChat({
-    db: params.db,
-    userId: workflow.userId,
-    threadId: workflow.threadId,
-    threadChatId: threadChat.id,
-    updates: {
-      appendQueuedMessages: [
-        {
-          type: "user" as const,
-          model: null,
-          timestamp: new Date().toISOString(),
-          parts: [{ type: "text" as const, text: "Continue implementation." }],
-        },
-      ],
-    },
-  });
+  // Queue a "Continue implementation." message for the follow-up queue,
+  // but only on retries — on the first run the user's original prompt suffices.
+  const head = await getWorkflowHead({ db: params.db, workflowId });
+  const isRetry =
+    !!head &&
+    (head.fixAttemptCount > 0 ||
+      head.infraRetryCount > 0 ||
+      head.generation > 1);
+  if (isRetry) {
+    const { updateThreadChat } = await import("@terragon/shared/model/threads");
+    await updateThreadChat({
+      db: params.db,
+      userId: workflow.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      updates: {
+        appendQueuedMessages: [
+          {
+            type: "user" as const,
+            model: null,
+            timestamp: new Date().toISOString(),
+            parts: [
+              { type: "text" as const, text: "Continue implementation." },
+            ],
+          },
+        ],
+      },
+    });
+  }
 
   // Trigger the follow-up queue to launch the sandbox run.
   // This is best-effort — the dispatch intent + queued message are already
@@ -812,6 +832,23 @@ async function handleGateStalenessCheck(params: {
       repoFullName,
       headSha: head.headSha,
     });
+    if (process.env.DELIVERY_LOOP_DEBUG === "true") {
+      const snapshotSummary = snapshot
+        ? {
+            complete: snapshot.complete,
+            failingCount: snapshot.failingChecks?.length ?? 0,
+            failingChecks: snapshot.failingChecks ?? [],
+          }
+        : null;
+      console.log(
+        "[gate_staleness_check] snapshot summary:",
+        snapshotSummary,
+        "headSha:",
+        head.headSha,
+        "repo:",
+        repoFullName,
+      );
+    }
 
     if (!snapshot) {
       // No check runs yet — re-enqueue for another poll in 5 min
@@ -870,6 +907,7 @@ async function handleGateStalenessCheck(params: {
     });
     return { kind: "gate_staleness_check", outcome: "pending" } as const;
   } catch (err) {
+    console.error("[gate_staleness_check] error:", err);
     console.error(
       `[handleGateStalenessCheck] Unexpected error for workflow ${params.effect.workflowId} (version ${params.payload.workflowVersion}):`,
       err,
