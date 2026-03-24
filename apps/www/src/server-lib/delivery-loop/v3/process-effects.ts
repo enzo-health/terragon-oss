@@ -273,7 +273,7 @@ async function processGateReviewEffect(params: {
   // but only on retries — on the first gate run the prior context is sufficient.
   const head = await getWorkflowHead({ db: params.db, workflowId });
   const isRetry =
-    head &&
+    !!head &&
     (head.fixAttemptCount > 0 ||
       head.infraRetryCount > 0 ||
       head.generation > 1);
@@ -418,7 +418,7 @@ async function processImplementingDispatchEffect(params: {
   // but only on retries — on the first run the user's original prompt suffices.
   const head = await getWorkflowHead({ db: params.db, workflowId });
   const isRetry =
-    head &&
+    !!head &&
     (head.fixAttemptCount > 0 ||
       head.infraRetryCount > 0 ||
       head.generation > 1);
@@ -832,14 +832,23 @@ async function handleGateStalenessCheck(params: {
       repoFullName,
       headSha: head.headSha,
     });
-    console.log(
-      "[gate_staleness_check] snapshot:",
-      JSON.stringify(snapshot),
-      "headSha:",
-      head.headSha,
-      "repo:",
-      repoFullName,
-    );
+    if (process.env.DELIVERY_LOOP_DEBUG === "true") {
+      const snapshotSummary = snapshot
+        ? {
+            complete: snapshot.complete,
+            failingCount: snapshot.failingChecks?.length ?? 0,
+            failingChecks: snapshot.failingChecks ?? [],
+          }
+        : null;
+      console.log(
+        "[gate_staleness_check] snapshot summary:",
+        snapshotSummary,
+        "headSha:",
+        head.headSha,
+        "repo:",
+        repoFullName,
+      );
+    }
 
     if (!snapshot) {
       // No check runs yet — re-enqueue for another poll in 5 min
