@@ -16,6 +16,7 @@ import {
   createWorkflow,
   getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -81,6 +82,7 @@ describe("approvePlan", () => {
       userId: user.id,
     });
     expect(loop).toBeDefined();
+    await ensureWorkflowHead({ db, workflowId: loop.id });
 
     await updateThreadChat({
       db,
@@ -171,6 +173,7 @@ describe("approvePlan", () => {
       planApprovalPolicy: "human_required",
     });
     expect(loop.planApprovalPolicy).toBe("human_required");
+    await ensureWorkflowHead({ db, workflowId: loop.id });
 
     await updateThreadChat({
       db,
@@ -247,6 +250,7 @@ describe("approvePlan", () => {
       userId: user.id,
       planApprovalPolicy: "human_required",
     });
+    await ensureWorkflowHead({ db, workflowId: loop.id });
     const existingArtifact = await createPlanArtifact({
       db,
       loopId: loop.id,
@@ -342,6 +346,7 @@ describe("approvePlan", () => {
       planApprovalPolicy: "human_required",
     });
     expect(loop).toBeDefined();
+    await ensureWorkflowHead({ db, workflowId: loop.id });
 
     const staleGeneratedPayload = {
       planText: "Stale generated plan",
@@ -477,6 +482,7 @@ describe("approvePlan", () => {
       planApprovalPolicy: "human_required",
     });
     expect(loop).toBeDefined();
+    await ensureWorkflowHead({ db, workflowId: loop.id });
 
     const staleApprovedPayload = {
       planText: "Previously approved plan",
@@ -589,6 +595,7 @@ describe("approvePlan", () => {
       planApprovalPolicy: "human_required",
     });
     expect(loop).toBeDefined();
+    await ensureWorkflowHead({ db, workflowId: loop.id });
 
     const matchingGeneratedPayload = {
       planText: "Plan that should be approved",
@@ -697,7 +704,7 @@ describe("approvePlan", () => {
     });
     await mockLoggedInUser(session);
 
-    await createWorkflow({
+    const loopNoArtifact = await createWorkflow({
       db,
       threadId,
       generation: 1,
@@ -706,6 +713,7 @@ describe("approvePlan", () => {
       repoFullName: "owner/repo",
       userId: user.id,
     });
+    await ensureWorkflowHead({ db, workflowId: loopNoArtifact.id });
 
     await expect(approvePlan({ threadId, threadChatId })).rejects.toThrow(
       "No plan artifact found",
@@ -733,6 +741,7 @@ describe("approvePlan", () => {
       userId: user.id,
     });
     expect(workflow).toBeDefined();
+    await ensureWorkflowHead({ db, workflowId: workflow.id });
 
     await expect(approvePlan({ threadId, threadChatId })).rejects.toThrow(
       "planning phase",

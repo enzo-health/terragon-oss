@@ -7,6 +7,7 @@ import {
 } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import {
   requestDeliveryLoopBypassCurrentGateOnce,
   requestDeliveryLoopResumeFromBlocked,
@@ -40,7 +41,7 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    await createWorkflow({
+    const loopBlocked = await createWorkflow({
       db,
       threadId,
       generation: 1,
@@ -49,6 +50,7 @@ describe("delivery-loop-interventions", () => {
       userId: user.id,
       repoFullName: "owner/repo",
     });
+    await ensureWorkflowHead({ db, workflowId: loopBlocked.id });
 
     // Should not throw — workflow is in a blocked kind
     await resumeFromBlocked({ threadId, threadChatId: null });
@@ -63,7 +65,7 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    await createWorkflow({
+    const loopImplementing = await createWorkflow({
       db,
       threadId,
       generation: 1,
@@ -72,6 +74,7 @@ describe("delivery-loop-interventions", () => {
       userId: user.id,
       repoFullName: "owner/repo",
     });
+    await ensureWorkflowHead({ db, workflowId: loopImplementing.id });
 
     // Should not throw — workflow is in a bypassable kind
     await bypassOnce({ threadId, threadChatId: null });
@@ -86,7 +89,7 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    await createWorkflow({
+    const loopGating = await createWorkflow({
       db,
       threadId,
       generation: 1,
@@ -98,6 +101,7 @@ describe("delivery-loop-interventions", () => {
       userId: user.id,
       repoFullName: "owner/repo",
     });
+    await ensureWorkflowHead({ db, workflowId: loopGating.id });
 
     // Should not throw — workflow is in a bypassable kind
     await bypassOnce({ threadId, threadChatId: null });
@@ -127,7 +131,7 @@ describe("delivery-loop-interventions", () => {
     });
     await mockLoggedInUser(session);
 
-    await createWorkflow({
+    const loopNotBlocked = await createWorkflow({
       db,
       threadId,
       generation: 1,
@@ -136,6 +140,7 @@ describe("delivery-loop-interventions", () => {
       userId: user.id,
       repoFullName: "owner/repo",
     });
+    await ensureWorkflowHead({ db, workflowId: loopNotBlocked.id });
 
     await expect(
       resumeFromBlocked({ threadId, threadChatId: null }),
