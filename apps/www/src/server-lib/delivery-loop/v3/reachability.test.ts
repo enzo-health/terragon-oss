@@ -171,164 +171,227 @@ describe("terminal state absorption", () => {
 // "noop" = state unchanged AND version unchanged (event fully ignored)
 // "stay"  = state unchanged but version bumped (event acknowledged)
 // WorkflowState = transitions to that state
-type Expectation = WorkflowState | "noop" | "stay";
+type Expectation = {
+  target: WorkflowState | "noop" | "stay";
+  effects?: string[];
+};
 
 const EVENT_TYPES = ALL_CANONICAL_EVENTS.map((e) => e.type);
 
 const EXPECTED: Record<WorkflowState, Record<string, Expectation>> = {
   // -- planning --
   planning: {
-    bootstrap: "implementing",
-    planning_run_completed: "stay", // stays in planning, bumps version
-    plan_completed: "implementing",
-    plan_failed: "awaiting_manual_fix",
-    dispatch_sent: "implementing",
-    dispatch_acked: "noop",
-    dispatch_ack_timeout: "noop",
-    run_completed: "noop",
-    run_failed: "noop",
-    gate_review_passed: "noop",
-    gate_review_failed: "noop",
-    gate_ci_passed: "noop",
-    gate_ci_failed: "noop",
-    pr_linked: "noop",
-    resume_requested: "noop",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    planning_run_completed: {
+      target: "stay",
+      effects: ["create_plan_artifact", "publish_status"],
+    },
+    plan_completed: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    plan_failed: {
+      target: "awaiting_manual_fix",
+      effects: ["publish_status"],
+    },
+    dispatch_sent: {
+      target: "implementing",
+      effects: ["ack_timeout_check"],
+    },
+    dispatch_acked: { target: "noop", effects: [] },
+    dispatch_ack_timeout: { target: "noop", effects: [] },
+    run_completed: { target: "noop", effects: [] },
+    run_failed: { target: "noop", effects: [] },
+    gate_review_passed: { target: "noop", effects: [] },
+    gate_review_failed: { target: "noop", effects: [] },
+    gate_ci_passed: { target: "noop", effects: [] },
+    gate_ci_failed: { target: "noop", effects: [] },
+    pr_linked: { target: "noop", effects: [] },
+    resume_requested: { target: "noop", effects: [] },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- implementing (activeRunId = "r-1", fresh retry counts) --
   implementing: {
-    bootstrap: "noop",
-    planning_run_completed: "noop",
-    plan_completed: "noop",
-    plan_failed: "noop",
-    dispatch_sent: "stay", // stays, updates activeRunId
-    dispatch_acked: "stay", // stays, ack recorded
-    dispatch_ack_timeout: "implementing", // infra retry -> stays implementing
-    run_completed: "gating_review",
-    run_failed: "implementing", // agent retry (first attempt, under budget)
-    gate_review_passed: "noop",
-    gate_review_failed: "noop",
-    gate_ci_passed: "noop",
-    gate_ci_failed: "noop",
-    pr_linked: "noop",
-    resume_requested: "noop",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: { target: "noop", effects: [] },
+    planning_run_completed: { target: "noop", effects: [] },
+    plan_completed: { target: "noop", effects: [] },
+    plan_failed: { target: "noop", effects: [] },
+    dispatch_sent: {
+      target: "stay",
+      effects: ["ack_timeout_check"],
+    },
+    dispatch_acked: { target: "stay", effects: [] },
+    dispatch_ack_timeout: {
+      // infra retry (first attempt, under budget) -> stays implementing
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    run_completed: {
+      target: "gating_review",
+      effects: ["dispatch_gate_review", "publish_status"],
+    },
+    run_failed: {
+      // agent retry (first attempt, under budget)
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    gate_review_passed: { target: "noop", effects: [] },
+    gate_review_failed: { target: "noop", effects: [] },
+    gate_ci_passed: { target: "noop", effects: [] },
+    gate_ci_failed: { target: "noop", effects: [] },
+    pr_linked: { target: "noop", effects: [] },
+    resume_requested: { target: "noop", effects: [] },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- gating_review (activeRunId = "r-1", headSha = "abc123") --
   gating_review: {
-    bootstrap: "noop",
-    planning_run_completed: "noop",
-    plan_completed: "noop",
-    plan_failed: "noop",
-    dispatch_sent: "stay", // updates activeRunId
-    dispatch_acked: "stay", // ack recorded
-    dispatch_ack_timeout: "implementing", // infra retry
-    run_completed: "noop",
-    run_failed: "implementing", // retry
-    gate_review_passed: "gating_ci", // with prNumber=1
-    gate_review_failed: "implementing", // agent retry
-    gate_ci_passed: "noop",
-    gate_ci_failed: "noop",
-    pr_linked: "noop",
-    resume_requested: "noop",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: { target: "noop", effects: [] },
+    planning_run_completed: { target: "noop", effects: [] },
+    plan_completed: { target: "noop", effects: [] },
+    plan_failed: { target: "noop", effects: [] },
+    dispatch_sent: {
+      target: "stay",
+      effects: ["ack_timeout_check"],
+    },
+    dispatch_acked: { target: "stay", effects: [] },
+    dispatch_ack_timeout: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    run_completed: { target: "noop", effects: [] },
+    run_failed: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    gate_review_passed: {
+      // prNumber=1 provided -> has PR -> gating_ci
+      target: "gating_ci",
+      effects: ["gate_staleness_check", "publish_status"],
+    },
+    gate_review_failed: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    gate_ci_passed: { target: "noop", effects: [] },
+    gate_ci_failed: { target: "noop", effects: [] },
+    pr_linked: { target: "noop", effects: [] },
+    resume_requested: { target: "noop", effects: [] },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- gating_ci (headSha = "abc123") --
   gating_ci: {
-    bootstrap: "noop",
-    planning_run_completed: "noop",
-    plan_completed: "noop",
-    plan_failed: "noop",
-    dispatch_sent: "noop",
-    dispatch_acked: "noop",
-    dispatch_ack_timeout: "noop",
-    run_completed: "noop",
-    run_failed: "noop",
-    gate_review_passed: "noop",
-    gate_review_failed: "noop",
-    gate_ci_passed: "awaiting_pr",
-    gate_ci_failed: "implementing", // agent retry
-    pr_linked: "noop",
-    resume_requested: "noop",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: { target: "noop", effects: [] },
+    planning_run_completed: { target: "noop", effects: [] },
+    plan_completed: { target: "noop", effects: [] },
+    plan_failed: { target: "noop", effects: [] },
+    dispatch_sent: { target: "noop", effects: [] },
+    dispatch_acked: { target: "noop", effects: [] },
+    dispatch_ack_timeout: { target: "noop", effects: [] },
+    run_completed: { target: "noop", effects: [] },
+    run_failed: { target: "noop", effects: [] },
+    gate_review_passed: { target: "noop", effects: [] },
+    gate_review_failed: { target: "noop", effects: [] },
+    gate_ci_passed: {
+      target: "awaiting_pr",
+      effects: ["publish_status"],
+    },
+    gate_ci_failed: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    pr_linked: { target: "noop", effects: [] },
+    resume_requested: { target: "noop", effects: [] },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- awaiting_pr (blockedReason = "Awaiting PR creation") --
   awaiting_pr: {
-    bootstrap: "noop",
-    planning_run_completed: "noop",
-    plan_completed: "noop",
-    plan_failed: "noop",
-    dispatch_sent: "noop",
-    dispatch_acked: "noop",
-    dispatch_ack_timeout: "noop",
-    run_completed: "noop",
-    run_failed: "noop",
-    gate_review_passed: "noop",
-    gate_review_failed: "implementing", // PR linkage failure -> retry
-    gate_ci_passed: "noop",
-    gate_ci_failed: "noop",
-    pr_linked: "gating_ci",
-    resume_requested: "noop",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: { target: "noop", effects: [] },
+    planning_run_completed: { target: "noop", effects: [] },
+    plan_completed: { target: "noop", effects: [] },
+    plan_failed: { target: "noop", effects: [] },
+    dispatch_sent: { target: "noop", effects: [] },
+    dispatch_acked: { target: "noop", effects: [] },
+    dispatch_ack_timeout: { target: "noop", effects: [] },
+    run_completed: { target: "noop", effects: [] },
+    run_failed: { target: "noop", effects: [] },
+    gate_review_passed: { target: "noop", effects: [] },
+    gate_review_failed: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    gate_ci_passed: { target: "noop", effects: [] },
+    gate_ci_failed: { target: "noop", effects: [] },
+    pr_linked: {
+      target: "gating_ci",
+      effects: ["gate_staleness_check", "publish_status"],
+    },
+    resume_requested: { target: "noop", effects: [] },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- awaiting_manual_fix --
   awaiting_manual_fix: {
-    bootstrap: "noop",
-    planning_run_completed: "noop",
-    plan_completed: "noop",
-    plan_failed: "noop",
-    dispatch_sent: "noop",
-    dispatch_acked: "noop",
-    dispatch_ack_timeout: "noop",
-    run_completed: "noop",
-    run_failed: "noop",
-    gate_review_passed: "noop",
-    gate_review_failed: "noop",
-    gate_ci_passed: "noop",
-    gate_ci_failed: "noop",
-    pr_linked: "noop",
-    resume_requested: "implementing",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: { target: "noop", effects: [] },
+    planning_run_completed: { target: "noop", effects: [] },
+    plan_completed: { target: "noop", effects: [] },
+    plan_failed: { target: "noop", effects: [] },
+    dispatch_sent: { target: "noop", effects: [] },
+    dispatch_acked: { target: "noop", effects: [] },
+    dispatch_ack_timeout: { target: "noop", effects: [] },
+    run_completed: { target: "noop", effects: [] },
+    run_failed: { target: "noop", effects: [] },
+    gate_review_passed: { target: "noop", effects: [] },
+    gate_review_failed: { target: "noop", effects: [] },
+    gate_ci_passed: { target: "noop", effects: [] },
+    gate_ci_failed: { target: "noop", effects: [] },
+    pr_linked: { target: "noop", effects: [] },
+    resume_requested: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- awaiting_operator_action --
   awaiting_operator_action: {
-    bootstrap: "noop",
-    planning_run_completed: "noop",
-    plan_completed: "noop",
-    plan_failed: "noop",
-    dispatch_sent: "noop",
-    dispatch_acked: "noop",
-    dispatch_ack_timeout: "noop",
-    run_completed: "noop",
-    run_failed: "noop",
-    gate_review_passed: "noop",
-    gate_review_failed: "noop",
-    gate_ci_passed: "noop",
-    gate_ci_failed: "noop",
-    pr_linked: "noop",
-    resume_requested: "implementing",
-    stop_requested: "stopped",
-    pr_closed: "terminated",
+    bootstrap: { target: "noop", effects: [] },
+    planning_run_completed: { target: "noop", effects: [] },
+    plan_completed: { target: "noop", effects: [] },
+    plan_failed: { target: "noop", effects: [] },
+    dispatch_sent: { target: "noop", effects: [] },
+    dispatch_acked: { target: "noop", effects: [] },
+    dispatch_ack_timeout: { target: "noop", effects: [] },
+    run_completed: { target: "noop", effects: [] },
+    run_failed: { target: "noop", effects: [] },
+    gate_review_passed: { target: "noop", effects: [] },
+    gate_review_failed: { target: "noop", effects: [] },
+    gate_ci_passed: { target: "noop", effects: [] },
+    gate_ci_failed: { target: "noop", effects: [] },
+    pr_linked: { target: "noop", effects: [] },
+    resume_requested: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+    stop_requested: { target: "stopped", effects: ["publish_status"] },
+    pr_closed: { target: "terminated", effects: ["publish_status"] },
   },
   // -- terminal states (all absorb) --
-  done: Object.fromEntries(EVENT_TYPES.map((t) => [t, "noop"])) as Record<
-    string,
-    Expectation
-  >,
-  stopped: Object.fromEntries(EVENT_TYPES.map((t) => [t, "noop"])) as Record<
-    string,
-    Expectation
-  >,
-  terminated: Object.fromEntries(EVENT_TYPES.map((t) => [t, "noop"])) as Record<
-    string,
-    Expectation
-  >,
+  done: Object.fromEntries(
+    EVENT_TYPES.map((t) => [t, { target: "noop", effects: [] }]),
+  ) as Record<string, Expectation>,
+  stopped: Object.fromEntries(
+    EVENT_TYPES.map((t) => [t, { target: "noop", effects: [] }]),
+  ) as Record<string, Expectation>,
+  terminated: Object.fromEntries(
+    EVENT_TYPES.map((t) => [t, { target: "noop", effects: [] }]),
+  ) as Record<string, Expectation>,
 };
 
 describe("exhaustive (state x event) transition table", () => {
@@ -336,23 +399,26 @@ describe("exhaustive (state x event) transition table", () => {
     describe(state, () => {
       const expectations = EXPECTED[state]!;
       for (const event of ALL_CANONICAL_EVENTS) {
-        const expected = expectations[event.type];
-        it(`${event.type} -> ${expected}`, () => {
+        const cell = expectations[event.type]!;
+        it(`${event.type} -> ${cell.target}`, () => {
           const head = makeHead(state);
           const result = reduce({ head, event, now: NOW });
 
-          if (expected === "noop") {
+          if (cell.target === "noop") {
             // Fully ignored: same state, same version
             expect(result.head.state).toBe(state);
             expect(result.head.version).toBe(head.version);
-          } else if (expected === "stay") {
+          } else if (cell.target === "stay") {
             // Acknowledged but stays in same state; version must bump
             expect(result.head.state).toBe(state);
             expect(result.head.version).toBeGreaterThan(head.version);
           } else {
             // Transitions to a different state
-            expect(result.head.state).toBe(expected);
+            expect(result.head.state).toBe(cell.target);
           }
+
+          // Check emitted effect kinds
+          expect(result.effects.map((e) => e.kind)).toEqual(cell.effects ?? []);
         });
       }
     });

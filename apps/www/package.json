@@ -136,6 +136,7 @@
     "@types/pg": "^8.15.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "fast-check": "^4.6.0",
     "postcss": "^8.5.5",
     "tailwindcss": "^4.1.10",
     "tsx": "^4.19.4",
