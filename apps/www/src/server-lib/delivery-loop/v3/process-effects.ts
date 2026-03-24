@@ -587,29 +587,6 @@ async function processEnsurePrEffect(params: {
       import("@/agent/thread-resource"),
       import("@/agent/pull-request"),
     ]);
-  const thread = await params.db.query.thread.findFirst({
-    where: eq(schema.thread.id, workflow.threadId),
-    columns: {
-      gitDiff: true,
-      gitDiffStats: true,
-    },
-  });
-  const diffStats =
-    thread?.gitDiffStats &&
-    typeof thread.gitDiffStats === "object" &&
-    thread.gitDiffStats !== null
-      ? (thread.gitDiffStats as { files?: unknown })
-      : null;
-  const diffFileCount =
-    typeof diffStats?.files === "number" ? diffStats.files : null;
-  if (diffFileCount === 0 && thread?.gitDiff !== "too-large") {
-    return {
-      kind: "ensure_pr",
-      outcome: "no_diff",
-      reason: "No code changes detected to open a PR",
-    };
-  }
-
   let prType: "draft" | "ready" = "draft";
   if (workflow.userId) {
     const { getUserSettings } = await import("@terragon/shared/model/user");
