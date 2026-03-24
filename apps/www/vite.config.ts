@@ -16,8 +16,8 @@ export default defineConfig({
   },
   test: {
     silent: "passed-only",
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    testTimeout: process.env.CI ? 10_000 : 30_000,
+    hookTimeout: process.env.CI ? 10_000 : 30_000,
     poolOptions: {
       threads: {
         minThreads: 1,
