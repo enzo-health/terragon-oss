@@ -213,7 +213,7 @@ function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
 function publishStatusEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "publish_status",
-    effectKey: `${head.workflowId}:${head.version + 1}:publish_status`,
+    effectKey: `${head.workflowId}:${head.version}:publish_status`,
     dueAt: now,
     maxAttempts: 3,
     payload: { kind: "publish_status" },
@@ -244,7 +244,7 @@ function dispatchImplementingEffect(
       : now;
   return {
     kind: "dispatch_implementing",
-    effectKey: `${head.workflowId}:${head.version + 1}:dispatch_implementing`,
+    effectKey: `${head.workflowId}:${head.version}:dispatch_implementing`,
     dueAt,
     payload: { kind: "dispatch_implementing", executionClass },
   };
@@ -253,7 +253,7 @@ function dispatchImplementingEffect(
 function dispatchReviewEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "dispatch_gate_review",
-    effectKey: `${head.workflowId}:${head.version + 1}:dispatch_gate_review`,
+    effectKey: `${head.workflowId}:${head.version}:dispatch_gate_review`,
     dueAt: now,
     payload: { kind: "dispatch_gate_review", gate: "review" },
   };
@@ -262,7 +262,7 @@ function dispatchReviewEffect(head: WorkflowHead, now: Date): EffectSpec {
 function ensurePrEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "ensure_pr",
-    effectKey: `${head.workflowId}:${head.version + 1}:ensure_pr`,
+    effectKey: `${head.workflowId}:${head.version}:ensure_pr`,
     dueAt: now,
     maxAttempts: 8,
     payload: { kind: "ensure_pr" },

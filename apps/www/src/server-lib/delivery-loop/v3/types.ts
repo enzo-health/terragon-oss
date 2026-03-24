@@ -177,6 +177,10 @@ export function stateToDeliveryLoopState(
     case "stopped":
       return "stopped";
     case "terminated":
+      // TODO: stateToDeliveryLoopState only receives a WorkflowState string and
+      // cannot distinguish terminated_pr_merged from terminated_pr_closed.
+      // Use buildSnapshotFromV3Head (which has access to blockedReason) for
+      // accurate terminal state mapping.
       return "terminated_pr_closed";
   }
 }

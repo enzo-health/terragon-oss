@@ -816,29 +816,16 @@ async function handleGateStalenessCheck(params: {
   ]);
 
   if (!head || head.version !== params.payload.workflowVersion) {
-    const outcome = { kind: "gate_staleness_check", outcome: "stale" } as const;
-    console.log("[gate_staleness_check] returning:", outcome);
-    return outcome;
+    return { kind: "gate_staleness_check", outcome: "stale" } as const;
   }
   if (!workflow || !head.headSha) {
-    const outcome = { kind: "gate_staleness_check", outcome: "stale" } as const;
-    console.log("[gate_staleness_check] returning:", outcome);
-    return outcome;
+    return { kind: "gate_staleness_check", outcome: "stale" } as const;
   }
 
   const repoFullName = workflow.repoFullName;
   if (!repoFullName) {
-    const outcome = { kind: "gate_staleness_check", outcome: "stale" } as const;
-    console.log("[gate_staleness_check] returning:", outcome);
-    return outcome;
+    return { kind: "gate_staleness_check", outcome: "stale" } as const;
   }
-
-  console.log(
-    "[gate_staleness_check] headSha:",
-    head.headSha,
-    "repoFullName:",
-    repoFullName,
-  );
 
   try {
     const { fetchCiSignalSnapshotForHeadSha } = await import(
@@ -848,7 +835,6 @@ async function handleGateStalenessCheck(params: {
       repoFullName,
       headSha: head.headSha,
     });
-    console.log("[gate_staleness_check] snapshot:", JSON.stringify(snapshot));
 
     if (!snapshot) {
       // No check runs yet — re-enqueue for another poll in 5 min
@@ -868,33 +854,24 @@ async function handleGateStalenessCheck(params: {
           },
         ],
       });
-      const outcome = {
-        kind: "gate_staleness_check",
-        outcome: "pending",
-      } as const;
-      console.log("[gate_staleness_check] returning:", outcome);
-      return outcome;
+      return { kind: "gate_staleness_check", outcome: "pending" } as const;
     }
 
     if (snapshot.failingChecks.length > 0) {
-      const outcome = {
+      return {
         kind: "gate_staleness_check",
         outcome: "ci_failed",
         headSha: head.headSha,
         reason: `CI checks failed: ${snapshot.failingChecks.join(", ")}`,
       } as const;
-      console.log("[gate_staleness_check] returning:", outcome);
-      return outcome;
     }
 
     if (snapshot.complete) {
-      const outcome = {
+      return {
         kind: "gate_staleness_check",
         outcome: "ci_passed",
         headSha: head.headSha,
       } as const;
-      console.log("[gate_staleness_check] returning:", outcome);
-      return outcome;
     }
 
     // Still pending — re-enqueue for another poll in 5 min
@@ -914,12 +891,7 @@ async function handleGateStalenessCheck(params: {
         },
       ],
     });
-    const pendingOutcome = {
-      kind: "gate_staleness_check",
-      outcome: "pending",
-    } as const;
-    console.log("[gate_staleness_check] returning:", pendingOutcome);
-    return pendingOutcome;
+    return { kind: "gate_staleness_check", outcome: "pending" } as const;
   } catch (err) {
     console.error(
       `[handleGateStalenessCheck] Unexpected error for workflow ${params.effect.workflowId} (version ${params.payload.workflowVersion}):`,
@@ -942,12 +914,7 @@ async function handleGateStalenessCheck(params: {
         },
       ],
     });
-    const pendingOutcome = {
-      kind: "gate_staleness_check",
-      outcome: "pending",
-    } as const;
-    console.log("[gate_staleness_check] returning:", pendingOutcome);
-    return pendingOutcome;
+    return { kind: "gate_staleness_check", outcome: "pending" } as const;
   }
 }
 

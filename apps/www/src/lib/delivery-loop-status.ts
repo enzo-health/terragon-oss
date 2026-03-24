@@ -793,6 +793,8 @@ export function buildSnapshotFromV3Head(
       return { kind: "stopped" };
 
     case "terminated":
-      return { kind: "terminated_pr_closed" };
+      return head.blockedReason === "PR merged"
+        ? { kind: "terminated_pr_merged" }
+        : { kind: "terminated_pr_closed" };
   }
 }
