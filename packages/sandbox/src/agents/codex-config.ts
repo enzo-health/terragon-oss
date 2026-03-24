@@ -39,15 +39,6 @@ export function buildCodexToml({
 
   const modelProvidersToml: Record<string, any> = {};
 
-  // Increase timeouts for the built-in openai provider to handle long-running tasks.
-  // Must be under [model_providers.openai] — root-level keys are silently ignored by codex_core.
-  // Note: request_max_retries cannot be overridden for built-in openai provider (Codex #3026).
-  modelProvidersToml.openai = {
-    name: "openai",
-    stream_idle_timeout_ms: 600_000,
-    stream_max_retries: 20,
-  };
-
   if (terryModelProviderBaseUrl) {
     modelProvidersToml.terry = {
       name: "terry",

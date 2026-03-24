@@ -35,11 +35,6 @@ describe("buildCodexToml", () => {
     });
     expect(toml).toMatchInlineSnapshot(`
       "# IMPORTANT: the top-level key is \`mcp_servers\` rather than \`mcpServers\`.
-      [model_providers.openai]
-      name = "openai"
-      stream_idle_timeout_ms = 600_000
-      stream_max_retries = 20
-
       [model_providers.terry]
       name = "terry"
       base_url = "https://example.com/api/proxy/openai/v1"
@@ -140,11 +135,6 @@ describe("buildCodexToml", () => {
 
     expect(toml).toMatchInlineSnapshot(`
       "# IMPORTANT: the top-level key is \`mcp_servers\` rather than \`mcpServers\`.
-      [model_providers.openai]
-      name = "openai"
-      stream_idle_timeout_ms = 600_000
-      stream_max_retries = 20
-
       [model_providers.terry]
       name = "terry"
       base_url = "https://example.com/api/proxy/openai/v1"
@@ -267,11 +257,6 @@ describe("buildCodexToml", () => {
     // Check that the TOML was generated
     expect(toml).toMatchInlineSnapshot(`
       "# IMPORTANT: the top-level key is \`mcp_servers\` rather than \`mcpServers\`.
-      [model_providers.openai]
-      name = "openai"
-      stream_idle_timeout_ms = 600_000
-      stream_max_retries = 20
-
       [model_providers.terry]
       name = "terry"
       base_url = "https://example.com/api/proxy/openai/v1"
