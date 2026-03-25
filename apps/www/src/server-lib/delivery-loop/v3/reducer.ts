@@ -775,6 +775,29 @@ export function reduce(params: {
           });
           break;
         }
+        if (event.type === "run_failed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const lane =
+            event.lane ??
+            classifyFailureLane({
+              category: event.category,
+              message: event.message,
+            });
+          result = retryToImplementing({
+            head,
+            now,
+            lane,
+            reason: event.message,
+          });
+          break;
+        }
         result = {
           head,
           effects: [],

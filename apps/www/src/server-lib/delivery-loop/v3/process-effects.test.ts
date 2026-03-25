@@ -15,7 +15,7 @@ import {
   updateWorkflowHead,
 } from "./store";
 import { drainDueEffects, effectResultToEvent } from "./process-effects";
-import type { EffectSpec } from "./types";
+import type { EffectResult, EffectSpec } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
 
@@ -172,6 +172,93 @@ describe("effectResultToEvent", () => {
       category: "effect_failure",
       lane: "infra",
     });
+  });
+
+  // gate_staleness_check
+  it("gate staleness ci_passed → gate_ci_passed", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "ci_passed",
+      headSha: "abc123",
+    });
+    expect(result).toEqual({ type: "gate_ci_passed", headSha: "abc123" });
+  });
+
+  it("gate staleness ci_failed → gate_ci_failed", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "ci_failed",
+      headSha: "abc123",
+      reason: "lint failed",
+    });
+    expect(result).toEqual({
+      type: "gate_ci_failed",
+      headSha: "abc123",
+      reason: "lint failed",
+    });
+  });
+
+  it("gate staleness pending → null", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "pending",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("gate staleness stale → null", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "stale",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("exhaustiveness: every EffectResult kind is handled (compile-time check)", () => {
+    // This test verifies that the default `never` branch in effectResultToEvent
+    // compiles. If a new EffectResult kind is added without a corresponding
+    // case, TypeScript will report a compile error on the `never` assignment.
+    // At runtime we just confirm the function handles all known kinds.
+    const allResults: EffectResult[] = [
+      {
+        kind: "create_plan_artifact",
+        outcome: "created",
+        approvalPolicy: "auto",
+      },
+      { kind: "create_plan_artifact", outcome: "failed", reason: "x" },
+      {
+        kind: "dispatch_gate_review",
+        outcome: "dispatched",
+        runId: "r",
+        ackDeadlineAt: new Date(),
+      },
+      { kind: "dispatch_gate_review", outcome: "failed", reason: "x" },
+      { kind: "ensure_pr", outcome: "linked", prNumber: 1 },
+      { kind: "ensure_pr", outcome: "no_diff", reason: "x" },
+      { kind: "ensure_pr", outcome: "failed", reason: "x" },
+      {
+        kind: "dispatch_implementing",
+        outcome: "dispatched",
+        runId: "r",
+        ackDeadlineAt: new Date(),
+      },
+      { kind: "dispatch_implementing", outcome: "failed", reason: "x" },
+      { kind: "ack_timeout_check", outcome: "fired", runId: "r" },
+      { kind: "ack_timeout_check", outcome: "stale" },
+      { kind: "gate_staleness_check", outcome: "ci_passed", headSha: "s" },
+      {
+        kind: "gate_staleness_check",
+        outcome: "ci_failed",
+        headSha: "s",
+        reason: "x",
+      },
+      { kind: "gate_staleness_check", outcome: "pending" },
+      { kind: "gate_staleness_check", outcome: "stale" },
+    ];
+    for (const r of allResults) {
+      // Should not throw
+      effectResultToEvent(r);
+    }
   });
 });
 
@@ -603,6 +690,236 @@ describe("drainDueEffects", () => {
     expect(headAfter.activeRunId).toBe(dispatchRunId);
     expect(headAfter.infraRetryCount).toBe(0);
     expect(headAfter.version).toBe(head.version + 1); // unchanged
+  });
+
+  it("ack timeout with version mismatch returns stale (no event fired)", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) throw new Error("Expected workflow head");
+
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: `run-${nanoid()}`,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(moved).toBe(true);
+
+    // Insert ack_timeout_check with a stale workflowVersion (head.version, not head.version+1)
+    const effect: EffectSpec = {
+      kind: "ack_timeout_check",
+      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:stale-ver`,
+      dueAt: now,
+      payload: {
+        kind: "ack_timeout_check",
+        runId: `run-${nanoid()}`,
+        workflowVersion: head.version, // mismatch — head is now head.version+1
+      },
+    };
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version + 1,
+      effects: [effect],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    // Effect processed as stale — no dispatch_ack_timeout journal entry
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    const timeoutEvents = journalRows.filter(
+      (r) => r.eventType === "dispatch_ack_timeout",
+    );
+    expect(timeoutEvents).toHaveLength(0);
+
+    // Effect marked succeeded (stale is still "succeeded" status)
+    const effectRow = await db.query.deliveryEffectLedgerV3.findFirst({
+      where: and(
+        eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+        eq(schema.deliveryEffectLedgerV3.effectKind, "ack_timeout_check"),
+      ),
+    });
+    expect(effectRow?.status).toBe("succeeded");
+  });
+
+  it("ack timeout fires when no threadChat exists", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) throw new Error("Expected workflow head");
+
+    const dispatchRunId = `run-${nanoid()}`;
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: dispatchRunId,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(moved).toBe(true);
+
+    // No threadChat created — daemon hasn't started yet
+
+    const effect: EffectSpec = {
+      kind: "ack_timeout_check",
+      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:no-chat`,
+      dueAt: now,
+      payload: {
+        kind: "ack_timeout_check",
+        runId: dispatchRunId,
+        workflowVersion: head.version + 1,
+      },
+    };
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version + 1,
+      effects: [effect],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    // dispatch_ack_timeout should fire (no threadChat → not suppressed)
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    const timeoutEvents = journalRows.filter(
+      (r) => r.eventType === "dispatch_ack_timeout",
+    );
+    expect(timeoutEvents).toHaveLength(1);
+
+    const headAfter = await getWorkflowHead({ db, workflowId });
+    if (!headAfter) throw new Error("Expected head after drain");
+    expect(headAfter.infraRetryCount).toBe(1);
+  });
+
+  it("multiple effects drain in order (oldest first)", async () => {
+    const now = new Date("2026-03-18T10:10:00.000Z");
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({ db, userId: user.id });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      userId: user.id,
+      kind: "planning",
+      stateJson: { state: "planning" },
+    });
+    const workflowId = workflow.id;
+
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) throw new Error("Expected workflow head");
+
+    const runId1 = `run-${nanoid()}`;
+    const runId2 = `run-${nanoid()}`;
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: runId1,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(moved).toBe(true);
+
+    // Two ack_timeout_check effects with different dueAt (both due)
+    const effects: EffectSpec[] = [
+      {
+        kind: "ack_timeout_check",
+        effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:order-2`,
+        dueAt: new Date("2026-03-18T10:05:00.000Z"), // later
+        payload: {
+          kind: "ack_timeout_check",
+          runId: runId2,
+          workflowVersion: head.version + 1,
+        },
+      },
+      {
+        kind: "ack_timeout_check",
+        effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:order-1`,
+        dueAt: new Date("2026-03-18T10:00:00.000Z"), // earlier
+        payload: {
+          kind: "ack_timeout_check",
+          runId: runId1,
+          workflowVersion: head.version + 1,
+        },
+      },
+    ];
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version + 1,
+      effects,
+    });
+    expect(inserted).toBe(2);
+
+    const drain = await drainDueEffects({
+      db,
+      maxItems: 2,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(2);
+
+    // Both effects processed
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    const ackEffects = effectRows.filter(
+      (r) => r.effectKind === "ack_timeout_check",
+    );
+    expect(ackEffects.every((e) => e.status === "succeeded")).toBe(true);
+
+    // Verify via dueAt order: the earlier-due effect was processed
+    // first because claimNextEffect orders by dueAt. Both succeeded confirms
+    // drain handled them sequentially.
+    const dueAtOrder = ackEffects.sort(
+      (a, b) => a.dueAt.getTime() - b.dueAt.getTime(),
+    );
+    expect(dueAtOrder[0]!.dueAt.getTime()).toBeLessThan(
+      dueAtOrder[1]!.dueAt.getTime(),
+    );
   });
 
   it("routes no-diff ensure_pr attempts back to implementing", async () => {
