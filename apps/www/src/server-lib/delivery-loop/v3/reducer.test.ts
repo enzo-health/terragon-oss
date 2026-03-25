@@ -948,4 +948,119 @@ describe("reduce", () => {
       expect(result.head.activeRunId).toBeNull();
     });
   });
+
+  describe("awaiting_pr noop verification", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+
+    it("awaiting_pr ignores run_completed (stale event)", () => {
+      const h = {
+        ...head("awaiting_pr"),
+        blockedReason: "Awaiting PR creation",
+        headSha: "sha-1",
+      };
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "run-stale",
+          headSha: "sha-1",
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("awaiting_pr");
+      expect(result.head.version).toBe(h.version);
+      expect(result.effects).toHaveLength(0);
+    });
+  });
+
+  describe("awaiting_pr + pr_linked happy path", () => {
+    it("awaiting_pr + pr_linked transitions to gating_ci", () => {
+      const now = new Date("2026-03-18T01:00:00.000Z");
+      const h = {
+        ...head("awaiting_pr"),
+        blockedReason: "Awaiting PR creation",
+        headSha: "sha-abc",
+      };
+      const result = reduce({
+        head: h,
+        event: { type: "pr_linked", prNumber: 55 },
+        now,
+      });
+
+      expect(result.head.state).toBe("gating_ci");
+      expect(result.head.activeGate).toBe("ci");
+      expect(result.head.activeRunId).toBeNull();
+      expect(result.head.blockedReason).toBeNull();
+      expect(result.head.version).toBeGreaterThan(h.version);
+      expect(result.effects).toHaveLength(2);
+      expect(result.effects[0]).toMatchObject({
+        kind: "gate_staleness_check",
+        payload: { kind: "gate_staleness_check" },
+      });
+      expect(result.effects[1]).toMatchObject({
+        kind: "publish_status",
+        payload: { kind: "publish_status" },
+      });
+    });
+  });
+
+  describe("awaiting_manual_fix and awaiting_operator_action", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+
+    it("awaiting_manual_fix + resume_requested transitions to implementing", () => {
+      const h = {
+        ...head("awaiting_manual_fix"),
+        blockedReason: "Fix attempt budget exhausted",
+        fixAttemptCount: 6,
+      };
+      const result = reduce({
+        head: h,
+        event: { type: "resume_requested" },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.blockedReason).toBeNull();
+      expect(result.head.activeRunId).toBeNull();
+      expect(result.effects).toHaveLength(2);
+      expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+      expect(result.effects[1]?.kind).toBe("publish_status");
+    });
+
+    it("awaiting_operator_action + resume_requested transitions to implementing", () => {
+      const h = {
+        ...head("awaiting_operator_action"),
+        blockedReason: "Infrastructure retry budget exhausted",
+        infraRetryCount: 10,
+      };
+      const result = reduce({
+        head: h,
+        event: { type: "resume_requested" },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.blockedReason).toBeNull();
+      expect(result.head.activeRunId).toBeNull();
+      expect(result.effects).toHaveLength(2);
+      expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+      expect(result.effects[1]?.kind).toBe("publish_status");
+    });
+
+    it("awaiting_manual_fix ignores dispatch_acked", () => {
+      const h = {
+        ...head("awaiting_manual_fix"),
+        blockedReason: "Fix attempt budget exhausted",
+      };
+      const result = reduce({
+        head: h,
+        event: { type: "dispatch_acked", runId: "run-stale" },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("awaiting_manual_fix");
+      expect(result.head.version).toBe(h.version);
+      expect(result.effects).toHaveLength(0);
+    });
+  });
 });
