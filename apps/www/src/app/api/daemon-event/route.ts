@@ -778,6 +778,22 @@ export async function POST(request: Request) {
         error: ackError,
       });
     }
+
+    try {
+      await appendEventAndAdvance({
+        db,
+        workflowId: effectiveLoopId,
+        source: "daemon",
+        idempotencyKey: `ack:${envelopeV2.runId}`,
+        event: { type: "dispatch_acked", runId: envelopeV2.runId },
+      });
+    } catch (err) {
+      console.warn("[delivery-loop] dispatch_acked journal write failed", {
+        loopId: effectiveLoopId,
+        runId: envelopeV2.runId,
+        error: err,
+      });
+    }
   }
 
   let claimedProcessingEvent = false;
@@ -1061,7 +1077,7 @@ export async function POST(request: Request) {
         db,
         workflowId: effectiveLoopId,
         source: "daemon",
-        idempotencyKey: `ack:${envelopeV2.eventId}:${envelopeV2.runId}`,
+        idempotencyKey: `ack:${envelopeV2.runId}`,
         event: {
           type: "dispatch_acked",
           runId: envelopeV2.runId,

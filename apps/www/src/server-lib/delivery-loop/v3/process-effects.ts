@@ -759,9 +759,11 @@ async function handleAckTimeoutCheck(params: {
       orderBy: [desc(schema.threadChat.createdAt)],
     });
     if (
-      activeThreadChat?.status === "working" ||
-      activeThreadChat?.status === "working-done"
+      (activeThreadChat?.status === "working" ||
+        activeThreadChat?.status === "working-done") &&
+      head.activeRunId === params.payload.runId
     ) {
+      // suppress — daemon is actively working and ack was journaled
       return { kind: "ack_timeout_check", outcome: "stale" };
     }
   }
