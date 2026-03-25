@@ -594,14 +594,11 @@ export async function startAgentMessage({
           }
           // Read authoritative state from v3 head
           let effectiveState: DeliveryLoopState | null = null;
-          if (v2Workflow) {
-            const v3Head = await getWorkflowHead({
-              db,
-              workflowId: v2Workflow.id,
-            });
-            effectiveState = v3Head
-              ? stateToDeliveryLoopState(v3Head.state)
-              : null;
+          const v3Head = v2Workflow
+            ? await getWorkflowHead({ db, workflowId: v2Workflow.id })
+            : null;
+          if (v3Head) {
+            effectiveState = stateToDeliveryLoopState(v3Head.state);
           }
           let planContext: {
             planText: string;
@@ -650,7 +647,11 @@ export async function startAgentMessage({
             }
           }
           const deliveryLoopPhasePromptPrefix =
-            buildDeliveryLoopPhasePromptPrefix(effectiveState, planContext);
+            buildDeliveryLoopPhasePromptPrefix(effectiveState, planContext, {
+              blockedReason: v3Head?.blockedReason ?? null,
+              fixAttemptCount: v3Head?.fixAttemptCount ?? 0,
+              infraRetryCount: v3Head?.infraRetryCount ?? 0,
+            });
 
           const sanitizedPrompt = finalPrompt.replace(
             /(?:^|\s)\/compact(?=\s|$)/g,
@@ -885,6 +886,11 @@ function buildDeliveryLoopPhasePromptPrefix(
       description?: string | null;
     }>;
   } | null,
+  headContext?: {
+    blockedReason: string | null;
+    fixAttemptCount: number;
+    infraRetryCount: number;
+  } | null,
 ): string | null {
   if (!state) {
     return null;
@@ -910,7 +916,21 @@ function buildDeliveryLoopPhasePromptPrefix(
       ].join("\n");
     // v3-reachable: implementing
     case "implementing": {
+      const isRetry =
+        (headContext?.fixAttemptCount ?? 0) > 0 ||
+        (headContext?.infraRetryCount ?? 0) > 0;
       const lines: string[] = ["Delivery Loop phase: implementing."];
+      if (isRetry && headContext?.blockedReason) {
+        lines.push(
+          "",
+          `## Previous Failure`,
+          `This is retry attempt #${(headContext.fixAttemptCount ?? 0) + 1}. The previous run failed:`,
+          `**${headContext.blockedReason}**`,
+          "",
+          "You MUST fix this specific issue before completing. Do not just re-run the same code — make targeted changes to resolve the failure.",
+          "",
+        );
+      }
       if (planContext?.planText) {
         lines.push("", "## Approved Plan", "", planContext.planText);
         if (planContext.tasks?.length) {
@@ -958,7 +978,9 @@ function buildDeliveryLoopPhasePromptPrefix(
     case "ci_gate":
       return [
         "Delivery Loop phase: ci_gate.",
-        "Run lint, typecheck, and tests. Fix any failures before proceeding.",
+        "Run lint, typecheck, and tests locally. Fix any failures before proceeding.",
+        "If a specific CI check is failing (e.g., format, lint, typecheck), run the corresponding command locally, fix the errors, and commit the fix.",
+        "Common fixes: run the project's formatter (prettier, eslint --fix), fix type errors, update failing test assertions.",
       ].join(" ");
     // v3-reachable: awaiting_pr_link (mapped from "awaiting_pr")
     case "awaiting_pr_link":
