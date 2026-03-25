@@ -836,4 +836,116 @@ describe("reduce", () => {
     expect(result.head.version).toBe(h.version);
     expect(result.effects).toHaveLength(0);
   });
+
+  describe("terminal states absorb all events", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+    const events = [
+      { type: "run_completed" as const, runId: "r-1", headSha: "sha-1" },
+      { type: "dispatch_sent" as const, runId: "r-1", ackDeadlineAt: NOW },
+      { type: "bootstrap" as const },
+      { type: "plan_completed" as const },
+    ];
+
+    it("done state absorbs all events", () => {
+      for (const event of events) {
+        const result = reduce({ head: head("done"), event, now: NOW });
+        expect(result.head.state).toBe("done");
+        expect(result.effects).toHaveLength(0);
+      }
+    });
+
+    it("stopped state absorbs all events", () => {
+      for (const event of events) {
+        const result = reduce({ head: head("stopped"), event, now: NOW });
+        expect(result.head.state).toBe("stopped");
+        expect(result.effects).toHaveLength(0);
+      }
+    });
+
+    it("terminated state absorbs all events", () => {
+      for (const event of events) {
+        const result = reduce({ head: head("terminated"), event, now: NOW });
+        expect(result.head.state).toBe("terminated");
+        expect(result.effects).toHaveLength(0);
+      }
+    });
+
+    it("stop_requested from done is a no-op", () => {
+      const result = reduce({
+        head: head("done"),
+        event: { type: "stop_requested" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("done");
+      expect(result.effects).toHaveLength(0);
+    });
+  });
+
+  describe("budget exhaustion", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+
+    it("fix budget exhaustion transitions to awaiting_manual_fix", () => {
+      const h = {
+        ...head("implementing"),
+        fixAttemptCount: 6,
+        maxFixAttempts: 6,
+      };
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_failed",
+          runId: "r-1",
+          message: "test failure",
+          category: null,
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("awaiting_manual_fix");
+    });
+
+    it("infra budget exhaustion transitions to awaiting_operator_action", () => {
+      const h = {
+        ...head("implementing"),
+        infraRetryCount: 10,
+        maxInfraRetries: 10,
+        activeRunId: "r-1",
+      };
+      const result = reduce({
+        head: h,
+        event: { type: "dispatch_ack_timeout", runId: "r-1" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("awaiting_operator_action");
+    });
+  });
+
+  describe("global event handlers", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+
+    it("stop_requested from implementing transitions to stopped", () => {
+      const result = reduce({
+        head: head("implementing"),
+        event: { type: "stop_requested" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("stopped");
+      expect(result.head.activeGate).toBeNull();
+      expect(result.head.activeRunId).toBeNull();
+    });
+
+    it("pr_closed from gating_ci transitions to terminated", () => {
+      const result = reduce({
+        head: {
+          ...head("gating_ci"),
+          activeGate: "ci",
+          headSha: "sha-1",
+        },
+        event: { type: "pr_closed" },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("terminated");
+      expect(result.head.activeGate).toBeNull();
+      expect(result.head.activeRunId).toBeNull();
+    });
+  });
 });
