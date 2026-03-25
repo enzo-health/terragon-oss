@@ -940,7 +940,7 @@ describe("reduce", () => {
           activeGate: "ci",
           headSha: "sha-1",
         },
-        event: { type: "pr_closed" },
+        event: { type: "pr_closed", merged: false },
         now: NOW,
       });
       expect(result.head.state).toBe("terminated");

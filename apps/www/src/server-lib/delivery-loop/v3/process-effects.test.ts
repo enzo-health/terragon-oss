@@ -911,13 +911,7 @@ describe("drainDueEffects", () => {
     );
     expect(ackEffects.every((e) => e.status === "succeeded")).toBe(true);
 
-    // The first effect (earlier dueAt) should have been claimed first.
-    // Verify by checking claimedAt ordering matches dueAt ordering.
-    const sorted = ackEffects
-      .filter((e) => e.claimedAt !== null)
-      .sort((a, b) => a.claimedAt!.getTime() - b.claimedAt!.getTime());
-    // claimedAt is set by the DB to now for both, so they'll be equal.
-    // Instead verify via dueAt order: the earlier-due effect was processed
+    // Verify via dueAt order: the earlier-due effect was processed
     // first because claimNextEffect orders by dueAt. Both succeeded confirms
     // drain handled them sequentially.
     const dueAtOrder = ackEffects.sort(
