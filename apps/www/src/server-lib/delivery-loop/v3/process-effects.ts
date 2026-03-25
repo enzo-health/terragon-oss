@@ -917,19 +917,22 @@ async function handleGateStalenessCheck(params: {
       `[handleGateStalenessCheck] Unexpected error for workflow ${params.effect.workflowId} (version ${params.payload.workflowVersion}):`,
       err,
     );
-    // Re-enqueue on transient errors rather than treating as stale
+    // Re-enqueue on transient errors rather than treating as stale.
+    // Use head.version (not params.payload.workflowVersion) so the
+    // re-enqueued effect isn't immediately stale if the version advanced.
+    const retryVersion = head?.version ?? params.payload.workflowVersion;
     await insertEffects({
       db: params.db,
       workflowId: params.effect.workflowId,
-      workflowVersion: params.payload.workflowVersion,
+      workflowVersion: retryVersion,
       effects: [
         {
           kind: "gate_staleness_check",
-          effectKey: `${params.effect.workflowId}:${params.payload.workflowVersion}:gate_staleness_check:${Date.now()}`,
+          effectKey: `${params.effect.workflowId}:${retryVersion}:gate_staleness_check:${Date.now()}`,
           dueAt: new Date(params.now.getTime() + 5 * 60 * 1000),
           payload: {
             kind: "gate_staleness_check",
-            workflowVersion: params.payload.workflowVersion,
+            workflowVersion: retryVersion,
           },
         },
       ],

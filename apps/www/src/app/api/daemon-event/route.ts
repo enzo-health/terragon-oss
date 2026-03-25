@@ -39,7 +39,6 @@ import {
 } from "@/lib/redis";
 import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
 import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
-import { drainDueEffects } from "@/server-lib/delivery-loop/v3/process-effects";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -1125,26 +1124,9 @@ export async function POST(request: Request) {
       });
     }
 
-    // Inline effect drain to avoid cron latency
-    try {
-      const drainResult = await drainDueEffects({
-        db,
-        workflowId: effectiveLoopId,
-        maxItems: 5,
-        leaseOwnerPrefix: "inline:daemon-event",
-      });
-      if (drainResult.processed > 0) {
-        console.log("[daemon-event] inline drain processed effects", {
-          loopId: effectiveLoopId,
-          processed: drainResult.processed,
-          trigger: "daemon-event-terminal",
-        });
-      }
-    } catch (err) {
-      console.error("[daemon-event] inline effect drain failed", {
-        error: err,
-      });
-    }
+    // NOTE: Explicit inline drain removed — the kernel's appendEventAndAdvance
+    // now eagerly drains effects inline (eagerDrain defaults to true).
+    // The cron at /api/internal/cron/dispatch-ack-timeout remains as safety net.
   }
 
   // Now that the coordinator tick succeeded, finalize the terminal run status.
