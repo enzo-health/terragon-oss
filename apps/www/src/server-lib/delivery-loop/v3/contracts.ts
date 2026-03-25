@@ -370,6 +370,9 @@ export function serializeEffectPayload(
       return {
         kind: "dispatch_implementing",
         executionClass: payload.executionClass,
+        ...(payload.retryReason != null
+          ? { retryReason: payload.retryReason }
+          : {}),
       };
     case "dispatch_gate_review":
       return { kind: payload.kind, gate: payload.gate };
@@ -411,6 +414,9 @@ export function parseEffectPayload(payload: unknown): EffectPayload | null {
     return {
       kind: "dispatch_implementing",
       executionClass: payload.executionClass,
+      ...(typeof payload.retryReason === "string"
+        ? { retryReason: payload.retryReason }
+        : {}),
     };
   }
   if (payload.kind === "dispatch_gate_review" && payload.gate === "review") {

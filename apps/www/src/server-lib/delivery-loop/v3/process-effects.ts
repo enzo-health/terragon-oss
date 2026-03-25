@@ -932,11 +932,12 @@ async function handleGateStalenessCheck(params: {
     });
     return { kind: "gate_staleness_check", outcome: "pending" } as const;
   } catch (err) {
-    console.error("[gate_staleness_check] error:", err);
-    console.error(
-      `[handleGateStalenessCheck] Unexpected error for workflow ${params.effect.workflowId} (version ${params.payload.workflowVersion}):`,
-      err,
-    );
+    console.error("[gate_staleness_check] transient error, re-enqueuing", {
+      workflowId: params.effect.workflowId,
+      version: params.payload.workflowVersion,
+      pollCount,
+      error: err instanceof Error ? err.message : err,
+    });
     // Re-enqueue on transient errors rather than treating as stale.
     // Use head.version (not params.payload.workflowVersion) so the
     // re-enqueued effect isn't immediately stale if the version advanced.

@@ -337,7 +337,7 @@ function retryToImplementing(params: {
     state: "implementing" as const,
     activeGate: null,
     activeRunId: null,
-    blockedReason: null,
+    blockedReason: params.reason ?? null,
     fixAttemptCount: laneUpdate.fixAttemptCount,
     infraRetryCount: laneUpdate.infraRetryCount,
   };

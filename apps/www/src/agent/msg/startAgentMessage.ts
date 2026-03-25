@@ -924,7 +924,7 @@ function buildDeliveryLoopPhasePromptPrefix(
         lines.push(
           "",
           `## Previous Failure`,
-          `This is retry attempt #${(headContext.fixAttemptCount ?? 0) + 1}. The previous run failed:`,
+          `This is retry attempt #${(headContext.fixAttemptCount ?? 0) + (headContext.infraRetryCount ?? 0) + 1}. The previous run failed:`,
           `**${headContext.blockedReason}**`,
           "",
           "You MUST fix this specific issue before completing. Do not just re-run the same code — make targeted changes to resolve the failure.",

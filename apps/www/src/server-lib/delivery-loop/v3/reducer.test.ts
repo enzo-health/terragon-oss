@@ -209,7 +209,7 @@ describe("reduce", () => {
 
     expect(result.head.state).toBe("implementing");
     expect(result.head.fixAttemptCount).toBe(1);
-    expect(result.head.blockedReason).toBeNull();
+    expect(result.head.blockedReason).toBe("Run completed without head SHA");
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
     expect(result.effects[0]?.payload).toMatchObject({
@@ -233,7 +233,9 @@ describe("reduce", () => {
     });
     expect(result.head.state).toBe("implementing"); // retried, not gating_review
     expect(result.head.fixAttemptCount).toBe(1);
-    expect(result.head.blockedReason).toBeNull();
+    expect(result.head.blockedReason).toBe(
+      "Agent completed without making code changes",
+    );
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
     expect(result.effects[1]?.kind).toBe("publish_status");
