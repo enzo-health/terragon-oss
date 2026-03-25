@@ -824,7 +824,7 @@ async function handleGateStalenessCheck(params: {
 }): Promise<EffectResult> {
   const pollCount = params.payload.pollCount ?? 0;
 
-  if (pollCount > MAX_GATE_STALENESS_POLLS) {
+  if (pollCount >= MAX_GATE_STALENESS_POLLS) {
     return { kind: "gate_staleness_check", outcome: "stale" } as const;
   }
 
