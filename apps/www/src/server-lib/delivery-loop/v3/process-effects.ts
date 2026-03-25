@@ -329,6 +329,7 @@ async function processImplementingDispatchEffect(params: {
   effect: DeliveryEffectLedgerV3Row;
   leaseOwner: string;
   executionClass: "implementation_runtime" | "implementation_runtime_fallback";
+  retryReason?: string | null;
   now: Date;
 }): Promise<EffectResult> {
   const workflowId = params.effect.workflowId;
@@ -422,6 +423,9 @@ async function processImplementingDispatchEffect(params: {
   // Queue a "Continue implementation." message for the follow-up queue,
   // but only on retries — on the first run the user's original prompt suffices.
   if (isRetry) {
+    const retryMessage = params.retryReason
+      ? `Previous attempt failed: ${params.retryReason}. Fix the issue and continue implementation.`
+      : "Continue implementation.";
     const { updateThreadChat } = await import("@terragon/shared/model/threads");
     await updateThreadChat({
       db: params.db,
@@ -434,9 +438,7 @@ async function processImplementingDispatchEffect(params: {
             type: "user" as const,
             model: null,
             timestamp: new Date().toISOString(),
-            parts: [
-              { type: "text" as const, text: "Continue implementation." },
-            ],
+            parts: [{ type: "text" as const, text: retryMessage }],
           },
         ],
       },
@@ -992,6 +994,7 @@ async function processSingleEffect(params: {
             effect: params.effect,
             leaseOwner: params.leaseOwner,
             executionClass: payload.executionClass,
+            retryReason: payload.retryReason,
             now: params.now,
           }),
       });

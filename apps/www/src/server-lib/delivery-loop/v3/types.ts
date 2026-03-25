@@ -69,6 +69,7 @@ export type EffectPayload =
       executionClass:
         | "implementation_runtime"
         | "implementation_runtime_fallback";
+      retryReason?: string | null;
     }
   | { kind: "dispatch_gate_review"; gate: "review" }
   | {
