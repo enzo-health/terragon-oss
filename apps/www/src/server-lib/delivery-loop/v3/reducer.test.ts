@@ -742,4 +742,98 @@ describe("reduce", () => {
       expect(result.head.version).toBe(h.version);
     });
   });
+
+  it("dispatch_acked in planning is a no-op", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = { ...head("planning"), activeRunId: "run-bootstrap" };
+    const result = reduce({
+      head: h,
+      event: { type: "dispatch_acked", runId: "run-bootstrap" },
+      now,
+    });
+    expect(result.head.state).toBe("planning");
+    expect(result.head.version).toBe(h.version);
+  });
+
+  it("dispatch_acked in gating_ci is a no-op", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = { ...head("gating_ci"), activeGate: "ci" };
+    const result = reduce({
+      head: h,
+      event: { type: "dispatch_acked", runId: "run-1" },
+      now,
+    });
+    expect(result.head.state).toBe("gating_ci");
+    expect(result.head.version).toBe(h.version);
+  });
+
+  it("dispatch_acked in awaiting_pr is a no-op", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = head("awaiting_pr");
+    const result = reduce({
+      head: h,
+      event: { type: "dispatch_acked", runId: "run-1" },
+      now,
+    });
+    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.version).toBe(h.version);
+  });
+
+  it("dispatch_acked with matching runId in implementing sets activeRunId", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = { ...head("implementing"), activeRunId: "run-1" };
+    const result = reduce({
+      head: h,
+      event: { type: "dispatch_acked", runId: "run-1" },
+      now,
+    });
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.activeRunId).toBe("run-1");
+  });
+
+  it("dispatch_sent in gating_review sets activeRunId and arms ack timeout", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
+    const result = reduce({
+      head: {
+        ...head("gating_review"),
+        activeGate: "review",
+      },
+      event: {
+        type: "dispatch_sent",
+        runId: "run-review",
+        ackDeadlineAt,
+      },
+      now,
+    });
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeRunId).toBe("run-review");
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]).toMatchObject({
+      kind: "ack_timeout_check",
+      dueAt: ackDeadlineAt,
+      payload: { kind: "ack_timeout_check", runId: "run-review" },
+    });
+  });
+
+  it("run_completed in gating_ci is a no-op", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("gating_ci"),
+      activeGate: "ci" as const,
+      headSha: "sha-current",
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "run_completed",
+        runId: "run-stale",
+        headSha: "sha-current",
+      },
+      now,
+    });
+    expect(result.head.state).toBe("gating_ci");
+    expect(result.head.version).toBe(h.version);
+    expect(result.effects).toHaveLength(0);
+  });
 });
