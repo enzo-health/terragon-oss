@@ -170,6 +170,7 @@ async function executeStateBlockingEffect(params: {
       source: "system",
       idempotencyKey: `effect-result:${params.effect.id}`,
       event,
+      eagerDrain: false, // prevent recursive drain — outer drainDueEffects loop handles follow-on effects
     });
   }
 }
