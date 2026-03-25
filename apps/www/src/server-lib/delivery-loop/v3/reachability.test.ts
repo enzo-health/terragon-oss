@@ -182,7 +182,7 @@ const EXPECTED: Record<WorkflowState, Record<string, Expectation>> = {
   // -- planning --
   planning: {
     bootstrap: {
-      target: "implementing",
+      target: "stay",
       effects: ["dispatch_implementing", "publish_status"],
     },
     planning_run_completed: {
@@ -198,7 +198,7 @@ const EXPECTED: Record<WorkflowState, Record<string, Expectation>> = {
       effects: ["publish_status"],
     },
     dispatch_sent: {
-      target: "implementing",
+      target: "stay",
       effects: ["ack_timeout_check"],
     },
     dispatch_acked: { target: "noop", effects: [] },

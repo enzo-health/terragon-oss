@@ -56,7 +56,7 @@ export async function enrollWorkflow(params: {
     });
 
     // 4. Create v3 head row + insert bootstrap journal event.
-    //    The kernel reducer handles bootstrap: planning -> implementing + dispatch effect.
+    //    The kernel reducer handles bootstrap: stays in planning + dispatches planning run.
     await appendEventAndAdvance({
       db: params.db,
       workflowId: workflow.id,
