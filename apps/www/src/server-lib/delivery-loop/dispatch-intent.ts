@@ -356,17 +356,35 @@ export async function createDispatchIntent(
   }
 
   const key = redisKey(params.threadChatId);
-  // Guard: prevent overwriting an active (non-terminal) intent.
-  // Only fetch the status field to avoid deserializing the full intent on the hot path.
+  // If an active (non-terminal) intent exists for this threadChat, expire it.
+  // The v3 kernel has already decided a new dispatch is needed, so the old
+  // intent is stale (e.g. from a timed-out or failed run). Forcing it to
+  // "completed" unblocks the retry loop that would otherwise get stuck on
+  // "Active dispatch intent already exists".
   const existingStatus = await redis.hget<string>(key, "status");
   if (
     existingStatus &&
     !TERMINAL_DISPATCH_STATUSES.has(existingStatus as DispatchIntentStatus)
   ) {
-    const existingId = await redis.hget<string>(key, "id");
-    throw new Error(
-      `Cannot create dispatch intent: active intent "${existingId}" exists for threadChat "${params.threadChatId}" with status "${existingStatus}"`,
+    console.warn(
+      `[dispatch-intent] Expiring stale active intent for threadChat "${params.threadChatId}" (status="${existingStatus}") to make room for new dispatch`,
     );
+    try {
+      await redis.hset(key, {
+        status: "completed",
+        updatedAt: new Date().toISOString(),
+      });
+      await redis.expire(key, COMPLETED_TTL_SECONDS);
+    } catch (expireErr) {
+      if (isRedisTransportParseError(expireErr)) {
+        console.warn(
+          "[dispatch-intent] local redis expire-stale parse failure, skipping",
+          { threadChatId: params.threadChatId },
+        );
+      } else {
+        throw expireErr;
+      }
+    }
   }
 
   try {
