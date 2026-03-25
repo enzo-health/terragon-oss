@@ -2,3 +2,4 @@
 {"run":2,"timestamp":"2026-03-25T19:47:22Z","description":"baseline v2 (test-focused metric)","metric_name":"composite_score","metric_value":-460,"status":"keep","total_tests":279,"passed_tests":274,"failed_tests":0,"gap_count":88}
 {"run":3,"timestamp":"2026-03-25T19:49:48Z","description":"add 6 dispatch_acked edge case tests","metric_name":"composite_score","metric_value":-472,"status":"keep","total_tests":285,"passed_tests":280,"failed_tests":0,"gap_count":88}
 {"run":4,"timestamp":"2026-03-25T19:51:52Z","description":"add 8 terminal + budget + global handler tests","metric_name":"composite_score","metric_value":-488,"status":"keep","total_tests":293,"passed_tests":288,"failed_tests":0,"gap_count":88}
+{"run":5,"timestamp":"2026-03-25T19:55:04Z","description":"add 3 effect handler edge case tests","metric_name":"composite_score","metric_value":-494,"status":"keep","total_tests":296,"passed_tests":291,"failed_tests":0,"gap_count":88}
