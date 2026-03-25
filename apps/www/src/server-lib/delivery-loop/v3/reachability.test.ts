@@ -294,7 +294,10 @@ const EXPECTED: Record<WorkflowState, Record<string, Expectation>> = {
     dispatch_acked: { target: "noop", effects: [] },
     dispatch_ack_timeout: { target: "noop", effects: [] },
     run_completed: { target: "noop", effects: [] },
-    run_failed: { target: "noop", effects: [] },
+    run_failed: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
     gate_review_passed: { target: "noop", effects: [] },
     gate_review_failed: { target: "noop", effects: [] },
     gate_ci_passed: {

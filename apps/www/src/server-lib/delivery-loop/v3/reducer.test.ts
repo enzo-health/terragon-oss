@@ -624,6 +624,28 @@ describe("reduce", () => {
     expect(result.head.activeRunId).toBeNull();
   });
 
+  it("gating_ci run_failed uses infra retry lane", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("gating_ci"),
+        activeGate: "ci",
+        infraRetryCount: 0,
+      },
+      event: {
+        type: "run_failed",
+        runId: "r-1",
+        message: "sandbox crash",
+        category: "infra_failure",
+        lane: "infra",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.infraRetryCount).toBe(1);
+  });
+
   it("normalizes terminal states through invariants", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
