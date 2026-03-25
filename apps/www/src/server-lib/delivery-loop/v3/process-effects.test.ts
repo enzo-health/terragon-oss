@@ -430,6 +430,183 @@ describe("drainDueEffects", () => {
     expect(ensurePrEffect.status).toBe("succeeded");
   });
 
+  it("fires ack timeout when daemon appears working but activeRunId was not journaled", async () => {
+    // Regression test for: daemon acked (dispatch intent = "acknowledged") but
+    // dispatch_acked journal event was never written. The head's activeRunId
+    // still holds the dispatched runId from dispatch_sent, but no journal ack
+    // means the version never advanced. Without the activeRunId guard, the
+    // timeout was incorrectly suppressed by the "working" threadChat check,
+    // leaving the workflow permanently stuck.
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({ db, userId: user.id });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      userId: user.id,
+      kind: "planning",
+      stateJson: { state: "planning" },
+    });
+    const workflowId = workflow.id;
+
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) throw new Error("Expected workflow head");
+
+    const dispatchRunId = `run-${nanoid()}`;
+    // Simulate: dispatch_sent set activeRunId, but dispatch_acked was never
+    // journaled so activeRunId is still the dispatched run. However, the
+    // threadChat shows "working" because the daemon started processing.
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: dispatchRunId,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(moved).toBe(true);
+
+    // Create a threadChat that looks like the daemon is working
+    await db.insert(schema.threadChat).values({
+      threadId,
+      userId: user.id,
+      role: "assistant",
+      status: "working",
+    });
+
+    const effect: EffectSpec = {
+      kind: "ack_timeout_check",
+      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:ack-working`,
+      dueAt: now,
+      payload: {
+        kind: "ack_timeout_check",
+        // Use a DIFFERENT runId than activeRunId — simulates a stale dispatch
+        // where the head advanced to a new run but the old timeout is still
+        // pending. The activeRunId guard should let this fire.
+        runId: `stale-run-${nanoid()}`,
+        workflowVersion: head.version + 1,
+      },
+    };
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version + 1,
+      effects: [effect],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+
+    // The timeout should fire (not be suppressed) because the effect's runId
+    // doesn't match head.activeRunId — the guard detects the ack was never
+    // journaled for this particular run.
+    expect(drain.processed).toBe(1);
+
+    const headAfter = await getWorkflowHead({ db, workflowId });
+    if (!headAfter) throw new Error("Expected head after drain");
+    // dispatch_ack_timeout with mismatched runId is dropped by reducer
+    // (isOutOfOrderRunSignal), so state stays implementing but the effect
+    // was processed (not suppressed). The key assertion is that drain
+    // processed it rather than returning stale.
+    expect(headAfter.state).toBe("implementing");
+  });
+
+  it("suppresses ack timeout when daemon is working AND activeRunId matches", async () => {
+    // Verify the happy path: daemon is working, ack was journaled (activeRunId
+    // matches the effect's runId), timeout should be suppressed as stale.
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({ db, userId: user.id });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      userId: user.id,
+      kind: "planning",
+      stateJson: { state: "planning" },
+    });
+    const workflowId = workflow.id;
+
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) throw new Error("Expected workflow head");
+
+    const dispatchRunId = `run-${nanoid()}`;
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: dispatchRunId,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(moved).toBe(true);
+
+    // Daemon is actively working
+    await db.insert(schema.threadChat).values({
+      threadId,
+      userId: user.id,
+      role: "assistant",
+      status: "working",
+    });
+
+    const effect: EffectSpec = {
+      kind: "ack_timeout_check",
+      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:ack-suppressed`,
+      dueAt: now,
+      payload: {
+        kind: "ack_timeout_check",
+        // SAME runId as activeRunId — ack was journaled, suppress timeout
+        runId: dispatchRunId,
+        workflowVersion: head.version + 1,
+      },
+    };
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version + 1,
+      effects: [effect],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+
+    // Effect was processed but returned stale (suppressed)
+    expect(drain.processed).toBe(1);
+
+    // State unchanged — timeout was suppressed, no retry triggered
+    const headAfter = await getWorkflowHead({ db, workflowId });
+    if (!headAfter) throw new Error("Expected head after drain");
+    expect(headAfter.state).toBe("implementing");
+    expect(headAfter.activeRunId).toBe(dispatchRunId);
+    expect(headAfter.infraRetryCount).toBe(0);
+    expect(headAfter.version).toBe(head.version + 1); // unchanged
+  });
+
   it("routes no-diff ensure_pr attempts back to implementing", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const { user } = await createTestUser({ db });
