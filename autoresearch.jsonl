@@ -1,2 +1,3 @@
 
 {"run":2,"timestamp":"2026-03-25T19:45:08Z","description":"baseline (fixed gap metric)","metric_name":"composite_score","metric_value":606,"status":"keep","total_tests":279,"passed_tests":274,"failed_tests":0,"gap_count":88}
+{"run":3,"timestamp":"2026-03-25T19:46:33Z","description":"gating_ci run_failed handler (already applied)","metric_name":"composite_score","metric_value":606,"status":"keep","total_tests":279,"passed_tests":274,"failed_tests":0,"gap_count":88}
