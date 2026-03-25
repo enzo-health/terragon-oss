@@ -387,6 +387,7 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `${keyPrefix}:bootstrap`,
       event: { type: "bootstrap" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -395,6 +396,7 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `${keyPrefix}:plan-completed`,
       event: { type: "plan_completed" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -407,6 +409,7 @@ describe("v3 durable delivery loop", () => {
         runId,
         ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
       },
+      eagerDrain: false,
     });
 
     const completionJournalId = await createSignalJournal({
@@ -525,6 +528,7 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `${currentPrefix}:bootstrap`,
       event: { type: "bootstrap" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -533,6 +537,7 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `${currentPrefix}:plan-completed`,
       event: { type: "plan_completed" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -545,6 +550,7 @@ describe("v3 durable delivery loop", () => {
         runId: runIdStale,
         ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
       },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -557,6 +563,7 @@ describe("v3 durable delivery loop", () => {
         runId: runIdCurrent,
         ackDeadlineAt: new Date("2026-03-18T10:01:10.000Z"),
       },
+      eagerDrain: false,
     });
 
     const staleJournalId = await createSignalJournal({
@@ -690,6 +697,7 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `${keyPrefix}:bootstrap`,
       event: { type: "bootstrap" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -698,6 +706,7 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `${keyPrefix}:plan-completed`,
       event: { type: "plan_completed" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -710,6 +719,7 @@ describe("v3 durable delivery loop", () => {
         runId,
         ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
       },
+      eagerDrain: false,
     });
 
     const legacyJournalId = await createLegacySignalEnvelopeJournal({
@@ -985,8 +995,10 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `dup:${workflowId}:bootstrap`,
       event: { type: "bootstrap" },
+      eagerDrain: false,
     });
-    expect(bootstrapResult.transitioned).toBe(true);
+    // Bootstrap stays in planning (no state transition), so transitioned is false
+    expect(bootstrapResult.transitioned).toBe(false);
 
     await appendEventAndAdvance({
       db,
@@ -994,6 +1006,7 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `dup:${workflowId}:plan-completed`,
       event: { type: "plan_completed" },
+      eagerDrain: false,
     });
 
     const dispatchResult = await appendEventAndAdvance({
@@ -1006,6 +1019,7 @@ describe("v3 durable delivery loop", () => {
         runId,
         ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
       },
+      eagerDrain: false,
     });
     expect(dispatchResult.inserted).toBe(true);
 
@@ -1019,6 +1033,7 @@ describe("v3 durable delivery loop", () => {
         source: "daemon",
         idempotencyKey,
         event,
+        eagerDrain: false,
       });
     };
 
@@ -1052,7 +1067,7 @@ describe("v3 durable delivery loop", () => {
     expect(
       effectKinds.filter((kind) => kind === "dispatch_gate_review"),
     ).toHaveLength(1);
-    expect(effects).toHaveLength(5);
+    expect(effects).toHaveLength(7);
   });
 
   it("accepts run_completed from any runId in implementing state (no runId poisoning)", async () => {
@@ -1077,6 +1092,7 @@ describe("v3 durable delivery loop", () => {
         source: "daemon",
         idempotencyKey: `oof:${workflowId}:bootstrap`,
         event: { type: "bootstrap" },
+        eagerDrain: false,
       });
 
       await appendEventAndAdvance({
@@ -1085,6 +1101,7 @@ describe("v3 durable delivery loop", () => {
         source: "system",
         idempotencyKey: `oof:${workflowId}:plan-completed`,
         event: { type: "plan_completed" },
+        eagerDrain: false,
       });
 
       await appendEventAndAdvance({
@@ -1097,6 +1114,7 @@ describe("v3 durable delivery loop", () => {
           runId: staleRunId,
           ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
         },
+        eagerDrain: false,
       });
 
       await appendEventAndAdvance({
@@ -1109,6 +1127,7 @@ describe("v3 durable delivery loop", () => {
           runId: currentRunId,
           ackDeadlineAt: new Date("2026-03-18T11:00:10.000Z"),
         },
+        eagerDrain: false,
       });
     } finally {
       drainSpy.mockRestore();
@@ -1126,6 +1145,7 @@ describe("v3 durable delivery loop", () => {
         runId: staleRunId,
         headSha: "stale-head-sha",
       },
+      eagerDrain: false,
     });
     expect(staleRunCompleted.transitioned).toBe(true);
 
@@ -1150,6 +1170,7 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `no-pr:${workflowId}:bootstrap`,
       event: { type: "bootstrap" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -1158,6 +1179,7 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `no-pr:${workflowId}:plan-completed`,
       event: { type: "plan_completed" },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -1170,6 +1192,7 @@ describe("v3 durable delivery loop", () => {
         runId: "run-no-pr",
         ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
       },
+      eagerDrain: false,
     });
 
     await appendEventAndAdvance({
@@ -1182,6 +1205,7 @@ describe("v3 durable delivery loop", () => {
         runId: "run-no-pr",
         headSha: "sha-no-pr",
       },
+      eagerDrain: false,
     });
 
     const reviewPassResult = await appendEventAndAdvance({
@@ -1193,6 +1217,7 @@ describe("v3 durable delivery loop", () => {
         type: "gate_review_passed",
         runId: null,
       },
+      eagerDrain: false,
     });
     expect(reviewPassResult.stateBefore).toBe("gating_review");
     expect(reviewPassResult.stateAfter).toBe("awaiting_pr");
