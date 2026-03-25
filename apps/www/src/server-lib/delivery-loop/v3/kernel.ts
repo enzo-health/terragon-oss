@@ -69,7 +69,7 @@ export async function appendEventAndAdvance(params: {
   now?: Date;
   /** When true, auto-injects bypass events for gating states (edge-triggered). */
   skipGates?: boolean;
-  /** When true, awaits inline effect drain instead of fire-and-forget setImmediate. */
+  /** Set to false to skip inline effect drain (default: true — drains eagerly). */
   eagerDrain?: boolean;
 }): Promise<{
   inserted: boolean;
@@ -196,33 +196,24 @@ export async function appendEventAndAdvance(params: {
   }
 
   // Eagerly drain effects inline instead of waiting for the cron.
-  // The effect ledger + cron is the fallback safety net; this is the fast path.
-  if (result.effectsInserted > 0) {
-    if (params.eagerDrain) {
-      try {
-        const { drainDueEffects } = await import("./process-effects");
-        await drainDueEffects({
-          db: params.db,
-          workflowId: params.workflowId,
-          maxItems: 5,
-          leaseOwnerPrefix: "eager",
-        });
-      } catch {
-        // Non-fatal: cron fallback
-      }
-    } else {
-      setImmediate(() => {
-        import("./process-effects")
-          .then(({ drainDueEffects }) =>
-            drainDueEffects({
-              db: params.db,
-              workflowId: params.workflowId,
-              maxItems: 5,
-              leaseOwnerPrefix: "inline",
-            }),
-          )
-          .catch(() => {});
+  // The cron is a safety net; this awaited drain is the primary path.
+  if (result.effectsInserted > 0 && params.eagerDrain !== false) {
+    try {
+      const { drainDueEffects } = await import("./process-effects");
+      await drainDueEffects({
+        db: params.db,
+        workflowId: params.workflowId,
+        maxItems: 5,
+        leaseOwnerPrefix: "inline:kernel",
       });
+    } catch (err) {
+      console.warn(
+        "[delivery-loop] inline eager drain failed (cron will recover)",
+        {
+          workflowId: params.workflowId,
+          error: err instanceof Error ? err.message : err,
+        },
+      );
     }
   }
 

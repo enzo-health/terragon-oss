@@ -91,7 +91,8 @@ describe("enrollWorkflow", () => {
       (e) => e.effectKind === "dispatch_implementing",
     );
     expect(dispatchEffect).toBeTruthy();
-    expect(dispatchEffect!.status).toBe("planned");
+    // Effect may be "planned" or already "succeeded" (eager inline drain)
+    expect(["planned", "succeeded"]).toContain(dispatchEffect!.status);
   });
 
   it("is idempotent — returns existing workflow on re-enrollment", async () => {
