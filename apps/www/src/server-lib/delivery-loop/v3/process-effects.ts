@@ -236,21 +236,7 @@ async function processGateReviewEffect(params: {
     headSha: workflow.headSha ?? undefined,
   };
 
-  try {
-    await createDispatchIntent(intentParams);
-  } catch (intentErr) {
-    if (
-      intentErr instanceof Error &&
-      intentErr.message.includes("active intent")
-    ) {
-      return {
-        kind: "dispatch_gate_review",
-        outcome: "failed",
-        reason: "Active dispatch intent already exists",
-      };
-    }
-    throw intentErr;
-  }
+  await createDispatchIntent(intentParams);
 
   // Persist durable dispatch intent in DB
   try {
@@ -381,21 +367,7 @@ async function processImplementingDispatchEffect(params: {
     headSha: workflow.headSha ?? undefined,
   };
 
-  try {
-    await createDispatchIntent(intentParams);
-  } catch (intentErr) {
-    if (
-      intentErr instanceof Error &&
-      intentErr.message.includes("active intent")
-    ) {
-      return {
-        kind: "dispatch_implementing",
-        outcome: "failed",
-        reason: "Active dispatch intent already exists",
-      };
-    }
-    throw intentErr;
-  }
+  await createDispatchIntent(intentParams);
 
   // Persist durable dispatch intent in DB
   try {

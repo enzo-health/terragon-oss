@@ -183,7 +183,7 @@ const EXPECTED: Record<WorkflowState, Record<string, Expectation>> = {
   planning: {
     bootstrap: {
       target: "stay",
-      effects: ["dispatch_implementing", "publish_status"],
+      effects: ["publish_status"],
     },
     planning_run_completed: {
       target: "stay",
