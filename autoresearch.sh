@@ -24,9 +24,10 @@ PASSED_TESTS=${PASSED_TESTS:-0}
 FAILED_TESTS=${FAILED_TESTS:-0}
 SKIPPED_TESTS=${SKIPPED_TESTS:-0}
 
-# Count silent no-ops in reducer (events that fall through to default/catch-all)
-# These are state×event pairs that silently return {head, effects:[], invariantActions:[]}
-GAP_COUNT=$(grep -c "effects: \[\]," apps/www/src/server-lib/delivery-loop/v3/reducer.ts 2>/dev/null || echo "0")
+# Count "noop" entries in the reachability matrix — these are state×event
+# pairs where the reducer silently ignores the event. The reachability test
+# is the authoritative source for intended vs accidental no-ops.
+GAP_COUNT=$(grep -c '"noop"' apps/www/src/server-lib/delivery-loop/v3/reachability.test.ts 2>/dev/null || echo "0")
 
 # Composite score: lower is better
 # gap_count × 10 (high weight — each gap is a stuck-state risk)
