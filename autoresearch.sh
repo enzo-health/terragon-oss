@@ -30,10 +30,10 @@ SKIPPED_TESTS=${SKIPPED_TESTS:-0}
 GAP_COUNT=$(grep -c '"noop"' apps/www/src/server-lib/delivery-loop/v3/reachability.test.ts 2>/dev/null || echo "0")
 
 # Composite score: lower is better
-# gap_count × 10 (high weight — each gap is a stuck-state risk)
-# + failed_tests × 100 (very high weight — failures are bugs)
-# - passed_tests × 1 (reward more coverage)
-COMPOSITE=$(( (GAP_COUNT * 10) + (FAILED_TESTS * 100) - (PASSED_TESTS * 1) ))
+# failed_tests × 1000 (failures are bugs — hard penalty)
+# + gap_count × 1 (minor weight — most noops are intentional)
+# - passed_tests × 2 (main lever — reward more coverage)
+COMPOSITE=$(( (FAILED_TESTS * 1000) + (GAP_COUNT * 1) - (PASSED_TESTS * 2) ))
 
 echo "=== Results ==="
 echo "total_tests: $TOTAL_TESTS"
