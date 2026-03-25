@@ -4,3 +4,4 @@
 {"run":4,"timestamp":"2026-03-25T19:51:52Z","description":"add 8 terminal + budget + global handler tests","metric_name":"composite_score","metric_value":-488,"status":"keep","total_tests":293,"passed_tests":288,"failed_tests":0,"gap_count":88}
 {"run":5,"timestamp":"2026-03-25T19:55:04Z","description":"add 3 effect handler edge case tests","metric_name":"composite_score","metric_value":-494,"status":"keep","total_tests":296,"passed_tests":291,"failed_tests":0,"gap_count":88}
 {"run":6,"timestamp":"2026-03-25T19:57:58Z","description":"add 5 awaiting state handler tests","metric_name":"composite_score","metric_value":-504,"status":"keep","total_tests":301,"passed_tests":296,"failed_tests":0,"gap_count":88}
+{"run":7,"timestamp":"2026-03-25T20:00:17Z","description":"add 3 property-based invariant tests","metric_name":"composite_score","metric_value":-510,"status":"keep","total_tests":304,"passed_tests":299,"failed_tests":0,"gap_count":88}
