@@ -305,6 +305,12 @@ export async function sendMessage({
     .slice(0, 12);
   const messageFilePath = `/tmp/terragon-daemon-message-${Date.now()}-${messageHash}.json`;
 
+  console.log("[daemon-send] sending message", {
+    messageHash,
+    attempt: 1,
+    totalAttempts: DAEMON_SEND_MAX_ATTEMPTS,
+  });
+
   await session.writeTextFile(messageFilePath, jsonMessage);
   try {
     for (let attempt = 0; attempt < DAEMON_SEND_MAX_ATTEMPTS; attempt++) {
@@ -319,6 +325,11 @@ export async function sendMessage({
         const isLastAttempt = attempt === DAEMON_SEND_MAX_ATTEMPTS - 1;
         const transient = isTransientDaemonSendError(error);
         if (!transient || isLastAttempt) {
+          console.error("[daemon-send] all retries exhausted", {
+            messageHash,
+            attempts: DAEMON_SEND_MAX_ATTEMPTS,
+            error: error instanceof Error ? error.message : String(error),
+          });
           throw error;
         }
         const waitMs = computeRetryBackoffMs(attempt);

@@ -351,7 +351,24 @@ async function processImplementingDispatchEffect(params: {
     throw new Error(`No threadChat for threadId ${workflow.threadId}`);
   }
 
+  // Resolve retry/generation info early for logging
+  const head = await getWorkflowHead({ db: params.db, workflowId });
+  const isRetry =
+    !!head &&
+    (head.fixAttemptCount > 0 ||
+      head.infraRetryCount > 0 ||
+      head.generation > 1);
+
   const runId = randomUUID();
+
+  if (process.env.DELIVERY_LOOP_DEBUG === "true") {
+    console.log("[delivery-loop] processImplementingDispatchEffect start", {
+      workflowId,
+      threadId: workflow.threadId,
+      isRetry,
+      generation: head?.generation ?? 0,
+    });
+  }
 
   // Create Redis dispatch intent
   const intentParams: CreateDispatchIntentParams = {
@@ -382,18 +399,19 @@ async function processImplementingDispatchEffect(params: {
       dispatchMechanism: "self_dispatch",
     });
     await markDispatchIntentDispatched(params.db, runId);
-  } catch {
-    // Non-fatal: Redis intent + cron sweep handle recovery
+  } catch (dbIntentErr) {
+    console.warn(
+      "[delivery-loop] DB dispatch intent persistence failed (non-fatal)",
+      {
+        workflowId,
+        runId,
+        error: dbIntentErr instanceof Error ? dbIntentErr.message : dbIntentErr,
+      },
+    );
   }
 
   // Queue a "Continue implementation." message for the follow-up queue,
   // but only on retries — on the first run the user's original prompt suffices.
-  const head = await getWorkflowHead({ db: params.db, workflowId });
-  const isRetry =
-    !!head &&
-    (head.fixAttemptCount > 0 ||
-      head.infraRetryCount > 0 ||
-      head.generation > 1);
   if (isRetry) {
     const { updateThreadChat } = await import("@terragon/shared/model/threads");
     await updateThreadChat({
@@ -428,15 +446,27 @@ async function processImplementingDispatchEffect(params: {
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
     });
-  } catch {
-    // Non-fatal: cron will pick up pending follow-ups
+  } catch (followUpErr) {
+    console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
+      workflowId,
+      runId,
+      error: followUpErr instanceof Error ? followUpErr.message : followUpErr,
+    });
   }
+
+  const ackDeadlineAt = new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS);
+  console.log("[delivery-loop] dispatch_implementing effect complete", {
+    workflowId,
+    runId,
+    ackDeadlineAt: ackDeadlineAt.toISOString(),
+    isRetry,
+  });
 
   return {
     kind: "dispatch_implementing",
     outcome: "dispatched",
     runId,
-    ackDeadlineAt: new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS),
+    ackDeadlineAt,
   };
 }
 

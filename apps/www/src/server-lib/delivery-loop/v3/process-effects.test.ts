@@ -477,7 +477,6 @@ describe("drainDueEffects", () => {
     await db.insert(schema.threadChat).values({
       threadId,
       userId: user.id,
-      role: "assistant",
       status: "working",
     });
 
@@ -564,7 +563,6 @@ describe("drainDueEffects", () => {
     await db.insert(schema.threadChat).values({
       threadId,
       userId: user.id,
-      role: "assistant",
       status: "working",
     });
 
