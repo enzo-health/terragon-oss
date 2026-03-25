@@ -15,7 +15,7 @@ import {
   updateWorkflowHead,
 } from "./store";
 import { drainDueEffects, effectResultToEvent } from "./process-effects";
-import type { EffectSpec } from "./types";
+import type { EffectResult, EffectSpec } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
 
@@ -172,6 +172,93 @@ describe("effectResultToEvent", () => {
       category: "effect_failure",
       lane: "infra",
     });
+  });
+
+  // gate_staleness_check
+  it("gate staleness ci_passed → gate_ci_passed", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "ci_passed",
+      headSha: "abc123",
+    });
+    expect(result).toEqual({ type: "gate_ci_passed", headSha: "abc123" });
+  });
+
+  it("gate staleness ci_failed → gate_ci_failed", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "ci_failed",
+      headSha: "abc123",
+      reason: "lint failed",
+    });
+    expect(result).toEqual({
+      type: "gate_ci_failed",
+      headSha: "abc123",
+      reason: "lint failed",
+    });
+  });
+
+  it("gate staleness pending → null", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "pending",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("gate staleness stale → null", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "stale",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("exhaustiveness: every EffectResult kind is handled (compile-time check)", () => {
+    // This test verifies that the default `never` branch in effectResultToEvent
+    // compiles. If a new EffectResult kind is added without a corresponding
+    // case, TypeScript will report a compile error on the `never` assignment.
+    // At runtime we just confirm the function handles all known kinds.
+    const allResults: EffectResult[] = [
+      {
+        kind: "create_plan_artifact",
+        outcome: "created",
+        approvalPolicy: "auto",
+      },
+      { kind: "create_plan_artifact", outcome: "failed", reason: "x" },
+      {
+        kind: "dispatch_gate_review",
+        outcome: "dispatched",
+        runId: "r",
+        ackDeadlineAt: new Date(),
+      },
+      { kind: "dispatch_gate_review", outcome: "failed", reason: "x" },
+      { kind: "ensure_pr", outcome: "linked", prNumber: 1 },
+      { kind: "ensure_pr", outcome: "no_diff", reason: "x" },
+      { kind: "ensure_pr", outcome: "failed", reason: "x" },
+      {
+        kind: "dispatch_implementing",
+        outcome: "dispatched",
+        runId: "r",
+        ackDeadlineAt: new Date(),
+      },
+      { kind: "dispatch_implementing", outcome: "failed", reason: "x" },
+      { kind: "ack_timeout_check", outcome: "fired", runId: "r" },
+      { kind: "ack_timeout_check", outcome: "stale" },
+      { kind: "gate_staleness_check", outcome: "ci_passed", headSha: "s" },
+      {
+        kind: "gate_staleness_check",
+        outcome: "ci_failed",
+        headSha: "s",
+        reason: "x",
+      },
+      { kind: "gate_staleness_check", outcome: "pending" },
+      { kind: "gate_staleness_check", outcome: "stale" },
+    ];
+    for (const r of allResults) {
+      // Should not throw
+      effectResultToEvent(r);
+    }
   });
 });
 

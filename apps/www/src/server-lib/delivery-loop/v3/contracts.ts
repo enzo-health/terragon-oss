@@ -385,7 +385,11 @@ export function serializeEffectPayload(
     case "publish_status":
       return { kind: payload.kind };
     case "gate_staleness_check":
-      return { kind: payload.kind, workflowVersion: payload.workflowVersion };
+      return {
+        kind: payload.kind,
+        workflowVersion: payload.workflowVersion,
+        ...(payload.pollCount != null ? { pollCount: payload.pollCount } : {}),
+      };
     default:
       throw new Error(
         `Unhandled effect kind ${(payload as { kind: string }).kind}`,
@@ -439,6 +443,9 @@ export function parseEffectPayload(payload: unknown): EffectPayload | null {
     return {
       kind: "gate_staleness_check",
       workflowVersion: payload.workflowVersion,
+      ...(typeof payload.pollCount === "number"
+        ? { pollCount: payload.pollCount }
+        : {}),
     };
   }
   return null;

@@ -79,7 +79,11 @@ export type EffectPayload =
   | { kind: "ensure_pr" }
   | { kind: "create_plan_artifact" }
   | { kind: "publish_status" }
-  | { kind: "gate_staleness_check"; workflowVersion: number };
+  | {
+      kind: "gate_staleness_check";
+      workflowVersion: number;
+      pollCount?: number;
+    };
 
 export type EffectSpec = {
   kind: EffectKind;

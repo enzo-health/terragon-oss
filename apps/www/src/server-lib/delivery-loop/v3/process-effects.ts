@@ -107,6 +107,14 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
           reason: result.reason,
         };
       return null; // pending or stale — no state transition yet
+
+    default: {
+      const _exhaustive: never = result;
+      console.error("[delivery-loop] unmapped effect result kind", {
+        result: _exhaustive,
+      });
+      return null;
+    }
   }
 }
 
@@ -806,12 +814,20 @@ async function handleAckTimeoutCheck(params: {
   };
 }
 
+const MAX_GATE_STALENESS_POLLS = 50;
+
 async function handleGateStalenessCheck(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
-  payload: { workflowVersion: number };
+  payload: { workflowVersion: number; pollCount?: number };
   now: Date;
 }): Promise<EffectResult> {
+  const pollCount = params.payload.pollCount ?? 0;
+
+  if (pollCount > MAX_GATE_STALENESS_POLLS) {
+    return { kind: "gate_staleness_check", outcome: "stale" } as const;
+  }
+
   const [head, workflow] = await Promise.all([
     getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
     getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),
@@ -869,6 +885,7 @@ async function handleGateStalenessCheck(params: {
             payload: {
               kind: "gate_staleness_check",
               workflowVersion: head.version,
+              pollCount: pollCount + 1,
             },
           },
         ],
@@ -906,6 +923,7 @@ async function handleGateStalenessCheck(params: {
           payload: {
             kind: "gate_staleness_check",
             workflowVersion: head.version,
+            pollCount: pollCount + 1,
           },
         },
       ],
@@ -933,6 +951,7 @@ async function handleGateStalenessCheck(params: {
           payload: {
             kind: "gate_staleness_check",
             workflowVersion: retryVersion,
+            pollCount: pollCount + 1,
           },
         },
       ],
