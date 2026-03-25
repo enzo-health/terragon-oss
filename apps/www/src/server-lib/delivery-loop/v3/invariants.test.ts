@@ -326,6 +326,93 @@ describe("reducer invariants (property-based)", () => {
     );
   });
 
+  it("dispatch_acked never changes state", () => {
+    fc.assert(
+      fc.property(stateArb, runIdArb, (initialState, runId) => {
+        // Set activeRunId to match or mismatch — either way state must not change
+        const headWithRun = makeHead({
+          state: initialState,
+          activeRunId: runId,
+        });
+        const headWithoutRun = makeHead({
+          state: initialState,
+          activeRunId: null,
+        });
+
+        for (const head of [headWithRun, headWithoutRun]) {
+          const result = reduce({
+            head,
+            event: { type: "dispatch_acked", runId },
+            now,
+          });
+          expect(result.head.state).toBe(initialState);
+        }
+      }),
+    );
+  });
+
+  it("retry budgets are never negative after any event sequence", () => {
+    fc.assert(
+      fc.property(
+        stateArb,
+        fc.array(loopEventArb, { minLength: 1, maxLength: 50 }),
+        (initialState, events) => {
+          let head = makeHead({ state: initialState });
+
+          for (const event of events) {
+            const result = reduce({ head, event, now });
+            expect(result.head.fixAttemptCount).toBeGreaterThanOrEqual(0);
+            expect(result.head.infraRetryCount).toBeGreaterThanOrEqual(0);
+            head = result.head;
+          }
+        },
+      ),
+    );
+  });
+
+  it("gating_ci + run_failed retries to implementing or stays if runId guard blocks", () => {
+    fc.assert(
+      fc.property(
+        runIdArb,
+        runIdArb,
+        fc.constantFrom<"agent" | "infra">("agent", "infra"),
+        (activeRunId, eventRunId, lane) => {
+          const head = makeHead({
+            state: "gating_ci",
+            activeRunId,
+            activeGate: "ci",
+          });
+          const result = reduce({
+            head,
+            event: {
+              type: "run_failed",
+              runId: eventRunId,
+              message: "err",
+              category: null,
+              lane,
+            },
+            now,
+          });
+
+          const isOutOfOrder =
+            activeRunId !== null && eventRunId !== activeRunId;
+
+          if (isOutOfOrder) {
+            // runId guard blocks — state unchanged
+            expect(result.head.state).toBe("gating_ci");
+          } else {
+            // retries to implementing or exhausts budget
+            expect(
+              result.head.state === "implementing" ||
+                result.head.state === "awaiting_manual_fix" ||
+                result.head.state === "awaiting_operator_action",
+            ).toBe(true);
+          }
+        },
+      ),
+    );
+  });
+
   it("entering gating_ci always emits a gate_staleness_check effect", () => {
     fc.assert(
       fc.property(
