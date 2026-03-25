@@ -220,9 +220,22 @@ export async function sendDaemonMessage({
       };
     }
 
+    console.log("[daemon-dispatch] sending message", {
+      threadId,
+      threadChatId,
+      runId: runContext?.runId ?? null,
+      agent: runContext?.agent ?? null,
+    });
+
     await sendMessage({
       session,
       message: finalMessage,
+    });
+
+    console.log("[daemon-dispatch] message sent", {
+      threadId,
+      threadChatId,
+      runId: runContext?.runId ?? null,
     });
   } catch (error) {
     if (message.type === "claude" && runContext) {

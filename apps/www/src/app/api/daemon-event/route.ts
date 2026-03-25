@@ -1127,12 +1127,19 @@ export async function POST(request: Request) {
 
     // Inline effect drain to avoid cron latency
     try {
-      await drainDueEffects({
+      const drainResult = await drainDueEffects({
         db,
         workflowId: effectiveLoopId,
         maxItems: 5,
         leaseOwnerPrefix: "inline:daemon-event",
       });
+      if (drainResult.processed > 0) {
+        console.log("[daemon-event] inline drain processed effects", {
+          loopId: effectiveLoopId,
+          processed: drainResult.processed,
+          trigger: "daemon-event-terminal",
+        });
+      }
     } catch (err) {
       console.error("[daemon-event] inline effect drain failed", {
         error: err,
