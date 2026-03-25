@@ -25,7 +25,7 @@ function head(state: WorkflowHead["state"]): WorkflowHead {
 }
 
 describe("reduce", () => {
-  it("planning bootstrap stays in planning and emits only publish_status", () => {
+  it("planning bootstrap stays in planning and emits dispatch_implementing + publish_status", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: head("planning"),
@@ -34,8 +34,12 @@ describe("reduce", () => {
     });
 
     expect(result.head.state).toBe("planning");
-    expect(result.effects).toHaveLength(1);
+    expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
+      kind: "dispatch_implementing",
+      payload: { kind: "dispatch_implementing" },
+    });
+    expect(result.effects[1]).toMatchObject({
       kind: "publish_status",
       payload: { kind: "publish_status" },
     });

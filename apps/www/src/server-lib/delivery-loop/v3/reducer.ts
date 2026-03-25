@@ -462,7 +462,15 @@ export function reduce(params: {
               activeGate: null,
               blockedReason: null,
             },
-            effects: [publishStatusEffect(next, now)],
+            effects: [
+              dispatchImplementingEffect(
+                next,
+                now,
+                "agent",
+                next.infraRetryCount,
+              ),
+              publishStatusEffect(next, now),
+            ],
             invariantActions: [],
           };
           break;
