@@ -25,7 +25,7 @@ function head(state: WorkflowHead["state"]): WorkflowHead {
 }
 
 describe("reduce", () => {
-  it("planning bootstrap schedules implementation dispatch without plan artifact", () => {
+  it("planning bootstrap stays in planning and dispatches planning run", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: head("planning"),
@@ -33,7 +33,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("planning");
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
@@ -102,7 +102,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("planning dispatch_sent implicitly enters implementing and arms ack timeout", () => {
+  it("planning dispatch_sent stays in planning and arms ack timeout", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
     const result = reduce({
@@ -115,7 +115,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("planning");
     expect(result.head.activeRunId).toBe("run-bootstrap");
     expect(result.effects).toHaveLength(1);
     expect(result.effects[0]).toMatchObject({

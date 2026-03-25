@@ -22,6 +22,7 @@ const TERMINAL_STATES: WorkflowState[] = ["done", "stopped", "terminated"];
 
 // States where activeRunId is allowed to be non-null (DISPATCH_COHERENT_STATES in reducer)
 const DISPATCH_COHERENT_STATES = new Set<WorkflowState>([
+  "planning",
   "implementing",
   "gating_review",
   "gating_ci",

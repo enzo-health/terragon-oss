@@ -358,13 +358,12 @@ describe("v3 durable delivery loop", () => {
     if (!workflowHead) {
       throw new Error("Expected workflow head after worker progression");
     }
-    expect(workflowHead.state).toBe("implementing");
+    expect(workflowHead.state).toBe("planning");
 
     const journalRows = await db.query.deliveryLoopJournalV3.findMany({
       where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
     });
-    // 1 pre-created bootstrap journal + 1 from worker's appendEventAndAdvance +
-    // 1 run_failed from dispatch_implementing failing inline (eagerDrain)
+    // 1 pre-created bootstrap journal + 1 from worker's appendEventAndAdvance
     expect(journalRows.length).toBeGreaterThanOrEqual(2);
 
     const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
@@ -388,6 +387,14 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `${keyPrefix}:bootstrap`,
       event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvance({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `${keyPrefix}:plan-completed`,
+      event: { type: "plan_completed" },
     });
 
     await appendEventAndAdvance({
@@ -518,6 +525,14 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `${currentPrefix}:bootstrap`,
       event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvance({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `${currentPrefix}:plan-completed`,
+      event: { type: "plan_completed" },
     });
 
     await appendEventAndAdvance({
@@ -675,6 +690,14 @@ describe("v3 durable delivery loop", () => {
       source: "daemon",
       idempotencyKey: `${keyPrefix}:bootstrap`,
       event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvance({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `${keyPrefix}:plan-completed`,
+      event: { type: "plan_completed" },
     });
 
     await appendEventAndAdvance({
@@ -929,15 +952,14 @@ describe("v3 durable delivery loop", () => {
         where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
       },
     );
-    // With eagerDrain on the recovery worker, dispatch_implementing fires and
-    // fails (no threadChat), creating a run_failed retry cycle. More than 2
-    // effects are created but only one dispatch_implementing was ever planned
-    // per version — proving no duplicate work.
+    // Bootstrap stays in planning and emits dispatch_implementing. The effect
+    // fires but run_failed is a noop in planning, so only one dispatch_implementing
+    // is created — proving no duplicate work.
     expect(
       effectsAfterRecovery.filter(
         (e) => e.effectKind === "dispatch_implementing",
       ),
-    ).toHaveLength(2); // v1 (succeeded) + v2 retry (planned/future)
+    ).toHaveLength(1);
 
     const recoveredHead = await db.query.deliveryWorkflowHeadV3.findFirst({
       where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
@@ -946,7 +968,7 @@ describe("v3 durable delivery loop", () => {
     if (!recoveredHead) {
       throw new Error("Expected workflow head after worker recovery");
     }
-    expect(recoveredHead.state).toBe("implementing");
+    expect(recoveredHead.state).toBe("planning");
 
     const recoveredOutbox = await getOutboxRow(outboxId);
     expect(recoveredOutbox.status).toBe("published");
@@ -965,6 +987,14 @@ describe("v3 durable delivery loop", () => {
       event: { type: "bootstrap" },
     });
     expect(bootstrapResult.transitioned).toBe(true);
+
+    await appendEventAndAdvance({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `dup:${workflowId}:plan-completed`,
+      event: { type: "plan_completed" },
+    });
 
     const dispatchResult = await appendEventAndAdvance({
       db,
@@ -1053,6 +1083,14 @@ describe("v3 durable delivery loop", () => {
         db,
         workflowId,
         source: "system",
+        idempotencyKey: `oof:${workflowId}:plan-completed`,
+        event: { type: "plan_completed" },
+      });
+
+      await appendEventAndAdvance({
+        db,
+        workflowId,
+        source: "system",
         idempotencyKey: `oof:${workflowId}:dispatch-stale`,
         event: {
           type: "dispatch_sent",
@@ -1112,6 +1150,26 @@ describe("v3 durable delivery loop", () => {
       source: "system",
       idempotencyKey: `no-pr:${workflowId}:bootstrap`,
       event: { type: "bootstrap" },
+    });
+
+    await appendEventAndAdvance({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `no-pr:${workflowId}:plan-completed`,
+      event: { type: "plan_completed" },
+    });
+
+    await appendEventAndAdvance({
+      db,
+      workflowId,
+      source: "system",
+      idempotencyKey: `no-pr:${workflowId}:dispatch`,
+      event: {
+        type: "dispatch_sent",
+        runId: "run-no-pr",
+        ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
+      },
     });
 
     await appendEventAndAdvance({

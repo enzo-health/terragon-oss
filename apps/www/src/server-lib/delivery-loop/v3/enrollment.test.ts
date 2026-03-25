@@ -52,8 +52,8 @@ describe("enrollWorkflow", () => {
       workflowId: result.workflowId,
     });
     expect(head).toBeTruthy();
-    // bootstrap event transitions planning -> implementing
-    expect(head!.state).toBe("implementing");
+    // bootstrap event stays in planning (dispatch is queued as an effect)
+    expect(head!.state).toBe("planning");
     expect(head!.version).toBeGreaterThan(0);
   });
 

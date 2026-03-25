@@ -7,6 +7,7 @@ import {
 } from "./types";
 
 const DISPATCH_COHERENT_STATES = new Set([
+  "planning",
   "implementing",
   "gating_review",
   "gating_ci",
@@ -396,8 +397,7 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: "implementing",
-              activeGate: null,
+              state: "planning",
               activeRunId: event.runId,
               blockedReason: null,
             },
@@ -453,7 +453,29 @@ export function reduce(params: {
           };
           break;
         }
-        if (event.type !== "plan_completed" && event.type !== "bootstrap") {
+        if (event.type === "bootstrap") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "planning",
+              activeGate: null,
+              blockedReason: null,
+            },
+            effects: [
+              dispatchImplementingEffect(
+                next,
+                now,
+                "agent",
+                next.infraRetryCount,
+              ),
+              publishStatusEffect(next, now),
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type !== "plan_completed") {
           result = {
             head,
             effects: [],
