@@ -219,6 +219,26 @@ describe("reduce", () => {
     expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
+  it("run_completed with unchanged headSha is treated as agent failure (no-op detection)", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("implementing"),
+      headSha: "sha-before",
+      activeRunId: "r-1",
+    };
+    const result = reduce({
+      head: h,
+      event: { type: "run_completed", runId: "r-1", headSha: "sha-before" },
+      now,
+    });
+    expect(result.head.state).toBe("implementing"); // retried, not gating_review
+    expect(result.head.fixAttemptCount).toBe(1);
+    expect(result.head.blockedReason).toBeNull();
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[1]?.kind).toBe("publish_status");
+  });
+
   it("implementing run_completed without activeRunId still resolves to gate_review", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({

@@ -234,6 +234,7 @@ function dispatchImplementingEffect(
   lane: "agent" | "infra",
   infraRetryCount: number,
   retryAttempt?: number,
+  retryReason?: string | null,
 ): EffectSpec {
   const executionClass =
     lane === "infra" && infraRetryCount > 0
@@ -247,7 +248,11 @@ function dispatchImplementingEffect(
     kind: "dispatch_implementing",
     effectKey: `${head.workflowId}:${head.version}:dispatch_implementing`,
     dueAt,
-    payload: { kind: "dispatch_implementing", executionClass },
+    payload: {
+      kind: "dispatch_implementing",
+      executionClass,
+      retryReason: retryReason ?? null,
+    },
   };
 }
 
@@ -345,6 +350,7 @@ function retryToImplementing(params: {
         params.lane,
         laneUpdate.infraRetryCount,
         laneUpdate.count,
+        params.reason,
       ),
       publishStatusEffect(next, params.now),
     ],
@@ -546,6 +552,18 @@ export function reduce(params: {
               now,
               lane: "agent",
               reason: "Run completed without head SHA",
+            });
+            break;
+          }
+          // Detect no-op: agent completed but made no code changes (same SHA)
+          const isNoOpRun =
+            head.headSha !== null && completedHeadSha === head.headSha;
+          if (isNoOpRun) {
+            result = retryToImplementing({
+              head,
+              now,
+              lane: "agent",
+              reason: "Agent completed without making code changes",
             });
             break;
           }
