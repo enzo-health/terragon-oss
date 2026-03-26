@@ -68,6 +68,7 @@ function ToolPartMultiEditResult({
           <GenericToolPartClickToExpand
             label={expanded ? "Hide edits" : "Show edits"}
             onClick={() => setExpanded((x) => !x)}
+            isExpanded={expanded}
           />
         </span>
       </GenericToolPartContentRow>

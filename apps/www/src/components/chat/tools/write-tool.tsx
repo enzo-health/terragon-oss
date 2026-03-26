@@ -63,6 +63,7 @@ function WriteToolContent({
           <GenericToolPartClickToExpand
             label={expanded ? "Hide lines" : "Show lines"}
             onClick={() => setExpanded((x) => !x)}
+            isExpanded={expanded}
           />
         </span>
       </GenericToolPartContentRow>

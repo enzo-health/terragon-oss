@@ -1,41 +1,45 @@
 import { describe, expect, it } from "vitest";
-import { truncatePlanPreview } from "./exit-plan-mode-tool";
+import { truncateAtWordBoundary } from "./exit-plan-mode-tool";
 
-describe("truncatePlanPreview", () => {
+describe("truncateAtWordBoundary", () => {
   it("returns text unchanged when shorter than maxChars", () => {
     const text = "Short plan";
-    expect(truncatePlanPreview(text)).toBe(text);
+    expect(truncateAtWordBoundary(text)).toBe(text);
   });
 
   it("returns text unchanged when exactly maxChars", () => {
-    const text = "a".repeat(150);
-    expect(truncatePlanPreview(text)).toBe(text);
+    const text = "a".repeat(300);
+    expect(truncateAtWordBoundary(text)).toBe(text);
   });
 
-  it("truncates at first paragraph break after maxChars", () => {
-    const before = "a".repeat(160);
-    const text = `${before}\n\nSecond paragraph`;
-    expect(truncatePlanPreview(text)).toBe(`${before}\u2026`);
+  it("truncates at word boundary when possible", () => {
+    const text = "word ".repeat(80); // 400 chars
+    const result = truncateAtWordBoundary(text);
+    expect(result.endsWith("...")).toBe(true);
+    expect(result.length).toBeLessThanOrEqual(303); // 300 + "..."
+    // Should not end with a partial word (trailing space is ok)
+    const withoutEllipsis = result.slice(0, -3);
+    expect(withoutEllipsis.endsWith(" ") || withoutEllipsis.endsWith("d")).toBe(
+      true,
+    );
   });
 
-  it("falls back to maxChars when no paragraph break exists", () => {
-    const text = "a".repeat(200);
-    expect(truncatePlanPreview(text)).toBe("a".repeat(150) + "\u2026");
+  it("falls back to maxChars when no good word boundary exists", () => {
+    const text = "a".repeat(400);
+    expect(truncateAtWordBoundary(text)).toBe("a".repeat(300) + "...");
   });
 
   it("uses a custom maxChars value", () => {
-    const text = "a".repeat(30);
-    expect(truncatePlanPreview(text, 10)).toBe("a".repeat(10) + "\u2026");
+    const text = "hello world this is a test of truncation";
+    const result = truncateAtWordBoundary(text, 15);
+    expect(result.endsWith("...")).toBe(true);
+    const withoutEllipsis = result.slice(0, -3);
+    expect(withoutEllipsis.length).toBeLessThanOrEqual(15);
   });
 
-  it("finds paragraph break exactly at maxChars boundary", () => {
-    const text = "a".repeat(150) + "\n\nMore content";
-    expect(truncatePlanPreview(text)).toBe("a".repeat(150) + "\u2026");
-  });
-
-  it("preserves content before a late paragraph break", () => {
-    const first = "a".repeat(180);
-    const text = `${first}\n\nLate break`;
-    expect(truncatePlanPreview(text)).toBe(`${first}\u2026`);
+  it("breaks at last space before maxChars", () => {
+    const text = "The quick brown fox jumps over the lazy dog";
+    const result = truncateAtWordBoundary(text, 20);
+    expect(result).toBe("The quick brown fox...");
   });
 });

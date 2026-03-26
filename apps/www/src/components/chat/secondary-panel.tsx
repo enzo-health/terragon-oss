@@ -1,13 +1,5 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { cn } from "@/lib/utils";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
 import {
   DBMessage,
   ThreadInfoFull,
@@ -20,34 +12,57 @@ import {
   type UITextFilePart,
 } from "@terragon/shared";
 import {
-  getArtifactDescriptors,
   type ArtifactDescriptor,
   type ArtifactDescriptorOrigin,
   type ExitPlanModeToolPart,
+  getArtifactDescriptors,
   type PlanArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
+import {
+  AlertTriangle,
+  Check,
+  ExternalLink,
+  FileDiff,
+  LayoutDashboard,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  X,
+} from "lucide-react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
+import { Button } from "@/components/ui/button";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { usePlatform } from "@/hooks/use-platform";
 import { useResizablePanel } from "@/hooks/use-resizable-panel";
+import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import { cn } from "@/lib/utils";
 import { GitDiffView } from "./git-diff-view";
+import { usePlanApproval, useSecondaryPanel } from "./hooks";
 import { RichTextPart } from "./rich-text-part";
 import { TextPart } from "./text-part";
-import { resolvePlanText } from "./tools/plan-utils";
-import { usePlatform } from "@/hooks/use-platform";
-import { usePlanApproval, useSecondaryPanel } from "./hooks";
-import { Button } from "@/components/ui/button";
-import { Check, ExternalLink, FileDiff, X } from "lucide-react";
 import type { PromptBoxRef } from "./thread-context";
-import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
-import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
+import { resolvePlanText } from "./tools/plan-utils";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
+const SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE = 0.95;
 const SECONDARY_PANEL_DEFAULT_WIDTH = 0.5;
 const SECONDARY_PANEL_RESIZE_STEP = 32;
 const SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH = 1024;
 
 export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
-const PREVIEW_TRUNCATED_SUFFIX =
-  "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---";
 
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 
@@ -279,6 +294,9 @@ export function SecondaryPanel({
 
   const handleClose = useCallback(() => onOpenChange(false), [onOpenChange]);
 
+  const [isMaximized, setIsMaximized] = useState(false);
+  const previousWidthRef = useRef<number | null>(null);
+
   const { width, setWidth, isResizing, handleMouseDown } = useResizablePanel({
     minWidth: SECONDARY_PANEL_MIN_WIDTH,
     maxWidth: SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE,
@@ -289,24 +307,68 @@ export function SecondaryPanel({
     enabled: isOpen && platform === "desktop",
   });
 
-  const getSecondaryPanelMaxWidth = () => {
-    const containerWidth =
+  const getContainerWidth = useCallback(() => {
+    return (
       containerRef.current?.offsetWidth ??
       (typeof window !== "undefined"
         ? window.innerWidth
-        : SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH);
-
-    return containerWidth * SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE;
-  };
-
-  const clampSecondaryPanelWidth = (nextWidth: number) => {
-    return Math.min(
-      Math.max(nextWidth, SECONDARY_PANEL_MIN_WIDTH),
-      getSecondaryPanelMaxWidth(),
+        : SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH)
     );
-  };
+  }, [containerRef]);
+
+  const getSecondaryPanelMaxWidth = useCallback(() => {
+    return getContainerWidth() * SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE;
+  }, [getContainerWidth]);
+
+  const clampSecondaryPanelWidth = useCallback(
+    (nextWidth: number) => {
+      return Math.min(
+        Math.max(nextWidth, SECONDARY_PANEL_MIN_WIDTH),
+        getSecondaryPanelMaxWidth(),
+      );
+    },
+    [getSecondaryPanelMaxWidth],
+  );
+
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
+  const toggleMaximize = useCallback(() => {
+    setIsMaximized((prev) => {
+      if (!prev) {
+        previousWidthRef.current = widthRef.current;
+        setWidth(
+          getContainerWidth() * SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE,
+        );
+        return true;
+      } else {
+        const restoreWidth =
+          previousWidthRef.current ??
+          getContainerWidth() * SECONDARY_PANEL_DEFAULT_WIDTH;
+        setWidth(clampSecondaryPanelWidth(restoreWidth));
+        return false;
+      }
+    });
+  }, [setWidth, getContainerWidth, clampSecondaryPanelWidth]);
+
+  // Keyboard shortcut: Cmd+Shift+F (Mac) / Ctrl+Shift+F (other)
+  useEffect(() => {
+    if (!isOpen || platform === "mobile") return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const modKey = e.metaKey || e.ctrlKey;
+      if (modKey && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        toggleMaximize();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, platform, toggleMaximize]);
 
   const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isMaximized) return;
     let nextWidth = width;
 
     switch (event.key) {
@@ -332,24 +394,19 @@ export function SecondaryPanel({
 
   if (platform === "mobile") {
     return (
-      <Drawer open={isOpen} onOpenChange={onOpenChange}>
-        <DrawerContent className="h-[80vh] overflow-hidden p-0">
-          <DrawerHeader className="sr-only">
-            <DrawerTitle>Artifact workspace</DrawerTitle>
-          </DrawerHeader>
-          <SecondaryPanelContent
-            artifacts={artifacts}
-            activeArtifactId={activeArtifactId}
-            onActiveArtifactChange={onActiveArtifactChange}
-            onClose={handleClose}
-            thread={thread}
-            messages={messages}
-            threadChatId={threadChatId}
-            isReadOnly={isReadOnly}
-            promptBoxRef={promptBoxRef}
-          />
-        </DrawerContent>
-      </Drawer>
+      <MobileArtifactDrawer
+        isOpen={isOpen}
+        onOpenChange={onOpenChange}
+        artifacts={artifacts}
+        activeArtifactId={activeArtifactId}
+        onActiveArtifactChange={onActiveArtifactChange}
+        onClose={handleClose}
+        thread={thread}
+        messages={messages}
+        threadChatId={threadChatId}
+        isReadOnly={isReadOnly}
+        promptBoxRef={promptBoxRef}
+      />
     );
   }
 
@@ -359,21 +416,32 @@ export function SecondaryPanel({
     <>
       <div
         className={cn(
-          "w-1.5 cursor-col-resize hover:bg-blue-500/50 transition-colors flex-shrink-0",
-          isResizing && "bg-blue-500/50",
+          "w-1.5 transition-colors flex-shrink-0",
+          isMaximized
+            ? "cursor-default"
+            : "cursor-col-resize hover:bg-blue-500/50",
+          isResizing && !isMaximized && "bg-blue-500/50",
         )}
-        onMouseDown={handleMouseDown}
-        onKeyDown={handleResizeKeyDown}
+        onMouseDown={isMaximized ? undefined : handleMouseDown}
+        onKeyDown={isMaximized ? undefined : handleResizeKeyDown}
         role="separator"
-        tabIndex={0}
+        tabIndex={isMaximized ? -1 : 0}
         aria-label="Resize artifact workspace"
         aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
         aria-orientation="vertical"
         aria-valuemin={SECONDARY_PANEL_MIN_WIDTH}
-        aria-valuemax={Math.round(getSecondaryPanelMaxWidth())}
+        aria-valuemax={Math.round(
+          isMaximized
+            ? getContainerWidth() * SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE
+            : getSecondaryPanelMaxWidth(),
+        )}
         aria-valuenow={Math.round(width)}
         aria-valuetext={`${Math.round(width)} pixels wide`}
-        title="Drag or use arrow keys to resize the artifact workspace"
+        title={
+          isMaximized
+            ? undefined
+            : "Drag or use arrow keys to resize the artifact workspace"
+        }
       />
       <div
         className="flex-shrink-0 border-l bg-background flex flex-col h-full"
@@ -384,6 +452,8 @@ export function SecondaryPanel({
           activeArtifactId={activeArtifactId}
           onActiveArtifactChange={onActiveArtifactChange}
           onClose={handleClose}
+          onToggleMaximize={toggleMaximize}
+          isMaximized={isMaximized}
           thread={thread}
           messages={messages}
           threadChatId={threadChatId}
@@ -395,7 +465,12 @@ export function SecondaryPanel({
   );
 }
 
-function SecondaryPanelContent({
+const MOBILE_DRAWER_SNAP_POINTS = [0.6, 0.95] as const;
+const MOBILE_DRAWER_DEFAULT_SNAP = 0.6;
+
+function MobileArtifactDrawer({
+  isOpen,
+  onOpenChange,
   artifacts,
   activeArtifactId,
   onActiveArtifactChange,
@@ -406,10 +481,116 @@ function SecondaryPanelContent({
   isReadOnly,
   promptBoxRef,
 }: {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   onClose: () => void;
+  thread: ThreadInfoFull;
+  messages: DBMessage[];
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+}) {
+  const [activeSnap, setActiveSnap] = useState<number | string | null>(
+    MOBILE_DRAWER_DEFAULT_SNAP,
+  );
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollFade, setShowScrollFade] = useState(false);
+
+  const checkScrollable = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      setShowScrollFade(false);
+      return;
+    }
+    const hasMoreBelow = el.scrollHeight - el.scrollTop - el.clientHeight > 8;
+    setShowScrollFade(hasMoreBelow);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    checkScrollable();
+    el.addEventListener("scroll", checkScrollable, { passive: true });
+    const observer = new ResizeObserver(checkScrollable);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", checkScrollable);
+      observer.disconnect();
+    };
+  }, [checkScrollable]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveSnap(MOBILE_DRAWER_DEFAULT_SNAP);
+    }
+  }, [isOpen]);
+
+  return (
+    <Drawer
+      open={isOpen}
+      onOpenChange={onOpenChange}
+      snapPoints={[...MOBILE_DRAWER_SNAP_POINTS]}
+      activeSnapPoint={activeSnap}
+      setActiveSnapPoint={setActiveSnap}
+    >
+      <DrawerContent
+        className="overflow-hidden p-0"
+        aria-label="Artifact panel"
+      >
+        <DrawerHeader className="sr-only">
+          <DrawerTitle>Artifact workspace</DrawerTitle>
+        </DrawerHeader>
+        <div
+          ref={scrollRef}
+          className={cn(
+            "flex-1 min-h-0",
+            activeSnap === MOBILE_DRAWER_SNAP_POINTS[1]
+              ? "overflow-auto"
+              : "overflow-hidden",
+          )}
+        >
+          <SecondaryPanelContent
+            artifacts={artifacts}
+            activeArtifactId={activeArtifactId}
+            onActiveArtifactChange={onActiveArtifactChange}
+            onClose={onClose}
+            thread={thread}
+            messages={messages}
+            threadChatId={threadChatId}
+            isReadOnly={isReadOnly}
+            promptBoxRef={promptBoxRef}
+          />
+        </div>
+        {showScrollFade && (
+          <div className="pointer-events-none sticky bottom-0 h-8 bg-gradient-to-t from-background to-transparent" />
+        )}
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+function SecondaryPanelContent({
+  artifacts,
+  activeArtifactId,
+  onActiveArtifactChange,
+  onClose,
+  onToggleMaximize,
+  isMaximized,
+  thread,
+  messages,
+  threadChatId,
+  isReadOnly,
+  promptBoxRef,
+}: {
+  artifacts: ArtifactWorkspaceItem[];
+  activeArtifactId: string | null;
+  onActiveArtifactChange: (artifactId: string | null) => void;
+  onClose: () => void;
+  onToggleMaximize?: () => void;
+  isMaximized?: boolean;
   thread: ThreadInfoFull;
   messages: DBMessage[];
   threadChatId?: string;
@@ -422,6 +603,8 @@ function SecondaryPanelContent({
       activeArtifactId={activeArtifactId}
       onActiveArtifactChange={onActiveArtifactChange}
       onClose={onClose}
+      onToggleMaximize={onToggleMaximize}
+      isMaximized={isMaximized}
       thread={thread}
       messages={messages}
       threadChatId={threadChatId}
@@ -441,6 +624,8 @@ function ArtifactWorkspaceShell({
   activeArtifactId,
   onActiveArtifactChange,
   onClose,
+  onToggleMaximize,
+  isMaximized,
   thread,
   messages,
   threadChatId,
@@ -452,6 +637,8 @@ function ArtifactWorkspaceShell({
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   onClose?: () => void;
+  onToggleMaximize?: () => void;
+  isMaximized?: boolean;
   thread: ThreadInfoFull;
   messages: DBMessage[];
   threadChatId?: string;
@@ -462,6 +649,7 @@ function ArtifactWorkspaceShell({
     description: string;
   };
 }) {
+  const tablistRef = useRef<HTMLDivElement>(null);
   const resolvedActiveArtifactId = resolveActiveArtifactId({
     artifacts,
     activeArtifactId,
@@ -472,6 +660,45 @@ function ArtifactWorkspaceShell({
   const viewState = getArtifactWorkspaceViewState(activeArtifact);
   const headerTitle = activeArtifact?.title ?? emptyState.title;
   const headerSummary = activeArtifact?.summary ?? emptyState.description;
+
+  const handleTabKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      const tabs =
+        tablistRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+      if (!tabs || tabs.length === 0) return;
+
+      const currentIndex = Array.from(tabs).findIndex(
+        (tab) => tab === event.currentTarget,
+      );
+      let nextIndex: number | null = null;
+
+      switch (event.key) {
+        case "ArrowRight":
+          nextIndex = (currentIndex + 1) % tabs.length;
+          break;
+        case "ArrowLeft":
+          nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+          break;
+        case "Home":
+          nextIndex = 0;
+          break;
+        case "End":
+          nextIndex = tabs.length - 1;
+          break;
+        default:
+          return;
+      }
+
+      event.preventDefault();
+      const nextTab = tabs[nextIndex];
+      if (nextTab) {
+        nextTab.focus();
+        const artifactId = nextTab.getAttribute("data-artifact-id");
+        if (artifactId) onActiveArtifactChange(artifactId);
+      }
+    },
+    [onActiveArtifactChange],
+  );
 
   return (
     <div
@@ -505,7 +732,10 @@ function ArtifactWorkspaceShell({
               )}
             </div>
             <div className="mt-2 min-w-0">
-              <h2 className="truncate text-sm font-semibold text-foreground">
+              <h2
+                className="truncate text-sm font-semibold text-foreground"
+                title={headerTitle}
+              >
                 {headerTitle}
               </h2>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -513,27 +743,59 @@ function ArtifactWorkspaceShell({
               </p>
             </div>
           </div>
-          {onClose && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              onClick={onClose}
-              aria-label="Close artifact workspace"
-            >
-              <X className="size-4" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1 shrink-0">
+            {onToggleMaximize && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={onToggleMaximize}
+                aria-label={
+                  isMaximized ? "Restore panel size" : "Maximize panel"
+                }
+                title={isMaximized ? "Restore panel size" : "Maximize panel"}
+              >
+                {isMaximized ? (
+                  <Minimize2 className="size-3.5" />
+                ) : (
+                  <Maximize2 className="size-3.5" />
+                )}
+              </Button>
+            )}
+            {onClose && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={onClose}
+                aria-label="Close artifact workspace"
+              >
+                <X className="size-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
         {artifacts.length > 1 && (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div
+            ref={tablistRef}
+            role="tablist"
+            aria-label="Artifacts"
+            className="mt-3 flex flex-wrap gap-2"
+          >
             {artifacts.map((artifact) => {
               const isActive = artifact.id === resolvedActiveArtifactId;
               return (
                 <button
                   key={artifact.id}
                   type="button"
+                  role="tab"
+                  id={`artifact-tab-${artifact.id}`}
+                  aria-selected={isActive}
+                  aria-controls={`artifact-panel-${artifact.id}`}
+                  tabIndex={isActive ? 0 : -1}
+                  data-artifact-id={artifact.id}
                   className={cn(
                     "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                     isActive
@@ -541,7 +803,7 @@ function ArtifactWorkspaceShell({
                       : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                   onClick={() => onActiveArtifactChange(artifact.id)}
-                  aria-pressed={isActive}
+                  onKeyDown={handleTabKeyDown}
                 >
                   {artifact.title}
                 </button>
@@ -551,9 +813,17 @@ function ArtifactWorkspaceShell({
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div
+        className="flex-1 min-h-0 overflow-hidden"
+        role="tabpanel"
+        id={activeArtifact ? `artifact-panel-${activeArtifact.id}` : undefined}
+        aria-labelledby={
+          activeArtifact ? `artifact-tab-${activeArtifact.id}` : undefined
+        }
+      >
         {viewState === "empty" && (
           <ArtifactWorkspaceState
+            variant="empty"
             title={emptyState.title}
             description={emptyState.description}
           />
@@ -561,6 +831,7 @@ function ArtifactWorkspaceShell({
 
         {viewState === "loading" && (
           <ArtifactWorkspaceState
+            variant="loading"
             title="Loading artifact"
             description="The selected artifact is still being prepared."
           />
@@ -568,6 +839,7 @@ function ArtifactWorkspaceShell({
 
         {viewState === "error" && (
           <ArtifactWorkspaceState
+            variant="error"
             title={activeArtifact?.title ?? "Artifact unavailable"}
             description={
               activeArtifact?.errorMessage ??
@@ -660,14 +932,14 @@ function DocumentArtifactRenderer({
 async function readCappedText(
   response: Response,
   maxBytes: number,
-): Promise<string> {
+): Promise<{ text: string; truncated: boolean }> {
   const reader = response.body?.getReader();
   if (!reader) {
     // Fallback when ReadableStream is unavailable (e.g. mocked fetch in tests).
     const raw = await response.text();
     return raw.length > maxBytes
-      ? raw.slice(0, maxBytes) + PREVIEW_TRUNCATED_SUFFIX
-      : raw;
+      ? { text: raw.slice(0, maxBytes), truncated: true }
+      : { text: raw, truncated: false };
   }
 
   const decoder = new TextDecoder();
@@ -688,13 +960,13 @@ async function readCappedText(
         }),
       );
       await reader.cancel();
-      return chunks.join("") + PREVIEW_TRUNCATED_SUFFIX;
+      return { text: chunks.join(""), truncated: true };
     }
     chunks.push(decoder.decode(value, { stream: true }));
   }
   // Flush any remaining bytes from the decoder.
   chunks.push(decoder.decode());
-  return chunks.join("");
+  return { text: chunks.join(""), truncated: false };
 }
 
 function TextFileArtifactRenderer({
@@ -704,7 +976,7 @@ function TextFileArtifactRenderer({
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
-    | { status: "ready"; content: string }
+    | { status: "ready"; content: string; isTruncated: boolean }
     | { status: "error"; message: string }
   >({ status: "loading" });
 
@@ -723,8 +995,11 @@ function TextFileArtifactRenderer({
         // Cap preview at 512 KB to avoid memory spikes on large generated files.
         // Read via stream to enforce the cap even when content-length is absent.
         const MAX_PREVIEW_BYTES = 512 * 1024;
-        const content = await readCappedText(response, MAX_PREVIEW_BYTES);
-        setState({ status: "ready", content });
+        const { text, truncated } = await readCappedText(
+          response,
+          MAX_PREVIEW_BYTES,
+        );
+        setState({ status: "ready", content: text, isTruncated: truncated });
       } catch (error) {
         if (controller.signal.aborted) {
           return;
@@ -768,15 +1043,23 @@ function TextFileArtifactRenderer({
           </a>
         </Button>
       </div>
+      {state.status === "ready" && state.isTruncated && (
+        <div className="flex items-center gap-2 border-b px-4 py-2 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          <span>File preview truncated at 512 KB</span>
+        </div>
+      )}
       <div className="flex-1 min-h-0 overflow-auto p-4">
         {state.status === "loading" && (
           <ArtifactWorkspaceState
+            variant="loading"
             title="Loading preview"
             description="Fetching file contents for preview."
           />
         )}
         {state.status === "error" && (
           <ArtifactWorkspaceState
+            variant="error"
             title="Preview unavailable"
             description={`${state.message} You can still open the raw file.`}
           />
@@ -916,15 +1199,51 @@ function PlanArtifactRenderer({
 function ArtifactWorkspaceState({
   title,
   description,
+  variant = "empty",
 }: {
   title: string;
   description: string;
+  variant?: "empty" | "loading" | "error";
 }) {
+  if (variant === "loading") {
+    return (
+      <div className="flex flex-col gap-4 p-6">
+        <div className="flex items-center gap-2">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">{title}</span>
+        </div>
+        <div className="space-y-2">
+          <div className="h-8 rounded bg-muted animate-pulse" />
+          <div className="h-4 w-3/4 rounded bg-muted animate-pulse" />
+          <div className="h-4 w-1/2 rounded bg-muted animate-pulse" />
+          <div className="h-4 w-5/6 rounded bg-muted animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === "error") {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <div className="rounded-lg bg-destructive/10 p-3">
+          <AlertTriangle className="size-6 text-destructive/60" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-destructive">{title}</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">{description}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center">
-      <div className="max-w-sm space-y-2">
-        <p className="text-sm font-semibold text-foreground">{title}</p>
-        <p className="text-sm text-muted-foreground">{description}</p>
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+      <div className="rounded-lg bg-muted/50 p-3">
+        <LayoutDashboard className="size-6 text-muted-foreground/60" />
+      </div>
+      <div>
+        <p className="text-sm font-medium text-muted-foreground">{title}</p>
+        <p className="mt-1 text-xs text-muted-foreground/60">{description}</p>
       </div>
     </div>
   );

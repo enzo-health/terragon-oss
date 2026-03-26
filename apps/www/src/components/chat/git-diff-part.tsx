@@ -11,7 +11,6 @@ import {
   FileDiff,
 } from "lucide-react";
 import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
-import { useTheme } from "next-themes";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
@@ -34,7 +33,6 @@ export const GitDiffPart = memo(function GitDiffPart({
   isLatest = false,
 }: GitDiffPartProps) {
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
-  const { resolvedTheme } = useTheme();
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
   const diffStats = useMemo(
     () => gitDiffPart.diffStats || parseGitDiffStats(gitDiffPart.diff),
@@ -115,7 +113,17 @@ export const GitDiffPart = memo(function GitDiffPart({
     <div className="flex flex-col border border-border rounded-md bg-muted/50">
       <div
         className="flex flex-row items-center cursor-pointer select-none justify-between p-2"
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-label={`Files Changed: ${diffStats.files} file${diffStats.files === 1 ? "" : "s"}`}
         onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleClick();
+          }
+        }}
       >
         <div className="flex items-center gap-3 min-w-0 overflow-hidden flex-1">
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -160,6 +168,10 @@ export const GitDiffPart = memo(function GitDiffPart({
               }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
               title={allExpanded ? "Collapse all" : "Expand all"}
+              aria-label={
+                allExpanded ? "Collapse all files" : "Expand all files"
+              }
+              aria-pressed={allExpanded}
             >
               {allExpanded ? (
                 <ChevronsDownUp className="w-3.5 h-3.5" />
@@ -171,15 +183,14 @@ export const GitDiffPart = memo(function GitDiffPart({
               </span>
             </button>
           )}
-          {(isLatest || artifactDescriptor) && (
-            <button
-              onClick={handleOpenPanel}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
-              title="Open in side panel"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <button
+            onClick={handleOpenPanel}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
+            title="Open in side panel"
+            aria-label="Open in side panel"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
       {isExpanded && (
@@ -199,7 +210,6 @@ export const GitDiffPart = memo(function GitDiffPart({
                   mode="unified"
                   expanded={!!expandedFiles[index]}
                   onToggle={() => toggleFile(index)}
-                  theme={resolvedTheme}
                   thread={thread}
                   enableComments={false}
                   isImageDiffViewEnabled={isImageDiffViewEnabled}

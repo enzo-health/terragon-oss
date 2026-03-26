@@ -66,6 +66,7 @@ function ToolPartEditResult({
           <GenericToolPartClickToExpand
             label={expanded ? "Hide diff" : "Show diff"}
             onClick={() => setExpanded((x) => !x)}
+            isExpanded={expanded}
           />
         </span>
       </GenericToolPartContentRow>

@@ -1,5 +1,5 @@
 import type { Story, StoryDefault } from "@ladle/react";
-import { DiffView } from "./diff-view";
+import { HighlightedDiffView } from "./diff-view";
 
 // Sample git diff data
 const singleFileDiff = `diff --git a/src/components/Button.tsx b/src/components/Button.tsx
@@ -9,13 +9,13 @@ index 7d4f8a9..2e3b5c1 100644
 @@ -1,10 +1,12 @@
  import React from 'react';
 +import { cn } from '@/lib/utils';
- 
+
  interface ButtonProps {
    children: React.ReactNode;
    onClick?: () => void;
 +  className?: string;
  }
- 
+
 -export function Button({ children, onClick }: ButtonProps) {
 -  return <button onClick={onClick}>{children}</button>;
 +export function Button({ children, onClick, className }: ButtonProps) {
@@ -29,13 +29,13 @@ index 7d4f8a9..2e3b5c1 100644
 @@ -1,10 +1,12 @@
  import React from 'react';
 +import { cn } from '@/lib/utils';
- 
+
  interface ButtonProps {
    children: React.ReactNode;
    onClick?: () => void;
 +  className?: string;
  }
- 
+
 -export function Button({ children, onClick }: ButtonProps) {
 -  return <button onClick={onClick}>{children}</button>;
 +export function Button({ children, onClick, className }: ButtonProps) {
@@ -49,21 +49,21 @@ index 3f5e2a1..8b9c4d7 100644
  import { useState, useEffect } from 'react';
  import { auth } from '@/lib/auth';
 +import { User } from '@/types/user';
- 
+
  export function useAuth() {
 -  const [user, setUser] = useState(null);
 +  const [user, setUser] = useState<User | null>(null);
    const [loading, setLoading] = useState(true);
- 
+
    useEffect(() => {
 @@ -10,7 +11,7 @@ export function useAuth() {
        setLoading(false);
      });
- 
+
 -    return () => unsubscribe();
 +    return unsubscribe;
    }, []);
- 
+
    return { user, loading };
 diff --git a/package.json b/package.json
 index 1234567..8901234 100644
@@ -88,7 +88,7 @@ index 1234567..8901234 100644
 +import { TRPCError } from "@trpc/server";
 +import { hash, compare } from "bcryptjs";
 +import { generateId } from "@/lib/utils";
- 
+
  export const userRouter = createTRPCRouter({
    getAll: publicProcedure.query(async ({ ctx }) => {
 -    return ctx.db.user.findMany();
@@ -101,7 +101,7 @@ index 1234567..8901234 100644
 +      },
 +    });
    }),
- 
+
    getById: publicProcedure
      .input(z.object({ id: z.string() }))
      .query(async ({ ctx, input }) => {
@@ -132,7 +132,7 @@ index 1234567..8901234 100644
 +
 +      return user;
      }),
- 
+
    create: publicProcedure
      .input(
        z.object({
@@ -166,7 +166,7 @@ index 1234567..8901234 100644
          },
        });
      }),
- 
+
    update: protectedProcedure
      .input(
        z.object({
@@ -206,7 +206,7 @@ index 1234567..8901234 100644
 +++ b/src/NewComponent.tsx
 @@ -1,8 +1,8 @@
  import React from 'react';
- 
+
 -export function OldComponent() {
 +export function NewComponent() {
    return (
@@ -216,95 +216,6 @@ index 1234567..8901234 100644
      </div>
    );`;
 
-const binaryFileDiff = `diff --git a/public/logo.png b/public/logo.png
-index 1234567..8901234 100644
-Binary files a/public/logo.png and b/public/logo.png differ
-diff --git a/src/assets/background.jpg b/src/assets/background.jpg
-new file mode 100644
-index 0000000..5678901
-Binary files /dev/null and b/src/assets/background.jpg differ`;
-
-const emptyDiff = ``;
-
-export const SingleFile: Story = () => {
-  return (
-    <div className="p-4">
-      <DiffView diffString={singleFileDiff} />
-    </div>
-  );
-};
-
-export const MultipleFiles: Story = () => {
-  return (
-    <div className="p-4">
-      <DiffView diffString={multipleFilesDiff} />
-    </div>
-  );
-};
-
-export const LargeFile: Story = () => {
-  return (
-    <div className="p-4">
-      <DiffView diffString={largeFileDiff} />
-    </div>
-  );
-};
-
-export const FileRename: Story = () => {
-  return (
-    <div className="p-4">
-      <DiffView diffString={fileRenameDiff} />
-    </div>
-  );
-};
-
-export const BinaryFiles: Story = () => {
-  return (
-    <div className="p-4">
-      <DiffView diffString={binaryFileDiff} />
-    </div>
-  );
-};
-
-export const TooLargeDiff: Story = () => {
-  return (
-    <div className="p-4">
-      <DiffView diffString="too-large" />
-    </div>
-  );
-};
-
-export const EmptyDiff: Story = () => {
-  return (
-    <div className="p-4">
-      <p className="text-muted-foreground mb-4">Empty diff:</p>
-      <DiffView diffString={emptyDiff} />
-    </div>
-  );
-};
-
-export const DefaultCollapsed: Story = () => {
-  return (
-    <div className="p-4">
-      <p className="text-muted-foreground mb-4">
-        Files are collapsed by default:
-      </p>
-      <DiffView diffString={multipleFilesDiff} defaultCollapsed={true} />
-    </div>
-  );
-};
-
-export const DefaultExpanded: Story = () => {
-  return (
-    <div className="p-4">
-      <p className="text-muted-foreground mb-4">
-        Files are expanded by default:
-      </p>
-      <DiffView diffString={multipleFilesDiff} defaultCollapsed={false} />
-    </div>
-  );
-};
-
 const longFilePathDiff = `diff --git a/src/components/very/long/nested/directory/structure/that/causes/overflow/on/mobile/devices/ComponentWithVeryLongNameThatExceedsNormalBounds.tsx b/src/components/very/long/nested/directory/structure/that/causes/overflow/on/mobile/devices/ComponentWithVeryLongNameThatExceedsNormalBounds.tsx
 index 1234567..8901234 100644
 --- a/src/components/very/long/nested/directory/structure/that/causes/overflow/on/mobile/devices/ComponentWithVeryLongNameThatExceedsNormalBounds.tsx
@@ -312,7 +223,7 @@ index 1234567..8901234 100644
 @@ -1,5 +1,6 @@
  import React from 'react';
 +import { cn } from '@/lib/utils';
- 
+
  export function ComponentWithVeryLongName() {
 -  return <div>Hello</div>;
 +  return <div className={cn('p-4')}>Hello World</div>;
@@ -330,51 +241,42 @@ index 2345678..9012345 100644
    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
  );`;
 
-export const MobileOverflowFix: Story = () => {
+export const SingleFile: Story = () => {
   return (
     <div className="p-4">
-      <p className="text-muted-foreground mb-4">
-        Long file paths are truncated to prevent horizontal overflow on mobile:
-      </p>
-      <div className="max-w-sm border border-gray-300 dark:border-neutral-700 rounded-lg overflow-hidden">
-        <DiffView diffString={longFilePathDiff} />
-      </div>
-      <p className="text-muted-foreground mt-4 text-sm">
-        The container above simulates a mobile viewport (max-width: 24rem).
-        Notice how the long file paths are truncated with ellipsis.
-      </p>
+      <HighlightedDiffView patch={singleFileDiff} />
     </div>
   );
 };
 
-export const MobileOverflowFixWithRename: Story = () => {
-  const renameWithLongPaths = `diff --git a/src/components/very/long/nested/directory/OldComponentWithExtremelLongName.tsx b/src/components/even/longer/nested/directory/structure/NewComponentWithEvenLongerNameThanBefore.tsx
-similarity index 85%
-rename from src/components/very/long/nested/directory/OldComponentWithExtremelLongName.tsx
-rename to src/components/even/longer/nested/directory/structure/NewComponentWithEvenLongerNameThanBefore.tsx
-index 1234567..8901234 100644
---- a/src/components/very/long/nested/directory/OldComponentWithExtremelLongName.tsx
-+++ b/src/components/even/longer/nested/directory/structure/NewComponentWithEvenLongerNameThanBefore.tsx
-@@ -1,8 +1,8 @@
- import React from 'react';
- 
--export function OldComponent() {
-+export function NewComponent() {
-   return (
--    <div className="old-component">
-+    <div className="new-component">
-       <h1>Hello World</h1>
-     </div>
-   );`;
-
+export const MultipleFiles: Story = () => {
   return (
     <div className="p-4">
-      <p className="text-muted-foreground mb-4">
-        File renames with long paths also handle overflow correctly:
-      </p>
-      <div className="max-w-sm border border-gray-300 dark:border-neutral-700 rounded-lg overflow-hidden">
-        <DiffView diffString={renameWithLongPaths} />
-      </div>
+      <HighlightedDiffView patch={multipleFilesDiff} />
+    </div>
+  );
+};
+
+export const LargeFile: Story = () => {
+  return (
+    <div className="p-4">
+      <HighlightedDiffView patch={largeFileDiff} />
+    </div>
+  );
+};
+
+export const FileRename: Story = () => {
+  return (
+    <div className="p-4">
+      <HighlightedDiffView patch={fileRenameDiff} />
+    </div>
+  );
+};
+
+export const LongFilePaths: Story = () => {
+  return (
+    <div className="p-4">
+      <HighlightedDiffView patch={longFilePathDiff} />
     </div>
   );
 };

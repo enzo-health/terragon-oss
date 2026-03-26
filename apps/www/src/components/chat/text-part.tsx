@@ -8,7 +8,10 @@ import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import {
+  parsePlanSpecViewModelFromText,
+  parsePartialPlan,
+} from "@/lib/delivery-loop-plan-view-model";
 import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
 
 interface TextPartProps {
@@ -65,6 +68,8 @@ function convertCitationsToGitHubLinks(
 function normalizeBoldHeaders(text: string): string {
   return text.replace(/^(\*\*[^*]+\*\*)([A-Za-z])/gm, "$1\n\n$2");
 }
+
+const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
@@ -140,22 +145,51 @@ const TextPart = memo(function TextPart({
   const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
-  const parsedPlan = useMemo(() => {
+  const { parsedPlan, isPlanStreaming } = useMemo(() => {
     if (!deliveryPlanReviewCard) {
-      return null;
+      return { parsedPlan: null, isPlanStreaming: false };
     }
-    return parsePlanSpecViewModelFromText(text);
+
+    const hasOpenTag = /<proposed_plan>/i.test(text);
+    const hasCloseTag = /<\/proposed_plan>/i.test(text);
+
+    if (hasOpenTag && !hasCloseTag) {
+      return {
+        parsedPlan: parsePartialPlan(text),
+        isPlanStreaming: true,
+      };
+    }
+
+    return {
+      parsedPlan: parsePlanSpecViewModelFromText(text),
+      isPlanStreaming: false,
+    };
   }, [deliveryPlanReviewCard, text]);
 
-  const processedText = normalizeBoldHeaders(
-    convertCitationsToGitHubLinks(
-      text,
-      githubRepoFullName,
-      branchName,
-      baseBranchName,
-      hasCheckpoint,
-    ),
-  );
+  const processedText = useMemo(() => {
+    let t = normalizeBoldHeaders(
+      convertCitationsToGitHubLinks(
+        text,
+        githubRepoFullName,
+        branchName,
+        baseBranchName,
+        hasCheckpoint,
+      ),
+    );
+    // Strip the plan XML when we already render a structured card
+    if (parsedPlan) {
+      PROPOSED_PLAN_RE.lastIndex = 0;
+      t = t.replace(PROPOSED_PLAN_RE, "").trim();
+    }
+    return t;
+  }, [
+    text,
+    githubRepoFullName,
+    branchName,
+    baseBranchName,
+    hasCheckpoint,
+    parsedPlan,
+  ]);
 
   // Scan for collapsible code blocks after DOM updates
   useEffect(() => {
@@ -374,25 +408,42 @@ const TextPart = memo(function TextPart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, toggleBlock]);
 
+  const showStreamdown = processedText.length > 0;
+
   return (
     <div>
       {parsedPlan ? (
         <DeliveryLoopPlanReviewCard
           plan={parsedPlan}
           className="mb-2"
+          isStreaming={isPlanStreaming}
           onOpenInArtifactWorkspace={onOpenInArtifactWorkspace}
         />
+      ) : isPlanStreaming ? (
+        <DeliveryLoopPlanReviewCard
+          plan={{
+            title: "",
+            summary: "",
+            tasks: [],
+            assumptions: [],
+            source: "proposed_plan_tag",
+          }}
+          className="mb-2"
+          isStreaming
+        />
       ) : null}
-      <div className="prose prose-sm max-w-none" ref={containerRef}>
-        <Streamdown
-          plugins={plugins}
-          components={components}
-          controls={{ code: true }}
-        >
-          {processedText}
-        </Streamdown>
-        {overlays}
-      </div>
+      {showStreamdown && (
+        <div className="prose prose-sm max-w-none" ref={containerRef}>
+          <Streamdown
+            plugins={plugins}
+            components={components}
+            controls={{ code: true }}
+          >
+            {processedText}
+          </Streamdown>
+          {overlays}
+        </div>
+      )}
     </div>
   );
 });

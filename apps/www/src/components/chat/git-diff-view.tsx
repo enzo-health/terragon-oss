@@ -1,42 +1,42 @@
 "use client";
 
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  PatchDiff,
   type AnnotationSide,
-  type DiffLineEventBaseProps,
   type DiffLineAnnotation,
+  type DiffLineEventBaseProps,
 } from "@pierre/diffs/react";
-import { useTheme } from "next-themes";
+import type { DBMessage, DBUserMessage } from "@terragon/shared";
+import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
 import {
-  ChevronRight,
   ChevronDown,
-  FileDiff,
-  Folder,
-  FilePlus,
-  FileX,
+  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  FileDiff,
+  FilePlus,
+  FileX,
+  Folder,
+  Image,
   PanelLeft,
   PanelLeftClose,
   X,
-  Image,
 } from "lucide-react";
-import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
-import { cn, formatBytes } from "@/lib/utils";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import { ImageDiffView } from "@/components/chat/image-diff-view";
+import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
+import { DiffRenderer } from "@/components/shared/diff-renderer";
+import { DiffModeToggle } from "@/components/shared/diff-view";
+import { Button } from "@/components/ui/button";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { convertToPlainText } from "@/lib/db-message-helpers";
 import {
-  parseMultiFileDiff,
   type FileChangeType,
   type ParsedDiffFile,
+  parseMultiFileDiff,
 } from "@/lib/git-diff";
-import { Button } from "@/components/ui/button";
-import type { DBMessage, DBUserMessage } from "@terragon/shared";
-import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
-import { ImageDiffView } from "@/components/chat/image-diff-view";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { cn, formatBytes } from "@/lib/utils";
 import { followUp } from "@/server-actions/follow-up";
 import { useOptimisticUpdateThreadChat } from "./hooks";
-import { convertToPlainText } from "@/lib/db-message-helpers";
 
 interface GitDiffViewProps {
   thread: ThreadInfoFull;
@@ -136,7 +136,6 @@ interface FileDiffWrapperProps {
   mode: "split" | "unified";
   expanded: boolean;
   onToggle: () => void;
-  theme: string | undefined;
   thread: ThreadInfoFull;
   enableComments: boolean;
   threadChatId?: string;
@@ -286,7 +285,6 @@ function FileDiffWrapper({
   mode,
   expanded,
   onToggle,
-  theme,
   thread,
   enableComments,
   threadChatId,
@@ -322,11 +320,6 @@ function FileDiffWrapper({
       },
     ];
   }, [activeAnnotation, enableComments]);
-
-  const getLineTheme = theme === "light" ? "pierre-light" : "pierre-dark";
-
-  const themeType: "light" | "dark" | "system" =
-    theme === "light" ? "light" : theme === "dark" ? "dark" : "system";
 
   const closeActiveAnnotation = () => setActiveAnnotation(null);
 
@@ -365,7 +358,17 @@ function FileDiffWrapper({
           expanded && "rounded-b-none",
           isHeaderStuck && "rounded-t-none",
         )}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={parsedFile.fileName}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
       >
         <div className="flex items-center min-w-0 gap-2">
           {expanded ? (
@@ -431,19 +434,14 @@ function FileDiffWrapper({
           </div>
         ) : (
           <div className="bg-background overflow-hidden rounded-b-lg">
-            <PatchDiff
+            <DiffRenderer<CommentWidgetData>
               patch={parsedFile.fullDiff}
-              options={{
-                diffStyle: effectiveMode === "split" ? "split" : "unified",
-                overflow: "wrap",
-                theme: getLineTheme,
-                themeType,
-                onLineClick: enableComments ? handleLineClick : undefined,
-              }}
+              mode={effectiveMode === "split" ? "split" : "unified"}
+              enableLineNumbers
+              enableFileHeader
+              onLineClick={enableComments ? handleLineClick : undefined}
               lineAnnotations={lineAnnotations}
-              renderAnnotation={(
-                annotation: DiffLineAnnotation<CommentWidgetData>,
-              ) => (
+              renderAnnotation={(annotation) => (
                 <CommentWidget
                   side={annotation.side === "additions" ? 2 : 1}
                   lineNumber={annotation.lineNumber}
@@ -455,11 +453,6 @@ function FileDiffWrapper({
                   isAddition={annotation.metadata?.isAddition ?? false}
                 />
               )}
-              style={
-                {
-                  "--diffs-font-size": "12px",
-                } as React.CSSProperties
-              }
             />
           </div>
         ))}
@@ -558,34 +551,11 @@ export function FilesChangedHeader({
             </span>
           </button>
           {!isSmallScreen && (
-            <div
-              className="flex items-center rounded-md border bg-background"
-              role="group"
-              aria-label="Diff view mode"
-            >
-              <button
-                type="button"
-                onClick={() => onViewModeChange("unified")}
-                className={cn(
-                  "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
-                  viewMode === "unified" ? "bg-muted" : "hover:bg-muted/50",
-                )}
-                aria-pressed={viewMode === "unified"}
-              >
-                Unified
-              </button>
-              <button
-                type="button"
-                onClick={() => onViewModeChange("split")}
-                className={cn(
-                  "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
-                  viewMode === "split" ? "bg-muted" : "hover:bg-muted/50",
-                )}
-                aria-pressed={viewMode === "split"}
-              >
-                Split
-              </button>
-            </div>
+            <DiffModeToggle
+              mode={viewMode}
+              onModeChange={onViewModeChange}
+              className="py-0.5 px-0.5"
+            />
           )}
         </div>
       )}
@@ -621,11 +591,26 @@ function FileTreeItem({
           isSelected && "bg-neutral-200 dark:bg-neutral-700",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isFolder ? isExpanded : undefined}
+        aria-pressed={!isFolder ? isSelected : undefined}
+        aria-label={node.name}
         onClick={() => {
           if (isFolder) {
             onToggleFolder(node.path);
           } else if (node.fileIndex !== undefined) {
             onFileSelect(node.fileIndex);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (isFolder) {
+              onToggleFolder(node.path);
+            } else if (node.fileIndex !== undefined) {
+              onFileSelect(node.fileIndex);
+            }
           }
         }}
       >
@@ -702,7 +687,6 @@ export function GitDiffView({
   const fileTreeId = useId();
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [isWideScreen, setIsWideScreen] = useState(false);
-  const { resolvedTheme } = useTheme();
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
 
   const [viewMode, setViewMode] = useState<"split" | "unified">("unified");
@@ -965,7 +949,6 @@ export function GitDiffView({
                   mode={effectiveViewMode}
                   expanded={!!expanded[index]}
                   onToggle={() => toggle(index)}
-                  theme={resolvedTheme}
                   thread={thread}
                   enableComments={enableComments}
                   threadChatId={threadChatId}

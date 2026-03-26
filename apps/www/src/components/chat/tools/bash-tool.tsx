@@ -108,6 +108,7 @@ function BashToolResult({
           <GenericToolPartClickToExpand
             label="Show all"
             onClick={() => setExpanded(true)}
+            isExpanded={false}
           />
         </GenericToolPartContentRow>
       </GenericToolPartContent>
@@ -122,6 +123,7 @@ function BashToolResult({
           <GenericToolPartClickToExpand
             label="Show less"
             onClick={() => setExpanded(false)}
+            isExpanded={true}
           />
         </span>
       </GenericToolPartContentRow>

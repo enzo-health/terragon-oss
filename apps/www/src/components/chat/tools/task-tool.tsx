@@ -134,6 +134,7 @@ function TaskToolContent({
               <GenericToolPartClickToExpand
                 label="Show all tools"
                 onClick={() => setExpanded(true)}
+                isExpanded={false}
               />
             </div>
           </GenericToolPartContentRow>
@@ -145,6 +146,7 @@ function TaskToolContent({
               <GenericToolPartClickToExpand
                 label="Show less"
                 onClick={() => setExpanded(false)}
+                isExpanded={true}
               />
             </div>
           </GenericToolPartContentRow>

@@ -21,6 +21,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import {
   buildArtifactFallbackPlanSpecViewModel,
   type PlanTaskViewModel,
+  type TaskStatus,
 } from "@/lib/delivery-loop-plan-view-model";
 import { DeliveryLoopPlanReviewCard } from "./delivery-loop-plan-review-card";
 import {
@@ -47,6 +48,23 @@ import {
   InfoIcon,
   LoaderCircleIcon,
 } from "lucide-react";
+
+function mapDeliveryTaskStatusToTaskStatus(
+  status: DeliveryPlannedTask["status"],
+): TaskStatus {
+  switch (status) {
+    case "done":
+    case "skipped":
+      return "completed";
+    case "in_progress":
+      return "in_progress";
+    case "blocked":
+      return "error";
+    case "todo":
+    default:
+      return "pending";
+  }
+}
 
 type DeliveryPhaseKey =
   | "planning"
@@ -376,6 +394,7 @@ export function DeliveryLoopTopProgressStepper({
             title: task.title,
             description: task.description,
             acceptance: task.acceptance,
+            status: mapDeliveryTaskStatusToTaskStatus(task.status),
           })),
         })
       : null;

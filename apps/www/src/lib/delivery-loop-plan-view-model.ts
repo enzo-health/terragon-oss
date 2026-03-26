@@ -9,11 +9,14 @@ export type PlanRenderSource =
   | "json_plan_spec"
   | "artifact_fallback";
 
+export type TaskStatus = "pending" | "in_progress" | "completed" | "error";
+
 export type PlanTaskViewModel = {
   stableTaskId: string;
   title: string;
   description: string | null;
   acceptance: string[];
+  status?: TaskStatus;
 };
 
 export type PlanSpecViewModel = {
@@ -209,6 +212,55 @@ export function parsePlanSpecViewModelFromText(
     tasks: mapParsedTasks(parsed.plan.tasks),
     assumptions: [],
     source: "json_plan_spec",
+  };
+}
+
+const PARTIAL_PROPOSED_PLAN_RE = /<proposed_plan>\s*([\s\S]*)$/i;
+
+/**
+ * Parse a partially-streamed `<proposed_plan>` block that has no closing tag yet.
+ * Returns whatever fields are available, or null if nothing meaningful exists.
+ */
+export function parsePartialPlan(text: string): PlanSpecViewModel | null {
+  const match = PARTIAL_PROPOSED_PLAN_RE.exec(text.trim());
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const partial = match[1].trim();
+  if (partial.length === 0) {
+    return null;
+  }
+
+  const sections = splitMarkdownSections(partial);
+  const summarySection = sections.find(
+    (section) => section.heading === "summary",
+  );
+  const assumptionSection = sections.find(
+    (section) =>
+      section.heading === "assumptions / defaults" ||
+      section.heading === "assumptions" ||
+      section.heading === "defaults",
+  );
+
+  const numberedTasks = parseTasksFromNumberedList(partial);
+
+  // Try structured parse as well for partial content
+  const parsed = parsePlanSpec(partial);
+  const parsedTasks = parsed.ok ? mapParsedTasks(parsed.plan.tasks) : [];
+  const tasks = numberedTasks.length > 0 ? numberedTasks : parsedTasks;
+
+  const title = parseHeadingTitle(partial);
+  const summary = summarySection?.body || "";
+
+  return {
+    title: title !== "Implementation Plan" ? title : "",
+    summary,
+    tasks,
+    assumptions: assumptionSection
+      ? parseSectionBullets(assumptionSection.body)
+      : [],
+    source: "proposed_plan_tag",
   };
 }
 
