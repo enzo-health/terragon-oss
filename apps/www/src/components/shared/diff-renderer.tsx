@@ -25,16 +25,16 @@ export interface DiffRendererProps<T = unknown> {
 function useResolvedPierreTheme() {
   const { resolvedTheme } = useTheme();
 
-  const pierreTheme = useMemo(() => {
-    if (resolvedTheme === "light") return "pierre-light";
-    if (resolvedTheme === "dark") return "pierre-dark";
-    return "pierre-light";
-  }, [resolvedTheme]);
-
-  const themeType = useMemo((): "light" | "dark" | "system" => {
-    if (resolvedTheme === "light") return "light";
-    if (resolvedTheme === "dark") return "dark";
-    return "system";
+  const { pierreTheme, themeType } = useMemo(() => {
+    const isLight = resolvedTheme === "light";
+    return {
+      pierreTheme: isLight ? "pierre-light" : "pierre-dark",
+      themeType: (isLight
+        ? "light"
+        : resolvedTheme === "dark"
+          ? "dark"
+          : "system") as "light" | "dark" | "system",
+    };
   }, [resolvedTheme]);
 
   return { pierreTheme, themeType };

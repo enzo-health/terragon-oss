@@ -7,6 +7,7 @@ import type {
   TaskStatus,
 } from "@/lib/delivery-loop-plan-view-model";
 import { useCallback, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 function getTaskStatusDotClass(status: TaskStatus): string {
   switch (status) {
@@ -24,8 +25,8 @@ function getTaskStatusDotClass(status: TaskStatus): string {
 function ShimmerRow() {
   return (
     <div className="flex items-center gap-3 py-2">
-      <div className="h-4 w-4 rounded bg-muted animate-pulse" />
-      <div className="h-4 flex-1 rounded bg-muted animate-pulse" />
+      <Skeleton className="h-4 w-4" />
+      <Skeleton className="h-4 flex-1" />
     </div>
   );
 }
@@ -42,7 +43,6 @@ export function DeliveryLoopPlanReviewCard({
   onOpenInArtifactWorkspace?: () => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [allExpanded, setAllExpanded] = useState(false);
 
   const isTaskExpanded = useCallback(
     (taskId: string) => expanded[taskId] ?? false,
@@ -53,9 +53,12 @@ export function DeliveryLoopPlanReviewCard({
     setExpanded((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
   }, []);
 
+  const allExpanded = plan.tasks.every(
+    (t) => expanded[t.stableTaskId] === true,
+  );
+
   const toggleAll = useCallback(() => {
     const next = !allExpanded;
-    setAllExpanded(next);
     const bulk: Record<string, boolean> = {};
     for (const task of plan.tasks) {
       bulk[task.stableTaskId] = next;

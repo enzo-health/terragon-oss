@@ -330,27 +330,26 @@ export function SecondaryPanel({
     [getSecondaryPanelMaxWidth],
   );
 
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
   const toggleMaximize = useCallback(() => {
-    if (isMaximized) {
-      const restoreWidth =
-        previousWidthRef.current ??
-        getContainerWidth() * SECONDARY_PANEL_DEFAULT_WIDTH;
-      setWidth(clampSecondaryPanelWidth(restoreWidth));
-      setIsMaximized(false);
-    } else {
-      previousWidthRef.current = width;
-      setWidth(
-        getContainerWidth() * SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE,
-      );
-      setIsMaximized(true);
-    }
-  }, [
-    isMaximized,
-    width,
-    setWidth,
-    getContainerWidth,
-    clampSecondaryPanelWidth,
-  ]);
+    setIsMaximized((prev) => {
+      if (!prev) {
+        previousWidthRef.current = widthRef.current;
+        setWidth(
+          getContainerWidth() * SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE,
+        );
+        return true;
+      } else {
+        const restoreWidth =
+          previousWidthRef.current ??
+          getContainerWidth() * SECONDARY_PANEL_DEFAULT_WIDTH;
+        setWidth(clampSecondaryPanelWidth(restoreWidth));
+        return false;
+      }
+    });
+  }, [setWidth, getContainerWidth, clampSecondaryPanelWidth]);
 
   // Keyboard shortcut: Cmd+Shift+F (Mac) / Ctrl+Shift+F (other)
   useEffect(() => {

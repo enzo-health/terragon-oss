@@ -69,6 +69,8 @@ function normalizeBoldHeaders(text: string): string {
   return text.replace(/^(\*\*[^*]+\*\*)([A-Za-z])/gm, "$1\n\n$2");
 }
 
+const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
+
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
 const LINE_HEIGHT_PX = 22;
@@ -176,7 +178,8 @@ const TextPart = memo(function TextPart({
     );
     // Strip the plan XML when we already render a structured card
     if (parsedPlan) {
-      t = t.replace(/<proposed_plan>[\s\S]*?<\/proposed_plan>/g, "").trim();
+      PROPOSED_PLAN_RE.lastIndex = 0;
+      t = t.replace(PROPOSED_PLAN_RE, "").trim();
     }
     return t;
   }, [
