@@ -145,6 +145,7 @@ function WebSearchToolContent({
           <GenericToolPartClickToExpand
             label={expanded ? "Show less" : "Show all"}
             onClick={() => setExpanded((x) => !x)}
+            isExpanded={expanded}
           />
         </span>
       </GenericToolPartContentRow>

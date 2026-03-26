@@ -169,17 +169,24 @@ export function GenericToolPartContentRow({
 export function GenericToolPartClickToExpand({
   label = "Show more",
   onClick,
+  isExpanded,
+  ariaLabel,
 }: {
   label?: string;
   onClick: () => void;
+  isExpanded?: boolean;
+  ariaLabel?: string;
 }) {
   return (
-    <span
-      className="inline text-muted-foreground/70 select-none"
+    <button
+      type="button"
+      className="inline text-muted-foreground/70 select-none cursor-pointer bg-transparent border-none p-0 font-inherit text-inherit"
       onClick={onClick}
+      aria-expanded={isExpanded}
+      aria-label={ariaLabel ?? label}
     >
       ({label})
-    </span>
+    </button>
   );
 }
 
@@ -278,6 +285,7 @@ export function GenericToolPartContentResultWithLines({
           <GenericToolPartClickToExpand
             label="Show all"
             onClick={() => setExpanded(true)}
+            isExpanded={false}
           />
         </GenericToolPartContentRow>
       </GenericToolPartContent>
@@ -291,6 +299,7 @@ export function GenericToolPartContentResultWithLines({
           <GenericToolPartClickToExpand
             label="Show less"
             onClick={() => setExpanded(false)}
+            isExpanded={true}
           />
         </span>
       </GenericToolPartContentRow>
@@ -343,6 +352,7 @@ export function GenericToolPartContentResultWithPreview({
           <GenericToolPartClickToExpand
             label={expanded ? showLessLabel : showAllLabel}
             onClick={() => setExpanded((x) => !x)}
+            isExpanded={expanded}
           />
         </span>
       </GenericToolPartContentRow>

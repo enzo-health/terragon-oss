@@ -94,6 +94,7 @@ function ReadToolContent({
         <GenericToolPartClickToExpand
           label={expanded ? "Hide lines" : "Show lines"}
           onClick={() => setExpanded((x) => !x)}
+          isExpanded={expanded}
         />
       </GenericToolPartContentRow>
       {expanded && (
