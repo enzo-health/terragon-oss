@@ -147,15 +147,29 @@ const TextPart = memo(function TextPart({
     return parsePlanSpecViewModelFromText(text);
   }, [deliveryPlanReviewCard, text]);
 
-  const processedText = normalizeBoldHeaders(
-    convertCitationsToGitHubLinks(
-      text,
-      githubRepoFullName,
-      branchName,
-      baseBranchName,
-      hasCheckpoint,
-    ),
-  );
+  const processedText = useMemo(() => {
+    let t = normalizeBoldHeaders(
+      convertCitationsToGitHubLinks(
+        text,
+        githubRepoFullName,
+        branchName,
+        baseBranchName,
+        hasCheckpoint,
+      ),
+    );
+    // Strip the plan XML when we already render a structured card
+    if (parsedPlan) {
+      t = t.replace(/<proposed_plan>[\s\S]*?<\/proposed_plan>/g, "").trim();
+    }
+    return t;
+  }, [
+    text,
+    githubRepoFullName,
+    branchName,
+    baseBranchName,
+    hasCheckpoint,
+    parsedPlan,
+  ]);
 
   // Scan for collapsible code blocks after DOM updates
   useEffect(() => {
@@ -374,6 +388,8 @@ const TextPart = memo(function TextPart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, toggleBlock]);
 
+  const showStreamdown = processedText.length > 0;
+
   return (
     <div>
       {parsedPlan ? (
@@ -383,16 +399,18 @@ const TextPart = memo(function TextPart({
           onOpenInArtifactWorkspace={onOpenInArtifactWorkspace}
         />
       ) : null}
-      <div className="prose prose-sm max-w-none" ref={containerRef}>
-        <Streamdown
-          plugins={plugins}
-          components={components}
-          controls={{ code: true }}
-        >
-          {processedText}
-        </Streamdown>
-        {overlays}
-      </div>
+      {showStreamdown && (
+        <div className="prose prose-sm max-w-none" ref={containerRef}>
+          <Streamdown
+            plugins={plugins}
+            components={components}
+            controls={{ code: true }}
+          >
+            {processedText}
+          </Streamdown>
+          {overlays}
+        </div>
+      )}
     </div>
   );
 });
