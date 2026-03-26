@@ -1,7 +1,48 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import React from "react";
 import { DiffRenderer } from "@/components/shared/diff-renderer";
+
+type DiffMode = "unified" | "split";
+
+function DiffModeToggle({
+  mode,
+  onModeChange,
+}: {
+  mode: DiffMode;
+  onModeChange: (mode: DiffMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Diff view mode"
+      className="inline-flex rounded-md border bg-background text-xs"
+    >
+      <button
+        type="button"
+        className={cn(
+          "px-2 py-0.5 rounded-l-md transition-colors",
+          mode === "unified" ? "bg-muted font-medium" : "hover:bg-muted/50",
+        )}
+        onClick={() => onModeChange("unified")}
+        aria-pressed={mode === "unified"}
+      >
+        Unified
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "px-2 py-0.5 rounded-r-md transition-colors",
+          mode === "split" ? "bg-muted font-medium" : "hover:bg-muted/50",
+        )}
+        onClick={() => onModeChange("split")}
+        aria-pressed={mode === "split"}
+      >
+        Split
+      </button>
+    </div>
+  );
+}
 
 /**
  * Generates a unified diff patch string from old and new content.
@@ -118,9 +159,11 @@ function createNoChangePatch(filePath: string, contents: string): string {
 export function HighlightedDiffView({
   patch,
   maxHeight,
+  mode = "unified",
 }: {
   patch: string;
   maxHeight?: string;
+  mode?: DiffMode;
 }) {
   return (
     <div
@@ -129,7 +172,7 @@ export function HighlightedDiffView({
         maxHeight,
       )}
     >
-      <DiffRenderer patch={patch} />
+      <DiffRenderer patch={patch} mode={mode} />
     </div>
   );
 }
@@ -147,6 +190,7 @@ export function EditDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
+  const [mode, setMode] = useState<DiffMode>("unified");
   const patch = useMemo(
     () => createEditPatch(filePath, oldStr, newStr),
     [filePath, oldStr, newStr],
@@ -156,7 +200,14 @@ export function EditDiffView({
 
   return (
     <div className="flex flex-col gap-1">
-      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
+      <div className="flex justify-end">
+        <DiffModeToggle mode={mode} onModeChange={setMode} />
+      </div>
+      <HighlightedDiffView
+        patch={patch}
+        maxHeight={chunkClassName}
+        mode={mode}
+      />
     </div>
   );
 }
@@ -172,6 +223,7 @@ export function WriteDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
+  const [mode, setMode] = useState<DiffMode>("unified");
   const patch = useMemo(
     () => createWritePatch(filePath, newStr),
     [filePath, newStr],
@@ -181,7 +233,14 @@ export function WriteDiffView({
 
   return (
     <div className="flex flex-col gap-1">
-      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
+      <div className="flex justify-end">
+        <DiffModeToggle mode={mode} onModeChange={setMode} />
+      </div>
+      <HighlightedDiffView
+        patch={patch}
+        maxHeight={chunkClassName}
+        mode={mode}
+      />
     </div>
   );
 }
@@ -222,6 +281,7 @@ export function MultiEditDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
+  const [mode, setMode] = useState<DiffMode>("unified");
   const patch = useMemo(
     () => createMultiEditPatch(filePath, edits),
     [filePath, edits],
@@ -231,7 +291,14 @@ export function MultiEditDiffView({
 
   return (
     <div className="flex flex-col gap-1">
-      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
+      <div className="flex justify-end">
+        <DiffModeToggle mode={mode} onModeChange={setMode} />
+      </div>
+      <HighlightedDiffView
+        patch={patch}
+        maxHeight={chunkClassName}
+        mode={mode}
+      />
     </div>
   );
 }
