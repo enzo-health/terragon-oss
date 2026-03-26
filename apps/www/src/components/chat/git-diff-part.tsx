@@ -11,7 +11,6 @@ import {
   FileDiff,
 } from "lucide-react";
 import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
-import { useTheme } from "next-themes";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
@@ -34,7 +33,6 @@ export const GitDiffPart = memo(function GitDiffPart({
   isLatest = false,
 }: GitDiffPartProps) {
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
-  const { resolvedTheme } = useTheme();
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
   const diffStats = useMemo(
     () => gitDiffPart.diffStats || parseGitDiffStats(gitDiffPart.diff),
@@ -212,7 +210,6 @@ export const GitDiffPart = memo(function GitDiffPart({
                   mode="unified"
                   expanded={!!expandedFiles[index]}
                   onToggle={() => toggleFile(index)}
-                  theme={resolvedTheme}
                   thread={thread}
                   enableComments={false}
                   isImageDiffViewEnabled={isImageDiffViewEnabled}

@@ -3,20 +3,25 @@ import { cn } from "@/lib/utils";
 import React from "react";
 import { DiffRenderer } from "@/components/shared/diff-renderer";
 
-type DiffMode = "unified" | "split";
+export type DiffMode = "unified" | "split";
 
-function DiffModeToggle({
+export function DiffModeToggle({
   mode,
   onModeChange,
+  className,
 }: {
   mode: DiffMode;
   onModeChange: (mode: DiffMode) => void;
+  className?: string;
 }) {
   return (
     <div
       role="group"
       aria-label="Diff view mode"
-      className="inline-flex rounded-md border bg-background text-xs"
+      className={cn(
+        "inline-flex rounded-md border bg-background text-xs",
+        className,
+      )}
     >
       <button
         type="button"
@@ -158,21 +163,54 @@ function createNoChangePatch(filePath: string, contents: string): string {
  */
 export function HighlightedDiffView({
   patch,
-  maxHeight,
+  containerClassName,
   mode = "unified",
 }: {
   patch: string;
-  maxHeight?: string;
+  containerClassName?: string;
   mode?: DiffMode;
 }) {
   return (
     <div
       className={cn(
         "overflow-auto rounded border dark:border-neutral-800",
-        maxHeight,
+        containerClassName,
       )}
     >
       <DiffRenderer patch={patch} mode={mode} />
+    </div>
+  );
+}
+
+/**
+ * Shared internal component for tool diff views.
+ * Handles the common pattern: early return if collapsed, mode toggle, diff rendering.
+ */
+function ToolDiffView({
+  patch,
+  defaultExpanded,
+  containerClassName,
+  showModeToggle = true,
+}: {
+  patch: string;
+  defaultExpanded?: boolean;
+  containerClassName?: string;
+  showModeToggle?: boolean;
+}) {
+  const [mode, setMode] = useState<DiffMode>("unified");
+  if (!defaultExpanded) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      {showModeToggle && (
+        <div className="flex justify-end">
+          <DiffModeToggle mode={mode} onModeChange={setMode} />
+        </div>
+      )}
+      <HighlightedDiffView
+        patch={patch}
+        containerClassName={containerClassName}
+        mode={mode}
+      />
     </div>
   );
 }
@@ -190,25 +228,17 @@ export function EditDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [mode, setMode] = useState<DiffMode>("unified");
   const patch = useMemo(
     () => createEditPatch(filePath, oldStr, newStr),
     [filePath, oldStr, newStr],
   );
 
-  if (!defaultExpanded) return null;
-
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-end">
-        <DiffModeToggle mode={mode} onModeChange={setMode} />
-      </div>
-      <HighlightedDiffView
-        patch={patch}
-        maxHeight={chunkClassName}
-        mode={mode}
-      />
-    </div>
+    <ToolDiffView
+      patch={patch}
+      defaultExpanded={defaultExpanded}
+      containerClassName={chunkClassName}
+    />
   );
 }
 
@@ -223,25 +253,17 @@ export function WriteDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [mode, setMode] = useState<DiffMode>("unified");
   const patch = useMemo(
     () => createWritePatch(filePath, newStr),
     [filePath, newStr],
   );
 
-  if (!defaultExpanded) return null;
-
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-end">
-        <DiffModeToggle mode={mode} onModeChange={setMode} />
-      </div>
-      <HighlightedDiffView
-        patch={patch}
-        maxHeight={chunkClassName}
-        mode={mode}
-      />
-    </div>
+    <ToolDiffView
+      patch={patch}
+      defaultExpanded={defaultExpanded}
+      containerClassName={chunkClassName}
+    />
   );
 }
 
@@ -261,12 +283,13 @@ export function NoChangesDiffView({
     [filePath, contents],
   );
 
-  if (!defaultExpanded) return null;
-
   return (
-    <div className="flex flex-col gap-1">
-      <HighlightedDiffView patch={patch} maxHeight={chunkClassName} />
-    </div>
+    <ToolDiffView
+      patch={patch}
+      defaultExpanded={defaultExpanded}
+      containerClassName={chunkClassName}
+      showModeToggle={false}
+    />
   );
 }
 
@@ -281,24 +304,16 @@ export function MultiEditDiffView({
   chunkClassName?: string;
   defaultExpanded?: boolean;
 }) {
-  const [mode, setMode] = useState<DiffMode>("unified");
   const patch = useMemo(
     () => createMultiEditPatch(filePath, edits),
     [filePath, edits],
   );
 
-  if (!defaultExpanded) return null;
-
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-end">
-        <DiffModeToggle mode={mode} onModeChange={setMode} />
-      </div>
-      <HighlightedDiffView
-        patch={patch}
-        maxHeight={chunkClassName}
-        mode={mode}
-      />
-    </div>
+    <ToolDiffView
+      patch={patch}
+      defaultExpanded={defaultExpanded}
+      containerClassName={chunkClassName}
+    />
   );
 }

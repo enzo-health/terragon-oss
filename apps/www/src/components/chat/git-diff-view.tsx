@@ -6,8 +6,8 @@ import {
   type DiffLineEventBaseProps,
   type DiffLineAnnotation,
 } from "@pierre/diffs/react";
-import { useTheme } from "next-themes";
 import { DiffRenderer } from "@/components/shared/diff-renderer";
+import { DiffModeToggle } from "@/components/shared/diff-view";
 import {
   ChevronRight,
   ChevronDown,
@@ -136,7 +136,6 @@ interface FileDiffWrapperProps {
   mode: "split" | "unified";
   expanded: boolean;
   onToggle: () => void;
-  theme: string | undefined;
   thread: ThreadInfoFull;
   enableComments: boolean;
   threadChatId?: string;
@@ -286,8 +285,6 @@ function FileDiffWrapper({
   mode,
   expanded,
   onToggle,
-  // theme prop kept for interface compat but no longer used — DiffRenderer resolves theme internally
-  theme: _theme,
   thread,
   enableComments,
   threadChatId,
@@ -554,34 +551,11 @@ export function FilesChangedHeader({
             </span>
           </button>
           {!isSmallScreen && (
-            <div
-              className="flex items-center rounded-md border bg-background"
-              role="group"
-              aria-label="Diff view mode"
-            >
-              <button
-                type="button"
-                onClick={() => onViewModeChange("unified")}
-                className={cn(
-                  "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
-                  viewMode === "unified" ? "bg-muted" : "hover:bg-muted/50",
-                )}
-                aria-pressed={viewMode === "unified"}
-              >
-                Unified
-              </button>
-              <button
-                type="button"
-                onClick={() => onViewModeChange("split")}
-                className={cn(
-                  "px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
-                  viewMode === "split" ? "bg-muted" : "hover:bg-muted/50",
-                )}
-                aria-pressed={viewMode === "split"}
-              >
-                Split
-              </button>
-            </div>
+            <DiffModeToggle
+              mode={viewMode}
+              onModeChange={onViewModeChange}
+              className="py-0.5 px-0.5"
+            />
           )}
         </div>
       )}
@@ -713,7 +687,6 @@ export function GitDiffView({
   const fileTreeId = useId();
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [isWideScreen, setIsWideScreen] = useState(false);
-  const { resolvedTheme } = useTheme();
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
 
   const [viewMode, setViewMode] = useState<"split" | "unified">("unified");
@@ -976,7 +949,6 @@ export function GitDiffView({
                   mode={effectiveViewMode}
                   expanded={!!expanded[index]}
                   onToggle={() => toggle(index)}
-                  theme={resolvedTheme}
                   thread={thread}
                   enableComments={enableComments}
                   threadChatId={threadChatId}
