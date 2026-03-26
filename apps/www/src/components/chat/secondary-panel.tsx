@@ -47,6 +47,8 @@ import {
   FileDiff,
   LayoutDashboard,
   Loader2,
+  Maximize2,
+  Minimize2,
   X,
 } from "lucide-react";
 import type { PromptBoxRef } from "./thread-context";
@@ -55,6 +57,7 @@ import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
+const SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE = 0.95;
 const SECONDARY_PANEL_DEFAULT_WIDTH = 0.5;
 const SECONDARY_PANEL_RESIZE_STEP = 32;
 const SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH = 1024;
@@ -291,6 +294,9 @@ export function SecondaryPanel({
 
   const handleClose = useCallback(() => onOpenChange(false), [onOpenChange]);
 
+  const [isMaximized, setIsMaximized] = useState(false);
+  const previousWidthRef = useRef<number | null>(null);
+
   const { width, setWidth, isResizing, handleMouseDown } = useResizablePanel({
     minWidth: SECONDARY_PANEL_MIN_WIDTH,
     maxWidth: SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE,
@@ -301,24 +307,69 @@ export function SecondaryPanel({
     enabled: isOpen && platform === "desktop",
   });
 
-  const getSecondaryPanelMaxWidth = () => {
-    const containerWidth =
+  const getContainerWidth = useCallback(() => {
+    return (
       containerRef.current?.offsetWidth ??
       (typeof window !== "undefined"
         ? window.innerWidth
-        : SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH);
-
-    return containerWidth * SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE;
-  };
-
-  const clampSecondaryPanelWidth = (nextWidth: number) => {
-    return Math.min(
-      Math.max(nextWidth, SECONDARY_PANEL_MIN_WIDTH),
-      getSecondaryPanelMaxWidth(),
+        : SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH)
     );
-  };
+  }, [containerRef]);
+
+  const getSecondaryPanelMaxWidth = useCallback(() => {
+    return getContainerWidth() * SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE;
+  }, [getContainerWidth]);
+
+  const clampSecondaryPanelWidth = useCallback(
+    (nextWidth: number) => {
+      return Math.min(
+        Math.max(nextWidth, SECONDARY_PANEL_MIN_WIDTH),
+        getSecondaryPanelMaxWidth(),
+      );
+    },
+    [getSecondaryPanelMaxWidth],
+  );
+
+  const toggleMaximize = useCallback(() => {
+    if (isMaximized) {
+      const restoreWidth =
+        previousWidthRef.current ??
+        getContainerWidth() * SECONDARY_PANEL_DEFAULT_WIDTH;
+      setWidth(clampSecondaryPanelWidth(restoreWidth));
+      setIsMaximized(false);
+    } else {
+      previousWidthRef.current = width;
+      setWidth(
+        getContainerWidth() * SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE,
+      );
+      setIsMaximized(true);
+    }
+  }, [
+    isMaximized,
+    width,
+    setWidth,
+    getContainerWidth,
+    clampSecondaryPanelWidth,
+  ]);
+
+  // Keyboard shortcut: Cmd+Shift+F (Mac) / Ctrl+Shift+F (other)
+  useEffect(() => {
+    if (!isOpen || platform === "mobile") return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const modKey = e.metaKey || e.ctrlKey;
+      if (modKey && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        toggleMaximize();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, platform, toggleMaximize]);
 
   const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isMaximized) return;
     let nextWidth = width;
 
     switch (event.key) {
@@ -344,24 +395,19 @@ export function SecondaryPanel({
 
   if (platform === "mobile") {
     return (
-      <Drawer open={isOpen} onOpenChange={onOpenChange}>
-        <DrawerContent className="h-[80vh] overflow-hidden p-0">
-          <DrawerHeader className="sr-only">
-            <DrawerTitle>Artifact workspace</DrawerTitle>
-          </DrawerHeader>
-          <SecondaryPanelContent
-            artifacts={artifacts}
-            activeArtifactId={activeArtifactId}
-            onActiveArtifactChange={onActiveArtifactChange}
-            onClose={handleClose}
-            thread={thread}
-            messages={messages}
-            threadChatId={threadChatId}
-            isReadOnly={isReadOnly}
-            promptBoxRef={promptBoxRef}
-          />
-        </DrawerContent>
-      </Drawer>
+      <MobileArtifactDrawer
+        isOpen={isOpen}
+        onOpenChange={onOpenChange}
+        artifacts={artifacts}
+        activeArtifactId={activeArtifactId}
+        onActiveArtifactChange={onActiveArtifactChange}
+        onClose={handleClose}
+        thread={thread}
+        messages={messages}
+        threadChatId={threadChatId}
+        isReadOnly={isReadOnly}
+        promptBoxRef={promptBoxRef}
+      />
     );
   }
 
@@ -371,13 +417,16 @@ export function SecondaryPanel({
     <>
       <div
         className={cn(
-          "w-1.5 cursor-col-resize hover:bg-blue-500/50 transition-colors flex-shrink-0",
-          isResizing && "bg-blue-500/50",
+          "w-1.5 transition-colors flex-shrink-0",
+          isMaximized
+            ? "cursor-default"
+            : "cursor-col-resize hover:bg-blue-500/50",
+          isResizing && !isMaximized && "bg-blue-500/50",
         )}
-        onMouseDown={handleMouseDown}
-        onKeyDown={handleResizeKeyDown}
+        onMouseDown={isMaximized ? undefined : handleMouseDown}
+        onKeyDown={isMaximized ? undefined : handleResizeKeyDown}
         role="separator"
-        tabIndex={0}
+        tabIndex={isMaximized ? -1 : 0}
         aria-label="Resize artifact workspace"
         aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
         aria-orientation="vertical"
@@ -385,7 +434,11 @@ export function SecondaryPanel({
         aria-valuemax={Math.round(getSecondaryPanelMaxWidth())}
         aria-valuenow={Math.round(width)}
         aria-valuetext={`${Math.round(width)} pixels wide`}
-        title="Drag or use arrow keys to resize the artifact workspace"
+        title={
+          isMaximized
+            ? undefined
+            : "Drag or use arrow keys to resize the artifact workspace"
+        }
       />
       <div
         className="flex-shrink-0 border-l bg-background flex flex-col h-full"
@@ -396,6 +449,8 @@ export function SecondaryPanel({
           activeArtifactId={activeArtifactId}
           onActiveArtifactChange={onActiveArtifactChange}
           onClose={handleClose}
+          onToggleMaximize={toggleMaximize}
+          isMaximized={isMaximized}
           thread={thread}
           messages={messages}
           threadChatId={threadChatId}
@@ -407,7 +462,12 @@ export function SecondaryPanel({
   );
 }
 
-function SecondaryPanelContent({
+const MOBILE_DRAWER_SNAP_POINTS = [0.6, 0.95] as const;
+const MOBILE_DRAWER_DEFAULT_SNAP = 0.6;
+
+function MobileArtifactDrawer({
+  isOpen,
+  onOpenChange,
   artifacts,
   activeArtifactId,
   onActiveArtifactChange,
@@ -418,10 +478,116 @@ function SecondaryPanelContent({
   isReadOnly,
   promptBoxRef,
 }: {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   onClose: () => void;
+  thread: ThreadInfoFull;
+  messages: DBMessage[];
+  threadChatId?: string;
+  isReadOnly?: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+}) {
+  const [activeSnap, setActiveSnap] = useState<number | string | null>(
+    MOBILE_DRAWER_DEFAULT_SNAP,
+  );
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollFade, setShowScrollFade] = useState(false);
+
+  const checkScrollable = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      setShowScrollFade(false);
+      return;
+    }
+    const hasMoreBelow = el.scrollHeight - el.scrollTop - el.clientHeight > 8;
+    setShowScrollFade(hasMoreBelow);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    checkScrollable();
+    el.addEventListener("scroll", checkScrollable, { passive: true });
+    const observer = new ResizeObserver(checkScrollable);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", checkScrollable);
+      observer.disconnect();
+    };
+  }, [checkScrollable, activeArtifactId]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveSnap(MOBILE_DRAWER_DEFAULT_SNAP);
+    }
+  }, [isOpen]);
+
+  return (
+    <Drawer
+      open={isOpen}
+      onOpenChange={onOpenChange}
+      snapPoints={[...MOBILE_DRAWER_SNAP_POINTS]}
+      activeSnapPoint={activeSnap}
+      setActiveSnapPoint={setActiveSnap}
+    >
+      <DrawerContent
+        className="overflow-hidden p-0"
+        aria-label="Artifact panel"
+      >
+        <DrawerHeader className="sr-only">
+          <DrawerTitle>Artifact workspace</DrawerTitle>
+        </DrawerHeader>
+        <div
+          ref={scrollRef}
+          className={cn(
+            "flex-1 min-h-0",
+            activeSnap === MOBILE_DRAWER_SNAP_POINTS[1]
+              ? "overflow-auto"
+              : "overflow-hidden",
+          )}
+        >
+          <SecondaryPanelContent
+            artifacts={artifacts}
+            activeArtifactId={activeArtifactId}
+            onActiveArtifactChange={onActiveArtifactChange}
+            onClose={onClose}
+            thread={thread}
+            messages={messages}
+            threadChatId={threadChatId}
+            isReadOnly={isReadOnly}
+            promptBoxRef={promptBoxRef}
+          />
+        </div>
+        {showScrollFade && (
+          <div className="pointer-events-none sticky bottom-0 h-8 bg-gradient-to-t from-background to-transparent" />
+        )}
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+function SecondaryPanelContent({
+  artifacts,
+  activeArtifactId,
+  onActiveArtifactChange,
+  onClose,
+  onToggleMaximize,
+  isMaximized,
+  thread,
+  messages,
+  threadChatId,
+  isReadOnly,
+  promptBoxRef,
+}: {
+  artifacts: ArtifactWorkspaceItem[];
+  activeArtifactId: string | null;
+  onActiveArtifactChange: (artifactId: string | null) => void;
+  onClose: () => void;
+  onToggleMaximize?: () => void;
+  isMaximized?: boolean;
   thread: ThreadInfoFull;
   messages: DBMessage[];
   threadChatId?: string;
@@ -434,6 +600,8 @@ function SecondaryPanelContent({
       activeArtifactId={activeArtifactId}
       onActiveArtifactChange={onActiveArtifactChange}
       onClose={onClose}
+      onToggleMaximize={onToggleMaximize}
+      isMaximized={isMaximized}
       thread={thread}
       messages={messages}
       threadChatId={threadChatId}
@@ -453,6 +621,8 @@ function ArtifactWorkspaceShell({
   activeArtifactId,
   onActiveArtifactChange,
   onClose,
+  onToggleMaximize,
+  isMaximized,
   thread,
   messages,
   threadChatId,
@@ -464,6 +634,8 @@ function ArtifactWorkspaceShell({
   activeArtifactId: string | null;
   onActiveArtifactChange: (artifactId: string | null) => void;
   onClose?: () => void;
+  onToggleMaximize?: () => void;
+  isMaximized?: boolean;
   thread: ThreadInfoFull;
   messages: DBMessage[];
   threadChatId?: string;
