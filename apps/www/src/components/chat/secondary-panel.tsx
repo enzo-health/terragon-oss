@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "@/lib/utils";
 import {
   Drawer,
@@ -460,6 +466,7 @@ function ArtifactWorkspaceShell({
     description: string;
   };
 }) {
+  const tablistRef = useRef<HTMLDivElement>(null);
   const resolvedActiveArtifactId = resolveActiveArtifactId({
     artifacts,
     activeArtifactId,
@@ -470,6 +477,46 @@ function ArtifactWorkspaceShell({
   const viewState = getArtifactWorkspaceViewState(activeArtifact);
   const headerTitle = activeArtifact?.title ?? emptyState.title;
   const headerSummary = activeArtifact?.summary ?? emptyState.description;
+
+  const handleTabKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      const tabs = tablistRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="tab"]',
+      );
+      if (!tabs || tabs.length === 0) return;
+
+      const currentIndex = Array.from(tabs).findIndex(
+        (tab) => tab === event.currentTarget,
+      );
+      let nextIndex: number | null = null;
+
+      switch (event.key) {
+        case "ArrowRight":
+          nextIndex = (currentIndex + 1) % tabs.length;
+          break;
+        case "ArrowLeft":
+          nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+          break;
+        case "Home":
+          nextIndex = 0;
+          break;
+        case "End":
+          nextIndex = tabs.length - 1;
+          break;
+        default:
+          return;
+      }
+
+      event.preventDefault();
+      const nextTab = tabs[nextIndex];
+      if (nextTab) {
+        nextTab.focus();
+        const artifactId = nextTab.getAttribute("data-artifact-id");
+        if (artifactId) onActiveArtifactChange(artifactId);
+      }
+    },
+    [onActiveArtifactChange],
+  );
 
   return (
     <div
@@ -525,13 +572,24 @@ function ArtifactWorkspaceShell({
           )}
         </div>
         {artifacts.length > 1 && (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div
+            ref={tablistRef}
+            role="tablist"
+            aria-label="Artifacts"
+            className="mt-3 flex flex-wrap gap-2"
+          >
             {artifacts.map((artifact) => {
               const isActive = artifact.id === resolvedActiveArtifactId;
               return (
                 <button
                   key={artifact.id}
                   type="button"
+                  role="tab"
+                  id={`artifact-tab-${artifact.id}`}
+                  aria-selected={isActive}
+                  aria-controls={`artifact-panel-${artifact.id}`}
+                  tabIndex={isActive ? 0 : -1}
+                  data-artifact-id={artifact.id}
                   className={cn(
                     "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                     isActive
@@ -539,7 +597,7 @@ function ArtifactWorkspaceShell({
                       : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                   onClick={() => onActiveArtifactChange(artifact.id)}
-                  aria-pressed={isActive}
+                  onKeyDown={handleTabKeyDown}
                 >
                   {artifact.title}
                 </button>
@@ -549,7 +607,14 @@ function ArtifactWorkspaceShell({
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div
+        className="flex-1 min-h-0 overflow-hidden"
+        role="tabpanel"
+        id={activeArtifact ? `artifact-panel-${activeArtifact.id}` : undefined}
+        aria-labelledby={
+          activeArtifact ? `artifact-tab-${activeArtifact.id}` : undefined
+        }
+      >
         {viewState === "empty" && (
           <ArtifactWorkspaceState
             title={emptyState.title}
