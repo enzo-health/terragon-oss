@@ -2,12 +2,12 @@
 
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  PatchDiff,
   type AnnotationSide,
   type DiffLineEventBaseProps,
   type DiffLineAnnotation,
 } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
+import { DiffRenderer } from "@/components/shared/diff-renderer";
 import {
   ChevronRight,
   ChevronDown,
@@ -286,7 +286,8 @@ function FileDiffWrapper({
   mode,
   expanded,
   onToggle,
-  theme,
+  // theme prop kept for interface compat but no longer used — DiffRenderer resolves theme internally
+  theme: _theme,
   thread,
   enableComments,
   threadChatId,
@@ -322,11 +323,6 @@ function FileDiffWrapper({
       },
     ];
   }, [activeAnnotation, enableComments]);
-
-  const getLineTheme = theme === "light" ? "pierre-light" : "pierre-dark";
-
-  const themeType: "light" | "dark" | "system" =
-    theme === "light" ? "light" : theme === "dark" ? "dark" : "system";
 
   const closeActiveAnnotation = () => setActiveAnnotation(null);
 
@@ -441,19 +437,14 @@ function FileDiffWrapper({
           </div>
         ) : (
           <div className="bg-background overflow-hidden rounded-b-lg">
-            <PatchDiff
+            <DiffRenderer<CommentWidgetData>
               patch={parsedFile.fullDiff}
-              options={{
-                diffStyle: effectiveMode === "split" ? "split" : "unified",
-                overflow: "wrap",
-                theme: getLineTheme,
-                themeType,
-                onLineClick: enableComments ? handleLineClick : undefined,
-              }}
+              mode={effectiveMode === "split" ? "split" : "unified"}
+              enableLineNumbers
+              enableFileHeader
+              onLineClick={enableComments ? handleLineClick : undefined}
               lineAnnotations={lineAnnotations}
-              renderAnnotation={(
-                annotation: DiffLineAnnotation<CommentWidgetData>,
-              ) => (
+              renderAnnotation={(annotation) => (
                 <CommentWidget
                   side={annotation.side === "additions" ? 2 : 1}
                   lineNumber={annotation.lineNumber}
@@ -465,11 +456,6 @@ function FileDiffWrapper({
                   isAddition={annotation.metadata?.isAddition ?? false}
                 />
               )}
-              style={
-                {
-                  "--diffs-font-size": "12px",
-                } as React.CSSProperties
-              }
             />
           </div>
         ))}

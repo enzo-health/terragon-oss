@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { PatchDiff } from "@pierre/diffs/react";
-import { useTheme } from "next-themes";
 import React from "react";
+import { DiffRenderer } from "@/components/shared/diff-renderer";
 
 /**
  * Generates a unified diff patch string from old and new content.
@@ -114,7 +113,7 @@ function createNoChangePatch(filePath: string, contents: string): string {
 }
 
 /**
- * Wrapper component for PatchDiff with consistent styling and theme support.
+ * Wrapper component for DiffRenderer with consistent styling and theme support.
  */
 export function HighlightedDiffView({
   patch,
@@ -123,20 +122,6 @@ export function HighlightedDiffView({
   patch: string;
   maxHeight?: string;
 }) {
-  const { resolvedTheme } = useTheme();
-
-  const getLineTheme = useMemo(() => {
-    if (resolvedTheme === "light") return "pierre-light";
-    if (resolvedTheme === "dark") return "pierre-dark";
-    return "pierre-dark";
-  }, [resolvedTheme]);
-
-  const themeType = useMemo(() => {
-    if (resolvedTheme === "light") return "light" as const;
-    if (resolvedTheme === "dark") return "dark" as const;
-    return "system" as const;
-  }, [resolvedTheme]);
-
   return (
     <div
       className={cn(
@@ -144,22 +129,7 @@ export function HighlightedDiffView({
         maxHeight,
       )}
     >
-      <PatchDiff
-        patch={patch}
-        options={{
-          diffStyle: "unified",
-          overflow: "wrap",
-          theme: getLineTheme,
-          themeType,
-          disableFileHeader: true,
-          disableLineNumbers: true,
-        }}
-        style={
-          {
-            "--diffs-font-size": "12px",
-          } as React.CSSProperties
-        }
-      />
+      <DiffRenderer patch={patch} />
     </div>
   );
 }
