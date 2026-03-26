@@ -104,18 +104,16 @@ export function ExitPlanModeTool({
       <div className="relative group">
         {plan && (
           <div className="absolute top-2 right-2 z-10 flex gap-1">
-            {artifactDescriptor && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 bg-muted/80 hover:bg-muted"
-                onClick={handleOpenPanel}
-                title="Open in side panel"
-                aria-label="Open plan in side panel"
-              >
-                <ExternalLink className="size-3" aria-hidden />
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 bg-muted/80 hover:bg-muted"
+              onClick={handleOpenPanel}
+              title="Open in side panel"
+              aria-label="Open plan in side panel"
+            >
+              <ExternalLink className="size-3" aria-hidden />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
