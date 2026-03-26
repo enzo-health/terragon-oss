@@ -516,7 +516,7 @@ function MobileArtifactDrawer({
       el.removeEventListener("scroll", checkScrollable);
       observer.disconnect();
     };
-  }, [checkScrollable, activeArtifactId]);
+  }, [checkScrollable]);
 
   useEffect(() => {
     if (isOpen) {
