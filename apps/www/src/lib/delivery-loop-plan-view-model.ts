@@ -9,11 +9,14 @@ export type PlanRenderSource =
   | "json_plan_spec"
   | "artifact_fallback";
 
+export type TaskStatus = "pending" | "in_progress" | "completed" | "error";
+
 export type PlanTaskViewModel = {
   stableTaskId: string;
   title: string;
   description: string | null;
   acceptance: string[];
+  status?: TaskStatus;
 };
 
 export type PlanSpecViewModel = {

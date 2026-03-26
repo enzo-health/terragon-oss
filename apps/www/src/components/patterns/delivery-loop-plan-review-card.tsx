@@ -2,8 +2,24 @@
 
 import { cn } from "@/lib/utils";
 import { ChevronRight, ExternalLink } from "lucide-react";
-import type { PlanSpecViewModel } from "@/lib/delivery-loop-plan-view-model";
+import type {
+  PlanSpecViewModel,
+  TaskStatus,
+} from "@/lib/delivery-loop-plan-view-model";
 import { useCallback, useState } from "react";
+
+function getTaskStatusDotClass(status: TaskStatus): string {
+  switch (status) {
+    case "pending":
+      return "bg-muted-foreground/30";
+    case "in_progress":
+      return "bg-blue-500 animate-pulse";
+    case "completed":
+      return "bg-emerald-500";
+    case "error":
+      return "bg-red-500";
+  }
+}
 
 function ShimmerRow() {
   return (
@@ -143,6 +159,16 @@ export function DeliveryLoopPlanReviewCard({
                         open && "rotate-90",
                       )}
                       aria-hidden
+                    />
+                  )}
+                  {task.status != null && (
+                    <span
+                      className={cn(
+                        "size-2 rounded-full shrink-0",
+                        getTaskStatusDotClass(task.status),
+                      )}
+                      role="img"
+                      aria-label={`Task status: ${task.status}`}
                     />
                   )}
                   <span className="text-xs font-semibold">
