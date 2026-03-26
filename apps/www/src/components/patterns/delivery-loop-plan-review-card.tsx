@@ -1,13 +1,13 @@
 "use client";
 
-import { cn } from "@/lib/utils";
 import { ChevronRight, ExternalLink } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import type {
   PlanSpecViewModel,
   TaskStatus,
 } from "@/lib/delivery-loop-plan-view-model";
-import { useCallback, useState } from "react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 function getTaskStatusDotClass(status: TaskStatus): string {
   switch (status) {
@@ -171,7 +171,7 @@ export function DeliveryLoopPlanReviewCard({
                         getTaskStatusDotClass(task.status),
                       )}
                       role="img"
-                      aria-label={`Task status: ${task.status}`}
+                      aria-label={`Task status: ${task.status.replaceAll("_", " ")}`}
                     />
                   )}
                   <span className="text-xs font-semibold">

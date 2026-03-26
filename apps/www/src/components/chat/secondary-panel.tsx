@@ -1,19 +1,5 @@
 "use client";
 
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { cn } from "@/lib/utils";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
 import {
   DBMessage,
   ThreadInfoFull,
@@ -26,20 +12,12 @@ import {
   type UITextFilePart,
 } from "@terragon/shared";
 import {
-  getArtifactDescriptors,
   type ArtifactDescriptor,
   type ArtifactDescriptorOrigin,
   type ExitPlanModeToolPart,
+  getArtifactDescriptors,
   type PlanArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
-import { useResizablePanel } from "@/hooks/use-resizable-panel";
-import { GitDiffView } from "./git-diff-view";
-import { RichTextPart } from "./rich-text-part";
-import { TextPart } from "./text-part";
-import { resolvePlanText } from "./tools/plan-utils";
-import { usePlatform } from "@/hooks/use-platform";
-import { usePlanApproval, useSecondaryPanel } from "./hooks";
-import { Button } from "@/components/ui/button";
 import {
   AlertTriangle,
   Check,
@@ -51,9 +29,31 @@ import {
   Minimize2,
   X,
 } from "lucide-react";
-import type { PromptBoxRef } from "./thread-context";
-import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
+import { Button } from "@/components/ui/button";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { usePlatform } from "@/hooks/use-platform";
+import { useResizablePanel } from "@/hooks/use-resizable-panel";
+import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import { cn } from "@/lib/utils";
+import { GitDiffView } from "./git-diff-view";
+import { usePlanApproval, useSecondaryPanel } from "./hooks";
+import { RichTextPart } from "./rich-text-part";
+import { TextPart } from "./text-part";
+import type { PromptBoxRef } from "./thread-context";
+import { resolvePlanText } from "./tools/plan-utils";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;
@@ -430,7 +430,11 @@ export function SecondaryPanel({
         aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
         aria-orientation="vertical"
         aria-valuemin={SECONDARY_PANEL_MIN_WIDTH}
-        aria-valuemax={Math.round(getSecondaryPanelMaxWidth())}
+        aria-valuemax={Math.round(
+          isMaximized
+            ? getContainerWidth() * SECONDARY_PANEL_MAXIMIZED_WIDTH_PERCENTAGE
+            : getSecondaryPanelMaxWidth(),
+        )}
         aria-valuenow={Math.round(width)}
         aria-valuetext={`${Math.round(width)} pixels wide`}
         title={

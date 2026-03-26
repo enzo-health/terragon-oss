@@ -1,42 +1,42 @@
 "use client";
 
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type AnnotationSide,
-  type DiffLineEventBaseProps,
   type DiffLineAnnotation,
+  type DiffLineEventBaseProps,
 } from "@pierre/diffs/react";
-import { DiffRenderer } from "@/components/shared/diff-renderer";
-import { DiffModeToggle } from "@/components/shared/diff-view";
+import type { DBMessage, DBUserMessage } from "@terragon/shared";
+import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
 import {
-  ChevronRight,
   ChevronDown,
-  FileDiff,
-  Folder,
-  FilePlus,
-  FileX,
+  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  FileDiff,
+  FilePlus,
+  FileX,
+  Folder,
+  Image,
   PanelLeft,
   PanelLeftClose,
   X,
-  Image,
 } from "lucide-react";
-import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
-import { cn, formatBytes } from "@/lib/utils";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import { ImageDiffView } from "@/components/chat/image-diff-view";
+import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
+import { DiffRenderer } from "@/components/shared/diff-renderer";
+import { DiffModeToggle } from "@/components/shared/diff-view";
+import { Button } from "@/components/ui/button";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { convertToPlainText } from "@/lib/db-message-helpers";
 import {
-  parseMultiFileDiff,
   type FileChangeType,
   type ParsedDiffFile,
+  parseMultiFileDiff,
 } from "@/lib/git-diff";
-import { Button } from "@/components/ui/button";
-import type { DBMessage, DBUserMessage } from "@terragon/shared";
-import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
-import { ImageDiffView } from "@/components/chat/image-diff-view";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { cn, formatBytes } from "@/lib/utils";
 import { followUp } from "@/server-actions/follow-up";
 import { useOptimisticUpdateThreadChat } from "./hooks";
-import { convertToPlainText } from "@/lib/db-message-helpers";
 
 interface GitDiffViewProps {
   thread: ThreadInfoFull;
@@ -591,10 +591,10 @@ function FileTreeItem({
           isSelected && "bg-neutral-200 dark:bg-neutral-700",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
-        role="treeitem"
+        role="button"
         tabIndex={0}
         aria-expanded={isFolder ? isExpanded : undefined}
-        aria-selected={isSelected}
+        aria-pressed={!isFolder ? isSelected : undefined}
         aria-label={node.name}
         onClick={() => {
           if (isFolder) {

@@ -1,22 +1,18 @@
-import { useMemo } from "react";
 import {
-  PatchDiff,
   type DiffLineAnnotation,
   type DiffLineEventBaseProps,
+  PatchDiff,
 } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
-import React from "react";
+import React, { useMemo } from "react";
 
 export interface DiffRendererProps<T = unknown> {
   patch: string;
   mode?: "unified" | "split";
-  maxHeight?: string;
   enableLineNumbers?: boolean;
   enableFileHeader?: boolean;
   fontSize?: string;
   className?: string;
-  // Comment/annotation support (optional)
-  enableComments?: boolean;
   onLineClick?: (props: DiffLineEventBaseProps) => void;
   lineAnnotations?: DiffLineAnnotation<T>[];
   renderAnnotation?: (annotation: DiffLineAnnotation<T>) => React.ReactNode;

@@ -1,9 +1,9 @@
-import React, { useState } from "react";
 import { AllToolParts } from "@terragon/shared";
+import { useTheme } from "next-themes";
+import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { getAgentColorClass } from "./agent-colors";
 import { ansiToHtml } from "./utils";
-import { useTheme } from "next-themes";
 
 export function GenericToolPart({
   toolName,
@@ -180,7 +180,7 @@ export function GenericToolPartClickToExpand({
   return (
     <button
       type="button"
-      className="inline text-muted-foreground/70 select-none cursor-pointer bg-transparent border-none p-0 font-inherit text-inherit"
+      className="inline text-muted-foreground/70 select-none cursor-pointer bg-transparent border-none p-0 font-inherit"
       onClick={onClick}
       aria-expanded={isExpanded}
       aria-label={ariaLabel ?? label}
