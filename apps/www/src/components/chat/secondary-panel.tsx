@@ -34,7 +34,7 @@ import { resolvePlanText } from "./tools/plan-utils";
 import { usePlatform } from "@/hooks/use-platform";
 import { usePlanApproval, useSecondaryPanel } from "./hooks";
 import { Button } from "@/components/ui/button";
-import { Check, ExternalLink, FileDiff, X } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, FileDiff, X } from "lucide-react";
 import type { PromptBoxRef } from "./thread-context";
 import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
 import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
@@ -46,8 +46,6 @@ const SECONDARY_PANEL_RESIZE_STEP = 32;
 const SECONDARY_PANEL_FALLBACK_CONTAINER_WIDTH = 1024;
 
 export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
-const PREVIEW_TRUNCATED_SUFFIX =
-  "\n\n--- Preview truncated. Use \u201COpen raw\u201D for the full file. ---";
 
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 
@@ -660,14 +658,14 @@ function DocumentArtifactRenderer({
 async function readCappedText(
   response: Response,
   maxBytes: number,
-): Promise<string> {
+): Promise<{ text: string; truncated: boolean }> {
   const reader = response.body?.getReader();
   if (!reader) {
     // Fallback when ReadableStream is unavailable (e.g. mocked fetch in tests).
     const raw = await response.text();
     return raw.length > maxBytes
-      ? raw.slice(0, maxBytes) + PREVIEW_TRUNCATED_SUFFIX
-      : raw;
+      ? { text: raw.slice(0, maxBytes), truncated: true }
+      : { text: raw, truncated: false };
   }
 
   const decoder = new TextDecoder();
@@ -688,13 +686,13 @@ async function readCappedText(
         }),
       );
       await reader.cancel();
-      return chunks.join("") + PREVIEW_TRUNCATED_SUFFIX;
+      return { text: chunks.join(""), truncated: true };
     }
     chunks.push(decoder.decode(value, { stream: true }));
   }
   // Flush any remaining bytes from the decoder.
   chunks.push(decoder.decode());
-  return chunks.join("");
+  return { text: chunks.join(""), truncated: false };
 }
 
 function TextFileArtifactRenderer({
@@ -704,7 +702,7 @@ function TextFileArtifactRenderer({
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
-    | { status: "ready"; content: string }
+    | { status: "ready"; content: string; isTruncated: boolean }
     | { status: "error"; message: string }
   >({ status: "loading" });
 
@@ -723,8 +721,8 @@ function TextFileArtifactRenderer({
         // Cap preview at 512 KB to avoid memory spikes on large generated files.
         // Read via stream to enforce the cap even when content-length is absent.
         const MAX_PREVIEW_BYTES = 512 * 1024;
-        const content = await readCappedText(response, MAX_PREVIEW_BYTES);
-        setState({ status: "ready", content });
+        const { text, truncated } = await readCappedText(response, MAX_PREVIEW_BYTES);
+        setState({ status: "ready", content: text, isTruncated: truncated });
       } catch (error) {
         if (controller.signal.aborted) {
           return;
@@ -768,6 +766,12 @@ function TextFileArtifactRenderer({
           </a>
         </Button>
       </div>
+      {state.status === "ready" && state.isTruncated && (
+        <div className="flex items-center gap-2 border-b px-4 py-2 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          <span>File preview truncated at 512 KB</span>
+        </div>
+      )}
       <div className="flex-1 min-h-0 overflow-auto p-4">
         {state.status === "loading" && (
           <ArtifactWorkspaceState
