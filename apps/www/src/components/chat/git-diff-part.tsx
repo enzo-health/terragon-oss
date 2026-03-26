@@ -115,7 +115,17 @@ export const GitDiffPart = memo(function GitDiffPart({
     <div className="flex flex-col border border-border rounded-md bg-muted/50">
       <div
         className="flex flex-row items-center cursor-pointer select-none justify-between p-2"
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-label={`Files Changed: ${diffStats.files} file${diffStats.files === 1 ? "" : "s"}`}
         onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleClick();
+          }
+        }}
       >
         <div className="flex items-center gap-3 min-w-0 overflow-hidden flex-1">
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -160,6 +170,10 @@ export const GitDiffPart = memo(function GitDiffPart({
               }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
               title={allExpanded ? "Collapse all" : "Expand all"}
+              aria-label={
+                allExpanded ? "Collapse all files" : "Expand all files"
+              }
+              aria-pressed={allExpanded}
             >
               {allExpanded ? (
                 <ChevronsDownUp className="w-3.5 h-3.5" />
@@ -175,6 +189,7 @@ export const GitDiffPart = memo(function GitDiffPart({
             onClick={handleOpenPanel}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md hover:bg-muted transition-colors"
             title="Open in side panel"
+            aria-label="Open in side panel"
           >
             <ExternalLink className="w-3.5 h-3.5" />
           </button>

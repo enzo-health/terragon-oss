@@ -365,7 +365,17 @@ function FileDiffWrapper({
           expanded && "rounded-b-none",
           isHeaderStuck && "rounded-t-none",
         )}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={parsedFile.fileName}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
       >
         <div className="flex items-center min-w-0 gap-2">
           {expanded ? (
@@ -621,11 +631,26 @@ function FileTreeItem({
           isSelected && "bg-neutral-200 dark:bg-neutral-700",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        role="treeitem"
+        tabIndex={0}
+        aria-expanded={isFolder ? isExpanded : undefined}
+        aria-selected={isSelected}
+        aria-label={node.name}
         onClick={() => {
           if (isFolder) {
             onToggleFolder(node.path);
           } else if (node.fileIndex !== undefined) {
             onFileSelect(node.fileIndex);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (isFolder) {
+              onToggleFolder(node.path);
+            } else if (node.fileIndex !== undefined) {
+              onFileSelect(node.fileIndex);
+            }
           }
         }}
       >

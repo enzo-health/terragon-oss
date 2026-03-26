@@ -557,7 +557,10 @@ function ArtifactWorkspaceShell({
               )}
             </div>
             <div className="mt-2 min-w-0">
-              <h2 className="truncate text-sm font-semibold text-foreground">
+              <h2
+                className="truncate text-sm font-semibold text-foreground"
+                title={headerTitle}
+              >
                 {headerTitle}
               </h2>
               <p className="mt-1 text-xs text-muted-foreground">
