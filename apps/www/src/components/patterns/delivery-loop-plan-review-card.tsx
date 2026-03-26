@@ -5,13 +5,24 @@ import { ChevronRight, ExternalLink } from "lucide-react";
 import type { PlanSpecViewModel } from "@/lib/delivery-loop-plan-view-model";
 import { useCallback, useState } from "react";
 
+function ShimmerRow() {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <div className="h-4 w-4 rounded bg-muted animate-pulse" />
+      <div className="h-4 flex-1 rounded bg-muted animate-pulse" />
+    </div>
+  );
+}
+
 export function DeliveryLoopPlanReviewCard({
   plan,
   className,
+  isStreaming,
   onOpenInArtifactWorkspace,
 }: {
   plan: PlanSpecViewModel;
   className?: string;
+  isStreaming?: boolean;
   onOpenInArtifactWorkspace?: () => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -46,9 +57,14 @@ export function DeliveryLoopPlanReviewCard({
     >
       <header className="space-y-1">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Plan Review
-          </p>
+          <div className="flex items-center gap-1.5">
+            {isStreaming && (
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
+            )}
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Plan Review
+            </p>
+          </div>
           {onOpenInArtifactWorkspace && (
             <button
               onClick={onOpenInArtifactWorkspace}
@@ -60,10 +76,27 @@ export function DeliveryLoopPlanReviewCard({
             </button>
           )}
         </div>
-        <h3 className="text-sm font-semibold leading-tight">{plan.title}</h3>
-        <p className="text-xs text-muted-foreground whitespace-pre-wrap">
-          {plan.summary}
-        </p>
+        {plan.title ? (
+          <h3 className="text-sm font-semibold leading-tight">{plan.title}</h3>
+        ) : isStreaming ? (
+          <div className="h-4 w-48 rounded bg-muted animate-pulse" />
+        ) : (
+          <h3 className="text-sm font-semibold leading-tight">{plan.title}</h3>
+        )}
+        {plan.summary ? (
+          <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+            {plan.summary}
+          </p>
+        ) : isStreaming ? (
+          <div className="space-y-1.5">
+            <div className="h-3 w-full rounded bg-muted animate-pulse" />
+            <div className="h-3 w-3/4 rounded bg-muted animate-pulse" />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+            {plan.summary}
+          </p>
+        )}
       </header>
 
       <div className="mt-3 space-y-2">
@@ -79,10 +112,15 @@ export function DeliveryLoopPlanReviewCard({
           </button>
         </div>
         <ol className="space-y-2">
+          {plan.tasks.length === 0 && isStreaming && (
+            <>
+              <ShimmerRow />
+              <ShimmerRow />
+            </>
+          )}
           {plan.tasks.map((task, idx) => {
             const open = isTaskExpanded(task.stableTaskId);
-            const hasContent =
-              !!task.description || task.acceptance.length > 0;
+            const hasContent = !!task.description || task.acceptance.length > 0;
             return (
               <li
                 key={task.stableTaskId}
@@ -133,9 +171,7 @@ export function DeliveryLoopPlanReviewCard({
                             </p>
                             <ul className="mt-1 list-disc pl-4 text-xs text-foreground">
                               {task.acceptance.map((criterion) => (
-                                <li
-                                  key={`${task.stableTaskId}-${criterion}`}
-                                >
+                                <li key={`${task.stableTaskId}-${criterion}`}>
                                   {criterion}
                                 </li>
                               ))}
@@ -149,6 +185,12 @@ export function DeliveryLoopPlanReviewCard({
               </li>
             );
           })}
+          {isStreaming && plan.tasks.length > 0 && (
+            <>
+              <ShimmerRow />
+              <ShimmerRow />
+            </>
+          )}
         </ol>
       </div>
 

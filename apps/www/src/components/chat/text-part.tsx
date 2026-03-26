@@ -8,7 +8,10 @@ import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
+import {
+  parsePlanSpecViewModelFromText,
+  parsePartialPlan,
+} from "@/lib/delivery-loop-plan-view-model";
 import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
 
 interface TextPartProps {
@@ -140,11 +143,25 @@ const TextPart = memo(function TextPart({
   const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
-  const parsedPlan = useMemo(() => {
+  const { parsedPlan, isPlanStreaming } = useMemo(() => {
     if (!deliveryPlanReviewCard) {
-      return null;
+      return { parsedPlan: null, isPlanStreaming: false };
     }
-    return parsePlanSpecViewModelFromText(text);
+
+    const hasOpenTag = /<proposed_plan>/i.test(text);
+    const hasCloseTag = /<\/proposed_plan>/i.test(text);
+
+    if (hasOpenTag && !hasCloseTag) {
+      return {
+        parsedPlan: parsePartialPlan(text),
+        isPlanStreaming: true,
+      };
+    }
+
+    return {
+      parsedPlan: parsePlanSpecViewModelFromText(text),
+      isPlanStreaming: false,
+    };
   }, [deliveryPlanReviewCard, text]);
 
   const processedText = useMemo(() => {
@@ -396,7 +413,20 @@ const TextPart = memo(function TextPart({
         <DeliveryLoopPlanReviewCard
           plan={parsedPlan}
           className="mb-2"
+          isStreaming={isPlanStreaming}
           onOpenInArtifactWorkspace={onOpenInArtifactWorkspace}
+        />
+      ) : isPlanStreaming ? (
+        <DeliveryLoopPlanReviewCard
+          plan={{
+            title: "",
+            summary: "",
+            tasks: [],
+            assumptions: [],
+            source: "proposed_plan_tag",
+          }}
+          className="mb-2"
+          isStreaming
         />
       ) : null}
       {showStreamdown && (
