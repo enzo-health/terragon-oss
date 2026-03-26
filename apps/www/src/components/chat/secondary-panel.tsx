@@ -740,18 +740,39 @@ function ArtifactWorkspaceShell({
               </p>
             </div>
           </div>
-          {onClose && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              onClick={onClose}
-              aria-label="Close artifact workspace"
-            >
-              <X className="size-4" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1 shrink-0">
+            {onToggleMaximize && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={onToggleMaximize}
+                aria-label={
+                  isMaximized ? "Restore panel size" : "Maximize panel"
+                }
+                title={isMaximized ? "Restore panel size" : "Maximize panel"}
+              >
+                {isMaximized ? (
+                  <Minimize2 className="size-3.5" />
+                ) : (
+                  <Maximize2 className="size-3.5" />
+                )}
+              </Button>
+            )}
+            {onClose && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={onClose}
+                aria-label="Close artifact workspace"
+              >
+                <X className="size-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
         {artifacts.length > 1 && (
           <div
