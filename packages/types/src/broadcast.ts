@@ -190,6 +190,7 @@ const BroadcastThreadPatchSchema = z.object({
   partIndex: z.number().int().nonnegative().optional(),
   deltaSeq: z.number().int().nonnegative().optional(),
   deltaIdempotencyKey: z.string().optional(),
+  deltaKind: z.enum(["text", "thinking"]).optional(),
   text: z.string().optional(),
 });
 

@@ -6,6 +6,7 @@ CREATE TABLE "token_stream_event" (
 	"thread_chat_id" text NOT NULL,
 	"message_id" text NOT NULL,
 	"part_index" integer NOT NULL,
+	"part_type" text DEFAULT 'text' NOT NULL,
 	"text" text NOT NULL,
 	"idempotency_key" text NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL

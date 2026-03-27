@@ -391,6 +391,7 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
         messageId: "m",
         partIndex: 0,
+        partType: "text",
         text: "c",
         idempotencyKey: "k-5",
         createdAt: new Date(),
@@ -403,6 +404,7 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
         messageId: "m",
         partIndex: 0,
+        partType: "text",
         text: "a",
         idempotencyKey: "k-3",
         createdAt: new Date(),
@@ -415,6 +417,7 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
         messageId: "m",
         partIndex: 0,
+        partType: "text",
         text: "b",
         idempotencyKey: "k-4",
         createdAt: new Date(),
@@ -431,8 +434,20 @@ describe("daemon-event route", () => {
         seq: 8,
         messages: [],
         deltas: [
-          { messageId: "m", partIndex: 0, deltaSeq: 10, text: "a" },
-          { messageId: "m", partIndex: 0, deltaSeq: 11, text: "b" },
+          {
+            messageId: "m",
+            partIndex: 0,
+            deltaSeq: 10,
+            kind: "text",
+            text: "a",
+          },
+          {
+            messageId: "m",
+            partIndex: 0,
+            deltaSeq: 11,
+            kind: "text",
+            text: "b",
+          },
         ],
         timezone: "UTC",
       }),
@@ -453,7 +468,11 @@ describe("daemon-event route", () => {
     );
     expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ deltaSeq: 3, deltaIdempotencyKey: "k-3" }),
+      expect.objectContaining({
+        deltaSeq: 3,
+        deltaIdempotencyKey: "k-3",
+        deltaKind: "text",
+      }),
     );
     expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
       2,

@@ -382,6 +382,7 @@ export function useRealtimeThread(
                       threadChatId: string;
                       messageId: string;
                       partIndex: number;
+                      partType: string;
                       streamSeq: number;
                       idempotencyKey: string;
                       text: string;
@@ -393,6 +394,8 @@ export function useRealtimeThread(
                       partIndex: entry.partIndex,
                       deltaSeq: entry.streamSeq,
                       deltaIdempotencyKey: entry.idempotencyKey,
+                      deltaKind:
+                        entry.partType === "thinking" ? "thinking" : "text",
                       text: entry.text,
                     }),
                   ),

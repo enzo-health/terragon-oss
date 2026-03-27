@@ -722,6 +722,7 @@ export async function POST(request: Request) {
         threadChatId,
         messageId: delta.messageId,
         partIndex: delta.partIndex,
+        partType: delta.kind === "thinking" ? "thinking" : "text",
         text: delta.text,
         idempotencyKey:
           envelopeV2 !== null
@@ -742,6 +743,7 @@ export async function POST(request: Request) {
         partIndex: tokenEvent.partIndex,
         deltaSeq: tokenEvent.streamSeq,
         deltaIdempotencyKey: tokenEvent.idempotencyKey,
+        deltaKind: tokenEvent.partType === "thinking" ? "thinking" : "text",
         text: tokenEvent.text,
       }).catch((error) => {
         console.warn("[daemon-event] delta broadcast failed", {

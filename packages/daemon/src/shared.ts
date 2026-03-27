@@ -230,6 +230,7 @@ export type DaemonDelta = {
   messageId: string;
   partIndex: number;
   deltaSeq: number;
+  kind?: "text" | "thinking";
   text: string;
 };
 

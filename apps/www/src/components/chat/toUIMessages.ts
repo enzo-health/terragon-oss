@@ -9,7 +9,7 @@ import type {
   UIGitDiffPart,
   ThreadStatus,
 } from "@terragon/shared";
-import type { DeltaAccumulator } from "@/hooks/useDeltaAccumulator";
+import type { DeltaAccumulator, DeltaChunk } from "@/hooks/useDeltaAccumulator";
 
 type UIMessageRange = {
   startDbIndex: number;
@@ -475,10 +475,7 @@ function appendDeltaMessages(
     return aIdx - bIdx;
   });
 
-  const parts: UIPart[] = sorted.map(([, text]) => ({
-    type: "text" as const,
-    text,
-  }));
+  const parts: UIPart[] = sorted.map(([, chunk]) => toDeltaPart(chunk));
 
   if (parts.length === 0) return messages;
 
@@ -489,6 +486,19 @@ function appendDeltaMessages(
   };
 
   return [...messages, deltaMessage];
+}
+
+function toDeltaPart(chunk: DeltaChunk): UIPart {
+  if (chunk.kind === "thinking") {
+    return {
+      type: "thinking",
+      thinking: chunk.text,
+    };
+  }
+  return {
+    type: "text",
+    text: chunk.text,
+  };
 }
 
 /**

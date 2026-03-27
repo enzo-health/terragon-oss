@@ -286,7 +286,14 @@ function ChatUI({
       } else {
         if (
           patch.appendMessages !== undefined &&
-          patch.appendMessages.length > 0
+          patch.appendMessages.length > 0 &&
+          patch.appendMessages.some(
+            (message) =>
+              typeof message === "object" &&
+              message !== null &&
+              "type" in message &&
+              (message as { type?: unknown }).type === "agent",
+          )
         ) {
           hasMaterializedMessages = true;
         }

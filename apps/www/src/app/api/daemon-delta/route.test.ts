@@ -56,7 +56,13 @@ describe("daemon-delta route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           deltas: [
-            { messageId: "m-1", partIndex: 0, deltaSeq: 1, text: "hello" },
+            {
+              messageId: "m-1",
+              partIndex: 0,
+              deltaSeq: 1,
+              kind: "text",
+              text: "hello",
+            },
           ],
         }),
       }),
@@ -76,6 +82,7 @@ describe("daemon-delta route", () => {
         threadChatId: "chat-1",
         messageId: "m-1",
         partIndex: 0,
+        partType: "text",
         text: "world",
         idempotencyKey: "k-9",
         createdAt: new Date(),
@@ -88,6 +95,7 @@ describe("daemon-delta route", () => {
         threadChatId: "chat-1",
         messageId: "m-1",
         partIndex: 0,
+        partType: "text",
         text: "hello",
         idempotencyKey: "k-7",
         createdAt: new Date(),
@@ -102,8 +110,20 @@ describe("daemon-delta route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           deltas: [
-            { messageId: "m-1", partIndex: 0, deltaSeq: 1, text: "hello" },
-            { messageId: "m-1", partIndex: 0, deltaSeq: 2, text: "world" },
+            {
+              messageId: "m-1",
+              partIndex: 0,
+              deltaSeq: 1,
+              kind: "text",
+              text: "hello",
+            },
+            {
+              messageId: "m-1",
+              partIndex: 0,
+              deltaSeq: 2,
+              kind: "text",
+              text: "world",
+            },
           ],
         }),
       }),
@@ -124,7 +144,11 @@ describe("daemon-delta route", () => {
     );
     expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ deltaSeq: 7, deltaIdempotencyKey: "k-7" }),
+      expect.objectContaining({
+        deltaSeq: 7,
+        deltaIdempotencyKey: "k-7",
+        deltaKind: "text",
+      }),
     );
     expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
       2,

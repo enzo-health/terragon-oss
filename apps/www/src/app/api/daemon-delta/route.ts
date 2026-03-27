@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       threadChatId,
       messageId: delta.messageId,
       partIndex: delta.partIndex,
+      partType: delta.kind === "thinking" ? "thinking" : "text",
       text: delta.text,
       idempotencyKey: `${threadChatId}:${claims.runId}:delta:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
     })),
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
       partIndex: event.partIndex,
       deltaSeq: event.streamSeq,
       deltaIdempotencyKey: event.idempotencyKey,
+      deltaKind: event.partType === "thinking" ? "thinking" : "text",
       text: event.text,
     });
   }

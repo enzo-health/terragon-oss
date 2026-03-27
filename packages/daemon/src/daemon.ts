@@ -1427,6 +1427,7 @@ export class TerragonDaemon {
                 messageId: itemId,
                 partIndex: 0,
                 deltaSeq,
+                kind: "text",
                 text: deltaText,
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
@@ -2030,6 +2031,7 @@ export class TerragonDaemon {
                         messageId: deltaMessageId,
                         partIndex: deltaPartIndex,
                         deltaSeq: deltaSeq++,
+                        kind: "text",
                         text: block.text,
                       },
                     ],
@@ -2046,6 +2048,7 @@ export class TerragonDaemon {
                         messageId: deltaMessageId,
                         partIndex: deltaPartIndex,
                         deltaSeq: deltaSeq++,
+                        kind: "thinking",
                         text: block.thinking,
                       },
                     ],
@@ -3900,6 +3903,7 @@ export class TerragonDaemon {
                 messageId: d.messageId,
                 partIndex: d.partIndex,
                 deltaSeq: d.deltaSeq,
+                kind: d.kind,
                 text: d.text,
               })),
             };
@@ -4105,6 +4109,7 @@ export class TerragonDaemon {
             messageId: d.messageId,
             partIndex: d.partIndex,
             deltaSeq: d.deltaSeq,
+            kind: d.kind,
             text: d.text,
           });
         } else {

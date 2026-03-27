@@ -91,6 +91,7 @@ export async function publishDeltaBroadcast({
   partIndex,
   deltaSeq,
   deltaIdempotencyKey,
+  deltaKind,
   text,
 }: {
   userId: string;
@@ -100,6 +101,7 @@ export async function publishDeltaBroadcast({
   partIndex: number;
   deltaSeq?: number;
   deltaIdempotencyKey?: string;
+  deltaKind?: "text" | "thinking";
   text: string;
 }): Promise<void> {
   return publishBroadcastUserMessage({
@@ -115,6 +117,7 @@ export async function publishDeltaBroadcast({
           partIndex,
           ...(deltaSeq !== undefined ? { deltaSeq } : {}),
           ...(deltaIdempotencyKey ? { deltaIdempotencyKey } : {}),
+          ...(deltaKind ? { deltaKind } : {}),
           text,
         },
       ],

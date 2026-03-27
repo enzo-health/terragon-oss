@@ -6,7 +6,12 @@ import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 /** Key format: `${messageId}:${partIndex}` */
 export type DeltaKey = string;
 
-export type DeltaAccumulator = Map<DeltaKey, string>;
+export type DeltaChunk = {
+  kind: "text" | "thinking";
+  text: string;
+};
+
+export type DeltaAccumulator = Map<DeltaKey, DeltaChunk>;
 
 function makeDeltaKey(messageId: string, partIndex: number): DeltaKey {
   return `${messageId}:${partIndex}`;
@@ -41,6 +46,8 @@ export function useDeltaAccumulator() {
       seenIdempotencyKeysRef.current.add(patch.deltaIdempotencyKey);
     }
 
+    const kind = patch.deltaKind === "thinking" ? "thinking" : "text";
+    const text = patch.text;
     const key = makeDeltaKey(patch.messageId, patch.partIndex);
     if (patch.deltaSeq != null) {
       const maxAppliedSeq = maxDeltaSeqByKeyRef.current.get(key);
@@ -52,7 +59,15 @@ export function useDeltaAccumulator() {
 
     setDeltas((prev) => {
       const next = new Map(prev);
-      next.set(key, (prev.get(key) ?? "") + patch.text);
+      const prevChunk = prev.get(key);
+      if (!prevChunk) {
+        next.set(key, { kind, text });
+      } else if (prevChunk.kind === kind) {
+        next.set(key, { kind, text: prevChunk.text + text });
+      } else {
+        // When kind changes on same part index, keep the latest semantic type.
+        next.set(key, { kind, text: prevChunk.text + text });
+      }
       deltasRef.current = next;
       return next;
     });
