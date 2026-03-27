@@ -148,6 +148,13 @@
       "when": 1774577400000,
       "tag": "0020_agent_run_context_failure_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1774580400000,
+      "tag": "0021_agent_run_context_failure_metadata_columns",
+      "breakpoints": true
     }
   ]
 }
