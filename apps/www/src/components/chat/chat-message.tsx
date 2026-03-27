@@ -22,6 +22,11 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { MessageToolbar } from "./chat-message-toolbar";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { GitDiffPart } from "./git-diff-part";
+import {
+  Message as AIMessage,
+  MessageContent as AIMessageContent,
+  MessageResponse,
+} from "@/components/ai-elements/message";
 
 type UIUserOrAgentPart =
   | UIAgentMessage["parts"][number]
@@ -66,6 +71,7 @@ type ForkDialogData = {
 
 type ChatMessageProps = {
   message: UIMessage;
+  useAiElementsLayout?: boolean;
   className?: string;
   isLatestMessage?: boolean;
   isAgentWorking?: boolean;
@@ -80,6 +86,7 @@ type ChatMessageProps = {
 
 type ChatMessageWithToolbarProps = {
   message: UIMessage;
+  useAiElementsLayout?: boolean;
   messageIndex: number;
   className?: string;
   isFirstUserMessage: boolean;
@@ -324,6 +331,7 @@ function AgentMetaFooter({
 
 export const ChatMessage = memo(function ChatMessage({
   message,
+  useAiElementsLayout = false,
   className,
   isLatestMessage = false,
   isAgentWorking = false,
@@ -358,18 +366,15 @@ export const ChatMessage = memo(function ChatMessage({
     isAgentWorking,
   });
   const lastGroupIndex = groups.length - 1;
-  return (
-    <div
-      style={{ overflowAnchor: "none" }}
-      className={cn(
-        "p-2 rounded-md w-full break-words",
-        {
-          "bg-primary/10 ml-auto max-w-[80%] w-fit": message.role === "user",
-          "mr-auto": message.role === "agent",
-        },
-        className,
-      )}
-    >
+  const from =
+    message.role === "user"
+      ? "user"
+      : message.role === "agent"
+        ? "assistant"
+        : "system";
+
+  const content = (
+    <MessageResponse>
       <div className="flex flex-col gap-2">
         {groups.map((group, groupIndex) => {
           if (group.type === "collapsible-agent-activity") {
@@ -422,12 +427,41 @@ export const ChatMessage = memo(function ChatMessage({
           <AgentMetaFooter meta={message.meta} />
         )}
       </div>
+    </MessageResponse>
+  );
+
+  if (useAiElementsLayout) {
+    return (
+      <AIMessage
+        from={from}
+        style={{ overflowAnchor: "none" }}
+        className={className}
+      >
+        <AIMessageContent from={from}>{content}</AIMessageContent>
+      </AIMessage>
+    );
+  }
+
+  return (
+    <div
+      style={{ overflowAnchor: "none" }}
+      className={cn(
+        "p-2 rounded-md w-full break-words",
+        {
+          "bg-primary/10 ml-auto max-w-[80%] w-fit": message.role === "user",
+          "mr-auto": message.role === "agent",
+        },
+        className,
+      )}
+    >
+      {content}
     </div>
   );
 });
 
 export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   message,
+  useAiElementsLayout = false,
   messageIndex,
   className,
   isLatestMessage = false,
@@ -450,6 +484,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
     >
       <ChatMessage
         message={message}
+        useAiElementsLayout={useAiElementsLayout}
         className={className}
         isLatestMessage={isLatestMessage}
         isAgentWorking={isAgentWorking}
@@ -483,6 +518,7 @@ function areChatMessageWithToolbarPropsEqual(
     nextProps.messagePartProps ?? DEFAULT_MESSAGE_PART_PROPS;
   if (
     prevProps.message !== nextProps.message ||
+    prevProps.useAiElementsLayout !== nextProps.useAiElementsLayout ||
     prevProps.messageIndex !== nextProps.messageIndex ||
     prevProps.className !== nextProps.className ||
     prevProps.isFirstUserMessage !== nextProps.isFirstUserMessage ||
