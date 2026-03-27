@@ -69,6 +69,19 @@ import { ThreadInfoFull } from "@terragon/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
 import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
 
+function isThreadStatusWorking(status: ThreadStatus): boolean {
+  return [
+    "queued",
+    "queued-tasks-concurrency",
+    "queued-sandbox-creation-rate-limit",
+    "queued-agent-rate-limit",
+    "booting",
+    "working",
+    "stopping",
+    "checkpointing",
+  ].includes(status);
+}
+
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
   { ssr: false },
@@ -280,10 +293,14 @@ function ChatUI({
   const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
   useRealtimeThread(threadId, threadChatId, (patches) => {
     let hasMaterializedMessages = false;
+    let latestPatchedStatus: ThreadStatus | null = null;
     for (const patch of patches) {
       if (patch.op === "delta") {
         applyDelta(patch);
       } else {
+        if (patch.chat?.status) {
+          latestPatchedStatus = patch.chat.status;
+        }
         if (
           patch.appendMessages !== undefined &&
           patch.appendMessages.length > 0 &&
@@ -302,7 +319,11 @@ function ChatUI({
     }
     // When a complete message arrives, clear accumulated deltas since the
     // DB message now contains the full text.
-    if (hasMaterializedMessages) {
+    if (
+      hasMaterializedMessages &&
+      latestPatchedStatus != null &&
+      !isThreadStatusWorking(latestPatchedStatus)
+    ) {
       clearDeltasForThread();
     }
   });

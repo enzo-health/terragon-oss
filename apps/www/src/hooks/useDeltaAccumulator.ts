@@ -65,8 +65,8 @@ export function useDeltaAccumulator() {
       } else if (prevChunk.kind === kind) {
         next.set(key, { kind, text: prevChunk.text + text });
       } else {
-        // When kind changes on same part index, keep the latest semantic type.
-        next.set(key, { kind, text: prevChunk.text + text });
+        // If semantic kind flips for the same key, prefer latest payload.
+        next.set(key, { kind, text });
       }
       deltasRef.current = next;
       return next;

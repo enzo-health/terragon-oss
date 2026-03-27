@@ -468,14 +468,35 @@ function appendDeltaMessages(
   agent: AIAgent,
   deltas: DeltaAccumulator,
 ): UIMessage[] {
-  // Sort by partIndex so text parts render in order
-  const sorted = Array.from(deltas.entries()).sort((a, b) => {
-    const aIdx = parseInt(a[0].split(":")[1]!, 10);
-    const bIdx = parseInt(b[0].split(":")[1]!, 10);
-    return aIdx - bIdx;
-  });
+  const firstSeenMessageOrder = new Map<string, number>();
+  const parsed = Array.from(deltas.entries())
+    .map(([key, chunk]) => {
+      const separatorIndex = key.lastIndexOf(":");
+      if (separatorIndex === -1) {
+        return null;
+      }
+      const messageId = key.slice(0, separatorIndex);
+      const partIndex = parseInt(key.slice(separatorIndex + 1), 10);
+      if (!Number.isFinite(partIndex)) {
+        return null;
+      }
+      if (!firstSeenMessageOrder.has(messageId)) {
+        firstSeenMessageOrder.set(messageId, firstSeenMessageOrder.size);
+      }
+      return { messageId, partIndex, chunk };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((a, b) => {
+      const messageOrderDelta =
+        (firstSeenMessageOrder.get(a.messageId) ?? 0) -
+        (firstSeenMessageOrder.get(b.messageId) ?? 0);
+      if (messageOrderDelta !== 0) {
+        return messageOrderDelta;
+      }
+      return a.partIndex - b.partIndex;
+    });
 
-  const parts: UIPart[] = sorted.map(([, chunk]) => toDeltaPart(chunk));
+  const parts: UIPart[] = parsed.map(({ chunk }) => toDeltaPart(chunk));
 
   if (parts.length === 0) return messages;
 

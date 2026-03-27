@@ -279,6 +279,22 @@ describe("daemon", () => {
           );
           notificationHandler(
             {
+              method: "item/updated",
+              params: {
+                item: {
+                  type: "agent_message",
+                  id: "agent-msg-1",
+                  text: "hello from codex world",
+                },
+              },
+            },
+            {
+              threadId: "codex-thread-delta-kind",
+              threadState,
+            },
+          );
+          notificationHandler(
+            {
               method: "turn/completed",
               params: {
                 response: {
@@ -314,6 +330,11 @@ describe("daemon", () => {
           expect.objectContaining({
             kind: "text",
             messageId: "agent-msg-1",
+          }),
+          expect.objectContaining({
+            kind: "text",
+            messageId: "agent-msg-1",
+            text: " world",
           }),
         ]),
       }),
