@@ -32,13 +32,49 @@ export function classifyDaemonError(
   ) {
     return "daemon_spawn_failed";
   }
+
+  // Explicit Codex transport classes.
+  if (
+    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded|input length and max_tokens exceed context limit|prompt is too long|input exceeds the maximum length/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "turn_input_too_large";
+  }
+  if (/provider not configured|invalid provider/i.test(rawErrorMessage)) {
+    return "config_invalid_provider";
+  }
+  if (
+    /codex.*app.?server.*exit.*mid.*turn|app.?server.*exit.*mid.*turn|app.?server.*crash.*mid.*turn/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "app_server_exit_mid_turn";
+  }
+  if (
+    /ws.*connect.*timeout|websocket.*connect.*timeout/i.test(rawErrorMessage)
+  ) {
+    return "ws_connect_timeout";
+  }
+  if (
+    /codex.*subagent.*child|subagent.*child.*fail|child.*subagent.*fail/i.test(
+      rawErrorMessage,
+    )
+  ) {
+    return "subagent_child_failure";
+  }
+
   // Rate limiting — transient, retry same intent.
   if (/rate.limit|429|too many requests|throttl/i.test(rawErrorMessage)) {
     return "dispatch_ack_timeout";
   }
   // Timeouts.
   if (
-    /timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(rawErrorMessage)
+    (/timeout|timed out/i.test(rawErrorMessage) &&
+      !/ws|websocket/i.test(rawErrorMessage)) ||
+    /ack.*timeout|dispatch.*timeout|timed out waiting for ack/i.test(
+      rawErrorMessage,
+    )
   ) {
     return "dispatch_ack_timeout";
   }
@@ -73,19 +109,38 @@ export function classifyDaemonEventError(
 
   // Context window overflow — non-retryable with the same input.
   if (
-    /context.window|ran out of room|context.*too long|token limit|max.*tokens.*exceeded/i.test(
+    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded|input length and max_tokens exceed context limit|prompt is too long|input exceeds the maximum length/i.test(
+      errorMessage,
+    )
+  ) {
+    return "turn_input_too_large";
+  }
+
+  // Codex-specific patterns.
+  if (
+    /codex.*app.?server.*exit.*mid.*turn|app.?server.*exit.*mid.*turn|app.?server.*crash.*mid.*turn/i.test(
       errorMessage,
     )
   )
-    return "config_error";
-
-  // Codex-specific patterns.
+    return "app_server_exit_mid_turn";
   if (/codex.*app.?server.*exit|app.?server.*crash/i.test(errorMessage))
     return "codex_app_server_exit";
+  if (
+    /codex.*subagent.*child|subagent.*child.*fail|child.*subagent.*fail/i.test(
+      errorMessage,
+    )
+  )
+    return "subagent_child_failure";
   if (/codex.*subagent|subagent.*fail/i.test(errorMessage))
     return "codex_subagent_failed";
   if (/codex.*turn.*fail|codex.*error/i.test(errorMessage))
     return "codex_turn_failed";
+
+  if (/provider not configured|invalid provider/i.test(errorMessage))
+    return "config_invalid_provider";
+
+  if (/ws.*connect.*timeout|websocket.*connect.*timeout/i.test(errorMessage))
+    return "ws_connect_timeout";
 
   // Claude-specific patterns.
   if (/claude.*exit|claude.*crash|claude.*runtime/i.test(errorMessage))

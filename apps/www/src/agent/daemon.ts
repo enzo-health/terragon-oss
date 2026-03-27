@@ -69,7 +69,7 @@ function isInfrastructureError(error: unknown): boolean {
   );
 }
 
-function classifyDaemonError(
+export function classifyDaemonError(
   msg: string,
   error: unknown,
 ): {
@@ -102,23 +102,68 @@ function classifyDaemonError(
     };
   }
 
+  // Codex transport input budget exceeded
+  if (
+    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded|input length and max_tokens exceed context limit|prompt is too long|input exceeds the maximum length/i.test(
+      msg,
+    )
+  ) {
+    return {
+      errorType: "prompt-too-long",
+      failureCategory: "turn_input_too_large",
+    };
+  }
+
+  // Codex provider configuration errors
+  if (/provider not configured|invalid provider/i.test(msg)) {
+    return {
+      errorType: "invalid-codex-credentials",
+      failureCategory: "config_invalid_provider",
+    };
+  }
+
+  // Codex app-server exited mid-turn
+  if (
+    /codex.*app.?server.*exit.*mid.*turn|app.?server.*exit.*mid.*turn|app.?server.*crash.*mid.*turn/i.test(
+      msg,
+    )
+  ) {
+    return {
+      errorType: "agent-generic-error",
+      failureCategory: "app_server_exit_mid_turn",
+    };
+  }
+
+  // Codex websocket connect timeout
+  if (/ws.*connect.*timeout|websocket.*connect.*timeout/i.test(msg)) {
+    return {
+      errorType: "agent-not-responding",
+      failureCategory: "ws_connect_timeout",
+    };
+  }
+
   // Dispatch acknowledgement timeout
-  if (/timeout|timed out|ack.*timeout|dispatch.*timeout/i.test(msg)) {
+  if (
+    (/timeout|timed out/i.test(msg) && !/ws|websocket/i.test(msg)) ||
+    /ack.*timeout|dispatch.*timeout|timed out waiting for ack/i.test(msg)
+  ) {
     return {
       errorType: "agent-not-responding",
       failureCategory: "dispatch_ack_timeout",
     };
   }
 
-  // Codex app-server exited
-  if (/codex.*app.?server.*exit|app.?server.*crash/i.test(msg)) {
+  // Codex turn/subagent failures
+  if (
+    /codex.*subagent.*child|subagent.*child.*fail|child.*subagent.*fail/i.test(
+      msg,
+    )
+  ) {
     return {
       errorType: "agent-generic-error",
-      failureCategory: "codex_app_server_exit",
+      failureCategory: "subagent_child_failure",
     };
   }
-
-  // Codex turn/subagent failures
   if (/codex.*subagent|subagent.*fail/i.test(msg)) {
     return {
       errorType: "agent-generic-error",

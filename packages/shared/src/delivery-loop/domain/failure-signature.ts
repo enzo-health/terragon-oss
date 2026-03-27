@@ -1,17 +1,22 @@
 import type { DaemonFailure } from "./signals.js";
+import type { DeliveryCodexTransportFailureClass } from "../../db/types.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type FailureSignature = {
-  category: DaemonFailure["kind"];
+  category: FailureSignatureCategory;
   messageHash: number;
   source: "daemon" | "timer";
   firstSeenAt: string;
   consecutiveCount: number;
   totalCount: number;
 };
+
+export type FailureSignatureCategory =
+  | DaemonFailure["kind"]
+  | DeliveryCodexTransportFailureClass;
 
 /** Keyed by `${category}:${messageHash}` */
 export type FailureSignatureMap = Record<string, FailureSignature>;
@@ -32,12 +37,18 @@ export type FailureClassifyInput = {
 // Default policies per failure category
 // ---------------------------------------------------------------------------
 
-const DEFAULT_POLICIES: Record<DaemonFailure["kind"], CircuitBreakerPolicy> = {
-  runtime_crash: { maxConsecutive: 3, maxTotal: 6 },
-  timeout: { maxConsecutive: 3, maxTotal: 6 },
-  oom: { maxConsecutive: 2, maxTotal: 4 },
-  config_error: { maxConsecutive: 1, maxTotal: 1 },
-};
+const DEFAULT_POLICIES: Record<FailureSignatureCategory, CircuitBreakerPolicy> =
+  {
+    runtime_crash: { maxConsecutive: 3, maxTotal: 6 },
+    timeout: { maxConsecutive: 3, maxTotal: 6 },
+    oom: { maxConsecutive: 2, maxTotal: 4 },
+    config_error: { maxConsecutive: 1, maxTotal: 1 },
+    turn_input_too_large: { maxConsecutive: 1, maxTotal: 1 },
+    app_server_exit_mid_turn: { maxConsecutive: 3, maxTotal: 6 },
+    ws_connect_timeout: { maxConsecutive: 3, maxTotal: 6 },
+    config_invalid_provider: { maxConsecutive: 1, maxTotal: 1 },
+    subagent_child_failure: { maxConsecutive: 3, maxTotal: 6 },
+  };
 
 const INFRA_POLICY: CircuitBreakerPolicy = {
   maxConsecutive: 10,
@@ -60,6 +71,40 @@ const INFRA_FAILURE_MESSAGE_MARKERS = [
   "out of memory",
   "oom",
   "codex app-server exited unexpectedly",
+  "ws connect timeout",
+] as const;
+
+const TURN_INPUT_TOO_LARGE_PATTERNS = [
+  /context.?length.?exceeded/i,
+  /context.?window/i,
+  /ran out of room/i,
+  /exceeds the context window/i,
+  /max.*tokens.*exceeded/i,
+  /input length and max_tokens exceed context limit/i,
+  /prompt is too long/i,
+  /input exceeds the maximum length/i,
+] as const;
+
+const APP_SERVER_EXIT_MID_TURN_PATTERNS = [
+  /app.?server.*exit.*mid.*turn/i,
+  /codex.*app.?server.*exit.*mid.*turn/i,
+  /app.?server.*crash.*mid.*turn/i,
+] as const;
+
+const WS_CONNECT_TIMEOUT_PATTERNS = [
+  /ws.*connect.*timeout/i,
+  /websocket.*connect.*timeout/i,
+  /codex.*websocket.*timeout/i,
+] as const;
+
+const CONFIG_INVALID_PROVIDER_PATTERNS = [
+  /provider not configured/i,
+  /invalid provider/i,
+] as const;
+
+const SUBAGENT_CHILD_FAILURE_PATTERNS = [
+  /subagent.*child.*fail/i,
+  /child.*subagent.*fail/i,
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -96,6 +141,52 @@ function failureMessage(failure: DaemonFailure): string {
   }
 }
 
+function classifyCodexTransportFailureCategory(
+  failure: DaemonFailure,
+): FailureSignatureCategory {
+  const message = failureMessage(failure).toLowerCase();
+
+  switch (failure.kind) {
+    case "runtime_crash":
+      if (
+        TURN_INPUT_TOO_LARGE_PATTERNS.some((pattern) => pattern.test(message))
+      ) {
+        return "turn_input_too_large";
+      }
+      if (
+        APP_SERVER_EXIT_MID_TURN_PATTERNS.some((pattern) =>
+          pattern.test(message),
+        )
+      ) {
+        return "app_server_exit_mid_turn";
+      }
+      if (
+        WS_CONNECT_TIMEOUT_PATTERNS.some((pattern) => pattern.test(message))
+      ) {
+        return "ws_connect_timeout";
+      }
+      if (
+        SUBAGENT_CHILD_FAILURE_PATTERNS.some((pattern) => pattern.test(message))
+      ) {
+        return "subagent_child_failure";
+      }
+      return "runtime_crash";
+    case "config_error":
+      if (
+        CONFIG_INVALID_PROVIDER_PATTERNS.some((pattern) =>
+          pattern.test(message),
+        )
+      ) {
+        return "config_invalid_provider";
+      }
+      return "config_error";
+    case "timeout":
+      return "timeout";
+    case "oom":
+      return "oom";
+  }
+}
+
 /**
  * Creates or updates a failure signature entry in the map.
  * Returns the key, updated signature, and a new map (immutable).
@@ -110,8 +201,9 @@ export function extractFailureSignature(
   signature: FailureSignature;
   updatedMap: FailureSignatureMap;
 } {
+  const category = classifyCodexTransportFailureCategory(failure);
   const msgHash = hashFailureMessage(failureMessage(failure));
-  const key = makeSignatureKey(failure.kind, msgHash);
+  const key = makeSignatureKey(category, msgHash);
   const existing = existingMap[key];
 
   const signature: FailureSignature = existing
@@ -121,7 +213,7 @@ export function extractFailureSignature(
         totalCount: existing.totalCount + 1,
       }
     : {
-        category: failure.kind,
+        category,
         messageHash: msgHash,
         source,
         firstSeenAt: now.toISOString(),
@@ -158,8 +250,9 @@ export function shouldTripCircuitBreaker(
  */
 export function isInfrastructureSignature(sig: FailureSignature): boolean {
   return (
-    sig.category === "runtime_crash" &&
-    sig.messageHash === hashFailureMessage("Internal error")
+    sig.category === "ws_connect_timeout" ||
+    (sig.category === "runtime_crash" &&
+      sig.messageHash === hashFailureMessage("Internal error"))
   );
 }
 
@@ -191,6 +284,10 @@ export function isInfrastructureFailure(params: FailureClassifyInput): boolean {
   }
 
   if (category === "transport" || category === "infra") {
+    return true;
+  }
+
+  if (category === "ws_connect_timeout") {
     return true;
   }
 

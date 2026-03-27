@@ -46,14 +46,17 @@ import {
 } from "./opencode";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
 import {
+  CODEX_TURN_START_MAX_INPUT_CHARS,
   codexCommand,
   createCodexParserState,
   parseCodexLine,
   buildThreadStartParams,
   buildTurnStartParams,
+  estimateTurnStartRequestSizeChars,
 } from "./codex";
 import {
   CodexAppServerManager,
+  type CodexAppServerDiagnostics,
   extractThreadEvent,
   SILENTLY_IGNORED_ITEM_TYPES,
 } from "./codex-app-server";
@@ -113,6 +116,18 @@ function formatError(error: unknown): object {
     };
   }
   return { value: error };
+}
+
+function formatAppServerDiagnostics(
+  diagnostics: CodexAppServerDiagnostics,
+): string {
+  return [
+    `lastRequestMethod=${diagnostics.lastRequestMethod ?? "null"}`,
+    `lastExitCode=${diagnostics.lastExitCode ?? "null"}`,
+    `lastExitSignal=${diagnostics.lastExitSignal ?? "null"}`,
+    `lastExitSource=${diagnostics.lastExitSource ?? "null"}`,
+    `lastStderrLine=${diagnostics.lastStderrLine ?? "null"}`,
+  ].join(", ");
 }
 
 function isDaemonEventClaimInProgressError(error: unknown): boolean {
@@ -1586,13 +1601,26 @@ export class TerragonDaemon {
         input,
         manager,
       });
+      const turnStartParams = buildTurnStartParams({
+        threadId,
+        prompt: input.prompt,
+      });
+      const turnStartPayloadChars =
+        estimateTurnStartRequestSizeChars(turnStartParams);
+      this.runtime.logger.info("Codex turn/start payload size", {
+        threadChatId: input.threadChatId,
+        threadId,
+        chars: turnStartPayloadChars,
+      });
+      if (turnStartPayloadChars > CODEX_TURN_START_MAX_INPUT_CHARS) {
+        throw new Error(
+          `codex app-server request failed for turn/start: Input exceeds the maximum length of ${CODEX_TURN_START_MAX_INPUT_CHARS} characters (estimated=${turnStartPayloadChars})`,
+        );
+      }
       await manager.send({
         method: "turn/start",
         threadChatId: input.threadChatId,
-        params: buildTurnStartParams({
-          threadId,
-          prompt: input.prompt,
-        }),
+        params: turnStartParams,
       });
 
       processHealthInterval = setInterval(() => {
@@ -1602,8 +1630,13 @@ export class TerragonDaemon {
         if (manager.isAlive()) {
           return;
         }
+        const diagnostics = formatAppServerDiagnostics(
+          manager.getDiagnostics(),
+        );
         context.rejectTurnComplete(
-          new Error("codex app-server exited unexpectedly during turn"),
+          new Error(
+            `codex app-server exited unexpectedly during turn (${diagnostics})`,
+          ),
         );
       }, 250);
 
@@ -1679,8 +1712,15 @@ export class TerragonDaemon {
             type: "custom-error",
             session_id: null,
             duration_ms: this.getProcessDurationMs(input.threadChatId),
-            error_info:
-              error instanceof Error ? error.message : "Codex app-server error",
+            error_info: (() => {
+              const diagnostics = formatAppServerDiagnostics(
+                manager.getDiagnostics(),
+              );
+              if (error instanceof Error) {
+                return `${error.message} (${diagnostics})`;
+              }
+              return `Codex app-server error (${diagnostics})`;
+            })(),
           },
           threadId: input.threadId,
           threadChatId: input.threadChatId,

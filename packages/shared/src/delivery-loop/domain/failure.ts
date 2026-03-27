@@ -7,6 +7,11 @@ export type DeliveryLoopFailureCategory =
   | "daemon_unreachable"
   | "daemon_spawn_failed"
   | "dispatch_ack_timeout"
+  | "turn_input_too_large"
+  | "app_server_exit_mid_turn"
+  | "ws_connect_timeout"
+  | "config_invalid_provider"
+  | "subagent_child_failure"
   | "codex_app_server_exit"
   | "codex_turn_failed"
   | "codex_subagent_failed"
@@ -42,6 +47,11 @@ export const DELIVERY_LOOP_FAILURE_ACTION_TABLE: Record<
   daemon_unreachable: "rerun_prepare_and_retry",
   daemon_spawn_failed: "rerun_prepare_and_retry",
   dispatch_ack_timeout: "retry_same_intent",
+  turn_input_too_large: "blocked",
+  app_server_exit_mid_turn: "retry_if_budget",
+  ws_connect_timeout: "retry_same_intent",
+  config_invalid_provider: "blocked",
+  subagent_child_failure: "return_to_implementing",
   codex_app_server_exit: "retry_if_budget",
   codex_turn_failed: "retry_if_budget",
   codex_subagent_failed: "return_to_implementing",

@@ -12,6 +12,7 @@ import {
 } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import {
   newThread as newThreadAction,
   NewThreadArgs,
@@ -750,6 +751,22 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(thread!.name).toBe("test-thread-name");
     expect(thread!.repoBaseBranchName).toBe("main");
     expect(thread!.githubRepoFullName).toBe("terragon/test-repo");
+    const runId = "run-error-metadata";
+    await db.insert(schema.agentRunContext).values({
+      runId,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: thread!.codesandboxId!,
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "processing",
+      tokenNonce: "nonce-error-metadata",
+    });
     expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId,
@@ -772,6 +789,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
+      runId,
       messages: [
         {
           type: "assistant",
@@ -800,7 +818,15 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      messages: [{ type: "custom-error", session_id: null, duration_ms: 1000 }],
+      runId,
+      messages: [
+        {
+          type: "custom-error",
+          session_id: null,
+          duration_ms: 1000,
+          error_info: "provider not configured",
+        },
+      ],
       contextUsage: null,
     });
     await waitUntilResolved();
@@ -812,6 +838,18 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     expect(threadChatUpdated!.status).toBe("complete");
     expect(threadChatUpdated!.errorMessage).toBe("agent-generic-error");
+    expect(threadChatUpdated!.errorMessageInfo).toBe("provider not configured");
+    const runContext = await getAgentRunContextByRunId({
+      db,
+      runId,
+      userId: user.id,
+    });
+    expect(runContext).toBeDefined();
+    expect(runContext!.failureCategory).toBe("config_invalid_provider");
+    expect(runContext!.failureSource).toBe("custom-error");
+    expect(runContext!.failureRetryable).toBe(false);
+    expect(runContext!.failureSignatureHash).not.toBeNull();
+    expect(runContext!.failureTerminalReason).toBe("agent-generic-error");
 
     await retryThread({ threadId, threadChatId });
     await waitUntilResolved();

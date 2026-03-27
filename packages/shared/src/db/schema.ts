@@ -53,6 +53,7 @@ import {
   DeliveryParityTargetClass,
   DeliveryReviewThreadEvaluationSource,
   DeliveryReviewThreadGateStatus,
+  ThreadFailureSource,
   DispatchIntentStatus,
   DispatchIntentExecutionClass,
   DispatchIntentDispatchMechanism,
@@ -76,6 +77,7 @@ import {
   DeliveryOutboxTopicV3,
   DeliveryOutboxStatusV3,
 } from "./types";
+import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";
 import {
   AutomationAction,
   AutomationTriggerType,
@@ -435,6 +437,12 @@ export const agentRunContext = pgTable(
     requestedSessionId: text("requested_session_id"),
     resolvedSessionId: text("resolved_session_id"),
     status: text("status").$type<AgentRunStatus>().notNull().default("pending"),
+    failureCategory:
+      text("failure_category").$type<DeliveryLoopFailureCategory>(),
+    failureSource: text("failure_source").$type<ThreadFailureSource>(),
+    failureRetryable: boolean("failure_retryable"),
+    failureSignatureHash: integer("failure_signature_hash"),
+    failureTerminalReason: text("failure_terminal_reason"),
     tokenNonce: text("token_nonce").notNull(),
     daemonTokenKeyId: text("daemon_token_key_id"),
     createdAt: timestamp("created_at").notNull().defaultNow(),

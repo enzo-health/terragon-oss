@@ -44,6 +44,14 @@ import {
   type WorkflowState,
 } from "./types";
 
+function summarizeRetryReason(reason: string): string {
+  const normalized = reason.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 180) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 180)}...`;
+}
+
 /**
  * Pure mapping from effect result to the LoopEvent that should be fired.
  * Returns null for results that don't require a state transition (e.g., human
@@ -424,7 +432,7 @@ async function processImplementingDispatchEffect(params: {
   // but only on retries — on the first run the user's original prompt suffices.
   if (isRetry) {
     const retryMessage = params.retryReason
-      ? `Previous attempt failed: ${params.retryReason}. Fix the issue and continue implementation.`
+      ? `Previous attempt failed: ${summarizeRetryReason(params.retryReason)}. Fix the issue and continue implementation.`
       : "Continue implementation.";
     const { updateThreadChat } = await import("@terragon/shared/model/threads");
     await updateThreadChat({

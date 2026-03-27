@@ -137,6 +137,64 @@ describe("extractFailureSignature", () => {
     const { signature } = extractFailureSignature(failure, "daemon", {}, NOW);
     expect(signature.category).toBe("oom");
   });
+
+  const knownTransportFailures: Array<[DaemonFailure, string]> = [
+    [
+      {
+        kind: "runtime_crash",
+        exitCode: 1,
+        message: "context window exceeded during codex turn",
+      },
+      "turn_input_too_large",
+    ],
+    [
+      {
+        kind: "runtime_crash",
+        exitCode: 1,
+        message: "Input exceeds the maximum length of 1048576 characters.",
+      },
+      "turn_input_too_large",
+    ],
+    [
+      {
+        kind: "runtime_crash",
+        exitCode: 1,
+        message: "codex app-server exited mid turn",
+      },
+      "app_server_exit_mid_turn",
+    ],
+    [
+      {
+        kind: "runtime_crash",
+        exitCode: 1,
+        message: "ws connect timeout while establishing transport",
+      },
+      "ws_connect_timeout",
+    ],
+    [
+      {
+        kind: "config_error",
+        message: "provider not configured for codex transport",
+      },
+      "config_invalid_provider",
+    ],
+    [
+      {
+        kind: "runtime_crash",
+        exitCode: 1,
+        message: "subagent child failed with exit code 1",
+      },
+      "subagent_child_failure",
+    ],
+  ];
+
+  it.each(knownTransportFailures)(
+    "maps known transport signatures to explicit categories",
+    (failure, expectedCategory) => {
+      const { signature } = extractFailureSignature(failure, "daemon", {}, NOW);
+      expect(signature.category).toBe(expectedCategory);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -251,6 +309,18 @@ describe("isInfrastructureSignature", () => {
     };
     expect(isInfrastructureSignature(sig)).toBe(false);
   });
+
+  it("returns true for ws_connect_timeout signatures", () => {
+    const sig: FailureSignature = {
+      category: "ws_connect_timeout",
+      messageHash: hashFailureMessage("ws connect timeout"),
+      source: "daemon",
+      firstSeenAt: NOW.toISOString(),
+      consecutiveCount: 1,
+      totalCount: 1,
+    };
+    expect(isInfrastructureSignature(sig)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -317,6 +387,15 @@ describe("isInfrastructureFailure", () => {
       isInfrastructureFailure({
         category: "agent-generic-error",
         message: "codex crashed",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies ws_connect_timeout category as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "ws_connect_timeout",
+        message: "websocket connect timeout",
       }),
     ).toBe(true);
   });
@@ -491,5 +570,19 @@ describe("getPolicyForSignature", () => {
     const policy = getPolicyForSignature(sig);
     expect(policy.maxConsecutive).toBe(1);
     expect(policy.maxTotal).toBe(1);
+  });
+
+  it("returns infra policy for ws_connect_timeout", () => {
+    const sig: FailureSignature = {
+      category: "ws_connect_timeout",
+      messageHash: hashFailureMessage("ws connect timeout"),
+      source: "daemon",
+      firstSeenAt: NOW.toISOString(),
+      consecutiveCount: 1,
+      totalCount: 1,
+    };
+    const policy = getPolicyForSignature(sig);
+    expect(policy.maxConsecutive).toBe(10);
+    expect(policy.maxTotal).toBe(15);
   });
 });
