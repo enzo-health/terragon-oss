@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { isTerminalStateV3, type WorkflowStateV3 } from "./types";
+import { isTerminalState, type WorkflowState } from "./types";
 
-describe("isTerminalStateV3", () => {
+describe("isTerminalState", () => {
   it("returns true for terminal states", () => {
-    const terminalStates: WorkflowStateV3[] = ["done", "stopped", "terminated"];
+    const terminalStates: WorkflowState[] = ["done", "stopped", "terminated"];
 
     for (const state of terminalStates) {
-      expect(isTerminalStateV3(state)).toBe(true);
+      expect(isTerminalState(state)).toBe(true);
     }
   });
 
   it("returns false for non-terminal states", () => {
-    const nonTerminalStates: WorkflowStateV3[] = [
+    const nonTerminalStates: WorkflowState[] = [
       "planning",
       "implementing",
       "gating_review",
@@ -22,7 +22,7 @@ describe("isTerminalStateV3", () => {
     ];
 
     for (const state of nonTerminalStates) {
-      expect(isTerminalStateV3(state)).toBe(false);
+      expect(isTerminalState(state)).toBe(false);
     }
   });
 });
