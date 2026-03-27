@@ -127,6 +127,7 @@ function formatAppServerDiagnostics(
     `lastExitSignal=${diagnostics.lastExitSignal ?? "null"}`,
     `lastExitSource=${diagnostics.lastExitSource ?? "null"}`,
     `lastStderrLine=${diagnostics.lastStderrLine ?? "null"}`,
+    `lastProcessError=${diagnostics.lastProcessError ?? "null"}`,
   ].join(", ");
 }
 
