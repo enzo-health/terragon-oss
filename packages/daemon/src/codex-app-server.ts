@@ -818,6 +818,14 @@ export type CodexAppServerManagerOptions = {
   createWebSocket?: (url: string) => WebSocket;
 };
 
+export type CodexAppServerDiagnostics = {
+  lastExitCode: number | null;
+  lastExitSignal: string | null;
+  lastExitSource: string | null;
+  lastStderrLine: string | null;
+  lastRequestMethod: string | null;
+};
+
 export class CodexAppServerManager {
   readonly threadStates = new Map<string, CodexAppServerThreadState>();
 
@@ -845,6 +853,11 @@ export class CodexAppServerManager {
   private readyPromise: Promise<void> | null = null;
   private daemonToken: string | null;
   private spawnToken: string | null = null;
+  private lastExitCode: number | null = null;
+  private lastExitSignal: string | null = null;
+  private lastExitSource: string | null = null;
+  private lastStderrLine: string | null = null;
+  private lastRequestMethod: string | null = null;
 
   constructor({
     logger,
@@ -983,6 +996,16 @@ export class CodexAppServerManager {
     return this.threadStates.get(threadId) ?? null;
   }
 
+  getDiagnostics(): CodexAppServerDiagnostics {
+    return {
+      lastExitCode: this.lastExitCode,
+      lastExitSignal: this.lastExitSignal,
+      lastExitSource: this.lastExitSource,
+      lastStderrLine: this.lastStderrLine,
+      lastRequestMethod: this.lastRequestMethod,
+    };
+  }
+
   ensureThreadState({
     threadId,
     threadChatId,
@@ -1064,9 +1087,11 @@ export class CodexAppServerManager {
     let closeHandled = false;
     const handleClose = ({
       code,
+      signal,
       source,
     }: {
       code: number | null;
+      signal: string | null;
       source: string;
     }): void => {
       if (closeHandled) {
@@ -1080,11 +1105,16 @@ export class CodexAppServerManager {
       if (this.process === processHandle) {
         this.process = null;
       }
+      this.lastExitCode = code;
+      this.lastExitSignal = signal;
+      this.lastExitSource = source;
       this.ready = false;
       this.pendingThreadStarts = [];
       this.threadStates.clear();
       this.rejectPendingRequests(
-        new Error(`codex app-server exited (${source}) with code ${code}`),
+        new Error(
+          `codex app-server exited (${source}) with code ${code} signal ${signal ?? "null"}`,
+        ),
       );
     };
 
@@ -1109,6 +1139,7 @@ export class CodexAppServerManager {
       if (!trimmed) {
         return;
       }
+      this.lastStderrLine = trimmed;
       const level = trimmed.includes("failed to load skill") ? "debug" : "warn";
       this.logger[level]("codex app-server stderr", {
         line: trimmed,
@@ -1126,17 +1157,21 @@ export class CodexAppServerManager {
       );
     });
 
-    processHandle.on("exit", (rawCode: unknown) => {
+    processHandle.on("exit", (rawCode: unknown, rawSignal: unknown) => {
       const code = typeof rawCode === "number" ? rawCode : null;
+      const signal = typeof rawSignal === "string" ? rawSignal : null;
       handleClose({
         code,
+        signal,
         source: "exit",
       });
     });
-    processHandle.on("close", (rawCode: unknown) => {
+    processHandle.on("close", (rawCode: unknown, rawSignal: unknown) => {
       const code = typeof rawCode === "number" ? rawCode : null;
+      const signal = typeof rawSignal === "string" ? rawSignal : null;
       handleClose({
         code,
+        signal,
         source: "close",
       });
     });
@@ -1388,6 +1423,7 @@ export class CodexAppServerManager {
     }
 
     const timeoutMs = request.timeoutMs ?? this.requestTimeoutMs;
+    this.lastRequestMethod = request.method;
     const requestId = this.nextRequestId;
     this.nextRequestId += 1;
 

@@ -563,6 +563,9 @@ export type CodexTurnStartParams = {
   sandboxPolicy?: CodexSandboxPolicy;
 };
 
+export const CODEX_TURN_START_SOFT_INPUT_CHARS = 900_000;
+export const CODEX_TURN_START_MAX_INPUT_CHARS = 1_048_576;
+
 export function buildTurnStartParams({
   threadId,
   prompt,
@@ -577,6 +580,18 @@ export function buildTurnStartParams({
     // sandbox enforcement because the Docker/E2B container IS the sandbox.
     sandboxPolicy: { type: "externalSandbox", networkAccess: "enabled" },
   };
+}
+
+export function estimateTurnStartRequestSizeChars(
+  params: CodexTurnStartParams,
+): number {
+  const requestEnvelope = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "turn/start",
+    params,
+  };
+  return JSON.stringify(requestEnvelope).length;
 }
 
 /**

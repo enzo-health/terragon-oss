@@ -2,6 +2,8 @@ import { describe, expect, test, vi } from "vitest";
 import {
   buildThreadStartParams,
   buildTurnStartParams,
+  CODEX_TURN_START_MAX_INPUT_CHARS,
+  estimateTurnStartRequestSizeChars,
   codexAppServerStartCommand,
   codexCommand,
   createCodexParserState,
@@ -1217,5 +1219,33 @@ describe("buildTurnStartParams", () => {
       input: [{ type: "text", text: "Implement this task" }],
       sandboxPolicy: { type: "externalSandbox", networkAccess: "enabled" },
     });
+  });
+});
+
+describe("estimateTurnStartRequestSizeChars", () => {
+  test("returns deterministic serialized request size", () => {
+    const params = buildTurnStartParams({
+      threadId: "thread-123",
+      prompt: "Implement this task",
+    });
+    const size = estimateTurnStartRequestSizeChars(params);
+    expect(size).toBeGreaterThan(0);
+    expect(size).toBe(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "turn/start",
+        params,
+      }).length,
+    );
+  });
+
+  test("exceeds max input chars when prompt is oversized", () => {
+    const params = buildTurnStartParams({
+      threadId: "thread-123",
+      prompt: "x".repeat(CODEX_TURN_START_MAX_INPUT_CHARS),
+    });
+    const size = estimateTurnStartRequestSizeChars(params);
+    expect(size).toBeGreaterThan(CODEX_TURN_START_MAX_INPUT_CHARS);
   });
 });

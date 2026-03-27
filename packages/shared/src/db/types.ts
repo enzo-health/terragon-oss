@@ -1,6 +1,7 @@
 import { SelectedAIModels } from "@terragon/agent/types";
 import { AutomationTrigger, AutomationTriggerType } from "../automations";
 import * as schema from "../db/schema";
+import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";
 
 type UserInner = typeof schema.user.$inferSelect;
 type SessionInner = typeof schema.session.$inferSelect;
@@ -338,6 +339,18 @@ export type ThreadErrorType =
   | "prompt-too-long"
   | "queue-limit-exceeded";
 export type ThreadErrorMessage = ThreadErrorType | string;
+export type ThreadFailureSource =
+  | "custom-error"
+  | "result"
+  | "custom-stop"
+  | "unknown";
+export type ThreadFailureMetadata = {
+  failureCategory: DeliveryLoopFailureCategory | null;
+  failureSource: ThreadFailureSource | null;
+  failureRetryable: boolean | null;
+  failureSignatureHash: number | null;
+  failureTerminalReason: string | null;
+};
 export type GithubPRStatus = "draft" | "open" | "closed" | "merged";
 export type GithubCheckRunConclusion =
   | "success"
@@ -860,6 +873,13 @@ export type DeliveryReviewThreadEvaluationSource = "webhook" | "polling";
 export type DeliveryVideoCaptureStatus = "not_started" | "captured" | "failed";
 
 export type DeliveryVideoFailureClass = "auth" | "quota" | "script" | "infra";
+
+export type DeliveryCodexTransportFailureClass =
+  | "turn_input_too_large"
+  | "app_server_exit_mid_turn"
+  | "ws_connect_timeout"
+  | "config_invalid_provider"
+  | "subagent_child_failure";
 
 export type DeliveryParityTargetClass = "coordinator";
 

@@ -11,6 +11,7 @@ import { env } from "@terragon/env/apps-www";
 import { gitPullUpstream } from "@terragon/sandbox/commands";
 import { CreateSandboxOptions, ISandboxSession } from "@terragon/sandbox/types";
 import {
+  DBMessage,
   DBUserMessage,
   DBUserMessageWithModel,
   Thread,
@@ -54,7 +55,7 @@ import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
-import { tryAutoCompactThread } from "@/server-lib/compact";
+import { compactThreadChat, tryAutoCompactThread } from "@/server-lib/compact";
 import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
 import {
   ensureDeliveryLoopEnrollmentForThreadIfEnabled,
@@ -657,10 +658,65 @@ export async function startAgentMessage({
             /(?:^|\s)\/compact(?=\s|$)/g,
             "",
           );
-          const finalFinalPrompt =
+          let finalFinalPrompt =
             deliveryLoopPhasePromptPrefix === null
               ? sanitizedPrompt
               : `${deliveryLoopPhasePromptPrefix}\n\n${sanitizedPrompt}`;
+
+          if (threadChat.agent === "codex") {
+            const initialTurnStartChars =
+              estimateTurnStartRequestSizeChars(finalFinalPrompt);
+            console.log("[startAgentMessage] Codex turn/start preflight size", {
+              threadId,
+              threadChatId,
+              chars: initialTurnStartChars,
+              softLimit: CODEX_TURN_START_SOFT_INPUT_CHARS,
+              hardLimit: CODEX_TURN_START_MAX_INPUT_CHARS,
+            });
+
+            if (initialTurnStartChars > CODEX_TURN_START_SOFT_INPUT_CHARS) {
+              const forcedCompact = await compactThreadChat({
+                userId,
+                threadId,
+                threadChatId,
+              });
+              if (forcedCompact?.summary) {
+                const compactSummaryMessage: DBMessage = {
+                  type: "system",
+                  message_type: "compact-result",
+                  parts: [{ type: "text", text: forcedCompact.summary }],
+                  timestamp: new Date().toISOString(),
+                };
+                await updateThreadChat({
+                  db,
+                  userId,
+                  threadId,
+                  threadChatId,
+                  updates: {
+                    appendMessages: [compactSummaryMessage],
+                    contextLength: null,
+                    sessionId: null,
+                  },
+                });
+                finalFinalPrompt =
+                  `${finalFinalPrompt}\n\n---\n\n` +
+                  `The user has run out of context. This is a summary of what has been done: <summary>\n` +
+                  `${forcedCompact.summary}\n</summary>\n\n`;
+                sessionId = null;
+                codexPreviousResponseId = null;
+              }
+            }
+
+            const finalTurnStartChars =
+              estimateTurnStartRequestSizeChars(finalFinalPrompt);
+            if (finalTurnStartChars > CODEX_TURN_START_MAX_INPUT_CHARS) {
+              throw new ThreadError(
+                "prompt-too-long",
+                `Input exceeds the maximum length of ${CODEX_TURN_START_MAX_INPUT_CHARS} characters (estimated=${finalTurnStartChars}).`,
+                null,
+              );
+            }
+          }
 
           if (!finalFinalPrompt.trim()) {
             throw new ThreadError("no-user-message", "", null);
@@ -807,6 +863,23 @@ export async function startAgentMessage({
 export type StartAgentMessageResult = {
   dispatchLaunched: boolean;
 };
+
+const CODEX_TURN_START_SOFT_INPUT_CHARS = 900_000;
+const CODEX_TURN_START_MAX_INPUT_CHARS = 1_048_576;
+
+function estimateTurnStartRequestSizeChars(prompt: string): number {
+  const requestEnvelope = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "turn/start",
+    params: {
+      threadId: "thread-id-placeholder",
+      input: [{ type: "text", text: prompt }],
+      sandboxPolicy: { type: "externalSandbox", networkAccess: "enabled" },
+    },
+  };
+  return JSON.stringify(requestEnvelope).length;
+}
 
 async function preparePromptForModel({
   model,
