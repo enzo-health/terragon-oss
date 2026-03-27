@@ -225,26 +225,72 @@ export function getThreadPatches(
 
 export function useRealtimeThread(
   threadId: string,
+  threadChatId: string | undefined,
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
 ) {
   const lastMessageSeqRef = useRef<number | null>(null);
+  const lastDeltaSeqRef = useRef<number | null>(null);
   const replayInFlightRef = useRef(false);
+
+  const updateSequenceTrackers = useCallback(
+    (patches: BroadcastThreadPatch[]) => {
+      const maxMessageSeq = patches.reduce<number | null>((max, patch) => {
+        const seq =
+          patch.messageSeq ??
+          (isMonotonicSequence(patch.chatSequence) ? patch.chatSequence : null);
+        if (seq == null) return max;
+        return max === null ? seq : Math.max(max, seq);
+      }, null);
+      if (
+        maxMessageSeq != null &&
+        (lastMessageSeqRef.current == null ||
+          maxMessageSeq > lastMessageSeqRef.current)
+      ) {
+        lastMessageSeqRef.current = maxMessageSeq;
+      }
+
+      const maxDeltaSeq = patches.reduce<number | null>((max, patch) => {
+        if (patch.op !== "delta" || patch.deltaSeq == null) {
+          return max;
+        }
+        return max == null ? patch.deltaSeq : Math.max(max, patch.deltaSeq);
+      }, null);
+      if (
+        maxDeltaSeq != null &&
+        (lastDeltaSeqRef.current == null ||
+          maxDeltaSeq > lastDeltaSeqRef.current)
+      ) {
+        lastDeltaSeqRef.current = maxDeltaSeq;
+      }
+    },
+    [],
+  );
 
   useRealtimeUser({
     debounceMs: 0,
     matches: useCallback(
       (message) =>
-        getThreadPatches(message).some((patch) => patch.threadId === threadId),
-      [threadId],
+        getThreadPatches(message).some(
+          (patch) =>
+            patch.threadId === threadId &&
+            (threadChatId == null ||
+              patch.threadChatId == null ||
+              patch.threadChatId === threadChatId),
+        ),
+      [threadId, threadChatId],
     ),
     onMessage: useCallback(
       (message) => {
         const patches = getThreadPatches(message).filter(
-          (patch) => patch.threadId === threadId,
+          (patch) =>
+            patch.threadId === threadId &&
+            (threadChatId == null ||
+              patch.threadChatId == null ||
+              patch.threadChatId === threadChatId),
         );
         if (patches.length === 0) return;
 
-        // Check for seq gaps and attempt replay
+        // Check for message seq gaps and attempt replay
         const maxIncomingSeq = patches.reduce<number | null>((max, p) => {
           const seq =
             p.messageSeq ??
@@ -254,60 +300,117 @@ export function useRealtimeThread(
         }, null);
 
         const lastSeq = lastMessageSeqRef.current;
-        const hasGap =
+        const hasMessageGap =
           maxIncomingSeq !== null &&
           lastSeq !== null &&
           isMonotonicSequence(lastSeq) &&
           maxIncomingSeq > lastSeq + 1;
 
-        if (hasGap && !replayInFlightRef.current) {
+        // Check for token delta seq gaps and attempt replay
+        const maxIncomingDeltaSeq = patches.reduce<number | null>(
+          (max, patch) => {
+            if (patch.op !== "delta" || patch.deltaSeq == null) {
+              return max;
+            }
+            return max === null
+              ? patch.deltaSeq
+              : Math.max(max, patch.deltaSeq);
+          },
+          null,
+        );
+        const lastDeltaSeq = lastDeltaSeqRef.current;
+        const hasDeltaGap =
+          maxIncomingDeltaSeq !== null &&
+          lastDeltaSeq !== null &&
+          maxIncomingDeltaSeq > lastDeltaSeq + 1;
+
+        if ((hasMessageGap || hasDeltaGap) && !replayInFlightRef.current) {
           replayInFlightRef.current = true;
-          fetch(
-            `/api/thread-replay?threadId=${encodeURIComponent(threadId)}&fromSeq=${lastSeq}`,
-          )
+          const replayUrl = new URL(
+            "/api/thread-replay",
+            window.location.origin,
+          );
+          replayUrl.searchParams.set("threadId", threadId);
+          replayUrl.searchParams.set(
+            "fromSeq",
+            String(lastMessageSeqRef.current ?? 0),
+          );
+          if (threadChatId != null && lastDeltaSeqRef.current != null) {
+            replayUrl.searchParams.set("threadChatId", threadChatId);
+            replayUrl.searchParams.set(
+              "fromDeltaSeq",
+              String(lastDeltaSeqRef.current),
+            );
+          }
+          fetch(replayUrl.toString())
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
+              const replayPatches: BroadcastThreadPatch[] = [];
               if (data?.entries?.length > 0) {
                 // Build synthetic patches from replayed entries
-                const replayPatches: BroadcastThreadPatch[] = data.entries.map(
-                  (entry: { seq: number; messages: unknown[] }) => ({
-                    threadId,
-                    op: "upsert" as const,
-                    chatSequence: entry.seq,
-                    messageSeq: entry.seq,
-                    appendMessages: entry.messages,
-                  }),
+                replayPatches.push(
+                  ...data.entries.map(
+                    (entry: { seq: number; messages: unknown[] }) => ({
+                      threadId,
+                      ...(threadChatId ? { threadChatId } : {}),
+                      op: "upsert" as const,
+                      chatSequence: entry.seq,
+                      messageSeq: entry.seq,
+                      appendMessages: entry.messages,
+                    }),
+                  ),
                 );
-                onThreadPatches(replayPatches);
               }
-              // Now apply the original patches
-              onThreadPatches(patches);
+
+              if (data?.deltaEntries?.length > 0) {
+                replayPatches.push(
+                  ...data.deltaEntries.map(
+                    (entry: {
+                      threadId: string;
+                      threadChatId: string;
+                      messageId: string;
+                      partIndex: number;
+                      streamSeq: number;
+                      idempotencyKey: string;
+                      text: string;
+                    }) => ({
+                      threadId: entry.threadId,
+                      threadChatId: entry.threadChatId,
+                      op: "delta" as const,
+                      messageId: entry.messageId,
+                      partIndex: entry.partIndex,
+                      deltaSeq: entry.streamSeq,
+                      deltaIdempotencyKey: entry.idempotencyKey,
+                      text: entry.text,
+                    }),
+                  ),
+                );
+              }
+
+              const combinedPatches = [...replayPatches, ...patches];
+              updateSequenceTrackers(combinedPatches);
+              onThreadPatches(combinedPatches);
             })
             .catch((error) => {
               console.warn(
                 "[broadcast] replay fetch failed, applying patches directly",
                 error,
               );
+              updateSequenceTrackers(patches);
               onThreadPatches(patches);
             })
             .finally(() => {
               replayInFlightRef.current = false;
             });
-        } else if (!hasGap || replayInFlightRef.current) {
+        } else if (
+          !(hasMessageGap || hasDeltaGap) ||
+          replayInFlightRef.current
+        ) {
+          updateSequenceTrackers(patches);
           onThreadPatches(patches);
         }
-
-        // Update lastMessageSeq tracker
-        if (maxIncomingSeq !== null) {
-          if (
-            lastMessageSeqRef.current === null ||
-            maxIncomingSeq > lastMessageSeqRef.current
-          ) {
-            lastMessageSeqRef.current = maxIncomingSeq;
-          }
-        }
       },
-      [threadId, onThreadPatches],
+      [threadId, threadChatId, onThreadPatches, updateSequenceTrackers],
     ),
   });
 }

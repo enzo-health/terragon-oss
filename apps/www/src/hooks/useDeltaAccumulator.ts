@@ -21,6 +21,8 @@ export function useDeltaAccumulator() {
   const [deltas, setDeltas] = useState<DeltaAccumulator>(new Map());
   // Ref mirrors state for synchronous reads inside the patch callback
   const deltasRef = useRef<DeltaAccumulator>(deltas);
+  const maxDeltaSeqByKeyRef = useRef<Map<DeltaKey, number>>(new Map());
+  const seenIdempotencyKeysRef = useRef<Set<string>>(new Set());
 
   const applyDelta = useCallback((patch: BroadcastThreadPatch) => {
     if (
@@ -31,10 +33,26 @@ export function useDeltaAccumulator() {
     ) {
       return;
     }
+
+    if (patch.deltaIdempotencyKey) {
+      if (seenIdempotencyKeysRef.current.has(patch.deltaIdempotencyKey)) {
+        return;
+      }
+      seenIdempotencyKeysRef.current.add(patch.deltaIdempotencyKey);
+    }
+
+    const key = makeDeltaKey(patch.messageId, patch.partIndex);
+    if (patch.deltaSeq != null) {
+      const maxAppliedSeq = maxDeltaSeqByKeyRef.current.get(key);
+      if (maxAppliedSeq != null && patch.deltaSeq <= maxAppliedSeq) {
+        return;
+      }
+      maxDeltaSeqByKeyRef.current.set(key, patch.deltaSeq);
+    }
+
     setDeltas((prev) => {
-      const key = makeDeltaKey(patch.messageId!, patch.partIndex!);
       const next = new Map(prev);
-      next.set(key, (prev.get(key) ?? "") + patch.text!);
+      next.set(key, (prev.get(key) ?? "") + patch.text);
       deltasRef.current = next;
       return next;
     });
@@ -44,6 +62,8 @@ export function useDeltaAccumulator() {
     if (deltasRef.current.size === 0) return;
     setDeltas(new Map());
     deltasRef.current = new Map();
+    maxDeltaSeqByKeyRef.current = new Map();
+    seenIdempotencyKeysRef.current = new Set();
   }, []);
 
   return { deltas, applyDelta, clearDeltasForThread } as const;

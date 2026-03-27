@@ -188,6 +188,8 @@ const BroadcastThreadPatchSchema = z.object({
   // Delta fields — ephemeral token-level streaming, not persisted or replayed
   messageId: z.string().optional(),
   partIndex: z.number().int().nonnegative().optional(),
+  deltaSeq: z.number().int().nonnegative().optional(),
+  deltaIdempotencyKey: z.string().optional(),
   text: z.string().optional(),
 });
 

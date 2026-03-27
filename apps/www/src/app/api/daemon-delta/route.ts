@@ -1,6 +1,9 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
 import type { DaemonDelta } from "@terragon/daemon/shared";
+import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import { db } from "@/lib/db";
+import { randomUUID } from "node:crypto";
 
 type DaemonDeltaBody = {
   threadId: string;
@@ -30,17 +33,43 @@ export async function POST(request: Request) {
   }
 
   const userId = daemonAuthContext.userId;
+  const claims = daemonAuthContext.claims;
+  if (
+    claims &&
+    (claims.threadId !== threadId || claims.threadChatId !== threadChatId)
+  ) {
+    return Response.json(
+      { success: false, error: "daemon_delta_claim_mismatch" },
+      { status: 401 },
+    );
+  }
 
-  // Broadcast all deltas in parallel — fire-and-forget, no DB write
+  const tokenEvents = await appendTokenStreamEvents({
+    db,
+    events: deltas.map((delta, index) => ({
+      userId,
+      threadId,
+      threadChatId,
+      messageId: delta.messageId,
+      partIndex: delta.partIndex,
+      text: delta.text,
+      idempotencyKey: claims
+        ? `${threadChatId}:${claims.runId}:delta:${delta.deltaSeq}:${index}`
+        : `${threadChatId}:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${randomUUID()}`,
+    })),
+  });
+
   await Promise.all(
-    deltas.map((delta) =>
+    tokenEvents.map((event) =>
       publishDeltaBroadcast({
         userId,
         threadId,
         threadChatId,
-        messageId: delta.messageId,
-        partIndex: delta.partIndex,
-        text: delta.text,
+        messageId: event.messageId,
+        partIndex: event.partIndex,
+        deltaSeq: event.streamSeq,
+        deltaIdempotencyKey: event.idempotencyKey,
+        text: event.text,
       }),
     ),
   );

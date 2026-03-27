@@ -278,19 +278,24 @@ function ChatUI({
     isReadOnly,
   });
   const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
-  useRealtimeThread(threadId, (patches) => {
-    let hasNonDelta = false;
+  useRealtimeThread(threadId, threadChatId, (patches) => {
+    let hasMaterializedMessages = false;
     for (const patch of patches) {
       if (patch.op === "delta") {
         applyDelta(patch);
       } else {
-        hasNonDelta = true;
+        if (
+          patch.appendMessages !== undefined &&
+          patch.appendMessages.length > 0
+        ) {
+          hasMaterializedMessages = true;
+        }
         applyThreadPatchToQueryClient({ queryClient, patch });
       }
     }
     // When a complete message arrives, clear accumulated deltas since the
     // DB message now contains the full text.
-    if (hasNonDelta) {
+    if (hasMaterializedMessages) {
       clearDeltasForThread();
     }
   });

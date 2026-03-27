@@ -80,8 +80,8 @@ async function appendToStreamIfRegistered(
 
 /**
  * Publish a delta broadcast for token-level streaming.
- * Deltas are ephemeral — NOT persisted to DB, NOT added to Redis Stream,
- * NOT replayed on reconnect.
+ * Deltas are already persisted and sequenced before publish in API routes.
+ * This function only emits the realtime patch.
  */
 export async function publishDeltaBroadcast({
   userId,
@@ -89,6 +89,8 @@ export async function publishDeltaBroadcast({
   threadChatId,
   messageId,
   partIndex,
+  deltaSeq,
+  deltaIdempotencyKey,
   text,
 }: {
   userId: string;
@@ -96,6 +98,8 @@ export async function publishDeltaBroadcast({
   threadChatId: string;
   messageId: string;
   partIndex: number;
+  deltaSeq?: number;
+  deltaIdempotencyKey?: string;
   text: string;
 }): Promise<void> {
   return publishBroadcastUserMessage({
@@ -109,6 +113,8 @@ export async function publishDeltaBroadcast({
           op: "delta",
           messageId,
           partIndex,
+          ...(deltaSeq !== undefined ? { deltaSeq } : {}),
+          ...(deltaIdempotencyKey ? { deltaIdempotencyKey } : {}),
           text,
         },
       ],
