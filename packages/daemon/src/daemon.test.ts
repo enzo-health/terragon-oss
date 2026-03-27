@@ -220,6 +220,151 @@ describe("daemon", () => {
     expect(spawnCommandLineMock).not.toHaveBeenCalled();
   });
 
+  it("emits text-kind deltas from codex app-server agent_message updates", async () => {
+    let notificationHandler:
+      | ((
+          notification: {
+            method: string;
+            params?: Record<string, unknown>;
+          },
+          context: {
+            threadId: string | null;
+            threadState: {
+              threadChatId: string;
+              parserState: ReturnType<typeof createCodexParserState>;
+            };
+          },
+        ) => void)
+      | null = null;
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn((handler: typeof notificationHandler) => {
+        notificationHandler = handler;
+        return () => {};
+      }),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "codex-thread-delta-kind",
+            },
+          };
+        }
+        if (method === "turn/start" && notificationHandler) {
+          notificationHandler(
+            {
+              method: "item/updated",
+              params: {
+                item: {
+                  type: "agent_message",
+                  id: "agent-msg-1",
+                  text: "hello from codex",
+                },
+              },
+            },
+            {
+              threadId: "codex-thread-delta-kind",
+              threadState,
+            },
+          );
+          notificationHandler(
+            {
+              method: "turn/completed",
+              params: {
+                response: {
+                  id: "resp-delta-kind",
+                },
+              },
+            },
+            {
+              threadId: "codex-thread-delta-kind",
+              threadState,
+            },
+          );
+        }
+        return {};
+      }),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await (daemon as any).runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5",
+      transportMode: "codex-app-server",
+      sessionId: null,
+    } satisfies DaemonMessageClaude);
+
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deltas: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "text",
+            messageId: "agent-msg-1",
+          }),
+        ]),
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
+  });
+
+  it("forwards mixed text/thinking delta kinds in daemon-event payload", async () => {
+    (daemon as any).deltaBuffer = [
+      {
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        token: TEST_INPUT_MESSAGE.token,
+        messageId: "part-1",
+        partIndex: 0,
+        deltaSeq: 1,
+        kind: "text",
+        text: "hello",
+      },
+      {
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        token: TEST_INPUT_MESSAGE.token,
+        messageId: "part-1",
+        partIndex: 1,
+        deltaSeq: 2,
+        kind: "thinking",
+        text: "reasoning",
+      },
+    ];
+
+    await (daemon as any).sendMessagesToAPI({
+      messages: [],
+      entryCount: 0,
+      timezone: "America/New_York",
+      token: TEST_INPUT_MESSAGE.token,
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+    });
+
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deltas: [
+          expect.objectContaining({ kind: "text", deltaSeq: 1 }),
+          expect.objectContaining({ kind: "thinking", deltaSeq: 2 }),
+        ],
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
+  });
+
   it("interrupts app-server turn on stop message instead of killing process", async () => {
     (daemon as any).appServerRunContexts.set(
       TEST_STOP_MESSAGE.threadChatId,

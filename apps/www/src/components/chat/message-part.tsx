@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, type ReactNode, useMemo } from "react";
 import {
   AllToolParts,
   UIPart,
@@ -23,6 +23,7 @@ import { findArtifactDescriptorForPart } from "./secondary-panel";
 
 export interface MessagePartProps {
   part: UIPart;
+  useAiElementsLayout?: boolean;
   onClick?: () => void;
   isLatest?: boolean;
   isAgentWorking?: boolean;
@@ -40,6 +41,7 @@ export interface MessagePartProps {
 
 export const MessagePart = memo(function MessagePart({
   part,
+  useAiElementsLayout = false,
   onClick,
   isLatest = false,
   isAgentWorking = false,
@@ -100,9 +102,16 @@ export const MessagePart = memo(function MessagePart({
     };
   }, [planArtifactDescriptor, onOpenArtifact]);
 
+  const wrapPart = (node: ReactNode): ReactNode => {
+    if (!useAiElementsLayout) {
+      return node;
+    }
+    return <div className="rounded-md border border-border/50 p-2">{node}</div>;
+  };
+
   switch (part.type) {
     case "text": {
-      return (
+      return wrapPart(
         <TextPart
           text={part.text}
           githubRepoFullName={githubRepoFullName}
@@ -110,67 +119,67 @@ export const MessagePart = memo(function MessagePart({
           baseBranchName={baseBranchName}
           hasCheckpoint={hasCheckpoint}
           onOpenInArtifactWorkspace={handleOpenPlanArtifact}
-        />
+        />,
       );
     }
     case "thinking": {
-      return (
+      return wrapPart(
         <ThinkingPart
           thinking={part.thinking}
           isLatest={isLatest}
           isAgentWorking={isAgentWorking}
-        />
+        />,
       );
     }
     case "tool": {
       const toolPart = part as AllToolParts;
-      return (
+      return wrapPart(
         <ToolPart
           toolPart={toolPart}
           {...toolProps}
           artifactDescriptors={artifactDescriptors}
           onOpenArtifact={onOpenArtifact}
-        />
+        />,
       );
     }
     case "image": {
       const imagePart = part as UIImagePart;
-      return (
+      return wrapPart(
         <ImagePart
           imageUrl={imagePart.image_url}
           onClick={onClick}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
+        />,
       );
     }
     case "rich-text": {
       const richTextPart = part as UIRichTextPart;
-      return (
+      return wrapPart(
         <RichTextPart
           richTextPart={richTextPart}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
+        />,
       );
     }
     case "pdf": {
       const pdfPart = part as UIPdfPart;
-      return (
+      return wrapPart(
         <PdfPart
           pdfUrl={pdfPart.pdf_url}
           filename={pdfPart.filename}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
+        />,
       );
     }
     case "text-file": {
       const textFilePart = part as UITextFilePart;
-      return (
+      return wrapPart(
         <TextFilePart
           textFileUrl={textFilePart.file_url}
           filename={textFilePart.filename}
           mimeType={textFilePart.mime_type}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
+        />,
       );
     }
     case "plan":
@@ -187,6 +196,7 @@ function areMessagePartPropsEqual(
 ) {
   if (
     prevProps.part !== nextProps.part ||
+    prevProps.useAiElementsLayout !== nextProps.useAiElementsLayout ||
     prevProps.onClick !== nextProps.onClick ||
     prevProps.isLatest !== nextProps.isLatest ||
     prevProps.isAgentWorking !== nextProps.isAgentWorking ||

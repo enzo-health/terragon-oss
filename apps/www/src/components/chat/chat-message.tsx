@@ -386,6 +386,7 @@ export const ChatMessage = memo(function ChatMessage({
                 isLatestMessage={isLatestMessage}
                 isAgentWorking={isAgentWorking}
                 messagePartProps={messagePartProps}
+                useAiElementsLayout={useAiElementsLayout}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
                 planOccurrences={planOccurrences}
@@ -413,6 +414,7 @@ export const ChatMessage = memo(function ChatMessage({
                     part={part}
                     isLatest={isLatestMessage && groupIndex === lastGroupIndex}
                     isAgentWorking={isAgentWorking}
+                    useAiElementsLayout={useAiElementsLayout}
                     {...messagePartProps}
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={onOpenArtifact}
@@ -734,6 +736,7 @@ function CollapsibleAgentActivityGroupLabel({
 function CollapsibleAgentActivityGroup({
   group,
   agent,
+  useAiElementsLayout = false,
   isLatestMessage = false,
   isAgentWorking = false,
   messagePartProps,
@@ -743,6 +746,7 @@ function CollapsibleAgentActivityGroup({
 }: {
   group: PartGroup;
   agent: AIAgent | null;
+  useAiElementsLayout?: boolean;
   isLatestMessage: boolean;
   isAgentWorking: boolean;
   messagePartProps: MessagePartRenderProps;
@@ -777,6 +781,7 @@ function CollapsibleAgentActivityGroup({
                 part={part}
                 isLatest={isLatestMessage && partIndex === numParts - 1}
                 isAgentWorking={isAgentWorking}
+                useAiElementsLayout={useAiElementsLayout}
                 {...messagePartProps}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
