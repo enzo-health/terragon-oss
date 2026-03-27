@@ -1,4 +1,4 @@
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { DB } from "../db";
 import * as schema from "../db/schema";
 import { TokenStreamEvent, TokenStreamEventInsert } from "../db/types";
@@ -34,13 +34,18 @@ export async function appendTokenStreamEvents({
     idempotencyKey: event.idempotencyKey,
   }));
 
-  return db
+  const insertedOrExisting = await db
     .insert(schema.tokenStreamEvent)
     .values(values)
-    .onConflictDoNothing({
+    .onConflictDoUpdate({
       target: schema.tokenStreamEvent.idempotencyKey,
+      // No-op update to return the existing row (with streamSeq) on retries.
+      set: {
+        idempotencyKey: sql`${schema.tokenStreamEvent.idempotencyKey}`,
+      },
     })
     .returning();
+  return insertedOrExisting.sort((a, b) => a.streamSeq - b.streamSeq);
 }
 
 export async function replayTokenStreamEventsFromSeq({

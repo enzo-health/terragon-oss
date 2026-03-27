@@ -20,6 +20,8 @@ import {
 } from "@terragon/daemon/shared";
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -113,6 +115,14 @@ const deliveryLoopModelMocks = vi.hoisted(() => ({
   markDispatchIntentFailed: vi.fn(),
 }));
 
+const tokenStreamMocks = vi.hoisted(() => ({
+  appendTokenStreamEvents: vi.fn(),
+}));
+
+const deltaBroadcastMocks = vi.hoisted(() => ({
+  publishDeltaBroadcast: vi.fn(),
+}));
+
 vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
 }));
@@ -172,6 +182,14 @@ vi.mock("@/agent/update-status", () => ({
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@terragon/shared/model/token-stream-event", () => ({
+  appendTokenStreamEvents: tokenStreamMocks.appendTokenStreamEvents,
+}));
+
+vi.mock("@terragon/shared/broadcast-server", () => ({
+  publishDeltaBroadcast: deltaBroadcastMocks.publishDeltaBroadcast,
 }));
 
 const redisMocks = vi.hoisted(() => {
@@ -343,6 +361,8 @@ describe("daemon-event route", () => {
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.updateReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.signalInboxFindFirst.mockResolvedValue(null);
+    vi.mocked(appendTokenStreamEvents).mockResolvedValue([]);
+    vi.mocked(publishDeltaBroadcast).mockResolvedValue(undefined);
   });
 
   it("returns 401 when daemon token auth fails", async () => {
@@ -359,6 +379,90 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(401);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("persists deltas with deterministic idempotency and broadcasts in stream order", async () => {
+    vi.mocked(appendTokenStreamEvents).mockResolvedValue([
+      {
+        id: "e-5",
+        streamSeq: 5,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messageId: "m",
+        partIndex: 0,
+        text: "c",
+        idempotencyKey: "k-5",
+        createdAt: new Date(),
+      },
+      {
+        id: "e-3",
+        streamSeq: 3,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messageId: "m",
+        partIndex: 0,
+        text: "a",
+        idempotencyKey: "k-3",
+        createdAt: new Date(),
+      },
+      {
+        id: "e-4",
+        streamSeq: 4,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messageId: "m",
+        partIndex: 0,
+        text: "b",
+        idempotencyKey: "k-4",
+        createdAt: new Date(),
+      },
+    ]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-1",
+        runId: "run-1",
+        seq: 8,
+        messages: [],
+        deltas: [
+          { messageId: "m", partIndex: 0, deltaSeq: 10, text: "a" },
+          { messageId: "m", partIndex: 0, deltaSeq: 11, text: "b" },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(appendTokenStreamEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            idempotencyKey: "chat-1:event-1:8:0",
+          }),
+          expect.objectContaining({
+            idempotencyKey: "chat-1:event-1:8:1",
+          }),
+        ],
+      }),
+    );
+    expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ deltaSeq: 3, deltaIdempotencyKey: "k-3" }),
+    );
+    expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ deltaSeq: 4, deltaIdempotencyKey: "k-4" }),
+    );
+    expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ deltaSeq: 5, deltaIdempotencyKey: "k-5" }),
+    );
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope when daemon advertises v2 capability", async () => {

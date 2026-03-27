@@ -17,16 +17,17 @@ export async function GET(request: NextRequest) {
   const threadChatId = request.nextUrl.searchParams.get("threadChatId");
   const fromDeltaSeqStr = request.nextUrl.searchParams.get("fromDeltaSeq");
 
-  if (!threadId || !fromSeqStr) {
-    return NextResponse.json(
-      { error: "Missing threadId or fromSeq" },
-      { status: 400 },
-    );
+  if (!threadId) {
+    return NextResponse.json({ error: "Missing threadId" }, { status: 400 });
   }
 
-  const fromSeq = parseInt(fromSeqStr, 10);
-  if (!Number.isFinite(fromSeq) || fromSeq < 0) {
-    return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
+  let fromSeq: number | null = null;
+  if (fromSeqStr != null) {
+    const parsedFromSeq = parseInt(fromSeqStr, 10);
+    if (!Number.isFinite(parsedFromSeq) || parsedFromSeq < 0) {
+      return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
+    }
+    fromSeq = parsedFromSeq;
   }
 
   let fromDeltaSeq: number | null = null;
@@ -50,6 +51,12 @@ export async function GET(request: NextRequest) {
       { status: 400 },
     );
   }
+  if (fromSeq == null && !(threadChatId && fromDeltaSeq != null)) {
+    return NextResponse.json(
+      { error: "Missing replay cursor (fromSeq or fromDeltaSeq)" },
+      { status: 400 },
+    );
+  }
 
   // Verify thread ownership
   const thread = await db
@@ -67,7 +74,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const entries = await replayFromSeq(threadId, fromSeq);
+  const entries = fromSeq != null ? await replayFromSeq(threadId, fromSeq) : [];
   const deltaEntries =
     threadChatId && fromDeltaSeq != null
       ? await replayTokenStreamEventsFromSeq({

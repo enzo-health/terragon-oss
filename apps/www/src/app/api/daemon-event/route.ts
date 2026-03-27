@@ -38,7 +38,6 @@ import {
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
-import { randomUUID } from "node:crypto";
 import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
 import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 
@@ -713,6 +712,8 @@ export async function POST(request: Request) {
   }
 
   if (deltas && deltas.length > 0) {
+    const deltaRunId =
+      envelopeV2?.runId ?? daemonAuthContext.claims?.runId ?? "legacy";
     const tokenEvents = await appendTokenStreamEvents({
       db,
       events: deltas.map((delta, index) => ({
@@ -725,11 +726,15 @@ export async function POST(request: Request) {
         idempotencyKey:
           envelopeV2 !== null
             ? `${threadChatId}:${envelopeV2.eventId}:${envelopeV2.seq}:${index}`
-            : `${threadChatId}:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${randomUUID()}`,
+            : `${threadChatId}:${deltaRunId}:delta:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
       })),
     });
-    for (const tokenEvent of tokenEvents) {
-      publishDeltaBroadcast({
+
+    const orderedTokenEvents = [...tokenEvents].sort(
+      (a, b) => a.streamSeq - b.streamSeq,
+    );
+    for (const tokenEvent of orderedTokenEvents) {
+      await publishDeltaBroadcast({
         userId,
         threadId,
         threadChatId,

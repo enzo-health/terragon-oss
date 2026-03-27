@@ -324,18 +324,30 @@ export function useRealtimeThread(
           lastDeltaSeq !== null &&
           maxIncomingDeltaSeq > lastDeltaSeq + 1;
 
-        if ((hasMessageGap || hasDeltaGap) && !replayInFlightRef.current) {
+        const shouldReplayMessages =
+          hasMessageGap && lastMessageSeqRef.current != null;
+        const shouldReplayDeltas =
+          hasDeltaGap &&
+          threadChatId != null &&
+          lastDeltaSeqRef.current != null;
+
+        if (
+          (shouldReplayMessages || shouldReplayDeltas) &&
+          !replayInFlightRef.current
+        ) {
           replayInFlightRef.current = true;
           const replayUrl = new URL(
             "/api/thread-replay",
             window.location.origin,
           );
           replayUrl.searchParams.set("threadId", threadId);
-          replayUrl.searchParams.set(
-            "fromSeq",
-            String(lastMessageSeqRef.current ?? 0),
-          );
-          if (threadChatId != null && lastDeltaSeqRef.current != null) {
+          if (shouldReplayMessages) {
+            replayUrl.searchParams.set(
+              "fromSeq",
+              String(lastMessageSeqRef.current),
+            );
+          }
+          if (shouldReplayDeltas) {
             replayUrl.searchParams.set("threadChatId", threadChatId);
             replayUrl.searchParams.set(
               "fromDeltaSeq",

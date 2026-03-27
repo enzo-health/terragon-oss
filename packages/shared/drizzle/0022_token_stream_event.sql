@@ -19,6 +19,6 @@ CREATE UNIQUE INDEX "token_stream_event_stream_seq_unique" ON "token_stream_even
 --> statement-breakpoint
 CREATE UNIQUE INDEX "token_stream_event_idempotency_key_unique" ON "token_stream_event" USING btree ("idempotency_key");
 --> statement-breakpoint
-CREATE UNIQUE INDEX "token_stream_event_thread_part_seq_unique" ON "token_stream_event" USING btree ("thread_chat_id","message_id","part_index","stream_seq");
+CREATE INDEX "token_stream_event_thread_part_seq_idx" ON "token_stream_event" USING btree ("thread_chat_id","message_id","part_index","stream_seq");
 --> statement-breakpoint
 CREATE INDEX "token_stream_event_replay_idx" ON "token_stream_event" USING btree ("user_id","thread_id","thread_chat_id","stream_seq");

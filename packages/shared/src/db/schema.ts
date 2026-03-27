@@ -487,7 +487,7 @@ export const tokenStreamEvent = pgTable(
     uniqueIndex("token_stream_event_idempotency_key_unique").on(
       table.idempotencyKey,
     ),
-    uniqueIndex("token_stream_event_thread_part_seq_unique").on(
+    index("token_stream_event_thread_part_seq_idx").on(
       table.threadChatId,
       table.messageId,
       table.partIndex,
