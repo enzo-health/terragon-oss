@@ -309,6 +309,7 @@ type AppServerRunContext = {
 type DaemonEventRunState = {
   runId: string;
   nextSeq: number;
+  nextDeltaSeq: number;
   transportMode: DaemonTransportMode;
   protocolVersion: number;
   acpServerId: string | null;
@@ -723,6 +724,7 @@ export class TerragonDaemon {
     this.daemonEventRunStates.set(input.threadChatId, {
       runId: input.runId ?? randomUUID(),
       nextSeq: 0,
+      nextDeltaSeq: 0,
       transportMode: input.transportMode ?? "legacy",
       protocolVersion: input.protocolVersion ?? 1,
       acpServerId: input.acpServerId ?? null,
@@ -1416,9 +1418,15 @@ export class TerragonDaemon {
             const itemId = item.id as string | undefined;
             const deltaText = item.text as string | undefined;
             if (itemId && deltaText) {
+              const runState = this.getOrCreateDaemonEventRunState(
+                input.threadChatId,
+              );
+              const deltaSeq = runState.nextDeltaSeq;
+              runState.nextDeltaSeq += 1;
               this.deltaBuffer.push({
                 messageId: itemId,
                 partIndex: 0,
+                deltaSeq,
                 text: deltaText,
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
@@ -1820,6 +1828,7 @@ export class TerragonDaemon {
     // on the client. Resets each time a non-text message arrives (tool_use, result).
     let deltaMessageId: string = randomUUID();
     let deltaPartIndex = 0;
+    let deltaSeq = 0;
 
     const createUrl = (bootstrapAgent: boolean): string => {
       const url = new URL(`${baseUrl}/v1/acp/${encodeURIComponent(serverId)}`);
@@ -2020,6 +2029,7 @@ export class TerragonDaemon {
                       {
                         messageId: deltaMessageId,
                         partIndex: deltaPartIndex,
+                        deltaSeq: deltaSeq++,
                         text: block.text,
                       },
                     ],
@@ -2035,6 +2045,7 @@ export class TerragonDaemon {
                       {
                         messageId: deltaMessageId,
                         partIndex: deltaPartIndex,
+                        deltaSeq: deltaSeq++,
                         text: block.thinking,
                       },
                     ],
@@ -2847,6 +2858,7 @@ export class TerragonDaemon {
     const created: DaemonEventRunState = {
       runId: randomUUID(),
       nextSeq: 0,
+      nextDeltaSeq: 0,
       transportMode: "legacy",
       protocolVersion: 1,
       acpServerId: null,
@@ -3887,6 +3899,7 @@ export class TerragonDaemon {
               deltas: deltas.map((d) => ({
                 messageId: d.messageId,
                 partIndex: d.partIndex,
+                deltaSeq: d.deltaSeq,
                 text: d.text,
               })),
             };
@@ -4091,6 +4104,7 @@ export class TerragonDaemon {
           matchingDeltas.push({
             messageId: d.messageId,
             partIndex: d.partIndex,
+            deltaSeq: d.deltaSeq,
             text: d.text,
           });
         } else {

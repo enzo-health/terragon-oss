@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import { replayFromSeq } from "@/lib/message-stream";
+import { replayTokenStreamEventsFromSeq } from "@terragon/shared/model/token-stream-event";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionOrNull();
@@ -13,17 +14,48 @@ export async function GET(request: NextRequest) {
 
   const threadId = request.nextUrl.searchParams.get("threadId");
   const fromSeqStr = request.nextUrl.searchParams.get("fromSeq");
+  const threadChatId = request.nextUrl.searchParams.get("threadChatId");
+  const fromDeltaSeqStr = request.nextUrl.searchParams.get("fromDeltaSeq");
 
-  if (!threadId || !fromSeqStr) {
+  if (!threadId) {
+    return NextResponse.json({ error: "Missing threadId" }, { status: 400 });
+  }
+
+  let fromSeq: number | null = null;
+  if (fromSeqStr != null) {
+    const parsedFromSeq = parseInt(fromSeqStr, 10);
+    if (!Number.isFinite(parsedFromSeq) || parsedFromSeq < 0) {
+      return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
+    }
+    fromSeq = parsedFromSeq;
+  }
+
+  let fromDeltaSeq: number | null = null;
+  if (fromDeltaSeqStr != null) {
+    const parsedFromDeltaSeq = parseInt(fromDeltaSeqStr, 10);
+    if (!Number.isFinite(parsedFromDeltaSeq) || parsedFromDeltaSeq < 0) {
+      return NextResponse.json(
+        { error: "Invalid fromDeltaSeq" },
+        { status: 400 },
+      );
+    }
+    fromDeltaSeq = parsedFromDeltaSeq;
+  }
+
+  if (
+    (threadChatId && fromDeltaSeq == null) ||
+    (!threadChatId && fromDeltaSeq != null)
+  ) {
     return NextResponse.json(
-      { error: "Missing threadId or fromSeq" },
+      { error: "threadChatId and fromDeltaSeq must be provided together" },
       { status: 400 },
     );
   }
-
-  const fromSeq = parseInt(fromSeqStr, 10);
-  if (!Number.isFinite(fromSeq) || fromSeq < 0) {
-    return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
+  if (fromSeq == null && !(threadChatId && fromDeltaSeq != null)) {
+    return NextResponse.json(
+      { error: "Missing replay cursor (fromSeq or fromDeltaSeq)" },
+      { status: 400 },
+    );
   }
 
   // Verify thread ownership
@@ -42,6 +74,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const entries = await replayFromSeq(threadId, fromSeq);
-  return NextResponse.json({ entries });
+  const entries = fromSeq != null ? await replayFromSeq(threadId, fromSeq) : [];
+  const deltaEntries =
+    threadChatId && fromDeltaSeq != null
+      ? await replayTokenStreamEventsFromSeq({
+          db,
+          userId: session.user.id,
+          threadId,
+          threadChatId,
+          fromSeq: fromDeltaSeq,
+        })
+      : [];
+  return NextResponse.json({ entries, deltaEntries });
 }

@@ -1,6 +1,8 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
 import type { DaemonDelta } from "@terragon/daemon/shared";
+import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import { db } from "@/lib/db";
 
 type DaemonDeltaBody = {
   threadId: string;
@@ -30,20 +32,48 @@ export async function POST(request: Request) {
   }
 
   const userId = daemonAuthContext.userId;
+  const claims = daemonAuthContext.claims;
+  if (!claims) {
+    return Response.json(
+      { success: false, error: "daemon_delta_missing_claims" },
+      { status: 401 },
+    );
+  }
+  if (claims.threadId !== threadId || claims.threadChatId !== threadChatId) {
+    return Response.json(
+      { success: false, error: "daemon_delta_claim_mismatch" },
+      { status: 401 },
+    );
+  }
 
-  // Broadcast all deltas in parallel — fire-and-forget, no DB write
-  await Promise.all(
-    deltas.map((delta) =>
-      publishDeltaBroadcast({
-        userId,
-        threadId,
-        threadChatId,
-        messageId: delta.messageId,
-        partIndex: delta.partIndex,
-        text: delta.text,
-      }),
-    ),
+  const tokenEvents = await appendTokenStreamEvents({
+    db,
+    events: deltas.map((delta, index) => ({
+      userId,
+      threadId,
+      threadChatId,
+      messageId: delta.messageId,
+      partIndex: delta.partIndex,
+      text: delta.text,
+      idempotencyKey: `${threadChatId}:${claims.runId}:delta:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
+    })),
+  });
+
+  const orderedTokenEvents = [...tokenEvents].sort(
+    (a, b) => a.streamSeq - b.streamSeq,
   );
+  for (const event of orderedTokenEvents) {
+    await publishDeltaBroadcast({
+      userId,
+      threadId,
+      threadChatId,
+      messageId: event.messageId,
+      partIndex: event.partIndex,
+      deltaSeq: event.streamSeq,
+      deltaIdempotencyKey: event.idempotencyKey,
+      text: event.text,
+    });
+  }
 
   return Response.json({ success: true });
 }

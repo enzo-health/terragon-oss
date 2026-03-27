@@ -48,6 +48,9 @@ export type Thread = typeof schema.thread.$inferSelect;
 export type ThreadChat = typeof schema.threadChat.$inferSelect;
 export type AgentRunContext = typeof schema.agentRunContext.$inferSelect;
 export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
+export type TokenStreamEvent = typeof schema.tokenStreamEvent.$inferSelect;
+export type TokenStreamEventInsert =
+  typeof schema.tokenStreamEvent.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;

@@ -185,9 +185,11 @@ const BroadcastThreadPatchSchema = z.object({
     })
     .optional(),
   refetch: z.array(z.enum(["shell", "chat", "diff", "list"])).optional(),
-  // Delta fields — ephemeral token-level streaming, not persisted or replayed
+  // Delta fields — token-level streaming with durable sequencing/replay support
   messageId: z.string().optional(),
   partIndex: z.number().int().nonnegative().optional(),
+  deltaSeq: z.number().int().nonnegative().optional(),
+  deltaIdempotencyKey: z.string().optional(),
   text: z.string().optional(),
 });
 

@@ -30,6 +30,7 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
+import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
 import { and, eq } from "drizzle-orm";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
@@ -513,26 +514,7 @@ export async function POST(request: Request) {
   const userId = daemonAuthContext.userId;
   const claims = daemonAuthContext.claims;
 
-  // Broadcast deltas immediately — ephemeral, not persisted, fire-and-forget.
   const deltas = json.deltas;
-  if (deltas && deltas.length > 0) {
-    for (const delta of deltas) {
-      publishDeltaBroadcast({
-        userId,
-        threadId,
-        threadChatId,
-        messageId: delta.messageId,
-        partIndex: delta.partIndex,
-        text: delta.text,
-      }).catch((error) => {
-        console.warn("[daemon-event] delta broadcast failed", {
-          threadId,
-          messageId: delta.messageId,
-          error,
-        });
-      });
-    }
-  }
 
   if (daemonAdvertisesEnvelopeV2 && !envelopeV2) {
     return Response.json(
@@ -729,9 +711,53 @@ export async function POST(request: Request) {
     }
   }
 
+  if (deltas && deltas.length > 0) {
+    const deltaRunId =
+      envelopeV2?.runId ?? daemonAuthContext.claims?.runId ?? "legacy";
+    const tokenEvents = await appendTokenStreamEvents({
+      db,
+      events: deltas.map((delta, index) => ({
+        userId,
+        threadId,
+        threadChatId,
+        messageId: delta.messageId,
+        partIndex: delta.partIndex,
+        text: delta.text,
+        idempotencyKey:
+          envelopeV2 !== null
+            ? `${threadChatId}:${envelopeV2.eventId}:${envelopeV2.seq}:${index}`
+            : `${threadChatId}:${deltaRunId}:delta:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
+      })),
+    });
+
+    const orderedTokenEvents = [...tokenEvents].sort(
+      (a, b) => a.streamSeq - b.streamSeq,
+    );
+    for (const tokenEvent of orderedTokenEvents) {
+      await publishDeltaBroadcast({
+        userId,
+        threadId,
+        threadChatId,
+        messageId: tokenEvent.messageId,
+        partIndex: tokenEvent.partIndex,
+        deltaSeq: tokenEvent.streamSeq,
+        deltaIdempotencyKey: tokenEvent.idempotencyKey,
+        text: tokenEvent.text,
+      }).catch((error) => {
+        console.warn("[daemon-event] delta broadcast failed", {
+          threadId,
+          threadChatId,
+          messageId: tokenEvent.messageId,
+          streamSeq: tokenEvent.streamSeq,
+          error,
+        });
+      });
+    }
+  }
+
   // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
   // run-context status transitions — just extend sandbox life + refresh updatedAt.
-  if (messages.length === 0) {
+  if (messages.length === 0 && (!deltas || deltas.length === 0)) {
     const result = await handleDaemonEvent({
       messages: [],
       threadId,
