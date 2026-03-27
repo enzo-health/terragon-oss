@@ -109,7 +109,14 @@ const ThinkingPart = memo(function ThinkingPart({
         </span>
       </button>
       <div className="overflow-hidden break-all">
-        <Streamdown components={components}>{thinking}</Streamdown>
+        <Streamdown
+          components={components}
+          mode={isActive ? "streaming" : "static"}
+          parseIncompleteMarkdown={isActive}
+          normalizeHtmlIndentation
+        >
+          {thinking}
+        </Streamdown>
       </div>
     </div>
   );

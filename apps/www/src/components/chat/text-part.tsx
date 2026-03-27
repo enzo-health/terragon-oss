@@ -16,6 +16,7 @@ import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-
 
 interface TextPartProps {
   text: string;
+  streaming?: boolean;
   githubRepoFullName?: string;
   branchName?: string;
   baseBranchName?: string;
@@ -134,6 +135,7 @@ function scanForCodeBlocks(
 
 const TextPart = memo(function TextPart({
   text,
+  streaming = false,
   githubRepoFullName,
   branchName,
   baseBranchName,
@@ -438,6 +440,9 @@ const TextPart = memo(function TextPart({
             plugins={plugins}
             components={components}
             controls={{ code: true }}
+            mode={streaming ? "streaming" : "static"}
+            parseIncompleteMarkdown={streaming}
+            normalizeHtmlIndentation
           >
             {processedText}
           </Streamdown>

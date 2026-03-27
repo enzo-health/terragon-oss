@@ -114,6 +114,7 @@ export const MessagePart = memo(function MessagePart({
       return wrapPart(
         <TextPart
           text={part.text}
+          streaming={isLatest && isAgentWorking}
           githubRepoFullName={githubRepoFullName}
           branchName={branchName ?? undefined}
           baseBranchName={baseBranchName}
