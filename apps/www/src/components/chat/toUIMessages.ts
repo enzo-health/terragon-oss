@@ -471,19 +471,31 @@ function appendDeltaMessages(
   const firstSeenMessageOrder = new Map<string, number>();
   const parsed = Array.from(deltas.entries())
     .map(([key, chunk]) => {
-      const separatorIndex = key.lastIndexOf(":");
-      if (separatorIndex === -1) {
+      const segments = key.split(":");
+      if (segments.length < 3) {
         return null;
       }
-      const messageId = key.slice(0, separatorIndex);
-      const partIndex = parseInt(key.slice(separatorIndex + 1), 10);
+      const kindSegment = segments[segments.length - 1];
+      const partIndexSegment = segments[segments.length - 2];
+      const messageId = segments.slice(0, -2).join(":");
+      const partIndex = parseInt(partIndexSegment ?? "", 10);
       if (!Number.isFinite(partIndex)) {
+        return null;
+      }
+      if (kindSegment !== "text" && kindSegment !== "thinking") {
         return null;
       }
       if (!firstSeenMessageOrder.has(messageId)) {
         firstSeenMessageOrder.set(messageId, firstSeenMessageOrder.size);
       }
-      return { messageId, partIndex, chunk };
+      return {
+        messageId,
+        partIndex,
+        kind: kindSegment,
+        firstDeltaSeq:
+          typeof chunk.firstDeltaSeq === "number" ? chunk.firstDeltaSeq : null,
+        chunk,
+      };
     })
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .sort((a, b) => {
@@ -493,7 +505,18 @@ function appendDeltaMessages(
       if (messageOrderDelta !== 0) {
         return messageOrderDelta;
       }
-      return a.partIndex - b.partIndex;
+      if (a.partIndex !== b.partIndex) {
+        return a.partIndex - b.partIndex;
+      }
+      if (a.firstDeltaSeq != null && b.firstDeltaSeq != null) {
+        if (a.firstDeltaSeq !== b.firstDeltaSeq) {
+          return a.firstDeltaSeq - b.firstDeltaSeq;
+        }
+      }
+      if (a.kind !== b.kind) {
+        return a.kind === "thinking" ? -1 : 1;
+      }
+      return 0;
     });
 
   const parts: UIPart[] = parsed.map(({ chunk }) => toDeltaPart(chunk));

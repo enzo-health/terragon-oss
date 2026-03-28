@@ -67,3 +67,20 @@ export function MessageResponse({
     </div>
   );
 }
+
+type MessagePartProps = HTMLAttributes<HTMLDivElement>;
+
+export function MessagePart({
+  children,
+  className,
+  ...props
+}: MessagePartProps) {
+  return (
+    <div
+      className={cn("rounded-md border border-border/50 p-2", className)}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}

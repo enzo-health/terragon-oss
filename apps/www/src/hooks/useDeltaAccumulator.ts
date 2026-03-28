@@ -3,18 +3,23 @@
 import { useCallback, useRef, useState } from "react";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 
-/** Key format: `${messageId}:${partIndex}` */
+/** Key format: `${messageId}:${partIndex}:${kind}` */
 export type DeltaKey = string;
 
 export type DeltaChunk = {
   kind: "text" | "thinking";
   text: string;
+  firstDeltaSeq?: number;
 };
 
 export type DeltaAccumulator = Map<DeltaKey, DeltaChunk>;
 
-function makeDeltaKey(messageId: string, partIndex: number): DeltaKey {
-  return `${messageId}:${partIndex}`;
+function makeDeltaKey(
+  messageId: string,
+  partIndex: number,
+  kind: "text" | "thinking",
+): DeltaKey {
+  return `${messageId}:${partIndex}:${kind}`;
 }
 
 /**
@@ -48,7 +53,7 @@ export function useDeltaAccumulator() {
 
     const kind = patch.deltaKind === "thinking" ? "thinking" : "text";
     const text = patch.text;
-    const key = makeDeltaKey(patch.messageId, patch.partIndex);
+    const key = makeDeltaKey(patch.messageId, patch.partIndex, kind);
     if (patch.deltaSeq != null) {
       const maxAppliedSeq = maxDeltaSeqByKeyRef.current.get(key);
       if (maxAppliedSeq != null && patch.deltaSeq <= maxAppliedSeq) {
@@ -61,12 +66,30 @@ export function useDeltaAccumulator() {
       const next = new Map(prev);
       const prevChunk = prev.get(key);
       if (!prevChunk) {
-        next.set(key, { kind, text });
+        next.set(key, {
+          kind,
+          text,
+          firstDeltaSeq:
+            patch.deltaSeq != null && Number.isFinite(patch.deltaSeq)
+              ? patch.deltaSeq
+              : undefined,
+        });
       } else if (prevChunk.kind === kind) {
-        next.set(key, { kind, text: prevChunk.text + text });
+        next.set(key, {
+          kind,
+          text: prevChunk.text + text,
+          firstDeltaSeq: prevChunk.firstDeltaSeq,
+        });
       } else {
         // If semantic kind flips for the same key, prefer latest payload.
-        next.set(key, { kind, text });
+        next.set(key, {
+          kind,
+          text,
+          firstDeltaSeq:
+            patch.deltaSeq != null && Number.isFinite(patch.deltaSeq)
+              ? patch.deltaSeq
+              : undefined,
+        });
       }
       deltasRef.current = next;
       return next;

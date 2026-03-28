@@ -1,10 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Streamdown } from "streamdown";
-import { createCodePlugin } from "@streamdown/code";
-import { createMathPlugin } from "@streamdown/math";
-import "streamdown/styles.css";
-import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
@@ -13,6 +8,7 @@ import {
   parsePartialPlan,
 } from "@/lib/delivery-loop-plan-view-model";
 import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
+import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 
 interface TextPartProps {
   text: string;
@@ -23,14 +19,6 @@ interface TextPartProps {
   hasCheckpoint?: boolean;
   onOpenInArtifactWorkspace?: () => void;
 }
-
-const codePlugin = createCodePlugin({
-  themes: ["github-light", "one-dark-pro"],
-});
-
-const mathPlugin = createMathPlugin();
-
-const plugins = { code: codePlugin, math: mathPlugin };
 
 function convertCitationsToGitHubLinks(
   text: string,
@@ -277,110 +265,6 @@ const TextPart = memo(function TextPart({
     });
   }, []);
 
-  const components = useMemo(
-    () => ({
-      code({ children, ...props }: any) {
-        return (
-          <code
-            className="bg-muted text-foreground px-1.5 py-0.5 rounded text-sm font-mono"
-            {...props}
-          >
-            {children}
-          </code>
-        );
-      },
-      p({ children }: any) {
-        return <p className="mb-2 last:mb-0 text-foreground">{children}</p>;
-      },
-      ul({ children }: any) {
-        return (
-          <ul className="list-disc pl-4 mb-2 text-foreground">{children}</ul>
-        );
-      },
-      ol({ children }: any) {
-        return (
-          <ol className="list-decimal pl-8 mb-2 text-foreground">{children}</ol>
-        );
-      },
-      li({ children }: any) {
-        return <li className="mb-1 text-foreground">{children}</li>;
-      },
-      blockquote({ children }: any) {
-        return (
-          <blockquote className="border-l-4 border-border pl-4 italic text-muted-foreground my-2">
-            {children}
-          </blockquote>
-        );
-      },
-      h1({ children }: any) {
-        return (
-          <h1 className="text-xl font-bold mb-2 text-foreground">{children}</h1>
-        );
-      },
-      h2({ children }: any) {
-        return (
-          <h2 className="text-lg font-bold mb-2 text-foreground">{children}</h2>
-        );
-      },
-      h3({ children }: any) {
-        return (
-          <h3 className="text-base font-bold mb-2 text-foreground">
-            {children}
-          </h3>
-        );
-      },
-      table({ children }: any) {
-        return (
-          <div className="overflow-x-auto my-2">
-            <table className="min-w-full border border-border">
-              {children}
-            </table>
-          </div>
-        );
-      },
-      thead({ children }: any) {
-        return <thead className="bg-muted">{children}</thead>;
-      },
-      th({ children }: any) {
-        return (
-          <th className="border border-border px-2 py-1 text-left font-medium text-foreground">
-            {children}
-          </th>
-        );
-      },
-      td({ children }: any) {
-        return (
-          <td className="border border-border px-2 py-1 text-foreground">
-            {children}
-          </td>
-        );
-      },
-      a({ children, href, ...props }: any) {
-        return (
-          <a
-            href={href}
-            className="underline break-all"
-            target="_blank"
-            rel="noopener noreferrer"
-            {...props}
-          >
-            {children}
-          </a>
-        );
-      },
-      img({ src, alt }: any) {
-        if (!src) {
-          return null;
-        }
-        return <ImagePart imageUrl={src as string} alt={alt} />;
-      },
-      hr() {
-        return <hr className="my-4 border-t border-border" />;
-      },
-    }),
-    [],
-  );
-
   // Render portals into code-block-body elements for collapse overlays
   const overlays = useMemo(() => {
     const container = containerRef.current;
@@ -436,16 +320,12 @@ const TextPart = memo(function TextPart({
       ) : null}
       {showStreamdown && (
         <div className="prose prose-sm max-w-none" ref={containerRef}>
-          <Streamdown
-            plugins={plugins}
-            components={components}
+          <MarkdownRenderer
+            content={processedText}
             controls={{ code: true }}
-            mode={streaming ? "streaming" : "static"}
-            parseIncompleteMarkdown={streaming}
-            normalizeHtmlIndentation
-          >
-            {processedText}
-          </Streamdown>
+            streaming={streaming}
+            renderImage={(src, alt) => <ImagePart imageUrl={src} alt={alt} />}
+          />
           {overlays}
         </div>
       )}

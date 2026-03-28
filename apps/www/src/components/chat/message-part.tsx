@@ -20,6 +20,7 @@ import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
+import { MessagePart as AIMessagePart } from "@/components/ai-elements/message";
 
 export interface MessagePartProps {
   part: UIPart;
@@ -106,7 +107,7 @@ export const MessagePart = memo(function MessagePart({
     if (!useAiElementsLayout) {
       return node;
     }
-    return <div className="rounded-md border border-border/50 p-2">{node}</div>;
+    return <AIMessagePart>{node}</AIMessagePart>;
   };
 
   switch (part.type) {
