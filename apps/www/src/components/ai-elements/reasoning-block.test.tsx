@@ -8,6 +8,11 @@ describe("ReasoningBlock", () => {
     expect(getReasoningTitle("**Planning**\n\nBody")).toBe("Planning");
   });
 
+  it("falls back to Thinking for malformed or empty bold prefix", () => {
+    expect(getReasoningTitle("**** body")).toBe("Thinking");
+    expect(getReasoningTitle("** **\nBody")).toBe("Thinking");
+  });
+
   it("renders expanded content without duplicating the bold title", () => {
     const html = renderToStaticMarkup(
       <ReasoningBlock
