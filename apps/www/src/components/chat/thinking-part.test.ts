@@ -28,8 +28,8 @@ describe("getThinkingTitle", () => {
 
   it("should handle edge cases with bold markdown", () => {
     expect(getThinkingTitle("**")).toBe("Thinking");
-    expect(getThinkingTitle("****")).toBe("");
-    expect(getThinkingTitle("** **")).toBe(""); // trim() removes whitespace
+    expect(getThinkingTitle("****")).toBe("Thinking");
+    expect(getThinkingTitle("** **")).toBe("Thinking");
     expect(getThinkingTitle("**Header** with more content")).toBe("Header");
   });
 });

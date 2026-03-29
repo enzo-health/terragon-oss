@@ -21,7 +21,10 @@ type ReasoningBlockProps = {
 export function getReasoningTitle(thinking: string): string {
   const match = thinking.match(/^\*\*(.*?)\*\*/);
   if (match) {
-    return match[1]?.trim() ?? "Thinking";
+    const title = match[1]?.trim();
+    if (title) {
+      return title;
+    }
   }
   return "Thinking";
 }
@@ -68,7 +71,7 @@ export const ReasoningBlock = memo(function ReasoningBlock({
         type="button"
         onClick={() => setIsExpanded(true)}
         className={cn(
-          "flex items-center gap-1 py-1 text-sm text-muted-foreground italic",
+          "flex items-center gap-1 py-1 text-sm text-muted-foreground italic focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 rounded-sm",
           isActive && "animate-pulse",
         )}
         aria-expanded={false}
@@ -86,7 +89,7 @@ export const ReasoningBlock = memo(function ReasoningBlock({
         type="button"
         onClick={() => setIsExpanded(false)}
         className={cn(
-          "flex items-center gap-1 py-1 w-fit",
+          "flex items-center gap-1 py-1 w-fit rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
           isActive && "animate-pulse",
         )}
         aria-expanded
