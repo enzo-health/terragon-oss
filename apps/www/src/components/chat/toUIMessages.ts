@@ -9,7 +9,7 @@ import type {
   UIGitDiffPart,
   ThreadStatus,
 } from "@terragon/shared";
-import type { DeltaAccumulator } from "@/hooks/useDeltaAccumulator";
+import type { DeltaAccumulator, DeltaChunk } from "@/hooks/useDeltaAccumulator";
 
 type UIMessageRange = {
   startDbIndex: number;
@@ -468,17 +468,58 @@ function appendDeltaMessages(
   agent: AIAgent,
   deltas: DeltaAccumulator,
 ): UIMessage[] {
-  // Sort by partIndex so text parts render in order
-  const sorted = Array.from(deltas.entries()).sort((a, b) => {
-    const aIdx = parseInt(a[0].split(":")[1]!, 10);
-    const bIdx = parseInt(b[0].split(":")[1]!, 10);
-    return aIdx - bIdx;
-  });
+  const firstSeenMessageOrder = new Map<string, number>();
+  const parsed = Array.from(deltas.entries())
+    .map(([key, chunk]) => {
+      const segments = key.split(":");
+      if (segments.length < 3) {
+        return null;
+      }
+      const kindSegment = segments[segments.length - 1];
+      const partIndexSegment = segments[segments.length - 2];
+      const messageId = segments.slice(0, -2).join(":");
+      const partIndex = parseInt(partIndexSegment ?? "", 10);
+      if (!Number.isFinite(partIndex)) {
+        return null;
+      }
+      if (kindSegment !== "text" && kindSegment !== "thinking") {
+        return null;
+      }
+      if (!firstSeenMessageOrder.has(messageId)) {
+        firstSeenMessageOrder.set(messageId, firstSeenMessageOrder.size);
+      }
+      return {
+        messageId,
+        partIndex,
+        kind: kindSegment,
+        firstDeltaSeq:
+          typeof chunk.firstDeltaSeq === "number" ? chunk.firstDeltaSeq : null,
+        chunk,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((a, b) => {
+      const messageOrderDelta =
+        (firstSeenMessageOrder.get(a.messageId) ?? 0) -
+        (firstSeenMessageOrder.get(b.messageId) ?? 0);
+      if (messageOrderDelta !== 0) {
+        return messageOrderDelta;
+      }
+      if (a.partIndex !== b.partIndex) {
+        return a.partIndex - b.partIndex;
+      }
+      if (a.firstDeltaSeq != null && b.firstDeltaSeq != null) {
+        if (a.firstDeltaSeq !== b.firstDeltaSeq) {
+          return a.firstDeltaSeq - b.firstDeltaSeq;
+        }
+      }
+      if (a.kind !== b.kind) {
+        return a.kind === "thinking" ? -1 : 1;
+      }
+      return 0;
+    });
 
-  const parts: UIPart[] = sorted.map(([, text]) => ({
-    type: "text" as const,
-    text,
-  }));
+  const parts: UIPart[] = parsed.map(({ chunk }) => toDeltaPart(chunk));
 
   if (parts.length === 0) return messages;
 
@@ -489,6 +530,19 @@ function appendDeltaMessages(
   };
 
   return [...messages, deltaMessage];
+}
+
+function toDeltaPart(chunk: DeltaChunk): UIPart {
+  if (chunk.kind === "thinking") {
+    return {
+      type: "thinking",
+      thinking: chunk.text,
+    };
+  }
+  return {
+    type: "text",
+    text: chunk.text,
+  };
 }
 
 /**

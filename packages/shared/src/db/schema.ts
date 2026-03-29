@@ -478,6 +478,7 @@ export const tokenStreamEvent = pgTable(
     threadChatId: text("thread_chat_id").notNull(),
     messageId: text("message_id").notNull(),
     partIndex: integer("part_index").notNull(),
+    partType: text("part_type").notNull().default("text"),
     text: text("text").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),

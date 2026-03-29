@@ -16,6 +16,11 @@ import { ChatMessageWithToolbar } from "./chat-message";
 import { LeafLoading } from "./leaf-loading";
 import { PromptBoxRef } from "./thread-context";
 import Link from "next/link";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import {
+  Conversation,
+  ConversationContent,
+} from "@/components/ai-elements/conversation";
 import {
   runScheduledThread,
   cancelScheduledThread,
@@ -100,6 +105,7 @@ export const ChatMessages = memo(function ChatMessages({
     }),
     [githubRepoFullName, branchName, baseBranchName, hasCheckpoint, toolProps],
   );
+  const useAiElementsLayout = useFeatureFlag("chatAIV2Renderer");
   // Find the latest agent message
   let latestAgentMessageIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -118,7 +124,7 @@ export const ChatMessages = memo(function ChatMessages({
     [messages],
   );
 
-  return (
+  const messageList = (
     <>
       {messages.map((message: UIMessage, index: number) => {
         const isLatestMessage = index === messages.length - 1;
@@ -131,6 +137,7 @@ export const ChatMessages = memo(function ChatMessages({
           <ChatMessageWithToolbar
             key={index}
             message={message}
+            useAiElementsLayout={useAiElementsLayout}
             messageIndex={index}
             isAgentWorking={rowIsAgentWorking}
             isLatestMessage={isLatestMessage}
@@ -153,6 +160,16 @@ export const ChatMessages = memo(function ChatMessages({
       })}
     </>
   );
+
+  if (useAiElementsLayout) {
+    return (
+      <Conversation>
+        <ConversationContent>{messageList}</ConversationContent>
+      </Conversation>
+    );
+  }
+
+  return messageList;
 });
 
 function getBootingSubstatusMessage(substatus: BootingSubstatus): string {

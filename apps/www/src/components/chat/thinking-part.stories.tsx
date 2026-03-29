@@ -14,7 +14,9 @@ export const SimpleText: Story = () => {
 };
 
 export const OverflowTest: Story = () => {
-  const longCodeThinking = `Looking at the Button component's outline variant on line 16-17:
+  const longCodeThinking = `**Analyzing outline variant**
+
+Looking at the Button component's outline variant on line 16-17:
 
 outline:
   'border bg-background shadow-xs hover:bg-muted/50 hover:text-muted-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50',

@@ -823,6 +823,7 @@ export type CodexAppServerDiagnostics = {
   lastExitSignal: string | null;
   lastExitSource: string | null;
   lastStderrLine: string | null;
+  lastProcessError: string | null;
   lastRequestMethod: string | null;
 };
 
@@ -857,6 +858,7 @@ export class CodexAppServerManager {
   private lastExitSignal: string | null = null;
   private lastExitSource: string | null = null;
   private lastStderrLine: string | null = null;
+  private lastProcessError: string | null = null;
   private lastRequestMethod: string | null = null;
 
   constructor({
@@ -1002,6 +1004,7 @@ export class CodexAppServerManager {
       lastExitSignal: this.lastExitSignal,
       lastExitSource: this.lastExitSource,
       lastStderrLine: this.lastStderrLine,
+      lastProcessError: this.lastProcessError,
       lastRequestMethod: this.lastRequestMethod,
     };
   }
@@ -1149,6 +1152,7 @@ export class CodexAppServerManager {
     processHandle.on("error", (error: unknown) => {
       const message =
         error instanceof Error ? error.message : "Unknown process error";
+      this.lastProcessError = message;
       this.logger.error("codex app-server process error", {
         message,
       });
@@ -1487,6 +1491,19 @@ export class CodexAppServerManager {
     // We connect directly instead of polling /readyz because production Codex
     // app-server versions do not always serve that HTTP endpoint.
     while (Date.now() - startTime < timeout) {
+      if (
+        !this.process ||
+        this.process.exitCode !== null ||
+        this.process.killed
+      ) {
+        const reason =
+          this.lastProcessError ??
+          this.lastStderrLine ??
+          "process exited before WebSocket opened";
+        throw new Error(
+          `codex app-server process unavailable during startup: ${reason}`,
+        );
+      }
       try {
         const ws = this.createWebSocket(url);
         await new Promise<void>((resolve, reject) => {

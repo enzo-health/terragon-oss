@@ -9,6 +9,7 @@ export type TokenStreamEventInput = {
   threadChatId: string;
   messageId: string;
   partIndex: number;
+  partType: "text" | "thinking";
   text: string;
   idempotencyKey: string;
 };
@@ -30,6 +31,7 @@ export async function appendTokenStreamEvents({
     threadChatId: event.threadChatId,
     messageId: event.messageId,
     partIndex: event.partIndex,
+    partType: event.partType,
     text: event.text,
     idempotencyKey: event.idempotencyKey,
   }));

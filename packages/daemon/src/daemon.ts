@@ -127,6 +127,7 @@ function formatAppServerDiagnostics(
     `lastExitSignal=${diagnostics.lastExitSignal ?? "null"}`,
     `lastExitSource=${diagnostics.lastExitSource ?? "null"}`,
     `lastStderrLine=${diagnostics.lastStderrLine ?? "null"}`,
+    `lastProcessError=${diagnostics.lastProcessError ?? "null"}`,
   ].join(", ");
 }
 
@@ -301,6 +302,8 @@ type AppServerRunContext = {
   turnCompletePromise: Promise<AppServerTurnCompletion>;
   threadReadyPromise: Promise<string>;
   watchdogTimer: NodeJS.Timeout | null;
+  /** Last full agent_message text by item id (for cumulative update dedupe). */
+  agentMessageTextById: Map<string, string>;
   resolveTurnComplete: (result: AppServerTurnCompletion) => void;
   rejectTurnComplete: (error: Error) => void;
   resolveThreadReady: (threadId: string) => void;
@@ -952,6 +955,7 @@ export class TerragonDaemon {
       turnCompletePromise,
       threadReadyPromise,
       watchdogTimer: null,
+      agentMessageTextById: new Map<string, string>(),
       resolveTurnComplete: (result) => {
         if (context.isCompleted) {
           return;
@@ -1416,27 +1420,47 @@ export class TerragonDaemon {
           ) {
             const item = threadEvent.item as Record<string, unknown>;
             const itemId = item.id as string | undefined;
-            const deltaText = item.text as string | undefined;
-            if (itemId && deltaText) {
-              const runState = this.getOrCreateDaemonEventRunState(
-                input.threadChatId,
-              );
-              const deltaSeq = runState.nextDeltaSeq;
-              runState.nextDeltaSeq += 1;
-              this.deltaBuffer.push({
-                messageId: itemId,
-                partIndex: 0,
-                deltaSeq,
-                text: deltaText,
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-              });
-              // Trigger a flush so deltas are sent promptly
-              if (!this.isFlushInProgress && !this.messageFlushTimer) {
-                this.messageFlushTimer = setTimeout(() => {
-                  this.flushMessageBuffer();
-                }, 50);
+            const messageText = item.text as string | undefined;
+            if (itemId && messageText) {
+              const previousText =
+                context.agentMessageTextById.get(itemId) ?? "";
+              const isExplicitDeltaMethod =
+                notification.method === "item/agentMessage/delta";
+              const deltaText = isExplicitDeltaMethod
+                ? messageText
+                : messageText.startsWith(previousText)
+                  ? messageText.slice(previousText.length)
+                  : messageText;
+              if (isExplicitDeltaMethod) {
+                context.agentMessageTextById.set(
+                  itemId,
+                  previousText + messageText,
+                );
+              } else {
+                context.agentMessageTextById.set(itemId, messageText);
+              }
+              if (deltaText) {
+                const runState = this.getOrCreateDaemonEventRunState(
+                  input.threadChatId,
+                );
+                const deltaSeq = runState.nextDeltaSeq;
+                runState.nextDeltaSeq += 1;
+                this.deltaBuffer.push({
+                  messageId: itemId,
+                  partIndex: 0,
+                  deltaSeq,
+                  kind: "text",
+                  text: deltaText,
+                  threadId: input.threadId,
+                  threadChatId: input.threadChatId,
+                  token: input.token,
+                });
+                // Trigger a flush so deltas are sent promptly
+                if (!this.isFlushInProgress && !this.messageFlushTimer) {
+                  this.messageFlushTimer = setTimeout(() => {
+                    this.flushMessageBuffer();
+                  }, 50);
+                }
               }
             }
             // Still pass through to parseCodexLine — it will be dropped
@@ -2030,6 +2054,7 @@ export class TerragonDaemon {
                         messageId: deltaMessageId,
                         partIndex: deltaPartIndex,
                         deltaSeq: deltaSeq++,
+                        kind: "text",
                         text: block.text,
                       },
                     ],
@@ -2046,6 +2071,7 @@ export class TerragonDaemon {
                         messageId: deltaMessageId,
                         partIndex: deltaPartIndex,
                         deltaSeq: deltaSeq++,
+                        kind: "thinking",
                         text: block.thinking,
                       },
                     ],
@@ -3900,6 +3926,7 @@ export class TerragonDaemon {
                 messageId: d.messageId,
                 partIndex: d.partIndex,
                 deltaSeq: d.deltaSeq,
+                kind: d.kind,
                 text: d.text,
               })),
             };
@@ -4105,6 +4132,7 @@ export class TerragonDaemon {
             messageId: d.messageId,
             partIndex: d.partIndex,
             deltaSeq: d.deltaSeq,
+            kind: d.kind,
             text: d.text,
           });
         } else {
