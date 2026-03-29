@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { default as React, memo } from "react";
 import {
   ReasoningBlock,
   getReasoningTitle,
