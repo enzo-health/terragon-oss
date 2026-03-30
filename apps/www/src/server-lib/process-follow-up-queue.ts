@@ -363,11 +363,16 @@ export async function maybeProcessFollowUpQueue({
   threadId,
   threadChatId,
   runId = null,
+  bypassBusyCheck = false,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
   runId?: string | null;
+  /** When true, skip the stale-CAS busy guard so the delivery loop can
+   *  dispatch a new run even when the threadChat is still in an active status
+   *  from a prior run that has logically completed. */
+  bypassBusyCheck?: boolean;
 }): Promise<FollowUpQueueProcessingResult> {
   console.log("Checking if we have queued follow up messages", {
     threadId,
@@ -549,9 +554,9 @@ export async function maybeProcessFollowUpQueue({
       chatUpdates: {
         replaceQueuedMessages: restQueuedMessages,
       },
-      requireStatusTransitionForChatUpdates: true,
+      requireStatusTransitionForChatUpdates: !bypassBusyCheck,
     });
-    if (!didUpdateStatus) {
+    if (!didUpdateStatus && !bypassBusyCheck) {
       const noopResult = await checkNoopBusy({
         threadId,
         threadChatId,
@@ -635,9 +640,9 @@ export async function maybeProcessFollowUpQueue({
     chatUpdates: {
       appendAndResetQueuedMessages: true,
     },
-    requireStatusTransitionForChatUpdates: true,
+    requireStatusTransitionForChatUpdates: !bypassBusyCheck,
   });
-  if (!didUpdateStatus) {
+  if (!didUpdateStatus && !bypassBusyCheck) {
     const noopResult = await checkNoopBusy({ threadId, threadChatId, userId });
     if (noopResult) return noopResult;
   }

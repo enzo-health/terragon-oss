@@ -647,10 +647,25 @@ describe("drainDueEffects", () => {
     expect(moved).toBe(true);
 
     // Daemon is actively working
-    await db.insert(schema.threadChat).values({
-      threadId,
+    const [threadChatRow] = await db
+      .insert(schema.threadChat)
+      .values({
+        threadId,
+        userId: user.id,
+        status: "working",
+      })
+      .returning({ id: schema.threadChat.id });
+
+    // An agent_run_context row proves the daemon actually received this run
+    await db.insert(schema.agentRunContext).values({
+      runId: dispatchRunId,
       userId: user.id,
-      status: "working",
+      threadId,
+      threadChatId: threadChatRow!.id,
+      sandboxId: `sandbox-${nanoid()}`,
+      agent: "claudeCode",
+      tokenNonce: nanoid(),
+      status: "processing",
     });
 
     const effect: EffectSpec = {
