@@ -21,7 +21,7 @@ export interface DatabaseConfig {
 }
 
 /** Sanitize UUID for use in database queries */
-function sanitizeUuid(id: string): string {
+export function sanitizeUuid(id: string): string {
   // UUIDs follow pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
   // Allow alphanumeric and hyphens only
   const sanitized = id.replace(/[^a-zA-Z0-9-]/g, "");
