@@ -26,7 +26,7 @@ export interface SourceSnapshot<T = unknown> {
   name: SourceName;
   fetchedAt: Date;
   durationMs: number;
-  data: T;
+  data: T | null; // Allow null for error cases
   error?: string;
 }
 
@@ -36,7 +36,7 @@ export interface Discrepancy {
   severity: DiscrepancySeverity;
   type: DiscrepancyType;
   threadId: string;
-  sources: [SourceSnapshot, SourceSnapshot];
+  sources: SourceSnapshot[]; // Changed from [SourceSnapshot, SourceSnapshot] to allow variable length
   field?: string; // Which field differs (e.g., "state", "version")
   description: string;
   impact: string;
@@ -188,6 +188,7 @@ export interface ContainerState {
   daemonRunning: boolean;
   daemonPid: number | null;
   lastLogTimestamp: string | null;
+  error?: string; // Error message if container fetch failed
   resourceUsage?: {
     cpuPercent: number;
     memoryPercent: number;

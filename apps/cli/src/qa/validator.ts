@@ -95,8 +95,10 @@ export class QAValidator {
       | undefined;
 
     // Check if using remote sandbox (not local Docker)
-    const sandboxProvider = dbThread?.data.sandboxProvider;
-    const isRemoteSandbox = sandboxProvider && sandboxProvider !== "docker";
+    const sandboxProvider = dbThread?.data?.sandboxProvider;
+    const isRemoteSandbox = Boolean(
+      sandboxProvider && sandboxProvider !== "docker",
+    );
 
     // Log results
     if (dbWorkflow) {
@@ -108,7 +110,7 @@ export class QAValidator {
       console.log(`❌ Database fetch failed: ${fetchResults[0].reason}`);
     }
 
-    if (dbThread) {
+    if (dbThread?.data) {
       const provider = dbThread.data.sandboxProvider || "unknown";
       console.log(
         `✅ Thread: status=${dbThread.data.status}, provider=${provider} (${dbThread.durationMs}ms)`,
@@ -128,14 +130,16 @@ export class QAValidator {
       console.log(`❌ UI fetch failed: ${fetchResults[1].reason}`);
     }
 
-    if (container) {
+    if (container?.data) {
       const data = container.data as ContainerState;
       if (isRemoteSandbox) {
         console.log(
           `⚠️  Container: Remote ${sandboxProvider} sandbox - local check skipped`,
         );
-      } else if (data.error) {
-        console.log(`⚠️  Container: ${data.error} (${container.durationMs}ms)`);
+      } else if (container.error) {
+        console.log(
+          `⚠️  Container: ${container.error} (${container.durationMs}ms)`,
+        );
       } else {
         console.log(
           `✅ Container: status=${data.status}, daemon=${data.daemonRunning ? "running" : "stopped"} (${container.durationMs}ms)`,
@@ -165,7 +169,7 @@ export class QAValidator {
     });
 
     // Add info discrepancy about remote sandbox
-    if (isRemoteSandbox && container?.data.error) {
+    if (isRemoteSandbox && container?.error && dbThread) {
       discrepancies.push({
         id: `remote-sandbox-${Date.now()}`,
         timestamp: new Date(),
@@ -175,15 +179,15 @@ export class QAValidator {
         sources: [
           {
             name: "database",
-            fetchedAt: dbThread!.fetchedAt,
-            durationMs: dbThread!.durationMs,
+            fetchedAt: dbThread.fetchedAt,
+            durationMs: dbThread.durationMs,
             data: { sandboxProvider },
           },
           {
             name: "container",
             fetchedAt: container.fetchedAt,
             durationMs: container.durationMs,
-            data: { error: container.data.error },
+            data: { error: container.error },
           },
         ],
         description: `Remote ${sandboxProvider} sandbox - container validation skipped`,

@@ -3,6 +3,8 @@
  *
  * Direct PostgreSQL queries for ground truth.
  * Uses the same connection logic as delivery-loop-local-framework.ts
+ * NOTE: This uses pg directly (not Drizzle) to keep the CLI lightweight
+ * and avoid circular dependencies with @terragon/shared
  */
 
 import { Client } from "pg";
@@ -18,6 +20,17 @@ export interface DatabaseConfig {
   timeoutMs: number;
 }
 
+/** Sanitize UUID for use in database queries */
+function sanitizeUuid(id: string): string {
+  // UUIDs follow pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  // Allow alphanumeric and hyphens only
+  const sanitized = id.replace(/[^a-zA-Z0-9-]/g, "");
+  if (sanitized !== id || !/^[0-9a-fA-F-]{36}$/.test(sanitized)) {
+    throw new Error(`Invalid UUID format: ${id}`);
+  }
+  return sanitized;
+}
+
 export class DatabaseSourceFetcher {
   private config: DatabaseConfig;
 
@@ -29,6 +42,10 @@ export class DatabaseSourceFetcher {
     threadId: string,
   ): Promise<SourceSnapshot<DatabaseWorkflowState>> {
     const startTime = Date.now();
+
+    // Validate thread ID format (UUID)
+    const safeThreadId = sanitizeUuid(threadId);
+
     const client = new Client({
       connectionString: this.config.connectionString,
       connectionTimeoutMillis: this.config.timeoutMs,
@@ -59,11 +76,11 @@ export class DatabaseSourceFetcher {
          WHERE w.thread_id = $1
          ORDER BY w.created_at DESC
          LIMIT 1`,
-        [threadId],
+        [safeThreadId],
       );
 
       if (workflowResult.rows.length === 0) {
-        throw new Error(`No workflow found for thread ${threadId}`);
+        throw new Error(`No workflow found for thread ${safeThreadId}`);
       }
 
       const data = workflowResult.rows[0] as DatabaseWorkflowState;
@@ -83,6 +100,10 @@ export class DatabaseSourceFetcher {
     threadId: string,
   ): Promise<SourceSnapshot<DatabaseThreadState>> {
     const startTime = Date.now();
+
+    // Validate thread ID format (UUID)
+    const safeThreadId = sanitizeUuid(threadId);
+
     const client = new Client({
       connectionString: this.config.connectionString,
       connectionTimeoutMillis: this.config.timeoutMs,
@@ -106,11 +127,11 @@ export class DatabaseSourceFetcher {
           updated_at as "updatedAt"
          FROM thread
          WHERE id = $1`,
-        [threadId],
+        [safeThreadId],
       );
 
       if (threadResult.rows.length === 0) {
-        throw new Error(`No thread found with id ${threadId}`);
+        throw new Error(`No thread found with id ${safeThreadId}`);
       }
 
       const data = threadResult.rows[0] as DatabaseThreadState;
@@ -131,6 +152,10 @@ export class DatabaseSourceFetcher {
     limit: number = 50,
   ): Promise<SourceSnapshot<DatabaseEventJournal>> {
     const startTime = Date.now();
+
+    // Validate workflow ID format (UUID)
+    const safeWorkflowId = sanitizeUuid(workflowId);
+
     const client = new Client({
       connectionString: this.config.connectionString,
       connectionTimeoutMillis: this.config.timeoutMs,
@@ -149,7 +174,7 @@ export class DatabaseSourceFetcher {
          WHERE workflow_id = $1
          ORDER BY occurred_at DESC
          LIMIT $2`,
-        [workflowId, limit],
+        [safeWorkflowId, limit],
       );
 
       // Get max version from effects ledger as proxy for "latest version"
@@ -157,7 +182,7 @@ export class DatabaseSourceFetcher {
         `SELECT COALESCE(MAX(workflow_version), 0) as "maxVersion"
          FROM delivery_effect_ledger_v3
          WHERE workflow_id = $1`,
-        [workflowId],
+        [safeWorkflowId],
       );
 
       const data: DatabaseEventJournal = {
@@ -178,6 +203,10 @@ export class DatabaseSourceFetcher {
 
   async fetchSignalInbox(workflowId: string): Promise<SourceSnapshot> {
     const startTime = Date.now();
+
+    // Validate workflow ID format (UUID)
+    const safeWorkflowId = sanitizeUuid(workflowId);
+
     const client = new Client({
       connectionString: this.config.connectionString,
       connectionTimeoutMillis: this.config.timeoutMs,
@@ -186,7 +215,7 @@ export class DatabaseSourceFetcher {
     try {
       await client.connect();
 
-      // Check which signal inbox table exists
+      // Check which signal inbox table exists (using parameterized query for safety)
       const tableCheck = await client.query(
         `SELECT to_regclass('public.delivery_signal_inbox') as exists`,
       );
@@ -208,7 +237,7 @@ export class DatabaseSourceFetcher {
          WHERE loop_id = $1
          ORDER BY received_at DESC
          LIMIT 20`,
-        [workflowId],
+        [safeWorkflowId],
       );
 
       return {
@@ -237,9 +266,14 @@ export class DatabaseSourceFetcher {
     const workflow = await this.fetchWorkflowState(threadId);
     const thread = await this.fetchThreadState(threadId);
 
-    // Deep mode: fetch journal and signals
-    const journal = await this.fetchEventJournal(workflow.data.workflowId);
-    const signals = await this.fetchSignalInbox(workflow.data.workflowId);
+    // Deep mode: fetch journal and signals only if workflow data exists
+    let journal: SourceSnapshot<DatabaseEventJournal> | undefined;
+    let signals: SourceSnapshot | undefined;
+
+    if (workflow.data) {
+      journal = await this.fetchEventJournal(workflow.data.workflowId);
+      signals = await this.fetchSignalInbox(workflow.data.workflowId);
+    }
 
     return {
       workflow,
@@ -253,10 +287,14 @@ export class DatabaseSourceFetcher {
 export function createDatabaseFetcher(
   connectionString?: string,
 ): DatabaseSourceFetcher {
-  const connStr =
-    connectionString ||
-    process.env.DATABASE_URL ||
-    "postgresql://postgres:postgres@localhost:5432/postgres";
+  const connStr = connectionString || process.env.DATABASE_URL;
+
+  if (!connStr) {
+    throw new Error(
+      "DATABASE_URL environment variable is required. " +
+        "Set it to your PostgreSQL connection string.",
+    );
+  }
 
   return new DatabaseSourceFetcher({
     connectionString: connStr,

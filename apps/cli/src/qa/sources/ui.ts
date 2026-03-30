@@ -61,7 +61,7 @@ export class UISourceFetcher {
 
   async fetchDeliveryLoopStatus(
     threadId: string,
-  ): Promise<SourceSnapshot<UIWorkflowState>> {
+  ): Promise<SourceSnapshot<UIWorkflowState | null>> {
     const startTime = Date.now();
 
     try {
@@ -98,7 +98,7 @@ export class UISourceFetcher {
         name: "ui",
         fetchedAt: new Date(),
         durationMs: Date.now() - startTime,
-        data: null as unknown as UIWorkflowState,
+        data: null,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -106,12 +106,12 @@ export class UISourceFetcher {
 
   async fetchAll(threadId: string): Promise<{
     detail: SourceSnapshot;
-    deliveryLoop?: SourceSnapshot<UIWorkflowState>;
+    deliveryLoop?: SourceSnapshot<UIWorkflowState | null>;
   }> {
     const detail = await this.fetchThreadDetail(threadId);
 
     // Try to fetch delivery loop status, but don't fail if unavailable
-    let deliveryLoop: SourceSnapshot<UIWorkflowState> | undefined;
+    let deliveryLoop: SourceSnapshot<UIWorkflowState | null> | undefined;
     try {
       const result = await this.fetchDeliveryLoopStatus(threadId);
       // Only include if data is actually present
