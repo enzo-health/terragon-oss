@@ -126,6 +126,9 @@ importers:
       node-fetch:
         specifier: ^3.3.2
         version: 3.3.2
+      pg:
+        specifier: ^8.11.0
+        version: 8.16.0
       react:
         specifier: 19.1.2
         version: 19.1.2
@@ -142,6 +145,9 @@ importers:
       '@types/node':
         specifier: 24.0.1
         version: 24.0.1
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.15.2
       '@types/react':
         specifier: ^19.1.8
         version: 19.1.8
