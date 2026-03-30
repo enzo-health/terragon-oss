@@ -311,6 +311,7 @@ async function processGateReviewEffect(params: {
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
+      bypassBusyCheck: true,
     });
   } catch {
     // Non-fatal: cron will pick up pending follow-ups
@@ -428,12 +429,15 @@ async function processImplementingDispatchEffect(params: {
     );
   }
 
-  // Queue a "Continue implementation." message for the follow-up queue,
-  // but only on retries — on the first run the user's original prompt suffices.
-  if (isRetry) {
-    const retryMessage = params.retryReason
-      ? `Previous attempt failed: ${summarizeRetryReason(params.retryReason)}. Fix the issue and continue implementation.`
-      : "Continue implementation.";
+  // Always queue a message so maybeProcessFollowUpQueue has something to
+  // dispatch.  Without this the first post-planning run gets orphaned because
+  // the follow-up queue finds an empty queuedMessages array and returns early.
+  {
+    const messageText = isRetry
+      ? params.retryReason
+        ? `Previous attempt failed: ${summarizeRetryReason(params.retryReason)}. Fix the issue and continue implementation.`
+        : "Continue implementation."
+      : "Begin implementation.";
     const { updateThreadChat } = await import("@terragon/shared/model/threads");
     await updateThreadChat({
       db: params.db,
@@ -446,7 +450,7 @@ async function processImplementingDispatchEffect(params: {
             type: "user" as const,
             model: null,
             timestamp: new Date().toISOString(),
-            parts: [{ type: "text" as const, text: retryMessage }],
+            parts: [{ type: "text" as const, text: messageText }],
           },
         ],
       },
@@ -464,6 +468,7 @@ async function processImplementingDispatchEffect(params: {
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
+      bypassBusyCheck: true,
     });
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
@@ -794,25 +799,28 @@ async function handleAckTimeoutCheck(params: {
     return { kind: "ack_timeout_check", outcome: "stale" };
   }
 
-  // If the thread is actively working, the daemon has started processing —
-  // the ack timeout is a false alarm. Don't fire it, or we'll create a
-  // phantom dispatch that poisons the activeRunId and causes the real
-  // run_completed to be silently dropped as "out of order".
+  // If the daemon has actually started processing THIS run, the ack timeout
+  // is a false alarm.  We verify by checking the agent_run_context table —
+  // a row only exists after startAgentMessage delivers the run to the daemon.
+  // Previously we checked threadChat.status === "working", but that can be
+  // stale from a PRIOR run, causing false suppression and a permanent stuck
+  // state when the new dispatch never reached the daemon.
   if (workflow) {
-    const activeThreadChat = await params.db.query.threadChat.findFirst({
-      where: and(
-        eq(schema.threadChat.threadId, workflow.threadId),
-        ne(schema.threadChat.status, "complete"),
-      ),
-      columns: { status: true },
-      orderBy: [desc(schema.threadChat.createdAt)],
+    const { getAgentRunContextByRunId } = await import(
+      "@terragon/shared/model/agent-run-context"
+    );
+    const runContext = await getAgentRunContextByRunId({
+      db: params.db,
+      runId: params.payload.runId,
+      userId: workflow.userId,
     });
     if (
-      (activeThreadChat?.status === "working" ||
-        activeThreadChat?.status === "working-done") &&
-      head.activeRunId === params.payload.runId
+      runContext &&
+      (runContext.status === "pending" ||
+        runContext.status === "dispatched" ||
+        runContext.status === "processing")
     ) {
-      // suppress — daemon is actively working and ack was journaled
+      // The daemon genuinely has this run — suppress the timeout
       return { kind: "ack_timeout_check", outcome: "stale" };
     }
   }
