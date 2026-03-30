@@ -173,16 +173,30 @@ export class ComparatorEngine {
         }
 
         const dbWorkflow = sources.database.workflow.data;
-        const container = sources.container.data;
+        const containerSnapshot = sources.container;
+        const container = containerSnapshot.data;
+
+        // Guard against null container data
+        if (!container) {
+          return null;
+        }
 
         const hasActiveRun = !!dbWorkflow.activeRunId;
         const containerRunning =
           container.status === "running" && container.daemonRunning;
 
+        // Check if container fetch failed (e.g., not found vs actual daemon issue)
+        const containerError = containerSnapshot.error;
+
         if (hasActiveRun && !containerRunning) {
+          // Distinguish between container not found (heuristic failed) vs daemon not running
+          const severity: DiscrepancySeverity = containerError
+            ? "warning" // Container not found - might be discoverability issue
+            : "critical"; // Container found but daemon not running - actual problem
+
           return this.createDiscrepancy({
             type: "container_db_mismatch",
-            severity: "critical",
+            severity,
             threadId: dbWorkflow.threadId,
             sources: [
               {
@@ -196,11 +210,15 @@ export class ComparatorEngine {
                 value: container.daemonRunning,
               },
             ],
-            description: `Database shows active run '${dbWorkflow.activeRunId}' but container daemon is not running (status: ${container.status})`,
-            impact:
-              "Task appears to be working but is actually stalled. User may wait indefinitely for completion.",
-            recommendedFix:
-              "Check daemon crash detection and auto-restart logic. Container may need manual intervention.",
+            description: containerError
+              ? `Database shows active run '${dbWorkflow.activeRunId}' but container could not be found (${containerError}). Container may be running but not discoverable via label/name heuristics.`
+              : `Database shows active run '${dbWorkflow.activeRunId}' but container daemon is not running (status: ${container.status})`,
+            impact: containerError
+              ? "Cannot verify container health - it may be running fine but discovery failed."
+              : "Task appears to be working but is actually stalled. User may wait indefinitely for completion.",
+            recommendedFix: containerError
+              ? "Check container labels (threadId) or naming conventions for discovery."
+              : "Check daemon crash detection and auto-restart logic. Container may need manual intervention.",
           });
         }
 
@@ -569,7 +587,7 @@ export class ComparatorEngine {
         fetchedAt: s.snapshot.fetchedAt,
         durationMs: s.snapshot.durationMs,
         data: { [s.field]: s.value },
-      })) as [SourceSnapshot, SourceSnapshot],
+      })),
       field: params.sources[0]?.field,
       description: params.description,
       impact: params.impact,

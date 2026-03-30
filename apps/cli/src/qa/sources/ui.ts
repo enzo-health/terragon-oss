@@ -64,44 +64,29 @@ export class UISourceFetcher {
   ): Promise<SourceSnapshot<UIWorkflowState | null>> {
     const startTime = Date.now();
 
-    try {
-      // The CLI API doesn't have delivery loop status endpoint yet
-      // We need to use the internal server action endpoint
-      // This is a workaround until the CLI contract is extended
+    // FIXME: This endpoint does not exist yet. The CLI API contract needs to be
+    // extended to include delivery loop status. For now, this method will always
+    // return an error, which gracefully disables UI state comparisons.
+    //
+    // To enable UI comparisons, add to packages/cli-api-contract:
+    //   deliveryLoopStatus: { input: { threadId: string }, output: UIWorkflowState }
+    // And implement the handler in apps/www/src/api/cli/
+    //
+    // Until then, the validator relies only on database and container sources.
 
-      const response = await fetch(
-        `${this.config.webUrl}/api/internal/delivery-loop-status`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Daemon-Token": this.config.apiKey,
-          },
-          body: JSON.stringify({ threadId }),
-        },
-      );
+    // Suppress unused variable warnings - will be used when endpoint is implemented
+    void this.config.webUrl;
+    void threadId;
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const data = (await response.json()) as UIWorkflowState;
-
-      return {
-        name: "ui",
-        fetchedAt: new Date(),
-        durationMs: Date.now() - startTime,
-        data,
-      };
-    } catch (error) {
-      return {
-        name: "ui",
-        fetchedAt: new Date(),
-        durationMs: Date.now() - startTime,
-        data: null,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    return {
+      name: "ui",
+      fetchedAt: new Date(),
+      durationMs: Date.now() - startTime,
+      data: null,
+      error:
+        "CLI API contract does not include delivery loop status endpoint. " +
+        "UI state comparisons are disabled. Extend the contract to enable.",
+    };
   }
 
   async fetchAll(threadId: string): Promise<{
