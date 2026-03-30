@@ -457,25 +457,47 @@ async function processImplementingDispatchEffect(params: {
     });
   }
 
-  // Trigger the follow-up queue to launch the sandbox run.
-  // This is best-effort — the dispatch intent + queued message are already
-  // persisted, so the cron will pick them up even if this fails.
-  try {
-    const { maybeProcessFollowUpQueue } = await import(
-      "@/server-lib/process-follow-up-queue"
+  // Trigger the follow-up queue to launch the sandbox run — but only when the
+  // sandbox is already up.  During initial bootstrap the threadChat is still in
+  // booting/queued while startAgentMessage is actively creating the sandbox.
+  // Calling maybeProcessFollowUpQueue in that state spawns a second
+  // startAgentMessage that races the first and fails with sandbox-not-found.
+  // The queued message is still persisted so the original startAgentMessage
+  // picks it up after sandbox boot or the cron drains it.
+  const chatStatus = threadChat.status;
+  const sandboxAlreadyRunning =
+    chatStatus === "working" ||
+    chatStatus === "working-done" ||
+    chatStatus === "complete" ||
+    chatStatus === "stopping" ||
+    chatStatus === "checkpointing";
+  if (sandboxAlreadyRunning) {
+    try {
+      const { maybeProcessFollowUpQueue } = await import(
+        "@/server-lib/process-follow-up-queue"
+      );
+      await maybeProcessFollowUpQueue({
+        userId: workflow.userId,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        bypassBusyCheck: true,
+      });
+    } catch (followUpErr) {
+      console.warn(
+        "[delivery-loop] follow-up queue trigger failed (non-fatal)",
+        {
+          workflowId,
+          runId,
+          error:
+            followUpErr instanceof Error ? followUpErr.message : followUpErr,
+        },
+      );
+    }
+  } else {
+    console.log(
+      "[delivery-loop] skipping eager follow-up dispatch — sandbox still booting",
+      { workflowId, runId, chatStatus },
     );
-    await maybeProcessFollowUpQueue({
-      userId: workflow.userId,
-      threadId: workflow.threadId,
-      threadChatId: threadChat.id,
-      bypassBusyCheck: true,
-    });
-  } catch (followUpErr) {
-    console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
-      workflowId,
-      runId,
-      error: followUpErr instanceof Error ? followUpErr.message : followUpErr,
-    });
   }
 
   const ackDeadlineAt = new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS);
