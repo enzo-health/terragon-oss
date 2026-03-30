@@ -74,6 +74,49 @@ terry qa watch thread_abc123 --interval 10000 --timeout 300000
 terry qa watch thread_abc123 --fail-on-discrepancy
 ```
 
+## Example Output
+
+### Healthy Task
+
+```
+🔍 Starting validation for thread 7d4ea142-0a2e-4837-bee3-a5603163e106...
+✅ Database: state=awaiting_manual_fix, version=3 (234ms)
+✅ Thread: status=queued, provider=docker (198ms)
+⚠️  UI: CLI API contract does not include delivery loop status endpoint (1ms)
+✅ Container: status=paused, daemon=stopped (1567ms)
+
+⚖️  Running validation rules...
+
+✅ All validation rules passed - no discrepancies found
+
+═══════════════════════════════════════════════════════════════
+VALIDATION SUMMARY
+═══════════════════════════════════════════════════════════════
+Thread:     7d4ea142-0a2e-4837-bee3-a5603163e106
+Duration:   2043ms
+Status:     ✅ HEALTHY
+Sources:    database, ui, container
+Sandbox:    docker (local)
+Issues:     0 critical, 0 warning, 0 info
+═══════════════════════════════════════════════════════════════
+```
+
+### With Discrepancies
+
+```
+⚠️  Found 2 discrepancy(s):
+
+🔴 [CRITICAL] container_db_mismatch
+   Database shows active run 'b05ac4d1-...' but container daemon is not running
+   Impact: Task appears to be working but is actually stalled
+   Fix: Check daemon crash detection and auto-restart logic
+
+🟡 [WARNING] database_ui_mismatch
+   UI shows state 'implementing' but database shows 'awaiting_manual_fix'
+   Impact: User sees incorrect task progress
+   Fix: Check React Query cache invalidation on workflow state transitions
+```
+
 ## Discrepancy Types
 
 | Type                    | Severity | Description                                |
@@ -121,8 +164,8 @@ terry qa watch thread_abc123 --fail-on-discrepancy
 ## Environment Variables
 
 ```bash
-# Database connection (defaults to local dev DB)
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+# Database connection (required - no default)
+DATABASE_URL=postgresql://user:password@host:port/database
 
 # Web URL for UI API (defaults to localhost)
 TERRAGON_WEB_URL=http://127.0.0.1:3000
@@ -130,6 +173,41 @@ TERRAGON_WEB_URL=http://127.0.0.1:3000
 # Terry API key location (defaults to ~/.terry/config.json)
 TERRY_SETTINGS_DIR=~/.terry
 ```
+
+## Current Limitations
+
+### UI State Comparisons Disabled
+
+The CLI API contract does not currently include a `deliveryLoopStatus` endpoint. As a result:
+
+- UI vs Database state comparisons are **disabled**
+- Gate status validations are **disabled**
+- PR linkage validations are **disabled**
+
+To enable UI comparisons, extend `@terragon/cli-api-contract` with:
+
+```typescript
+deliveryLoopStatus: {
+  input: { threadId: string },
+  output: UIWorkflowState
+}
+```
+
+The validator currently relies on **Database** and **Container** sources only, which still provide valuable validation coverage for:
+
+- Container vs Database state consistency
+- Container crash detection
+- Git SHA verification
+- Thread status validation
+
+### Container Discovery Heuristics
+
+For Docker containers, the validator uses label-based or name-based heuristics to find the container for a thread:
+
+1. First tries: `docker ps --filter "label=threadId=<threadId>"`
+2. Fallback: Searches for container names containing the last 8 characters of thread ID
+
+If the container cannot be found via these heuristics, a **warning** (not critical) discrepancy is generated, as the container may be running fine but not discoverable.
 
 ## Testing
 

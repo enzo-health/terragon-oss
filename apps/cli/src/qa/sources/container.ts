@@ -12,7 +12,7 @@ import type { SourceSnapshot, ContainerState } from "../types.js";
 const execFileAsync = promisify(execFile);
 
 /** Sanitize container ID to prevent command injection */
-function sanitizeContainerId(id: string): string {
+export function sanitizeContainerId(id: string): string {
   // Only allow alphanumeric characters, hyphens, and underscores
   // Container IDs are typically hex strings or names with limited characters
   const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -23,7 +23,7 @@ function sanitizeContainerId(id: string): string {
 }
 
 /** Sanitize thread ID for use in container lookups */
-function sanitizeThreadId(id: string): string {
+export function sanitizeThreadId(id: string): string {
   // Thread IDs are UUIDs, allow alphanumeric and hyphens
   const sanitized = id.replace(/[^a-zA-Z0-9-]/g, "");
   if (sanitized !== id) {
