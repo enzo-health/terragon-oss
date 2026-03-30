@@ -429,10 +429,15 @@ async function processImplementingDispatchEffect(params: {
     );
   }
 
-  // Always queue a message so maybeProcessFollowUpQueue has something to
-  // dispatch.  Without this the first post-planning run gets orphaned because
-  // the follow-up queue finds an empty queuedMessages array and returns early.
-  {
+  // Queue a follow-up message so maybeProcessFollowUpQueue has something to
+  // dispatch.  Without this the post-planning implementing run gets orphaned
+  // because the follow-up queue finds an empty queuedMessages array.
+  //
+  // Skip during the planning phase — the original user prompt is already in
+  // the chat messages and startAgentMessage will send it directly.  Queuing
+  // "Begin implementation." here would contaminate the planning prompt.
+  const isPlanningPhase = head?.state === "planning";
+  if (!isPlanningPhase) {
     const messageText = isRetry
       ? params.retryReason
         ? `Previous attempt failed: ${summarizeRetryReason(params.retryReason)}. Fix the issue and continue implementation.`
