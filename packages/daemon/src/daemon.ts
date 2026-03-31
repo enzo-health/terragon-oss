@@ -304,6 +304,8 @@ type AppServerRunContext = {
   watchdogTimer: NodeJS.Timeout | null;
   /** Last full agent_message text by item id (for cumulative update dedupe). */
   agentMessageTextById: Map<string, string>;
+  /** True once any item event (assistant message, tool call, etc.) has been emitted. */
+  hasItemOutput: boolean;
   resolveTurnComplete: (result: AppServerTurnCompletion) => void;
   rejectTurnComplete: (error: Error) => void;
   resolveThreadReady: (threadId: string) => void;
@@ -956,6 +958,7 @@ export class TerragonDaemon {
       threadReadyPromise,
       watchdogTimer: null,
       agentMessageTextById: new Map<string, string>(),
+      hasItemOutput: false,
       resolveTurnComplete: (result) => {
         if (context.isCompleted) {
           return;
@@ -1494,6 +1497,7 @@ export class TerragonDaemon {
             threadEvent.type === "item.updated" ||
             threadEvent.type === "item.completed"
           ) {
+            context.hasItemOutput = true;
             this.resetAppServerWatchdog({
               context,
               input,
@@ -1536,6 +1540,24 @@ export class TerragonDaemon {
             const completionStatus = isTurnInterruptedFromParams(params)
               ? "interrupted"
               : "completed";
+
+            // Log a warning when the turn completed with zero tokens and no
+            // items.  The server-side empty-completion detector in
+            // handle-daemon-event.ts catches this authoritatively; we just log
+            // here for daemon-level observability.
+            if (
+              completionStatus === "completed" &&
+              !context.hasItemOutput &&
+              threadEvent.usage &&
+              (threadEvent.usage.input_tokens ?? 0) === 0 &&
+              (threadEvent.usage.output_tokens ?? 0) === 0
+            ) {
+              this.runtime.logger.warn(
+                "Codex turn.completed with zero tokens and no items — likely credential or model issue",
+                { threadChatId: input.threadChatId },
+              );
+            }
+
             context.resolveTurnComplete({
               status: completionStatus,
               codexPreviousResponseId:
