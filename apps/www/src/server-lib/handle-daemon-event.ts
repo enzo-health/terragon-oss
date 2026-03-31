@@ -434,6 +434,32 @@ export async function handleDaemonEvent({
       }
     }
   }
+  // Detect empty completions: agent reports success but produced zero output.
+  // This typically means the agent couldn't reach its provider API (bad key,
+  // network issue) but reported "success" instead of an error.
+  if (isDone && !isError && !isRateLimited && !isOverloaded) {
+    const hasAssistantInBatch = messages.some((m) => m.type === "assistant");
+    const hasAssistantInHistory = (threadChat.messages ?? []).some(
+      (m: { type: string }) => m.type === "assistant",
+    );
+    if (!hasAssistantInBatch && !hasAssistantInHistory) {
+      console.warn(
+        "[daemon-event] Empty completion detected — agent produced zero output",
+        {
+          threadId,
+          threadChatId,
+          agent: threadChat.agent,
+          durationMs,
+          costUsd,
+        },
+      );
+      isError = true;
+      customErrorMessage =
+        "Agent completed without producing any output. This usually means the agent's API credentials are missing or invalid.";
+      terminalFailureSource = "result";
+    }
+  }
+
   waitUntil(
     trackUsageEvents({
       userId,
