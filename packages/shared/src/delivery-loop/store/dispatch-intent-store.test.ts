@@ -37,19 +37,21 @@ describe("createDispatchIntent", () => {
     };
   });
 
-  it("is idempotent on runId", async () => {
+  it("is idempotent on runId under concurrent duplicate creates", async () => {
     const runId = `run-${nanoid()}`;
 
-    const firstId = await createDispatchIntent(db, {
-      ...baseInput,
-      runId,
-    });
-    expect(firstId).toBeTruthy();
+    const [firstId, secondId] = await Promise.all([
+      createDispatchIntent(db, {
+        ...baseInput,
+        runId,
+      }),
+      createDispatchIntent(db, {
+        ...baseInput,
+        runId,
+      }),
+    ]);
 
-    const secondId = await createDispatchIntent(db, {
-      ...baseInput,
-      runId,
-    });
+    expect(firstId).toBeTruthy();
     expect(secondId).toBe(firstId);
 
     const rows = await db
