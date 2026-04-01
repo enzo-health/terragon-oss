@@ -126,6 +126,7 @@ describe("getDeliveryLoopStatusAction", () => {
       expect(status).not.toBeNull();
       expect(status?.state).toBe(expectedState);
       expect(status?.stateLabel).toBe(expectedLabel);
+      expect(status?.actions.canBypassOnce).toBe(false);
       expect(status?.explanation).toBe(
         buildTerminalActionExplanation({
           blockedReason,

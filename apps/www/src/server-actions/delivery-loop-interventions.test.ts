@@ -56,7 +56,7 @@ describe("delivery-loop-interventions", () => {
     await resumeFromBlocked({ threadId, threadChatId: null });
   });
 
-  it("accepts bypass request for a v2 workflow in implementing state", async () => {
+  it("rejects bypass request for a v3 workflow in implementing state", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -76,11 +76,12 @@ describe("delivery-loop-interventions", () => {
     });
     await ensureWorkflowHead({ db, workflowId: loopImplementing.id });
 
-    // Should not throw — workflow is in a bypassable kind
-    await bypassOnce({ threadId, threadChatId: null });
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
+    );
   });
 
-  it("accepts bypass request for a v2 workflow in gating state", async () => {
+  it("rejects bypass request for a v3 workflow in gating state", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -103,8 +104,9 @@ describe("delivery-loop-interventions", () => {
     });
     await ensureWorkflowHead({ db, workflowId: loopGating.id });
 
-    // Should not throw — workflow is in a bypassable kind
-    await bypassOnce({ threadId, threadChatId: null });
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
+    );
   });
 
   it("rejects intervention when user is logged out", async () => {

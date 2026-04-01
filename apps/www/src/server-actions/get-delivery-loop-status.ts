@@ -211,7 +211,7 @@ function buildDeliveryLoopActions({
 }) {
   return {
     canResume: loopSnapshot.kind === "blocked",
-    canBypassOnce: loopSnapshot.kind === "blocked",
+    canBypassOnce: false,
     canApprovePlan:
       loopState === "planning" &&
       planApprovalPolicy === "human_required" &&
