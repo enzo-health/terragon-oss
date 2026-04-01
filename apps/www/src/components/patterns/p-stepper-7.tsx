@@ -319,15 +319,17 @@ function DeliveryInterventionControls({
       >
         {resumeMutation.isPending ? "Resuming…" : "Resume"}
       </Button>
-      <Button
-        size="sm"
-        variant="secondary"
-        className="h-7 text-xs"
-        disabled={bypassMutation.isPending || !canBypassOnce}
-        onClick={handleBypass}
-      >
-        {bypassMutation.isPending ? "Bypassing…" : "Bypass Once"}
-      </Button>
+      {canBypassOnce && (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-7 text-xs"
+          disabled={bypassMutation.isPending}
+          onClick={handleBypass}
+        >
+          {bypassMutation.isPending ? "Bypassing…" : "Bypass Once"}
+        </Button>
+      )}
     </div>
   );
 }

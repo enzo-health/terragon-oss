@@ -414,6 +414,7 @@ describe("getDeliveryLoopStatusAction", () => {
     const status = await getDeliveryLoopStatus(threadId);
 
     expect(status?.state).toBe("blocked");
+    expect(status?.actions.canBypassOnce).toBe(false);
     expect(status?.needsAttention.topBlockers).toContainEqual(
       expect.objectContaining({
         source: "human_feedback",

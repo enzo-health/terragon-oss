@@ -109,6 +109,20 @@ describe("delivery-loop-interventions", () => {
     );
   });
 
+  it("returns the unsupported bypass error when no active workflow exists", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: { githubRepoFullName: "owner/repo" },
+    });
+    await mockLoggedInUser(session);
+
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
+    );
+  });
+
   it("rejects intervention when user is logged out", async () => {
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({

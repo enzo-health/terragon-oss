@@ -87,18 +87,6 @@ export const requestDeliveryLoopBypassCurrentGateOnce = userOnlyAction(
     userId: string,
     { threadId }: { threadId: string; threadChatId: string | null },
   ) {
-    const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row) {
-      throw new UserFacingError(
-        "No active Delivery Loop found for this thread",
-      );
-    }
-
-    const v3Head = await getWorkflowHead({ db, workflowId: v2Row.id });
-    if (!v3Head) {
-      throw new Error(`No v3 head for workflow ${v2Row.id}`);
-    }
-
     throw new UserFacingError(
       "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
     );
