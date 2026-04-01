@@ -31,6 +31,31 @@ async function getDeliveryLoopStatus(threadId: string) {
   return unwrapResult(await getDeliveryLoopStatusAction(threadId));
 }
 
+const TERMINAL_STATUS_CASES = [
+  {
+    blockedReason: "PR merged via squash",
+    expectedState: "terminated_pr_merged",
+    expectedLabel: "Terminated: PR Merged",
+    expectedSummaryExplanation:
+      "The loop ended because the pull request was merged.",
+  },
+  {
+    blockedReason: "PR closed",
+    expectedState: "terminated_pr_closed",
+    expectedLabel: "Terminated: PR Closed",
+    expectedSummaryExplanation:
+      "The loop ended because the pull request was closed.",
+  },
+] as const;
+
+type TerminalStatusCase = (typeof TERMINAL_STATUS_CASES)[number];
+
+function buildTerminalActionExplanation(
+  terminalCase: TerminalStatusCase,
+): string {
+  return `${terminalCase.expectedSummaryExplanation} Reason: ${terminalCase.blockedReason}.`;
+}
+
 describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -40,28 +65,13 @@ describe("getDeliveryLoopStatusAction", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([
-    {
-      blockedReason: "PR merged",
-      expectedState: "terminated_pr_merged",
-      expectedLabel: "Terminated: PR Merged",
-      expectedExplanation:
-        "The loop ended because the pull request was merged. Reason: PR merged.",
-    },
-    {
-      blockedReason: "PR closed",
-      expectedState: "terminated_pr_closed",
-      expectedLabel: "Terminated: PR Closed",
-      expectedExplanation:
-        "The loop ended because the pull request was closed. Reason: PR closed.",
-    },
-  ])(
+  it.each(TERMINAL_STATUS_CASES)(
     "returns a consistent terminal status payload for $blockedReason",
     async ({
       blockedReason,
       expectedState,
       expectedLabel,
-      expectedExplanation,
+      expectedSummaryExplanation,
     }) => {
       const { user, session } = await createTestUser({ db });
       const { threadId } = await createTestThread({
@@ -113,29 +123,26 @@ describe("getDeliveryLoopStatusAction", () => {
       expect(status).not.toBeNull();
       expect(status?.state).toBe(expectedState);
       expect(status?.stateLabel).toBe(expectedLabel);
-      expect(status?.explanation).toBe(expectedExplanation);
+      expect(status?.explanation).toBe(
+        buildTerminalActionExplanation({
+          blockedReason,
+          expectedState,
+          expectedLabel,
+          expectedSummaryExplanation,
+        }),
+      );
       expect(status?.progressPercent).toBe(100);
     },
   );
 
-  it.each([
-    {
-      blockedReason: "PR merged",
-      expectedState: "terminated_pr_merged",
-      expectedLabel: "Terminated: PR Merged",
-      expectedExplanation:
-        "The loop ended because the pull request was merged.",
-    },
-    {
-      blockedReason: "PR closed",
-      expectedState: "terminated_pr_closed",
-      expectedLabel: "Terminated: PR Closed",
-      expectedExplanation:
-        "The loop ended because the pull request was closed.",
-    },
-  ])(
+  it.each(TERMINAL_STATUS_CASES)(
     "projects terminated workflow heads consistently for $blockedReason",
-    ({ blockedReason, expectedState, expectedLabel, expectedExplanation }) => {
+    ({
+      blockedReason,
+      expectedState,
+      expectedLabel,
+      expectedSummaryExplanation,
+    }) => {
       const head: WorkflowHead = {
         workflowId: "wf-terminal",
         threadId: "thread-terminal",
@@ -160,7 +167,7 @@ describe("getDeliveryLoopStatusAction", () => {
 
       expect(snapshot.kind).toBe(expectedState);
       expect(summary.stateLabel).toBe(expectedLabel);
-      expect(summary.explanation).toBe(expectedExplanation);
+      expect(summary.explanation).toBe(expectedSummaryExplanation);
       expect(summary.progressPercent).toBe(100);
     },
   );

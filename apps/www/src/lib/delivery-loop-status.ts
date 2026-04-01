@@ -793,8 +793,16 @@ export function buildSnapshotFromV3Head(
       return { kind: "stopped" };
 
     case "terminated":
-      return head.blockedReason === "PR merged"
+      return isMergedTerminationReason(head.blockedReason)
         ? { kind: "terminated_pr_merged" }
         : { kind: "terminated_pr_closed" };
   }
+}
+
+function isMergedTerminationReason(blockedReason: string | null): boolean {
+  if (!blockedReason) {
+    return false;
+  }
+
+  return /\bmerge(d|s)?\b/i.test(blockedReason.trim());
 }
