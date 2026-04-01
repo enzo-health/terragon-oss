@@ -804,5 +804,5 @@ function isMergedTerminationReason(blockedReason: string | null): boolean {
     return false;
   }
 
-  return /\bmerge(d|s)?\b/i.test(blockedReason.trim());
+  return /\bmerged\b/i.test(blockedReason.trim());
 }

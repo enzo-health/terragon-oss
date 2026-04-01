@@ -51,7 +51,10 @@ const TERMINAL_STATUS_CASES = [
 type TerminalStatusCase = (typeof TERMINAL_STATUS_CASES)[number];
 
 function buildTerminalActionExplanation(
-  terminalCase: TerminalStatusCase,
+  terminalCase: Pick<
+    TerminalStatusCase,
+    "blockedReason" | "expectedSummaryExplanation"
+  >,
 ): string {
   return `${terminalCase.expectedSummaryExplanation} Reason: ${terminalCase.blockedReason}.`;
 }
@@ -126,8 +129,6 @@ describe("getDeliveryLoopStatusAction", () => {
       expect(status?.explanation).toBe(
         buildTerminalActionExplanation({
           blockedReason,
-          expectedState,
-          expectedLabel,
           expectedSummaryExplanation,
         }),
       );
