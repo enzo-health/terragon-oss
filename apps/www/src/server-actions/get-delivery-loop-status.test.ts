@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
@@ -19,9 +19,11 @@ import {
   replacePlanTasksForArtifact,
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
+import * as workflowStore from "@terragon/shared/delivery-loop/store/workflow-store";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
+import * as v3Store from "@/server-lib/delivery-loop/v3/store";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -33,6 +35,88 @@ describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
   });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    {
+      blockedReason: "PR merged",
+      expectedState: "terminated_pr_merged",
+      expectedLabel: "Terminated: PR Merged",
+      expectedExplanation:
+        "The loop ended because the pull request was merged. Reason: PR merged.",
+    },
+    {
+      blockedReason: "PR closed",
+      expectedState: "terminated_pr_closed",
+      expectedLabel: "Terminated: PR Closed",
+      expectedExplanation:
+        "The loop ended because the pull request was closed. Reason: PR closed.",
+    },
+  ])(
+    "returns a consistent terminal status payload for $blockedReason",
+    async ({
+      blockedReason,
+      expectedState,
+      expectedLabel,
+      expectedExplanation,
+    }) => {
+      const { user, session } = await createTestUser({ db });
+      const { threadId } = await createTestThread({
+        db,
+        userId: user.id,
+        overrides: {
+          githubRepoFullName: "owner/repo",
+        },
+      });
+      await mockLoggedInUser(session);
+
+      const workflow = await createWorkflow({
+        db,
+        threadId,
+        generation: 1,
+        kind: "implementing",
+        stateJson: {},
+        userId: user.id,
+        repoFullName: "owner/repo",
+      });
+
+      vi.spyOn(v3Store, "getWorkflowHead").mockResolvedValue({
+        workflowId: workflow.id,
+        threadId,
+        generation: workflow.generation,
+        version: workflow.version,
+        state: "terminated",
+        activeGate: null,
+        headSha: null,
+        activeRunId: null,
+        fixAttemptCount: 0,
+        infraRetryCount: 0,
+        maxFixAttempts: workflow.maxFixAttempts,
+        maxInfraRetries: 10,
+        blockedReason,
+        createdAt: workflow.createdAt,
+        updatedAt: workflow.updatedAt,
+        lastActivityAt: workflow.lastActivityAt,
+      });
+
+      vi.spyOn(workflowStore, "getActiveWorkflowForThread").mockResolvedValue({
+        ...workflow,
+        kind: "implementing",
+        stateJson: {},
+      });
+
+      const status = await getDeliveryLoopStatus(threadId);
+
+      expect(status).not.toBeNull();
+      expect(status?.state).toBe(expectedState);
+      expect(status?.stateLabel).toBe(expectedLabel);
+      expect(status?.explanation).toBe(expectedExplanation);
+      expect(status?.progressPercent).toBe(100);
+    },
+  );
 
   it.each([
     {
