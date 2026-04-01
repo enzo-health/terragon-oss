@@ -86,8 +86,20 @@ export async function createDispatchIntent(
       status: toDispatchIntentStatus("prepared"),
       retryCount: input.retryCount ?? 0,
     })
+    .onConflictDoNothing()
     .returning({ id: schema.deliveryLoopDispatchIntent.id });
-  return row!.id;
+
+  if (row) {
+    return row.id;
+  }
+
+  const existing = await getDispatchIntentByRunId(db, input.runId);
+  if (!existing) {
+    throw new Error(
+      `Failed to create or locate dispatch intent for runId ${input.runId}`,
+    );
+  }
+  return existing.id;
 }
 
 /**
