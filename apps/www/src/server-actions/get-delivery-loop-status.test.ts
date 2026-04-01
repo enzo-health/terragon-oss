@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
   buildDeliveryLoopStatusChecks,
+  buildSnapshotFromV3Head,
   getDeliveryLoopSnapshotStateSummary,
 } from "@/lib/delivery-loop-status";
 import { unwrapResult } from "@/lib/server-actions";
@@ -20,6 +21,7 @@ import {
 } from "@terragon/shared/delivery-loop/store/artifact-store";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -31,6 +33,53 @@ describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
   });
+
+  it.each([
+    {
+      blockedReason: "PR merged",
+      expectedState: "terminated_pr_merged",
+      expectedLabel: "Terminated: PR Merged",
+      expectedExplanation:
+        "The loop ended because the pull request was merged.",
+    },
+    {
+      blockedReason: "PR closed",
+      expectedState: "terminated_pr_closed",
+      expectedLabel: "Terminated: PR Closed",
+      expectedExplanation:
+        "The loop ended because the pull request was closed.",
+    },
+  ])(
+    "projects terminated workflow heads consistently for $blockedReason",
+    ({ blockedReason, expectedState, expectedLabel, expectedExplanation }) => {
+      const head: WorkflowHead = {
+        workflowId: "wf-terminal",
+        threadId: "thread-terminal",
+        generation: 1,
+        version: 3,
+        state: "terminated",
+        activeGate: null,
+        headSha: null,
+        activeRunId: null,
+        fixAttemptCount: 0,
+        infraRetryCount: 0,
+        maxFixAttempts: 6,
+        maxInfraRetries: 10,
+        blockedReason,
+        createdAt: new Date("2026-03-18T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-18T00:00:00.000Z"),
+        lastActivityAt: new Date("2026-03-18T00:00:00.000Z"),
+      };
+
+      const snapshot = buildSnapshotFromV3Head(head);
+      const summary = getDeliveryLoopSnapshotStateSummary(snapshot);
+
+      expect(snapshot.kind).toBe(expectedState);
+      expect(summary.stateLabel).toBe(expectedLabel);
+      expect(summary.explanation).toBe(expectedExplanation);
+      expect(summary.progressPercent).toBe(100);
+    },
+  );
 
   it("surfaces blocked summary from the canonical snapshot model", () => {
     const summary = getDeliveryLoopSnapshotStateSummary({
