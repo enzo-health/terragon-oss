@@ -192,6 +192,28 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
+  it("awaiting_implementation_acceptance ignores dispatch_ack_timeout when no activeRunId is tracked", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("awaiting_implementation_acceptance"),
+      activeRunId: null,
+      infraRetryCount: 2,
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "dispatch_ack_timeout",
+        runId: "stale-run",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
+    expect(result.head.infraRetryCount).toBe(2);
+    expect(result.head.version).toBe(h.version);
+    expect(result.effects).toHaveLength(0);
+  });
+
   it("implementing run_completed without head SHA retries via awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({

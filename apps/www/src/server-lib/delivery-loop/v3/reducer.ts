@@ -556,6 +556,16 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_ack_timeout") {
+          // Ignore timeout signals before any dispatch run has been recorded.
+          // This prevents stale timer events from burning infra retries.
+          if (head.activeRunId == null) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
           if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
             result = {
               head,
