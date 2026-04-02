@@ -156,6 +156,9 @@ export type WorkflowHead = {
   activeGate: string | null;
   headSha: string | null;
   activeRunId: string | null;
+  activeRunSeq: number | null;
+  leaseExpiresAt: Date | null;
+  lastTerminalRunSeq: number | null;
   fixAttemptCount: number;
   infraRetryCount: number;
   maxFixAttempts: number;
