@@ -89,6 +89,19 @@ function toDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function toOptionalInteger(value: unknown): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return undefined;
+  }
+  return value;
+}
+
 export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
   switch (event.type) {
     case "bootstrap":
@@ -122,12 +135,14 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return {
         type: event.type,
         runId: event.runId,
+        runSeq: event.runSeq ?? null,
         headSha: event.headSha ?? null,
       };
     case "run_failed":
       return {
         type: event.type,
         runId: event.runId,
+        runSeq: event.runSeq ?? null,
         message: event.message,
         category: event.category,
         lane: event.lane ?? null,
@@ -136,6 +151,7 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         prNumber: event.prNumber ?? null,
       };
     case "pr_linked":
@@ -147,18 +163,21 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         reason: event.reason ?? null,
       };
     case "gate_ci_passed":
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         headSha: event.headSha ?? null,
       };
     case "gate_ci_failed":
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         headSha: event.headSha ?? null,
         reason: event.reason ?? null,
       };
@@ -224,6 +243,9 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       if (typeof payload.runId !== "string") {
         return null;
       }
+      if (toOptionalInteger(payload.runSeq) === undefined) {
+        return null;
+      }
       if (
         payload.headSha !== undefined &&
         payload.headSha !== null &&
@@ -234,6 +256,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       return {
         type: "run_completed",
         runId: payload.runId,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
       };
     case "run_failed":
@@ -254,9 +277,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (toOptionalInteger(payload.runSeq) === undefined) {
+        return null;
+      }
       return {
         type: "run_failed",
         runId: payload.runId,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         message: payload.message,
         category: (payload.category as string | null | undefined) ?? null,
         lane:
@@ -280,9 +307,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (toOptionalInteger(payload.runSeq) === undefined) {
+        return null;
+      }
       return {
         type: "gate_review_passed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         prNumber: (payload.prNumber as number | null | undefined) ?? null,
       };
     case "pr_linked":
@@ -313,9 +344,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (toOptionalInteger(payload.runSeq) === undefined) {
+        return null;
+      }
       return {
         type: "gate_review_failed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         reason: (payload.reason as string | null | undefined) ?? null,
       };
     case "gate_ci_failed":
@@ -340,9 +375,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (toOptionalInteger(payload.runSeq) === undefined) {
+        return null;
+      }
       return {
         type: "gate_ci_failed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
         reason: (payload.reason as string | null | undefined) ?? null,
       };
@@ -361,9 +400,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (toOptionalInteger(payload.runSeq) === undefined) {
+        return null;
+      }
       return {
         type: "gate_ci_passed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
       };
     case "pr_closed":

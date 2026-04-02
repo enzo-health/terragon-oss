@@ -167,7 +167,15 @@ function applyInvariantMiddleware(params: {
 function isOutOfOrderRunSignal(params: {
   head: WorkflowHead;
   runId: string | null | undefined;
+  runSeq?: number | null;
 }): boolean {
+  if (params.runSeq != null) {
+    return (
+      params.head.activeRunSeq == null ||
+      params.runSeq !== params.head.activeRunSeq
+    );
+  }
+
   if (params.head.activeRunSeq == null) {
     return true;
   }
@@ -185,6 +193,7 @@ function isOutOfOrderRunSignal(params: {
 function isOutOfOrderFailureSignal(params: {
   head: WorkflowHead;
   runId: string | null | undefined;
+  runSeq?: number | null;
   category: string | null;
   lane?: "agent" | "infra";
 }): boolean {
@@ -198,13 +207,22 @@ function isOutOfOrderFailureSignal(params: {
   return isOutOfOrderRunSignal({
     head: params.head,
     runId: params.runId,
+    runSeq: params.runSeq,
   });
 }
 
 function isOutOfOrderGateSignal(params: {
   head: WorkflowHead;
   runId: string | null | undefined;
+  runSeq?: number | null;
 }): boolean {
+  if (params.runSeq != null) {
+    return (
+      params.head.activeRunSeq == null ||
+      params.runSeq !== params.head.activeRunSeq
+    );
+  }
+
   if (params.head.activeRunSeq == null) {
     return true;
   }
@@ -220,7 +238,14 @@ function isOutOfOrderCiSignal(params: {
   head: WorkflowHead;
   event: Extract<LoopEvent, { type: "gate_ci_passed" | "gate_ci_failed" }>;
 }): boolean {
-  if (params.head.activeRunSeq == null) {
+  if (params.event.runSeq != null) {
+    if (params.head.activeRunSeq == null) {
+      return true;
+    }
+    if (params.event.runSeq !== params.head.activeRunSeq) {
+      return true;
+    }
+  } else if (params.head.activeRunSeq == null) {
     return true;
   }
 
@@ -234,6 +259,10 @@ function isOutOfOrderCiSignal(params: {
   }
 
   if (params.head.activeRunId === null) {
+    return false;
+  }
+
+  if (params.event.runSeq != null) {
     return false;
   }
 
@@ -479,7 +508,6 @@ export function reduce(params: {
       head: {
         ...next,
         state: "stopped",
-        ...clearActiveLease(head),
         blockedReason: "Stopped by user",
       },
       effects: [publishStatusEffect(next, now)],
@@ -491,7 +519,6 @@ export function reduce(params: {
       head: {
         ...next,
         state: "terminated",
-        ...clearActiveLease(head),
         blockedReason: event.merged ? "PR merged" : "PR closed",
       },
       effects: [publishStatusEffect(next, now)],
@@ -667,7 +694,12 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_ack_timeout") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderRunSignal({
+              head,
+              runId: event.runId,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -688,6 +720,7 @@ export function reduce(params: {
             isOutOfOrderFailureSignal({
               head,
               runId: event.runId,
+              runSeq: event.runSeq,
               category: event.category,
               lane: event.lane,
             })
@@ -718,7 +751,13 @@ export function reduce(params: {
       }
       case "implementing": {
         if (event.type === "run_completed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderRunSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -771,6 +810,7 @@ export function reduce(params: {
             isOutOfOrderFailureSignal({
               head,
               runId: event.runId,
+              runSeq: event.runSeq,
               category: event.category,
               lane: event.lane,
             })
@@ -805,7 +845,13 @@ export function reduce(params: {
       }
       case "gating_review": {
         if (event.type === "gate_review_passed") {
-          if (isOutOfOrderGateSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderGateSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -831,7 +877,13 @@ export function reduce(params: {
           break;
         }
         if (event.type === "gate_review_failed") {
-          if (isOutOfOrderGateSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderGateSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -852,6 +904,7 @@ export function reduce(params: {
             isOutOfOrderFailureSignal({
               head,
               runId: event.runId,
+              runSeq: event.runSeq,
               category: event.category,
               lane: event.lane,
             })
@@ -930,6 +983,7 @@ export function reduce(params: {
             isOutOfOrderFailureSignal({
               head,
               runId: event.runId,
+              runSeq: event.runSeq,
               category: event.category,
               lane: event.lane,
             })

@@ -33,10 +33,16 @@ export type LoopEvent =
   | { type: "dispatch_sent"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_acked"; runId: string }
   | { type: "dispatch_ack_timeout"; runId: string }
-  | { type: "run_completed"; runId: string; headSha?: string | null }
+  | {
+      type: "run_completed";
+      runId: string;
+      runSeq?: number | null;
+      headSha?: string | null;
+    }
   | {
       type: "run_failed";
       runId: string;
+      runSeq?: number | null;
       message: string;
       category: string | null;
       lane?: FailureLane;
@@ -44,22 +50,26 @@ export type LoopEvent =
   | {
       type: "gate_review_passed";
       runId?: string | null;
+      runSeq?: number | null;
       prNumber?: number | null;
     }
   | { type: "pr_linked"; prNumber?: number | null }
   | {
       type: "gate_review_failed";
       runId?: string | null;
+      runSeq?: number | null;
       reason?: string | null;
     }
   | {
       type: "gate_ci_passed";
       runId?: string | null;
+      runSeq?: number | null;
       headSha?: string | null;
     }
   | {
       type: "gate_ci_failed";
       runId?: string | null;
+      runSeq?: number | null;
       headSha?: string | null;
       reason?: string | null;
     }

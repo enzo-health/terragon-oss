@@ -96,18 +96,21 @@ describe("v3 contracts", () => {
     const serializedPassed = serializeLoopEvent({
       type: "gate_ci_passed",
       runId: "run-ci-1",
+      runSeq: 7,
       headSha: "sha-ci-1",
     });
     const parsedPassed = parseLoopEvent(serializedPassed);
     expect(parsedPassed).toEqual({
       type: "gate_ci_passed",
       runId: "run-ci-1",
+      runSeq: 7,
       headSha: "sha-ci-1",
     });
 
     const serializedFailed = serializeLoopEvent({
       type: "gate_ci_failed",
       runId: "run-ci-2",
+      runSeq: 8,
       headSha: "sha-ci-2",
       reason: "CI checks failed",
     });
@@ -115,6 +118,7 @@ describe("v3 contracts", () => {
     expect(parsedFailed).toEqual({
       type: "gate_ci_failed",
       runId: "run-ci-2",
+      runSeq: 8,
       headSha: "sha-ci-2",
       reason: "CI checks failed",
     });
@@ -124,6 +128,7 @@ describe("v3 contracts", () => {
     const serialized = serializeLoopEvent({
       type: "gate_review_passed",
       runId: "run-review-1",
+      runSeq: 9,
       prNumber: 123,
     });
     const parsed = parseLoopEvent(serialized);
@@ -131,7 +136,43 @@ describe("v3 contracts", () => {
     expect(parsed).toEqual({
       type: "gate_review_passed",
       runId: "run-review-1",
+      runSeq: 9,
       prNumber: 123,
+    });
+  });
+
+  it("round-trips run terminal events with optional runSeq", () => {
+    const completed = parseLoopEvent(
+      serializeLoopEvent({
+        type: "run_completed",
+        runId: "run-1",
+        runSeq: 11,
+        headSha: "sha-1",
+      }),
+    );
+    expect(completed).toEqual({
+      type: "run_completed",
+      runId: "run-1",
+      runSeq: 11,
+      headSha: "sha-1",
+    });
+
+    const failed = parseLoopEvent(
+      serializeLoopEvent({
+        type: "run_failed",
+        runId: "run-2",
+        runSeq: 12,
+        message: "boom",
+        category: null,
+      }),
+    );
+    expect(failed).toEqual({
+      type: "run_failed",
+      runId: "run-2",
+      runSeq: 12,
+      message: "boom",
+      category: null,
+      lane: undefined,
     });
   });
 

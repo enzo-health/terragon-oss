@@ -418,6 +418,30 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
+  it("implementing run_completed with mismatched runSeq is ignored even when runId matches", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("implementing"),
+      activeRunId: "run-current",
+      activeRunSeq: 7,
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "run_completed",
+        runId: "run-current",
+        runSeq: 8,
+        headSha: "sha-stale",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.version).toBe(h.version);
+    expect(result.head.activeRunSeq).toBe(7);
+    expect(result.effects).toHaveLength(0);
+  });
+
   it("ignores stale review gate verdict for non-current run", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
@@ -482,6 +506,31 @@ describe("reduce", () => {
     expect(result.head.activeGate).toBe("ci");
     expect(result.head.activeRunId).toBe("run-review");
     expect(result.head.activeRunSeq).toBe(1);
+  });
+
+  it("gate_review_passed with mismatched runSeq is ignored", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("gating_review"),
+      activeGate: "review",
+      activeRunId: "run-review",
+      activeRunSeq: 4,
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "gate_review_passed",
+        runId: "run-review",
+        runSeq: 5,
+        prNumber: 42,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.version).toBe(h.version);
+    expect(result.head.activeRunSeq).toBe(4);
+    expect(result.effects).toHaveLength(0);
   });
 
   it("gate_review_passed without linked PR transitions to awaiting_pr_creation", () => {
@@ -730,6 +779,32 @@ describe("reduce", () => {
     expect(result.head.lastTerminalRunSeq).toBe(1);
   });
 
+  it("gate_ci_passed with mismatched runSeq is ignored even when headSha matches", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("gating_ci"),
+      activeGate: "ci",
+      activeRunId: "run-ci",
+      activeRunSeq: 11,
+      headSha: "sha-current",
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "gate_ci_passed",
+        runId: "run-ci",
+        runSeq: 12,
+        headSha: "sha-current",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_ci");
+    expect(result.head.version).toBe(h.version);
+    expect(result.head.activeRunSeq).toBe(11);
+    expect(result.effects).toHaveLength(0);
+  });
+
   it("gating_ci run_failed uses infra retry lane and returns to awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
@@ -792,6 +867,30 @@ describe("reduce", () => {
     expect(result.head.state).toBe("stopped");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
+    expect(result.head.activeRunSeq).toBe(1);
+  });
+
+  it("pr_closed preserves the active lease metadata while terminating", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("gating_ci"),
+        activeGate: "ci",
+        activeRunId: "run-close",
+        activeRunSeq: 9,
+        headSha: "sha-current",
+      },
+      event: {
+        type: "pr_closed",
+        merged: false,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("terminated");
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.activeRunSeq).toBe(9);
+    expect(result.head.lastTerminalRunSeq).toBeNull();
   });
 
   describe("implementing state fences stale runIds", () => {

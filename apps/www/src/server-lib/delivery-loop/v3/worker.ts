@@ -105,6 +105,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function toOptionalRunSeq(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
 function parseLegacySignalEnvelopeToLoopEvent(
   payload: unknown,
 ): LegacySignalEnvelopeParseResult {
@@ -126,11 +130,15 @@ function parseLegacySignalEnvelopeToLoopEvent(
         isRecord(rawResult) && typeof rawResult.headSha === "string"
           ? rawResult.headSha
           : null;
+      const runSeq =
+        toOptionalRunSeq(rawEvent.runSeq) ??
+        (isRecord(rawResult) ? toOptionalRunSeq(rawResult.runSeq) : null);
       return {
         kind: "event",
         event: {
           type: "run_completed",
           runId: rawEvent.runId,
+          runSeq,
           headSha,
         },
       };
@@ -148,11 +156,15 @@ function parseLegacySignalEnvelopeToLoopEvent(
         isRecord(rawFailure) && typeof rawFailure.kind === "string"
           ? rawFailure.kind
           : null;
+      const runSeq =
+        toOptionalRunSeq(rawEvent.runSeq) ??
+        (isRecord(rawFailure) ? toOptionalRunSeq(rawFailure.runSeq) : null);
       return {
         kind: "event",
         event: {
           type: "run_failed",
           runId: rawEvent.runId,
+          runSeq,
           message,
           category,
           lane: undefined,
@@ -187,6 +199,8 @@ function parseLegacySignalEnvelopeToLoopEvent(
           : typeof rawResult.headSha === "string"
             ? rawResult.headSha
             : null;
+      const ciRunSeq =
+        toOptionalRunSeq(rawEvent.runSeq) ?? toOptionalRunSeq(rawResult.runSeq);
       if (!ciRunId && !ciHeadSha) {
         return {
           kind: "noop",
@@ -197,7 +211,12 @@ function parseLegacySignalEnvelopeToLoopEvent(
       if (rawResult.passed) {
         return {
           kind: "event",
-          event: { type: "gate_ci_passed", runId: ciRunId, headSha: ciHeadSha },
+          event: {
+            type: "gate_ci_passed",
+            runId: ciRunId,
+            runSeq: ciRunSeq,
+            headSha: ciHeadSha,
+          },
         };
       }
       return {
@@ -205,6 +224,7 @@ function parseLegacySignalEnvelopeToLoopEvent(
         event: {
           type: "gate_ci_failed",
           runId: ciRunId,
+          runSeq: ciRunSeq,
           headSha: ciHeadSha,
           reason: null,
         },
@@ -221,6 +241,8 @@ function parseLegacySignalEnvelopeToLoopEvent(
           : typeof rawResult.runId === "string"
             ? rawResult.runId
             : null;
+      const reviewRunSeq =
+        toOptionalRunSeq(rawEvent.runSeq) ?? toOptionalRunSeq(rawResult.runSeq);
       if (!reviewRunId) {
         return {
           kind: "noop",
@@ -233,6 +255,7 @@ function parseLegacySignalEnvelopeToLoopEvent(
           event: {
             type: "gate_review_passed",
             runId: reviewRunId,
+            runSeq: reviewRunSeq,
           },
         };
       }
@@ -241,6 +264,7 @@ function parseLegacySignalEnvelopeToLoopEvent(
         event: {
           type: "gate_review_failed",
           runId: reviewRunId,
+          runSeq: reviewRunSeq,
           reason: null,
         },
       };

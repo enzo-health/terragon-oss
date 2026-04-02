@@ -425,6 +425,30 @@ describe("reducer invariants (property-based)", () => {
     expect(result.effects).toHaveLength(0);
   });
 
+  it("mismatched runSeq gate verdicts are no-ops", () => {
+    const head = makeHead({
+      state: "gating_review",
+      activeGate: "review",
+      activeRunId: "run-current",
+      activeRunSeq: 3,
+    });
+
+    const result = reduce({
+      head,
+      event: {
+        type: "gate_review_passed",
+        runId: "run-current",
+        runSeq: 4,
+        prNumber: 42,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeRunSeq).toBe(3);
+    expect(result.effects).toHaveLength(0);
+  });
+
   it("gating_ci + run_failed retries to implementing or stays if runId guard blocks", () => {
     fc.assert(
       fc.property(
