@@ -831,12 +831,7 @@ async function handleAckTimeoutCheck(params: {
       runId: params.payload.runId,
       userId: workflow.userId,
     });
-    if (
-      runContext &&
-      (runContext.status === "pending" ||
-        runContext.status === "dispatched" ||
-        runContext.status === "processing")
-    ) {
+    if (runContext && runContext.status === "processing") {
       // The daemon genuinely has this run — suppress the timeout
       return { kind: "ack_timeout_check", outcome: "stale" };
     }

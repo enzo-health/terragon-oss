@@ -1004,6 +1004,110 @@ describe("drainDueEffects", () => {
     expect(headAfter.infraRetryCount).toBe(0);
   });
 
+  it("does not suppress ack timeout when run context is only dispatched", async () => {
+    setAckTimeoutCorrectnessEnv("true");
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const { user } = await createTestUser({ db });
+    const { threadId } = await createTestThread({ db, userId: user.id });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      userId: user.id,
+      kind: "planning",
+      stateJson: { state: "planning" },
+    });
+    const workflowId = workflow.id;
+
+    const seedHead = await ensureWorkflowHead({ db, workflowId });
+    if (!seedHead) throw new Error("Expected workflow head");
+
+    const dispatchRunId = `run-${nanoid()}`;
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...seedHead,
+        version: seedHead.version + 1,
+        state: "awaiting_implementation_acceptance",
+        activeGate: null,
+        activeRunId: dispatchRunId,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: seedHead.version,
+    });
+    expect(moved).toBe(true);
+
+    const [threadChatRow] = await db
+      .insert(schema.threadChat)
+      .values({
+        threadId,
+        userId: user.id,
+        status: "working",
+      })
+      .returning({ id: schema.threadChat.id });
+
+    await db.insert(schema.agentRunContext).values({
+      runId: dispatchRunId,
+      userId: user.id,
+      threadId,
+      threadChatId: threadChatRow!.id,
+      sandboxId: `sandbox-${nanoid()}`,
+      transportMode: "legacy",
+      protocolVersion: 2,
+      agent: "codex",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: `nonce-${nanoid()}`,
+      daemonTokenKeyId: null,
+    });
+
+    const effect: EffectSpec = {
+      kind: "ack_timeout_check",
+      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:ack-dispatched`,
+      dueAt: now,
+      payload: {
+        kind: "ack_timeout_check",
+        runId: dispatchRunId,
+        workflowVersion: seedHead.version + 1,
+      },
+    };
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: seedHead.version + 1,
+      effects: [effect],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      workflowId,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const headAfter = await getWorkflowHead({ db, workflowId });
+    if (!headAfter) throw new Error("Expected workflow head after drain");
+    expect(headAfter.state).toBe("awaiting_implementation_acceptance");
+    expect(headAfter.infraRetryCount).toBe(1);
+    expect(headAfter.activeRunId).toBeNull();
+    expect(headAfter.blockedReason).toContain("Dispatch ack timeout for run");
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    expect(
+      effectRows.some((row) => row.effectKind === "dispatch_implementing"),
+    ).toBe(true);
+  });
+
   it("multiple effects drain in order (oldest first)", async () => {
     const now = new Date("2026-03-18T10:10:00.000Z");
     const { user } = await createTestUser({ db });
