@@ -1252,6 +1252,9 @@ describe("v3 durable delivery loop", () => {
         activeGate: "ci",
         headSha: "sha-no-pr",
         activeRunId: null,
+        activeRunSeq: 7,
+        leaseExpiresAt: new Date(staleTime.getTime() + 10_000),
+        lastTerminalRunSeq: 6,
         updatedAt: staleTime,
         lastActivityAt: staleTime,
       },
@@ -1271,6 +1274,9 @@ describe("v3 durable delivery loop", () => {
     expect(head?.state).toBe("awaiting_pr_creation");
     expect(head?.activeGate).toBeNull();
     expect(head?.blockedReason).toBe("Awaiting PR creation");
+    expect(head?.activeRunSeq).toBeNull();
+    expect(head?.leaseExpiresAt).toBeNull();
+    expect(head?.lastTerminalRunSeq).toBeNull();
 
     const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
       where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
@@ -1302,5 +1308,43 @@ describe("v3 durable delivery loop", () => {
     }
     expect(current.version).toBe(head.version);
     expect(current.blockedReason).toBeNull();
+  });
+
+  it("round-trips run lease fields through updateWorkflowHead/getWorkflowHead", async () => {
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) {
+      throw new Error("Expected workflow head for run lease round-trip test");
+    }
+
+    const leaseExpiresAt = new Date("2026-03-18T11:15:00.000Z");
+    const now = new Date("2026-03-18T11:00:00.000Z");
+    const updated = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        activeRunId: "run-lease-test",
+        activeRunSeq: 42,
+        leaseExpiresAt,
+        lastTerminalRunSeq: 41,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(updated).toBe(true);
+
+    const current = await getWorkflowHead({ db, workflowId });
+    expect(current).not.toBeNull();
+    if (!current) {
+      throw new Error("Expected workflow head after run lease update");
+    }
+    expect(current.activeRunId).toBe("run-lease-test");
+    expect(current.activeRunSeq).toBe(42);
+    expect(current.leaseExpiresAt?.toISOString()).toBe(
+      leaseExpiresAt.toISOString(),
+    );
+    expect(current.lastTerminalRunSeq).toBe(41);
   });
 });

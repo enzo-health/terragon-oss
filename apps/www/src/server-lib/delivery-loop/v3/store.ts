@@ -183,6 +183,7 @@ async function reconcileHeadFromProjection(params: {
       activeRunId: null,
       activeRunSeq: null,
       leaseExpiresAt: null,
+      lastTerminalRunSeq: null,
       blockedReason: params.projection.blockedReason,
       updatedAt: params.now,
       lastActivityAt: params.now,
