@@ -1310,6 +1310,54 @@ describe("v3 durable delivery loop", () => {
     expect(current.blockedReason).toBeNull();
   });
 
+  it("rejects CAS updates when activeRunSeq no longer matches", async () => {
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) {
+      throw new Error("Expected workflow head for activeRunSeq CAS test");
+    }
+
+    const leased = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        activeRunSeq: 7,
+      },
+      expectedVersion: head.version,
+      expectedActiveRunSeq: head.activeRunSeq,
+    });
+    expect(leased).toBe(true);
+
+    const current = await getWorkflowHead({ db, workflowId });
+    expect(current).not.toBeNull();
+    if (!current) {
+      throw new Error("Expected workflow head after leasing activeRunSeq");
+    }
+
+    const staleLeaseUpdate = await updateWorkflowHead({
+      db,
+      head: {
+        ...current,
+        version: current.version + 1,
+        blockedReason: "stale lease update",
+      },
+      expectedVersion: current.version,
+      expectedActiveRunSeq: null,
+    });
+    expect(staleLeaseUpdate).toBe(false);
+
+    const unchanged = await getWorkflowHead({ db, workflowId });
+    expect(unchanged).not.toBeNull();
+    if (!unchanged) {
+      throw new Error("Expected workflow head after stale activeRunSeq CAS");
+    }
+
+    expect(unchanged.version).toBe(current.version);
+    expect(unchanged.activeRunSeq).toBe(7);
+    expect(unchanged.blockedReason).toBeNull();
+  });
+
   it("round-trips run lease fields through updateWorkflowHead/getWorkflowHead", async () => {
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });

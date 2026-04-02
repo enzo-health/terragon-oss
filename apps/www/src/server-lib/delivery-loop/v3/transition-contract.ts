@@ -32,21 +32,29 @@ export function makeContractHead(state: WorkflowState): WorkflowHead {
 
   switch (state) {
     case "awaiting_implementation_acceptance":
-      return { ...base, activeRunId: "r-1" };
+      return { ...base, activeRunId: "r-1", activeRunSeq: 1 };
     case "implementing":
-      return { ...base, activeRunId: "r-1" };
+      return { ...base, activeRunId: "r-1", activeRunSeq: 1 };
     case "gating_review":
       return {
         ...base,
         activeRunId: "r-1",
+        activeRunSeq: 1,
         headSha: "abc123",
         activeGate: "review",
       };
     case "gating_ci":
-      return { ...base, headSha: "abc123", activeGate: "ci" };
+      return {
+        ...base,
+        activeRunId: "r-1",
+        activeRunSeq: 1,
+        headSha: "abc123",
+        activeGate: "ci",
+      };
     case "awaiting_pr_creation":
       return {
         ...base,
+        activeRunSeq: 1,
         headSha: "abc123",
         blockedReason: "Awaiting PR creation",
       };
@@ -54,6 +62,7 @@ export function makeContractHead(state: WorkflowState): WorkflowHead {
       return {
         ...base,
         headSha: "abc123",
+        lastTerminalRunSeq: 1,
       };
     case "awaiting_manual_fix":
       return { ...base, blockedReason: "test" };

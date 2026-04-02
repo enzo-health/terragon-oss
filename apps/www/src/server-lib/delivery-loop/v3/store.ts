@@ -426,7 +426,17 @@ export async function updateWorkflowHead(params: {
   db: Pick<DB, "update">;
   head: WorkflowHead;
   expectedVersion: number;
+  expectedActiveRunSeq?: number | null;
 }): Promise<boolean> {
+  const activeRunSeqGuard =
+    params.expectedActiveRunSeq === undefined
+      ? undefined
+      : params.expectedActiveRunSeq === null
+        ? isNull(schema.deliveryWorkflowHeadV3.activeRunSeq)
+        : eq(
+            schema.deliveryWorkflowHeadV3.activeRunSeq,
+            params.expectedActiveRunSeq,
+          );
   const [row] = await params.db
     .update(schema.deliveryWorkflowHeadV3)
     .set({
@@ -448,6 +458,7 @@ export async function updateWorkflowHead(params: {
       and(
         eq(schema.deliveryWorkflowHeadV3.workflowId, params.head.workflowId),
         eq(schema.deliveryWorkflowHeadV3.version, params.expectedVersion),
+        activeRunSeqGuard,
       ),
     )
     .returning({ workflowId: schema.deliveryWorkflowHeadV3.workflowId });

@@ -12,6 +12,15 @@ import {
 
 function head(state: WorkflowHead["state"]): WorkflowHead {
   const now = new Date("2026-03-18T00:00:00.000Z");
+  const activeRunSeq =
+    state === "awaiting_implementation_acceptance" ||
+    state === "implementing" ||
+    state === "gating_review" ||
+    state === "gating_ci" ||
+    state === "awaiting_pr_creation"
+      ? 1
+      : null;
+  const lastTerminalRunSeq = state === "awaiting_pr_lifecycle" ? 1 : null;
   return {
     workflowId: "wf-1",
     threadId: "thread-1",
@@ -21,9 +30,9 @@ function head(state: WorkflowHead["state"]): WorkflowHead {
     activeGate: null,
     headSha: null,
     activeRunId: null,
-    activeRunSeq: null,
+    activeRunSeq,
     leaseExpiresAt: null,
-    lastTerminalRunSeq: null,
+    lastTerminalRunSeq,
     fixAttemptCount: 0,
     infraRetryCount: 0,
     maxFixAttempts: 6,
@@ -76,6 +85,22 @@ describe("reduce", () => {
     ).toMatchObject({
       kind: "publish_status",
     });
+  });
+
+  it("scheduling a new implementation attempt allocates the next activeRunSeq", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("awaiting_manual_fix"),
+        lastTerminalRunSeq: 4,
+      },
+      event: { type: "resume_requested" },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
+    expect(result.head.activeRunSeq).toBe(5);
+    expect(result.head.lastTerminalRunSeq).toBe(4);
   });
 
   it("planning_run_completed stays in planning and emits create_plan_artifact", () => {
@@ -193,6 +218,59 @@ describe("reduce", () => {
     expect(result.head.fixAttemptCount).toBe(0);
     expect(result.head.version).toBe(2);
     expect(result.effects).toHaveLength(0);
+  });
+
+  it("awaiting_implementation_acceptance adopts newer dispatch_queued runId", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
+    const result = reduce({
+      head: {
+        ...head("awaiting_implementation_acceptance"),
+        activeRunId: "run-stale",
+      },
+      event: {
+        type: "dispatch_queued",
+        runId: "run-fresh",
+        ackDeadlineAt,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
+    expect(result.head.activeRunId).toBe("run-fresh");
+    expect(result.head.version).toBe(3);
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]).toMatchObject({
+      kind: "ack_timeout_check",
+      payload: {
+        kind: "ack_timeout_check",
+        runId: "run-fresh",
+      },
+    });
+  });
+
+  it("awaiting_implementation_acceptance accepts newer dispatch_accepted runId", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("awaiting_implementation_acceptance"),
+        activeRunId: "run-stale",
+      },
+      event: {
+        type: "dispatch_accepted",
+        runId: "run-fresh",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.activeRunId).toBe("run-fresh");
+    expect(result.head.version).toBe(3);
+    expect(result.effects).toHaveLength(1);
+    expect(result.effects[0]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
   });
 
   it("implementing run_completed without head SHA retries via awaiting_implementation_acceptance", () => {
@@ -317,7 +395,7 @@ describe("reduce", () => {
     });
   });
 
-  it("implementing run_failed with mismatched runId still triggers retry to awaiting_implementation_acceptance", () => {
+  it("implementing run_failed with mismatched runId is ignored", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -334,11 +412,10 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("awaiting_implementation_acceptance");
-    expect(result.head.fixAttemptCount).toBe(3);
-    expect(result.effects).toHaveLength(2);
-    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
-    expect(result.effects[1]?.kind).toBe("publish_status");
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.fixAttemptCount).toBe(2);
+    expect(result.head.version).toBe(2);
+    expect(result.effects).toHaveLength(0);
   });
 
   it("ignores stale review gate verdict for non-current run", () => {
@@ -362,7 +439,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("ignores review gate verdicts without runId while a run is active", () => {
+  it("accepts review gate verdicts without runId while the current lease is active", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -376,12 +453,16 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("gating_review");
-    expect(result.head.activeRunId).toBe("run-current");
-    expect(result.effects).toHaveLength(0);
+    expect(result.head.state).toBe("awaiting_pr_creation");
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.activeRunSeq).toBe(1);
+    expect(result.effects.map((effect) => effect.kind)).toEqual([
+      "ensure_pr",
+      "publish_status",
+    ]);
   });
 
-  it("gate_review_passed clears active run before entering CI gate", () => {
+  it("gate_review_passed preserves the active lease before entering CI gate", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -399,7 +480,8 @@ describe("reduce", () => {
 
     expect(result.head.state).toBe("gating_ci");
     expect(result.head.activeGate).toBe("ci");
-    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.activeRunId).toBe("run-review");
+    expect(result.head.activeRunSeq).toBe(1);
   });
 
   it("gate_review_passed without linked PR transitions to awaiting_pr_creation", () => {
@@ -421,6 +503,7 @@ describe("reduce", () => {
     expect(result.head.state).toBe("awaiting_pr_creation");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
+    expect(result.head.activeRunSeq).toBe(1);
     expect(result.head.blockedReason).toBe("Awaiting PR creation");
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
@@ -625,7 +708,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("accepts correlated CI pass and transitions to awaiting_pr_lifecycle", () => {
+  it("accepts correlated CI pass, clears the lease, and transitions to awaiting_pr_lifecycle", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -643,6 +726,8 @@ describe("reduce", () => {
     expect(result.head.state).toBe("awaiting_pr_lifecycle");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
+    expect(result.head.activeRunSeq).toBeNull();
+    expect(result.head.lastTerminalRunSeq).toBe(1);
   });
 
   it("gating_ci run_failed uses infra retry lane and returns to awaiting_implementation_acceptance", () => {
@@ -709,10 +794,10 @@ describe("reduce", () => {
     expect(result.head.activeRunId).toBeNull();
   });
 
-  describe("implementing state accepts mismatched runIds", () => {
+  describe("implementing state fences stale runIds", () => {
     const NOW = new Date("2026-03-18T01:00:00.000Z");
 
-    it("run_completed with different runId transitions to gating_review", () => {
+    it("run_completed with different runId is ignored", () => {
       const h = { ...head("implementing"), activeRunId: "r-1" };
       const result = reduce({
         head: h,
@@ -723,7 +808,8 @@ describe("reduce", () => {
         },
         now: NOW,
       });
-      expect(result.head.state).toBe("gating_review");
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.version).toBe(h.version);
     });
 
     it("dispatch_acked with different runId is dropped (out-of-order guard)", () => {
@@ -737,7 +823,7 @@ describe("reduce", () => {
       expect(result.head.activeRunId).toBe("r-1");
     });
 
-    it("run_failed with different runId triggers retry to awaiting_implementation_acceptance", () => {
+    it("run_failed with different runId is ignored", () => {
       const h = { ...head("implementing"), activeRunId: "r-1" };
       const result = reduce({
         head: h,
@@ -749,7 +835,8 @@ describe("reduce", () => {
         },
         now: NOW,
       });
-      expect(result.head.state).toBe("awaiting_implementation_acceptance");
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.version).toBe(h.version);
     });
 
     it("dispatch_ack_timeout with different runId is ignored (stale)", () => {
