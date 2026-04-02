@@ -99,12 +99,19 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return { type: event.type };
     case "plan_failed":
       return { type: event.type, reason: event.reason };
+    case "dispatch_queued":
     case "dispatch_sent":
       return {
         type: event.type,
         runId: event.runId,
         ackDeadlineAt: event.ackDeadlineAt.toISOString(),
       };
+    case "dispatch_claimed":
+      return {
+        type: event.type,
+        runId: event.runId,
+      };
+    case "dispatch_accepted":
     case "dispatch_acked":
     case "dispatch_ack_timeout":
       return {
@@ -180,6 +187,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       return { type: "plan_failed", reason: payload.reason };
+    case "dispatch_queued":
     case "dispatch_sent": {
       if (typeof payload.runId !== "string") {
         return null;
@@ -189,11 +197,20 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       return {
-        type: "dispatch_sent",
+        type: payload.type,
         runId: payload.runId,
         ackDeadlineAt,
       };
     }
+    case "dispatch_claimed":
+      if (typeof payload.runId !== "string") {
+        return null;
+      }
+      return {
+        type: "dispatch_claimed",
+        runId: payload.runId,
+      };
+    case "dispatch_accepted":
     case "dispatch_acked":
     case "dispatch_ack_timeout":
       if (typeof payload.runId !== "string") {

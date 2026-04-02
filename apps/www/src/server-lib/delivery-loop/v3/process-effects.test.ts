@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid/non-secure";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -18,6 +18,32 @@ import { drainDueEffects, effectResultToEvent } from "./process-effects";
 import type { EffectResult, EffectSpec } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
+const ACK_TIMEOUT_CORRECTNESS_ENV_KEY =
+  "DELIVERY_LOOP_V3_ENABLE_ACK_TIMEOUT_CORRECTNESS";
+const ORIGINAL_ACK_TIMEOUT_CORRECTNESS_ENV =
+  process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY];
+
+function setAckTimeoutCorrectnessEnv(value: "true" | "false" | undefined) {
+  if (value === undefined) {
+    delete process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY];
+    return;
+  }
+  process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY] = value;
+}
+
+beforeEach(() => {
+  setAckTimeoutCorrectnessEnv(undefined);
+});
+
+afterEach(() => {
+  if (ORIGINAL_ACK_TIMEOUT_CORRECTNESS_ENV === undefined) {
+    delete process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY];
+  } else {
+    process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY] =
+      ORIGINAL_ACK_TIMEOUT_CORRECTNESS_ENV;
+  }
+  vi.restoreAllMocks();
+});
 
 async function createWorkflowFixture(): Promise<string> {
   const { user } = await createTestUser({ db });
@@ -63,7 +89,7 @@ describe("effectResultToEvent", () => {
   });
 
   // dispatch_gate_review
-  it("gate review dispatched → dispatch_sent", () => {
+  it("gate review dispatched → dispatch_queued", () => {
     const ackDeadline = new Date("2030-01-01");
     const result = effectResultToEvent({
       kind: "dispatch_gate_review",
@@ -72,7 +98,7 @@ describe("effectResultToEvent", () => {
       ackDeadlineAt: ackDeadline,
     });
     expect(result).toEqual({
-      type: "dispatch_sent",
+      type: "dispatch_queued",
       runId: "r-1",
       ackDeadlineAt: ackDeadline,
     });
@@ -145,7 +171,7 @@ describe("effectResultToEvent", () => {
   });
 
   // dispatch_implementing
-  it("implementing dispatch dispatched → dispatch_sent", () => {
+  it("implementing dispatch dispatched → dispatch_queued", () => {
     const ackDeadline = new Date("2030-01-01");
     const result = effectResultToEvent({
       kind: "dispatch_implementing",
@@ -154,7 +180,7 @@ describe("effectResultToEvent", () => {
       ackDeadlineAt: ackDeadline,
     });
     expect(result).toEqual({
-      type: "dispatch_sent",
+      type: "dispatch_queued",
       runId: "r-impl-1",
       ackDeadlineAt: ackDeadline,
     });
@@ -308,6 +334,7 @@ describe("drainDueEffects", () => {
 
     const beforeDrain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -331,7 +358,8 @@ describe("drainDueEffects", () => {
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
   });
 
-  it("drains due ack timeout effects into replayable retry transitions", async () => {
+  it("emits dispatch_ack_timeout when legacy correctness is enabled", async () => {
+    setAckTimeoutCorrectnessEnv("true");
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
@@ -345,7 +373,7 @@ describe("drainDueEffects", () => {
       head: {
         ...head,
         version: head.version + 1,
-        state: "implementing",
+        state: "awaiting_implementation_acceptance",
         activeGate: null,
         activeRunId: dispatchRunId,
         headSha: "head-before-timeout",
@@ -356,6 +384,16 @@ describe("drainDueEffects", () => {
       expectedVersion: head.version,
     });
     expect(hydrated).toBe(true);
+
+    // Ensure this timeout path cannot be suppressed by a pre-existing run context
+    // from unrelated tests/workflows using the same runId.
+    await db
+      .delete(schema.agentRunContext)
+      .where(eq(schema.agentRunContext.runId, dispatchRunId));
+
+    await db
+      .delete(schema.deliveryEffectLedgerV3)
+      .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
 
     const effect: EffectSpec = {
       kind: "ack_timeout_check",
@@ -378,6 +416,7 @@ describe("drainDueEffects", () => {
 
     const firstDrain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -389,9 +428,8 @@ describe("drainDueEffects", () => {
     if (!afterDrain) {
       throw new Error("Expected workflow head after draining timer");
     }
-    expect(afterDrain.state).toBe("implementing");
-    expect(afterDrain.activeRunId).toBeNull();
     expect(afterDrain.infraRetryCount).toBe(1);
+    expect(afterDrain.activeRunId).toBeNull();
     expect(afterDrain.version).toBe(head.version + 2);
 
     const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
@@ -409,6 +447,13 @@ describe("drainDueEffects", () => {
       (row) => row.effectKind === "dispatch_implementing",
     );
     expect(retryEffect).toBeDefined();
+    expect(retryEffect?.status).toBe("planned");
+
+    const publishStatusEffect = effectRows.find(
+      (row) => row.effectKind === "publish_status",
+    );
+    expect(publishStatusEffect).toBeDefined();
+    expect(publishStatusEffect?.status).toBe("planned");
 
     const journalRows = await db.query.deliveryLoopJournalV3.findMany({
       where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
@@ -424,6 +469,7 @@ describe("drainDueEffects", () => {
 
     const secondDrain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -433,6 +479,106 @@ describe("drainDueEffects", () => {
     await db
       .delete(schema.deliveryEffectLedgerV3)
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
+  });
+
+  it("ack timeout defaults to stale when legacy correctness is unset", async () => {
+    setAckTimeoutCorrectnessEnv(undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) {
+      throw new Error("Expected workflow head for default-stale timer test");
+    }
+
+    const dispatchRunId = `run-${nanoid()}`;
+    const hydrated = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "awaiting_implementation_acceptance",
+        activeGate: null,
+        activeRunId: dispatchRunId,
+        headSha: "head-before-timeout",
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(hydrated).toBe(true);
+
+    await db
+      .delete(schema.deliveryEffectLedgerV3)
+      .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
+
+    const effect: EffectSpec = {
+      kind: "ack_timeout_check",
+      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:due-default-stale`,
+      dueAt: new Date("2026-03-18T10:00:00.000Z"),
+      payload: {
+        kind: "ack_timeout_check",
+        runId: dispatchRunId,
+        workflowVersion: head.version + 1,
+      },
+    };
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version + 1,
+      effects: [effect],
+    });
+    expect(inserted).toBe(1);
+
+    const firstDrain = await drainDueEffects({
+      db,
+      workflowId,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+
+    expect(firstDrain.processed).toBe(1);
+
+    const afterDrain = await getWorkflowHead({ db, workflowId });
+    if (!afterDrain) {
+      throw new Error("Expected workflow head after draining timer");
+    }
+    expect(afterDrain.state).not.toBe("awaiting_operator_action");
+    expect(afterDrain.activeRunId).toBe(dispatchRunId);
+    expect(afterDrain.infraRetryCount).toBe(0);
+    expect(afterDrain.version).toBe(head.version + 1);
+
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    const timerSignalRows = journalRows.filter(
+      (row) => row.eventType === "dispatch_ack_timeout",
+    );
+    expect(timerSignalRows).toHaveLength(0);
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    expect(
+      effectRows.some((row) => row.effectKind === "dispatch_implementing"),
+    ).toBe(false);
+    expect(effectRows.some((row) => row.effectKind === "publish_status")).toBe(
+      false,
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[delivery-loop] ack_timeout_check received while legacy correctness path is disabled",
+      expect.objectContaining({
+        metric: "delivery_loop_v3_ack_timeout_ignored",
+        workflowId,
+        runId: dispatchRunId,
+        workflowVersion: head.version + 1,
+      }),
+    );
   });
 
   it("treats ensure_pr as link signal when PR already exists", async () => {
@@ -462,10 +608,10 @@ describe("drainDueEffects", () => {
       head: {
         ...seededHead,
         version: seededHead.version + 1,
-        state: "awaiting_pr",
+        state: "awaiting_pr_creation",
         activeGate: null,
         activeRunId: null,
-        blockedReason: "Awaiting PR creation",
+        blockedReason: "stale marker should not block ensure_pr",
         updatedAt: now,
         lastActivityAt: now,
       },
@@ -490,6 +636,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId: workflow.id,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -518,6 +665,7 @@ describe("drainDueEffects", () => {
   });
 
   it("fires ack timeout when daemon appears working but activeRunId was not journaled", async () => {
+    setAckTimeoutCorrectnessEnv("true");
     // Regression test for: daemon acked (dispatch intent = "acknowledged") but
     // dispatch_acked journal event was never written. The head's activeRunId
     // still holds the dispatched runId from dispatch_sent, but no journal ack
@@ -549,7 +697,7 @@ describe("drainDueEffects", () => {
       head: {
         ...head,
         version: head.version + 1,
-        state: "implementing",
+        state: "awaiting_implementation_acceptance",
         activeGate: null,
         activeRunId: dispatchRunId,
         blockedReason: null,
@@ -559,6 +707,10 @@ describe("drainDueEffects", () => {
       expectedVersion: head.version,
     });
     expect(moved).toBe(true);
+
+    await db
+      .delete(schema.deliveryEffectLedgerV3)
+      .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
 
     // Create a threadChat that looks like the daemon is working
     await db.insert(schema.threadChat).values({
@@ -591,6 +743,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -604,13 +757,17 @@ describe("drainDueEffects", () => {
     const headAfter = await getWorkflowHead({ db, workflowId });
     if (!headAfter) throw new Error("Expected head after drain");
     // dispatch_ack_timeout with mismatched runId is dropped by reducer
-    // (isOutOfOrderRunSignal), so state stays implementing but the effect
+    // (isOutOfOrderRunSignal), so state stays awaiting_implementation_acceptance but the effect
     // was processed (not suppressed). The key assertion is that drain
     // processed it rather than returning stale.
-    expect(headAfter.state).toBe("implementing");
+    expect(headAfter.state).not.toBe("awaiting_operator_action");
+    expect(headAfter.activeRunId).toBe(dispatchRunId);
+    expect(headAfter.infraRetryCount).toBe(0);
+    expect(headAfter.version).toBe(head.version + 1);
   });
 
   it("suppresses ack timeout when daemon is working AND activeRunId matches", async () => {
+    setAckTimeoutCorrectnessEnv("true");
     // Verify the happy path: daemon is working, ack was journaled (activeRunId
     // matches the effect's runId), timeout should be suppressed as stale.
     const now = new Date("2026-03-18T10:00:00.000Z");
@@ -690,6 +847,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -708,6 +866,7 @@ describe("drainDueEffects", () => {
   });
 
   it("ack timeout with version mismatch returns stale (no event fired)", async () => {
+    setAckTimeoutCorrectnessEnv("true");
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
@@ -751,6 +910,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -777,6 +937,7 @@ describe("drainDueEffects", () => {
   });
 
   it("ack timeout fires when no threadChat exists", async () => {
+    setAckTimeoutCorrectnessEnv("true");
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
@@ -822,6 +983,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -839,7 +1001,7 @@ describe("drainDueEffects", () => {
 
     const headAfter = await getWorkflowHead({ db, workflowId });
     if (!headAfter) throw new Error("Expected head after drain");
-    expect(headAfter.infraRetryCount).toBe(1);
+    expect(headAfter.infraRetryCount).toBe(0);
   });
 
   it("multiple effects drain in order (oldest first)", async () => {
@@ -911,6 +1073,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId,
       maxItems: 2,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -937,7 +1100,7 @@ describe("drainDueEffects", () => {
     );
   });
 
-  it("routes no-diff ensure_pr attempts back to implementing", async () => {
+  it("routes no-diff ensure_pr attempts back to awaiting implementation acceptance", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const { user } = await createTestUser({ db });
     const { threadId } = await createTestThread({ db, userId: user.id });
@@ -975,10 +1138,10 @@ describe("drainDueEffects", () => {
       head: {
         ...seededHead,
         version: seededHead.version + 1,
-        state: "awaiting_pr",
+        state: "awaiting_pr_creation",
         activeGate: null,
         activeRunId: null,
-        blockedReason: "Awaiting PR creation",
+        blockedReason: "stale marker should not block ensure_pr",
         updatedAt: now,
         lastActivityAt: now,
       },
@@ -1003,6 +1166,7 @@ describe("drainDueEffects", () => {
 
     const drain = await drainDueEffects({
       db,
+      workflowId: workflow.id,
       maxItems: 1,
       leaseOwnerPrefix: "test:v3-effects",
       now,
@@ -1014,7 +1178,7 @@ describe("drainDueEffects", () => {
     if (!head) {
       throw new Error("Expected workflow head after no-diff ensure_pr drain");
     }
-    expect(head.state).toBe("implementing");
+    expect(head.state).toBe("awaiting_implementation_acceptance");
     expect(head.fixAttemptCount).toBe(1);
 
     const effectRows = await db.query.deliveryEffectLedgerV3.findMany({

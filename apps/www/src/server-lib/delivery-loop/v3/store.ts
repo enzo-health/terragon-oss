@@ -30,10 +30,12 @@ const OUTBOX_LEASE_TTL_MS = 2 * 60 * 1000;
 function normalizeHeadState(state: string): WorkflowHead["state"] {
   switch (state) {
     case "planning":
+    case "awaiting_implementation_acceptance":
     case "implementing":
     case "gating_review":
     case "gating_ci":
-    case "awaiting_pr":
+    case "awaiting_pr_creation":
+    case "awaiting_pr_lifecycle":
     case "awaiting_manual_fix":
     case "awaiting_operator_action":
     case "done":
@@ -75,7 +77,7 @@ export function mapLegacyState(kind: string): WorkflowHead["state"] {
     case "gating":
       return "gating_review";
     case "awaiting_pr":
-      return "awaiting_pr";
+      return "awaiting_pr_creation";
     case "awaiting_manual_fix":
       return "awaiting_manual_fix";
     case "awaiting_operator_action":
@@ -89,6 +91,121 @@ export function mapLegacyState(kind: string): WorkflowHead["state"] {
     default:
       return "implementing";
   }
+}
+
+function mapLegacyStateWithPr(params: {
+  kind: string;
+  prNumber: number | null;
+}): WorkflowHead["state"] {
+  if (params.kind === "awaiting_pr") {
+    return params.prNumber === null
+      ? "awaiting_pr_creation"
+      : "awaiting_pr_lifecycle";
+  }
+  return mapLegacyState(params.kind);
+}
+
+type LegacyHeadProjection = {
+  state: WorkflowHead["state"];
+  blockedReason: string | null;
+  shouldScheduleEnsurePr: boolean;
+};
+
+function projectLegacyToV3Head(params: {
+  legacy: {
+    kind: string;
+    prNumber: number | null;
+    blockedReason: string | null;
+  };
+  currentHeadState?: WorkflowHead["state"];
+}): LegacyHeadProjection {
+  const staleCiWithoutPr =
+    params.currentHeadState === "gating_ci" && params.legacy.prNumber === null;
+  const state = staleCiWithoutPr
+    ? "awaiting_pr_creation"
+    : mapLegacyStateWithPr({
+        kind: params.legacy.kind,
+        prNumber: params.legacy.prNumber,
+      });
+  const shouldScheduleEnsurePr =
+    state === "awaiting_pr_creation" && params.legacy.prNumber === null;
+
+  return {
+    state,
+    blockedReason: shouldScheduleEnsurePr
+      ? AWAITING_PR_CREATION_REASON
+      : (params.legacy.blockedReason ?? null),
+    shouldScheduleEnsurePr,
+  };
+}
+
+function ensurePrReconcileEffects(params: {
+  workflowId: string;
+  workflowVersion: number;
+  now: Date;
+}): EffectSpec[] {
+  return [
+    {
+      kind: "ensure_pr",
+      effectKey: `${params.workflowId}:${params.workflowVersion}:ensure_pr`,
+      dueAt: params.now,
+      maxAttempts: 8,
+      payload: { kind: "ensure_pr" },
+    },
+    {
+      kind: "publish_status",
+      effectKey: `${params.workflowId}:${params.workflowVersion}:publish_status`,
+      dueAt: params.now,
+      payload: { kind: "publish_status" },
+    },
+  ];
+}
+
+async function reconcileHeadFromProjection(params: {
+  db: DB;
+  workflowId: string;
+  expectedVersion: number;
+  headSha: string | null;
+  projection: LegacyHeadProjection;
+  now: Date;
+}): Promise<boolean> {
+  const nextVersion = params.expectedVersion + 1;
+  const [row] = await params.db
+    .update(schema.deliveryWorkflowHeadV3)
+    .set({
+      version: nextVersion,
+      state: params.projection.state,
+      activeGate: null,
+      headSha: params.headSha,
+      activeRunId: null,
+      blockedReason: params.projection.blockedReason,
+      updatedAt: params.now,
+      lastActivityAt: params.now,
+    })
+    .where(
+      and(
+        eq(schema.deliveryWorkflowHeadV3.workflowId, params.workflowId),
+        eq(schema.deliveryWorkflowHeadV3.version, params.expectedVersion),
+      ),
+    )
+    .returning({ workflowId: schema.deliveryWorkflowHeadV3.workflowId });
+  if (!row) {
+    return false;
+  }
+  if (!params.projection.shouldScheduleEnsurePr) {
+    return true;
+  }
+  await insertEffects({
+    db: params.db,
+    workflowId: params.workflowId,
+    workflowVersion: nextVersion,
+    effects: ensurePrReconcileEffects({
+      workflowId: params.workflowId,
+      workflowVersion: nextVersion,
+      now: params.now,
+    }),
+  });
+  return true;
 }
 
 const ZOMBIE_GATE_STATES = ["gating_review", "gating_ci"] as const;
@@ -119,6 +236,7 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
     .select({
       workflowId: headTable.workflowId,
       headVersion: headTable.version,
+      headState: headTable.state,
       headSha: headTable.headSha,
       legacyKind: legacyTable.kind,
       legacyPrNumber: legacyTable.prNumber,
@@ -138,57 +256,29 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
 
   let reconciled = 0;
   for (const candidate of candidates) {
-    const targetState = mapLegacyState(candidate.legacyKind);
-    if (targetState === "gating_review" || targetState === "gating_ci") {
+    const projection = projectLegacyToV3Head({
+      legacy: {
+        kind: candidate.legacyKind,
+        prNumber: candidate.legacyPrNumber,
+        blockedReason: candidate.legacyBlockedReason,
+      },
+      currentHeadState: normalizeHeadState(candidate.headState),
+    });
+    if (
+      projection.state === "gating_review" ||
+      projection.state === "gating_ci"
+    ) {
       continue;
     }
-    const targetVersion = candidate.headVersion + 1;
-    const needsEnsurePr =
-      targetState === "awaiting_pr" && candidate.legacyPrNumber === null;
-    const [row] = await params.db
-      .update(headTable)
-      .set({
-        version: targetVersion,
-        state: targetState,
-        activeGate: null,
-        headSha: candidate.legacyHeadSha ?? candidate.headSha,
-        activeRunId: null,
-        blockedReason: needsEnsurePr
-          ? AWAITING_PR_CREATION_REASON
-          : (candidate.legacyBlockedReason ?? null),
-        updatedAt: now,
-        lastActivityAt: now,
-      })
-      .where(
-        and(
-          eq(headTable.workflowId, candidate.workflowId),
-          eq(headTable.version, candidate.headVersion),
-        ),
-      )
-      .returning({ workflowId: headTable.workflowId });
-    if (row) {
-      if (needsEnsurePr) {
-        await insertEffects({
-          db: params.db,
-          workflowId: candidate.workflowId,
-          workflowVersion: targetVersion,
-          effects: [
-            {
-              kind: "ensure_pr",
-              effectKey: `${candidate.workflowId}:${targetVersion}:ensure_pr`,
-              dueAt: now,
-              maxAttempts: 8,
-              payload: { kind: "ensure_pr" },
-            },
-            {
-              kind: "publish_status",
-              effectKey: `${candidate.workflowId}:${targetVersion}:publish_status`,
-              dueAt: now,
-              payload: { kind: "publish_status" },
-            },
-          ],
-        });
-      }
+    const didReconcile = await reconcileHeadFromProjection({
+      db: params.db,
+      workflowId: candidate.workflowId,
+      expectedVersion: candidate.headVersion,
+      headSha: candidate.legacyHeadSha ?? candidate.headSha,
+      projection,
+      now,
+    });
+    if (didReconcile) {
       reconciled++;
     }
   }
@@ -196,6 +286,11 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
     .select({
       workflowId: headTable.workflowId,
       headVersion: headTable.version,
+      headSha: headTable.headSha,
+      legacyKind: legacyTable.kind,
+      legacyPrNumber: legacyTable.prNumber,
+      legacyHeadSha: legacyTable.headSha,
+      legacyBlockedReason: legacyTable.blockedReason,
     })
     .from(headTable)
     .innerJoin(legacyTable, eq(headTable.workflowId, legacyTable.id))
@@ -209,47 +304,23 @@ export async function reconcileZombieGateHeadsFromLegacy(params: {
     .limit(maxRows);
 
   for (const candidate of noPrCiCandidates) {
-    const targetVersion = candidate.headVersion + 1;
-    const [row] = await params.db
-      .update(headTable)
-      .set({
-        version: targetVersion,
-        state: "awaiting_pr",
-        activeGate: null,
-        activeRunId: null,
-        blockedReason: AWAITING_PR_CREATION_REASON,
-        updatedAt: now,
-        lastActivityAt: now,
-      })
-      .where(
-        and(
-          eq(headTable.workflowId, candidate.workflowId),
-          eq(headTable.version, candidate.headVersion),
-        ),
-      )
-      .returning({ workflowId: headTable.workflowId });
-
-    if (row) {
-      await insertEffects({
-        db: params.db,
-        workflowId: candidate.workflowId,
-        workflowVersion: targetVersion,
-        effects: [
-          {
-            kind: "ensure_pr",
-            effectKey: `${candidate.workflowId}:${targetVersion}:ensure_pr`,
-            dueAt: now,
-            maxAttempts: 8,
-            payload: { kind: "ensure_pr" },
-          },
-          {
-            kind: "publish_status",
-            effectKey: `${candidate.workflowId}:${targetVersion}:publish_status`,
-            dueAt: now,
-            payload: { kind: "publish_status" },
-          },
-        ],
-      });
+    const projection = projectLegacyToV3Head({
+      legacy: {
+        kind: candidate.legacyKind,
+        prNumber: candidate.legacyPrNumber,
+        blockedReason: candidate.legacyBlockedReason,
+      },
+      currentHeadState: "gating_ci",
+    });
+    const didReconcile = await reconcileHeadFromProjection({
+      db: params.db,
+      workflowId: candidate.workflowId,
+      expectedVersion: candidate.headVersion,
+      headSha: candidate.legacyHeadSha ?? candidate.headSha,
+      projection,
+      now,
+    });
+    if (didReconcile) {
       reconciled++;
     }
   }
@@ -284,6 +355,13 @@ export async function ensureWorkflowHead(params: {
     where: eq(schema.deliveryWorkflow.id, params.workflowId),
   });
   if (!legacy) return null;
+  const projection = projectLegacyToV3Head({
+    legacy: {
+      kind: legacy.kind,
+      prNumber: legacy.prNumber,
+      blockedReason: legacy.blockedReason ?? null,
+    },
+  });
 
   const [inserted] = await params.db
     .insert(schema.deliveryWorkflowHeadV3)
@@ -292,14 +370,14 @@ export async function ensureWorkflowHead(params: {
       threadId: legacy.threadId,
       generation: legacy.generation,
       version: legacy.version,
-      state: mapLegacyState(legacy.kind),
+      state: projection.state,
       activeGate: legacy.kind === "gating" ? "review" : null,
       headSha: legacy.headSha ?? null,
       fixAttemptCount: legacy.fixAttemptCount ?? 0,
       infraRetryCount: legacy.infraRetryCount ?? 0,
       maxFixAttempts: legacy.maxFixAttempts ?? 6,
       maxInfraRetries: 10,
-      blockedReason: legacy.blockedReason ?? null,
+      blockedReason: projection.blockedReason,
       lastActivityAt: legacy.lastActivityAt ?? null,
     })
     .onConflictDoNothing()

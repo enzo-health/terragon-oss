@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { reduce } from "./reducer";
-import type { WorkflowHead } from "./types";
+import type { WorkflowHead, WorkflowState } from "./types";
+import {
+  ALL_CANONICAL_EVENTS,
+  ALL_STATES,
+  BRANCH_CASES,
+  CONTRACT_NOW,
+  EXPECTED_TRANSITIONS,
+  makeContractHead,
+} from "./transition-contract";
 
 function head(state: WorkflowHead["state"]): WorkflowHead {
   const now = new Date("2026-03-18T00:00:00.000Z");
@@ -25,7 +33,7 @@ function head(state: WorkflowHead["state"]): WorkflowHead {
 }
 
 describe("reduce", () => {
-  it("planning bootstrap stays in planning and emits dispatch_implementing + publish_status", () => {
+  it("planning bootstrap transitions to awaiting_implementation_acceptance and emits dispatch_implementing + publish_status", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: head("planning"),
@@ -33,7 +41,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("planning");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
@@ -45,7 +53,7 @@ describe("reduce", () => {
     });
   });
 
-  it("plan_completed transitions to implementing without plan artifact", () => {
+  it("plan_completed transitions to awaiting_implementation_acceptance without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: head("planning"),
@@ -53,7 +61,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.effects).toHaveLength(2);
     expect(
       result.effects.find((e) => e.kind === "dispatch_implementing"),
@@ -99,7 +107,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("planning dispatch_sent stays in planning and arms ack timeout", () => {
+  it("planning dispatch_sent is a legacy no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
     const result = reduce({
@@ -113,19 +121,12 @@ describe("reduce", () => {
     });
 
     expect(result.head.state).toBe("planning");
-    expect(result.head.activeRunId).toBe("run-bootstrap");
-    expect(result.effects).toHaveLength(1);
-    expect(result.effects[0]).toMatchObject({
-      kind: "ack_timeout_check",
-      dueAt: ackDeadlineAt,
-      payload: {
-        kind: "ack_timeout_check",
-        runId: "run-bootstrap",
-      },
-    });
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.version).toBe(2);
+    expect(result.effects).toHaveLength(0);
   });
 
-  it("gating_review dispatch_sent arms ack timeout check", () => {
+  it("gating_review dispatch_sent is a legacy no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
     const result = reduce({
@@ -141,19 +142,13 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.activeRunId).toBe("run-1");
-    expect(result.effects).toHaveLength(1);
-    expect(result.effects[0]).toMatchObject({
-      kind: "ack_timeout_check",
-      dueAt: ackDeadlineAt,
-      payload: {
-        kind: "ack_timeout_check",
-        runId: "run-1",
-      },
-    });
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.version).toBe(2);
+    expect(result.effects).toHaveLength(0);
   });
 
-  it("review failure transitions back to implementing and increments fix attempts", () => {
+  it("review failure transitions to awaiting_implementation_acceptance and increments fix attempts", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -168,14 +163,14 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(3);
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
     expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
-  it("review dispatch ack timeout uses infra retry lane", () => {
+  it("review dispatch ack timeout is ignored in acceptance-gated flow", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -190,12 +185,14 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
-    expect(result.head.infraRetryCount).toBe(2);
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.infraRetryCount).toBe(1);
     expect(result.head.fixAttemptCount).toBe(0);
+    expect(result.head.version).toBe(2);
+    expect(result.effects).toHaveLength(0);
   });
 
-  it("implementing run_completed without head SHA retries implementation", () => {
+  it("implementing run_completed without head SHA retries via awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: head("implementing"),
@@ -207,7 +204,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(1);
     expect(result.head.blockedReason).toBe("Run completed without head SHA");
     expect(result.effects).toHaveLength(2);
@@ -219,7 +216,7 @@ describe("reduce", () => {
     expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
-  it("run_completed with unchanged headSha is treated as agent failure (no-op detection)", () => {
+  it("run_completed with unchanged headSha is treated as agent failure and returns to awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const h = {
       ...head("implementing"),
@@ -231,7 +228,7 @@ describe("reduce", () => {
       event: { type: "run_completed", runId: "r-1", headSha: "sha-before" },
       now,
     });
-    expect(result.head.state).toBe("implementing"); // retried, not gating_review
+    expect(result.head.state).toBe("awaiting_implementation_acceptance"); // retried, not gating_review
     expect(result.head.fixAttemptCount).toBe(1);
     expect(result.head.blockedReason).toBe(
       "Agent completed without making code changes",
@@ -264,7 +261,7 @@ describe("reduce", () => {
     expect(result.head.headSha).toBe("sha-early");
   });
 
-  it("implementing run_failed without activeRunId still retries", () => {
+  it("implementing run_failed without activeRunId retries through awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -280,7 +277,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(0);
     expect(result.head.infraRetryCount).toBe(1);
     expect(result.effects).toHaveLength(2);
@@ -291,7 +288,7 @@ describe("reduce", () => {
     expect(result.effects[1]?.kind).toBe("publish_status");
   });
 
-  it("infra run_failed from planning/implementing falls back to secondary runtime", () => {
+  it("infra run_failed from gating_review falls back to secondary runtime and returns to awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -308,7 +305,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(0);
     expect(result.head.infraRetryCount).toBe(3);
     expect(result.effects[0]?.payload).toMatchObject({
@@ -317,7 +314,7 @@ describe("reduce", () => {
     });
   });
 
-  it("implementing run_failed with mismatched runId still triggers retry", () => {
+  it("implementing run_failed with mismatched runId still triggers retry to awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -334,7 +331,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(3);
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]?.kind).toBe("dispatch_implementing");
@@ -402,7 +399,7 @@ describe("reduce", () => {
     expect(result.head.activeRunId).toBeNull();
   });
 
-  it("gate_review_passed without linked PR transitions to awaiting_pr", () => {
+  it("gate_review_passed without linked PR transitions to awaiting_pr_creation", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -418,7 +415,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.state).toBe("awaiting_pr_creation");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
     expect(result.head.blockedReason).toBe("Awaiting PR creation");
@@ -433,11 +430,11 @@ describe("reduce", () => {
     });
   });
 
-  it("awaiting_pr with PR-creation marker re-enters CI gate on pr_linked", () => {
+  it("awaiting_pr_creation re-enters CI gate on pr_linked", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
-        ...head("awaiting_pr"),
+        ...head("awaiting_pr_creation"),
         blockedReason: "Awaiting PR creation",
       },
       event: {
@@ -465,7 +462,7 @@ describe("reduce", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
-        ...head("awaiting_pr"),
+        ...head("awaiting_pr_creation"),
         blockedReason: "Awaiting PR creation",
       },
       event: {
@@ -489,12 +486,11 @@ describe("reduce", () => {
     });
   });
 
-  it("awaiting_pr without PR-creation marker ignores pr_linked", () => {
+  it("awaiting_pr_lifecycle ignores pr_linked", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
-        ...head("awaiting_pr"),
-        blockedReason: null,
+        ...head("awaiting_pr_lifecycle"),
       },
       event: {
         type: "pr_linked",
@@ -503,15 +499,15 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.state).toBe("awaiting_pr_lifecycle");
     expect(result.effects).toHaveLength(0);
   });
 
-  it("awaiting_pr retries implementing when PR linkage fails", () => {
+  it("awaiting_pr_creation retries to awaiting_implementation_acceptance when PR linkage fails", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
-        ...head("awaiting_pr"),
+        ...head("awaiting_pr_creation"),
         blockedReason: "Awaiting PR creation",
       },
       event: {
@@ -521,7 +517,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(1);
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
@@ -626,7 +622,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("accepts correlated CI pass and transitions to awaiting_pr", () => {
+  it("accepts correlated CI pass and transitions to awaiting_pr_lifecycle", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -641,12 +637,12 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.state).toBe("awaiting_pr_lifecycle");
     expect(result.head.activeGate).toBeNull();
     expect(result.head.activeRunId).toBeNull();
   });
 
-  it("gating_ci run_failed uses infra retry lane", () => {
+  it("gating_ci run_failed uses infra retry lane and returns to awaiting_implementation_acceptance", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -664,7 +660,7 @@ describe("reduce", () => {
       now,
     });
 
-    expect(result.head.state).toBe("implementing");
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.infraRetryCount).toBe(1);
   });
 
@@ -738,7 +734,7 @@ describe("reduce", () => {
       expect(result.head.activeRunId).toBe("r-1");
     });
 
-    it("run_failed with different runId triggers retry", () => {
+    it("run_failed with different runId triggers retry to awaiting_implementation_acceptance", () => {
       const h = { ...head("implementing"), activeRunId: "r-1" };
       const result = reduce({
         head: h,
@@ -750,7 +746,7 @@ describe("reduce", () => {
         },
         now: NOW,
       });
-      expect(result.head.state).toBe("implementing");
+      expect(result.head.state).toBe("awaiting_implementation_acceptance");
     });
 
     it("dispatch_ack_timeout with different runId is ignored (stale)", () => {
@@ -789,15 +785,15 @@ describe("reduce", () => {
     expect(result.head.version).toBe(h.version);
   });
 
-  it("dispatch_acked in awaiting_pr is a no-op", () => {
+  it("dispatch_acked in awaiting_pr_lifecycle is a no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
-    const h = head("awaiting_pr");
+    const h = head("awaiting_pr_lifecycle");
     const result = reduce({
       head: h,
       event: { type: "dispatch_acked", runId: "run-1" },
       now,
     });
-    expect(result.head.state).toBe("awaiting_pr");
+    expect(result.head.state).toBe("awaiting_pr_lifecycle");
     expect(result.head.version).toBe(h.version);
   });
 
@@ -813,7 +809,7 @@ describe("reduce", () => {
     expect(result.head.activeRunId).toBe("run-1");
   });
 
-  it("dispatch_sent in gating_review sets activeRunId and arms ack timeout", () => {
+  it("dispatch_sent in gating_review is a legacy no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
     const result = reduce({
@@ -829,13 +825,9 @@ describe("reduce", () => {
       now,
     });
     expect(result.head.state).toBe("gating_review");
-    expect(result.head.activeRunId).toBe("run-review");
-    expect(result.effects).toHaveLength(1);
-    expect(result.effects[0]).toMatchObject({
-      kind: "ack_timeout_check",
-      dueAt: ackDeadlineAt,
-      payload: { kind: "ack_timeout_check", runId: "run-review" },
-    });
+    expect(result.head.activeRunId).toBeNull();
+    expect(result.head.version).toBe(2);
+    expect(result.effects).toHaveLength(0);
   });
 
   it("run_completed in gating_ci is a no-op", () => {
@@ -930,11 +922,16 @@ describe("reduce", () => {
         ...head("implementing"),
         infraRetryCount: 10,
         maxInfraRetries: 10,
-        activeRunId: "r-1",
       };
       const result = reduce({
         head: h,
-        event: { type: "dispatch_ack_timeout", runId: "r-1" },
+        event: {
+          type: "run_failed",
+          runId: "r-1",
+          message: "sandbox crash",
+          category: "infra_failure",
+          lane: "infra",
+        },
         now: NOW,
       });
       expect(result.head.state).toBe("awaiting_operator_action");
@@ -971,12 +968,12 @@ describe("reduce", () => {
     });
   });
 
-  describe("awaiting_pr noop verification", () => {
+  describe("awaiting_pr_creation noop verification", () => {
     const NOW = new Date("2026-03-18T01:00:00.000Z");
 
-    it("awaiting_pr ignores run_completed (stale event)", () => {
+    it("awaiting_pr_creation ignores run_completed (stale event)", () => {
       const h = {
-        ...head("awaiting_pr"),
+        ...head("awaiting_pr_creation"),
         blockedReason: "Awaiting PR creation",
         headSha: "sha-1",
       };
@@ -989,17 +986,17 @@ describe("reduce", () => {
         },
         now: NOW,
       });
-      expect(result.head.state).toBe("awaiting_pr");
+      expect(result.head.state).toBe("awaiting_pr_creation");
       expect(result.head.version).toBe(h.version);
       expect(result.effects).toHaveLength(0);
     });
   });
 
-  describe("awaiting_pr + pr_linked happy path", () => {
-    it("awaiting_pr + pr_linked transitions to gating_ci", () => {
+  describe("awaiting_pr_creation + pr_linked happy path", () => {
+    it("awaiting_pr_creation + pr_linked transitions to gating_ci", () => {
       const now = new Date("2026-03-18T01:00:00.000Z");
       const h = {
-        ...head("awaiting_pr"),
+        ...head("awaiting_pr_creation"),
         blockedReason: "Awaiting PR creation",
         headSha: "sha-abc",
       };
@@ -1029,7 +1026,7 @@ describe("reduce", () => {
   describe("awaiting_manual_fix and awaiting_operator_action", () => {
     const NOW = new Date("2026-03-18T01:00:00.000Z");
 
-    it("awaiting_manual_fix + resume_requested transitions to implementing", () => {
+    it("awaiting_manual_fix + resume_requested transitions to awaiting_implementation_acceptance", () => {
       const h = {
         ...head("awaiting_manual_fix"),
         blockedReason: "Fix attempt budget exhausted",
@@ -1041,7 +1038,7 @@ describe("reduce", () => {
         now: NOW,
       });
 
-      expect(result.head.state).toBe("implementing");
+      expect(result.head.state).toBe("awaiting_implementation_acceptance");
       expect(result.head.blockedReason).toBeNull();
       expect(result.head.activeRunId).toBeNull();
       expect(result.effects).toHaveLength(2);
@@ -1049,7 +1046,7 @@ describe("reduce", () => {
       expect(result.effects[1]?.kind).toBe("publish_status");
     });
 
-    it("awaiting_operator_action + resume_requested transitions to implementing", () => {
+    it("awaiting_operator_action + resume_requested transitions to awaiting_implementation_acceptance", () => {
       const h = {
         ...head("awaiting_operator_action"),
         blockedReason: "Infrastructure retry budget exhausted",
@@ -1061,7 +1058,7 @@ describe("reduce", () => {
         now: NOW,
       });
 
-      expect(result.head.state).toBe("implementing");
+      expect(result.head.state).toBe("awaiting_implementation_acceptance");
       expect(result.head.blockedReason).toBeNull();
       expect(result.head.activeRunId).toBeNull();
       expect(result.effects).toHaveLength(2);
@@ -1084,5 +1081,58 @@ describe("reduce", () => {
       expect(result.head.version).toBe(h.version);
       expect(result.effects).toHaveLength(0);
     });
+  });
+
+  describe("shared transition contract parity", () => {
+    for (const state of ALL_STATES) {
+      describe(state, () => {
+        const expectations = EXPECTED_TRANSITIONS[state]!;
+        for (const event of ALL_CANONICAL_EVENTS) {
+          const cell = expectations[event.type]!;
+          it(`contract ${event.type} -> ${cell.target}`, () => {
+            const contractHead = makeContractHead(state);
+            const result = reduce({
+              head: contractHead,
+              event,
+              now: CONTRACT_NOW,
+            });
+
+            if (cell.target === "noop") {
+              expect(result.head.state).toBe(state);
+              expect(result.head.version).toBe(contractHead.version);
+            } else if (cell.target === "stay") {
+              expect(result.head.state).toBe(state);
+              expect(result.head.version).toBeGreaterThan(contractHead.version);
+            } else {
+              expect(result.head.state).toBe(cell.target as WorkflowState);
+            }
+            expect(result.effects.map((effect) => effect.kind)).toEqual(
+              cell.effects ?? [],
+            );
+          });
+        }
+      });
+    }
+  });
+
+  describe("shared branch contract parity", () => {
+    for (const testCase of BRANCH_CASES) {
+      it(`contract ${testCase.name}`, () => {
+        const result = reduce({
+          head: testCase.head,
+          event: testCase.event,
+          now: CONTRACT_NOW,
+        });
+        expect(result.head.state).toBe(testCase.expectedState);
+        if (testCase.expectedVersionDelta === 0) {
+          expect(result.head.version).toBe(testCase.head.version);
+        } else {
+          expect(result.head.version).toBeGreaterThan(testCase.head.version);
+        }
+        expect(result.effects.map((effect) => effect.kind)).toEqual(
+          testCase.expectedEffects,
+        );
+      });
+    }
   });
 });

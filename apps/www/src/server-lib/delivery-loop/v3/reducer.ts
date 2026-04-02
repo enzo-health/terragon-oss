@@ -8,6 +8,7 @@ import {
 
 const DISPATCH_COHERENT_STATES = new Set([
   "planning",
+  "awaiting_implementation_acceptance",
   "implementing",
   "gating_review",
   "gating_ci",
@@ -334,7 +335,7 @@ function retryToImplementing(params: {
 
   const retryHead = {
     ...next,
-    state: "implementing" as const,
+    state: "awaiting_implementation_acceptance" as const,
     activeGate: null,
     activeRunId: null,
     blockedReason: params.reason ?? null,
@@ -364,7 +365,8 @@ export function reduce(params: {
   now?: Date;
 }): ReduceResult {
   const now = params.now ?? new Date();
-  const { head, event } = params;
+  const head = params.head;
+  const event = params.event;
 
   let result: ReduceResult;
   if (
@@ -398,31 +400,6 @@ export function reduce(params: {
   } else
     switch (head.state) {
       case "planning": {
-        if (event.type === "dispatch_sent") {
-          const next = withVersion(head, now);
-          result = {
-            head: {
-              ...next,
-              state: "planning",
-              activeRunId: event.runId,
-              blockedReason: null,
-            },
-            effects: [
-              {
-                kind: "ack_timeout_check",
-                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
-                dueAt: event.ackDeadlineAt,
-                payload: {
-                  kind: "ack_timeout_check",
-                  runId: event.runId,
-                  workflowVersion: next.version,
-                },
-              },
-            ],
-            invariantActions: [],
-          };
-          break;
-        }
         if (event.type === "planning_run_completed") {
           const next = withVersion(head, now);
           result = {
@@ -464,8 +441,9 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: "planning",
+              state: "awaiting_implementation_acceptance",
               activeGate: null,
+              activeRunId: null,
               blockedReason: null,
             },
             effects: [
@@ -493,8 +471,9 @@ export function reduce(params: {
         result = {
           head: {
             ...next,
-            state: "implementing",
+            state: "awaiting_implementation_acceptance",
             activeGate: null,
+            activeRunId: null,
             blockedReason: null,
           },
           effects: [
@@ -510,11 +489,20 @@ export function reduce(params: {
         };
         break;
       }
-      case "implementing": {
-        if (event.type === "dispatch_sent") {
+      case "awaiting_implementation_acceptance": {
+        if (event.type === "dispatch_queued") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = { head, effects: [], invariantActions: [] };
+            break;
+          }
           const next = withVersion(head, now);
           result = {
-            head: { ...next, activeRunId: event.runId, blockedReason: null },
+            head: {
+              ...next,
+              state: "awaiting_implementation_acceptance",
+              activeRunId: event.runId,
+              blockedReason: null,
+            },
             effects: [
               {
                 kind: "ack_timeout_check",
@@ -531,19 +519,86 @@ export function reduce(params: {
           };
           break;
         }
-        if (event.type === "dispatch_acked") {
+        if (event.type === "dispatch_claimed") {
           if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
             result = { head, effects: [], invariantActions: [] };
             break;
           }
           const next = withVersion(head, now);
           result = {
-            head: { ...next, activeRunId: event.runId },
+            head: {
+              ...next,
+              state: "awaiting_implementation_acceptance",
+              activeRunId: event.runId,
+              blockedReason: null,
+            },
             effects: [],
             invariantActions: [],
           };
           break;
         }
+        if (event.type === "dispatch_accepted") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = { head, effects: [], invariantActions: [] };
+            break;
+          }
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "implementing",
+              activeRunId: event.runId,
+              blockedReason: null,
+            },
+            effects: [publishStatusEffect(next, now)],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "dispatch_ack_timeout") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          result = retryToImplementing({
+            head,
+            now,
+            lane: "infra",
+            reason: `Dispatch ack timeout for run ${event.runId}`,
+          });
+          break;
+        }
+        if (event.type === "run_failed") {
+          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+            result = { head, effects: [], invariantActions: [] };
+            break;
+          }
+          const lane =
+            event.lane ??
+            classifyFailureLane({
+              category: event.category,
+              message: event.message,
+            });
+          result = retryToImplementing({
+            head,
+            now,
+            lane,
+            reason: event.message,
+          });
+          break;
+        }
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
+      }
+      case "implementing": {
         if (event.type === "run_completed") {
           const completedHeadSha = event.headSha ?? head.headSha;
           if (!completedHeadSha) {
@@ -585,23 +640,6 @@ export function reduce(params: {
           };
           break;
         }
-        if (event.type === "dispatch_ack_timeout") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
-          result = retryToImplementing({
-            head,
-            now,
-            lane: "infra",
-            reason: `Dispatch ack timeout for run ${event.runId}`,
-          });
-          break;
-        }
         if (event.type === "run_failed") {
           const lane =
             event.lane ??
@@ -625,43 +663,6 @@ export function reduce(params: {
         break;
       }
       case "gating_review": {
-        if (event.type === "dispatch_sent") {
-          const next = withVersion(head, now);
-          result = {
-            head: { ...next, activeRunId: event.runId, blockedReason: null },
-            effects: [
-              {
-                kind: "ack_timeout_check",
-                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
-                dueAt: event.ackDeadlineAt,
-                payload: {
-                  kind: "ack_timeout_check",
-                  runId: event.runId,
-                  workflowVersion: next.version,
-                },
-              },
-            ],
-            invariantActions: [],
-          };
-          break;
-        }
-        if (event.type === "dispatch_acked") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
-          const next = withVersion(head, now);
-          result = {
-            head: { ...next, activeRunId: event.runId },
-            effects: [],
-            invariantActions: [],
-          };
-          break;
-        }
         if (event.type === "gate_review_passed") {
           if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
             result = {
@@ -676,7 +677,7 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: hasLinkedPr ? "gating_ci" : "awaiting_pr",
+              state: hasLinkedPr ? "gating_ci" : "awaiting_pr_creation",
               activeGate: hasLinkedPr ? "ci" : null,
               activeRunId: null,
               blockedReason: hasLinkedPr ? null : AWAITING_PR_CREATION_REASON,
@@ -728,23 +729,6 @@ export function reduce(params: {
           });
           break;
         }
-        if (event.type === "dispatch_ack_timeout") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
-          result = retryToImplementing({
-            head,
-            now,
-            lane: "infra",
-            reason: `Dispatch ack timeout for run ${event.runId}`,
-          });
-          break;
-        }
         result = {
           head,
           effects: [],
@@ -766,7 +750,7 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: "awaiting_pr",
+              state: "awaiting_pr_lifecycle",
               activeGate: null,
               activeRunId: null,
               blockedReason: null,
@@ -823,16 +807,8 @@ export function reduce(params: {
         };
         break;
       }
-      case "awaiting_pr": {
+      case "awaiting_pr_creation": {
         if (event.type === "pr_linked") {
-          if (head.blockedReason !== AWAITING_PR_CREATION_REASON) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
           if (typeof event.prNumber !== "number") {
             result = {
               head,
@@ -874,6 +850,14 @@ export function reduce(params: {
         };
         break;
       }
+      case "awaiting_pr_lifecycle": {
+        result = {
+          head,
+          effects: [],
+          invariantActions: [],
+        };
+        break;
+      }
       case "awaiting_manual_fix":
       case "awaiting_operator_action": {
         if (event.type !== "resume_requested") {
@@ -888,7 +872,7 @@ export function reduce(params: {
         result = {
           head: {
             ...next,
-            state: "implementing",
+            state: "awaiting_implementation_acceptance",
             activeGate: null,
             activeRunId: null,
             blockedReason: null,
