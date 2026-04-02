@@ -643,10 +643,14 @@ describe("reduce", () => {
     const result = reduce({
       head: {
         ...head("awaiting_pr_creation"),
+        activeRunId: "run-review",
+        activeRunSeq: 4,
         blockedReason: "Awaiting PR creation",
       },
       event: {
         type: "gate_review_failed",
+        runId: "run-review",
+        runSeq: 4,
         reason: "No code changes detected to open PR",
       },
       now,
@@ -654,6 +658,7 @@ describe("reduce", () => {
 
     expect(result.head.state).toBe("awaiting_implementation_acceptance");
     expect(result.head.fixAttemptCount).toBe(1);
+    expect(result.head.activeRunSeq).toBe(5);
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
@@ -666,6 +671,31 @@ describe("reduce", () => {
       kind: "publish_status",
       payload: { kind: "publish_status" },
     });
+  });
+
+  it("awaiting_pr_creation ignores gate_review_failed from a stale runSeq", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("awaiting_pr_creation"),
+      activeRunId: "run-review",
+      activeRunSeq: 4,
+      blockedReason: "Awaiting PR creation",
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "gate_review_failed",
+        runId: "run-review",
+        runSeq: 3,
+        reason: "Stale PR linkage failure",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_pr_creation");
+    expect(result.head.version).toBe(h.version);
+    expect(result.head.activeRunSeq).toBe(4);
+    expect(result.effects).toHaveLength(0);
   });
 
   it("dispatch coherence clears stale activeRunId in non-dispatch state", () => {

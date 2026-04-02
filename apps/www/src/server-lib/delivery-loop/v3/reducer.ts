@@ -197,18 +197,33 @@ function isOutOfOrderFailureSignal(params: {
   category: string | null;
   lane?: "agent" | "infra";
 }): boolean {
-  const isSyntheticEffectFailure =
-    params.lane === "infra" && params.category === "effect_failure";
-
-  if (isSyntheticEffectFailure) {
-    return params.head.activeRunSeq == null;
-  }
-
   return isOutOfOrderRunSignal({
     head: params.head,
     runId: params.runId,
     runSeq: params.runSeq,
   });
+}
+
+function isOutOfOrderAwaitingPrRetrySignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+}): boolean {
+  if (params.runSeq != null) {
+    return (
+      params.head.activeRunSeq == null ||
+      params.runSeq !== params.head.activeRunSeq
+    );
+  }
+
+  if (params.head.activeRunId != null) {
+    if (params.runId == null) {
+      return true;
+    }
+    return params.runId !== params.head.activeRunId;
+  }
+
+  return true;
 }
 
 function isOutOfOrderGateSignal(params: {
@@ -1046,6 +1061,20 @@ export function reduce(params: {
           break;
         }
         if (event.type === "gate_review_failed") {
+          if (
+            isOutOfOrderAwaitingPrRetrySignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
           result = retryToImplementing({
             head,
             now,

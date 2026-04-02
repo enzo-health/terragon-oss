@@ -128,7 +128,7 @@ export const ALL_CANONICAL_EVENTS: LoopEvent[] = [
   { type: "run_completed", runId: "r-1", headSha: "abc123" },
   { type: "run_failed", runId: "r-1", message: "err", category: null },
   { type: "gate_review_passed", runId: "r-1", prNumber: 1 },
-  { type: "gate_review_failed", runId: "r-1", reason: "test" },
+  { type: "gate_review_failed", runId: "r-1", runSeq: 1, reason: "test" },
   { type: "gate_ci_passed", headSha: "abc123" },
   { type: "gate_ci_failed", headSha: "abc123", reason: "test" },
   { type: "pr_linked", prNumber: 1 },

@@ -60,7 +60,10 @@ function summarizeRetryReason(reason: string): string {
  * Returns null for results that don't require a state transition (e.g., human
  * approval pending, stale ack timeout).
  */
-export function effectResultToEvent(result: EffectResult): LoopEvent | null {
+export function effectResultToEvent(
+  result: EffectResult,
+  context?: { activeRunSeq: number | null },
+): LoopEvent | null {
   switch (result.kind) {
     case "create_plan_artifact":
       if (result.outcome === "created" && result.approvalPolicy === "auto")
@@ -78,6 +81,7 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
       return {
         type: "run_failed",
         runId: `gate-dispatch-failed-${Date.now()}`,
+        runSeq: context?.activeRunSeq ?? null,
         message: result.reason,
         category: "effect_failure",
         lane: "infra",
@@ -86,7 +90,11 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
     case "ensure_pr":
       if (result.outcome === "linked")
         return { type: "pr_linked", prNumber: result.prNumber };
-      return { type: "gate_review_failed", reason: result.reason };
+      return {
+        type: "gate_review_failed",
+        runSeq: context?.activeRunSeq ?? null,
+        reason: result.reason,
+      };
 
     case "dispatch_implementing":
       if (result.outcome === "dispatched")
@@ -98,6 +106,7 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
       return {
         type: "run_failed",
         runId: `impl-dispatch-failed-${Date.now()}`,
+        runSeq: context?.activeRunSeq ?? null,
         message: result.reason,
         category: "effect_failure",
         lane: "infra",
@@ -181,7 +190,17 @@ async function executeStateBlockingEffect(params: {
   });
 
   // Map result to event and fire if non-null
-  const event = effectResultToEvent(result);
+  const currentHead = await getWorkflowHead({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  const eventRunSeq =
+    currentHead?.version === params.effect.workflowVersion
+      ? currentHead.activeRunSeq
+      : null;
+  const event = effectResultToEvent(result, {
+    activeRunSeq: eventRunSeq,
+  });
   if (event) {
     await appendEventAndAdvance({
       db: params.db,
