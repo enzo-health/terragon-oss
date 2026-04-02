@@ -78,30 +78,6 @@ function normalizeLegacyLoopEvent(event: LoopEvent): LoopEvent {
   }
 }
 
-function mapCanonicalDispatchEventForReducer(event: LoopEvent): LoopEvent {
-  switch (event.type) {
-    case "dispatch_queued":
-      return {
-        type: "dispatch_sent",
-        runId: event.runId,
-        ackDeadlineAt: event.ackDeadlineAt,
-      };
-    case "dispatch_claimed":
-      // Reducer has no explicit "claimed" transition yet; treat as ack-like progress.
-      return {
-        type: "dispatch_acked",
-        runId: event.runId,
-      };
-    case "dispatch_accepted":
-      return {
-        type: "dispatch_acked",
-        runId: event.runId,
-      };
-    default:
-      return event;
-  }
-}
-
 export async function appendEventAndAdvance(params: {
   db: DB;
   workflowId: string;
@@ -143,7 +119,6 @@ export async function appendEventAndAdvance(params: {
       event: params.event,
     });
     const event = normalizeLegacyLoopEvent(eventWithContext);
-    const reducerEvent = mapCanonicalDispatchEventForReducer(event);
 
     const signal = buildSignalJournalContract({
       workflowId: params.workflowId,
@@ -175,7 +150,7 @@ export async function appendEventAndAdvance(params: {
 
     const reduced = reduce({
       head,
-      event: reducerEvent,
+      event,
       now,
     });
 

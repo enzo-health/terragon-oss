@@ -9,6 +9,9 @@ import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
 import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
+import * as schema from "@terragon/shared/db/schema";
+import { eq } from "drizzle-orm";
 
 function buildResumeFollowUpMessage(): DBUserMessage {
   return {
@@ -32,6 +35,27 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       threadChatId,
     }: { threadId: string; threadChatId: string | null },
   ) {
+    const thread = await db.query.thread.findFirst({
+      columns: {
+        id: true,
+        userId: true,
+      },
+      where: eq(schema.thread.id, threadId),
+    });
+    if (!thread) {
+      throw new UserFacingError("Unauthorized");
+    }
+
+    if (thread.userId !== userId) {
+      const threadWithPermissions = await getThreadWithUserPermissions({
+        userId,
+        threadId,
+      });
+      if (!threadWithPermissions) {
+        throw new UserFacingError("Unauthorized");
+      }
+    }
+
     const v2Row = await getActiveWorkflowForThread({ db, threadId });
     if (!v2Row) {
       throw new UserFacingError(

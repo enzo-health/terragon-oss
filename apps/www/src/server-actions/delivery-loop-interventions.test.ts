@@ -138,6 +138,35 @@ describe("delivery-loop-interventions", () => {
     );
   });
 
+  it("rejects resume when user does not own the thread", async () => {
+    const { user: owner } = await createTestUser({ db });
+    const { user: attacker, session: attackerSession } = await createTestUser({
+      db,
+    });
+    const { threadId } = await createTestThread({
+      db,
+      userId: owner.id,
+      overrides: { githubRepoFullName: "owner/repo" },
+    });
+    await mockLoggedInUser(attackerSession);
+
+    const loopBlocked = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      kind: "awaiting_manual_fix",
+      stateJson: {},
+      userId: owner.id,
+      repoFullName: "owner/repo",
+    });
+    await ensureWorkflowHead({ db, workflowId: loopBlocked.id });
+
+    await expect(
+      resumeFromBlocked({ threadId, threadChatId: null }),
+    ).rejects.toThrow("Unauthorized");
+    expect(attacker.id).not.toBe(owner.id);
+  });
+
   it("rejects resume when v2 workflow is not in a blocked kind", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
