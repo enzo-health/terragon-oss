@@ -472,15 +472,15 @@ export const BRANCH_CASES: BranchTransitionCase[] = [
     expectedEffects: [],
   },
   {
-    name: "awaiting_implementation_acceptance(activeRunId=null) + dispatch_ack_timeout -> retry",
+    name: "awaiting_implementation_acceptance(activeRunId=null) + dispatch_ack_timeout -> noop",
     head: {
       ...makeContractHead("awaiting_implementation_acceptance"),
       activeRunId: null,
     },
     event: { type: "dispatch_ack_timeout", runId: "r-2" },
     expectedState: "awaiting_implementation_acceptance",
-    expectedVersionDelta: 1,
-    expectedEffects: ["dispatch_implementing", "publish_status"],
+    expectedVersionDelta: 0,
+    expectedEffects: [],
   },
   {
     name: "gating_review + gate_review_passed(prNumber=null) -> awaiting_pr_creation",
