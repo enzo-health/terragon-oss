@@ -72,22 +72,39 @@ export async function createDispatchIntent(
   db: DB,
   input: CreateDispatchIntentInput,
 ): Promise<string> {
-  const [row] = await db
-    .insert(schema.deliveryLoopDispatchIntent)
-    .values({
-      loopId: input.loopId,
-      threadId: input.threadId,
-      threadChatId: input.threadChatId,
-      runId: input.runId,
-      targetPhase: input.targetPhase,
-      selectedAgent: input.selectedAgent,
-      executionClass: input.executionClass,
-      dispatchMechanism: input.dispatchMechanism,
-      status: toDispatchIntentStatus("prepared"),
-      retryCount: input.retryCount ?? 0,
-    })
-    .returning({ id: schema.deliveryLoopDispatchIntent.id });
-  return row!.id;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const [row] = await db
+      .insert(schema.deliveryLoopDispatchIntent)
+      .values({
+        loopId: input.loopId,
+        threadId: input.threadId,
+        threadChatId: input.threadChatId,
+        runId: input.runId,
+        targetPhase: input.targetPhase,
+        selectedAgent: input.selectedAgent,
+        executionClass: input.executionClass,
+        dispatchMechanism: input.dispatchMechanism,
+        status: toDispatchIntentStatus("prepared"),
+        retryCount: input.retryCount ?? 0,
+      })
+      .onConflictDoNothing({
+        target: schema.deliveryLoopDispatchIntent.runId,
+      })
+      .returning({ id: schema.deliveryLoopDispatchIntent.id });
+
+    if (row) {
+      return row.id;
+    }
+
+    const existing = await getDispatchIntentByRunId(db, input.runId);
+    if (existing) {
+      return existing.id;
+    }
+  }
+
+  throw new Error(
+    `Failed to create or locate dispatch intent for runId ${input.runId}`,
+  );
 }
 
 /**

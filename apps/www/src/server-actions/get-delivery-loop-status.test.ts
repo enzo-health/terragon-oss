@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
   buildDeliveryLoopStatusChecks,
+  buildSnapshotFromV3Head,
   getDeliveryLoopSnapshotStateSummary,
 } from "@/lib/delivery-loop-status";
 import { unwrapResult } from "@/lib/server-actions";
@@ -18,8 +19,11 @@ import {
   replacePlanTasksForArtifact,
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
+import * as workflowStore from "@terragon/shared/delivery-loop/store/workflow-store";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
+import * as v3Store from "@/server-lib/delivery-loop/v3/store";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -27,10 +31,148 @@ async function getDeliveryLoopStatus(threadId: string) {
   return unwrapResult(await getDeliveryLoopStatusAction(threadId));
 }
 
+const TERMINAL_STATUS_CASES = [
+  {
+    blockedReason: "PR merged via squash",
+    expectedState: "terminated_pr_merged",
+    expectedLabel: "Terminated: PR Merged",
+    expectedSummaryExplanation:
+      "The loop ended because the pull request was merged.",
+  },
+  {
+    blockedReason: "PR closed",
+    expectedState: "terminated_pr_closed",
+    expectedLabel: "Terminated: PR Closed",
+    expectedSummaryExplanation:
+      "The loop ended because the pull request was closed.",
+  },
+] as const;
+
+type TerminalStatusCase = (typeof TERMINAL_STATUS_CASES)[number];
+
+function buildTerminalActionExplanation(
+  terminalCase: Pick<
+    TerminalStatusCase,
+    "blockedReason" | "expectedSummaryExplanation"
+  >,
+): string {
+  return `${terminalCase.expectedSummaryExplanation} Reason: ${terminalCase.blockedReason}.`;
+}
+
 describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
   });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(TERMINAL_STATUS_CASES)(
+    "returns a consistent terminal status payload for $blockedReason",
+    async ({
+      blockedReason,
+      expectedState,
+      expectedLabel,
+      expectedSummaryExplanation,
+    }) => {
+      const { user, session } = await createTestUser({ db });
+      const { threadId } = await createTestThread({
+        db,
+        userId: user.id,
+        overrides: {
+          githubRepoFullName: "owner/repo",
+        },
+      });
+      await mockLoggedInUser(session);
+
+      const workflow = await createWorkflow({
+        db,
+        threadId,
+        generation: 1,
+        kind: "implementing",
+        stateJson: {},
+        userId: user.id,
+        repoFullName: "owner/repo",
+      });
+
+      vi.spyOn(v3Store, "getWorkflowHead").mockResolvedValue({
+        workflowId: workflow.id,
+        threadId,
+        generation: workflow.generation,
+        version: workflow.version,
+        state: "terminated",
+        activeGate: null,
+        headSha: null,
+        activeRunId: null,
+        fixAttemptCount: 0,
+        infraRetryCount: 0,
+        maxFixAttempts: workflow.maxFixAttempts,
+        maxInfraRetries: 10,
+        blockedReason,
+        createdAt: workflow.createdAt,
+        updatedAt: workflow.updatedAt,
+        lastActivityAt: workflow.lastActivityAt,
+      });
+
+      vi.spyOn(workflowStore, "getActiveWorkflowForThread").mockResolvedValue({
+        ...workflow,
+        kind: "implementing",
+        stateJson: {},
+      });
+
+      const status = await getDeliveryLoopStatus(threadId);
+
+      expect(status).not.toBeNull();
+      expect(status?.state).toBe(expectedState);
+      expect(status?.stateLabel).toBe(expectedLabel);
+      expect(status?.actions.canBypassOnce).toBe(false);
+      expect(status?.explanation).toBe(
+        buildTerminalActionExplanation({
+          blockedReason,
+          expectedSummaryExplanation,
+        }),
+      );
+      expect(status?.progressPercent).toBe(100);
+    },
+  );
+
+  it.each(TERMINAL_STATUS_CASES)(
+    "projects terminated workflow heads consistently for $blockedReason",
+    ({
+      blockedReason,
+      expectedState,
+      expectedLabel,
+      expectedSummaryExplanation,
+    }) => {
+      const head: WorkflowHead = {
+        workflowId: "wf-terminal",
+        threadId: "thread-terminal",
+        generation: 1,
+        version: 3,
+        state: "terminated",
+        activeGate: null,
+        headSha: null,
+        activeRunId: null,
+        fixAttemptCount: 0,
+        infraRetryCount: 0,
+        maxFixAttempts: 6,
+        maxInfraRetries: 10,
+        blockedReason,
+        createdAt: new Date("2026-03-18T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-18T00:00:00.000Z"),
+        lastActivityAt: new Date("2026-03-18T00:00:00.000Z"),
+      };
+
+      const snapshot = buildSnapshotFromV3Head(head);
+      const summary = getDeliveryLoopSnapshotStateSummary(snapshot);
+
+      expect(snapshot.kind).toBe(expectedState);
+      expect(summary.stateLabel).toBe(expectedLabel);
+      expect(summary.explanation).toBe(expectedSummaryExplanation);
+      expect(summary.progressPercent).toBe(100);
+    },
+  );
 
   it("surfaces blocked summary from the canonical snapshot model", () => {
     const summary = getDeliveryLoopSnapshotStateSummary({
@@ -272,6 +414,7 @@ describe("getDeliveryLoopStatusAction", () => {
     const status = await getDeliveryLoopStatus(threadId);
 
     expect(status?.state).toBe("blocked");
+    expect(status?.actions.canBypassOnce).toBe(false);
     expect(status?.needsAttention.topBlockers).toContainEqual(
       expect.objectContaining({
         source: "human_feedback",

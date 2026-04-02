@@ -1161,7 +1161,7 @@ describe("v3 durable delivery loop", () => {
     expect(headAfterStale.headSha).toBe("stale-head-sha");
   });
 
-  it("routes review pass to awaiting_pr when no PR is linked", async () => {
+  it("routes review pass to awaiting_pr_creation when no PR is linked", async () => {
     const workflowId = await createWorkflowFixture();
 
     await appendEventAndAdvance({
@@ -1220,10 +1220,10 @@ describe("v3 durable delivery loop", () => {
       eagerDrain: false,
     });
     expect(reviewPassResult.stateBefore).toBe("gating_review");
-    expect(reviewPassResult.stateAfter).toBe("awaiting_pr");
+    expect(reviewPassResult.stateAfter).toBe("awaiting_pr_creation");
 
     const workflowHead = await getWorkflowHead({ db, workflowId });
-    expect(workflowHead?.state).toBe("awaiting_pr");
+    expect(workflowHead?.state).toBe("awaiting_pr_creation");
     expect(workflowHead?.activeGate).toBeNull();
     expect(workflowHead?.blockedReason).toBe("Awaiting PR creation");
 
@@ -1233,7 +1233,7 @@ describe("v3 durable delivery loop", () => {
     expect(effectRows.some((row) => row.effectKind === "ensure_pr")).toBe(true);
   });
 
-  it("reconciles stale gating_ci heads without a linked PR to awaiting_pr", async () => {
+  it("reconciles stale gating_ci heads without a linked PR to awaiting_pr_creation", async () => {
     const workflowId = await createWorkflowFixture();
     const seeded = await ensureWorkflowHead({ db, workflowId });
     if (!seeded) {
@@ -1268,7 +1268,7 @@ describe("v3 durable delivery loop", () => {
     expect(reconcile.reconciled).toBeGreaterThanOrEqual(1);
 
     const head = await getWorkflowHead({ db, workflowId });
-    expect(head?.state).toBe("awaiting_pr");
+    expect(head?.state).toBe("awaiting_pr_creation");
     expect(head?.activeGate).toBeNull();
     expect(head?.blockedReason).toBe("Awaiting PR creation");
 

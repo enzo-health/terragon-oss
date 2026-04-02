@@ -16,7 +16,8 @@ describe("isTerminalState", () => {
       "implementing",
       "gating_review",
       "gating_ci",
-      "awaiting_pr",
+      "awaiting_pr_creation",
+      "awaiting_pr_lifecycle",
       "awaiting_manual_fix",
       "awaiting_operator_action",
     ];

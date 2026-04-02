@@ -735,6 +735,19 @@ export function buildSnapshotFromV3Head(
         },
       };
 
+    case "awaiting_implementation_acceptance":
+      return {
+        kind: "implementing",
+        execution: {
+          kind: "implementation",
+          selectedAgent: null,
+          dispatchStatus: null,
+          dispatchAttemptCount: 0,
+          activeRunId: head.activeRunId ?? null,
+          lastFailureCategory: null,
+        },
+      };
+
     case "gating_review":
       return {
         kind: "review_gate",
@@ -753,7 +766,8 @@ export function buildSnapshotFromV3Head(
         },
       };
 
-    case "awaiting_pr":
+    case "awaiting_pr_creation":
+    case "awaiting_pr_lifecycle":
       return {
         kind: "awaiting_pr_link",
         selectedAgent: null,
@@ -793,8 +807,16 @@ export function buildSnapshotFromV3Head(
       return { kind: "stopped" };
 
     case "terminated":
-      return head.blockedReason === "PR merged"
+      return isMergedTerminationReason(head.blockedReason)
         ? { kind: "terminated_pr_merged" }
         : { kind: "terminated_pr_closed" };
   }
+}
+
+function isMergedTerminationReason(blockedReason: string | null): boolean {
+  if (!blockedReason) {
+    return false;
+  }
+
+  return /\bmerged\b/i.test(blockedReason.trim());
 }

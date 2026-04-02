@@ -10,9 +10,11 @@ import {
 export type WorkflowState =
   | "planning"
   | "implementing"
+  | "awaiting_implementation_acceptance"
   | "gating_review"
   | "gating_ci"
-  | "awaiting_pr"
+  | "awaiting_pr_creation"
+  | "awaiting_pr_lifecycle"
   | "awaiting_manual_fix"
   | "awaiting_operator_action"
   | "done"
@@ -24,6 +26,10 @@ export type LoopEvent =
   | { type: "planning_run_completed" }
   | { type: "plan_completed" }
   | { type: "plan_failed"; reason: string }
+  | { type: "dispatch_queued"; runId: string; ackDeadlineAt: Date }
+  | { type: "dispatch_claimed"; runId: string }
+  | { type: "dispatch_accepted"; runId: string }
+  // Legacy dispatch lifecycle events retained for compatibility.
   | { type: "dispatch_sent"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_acked"; runId: string }
   | { type: "dispatch_ack_timeout"; runId: string }
@@ -161,17 +167,21 @@ export type WorkflowHead = {
 };
 
 export function stateToDeliveryLoopState(
-  state: WorkflowState,
+  state: WorkflowState | "awaiting_pr",
 ): DeliveryLoopState {
   switch (state) {
     case "planning":
       return "planning";
     case "implementing":
       return "implementing";
+    case "awaiting_implementation_acceptance":
+      return "implementing";
     case "gating_review":
       return "review_gate";
     case "gating_ci":
       return "ci_gate";
+    case "awaiting_pr_creation":
+    case "awaiting_pr_lifecycle":
     case "awaiting_pr":
       return "awaiting_pr_link";
     case "awaiting_manual_fix":
@@ -187,6 +197,9 @@ export function stateToDeliveryLoopState(
       // Use buildSnapshotFromV3Head (which has access to blockedReason) for
       // accurate terminal state mapping.
       return "terminated_pr_closed";
+    default:
+      // Defensive runtime fallback for unexpected persisted string values.
+      return "blocked";
   }
 }
 

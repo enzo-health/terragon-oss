@@ -56,7 +56,7 @@ describe("delivery-loop-interventions", () => {
     await resumeFromBlocked({ threadId, threadChatId: null });
   });
 
-  it("accepts bypass request for a v2 workflow in implementing state", async () => {
+  it("rejects bypass request for a v3 workflow in implementing state", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -76,11 +76,12 @@ describe("delivery-loop-interventions", () => {
     });
     await ensureWorkflowHead({ db, workflowId: loopImplementing.id });
 
-    // Should not throw — workflow is in a bypassable kind
-    await bypassOnce({ threadId, threadChatId: null });
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
+    );
   });
 
-  it("accepts bypass request for a v2 workflow in gating state", async () => {
+  it("rejects bypass request for a v3 workflow in gating state", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({
       db,
@@ -103,8 +104,23 @@ describe("delivery-loop-interventions", () => {
     });
     await ensureWorkflowHead({ db, workflowId: loopGating.id });
 
-    // Should not throw — workflow is in a bypassable kind
-    await bypassOnce({ threadId, threadChatId: null });
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
+    );
+  });
+
+  it("returns the unsupported bypass error when no active workflow exists", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: { githubRepoFullName: "owner/repo" },
+    });
+    await mockLoggedInUser(session);
+
+    await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
+      "Delivery Loop bypass is not supported in the v3 workflow. Resume instead.",
+    );
   });
 
   it("rejects intervention when user is logged out", async () => {
@@ -120,6 +136,35 @@ describe("delivery-loop-interventions", () => {
     await expect(bypassOnce({ threadId, threadChatId: null })).rejects.toThrow(
       "Unauthorized",
     );
+  });
+
+  it("rejects resume when user does not own the thread", async () => {
+    const { user: owner } = await createTestUser({ db });
+    const { user: attacker, session: attackerSession } = await createTestUser({
+      db,
+    });
+    const { threadId } = await createTestThread({
+      db,
+      userId: owner.id,
+      overrides: { githubRepoFullName: "owner/repo" },
+    });
+    await mockLoggedInUser(attackerSession);
+
+    const loopBlocked = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      kind: "awaiting_manual_fix",
+      stateJson: {},
+      userId: owner.id,
+      repoFullName: "owner/repo",
+    });
+    await ensureWorkflowHead({ db, workflowId: loopBlocked.id });
+
+    await expect(
+      resumeFromBlocked({ threadId, threadChatId: null }),
+    ).rejects.toThrow("Unauthorized");
+    expect(attacker.id).not.toBe(owner.id);
   });
 
   it("rejects resume when v2 workflow is not in a blocked kind", async () => {

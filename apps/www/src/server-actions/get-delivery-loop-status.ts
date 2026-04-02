@@ -16,7 +16,6 @@ import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
@@ -212,7 +211,7 @@ function buildDeliveryLoopActions({
 }) {
   return {
     canResume: loopSnapshot.kind === "blocked",
-    canBypassOnce: loopSnapshot.kind === "blocked",
+    canBypassOnce: false,
     canApprovePlan:
       loopState === "planning" &&
       planApprovalPolicy === "human_required" &&
@@ -592,7 +591,7 @@ async function buildStatusFromV2Workflow(params: {
   }
 
   const loopSnapshot = buildSnapshotFromV3Head(v3Head);
-  const loopState = stateToDeliveryLoopState(v3Head.state);
+  const loopState = loopSnapshot.kind;
 
   const currentHeadSha = v3Head.headSha ?? workflowRow.currentHeadSha ?? null;
 
@@ -606,14 +605,13 @@ async function buildStatusFromV2Workflow(params: {
     canonicalCheckRunId: workflowRow.canonicalCheckRunId ?? null,
   });
 
-  const currentState = v3Head.state;
   const stateSummary = getDeliveryLoopSnapshotStateSummary(loopSnapshot);
   const blockedReason = v3Head.blockedReason ?? null;
   const explanation = blockedReason
     ? `${stateSummary.explanation} Reason: ${blockedReason}.`
     : stateSummary.explanation;
   const planApprovalPolicy: "auto" | "human_required" =
-    currentState === "planning" && workflowRow.planApprovalPolicy === "human"
+    loopState === "planning" && workflowRow.planApprovalPolicy === "human"
       ? "human_required"
       : (workflowRow.planApprovalPolicy as "auto" | "human_required");
 
