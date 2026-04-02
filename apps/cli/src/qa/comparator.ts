@@ -184,6 +184,8 @@ export class ComparatorEngine {
         const hasActiveRun = !!dbWorkflow.activeRunId;
         const containerRunning =
           container.status === "running" && container.daemonRunning;
+        const isBootstrapWindow =
+          dbWorkflow.state === "planning" && container.status === "running";
 
         // Check if container fetch failed (e.g., not found vs actual daemon issue)
         const containerError = containerSnapshot.error;
@@ -192,7 +194,9 @@ export class ComparatorEngine {
           // Distinguish between container not found (heuristic failed) vs daemon not running
           const severity: DiscrepancySeverity = containerError
             ? "warning" // Container not found - might be discoverability issue
-            : "critical"; // Container found but daemon not running - actual problem
+            : isBootstrapWindow
+              ? "warning" // Container is up, daemon may still be starting
+              : "critical"; // Container found but daemon not running - actual problem
 
           return this.createDiscrepancy({
             type: "container_db_mismatch",
@@ -212,13 +216,19 @@ export class ComparatorEngine {
             ],
             description: containerError
               ? `Database shows active run '${dbWorkflow.activeRunId}' but container could not be found (${containerError}). Container may be running but not discoverable via label/name heuristics.`
-              : `Database shows active run '${dbWorkflow.activeRunId}' but container daemon is not running (status: ${container.status})`,
+              : isBootstrapWindow
+                ? `Database shows active run '${dbWorkflow.activeRunId}' while workflow is '${dbWorkflow.state}', but daemon has not started yet.`
+                : `Database shows active run '${dbWorkflow.activeRunId}' but container daemon is not running (status: ${container.status})`,
             impact: containerError
               ? "Cannot verify container health - it may be running fine but discovery failed."
-              : "Task appears to be working but is actually stalled. User may wait indefinitely for completion.",
+              : isBootstrapWindow
+                ? "Likely bootstrap delay. If this persists, task startup may be stuck."
+                : "Task appears to be working but is actually stalled. User may wait indefinitely for completion.",
             recommendedFix: containerError
               ? "Check container labels (threadId) or naming conventions for discovery."
-              : "Check daemon crash detection and auto-restart logic. Container may need manual intervention.",
+              : isBootstrapWindow
+                ? "Wait briefly and re-check. If daemon stays stopped, inspect startup logs and bootstrap timing."
+                : "Check daemon crash detection and auto-restart logic. Container may need manual intervention.",
           });
         }
 
@@ -531,11 +541,14 @@ export class ComparatorEngine {
         const workflow = sources.database.workflow.data;
 
         // Map workflow states to expected thread statuses
-        const expectedThreadStatus = this.inferThreadStatusFromWorkflow(
+        const expectedThreadStatuses = this.inferThreadStatusesFromWorkflow(
           workflow.state,
         );
 
-        if (expectedThreadStatus && thread.status !== expectedThreadStatus) {
+        if (
+          expectedThreadStatuses &&
+          !expectedThreadStatuses.includes(thread.status)
+        ) {
           return this.createDiscrepancy({
             type: "database_ui_mismatch",
             severity: "warning",
@@ -552,7 +565,7 @@ export class ComparatorEngine {
                 value: workflow.state,
               },
             ],
-            description: `Thread status is '${thread.status}' but workflow state '${workflow.state}' suggests '${expectedThreadStatus}'`,
+            description: `Thread status is '${thread.status}' but workflow state '${workflow.state}' suggests one of [${expectedThreadStatuses.join(", ")}]`,
             impact:
               "UI thread list may show incorrect status vs actual workflow progress",
             recommendedFix:
@@ -633,17 +646,19 @@ export class ComparatorEngine {
     };
   }
 
-  private inferThreadStatusFromWorkflow(workflowState: string): string | null {
-    const mapping: Record<string, string> = {
-      planning: "working",
-      implementing: "working",
-      review_gate: "working",
-      ci_gate: "working",
-      ui_testing: "working",
-      done: "complete",
-      stopped: "stopped",
-      terminated: "complete",
-      blocked: "working",
+  private inferThreadStatusesFromWorkflow(
+    workflowState: string,
+  ): string[] | null {
+    const mapping: Record<string, string[]> = {
+      planning: ["queued", "working"],
+      implementing: ["working"],
+      review_gate: ["working"],
+      ci_gate: ["working"],
+      ui_testing: ["working"],
+      done: ["complete"],
+      stopped: ["stopped"],
+      terminated: ["complete"],
+      blocked: ["working"],
     };
     return mapping[workflowState] || null;
   }

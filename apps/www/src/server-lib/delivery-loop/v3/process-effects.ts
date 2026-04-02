@@ -37,12 +37,15 @@ import {
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import {
-  AWAITING_PR_CREATION_REASON,
   isTerminalState,
   type EffectResult,
   type LoopEvent,
   type WorkflowState,
 } from "./types";
+
+function isLegacyAckTimeoutCorrectnessEnabled(): boolean {
+  return process.env.DELIVERY_LOOP_V3_ENABLE_ACK_TIMEOUT_CORRECTNESS === "true";
+}
 
 function summarizeRetryReason(reason: string): string {
   const normalized = reason.replace(/\s+/g, " ").trim();
@@ -68,7 +71,7 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
     case "dispatch_gate_review":
       if (result.outcome === "dispatched")
         return {
-          type: "dispatch_sent",
+          type: "dispatch_queued",
           runId: result.runId,
           ackDeadlineAt: result.ackDeadlineAt,
         };
@@ -88,7 +91,7 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
     case "dispatch_implementing":
       if (result.outcome === "dispatched")
         return {
-          type: "dispatch_sent",
+          type: "dispatch_queued",
           runId: result.runId,
           ackDeadlineAt: result.ackDeadlineAt,
         };
@@ -194,7 +197,7 @@ async function executeStateBlockingEffect(params: {
 /**
  * Execute the `dispatch_gate_review` effect natively — resolves the workflow
  * context, creates a dispatch intent for the gate sandbox run, triggers the
- * follow-up queue, and emits `dispatch_sent` into the v3 kernel.
+ * follow-up queue, and emits dispatch lifecycle events into the v3 kernel.
  *
  * This replaces the v2 work-queue bridge, keeping the full lifecycle within
  * the v3 effect ledger.
@@ -328,7 +331,8 @@ async function processGateReviewEffect(params: {
 /**
  * Execute the `dispatch_implementing` effect natively — resolves the workflow
  * context, creates a dispatch intent for the implementation sandbox run,
- * triggers the follow-up queue, and emits `dispatch_sent` into the v3 kernel.
+ * triggers the follow-up queue, and emits dispatch lifecycle events into the
+ * v3 kernel.
  *
  * This replaces the v2 work-queue bridge, keeping the full lifecycle within
  * the v3 effect ledger.
@@ -499,7 +503,8 @@ const STATE_LABELS: Record<string, string> = {
   implementing: "Implementation in progress",
   gating_review: "Waiting on review gate",
   gating_ci: "Waiting on CI gate",
-  awaiting_pr: "Awaiting PR review",
+  awaiting_pr_creation: "Awaiting PR creation",
+  awaiting_pr_lifecycle: "Awaiting PR review lifecycle",
   awaiting_manual_fix: "Awaiting manual fix from human",
   awaiting_operator_action: "Awaiting operator action",
   done: "Delivery loop completed",
@@ -608,15 +613,11 @@ async function processEnsurePrEffect(params: {
     db: params.db,
     workflowId: params.effect.workflowId,
   });
-  if (
-    !head ||
-    head.state !== "awaiting_pr" ||
-    head.blockedReason !== AWAITING_PR_CREATION_REASON
-  ) {
+  if (!head || head.state !== "awaiting_pr_creation") {
     return {
       kind: "ensure_pr",
       outcome: "failed",
-      reason: "Workflow not in awaiting_pr state",
+      reason: "Workflow not in awaiting_pr_creation state",
     };
   }
 
@@ -791,6 +792,22 @@ async function handleAckTimeoutCheck(params: {
   effect: DeliveryEffectLedgerV3Row;
   payload: { runId: string; workflowVersion: number };
 }): Promise<EffectResult> {
+  // Queue lifecycle events (queued/claimed/accepted) are the active correctness
+  // path. Ack timeout is retained only as an opt-in legacy fallback.
+  if (!isLegacyAckTimeoutCorrectnessEnabled()) {
+    console.warn(
+      "[delivery-loop] ack_timeout_check received while legacy correctness path is disabled",
+      {
+        metric: "delivery_loop_v3_ack_timeout_ignored",
+        workflowId: params.effect.workflowId,
+        effectId: params.effect.id,
+        runId: params.payload.runId,
+        workflowVersion: params.payload.workflowVersion,
+      },
+    );
+    return { kind: "ack_timeout_check", outcome: "stale" };
+  }
+
   const [head, workflow] = await Promise.all([
     getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
     getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),

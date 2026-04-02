@@ -60,6 +60,24 @@ async function appendInvariantJournalActions(params: {
   }
 }
 
+function normalizeLegacyLoopEvent(event: LoopEvent): LoopEvent {
+  switch (event.type) {
+    case "dispatch_sent":
+      return {
+        type: "dispatch_queued",
+        runId: event.runId,
+        ackDeadlineAt: event.ackDeadlineAt,
+      };
+    case "dispatch_acked":
+      return {
+        type: "dispatch_accepted",
+        runId: event.runId,
+      };
+    default:
+      return event;
+  }
+}
+
 export async function appendEventAndAdvance(params: {
   db: DB;
   workflowId: string;
@@ -95,11 +113,12 @@ export async function appendEventAndAdvance(params: {
       };
     }
 
-    const event = await enrichEventWithWorkflowContext({
+    const eventWithContext = await enrichEventWithWorkflowContext({
       db: tx,
       workflowId: params.workflowId,
       event: params.event,
     });
+    const event = normalizeLegacyLoopEvent(eventWithContext);
 
     const signal = buildSignalJournalContract({
       workflowId: params.workflowId,

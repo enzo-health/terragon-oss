@@ -39,7 +39,7 @@ describe("enrollWorkflow", () => {
     expect(workflow!.userId).toBe(testUserId);
   });
 
-  it("creates a v3 head row that transitions to implementing after bootstrap", async () => {
+  it("creates a v3 head row that transitions to awaiting implementation acceptance after bootstrap", async () => {
     const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
@@ -52,8 +52,8 @@ describe("enrollWorkflow", () => {
       workflowId: result.workflowId,
     });
     expect(head).toBeTruthy();
-    // bootstrap event stays in planning (dispatch is queued as an effect)
-    expect(head!.state).toBe("planning");
+    // bootstrap now queues dispatch and waits for explicit acceptance before implementing
+    expect(head!.state).toBe("awaiting_implementation_acceptance");
     expect(head!.version).toBeGreaterThan(0);
   });
 
@@ -103,6 +103,14 @@ describe("enrollWorkflow", () => {
       repoFullName: "test-org/test-repo",
     });
 
+    const effectsAfterFirstEnroll = await db
+      .select()
+      .from(schema.deliveryEffectLedgerV3)
+      .where(eq(schema.deliveryEffectLedgerV3.workflowId, first.workflowId));
+    const firstDispatchEffects = effectsAfterFirstEnroll.filter(
+      (e) => e.effectKind === "dispatch_implementing",
+    );
+
     const second = await enrollWorkflow({
       db,
       threadId: testThreadId,
@@ -112,15 +120,15 @@ describe("enrollWorkflow", () => {
 
     expect(second.workflowId).toBe(first.workflowId);
 
-    // No duplicate dispatch effects
-    const effects = await db
+    // Re-enrollment must not enqueue additional implementing dispatch effects.
+    const effectsAfterSecondEnroll = await db
       .select()
       .from(schema.deliveryEffectLedgerV3)
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, first.workflowId));
-    const dispatchEffects = effects.filter(
+    const secondDispatchEffects = effectsAfterSecondEnroll.filter(
       (e) => e.effectKind === "dispatch_implementing",
     );
-    expect(dispatchEffects).toHaveLength(1);
+    expect(secondDispatchEffects).toHaveLength(firstDispatchEffects.length);
   });
 
   it("respects planApprovalPolicy", async () => {

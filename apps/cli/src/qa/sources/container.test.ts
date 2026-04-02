@@ -156,7 +156,14 @@ describe("ContainerSourceFetcher", () => {
     it("should find container by label", async () => {
       mockedExecFile.mockImplementation(
         (cmd: any, args: any, opts: any, cb: any) => {
-          if (args && args.includes("label=threadId=")) {
+          if (
+            args &&
+            Array.isArray(args) &&
+            args.some(
+              (arg) =>
+                typeof arg === "string" && arg.startsWith("label=threadId="),
+            )
+          ) {
             cb(null, { stdout: "abc123\n", stderr: "" });
           } else {
             cb(null, { stdout: "", stderr: "" });
@@ -175,11 +182,50 @@ describe("ContainerSourceFetcher", () => {
     it("should find container by name fallback", async () => {
       mockedExecFile.mockImplementation(
         (cmd: any, args: any, opts: any, cb: any) => {
-          if (args && args.includes("label=threadId=")) {
+          if (
+            args &&
+            Array.isArray(args) &&
+            args.some(
+              (arg) =>
+                typeof arg === "string" && arg.startsWith("label=threadId="),
+            )
+          ) {
             cb(null, { stdout: "", stderr: "" });
           } else if (args && args[0] === "ps" && args[1] === "-a") {
             cb(null, {
               stdout: "abc123 container-63e106 running\n",
+              stderr: "",
+            });
+          } else {
+            cb(null, { stdout: "", stderr: "" });
+          }
+          return undefined as any;
+        },
+      );
+
+      const result = await fetcher.findContainerForThread(
+        "7d4ea142-0a2e-4837-bee3-a5603163e106",
+      );
+
+      expect(result).toBe("abc123");
+    });
+
+    it("should find container by full thread ID in labels fallback", async () => {
+      mockedExecFile.mockImplementation(
+        (cmd: any, args: any, opts: any, cb: any) => {
+          if (
+            args &&
+            Array.isArray(args) &&
+            args.some(
+              (arg) =>
+                typeof arg === "string" && arg.startsWith("label=threadId="),
+            )
+          ) {
+            cb(null, { stdout: "", stderr: "" });
+          } else if (args && args[0] === "ps" && args[1] === "-a") {
+            cb(null, {
+              stdout:
+                "abc123 sandbox-qa com.docker.compose.project=terragon,threadId=7d4ea142-0a2e-4837-bee3-a5603163e106\n",
               stderr: "",
             });
           } else {
@@ -242,7 +288,14 @@ describe("ContainerSourceFetcher", () => {
 
       mockedExecFile.mockImplementation(
         (cmd: any, args: any, opts: any, cb: any) => {
-          if (args && args.includes("label=threadId=")) {
+          if (
+            args &&
+            Array.isArray(args) &&
+            args.some(
+              (arg) =>
+                typeof arg === "string" && arg.startsWith("label=threadId="),
+            )
+          ) {
             cb(null, { stdout: "abc123\n", stderr: "" });
           } else if (args && args[0] === "inspect") {
             cb(null, { stdout: containerState, stderr: "" });
@@ -261,6 +314,31 @@ describe("ContainerSourceFetcher", () => {
 
       expect(result.data.sandboxId).toBe("abc123");
       expect(result.data.status).toBe("running");
+    });
+
+    it("should prefer explicit sandboxId when provided", async () => {
+      const containerState = JSON.stringify({ Status: "running" });
+
+      mockedExecFile.mockImplementation(
+        (cmd: any, args: any, opts: any, cb: any) => {
+          if (args && args[0] === "inspect" && args[1] === "sandbox-123") {
+            cb(null, { stdout: containerState, stderr: "" });
+          } else if (args && args[0] === "exec" && args[2] === "pgrep") {
+            cb(null, { stdout: "1234\n", stderr: "" });
+          } else {
+            cb(null, { stdout: "", stderr: "" });
+          }
+          return undefined as any;
+        },
+      );
+
+      const result = await fetcher.fetchForThread(
+        "7d4ea142-0a2e-4837-bee3-a5603163e106",
+        "sandbox-123",
+      );
+
+      expect(result.data.sandboxId).toBe("sandbox-123");
+      expect(result.error).toBeUndefined();
     });
   });
 });

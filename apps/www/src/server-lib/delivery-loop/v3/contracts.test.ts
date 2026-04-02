@@ -41,6 +41,48 @@ describe("v3 contracts", () => {
     });
   });
 
+  it("round-trips a dispatch_queued event payload", () => {
+    const ackDeadlineAt = new Date("2026-03-18T12:00:45.000Z");
+    const serialized = serializeLoopEvent({
+      type: "dispatch_queued",
+      runId: "run-queued-123",
+      ackDeadlineAt,
+    });
+    const parsed = parseLoopEvent(serialized);
+
+    expect(parsed).toEqual({
+      type: "dispatch_queued",
+      runId: "run-queued-123",
+      ackDeadlineAt,
+    });
+  });
+
+  it("round-trips a dispatch_claimed event payload", () => {
+    const serialized = serializeLoopEvent({
+      type: "dispatch_claimed",
+      runId: "run-claimed-123",
+    });
+    const parsed = parseLoopEvent(serialized);
+
+    expect(parsed).toEqual({
+      type: "dispatch_claimed",
+      runId: "run-claimed-123",
+    });
+  });
+
+  it("round-trips a dispatch_accepted event payload", () => {
+    const serialized = serializeLoopEvent({
+      type: "dispatch_accepted",
+      runId: "run-accepted-123",
+    });
+    const parsed = parseLoopEvent(serialized);
+
+    expect(parsed).toEqual({
+      type: "dispatch_accepted",
+      runId: "run-accepted-123",
+    });
+  });
+
   it("rejects invalid loop event payloads", () => {
     const parsed = parseLoopEvent({
       type: "dispatch_sent",

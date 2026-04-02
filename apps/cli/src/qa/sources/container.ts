@@ -248,13 +248,24 @@ export class ContainerSourceFetcher {
       // Fallback: search by environment variable or process
       const { stdout: allContainers } = await execFileAsync(
         "docker",
-        ["ps", "-a", "--format", "{{.ID}} {{.Names}} {{.Status}}"],
+        ["ps", "-a", "--format", "{{.ID}} {{.Names}} {{.Labels}}"],
         { timeout: 10000 },
       );
 
-      // Look for containers with matching names (last 8 chars of thread ID)
-      const threadSuffix = safeThreadId.slice(-8);
+      // Look for containers with matching full thread ID in labels first.
       const lines = allContainers.trim().split("\n");
+      for (const line of lines) {
+        if (!line.includes(safeThreadId)) {
+          continue;
+        }
+        const [id] = line.split(" ");
+        if (id) {
+          return id;
+        }
+      }
+
+      // Fallback: look for containers with matching names (last 8 chars of thread ID)
+      const threadSuffix = safeThreadId.slice(-8);
       for (const line of lines) {
         const parts = line.split(" ");
         const id = parts[0];
@@ -272,10 +283,24 @@ export class ContainerSourceFetcher {
 
   async fetchForThread(
     threadId: string,
+    sandboxId?: string | null,
   ): Promise<SourceSnapshot<ContainerState>> {
+    let sandboxLookupError: SourceSnapshot<ContainerState> | null = null;
+
+    if (sandboxId) {
+      const bySandboxId = await this.fetchDockerContainer(sandboxId);
+      if (!bySandboxId.error) {
+        return bySandboxId;
+      }
+      sandboxLookupError = bySandboxId;
+    }
+
     const containerId = await this.findContainerForThread(threadId);
 
     if (!containerId) {
+      if (sandboxLookupError) {
+        return sandboxLookupError;
+      }
       return {
         name: "container",
         fetchedAt: new Date(),

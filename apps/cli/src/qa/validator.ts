@@ -61,25 +61,16 @@ export class QAValidator {
 
     console.log(`\n🔍 Starting validation for thread ${threadId}...`);
 
-    // Fetch all sources in parallel
-    const fetchResults = await Promise.allSettled([
+    // Fetch DB + UI first so container lookup can use codesandboxId from DB thread.
+    const [dbFetchResult, uiFetchResult] = await Promise.allSettled([
       this.fetchDatabase(threadId),
       this.fetchUI(threadId),
-      this.fetchContainer(threadId),
     ]);
 
     const dbResult =
-      fetchResults[0].status === "fulfilled"
-        ? fetchResults[0].value
-        : undefined;
+      dbFetchResult.status === "fulfilled" ? dbFetchResult.value : undefined;
     const uiResult =
-      fetchResults[1].status === "fulfilled"
-        ? fetchResults[1].value
-        : undefined;
-    const containerResult =
-      fetchResults[2].status === "fulfilled"
-        ? fetchResults[2].value
-        : undefined;
+      uiFetchResult.status === "fulfilled" ? uiFetchResult.value : undefined;
 
     const dbWorkflow = dbResult?.workflow as
       | SourceSnapshot<DatabaseWorkflowState>
@@ -90,9 +81,16 @@ export class QAValidator {
     const uiDeliveryLoop = uiResult?.deliveryLoop as
       | SourceSnapshot<UIWorkflowState>
       | undefined;
-    const container = containerResult as
-      | SourceSnapshot<ContainerState>
-      | undefined;
+    const knownSandboxId = dbThread?.data?.codesandboxId;
+
+    const containerFetchResult = await Promise.allSettled([
+      this.fetchContainer(threadId, knownSandboxId),
+    ]);
+
+    const container =
+      containerFetchResult[0]?.status === "fulfilled"
+        ? (containerFetchResult[0].value as SourceSnapshot<ContainerState>)
+        : undefined;
 
     // Check if using remote sandbox (not local Docker)
     const sandboxProvider = dbThread?.data?.sandboxProvider;
@@ -106,8 +104,8 @@ export class QAValidator {
       console.log(
         `✅ Database: state=${data.state}, version=${data.version} (${dbWorkflow.durationMs}ms)`,
       );
-    } else if (fetchResults[0].status === "rejected") {
-      console.log(`❌ Database fetch failed: ${fetchResults[0].reason}`);
+    } else if (dbFetchResult.status === "rejected") {
+      console.log(`❌ Database fetch failed: ${dbFetchResult.reason}`);
     }
 
     if (dbThread?.data) {
@@ -126,8 +124,8 @@ export class QAValidator {
       console.log(
         `✅ UI: basic detail fetched (${uiResult.detail.durationMs}ms) - delivery loop status unavailable`,
       );
-    } else if (fetchResults[1].status === "rejected") {
-      console.log(`❌ UI fetch failed: ${fetchResults[1].reason}`);
+    } else if (uiFetchResult.status === "rejected") {
+      console.log(`❌ UI fetch failed: ${uiFetchResult.reason}`);
     }
 
     if (container?.data) {
@@ -145,8 +143,10 @@ export class QAValidator {
           `✅ Container: status=${data.status}, daemon=${data.daemonRunning ? "running" : "stopped"} (${container.durationMs}ms)`,
         );
       }
-    } else if (fetchResults[2].status === "rejected") {
-      console.log(`❌ Container fetch failed: ${fetchResults[2].reason}`);
+    } else if (containerFetchResult[0]?.status === "rejected") {
+      console.log(
+        `❌ Container fetch failed: ${containerFetchResult[0].reason}`,
+      );
     }
 
     // Run comparison rules
@@ -282,12 +282,15 @@ export class QAValidator {
     return this.uiFetcher.fetchAll(threadId);
   }
 
-  private async fetchContainer(threadId: string): Promise<SourceSnapshot> {
+  private async fetchContainer(
+    threadId: string,
+    sandboxId?: string | null,
+  ): Promise<SourceSnapshot> {
     if (!this.containerFetcher) {
       throw new Error("Container fetcher not initialized");
     }
 
-    return this.containerFetcher.fetchForThread(threadId);
+    return this.containerFetcher.fetchForThread(threadId, sandboxId);
   }
 
   private printSummary(
