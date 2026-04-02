@@ -817,8 +817,9 @@ async function handleAckTimeoutCheck(params: {
   }
 
   // If the daemon has actually started processing THIS run, the ack timeout
-  // is a false alarm.  We verify by checking the agent_run_context table —
-  // a row only exists after startAgentMessage delivers the run to the daemon.
+  // is a false alarm. We verify using agent_run_context status. The row is
+  // created before daemon ack (pending/dispatched), so only "processing"
+  // proves the daemon accepted and began the run.
   // Previously we checked threadChat.status === "working", but that can be
   // stale from a PRIOR run, causing false suppression and a permanent stuck
   // state when the new dispatch never reached the daemon.
