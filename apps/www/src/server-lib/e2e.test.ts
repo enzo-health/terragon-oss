@@ -12,7 +12,10 @@ import {
 } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import {
+  getAgentRunContextByRunId,
+  upsertAgentRunContext,
+} from "@terragon/shared/model/agent-run-context";
 import {
   newThread as newThreadAction,
   NewThreadArgs,
@@ -861,6 +864,98 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     expect(threadChatUpdated!.status).toBe("booting");
     expect(threadChatUpdated!.errorMessage).toBeNull();
+  });
+
+  it("delivery-loop run context persists workflow lease and fences stale terminal errors", async () => {
+    const testUserAndAccount = await createTestUser({ db });
+    const user = testUserAndAccount.user;
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      enableThreadChatCreation: true,
+      overrides: {
+        codesandboxId: "mock-sandbox-id",
+        disableGitCheckpointing: true,
+      },
+      chatOverrides: {
+        status: "working",
+      },
+    });
+    const workflowId = `workflow-${user.id}`;
+    const runId = `run-${user.id}-stale-terminal`;
+    await db.insert(schema.deliveryWorkflow).values({
+      id: workflowId,
+      threadId,
+      generation: 1,
+      kind: "delivery",
+      stateJson: {},
+      userId: user.id,
+      repoFullName: "terragon/test-repo",
+    });
+    await db.insert(schema.deliveryWorkflowHeadV3).values({
+      workflowId,
+      threadId,
+      generation: 1,
+      version: 0,
+      state: "implementing",
+      activeRunId: runId,
+      activeRunSeq: 8,
+    });
+    await upsertAgentRunContext({
+      db,
+      runId,
+      workflowId,
+      runSeq: 7,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "processing",
+      tokenNonce: `nonce-${user.id}`,
+    });
+
+    const runContext = await getAgentRunContextByRunId({
+      db,
+      runId,
+      userId: user.id,
+    });
+    expect(runContext).toBeDefined();
+    expect(runContext!.workflowId).toBe(workflowId);
+    expect(runContext!.runSeq).toBe(7);
+
+    await handleDaemonEvent({
+      threadId,
+      threadChatId,
+      userId: user.id,
+      timezone: "America/New_York",
+      runId,
+      messages: [
+        {
+          type: "custom-error",
+          session_id: null,
+          duration_ms: 1000,
+          error_info: "transient daemon hiccup",
+        },
+      ],
+      contextUsage: null,
+    });
+    await waitUntilResolved();
+
+    const threadChatUpdated = await getThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+    });
+    expect(threadChatUpdated!.status).toBe("working-error");
+    expect(threadChatUpdated!.errorMessage).toBe("agent-generic-error");
+    expect(threadChatUpdated!.errorMessageInfo).toBe("transient daemon hiccup");
   });
 
   it("new thread -> checkpoint error -> retry git checkpoint", async () => {

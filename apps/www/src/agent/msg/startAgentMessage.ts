@@ -735,6 +735,7 @@ export async function startAgentMessage({
             ? await getActiveDispatchIntent(threadChatId)
             : null;
           const workflowId = v2Workflow?.id ?? null;
+          const workflowRunSeq = v3Head?.activeRunSeq ?? null;
           const durableIntent =
             workflowId && !activeIntent
               ? await getLatestActiveDispatchIntentForThreadChat(db, {
@@ -801,6 +802,8 @@ export async function startAgentMessage({
           await upsertAgentRunContext({
             db,
             runId,
+            workflowId,
+            runSeq: workflowRunSeq,
             userId,
             threadId,
             threadChatId,

@@ -13,6 +13,8 @@ import { AIAgent } from "@terragon/agent/types";
 export async function upsertAgentRunContext({
   db,
   runId,
+  workflowId,
+  runSeq,
   userId,
   threadId,
   threadChatId,
@@ -29,6 +31,8 @@ export async function upsertAgentRunContext({
 }: {
   db: DB;
   runId: string;
+  workflowId?: string | null;
+  runSeq?: number | null;
   userId: string;
   threadId: string;
   threadChatId: string;
@@ -45,6 +49,8 @@ export async function upsertAgentRunContext({
 }): Promise<AgentRunContext> {
   const values: AgentRunContextInsert = {
     runId,
+    workflowId: workflowId ?? null,
+    runSeq: runSeq ?? null,
     userId,
     threadId,
     threadChatId,
@@ -66,6 +72,8 @@ export async function upsertAgentRunContext({
     .onConflictDoUpdate({
       target: schema.agentRunContext.runId,
       set: {
+        workflowId: workflowId ?? null,
+        runSeq: runSeq ?? null,
         userId,
         threadId,
         threadChatId,

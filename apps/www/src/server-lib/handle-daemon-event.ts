@@ -48,7 +48,6 @@ import {
   updateAgentSession,
 } from "./linear-agent-activity";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
@@ -274,6 +273,14 @@ export async function handleDaemonEvent({
   if (!threadChat || !thread) {
     return { success: false, error: "Thread chat not found", status: 404 };
   }
+  const runContext =
+    runId != null
+      ? await getAgentRunContextByRunId({
+          db,
+          runId,
+          userId,
+        })
+      : null;
   console.log("Thread chat status: ", threadChat.status);
 
   if (messages.length > 0 && messages.some((m) => m.type === "assistant")) {
@@ -724,20 +731,33 @@ export async function handleDaemonEvent({
   // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
-      const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
       let sdlcPhase: string | null = null;
-      if (v2Workflow) {
+      if (runContext?.workflowId && runContext.runSeq != null) {
         const { getWorkflowHead } = await import(
           "@/server-lib/delivery-loop/v3/store"
         );
         const v3Head = await getWorkflowHead({
           db,
-          workflowId: v2Workflow.id,
+          workflowId: runContext.workflowId,
         });
         if (!v3Head) {
-          throw new Error(`No v3 head for workflow ${v2Workflow.id}`);
+          throw new Error(`No v3 head for workflow ${runContext.workflowId}`);
         }
-        sdlcPhase = v3Head.state;
+        if (v3Head.activeRunSeq !== runContext.runSeq) {
+          console.log(
+            "[handle-daemon-event] skipping SDLC auto-retry for stale terminal event",
+            {
+              threadId,
+              threadChatId: threadChat.id,
+              runId,
+              workflowId: runContext.workflowId,
+              persistedRunSeq: runContext.runSeq,
+              activeRunSeq: v3Head.activeRunSeq,
+            },
+          );
+        } else {
+          sdlcPhase = v3Head.state;
+        }
       }
 
       const failureCategory = classifyDaemonEventError(customErrorMessage);

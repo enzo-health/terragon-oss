@@ -508,23 +508,25 @@ function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
 function buildCompletedEvent(
   state: string | undefined,
   runId: string,
+  runSeq: number | null,
   headSha: string | null | undefined,
 ) {
   switch (state) {
     case "planning":
       return { type: "planning_run_completed" as const };
     case "gating_review":
-      return { type: "gate_review_passed" as const, runId };
+      return { type: "gate_review_passed" as const, runId, runSeq };
     case "gating_ci":
-      return { type: "gate_ci_passed" as const, runId, headSha };
+      return { type: "gate_ci_passed" as const, runId, runSeq, headSha };
     default:
-      return { type: "run_completed" as const, runId, headSha };
+      return { type: "run_completed" as const, runId, runSeq, headSha };
   }
 }
 
 function buildFailedEvent(
   state: string | undefined,
   runId: string,
+  runSeq: number | null,
   headSha: string | null | undefined,
   errorMessage: string | undefined,
   errorCategory: string | null,
@@ -539,12 +541,14 @@ function buildFailedEvent(
       return {
         type: "gate_review_failed" as const,
         runId,
+        runSeq,
         reason: errorMessage ?? "Gate blocked",
       };
     case "gating_ci":
       return {
         type: "gate_ci_failed" as const,
         runId,
+        runSeq,
         headSha,
         reason: errorMessage ?? "CI gate blocked",
       };
@@ -552,6 +556,7 @@ function buildFailedEvent(
       return {
         type: "run_failed" as const,
         runId,
+        runSeq,
         message: errorMessage ?? "Run failed",
         category: errorCategory,
       };
@@ -983,7 +988,7 @@ export async function POST(request: Request) {
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
 
   const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-  const effectiveLoopId = v2Workflow?.id ?? null;
+  const effectiveLoopId = runContext?.workflowId ?? v2Workflow?.id ?? null;
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
@@ -1301,16 +1306,29 @@ export async function POST(request: Request) {
         db,
         workflowId: effectiveLoopId,
       });
+      const terminalState = headAfterAck?.state;
+      const terminalRunSeq = runContext?.runSeq ?? null;
+      const requiresRunSeqForTerminalEvent = terminalState !== "planning";
 
-      if (daemonRunStatusFromMessages === "completed") {
+      if (requiresRunSeqForTerminalEvent && terminalRunSeq == null) {
+        console.warn(
+          "[daemon-event] skipping terminal v3 bridge without persisted runSeq",
+          {
+            loopId: effectiveLoopId,
+            runId: envelopeV2.runId,
+            state: terminalState,
+          },
+        );
+      } else if (daemonRunStatusFromMessages === "completed") {
         await appendEventAndAdvance({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
           idempotencyKey: `run-completed:${envelopeV2.eventId}`,
           event: buildCompletedEvent(
-            headAfterAck?.state,
+            terminalState,
             envelopeV2.runId,
+            terminalRunSeq,
             daemonHeadShaAtCompletion,
           ),
         });
@@ -1321,8 +1339,9 @@ export async function POST(request: Request) {
           source: "daemon",
           idempotencyKey: `run-failed:${envelopeV2.eventId}`,
           event: buildFailedEvent(
-            headAfterAck?.state,
+            terminalState,
             envelopeV2.runId,
+            terminalRunSeq,
             daemonHeadShaAtCompletion,
             daemonTerminalErrorInfo.errorMessage ?? undefined,
             daemonTerminalErrorInfo.errorCategory,

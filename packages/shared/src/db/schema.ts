@@ -414,6 +414,11 @@ export const agentRunContext = pgTable(
   "agent_run_context",
   {
     runId: text("run_id").primaryKey(),
+    workflowId: text("workflow_id").references(
+      (): AnyPgColumn => deliveryWorkflow.id,
+      { onDelete: "set null" },
+    ),
+    runSeq: bigint("run_seq", { mode: "number" }),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -453,6 +458,10 @@ export const agentRunContext = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
+    index("agent_run_context_workflow_run_seq_idx").on(
+      table.workflowId,
+      table.runSeq,
+    ),
     index("agent_run_context_thread_chat_id_idx").on(
       table.threadId,
       table.threadChatId,
