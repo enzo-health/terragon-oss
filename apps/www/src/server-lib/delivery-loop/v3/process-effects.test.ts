@@ -649,6 +649,112 @@ describe("drainDueEffects", () => {
     );
   });
 
+  it("does not suppress lease expiry for terminal run-context rows", async () => {
+    const terminalStatuses = ["completed", "failed"] as const;
+
+    for (const status of terminalStatuses) {
+      const now = new Date("2026-03-18T10:00:00.000Z");
+      const leaseExpiresAt = new Date("2026-03-18T10:00:00.000Z");
+      const workflowId = await createWorkflowFixture();
+      const head = await ensureWorkflowHead({ db, workflowId });
+      if (!head) {
+        throw new Error("Expected workflow head for terminal run-context test");
+      }
+
+      const dispatchRunId = `run-${status}-${nanoid()}`;
+      const hydrated = await updateWorkflowHead({
+        db,
+        head: {
+          ...head,
+          version: head.version + 1,
+          state: "implementing",
+          activeGate: null,
+          activeRunId: dispatchRunId,
+          activeRunSeq: 1,
+          leaseExpiresAt,
+          blockedReason: null,
+          updatedAt: now,
+          lastActivityAt: now,
+        },
+        expectedVersion: head.version,
+      });
+      expect(hydrated).toBe(true);
+
+      const workflow = await db.query.deliveryWorkflow.findFirst({
+        where: eq(schema.deliveryWorkflow.id, workflowId),
+      });
+      if (!workflow) {
+        throw new Error("Expected workflow row for terminal run-context test");
+      }
+
+      const [threadChat] = await db
+        .insert(schema.threadChat)
+        .values({
+          threadId: workflow.threadId,
+          userId: workflow.userId,
+          status: "complete",
+        })
+        .returning({ id: schema.threadChat.id });
+      if (!threadChat) {
+        throw new Error("Expected thread chat row for terminal run-context");
+      }
+
+      await db.insert(schema.agentRunContext).values({
+        runId: dispatchRunId,
+        userId: workflow.userId,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        sandboxId: `sandbox-${nanoid()}`,
+        agent: "claudeCode",
+        tokenNonce: nanoid(),
+        status,
+      });
+
+      const effect: EffectSpec = {
+        kind: "run_lease_expiry_check",
+        effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:terminal-${status}`,
+        dueAt: leaseExpiresAt,
+        payload: {
+          kind: "run_lease_expiry_check",
+          runId: dispatchRunId,
+          workflowVersion: head.version + 1,
+        },
+      };
+
+      const inserted = await insertEffects({
+        db,
+        workflowId,
+        workflowVersion: head.version + 1,
+        effects: [effect],
+      });
+      expect(inserted).toBe(1);
+
+      const drain = await drainDueEffects({
+        db,
+        workflowId,
+        maxItems: 1,
+        leaseOwnerPrefix: "test:v3-effects",
+        now,
+      });
+      expect(drain.processed).toBe(1);
+
+      const headAfter = await getWorkflowHead({ db, workflowId });
+      if (!headAfter) {
+        throw new Error(
+          "Expected workflow head after terminal run-context drain",
+        );
+      }
+      expect(headAfter.infraRetryCount).toBe(1);
+
+      const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+        where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+      });
+      expect(
+        journalRows.filter((row) => row.eventType === "dispatch_ack_timeout"),
+      ).toHaveLength(1);
+    }
+  });
+
   it("treats ensure_pr as link signal when PR already exists", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const { user } = await createTestUser({ db });

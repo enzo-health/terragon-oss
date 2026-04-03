@@ -1,6 +1,7 @@
 import { and, eq, ne, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { DB } from "@terragon/shared/db";
+import type { AgentRunStatus } from "@terragon/shared/db/types";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryEffectLedgerV3Row } from "@terragon/shared/db/types";
 import {
@@ -51,6 +52,12 @@ function summarizeRetryReason(reason: string): string {
   }
   return `${normalized.slice(0, 180)}...`;
 }
+
+const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>([
+  "pending",
+  "dispatched",
+  "processing",
+]);
 
 /**
  * Pure mapping from effect result to the LoopEvent that should be fired.
@@ -859,7 +866,7 @@ async function handleRunLeaseExpiryCheck(params: {
       runId: params.payload.runId,
       userId: workflow.userId,
     });
-    if (runContext) {
+    if (runContext && ACTIVE_RUN_CONTEXT_STATUSES.has(runContext.status)) {
       return staleResult;
     }
   }
