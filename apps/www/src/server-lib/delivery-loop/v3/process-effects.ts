@@ -53,11 +53,7 @@ function summarizeRetryReason(reason: string): string {
   return `${normalized.slice(0, 180)}...`;
 }
 
-const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>([
-  "pending",
-  "dispatched",
-  "processing",
-]);
+const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>(["processing"]);
 
 /**
  * Pure mapping from effect result to the LoopEvent that should be fired.
