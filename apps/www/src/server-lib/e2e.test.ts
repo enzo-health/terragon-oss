@@ -935,6 +935,8 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       userId: user.id,
       timezone: "America/New_York",
       runId,
+      runContext,
+      workflowId,
       messages: [
         {
           type: "custom-error",

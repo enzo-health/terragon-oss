@@ -198,10 +198,20 @@ async function executeStateBlockingEffect(params: {
     db: params.db,
     workflowId: params.effect.workflowId,
   });
-  const eventRunSeq =
-    currentHead?.version === params.effect.workflowVersion
-      ? currentHead.activeRunSeq
-      : null;
+  if (currentHead?.version !== params.effect.workflowVersion) {
+    console.warn(
+      "[delivery-loop] suppressing stale state-blocking effect result",
+      {
+        workflowId: params.effect.workflowId,
+        effectId: params.effect.id,
+        effectKind: result.kind,
+        effectWorkflowVersion: params.effect.workflowVersion,
+        currentWorkflowVersion: currentHead?.version ?? null,
+      },
+    );
+    return;
+  }
+  const eventRunSeq = currentHead.activeRunSeq;
   const event = effectResultToEvent(result, {
     activeRunSeq: eventRunSeq,
   });
@@ -346,8 +356,12 @@ async function processGateReviewEffect(params: {
         reason: `Follow-up dispatch did not launch (${followUpResult.reason})`,
       };
     }
-  } catch {
-    // Non-fatal: cron will pick up pending follow-ups
+  } catch (followUpErr) {
+    console.warn("[delivery-loop] review gate follow-up queue trigger failed", {
+      workflowId,
+      runId,
+      error: followUpErr instanceof Error ? followUpErr.message : followUpErr,
+    });
   }
 
   return {

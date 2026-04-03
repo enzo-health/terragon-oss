@@ -2,7 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid/non-secure";
 import { db } from "@/lib/db";
+import * as dispatchIntentModule from "@/server-lib/delivery-loop/dispatch-intent";
+import * as followUpQueueModule from "@/server-lib/process-follow-up-queue";
 import * as schema from "@terragon/shared/db/schema";
+import * as dispatchIntentStoreModule from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import {
   createTestThread,
   createTestUser,
@@ -1207,6 +1210,96 @@ describe("drainDueEffects", () => {
     expect(effectRow?.status).toBe("succeeded");
   });
 
+  it("suppresses stale state-blocking effect results when the workflow version has advanced", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) {
+      throw new Error(
+        "Expected workflow head for stale effect suppression test",
+      );
+    }
+
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        state: "planning",
+        activeGate: null,
+        activeRunId: null,
+        activeRunSeq: null,
+        leaseExpiresAt: null,
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(moved).toBe(true);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: head.version,
+      effects: [
+        {
+          kind: "create_plan_artifact",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:stale-create-plan`,
+          dueAt: now,
+          payload: { kind: "create_plan_artifact" },
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      workflowId,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const headAfter = await getWorkflowHead({ db, workflowId });
+    if (!headAfter) {
+      throw new Error("Expected workflow head after stale effect suppression");
+    }
+    expect(headAfter.state).toBe("planning");
+    expect(headAfter.version).toBe(head.version + 1);
+
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(
+      journalRows.filter((row) => row.eventType === "plan_failed"),
+    ).toHaveLength(0);
+
+    const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
+      where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+    });
+    const effectRow = effectRows.find(
+      (row) => row.effectKind === "create_plan_artifact",
+    );
+    if (!effectRow) {
+      throw new Error("Expected create_plan_artifact effect row");
+    }
+    expect(effectRow.status).toBe("succeeded");
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[delivery-loop] suppressing stale state-blocking effect result",
+      expect.objectContaining({
+        workflowId,
+        effectKind: "create_plan_artifact",
+        effectWorkflowVersion: head.version,
+        currentWorkflowVersion: head.version + 1,
+      }),
+    );
+  });
+
   it("keeps legacy ack timeout effects working during the migration window", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
@@ -1525,5 +1618,116 @@ describe("drainDueEffects", () => {
       throw new Error("Expected ensure_pr effect row for no-diff test");
     }
     expect(ensurePrEffect.status).toBe("succeeded");
+  });
+
+  it("logs review gate follow-up queue trigger errors without dropping the queued dispatch", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: eq(schema.deliveryWorkflow.id, workflowId),
+    });
+    if (!workflow) {
+      throw new Error("Expected workflow row for gate review warning test");
+    }
+
+    const [threadChat] = await db
+      .insert(schema.threadChat)
+      .values({
+        threadId: workflow.threadId,
+        userId: workflow.userId,
+        status: "working",
+      })
+      .returning({ id: schema.threadChat.id });
+    if (!threadChat) {
+      throw new Error("Expected thread chat row for gate review warning test");
+    }
+
+    const seededHead = await ensureWorkflowHead({ db, workflowId });
+    if (!seededHead) {
+      throw new Error("Expected workflow head for gate review warning test");
+    }
+
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...seededHead,
+        version: seededHead.version + 1,
+        state: "gating_review",
+        activeGate: "review",
+        activeRunId: null,
+        activeRunSeq: 2,
+        leaseExpiresAt: null,
+        headSha: "sha-review-test",
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: seededHead.version,
+    });
+    expect(moved).toBe(true);
+
+    vi.spyOn(dispatchIntentModule, "createDispatchIntent").mockResolvedValue(
+      {} as Awaited<
+        ReturnType<typeof dispatchIntentModule.createDispatchIntent>
+      >,
+    );
+    vi.spyOn(
+      dispatchIntentStoreModule,
+      "createDispatchIntent",
+    ).mockResolvedValue("dispatch-intent-row-id");
+    vi.spyOn(
+      dispatchIntentStoreModule,
+      "markDispatchIntentDispatched",
+    ).mockResolvedValue(undefined);
+    vi.spyOn(
+      followUpQueueModule,
+      "maybeProcessFollowUpQueue",
+    ).mockRejectedValue(new Error("queue exploded"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: seededHead.version + 1,
+      effects: [
+        {
+          kind: "dispatch_gate_review",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:gate-review-follow-up-warning`,
+          dueAt: now,
+          payload: { kind: "dispatch_gate_review", gate: "review" },
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      workflowId,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const headAfter = await getWorkflowHead({ db, workflowId });
+    if (!headAfter) {
+      throw new Error("Expected workflow head after gate review warning test");
+    }
+    expect(headAfter.state).toBe("gating_review");
+
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(
+      journalRows.filter((row) => row.eventType === "dispatch_queued"),
+    ).toHaveLength(1);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[delivery-loop] review gate follow-up queue trigger failed",
+      expect.objectContaining({
+        workflowId,
+        error: "queue exploded",
+      }),
+    );
   });
 });

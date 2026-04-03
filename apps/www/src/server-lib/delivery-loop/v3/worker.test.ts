@@ -9,7 +9,10 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { drainOutboxWorker } from "./worker";
+import {
+  drainOutboxWorker,
+  parseLegacySignalEnvelopeToLoopEvent,
+} from "./worker";
 
 const OUTBOX_REDIS_KEY_PREFIX = "dl3:test:v3-worker";
 const OUTBOX_WORKER_DLQ_STREAM = `${OUTBOX_REDIS_KEY_PREFIX}:dead-letter`;
@@ -108,6 +111,151 @@ async function cleanupWorkerTestState(): Promise<void> {
 
 beforeEach(cleanupWorkerTestState);
 afterEach(cleanupWorkerTestState);
+
+describe("parseLegacySignalEnvelopeToLoopEvent", () => {
+  it("extracts run_completed runSeq from the event first and falls back to result metadata", () => {
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "run_completed",
+          runId: "run-1",
+          runSeq: 11,
+          result: {
+            headSha: "head-1",
+            runSeq: 12,
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "event",
+      event: {
+        type: "run_completed",
+        runId: "run-1",
+        runSeq: 11,
+        headSha: "head-1",
+      },
+    });
+
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "run_completed",
+          runId: "run-1",
+          result: {
+            headSha: "head-1",
+            runSeq: 12,
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "event",
+      event: {
+        type: "run_completed",
+        runId: "run-1",
+        runSeq: 12,
+        headSha: "head-1",
+      },
+    });
+  });
+
+  it("falls back to nested failure data when run_failed omits a usable runSeq", () => {
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "run_failed",
+          runId: "run-2",
+          runSeq: "not-a-number",
+          failure: {
+            message: "processor failed",
+            kind: "timeout",
+            runSeq: 13,
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "event",
+      event: {
+        type: "run_failed",
+        runId: "run-2",
+        runSeq: 13,
+        message: "processor failed",
+        category: "timeout",
+      },
+    });
+  });
+
+  it("falls back to nested result data for ci_changed and review_changed", () => {
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "ci_changed",
+          runSeq: "not-a-number",
+          result: {
+            passed: true,
+            runId: "run-3",
+            runSeq: 14,
+            headSha: "head-3",
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "event",
+      event: {
+        type: "gate_ci_passed",
+        runId: "run-3",
+        runSeq: 14,
+        headSha: "head-3",
+      },
+    });
+
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "review_changed",
+          runSeq: "not-a-number",
+          result: {
+            passed: false,
+            runId: "run-4",
+            runSeq: 15,
+            headSha: "head-4",
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "event",
+      event: {
+        type: "gate_review_failed",
+        runId: "run-4",
+        runSeq: 15,
+        reason: null,
+      },
+    });
+  });
+
+  it("returns noop or invalid for unsupported and malformed payloads", () => {
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "progress_reported",
+        },
+      }),
+    ).toEqual({
+      kind: "noop",
+      reason: "Signal event progress_reported has no v3 loop-event mapping",
+    });
+
+    expect(
+      parseLegacySignalEnvelopeToLoopEvent({
+        event: {
+          kind: "ci_changed",
+          result: {
+            passed: "yes",
+          },
+        },
+      }),
+    ).toEqual({ kind: "invalid" });
+  });
+});
 
 describe("drainOutboxWorker", () => {
   it("uses the db fallback on local redis-http and retires the row in postgres", async () => {

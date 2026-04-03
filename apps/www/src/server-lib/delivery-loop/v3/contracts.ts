@@ -276,7 +276,10 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       if (typeof payload.runId !== "string") {
         return null;
       }
-      if (toOptionalInteger(payload.runSeq) === undefined) {
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
         return null;
       }
       if (
@@ -310,7 +313,10 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
-      if (toOptionalInteger(payload.runSeq) === undefined) {
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
         return null;
       }
       return {
@@ -347,7 +353,10 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
-      if (toOptionalInteger(payload.runSeq) === undefined) {
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
         return null;
       }
       return {
@@ -385,7 +394,10 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
-      if (toOptionalInteger(payload.runSeq) === undefined) {
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
         return null;
       }
       return {
@@ -416,7 +428,10 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
-      if (toOptionalInteger(payload.runSeq) === undefined) {
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
         return null;
       }
       return {
@@ -441,7 +456,10 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
-      if (toOptionalInteger(payload.runSeq) === undefined) {
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
         return null;
       }
       return {

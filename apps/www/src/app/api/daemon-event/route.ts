@@ -986,6 +986,7 @@ export async function POST(request: Request) {
       userId,
       timezone,
       contextUsage: null,
+      runContext,
     });
     if (!result.success) {
       return new Response(result.error, { status: result.status || 500 });
@@ -1125,6 +1126,8 @@ export async function POST(request: Request) {
       timezone,
       contextUsage: computedContextUsage ?? null,
       runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      runContext,
+      workflowId: effectiveLoopId,
     });
   } catch (error) {
     console.error(

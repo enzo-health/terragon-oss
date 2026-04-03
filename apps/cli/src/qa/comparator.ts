@@ -304,11 +304,11 @@ export class ComparatorEngine {
         const state = sources.database.workflow.data.state;
         const hasActiveRun = !!sources.database.workflow.data.activeRunId;
 
-        // Once we are waiting on external PR lifecycle, the sandbox can safely
-        // diverge (follow-up commits/rebases) without indicating state machine
-        // drift. Keep SHA parity checks focused on active execution/gating.
+        // Only suppress SHA checks while the workflow is actively implementing
+        // with a leased run. Gating states still need drift detection even when
+        // the lease model keeps `activeRunId` populated.
         if (
-          hasActiveRun ||
+          (state === "implementing" && hasActiveRun) ||
           state === "awaiting_pr_lifecycle" ||
           state === "done" ||
           state === "stopped" ||

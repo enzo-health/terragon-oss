@@ -83,6 +83,55 @@ describe("v3 contracts", () => {
     });
   });
 
+  it("round-trips planning events with runSeq present", () => {
+    const planningCompleted = parseLoopEvent(
+      serializeLoopEvent({
+        type: "planning_run_completed",
+        runId: "run-planning-1",
+        runSeq: 4,
+      }),
+    );
+    expect(planningCompleted).toEqual({
+      type: "planning_run_completed",
+      runId: "run-planning-1",
+      runSeq: 4,
+    });
+
+    const planFailed = parseLoopEvent(
+      serializeLoopEvent({
+        type: "plan_failed",
+        reason: "planning failed",
+        runId: "run-planning-2",
+        runSeq: 5,
+      }),
+    );
+    expect(planFailed).toEqual({
+      type: "plan_failed",
+      reason: "planning failed",
+      runId: "run-planning-2",
+      runSeq: 5,
+    });
+  });
+
+  it("rejects malformed runSeq values for planning events", () => {
+    expect(
+      parseLoopEvent({
+        type: "planning_run_completed",
+        runId: "run-planning-1",
+        runSeq: "bad",
+      }),
+    ).toBeNull();
+
+    expect(
+      parseLoopEvent({
+        type: "plan_failed",
+        reason: "planning failed",
+        runId: "run-planning-2",
+        runSeq: 1.5,
+      }),
+    ).toBeNull();
+  });
+
   it("rejects invalid loop event payloads", () => {
     const parsed = parseLoopEvent({
       type: "dispatch_sent",
@@ -90,6 +139,93 @@ describe("v3 contracts", () => {
       ackDeadlineAt: 123,
     });
     expect(parsed).toBeNull();
+  });
+
+  it("accepts omitted runSeq for legacy terminal and gate events", () => {
+    expect(
+      parseLoopEvent({
+        type: "run_completed",
+        runId: "run-1",
+        headSha: "sha-1",
+      }),
+    ).toEqual({
+      type: "run_completed",
+      runId: "run-1",
+      runSeq: null,
+      headSha: "sha-1",
+    });
+
+    expect(
+      parseLoopEvent({
+        type: "run_failed",
+        runId: "run-2",
+        message: "boom",
+        category: null,
+      }),
+    ).toEqual({
+      type: "run_failed",
+      runId: "run-2",
+      runSeq: null,
+      message: "boom",
+      category: null,
+      lane: undefined,
+    });
+
+    expect(
+      parseLoopEvent({
+        type: "gate_review_passed",
+        runId: "run-review-1",
+        headSha: "sha-review-1",
+        prNumber: 123,
+      }),
+    ).toEqual({
+      type: "gate_review_passed",
+      runId: "run-review-1",
+      runSeq: null,
+      headSha: "sha-review-1",
+      prNumber: 123,
+    });
+
+    expect(
+      parseLoopEvent({
+        type: "gate_review_failed",
+        runId: "run-review-2",
+        reason: "review failed",
+      }),
+    ).toEqual({
+      type: "gate_review_failed",
+      runId: "run-review-2",
+      runSeq: null,
+      reason: "review failed",
+    });
+
+    expect(
+      parseLoopEvent({
+        type: "gate_ci_passed",
+        runId: "run-ci-1",
+        headSha: "sha-ci-1",
+      }),
+    ).toEqual({
+      type: "gate_ci_passed",
+      runId: "run-ci-1",
+      runSeq: null,
+      headSha: "sha-ci-1",
+    });
+
+    expect(
+      parseLoopEvent({
+        type: "gate_ci_failed",
+        runId: "run-ci-2",
+        headSha: "sha-ci-2",
+        reason: "CI checks failed",
+      }),
+    ).toEqual({
+      type: "gate_ci_failed",
+      runId: "run-ci-2",
+      runSeq: null,
+      headSha: "sha-ci-2",
+      reason: "CI checks failed",
+    });
   });
 
   it("round-trips correlated CI gate events", () => {

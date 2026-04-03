@@ -109,7 +109,7 @@ function toOptionalRunSeq(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
-function parseLegacySignalEnvelopeToLoopEvent(
+export function parseLegacySignalEnvelopeToLoopEvent(
   payload: unknown,
 ): LegacySignalEnvelopeParseResult {
   if (!isRecord(payload)) {

@@ -106,12 +106,14 @@ async function maybeTrackFirstAssistantLatency({
   threadId,
   threadChatId,
   hasAssistantMessage,
+  runContext,
 }: {
   runId: string | null;
   userId: string;
   threadId: string;
   threadChatId: string;
   hasAssistantMessage: boolean;
+  runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
 }) {
   if (!runId || !hasAssistantMessage) {
     return;
@@ -124,15 +126,15 @@ async function maybeTrackFirstAssistantLatency({
     if (tracked !== "OK") {
       return;
     }
-    const [runContext, followUpStartRaw] = await Promise.all([
-      getAgentRunContextByRunId({ db, runId, userId }),
+    const [fetchedRunContext, followUpStartRaw] = await Promise.all([
+      runContext ?? getAgentRunContextByRunId({ db, runId, userId }),
       redis.get<string>(
         getFollowUpTtfrStartKey({ userId, threadId, threadChatId }),
       ),
     ]);
     const nowMs = Date.now();
-    const runDispatchToFirstAssistantMs = runContext
-      ? Math.max(0, nowMs - new Date(runContext.createdAt).getTime())
+    const runDispatchToFirstAssistantMs = fetchedRunContext
+      ? Math.max(0, nowMs - new Date(fetchedRunContext.createdAt).getTime())
       : null;
     const followUpStartMs = followUpStartRaw
       ? Number.parseInt(followUpStartRaw, 10)
@@ -222,6 +224,8 @@ export async function handleDaemonEvent({
   timezone,
   contextUsage,
   runId = null,
+  runContext = null,
+  workflowId = null,
 }: {
   messages: ClaudeMessage[];
   threadId: string;
@@ -230,6 +234,8 @@ export async function handleDaemonEvent({
   timezone: string;
   contextUsage: number | null;
   runId?: string | null;
+  runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
+  workflowId?: string | null;
 }) {
   console.log(
     "Daemon event",
@@ -273,14 +279,6 @@ export async function handleDaemonEvent({
   if (!threadChat || !thread) {
     return { success: false, error: "Thread chat not found", status: 404 };
   }
-  const runContext =
-    runId != null
-      ? await getAgentRunContextByRunId({
-          db,
-          runId,
-          userId,
-        })
-      : null;
   console.log("Thread chat status: ", threadChat.status);
 
   if (messages.length > 0 && messages.some((m) => m.type === "assistant")) {
@@ -299,6 +297,7 @@ export async function handleDaemonEvent({
       threadId,
       threadChatId,
       hasAssistantMessage: messages.some((m) => m.type === "assistant"),
+      runContext,
     }),
   );
 
@@ -732,20 +731,22 @@ export async function handleDaemonEvent({
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
       let sdlcPhase: string | null = null;
-      if (runContext?.workflowId) {
+      const effectiveWorkflowId = runContext?.workflowId ?? workflowId;
+      if (effectiveWorkflowId) {
         const { getWorkflowHead } = await import(
           "@/server-lib/delivery-loop/v3/store"
         );
         const v3Head = await getWorkflowHead({
           db,
-          workflowId: runContext.workflowId,
+          workflowId: effectiveWorkflowId,
         });
         if (!v3Head) {
-          throw new Error(`No v3 head for workflow ${runContext.workflowId}`);
+          throw new Error(`No v3 head for workflow ${effectiveWorkflowId}`);
         }
+        const persistedRunSeq = runContext?.runSeq ?? null;
         if (
-          runContext.runSeq != null &&
-          v3Head.activeRunSeq !== runContext.runSeq
+          persistedRunSeq != null &&
+          v3Head.activeRunSeq !== persistedRunSeq
         ) {
           console.log(
             "[handle-daemon-event] skipping SDLC auto-retry for stale terminal event",
@@ -753,8 +754,8 @@ export async function handleDaemonEvent({
               threadId,
               threadChatId: threadChat.id,
               runId,
-              workflowId: runContext.workflowId,
-              persistedRunSeq: runContext.runSeq,
+              workflowId: effectiveWorkflowId,
+              persistedRunSeq,
               activeRunSeq: v3Head.activeRunSeq,
             },
           );
