@@ -10,6 +10,7 @@ import {
 export type WorkflowState =
   | "planning"
   | "implementing"
+  // Legacy persisted state; normalize to implementing on read/reduce.
   | "awaiting_implementation_acceptance"
   | "gating_review"
   | "gating_ci"

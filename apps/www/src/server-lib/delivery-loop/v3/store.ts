@@ -30,7 +30,9 @@ const OUTBOX_LEASE_TTL_MS = 2 * 60 * 1000;
 function normalizeHeadState(state: string): WorkflowHead["state"] {
   switch (state) {
     case "planning":
+      return state;
     case "awaiting_implementation_acceptance":
+      return "implementing";
     case "implementing":
     case "gating_review":
     case "gating_ci":

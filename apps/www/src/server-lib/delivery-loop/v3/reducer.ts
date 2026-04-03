@@ -8,7 +8,6 @@ import {
 
 const DISPATCH_COHERENT_STATES = new Set([
   "planning",
-  "awaiting_implementation_acceptance",
   "implementing",
   "gating_review",
   "gating_ci",
@@ -301,6 +300,17 @@ function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
   };
 }
 
+function normalizeHeadForReduction(head: WorkflowHead): WorkflowHead {
+  if (head.state !== "awaiting_implementation_acceptance") {
+    return head;
+  }
+
+  return {
+    ...head,
+    state: "implementing",
+  };
+}
+
 function publishStatusEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "publish_status",
@@ -473,7 +483,7 @@ function retryToImplementing(params: {
 
   const retryHead = {
     ...next,
-    state: "awaiting_implementation_acceptance" as const,
+    state: "implementing" as const,
     activeGate: null,
     ...allocateImplementationLease({
       head: params.head,
@@ -506,7 +516,7 @@ export function reduce(params: {
   now?: Date;
 }): ReduceResult {
   const now = params.now ?? new Date();
-  const head = params.head;
+  const head = normalizeHeadForReduction(params.head);
   const event = params.event;
 
   let result: ReduceResult;
@@ -586,7 +596,7 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: "awaiting_implementation_acceptance",
+              state: "implementing",
               activeGate: null,
               ...allocateImplementationLease({
                 head,
@@ -619,7 +629,7 @@ export function reduce(params: {
         result = {
           head: {
             ...next,
-            state: "awaiting_implementation_acceptance",
+            state: "implementing",
             activeGate: null,
             ...allocateImplementationLease({
               head,
@@ -640,16 +650,15 @@ export function reduce(params: {
         };
         break;
       }
-      case "awaiting_implementation_acceptance": {
+      case "implementing": {
         if (event.type === "dispatch_queued") {
-          // A queued dispatch is authoritative for which run is currently
-          // pending acceptance. Always adopt the most recent runId so stale
-          // activeRunId values cannot strand the workflow.
+          // Queueing is authoritative for which run is currently holding the
+          // active implementation lease.
           const next = withVersion(head, now);
           result = {
             head: {
               ...next,
-              state: "awaiting_implementation_acceptance",
+              state: "implementing",
               activeRunId: event.runId,
               activeRunSeq: head.activeRunSeq,
               leaseExpiresAt: head.leaseExpiresAt,
@@ -673,13 +682,13 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_claimed") {
-          // Claimed dispatch events represent the daemon taking ownership of a
-          // concrete run. Treat as authoritative handoff.
+          // Claimed dispatch events identify the daemon that now owns the
+          // active implementation lease.
           const next = withVersion(head, now);
           result = {
             head: {
               ...next,
-              state: "awaiting_implementation_acceptance",
+              state: "implementing",
               activeRunId: event.runId,
               activeRunSeq: head.activeRunSeq,
               leaseExpiresAt: head.leaseExpiresAt,
@@ -692,9 +701,17 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_accepted") {
-          // Accepted dispatch events are the canonical "start implementing"
-          // handoff. Accepting a newer runId keeps retries/self-healing from
-          // deadlocking on stale activeRunId.
+          if (head.activeRunId === event.runId) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+
+          // Legacy acked/accepted signals can still refresh run identity, but
+          // they no longer advance the state machine.
           const next = withVersion(head, now);
           result = {
             head: {
@@ -706,7 +723,7 @@ export function reduce(params: {
               lastTerminalRunSeq: head.lastTerminalRunSeq,
               blockedReason: null,
             },
-            effects: [publishStatusEffect(next, now)],
+            effects: [],
             invariantActions: [],
           };
           break;
@@ -733,41 +750,6 @@ export function reduce(params: {
           });
           break;
         }
-        if (event.type === "run_failed") {
-          if (
-            isOutOfOrderFailureSignal({
-              head,
-              runId: event.runId,
-              runSeq: event.runSeq,
-              category: event.category,
-              lane: event.lane,
-            })
-          ) {
-            result = { head, effects: [], invariantActions: [] };
-            break;
-          }
-          const lane =
-            event.lane ??
-            classifyFailureLane({
-              category: event.category,
-              message: event.message,
-            });
-          result = retryToImplementing({
-            head,
-            now,
-            lane,
-            reason: event.message,
-          });
-          break;
-        }
-        result = {
-          head,
-          effects: [],
-          invariantActions: [],
-        };
-        break;
-      }
-      case "implementing": {
         if (event.type === "run_completed") {
           if (
             isOutOfOrderRunSignal({
@@ -1115,7 +1097,7 @@ export function reduce(params: {
         result = {
           head: {
             ...next,
-            state: "awaiting_implementation_acceptance",
+            state: "implementing",
             activeGate: null,
             ...allocateImplementationLease({
               head,
