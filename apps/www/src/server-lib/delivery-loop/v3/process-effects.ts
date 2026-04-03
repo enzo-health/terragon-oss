@@ -468,12 +468,29 @@ async function processImplementingDispatchEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const followUpResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
+    if (!followUpResult.dispatchLaunched) {
+      console.warn(
+        "[delivery-loop] follow-up queue trigger did not launch dispatch",
+        {
+          workflowId,
+          runId,
+          reason: followUpResult.reason,
+          retryCount: followUpResult.retryCount,
+          maxRetries: followUpResult.maxRetries,
+        },
+      );
+      if (followUpResult.reason === "dispatch_retry_persistence_failed") {
+        throw new Error(
+          `follow-up queue retry persistence failed for implementing dispatch (runId=${runId})`,
+        );
+      }
+    }
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
       workflowId,
