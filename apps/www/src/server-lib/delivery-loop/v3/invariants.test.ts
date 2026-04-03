@@ -41,6 +41,9 @@ function makeHead(overrides: Partial<WorkflowHead> = {}): WorkflowHead {
     version: 1,
     state: "planning",
     activeRunId: null,
+    activeRunSeq: null,
+    leaseExpiresAt: null,
+    lastTerminalRunSeq: null,
     activeGate: null,
     headSha: null,
     blockedReason: null,
@@ -369,6 +372,81 @@ describe("reducer invariants (property-based)", () => {
         },
       ),
     );
+  });
+
+  it("activeRunSeq stays ahead of the last consumed lease after any event sequence", () => {
+    fc.assert(
+      fc.property(
+        stateArb,
+        fc.array(loopEventArb, { minLength: 1, maxLength: 50 }),
+        (initialState, events) => {
+          let head = makeHead({ state: initialState });
+
+          for (const event of events) {
+            const result = reduce({ head, event, now });
+
+            if (
+              result.head.activeRunSeq !== null &&
+              result.head.lastTerminalRunSeq !== null
+            ) {
+              expect(result.head.activeRunSeq).toBeGreaterThan(
+                result.head.lastTerminalRunSeq,
+              );
+            }
+
+            head = result.head;
+          }
+        },
+      ),
+    );
+  });
+
+  it("stale terminal run signals do not consume the active lease", () => {
+    const head = makeHead({
+      state: "implementing",
+      activeRunId: "run-current",
+      activeRunSeq: 7,
+    });
+
+    const result = reduce({
+      head,
+      event: {
+        type: "run_completed",
+        runId: "run-stale",
+        headSha: "sha-stale",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.activeRunId).toBe("run-current");
+    expect(result.head.activeRunSeq).toBe(7);
+    expect(result.head.lastTerminalRunSeq).toBeNull();
+    expect(result.effects).toHaveLength(0);
+  });
+
+  it("mismatched runSeq gate verdicts are no-ops", () => {
+    const head = makeHead({
+      state: "gating_review",
+      activeGate: "review",
+      activeRunId: "run-current",
+      activeRunSeq: 3,
+    });
+
+    const result = reduce({
+      head,
+      event: {
+        type: "gate_review_passed",
+        runId: "run-current",
+        runSeq: 4,
+        prNumber: 42,
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("gating_review");
+    expect(result.head.activeRunSeq).toBe(3);
+    expect(result.effects).toHaveLength(0);
   });
 
   it("gating_ci + run_failed retries to implementing or stays if runId guard blocks", () => {

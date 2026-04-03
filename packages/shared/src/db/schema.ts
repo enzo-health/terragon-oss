@@ -414,6 +414,11 @@ export const agentRunContext = pgTable(
   "agent_run_context",
   {
     runId: text("run_id").primaryKey(),
+    workflowId: text("workflow_id").references(
+      (): AnyPgColumn => deliveryWorkflow.id,
+      { onDelete: "set null" },
+    ),
+    runSeq: bigint("run_seq", { mode: "number" }),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -453,6 +458,10 @@ export const agentRunContext = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
+    index("agent_run_context_workflow_run_seq_idx").on(
+      table.workflowId,
+      table.runSeq,
+    ),
     index("agent_run_context_thread_chat_id_idx").on(
       table.threadId,
       table.threadChatId,
@@ -2069,6 +2078,9 @@ export const deliveryWorkflowHeadV3 = pgTable(
     activeGate: text("active_gate"),
     headSha: text("head_sha"),
     activeRunId: text("active_run_id"),
+    activeRunSeq: bigint("active_run_seq", { mode: "number" }),
+    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date" }),
+    lastTerminalRunSeq: bigint("last_terminal_run_seq", { mode: "number" }),
     fixAttemptCount: integer("fix_attempt_count").notNull().default(0),
     infraRetryCount: integer("infra_retry_count").notNull().default(0),
     maxFixAttempts: integer("max_fix_attempts").notNull().default(6),

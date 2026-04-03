@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reduce } from "./reducer";
-import type { WorkflowHead, WorkflowState } from "./types";
+import type { WorkflowHead } from "./types";
 import {
   ALL_CANONICAL_EVENTS,
   ALL_STATES,
@@ -12,7 +12,9 @@ import {
   makeContractHead,
 } from "./transition-contract";
 
-function canReachTerminal(startState: WorkflowState): {
+type ContractWorkflowState = (typeof ALL_STATES)[number];
+
+function canReachTerminal(startState: (typeof NON_TERMINAL_STATES)[number]): {
   reachable: boolean;
   path: string[];
 } {
@@ -26,10 +28,11 @@ function canReachTerminal(startState: WorkflowState): {
     if (TERMINAL_STATES.has(head.state)) return { reachable: true, path };
     if (visited.has(head.state)) continue;
     visited.add(head.state);
+    const currentState = head.state as ContractWorkflowState;
 
     for (const event of ALL_CANONICAL_EVENTS) {
       const result = reduce({
-        head: makeContractHead(head.state),
+        head: makeContractHead(currentState),
         event,
         now: CONTRACT_NOW,
       });
@@ -54,7 +57,7 @@ describe("BFS reachability", () => {
 });
 
 describe("terminal state absorption", () => {
-  for (const state of ["done", "stopped", "terminated"] as WorkflowState[]) {
+  for (const state of ["done", "stopped", "terminated"] as const) {
     it(`${state} absorbs all events`, () => {
       for (const event of ALL_CANONICAL_EVENTS) {
         const result = reduce({

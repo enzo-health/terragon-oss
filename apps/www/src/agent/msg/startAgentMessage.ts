@@ -735,6 +735,17 @@ export async function startAgentMessage({
             ? await getActiveDispatchIntent(threadChatId)
             : null;
           const workflowId = v2Workflow?.id ?? null;
+          const workflowRunSeq = v3Head?.activeRunSeq ?? null;
+          if (workflowId !== null && workflowRunSeq === null) {
+            console.warn(
+              "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
+              {
+                threadId,
+                threadChatId,
+                workflowId,
+              },
+            );
+          }
           const durableIntent =
             workflowId && !activeIntent
               ? await getLatestActiveDispatchIntentForThreadChat(db, {
@@ -801,6 +812,8 @@ export async function startAgentMessage({
           await upsertAgentRunContext({
             db,
             runId,
+            workflowId,
+            runSeq: workflowRunSeq,
             userId,
             threadId,
             threadChatId,

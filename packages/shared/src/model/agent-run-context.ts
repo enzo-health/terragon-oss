@@ -10,9 +10,43 @@ import {
 } from "../db/types";
 import { AIAgent } from "@terragon/agent/types";
 
+function warnOnPartialWorkflowRunLinkage({
+  runId,
+  workflowId,
+  runSeq,
+}: {
+  runId: string;
+  workflowId?: string | null;
+  runSeq?: number | null;
+}): void {
+  const normalizedWorkflowId = workflowId ?? null;
+  const normalizedRunSeq = runSeq ?? null;
+
+  if (normalizedWorkflowId === null && normalizedRunSeq === null) {
+    return;
+  }
+
+  if (normalizedWorkflowId === null) {
+    console.warn(
+      "[agent-run-context] persisting degraded run linkage without workflowId",
+      { runId, runSeq: normalizedRunSeq },
+    );
+    return;
+  }
+
+  if (normalizedRunSeq === null) {
+    console.warn(
+      "[agent-run-context] persisting degraded run linkage without runSeq",
+      { runId, workflowId: normalizedWorkflowId },
+    );
+  }
+}
+
 export async function upsertAgentRunContext({
   db,
   runId,
+  workflowId,
+  runSeq,
   userId,
   threadId,
   threadChatId,
@@ -29,6 +63,8 @@ export async function upsertAgentRunContext({
 }: {
   db: DB;
   runId: string;
+  workflowId?: string | null;
+  runSeq?: number | null;
   userId: string;
   threadId: string;
   threadChatId: string;
@@ -43,8 +79,12 @@ export async function upsertAgentRunContext({
   tokenNonce: string;
   daemonTokenKeyId?: string | null;
 }): Promise<AgentRunContext> {
+  warnOnPartialWorkflowRunLinkage({ runId, workflowId, runSeq });
+
   const values: AgentRunContextInsert = {
     runId,
+    workflowId: workflowId ?? null,
+    runSeq: runSeq ?? null,
     userId,
     threadId,
     threadChatId,
@@ -66,6 +106,8 @@ export async function upsertAgentRunContext({
     .onConflictDoUpdate({
       target: schema.agentRunContext.runId,
       set: {
+        workflowId: workflowId ?? null,
+        runSeq: runSeq ?? null,
         userId,
         threadId,
         threadChatId,

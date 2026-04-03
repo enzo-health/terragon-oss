@@ -1,6 +1,7 @@
 import { and, eq, ne, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { DB } from "@terragon/shared/db";
+import type { AgentRunStatus } from "@terragon/shared/db/types";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryEffectLedgerV3Row } from "@terragon/shared/db/types";
 import {
@@ -37,15 +38,12 @@ import {
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import {
+  type EffectPayload,
   isTerminalState,
   type EffectResult,
   type LoopEvent,
   type WorkflowState,
 } from "./types";
-
-function isLegacyAckTimeoutCorrectnessEnabled(): boolean {
-  return process.env.DELIVERY_LOOP_V3_ENABLE_ACK_TIMEOUT_CORRECTNESS === "true";
-}
 
 function summarizeRetryReason(reason: string): string {
   const normalized = reason.replace(/\s+/g, " ").trim();
@@ -55,12 +53,17 @@ function summarizeRetryReason(reason: string): string {
   return `${normalized.slice(0, 180)}...`;
 }
 
+const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>(["processing"]);
+
 /**
  * Pure mapping from effect result to the LoopEvent that should be fired.
  * Returns null for results that don't require a state transition (e.g., human
- * approval pending, stale ack timeout).
+ * approval pending, stale lease expiry).
  */
-export function effectResultToEvent(result: EffectResult): LoopEvent | null {
+export function effectResultToEvent(
+  result: EffectResult,
+  context?: { activeRunSeq: number | null },
+): LoopEvent | null {
   switch (result.kind) {
     case "create_plan_artifact":
       if (result.outcome === "created" && result.approvalPolicy === "auto")
@@ -78,6 +81,7 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
       return {
         type: "run_failed",
         runId: `gate-dispatch-failed-${Date.now()}`,
+        runSeq: context?.activeRunSeq ?? null,
         message: result.reason,
         category: "effect_failure",
         lane: "infra",
@@ -86,7 +90,11 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
     case "ensure_pr":
       if (result.outcome === "linked")
         return { type: "pr_linked", prNumber: result.prNumber };
-      return { type: "gate_review_failed", reason: result.reason };
+      return {
+        type: "gate_review_failed",
+        runSeq: context?.activeRunSeq ?? null,
+        reason: result.reason,
+      };
 
     case "dispatch_implementing":
       if (result.outcome === "dispatched")
@@ -98,15 +106,17 @@ export function effectResultToEvent(result: EffectResult): LoopEvent | null {
       return {
         type: "run_failed",
         runId: `impl-dispatch-failed-${Date.now()}`,
+        runSeq: context?.activeRunSeq ?? null,
         message: result.reason,
         category: "effect_failure",
         lane: "infra",
       };
 
+    case "run_lease_expiry_check":
     case "ack_timeout_check":
       if (result.outcome === "fired")
         return { type: "dispatch_ack_timeout", runId: result.runId };
-      return null; // Stale timeout, version already advanced
+      return null; // Lease expired after the workflow had already advanced
 
     case "gate_staleness_check":
       if (result.outcome === "ci_passed")
@@ -161,6 +171,9 @@ async function executeStateBlockingEffect(params: {
       case "dispatch_implementing":
         result = { kind: "dispatch_implementing", outcome: "failed", reason };
         break;
+      case "run_lease_expiry_check":
+        result = { kind: "run_lease_expiry_check", outcome: "stale" };
+        break;
       case "ack_timeout_check":
         result = { kind: "ack_timeout_check", outcome: "stale" };
         break;
@@ -181,7 +194,27 @@ async function executeStateBlockingEffect(params: {
   });
 
   // Map result to event and fire if non-null
-  const event = effectResultToEvent(result);
+  const currentHead = await getWorkflowHead({
+    db: params.db,
+    workflowId: params.effect.workflowId,
+  });
+  if (currentHead?.version !== params.effect.workflowVersion) {
+    console.warn(
+      "[delivery-loop] suppressing stale state-blocking effect result",
+      {
+        workflowId: params.effect.workflowId,
+        effectId: params.effect.id,
+        effectKind: result.kind,
+        effectWorkflowVersion: params.effect.workflowVersion,
+        currentWorkflowVersion: currentHead?.version ?? null,
+      },
+    );
+    return;
+  }
+  const eventRunSeq = currentHead.activeRunSeq;
+  const event = effectResultToEvent(result, {
+    activeRunSeq: eventRunSeq,
+  });
   if (event) {
     await appendEventAndAdvance({
       db: params.db,
@@ -310,14 +343,25 @@ async function processGateReviewEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const followUpResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
-  } catch {
-    // Non-fatal: cron will pick up pending follow-ups
+    if (!followUpResult.dispatchLaunched) {
+      return {
+        kind: "dispatch_gate_review",
+        outcome: "failed",
+        reason: `Follow-up dispatch did not launch (${followUpResult.reason})`,
+      };
+    }
+  } catch (followUpErr) {
+    console.warn("[delivery-loop] review gate follow-up queue trigger failed", {
+      workflowId,
+      runId,
+      error: followUpErr instanceof Error ? followUpErr.message : followUpErr,
+    });
   }
 
   return {
@@ -468,12 +512,27 @@ async function processImplementingDispatchEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const followUpResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
+    if (!followUpResult.dispatchLaunched) {
+      return {
+        kind: "dispatch_implementing",
+        outcome: "failed",
+        reason: `Follow-up dispatch did not launch (${followUpResult.reason})`,
+      };
+    }
+
+    // Keep thread-level status in sync with workflow-level implementing phase.
+    // startAgentMessage usually flips this, but delivery-loop retries can launch
+    // from queued follow-up paths where thread.status is still queued.
+    await params.db
+      .update(schema.thread)
+      .set({ status: "working", updatedAt: new Date() })
+      .where(eq(schema.thread.id, workflow.threadId));
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
       workflowId,
@@ -787,41 +846,49 @@ async function handleCreatePlanArtifact(params: {
   };
 }
 
-async function handleAckTimeoutCheck(params: {
+async function handleRunLeaseExpiryCheck(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
-  payload: { runId: string; workflowVersion: number };
+  payload: Extract<
+    EffectPayload,
+    { kind: "run_lease_expiry_check" | "ack_timeout_check" }
+  >;
 }): Promise<EffectResult> {
-  // Queue lifecycle events (queued/claimed/accepted) are the active correctness
-  // path. Ack timeout is retained only as an opt-in legacy fallback.
-  if (!isLegacyAckTimeoutCorrectnessEnabled()) {
-    console.warn(
-      "[delivery-loop] ack_timeout_check received while legacy correctness path is disabled",
-      {
-        metric: "delivery_loop_v3_ack_timeout_ignored",
-        workflowId: params.effect.workflowId,
-        effectId: params.effect.id,
-        runId: params.payload.runId,
-        workflowVersion: params.payload.workflowVersion,
-      },
-    );
-    return { kind: "ack_timeout_check", outcome: "stale" };
-  }
-
+  const staleResult =
+    params.payload.kind === "run_lease_expiry_check"
+      ? ({ kind: "run_lease_expiry_check", outcome: "stale" } as const)
+      : ({ kind: "ack_timeout_check", outcome: "stale" } as const);
+  const firedResult = {
+    kind: params.payload.kind,
+    outcome: "fired",
+    runId: params.payload.runId,
+  } as const;
   const [head, workflow] = await Promise.all([
     getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
     getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),
   ]);
   if (!head || head.version !== params.payload.workflowVersion) {
-    return { kind: "ack_timeout_check", outcome: "stale" };
+    return staleResult;
   }
 
-  // If the daemon has actually started processing THIS run, the ack timeout
-  // is a false alarm.  We verify by checking the agent_run_context table —
-  // a row only exists after startAgentMessage delivers the run to the daemon.
-  // Previously we checked threadChat.status === "working", but that can be
-  // stale from a PRIOR run, causing false suppression and a permanent stuck
-  // state when the new dispatch never reached the daemon.
+  if (
+    head.state !== "implementing" &&
+    head.state !== "awaiting_implementation_acceptance"
+  ) {
+    return staleResult;
+  }
+
+  const hasMatchingLease =
+    head.leaseExpiresAt !== null &&
+    head.leaseExpiresAt.getTime() <= params.effect.dueAt.getTime();
+  const isLegacyAckTimeout = params.payload.kind === "ack_timeout_check";
+  if (
+    head.activeRunId !== params.payload.runId ||
+    (!hasMatchingLease && !isLegacyAckTimeout)
+  ) {
+    return staleResult;
+  }
+
   if (workflow) {
     const { getAgentRunContextByRunId } = await import(
       "@terragon/shared/model/agent-run-context"
@@ -831,22 +898,12 @@ async function handleAckTimeoutCheck(params: {
       runId: params.payload.runId,
       userId: workflow.userId,
     });
-    if (
-      runContext &&
-      (runContext.status === "pending" ||
-        runContext.status === "dispatched" ||
-        runContext.status === "processing")
-    ) {
-      // The daemon genuinely has this run — suppress the timeout
-      return { kind: "ack_timeout_check", outcome: "stale" };
+    if (runContext && ACTIVE_RUN_CONTEXT_STATUSES.has(runContext.status)) {
+      return staleResult;
     }
   }
 
-  return {
-    kind: "ack_timeout_check",
-    outcome: "fired",
-    runId: params.payload.runId,
-  };
+  return firedResult;
 }
 
 const MAX_GATE_STALENESS_POLLS = 50;
@@ -1092,14 +1149,16 @@ async function processSingleEffect(params: {
       return;
     }
 
-    // ack_timeout_check
-    if (payload.kind === "ack_timeout_check") {
+    if (
+      payload.kind === "run_lease_expiry_check" ||
+      payload.kind === "ack_timeout_check"
+    ) {
       await executeStateBlockingEffect({
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
         handler: () =>
-          handleAckTimeoutCheck({
+          handleRunLeaseExpiryCheck({
             db: params.db,
             effect: params.effect,
             payload,

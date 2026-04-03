@@ -1070,13 +1070,8 @@ describe("v3 durable delivery loop", () => {
     expect(effects).toHaveLength(7);
   });
 
-  it("accepts run_completed from any runId in implementing state (no runId poisoning)", async () => {
-    // Commit 133f8c4 removed the isOutOfOrderRunSignal guard for run_completed
-    // in implementing state to prevent workflows from getting stuck when the
-    // daemon acks a different run. As a result, a stale run_completed DOES
-    // transition the workflow — this test verifies that behavior.
+  it("ignores stale run_completed when runSeq no longer matches the active lease", async () => {
     const workflowId = await createWorkflowFixture();
-    const staleRunId = `run-${nanoid()}`;
     const currentRunId = `run-${nanoid()}`;
 
     // Suppress the fire-and-forget setImmediate effect drain during setup so it
@@ -1108,19 +1103,6 @@ describe("v3 durable delivery loop", () => {
         db,
         workflowId,
         source: "system",
-        idempotencyKey: `oof:${workflowId}:dispatch-stale`,
-        event: {
-          type: "dispatch_sent",
-          runId: staleRunId,
-          ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
-        },
-        eagerDrain: false,
-      });
-
-      await appendEventAndAdvance({
-        db,
-        workflowId,
-        source: "system",
         idempotencyKey: `oof:${workflowId}:dispatch-current`,
         event: {
           type: "dispatch_sent",
@@ -1129,12 +1111,22 @@ describe("v3 durable delivery loop", () => {
         },
         eagerDrain: false,
       });
+
+      await appendEventAndAdvance({
+        db,
+        workflowId,
+        source: "system",
+        idempotencyKey: `oof:${workflowId}:accepted-current`,
+        event: {
+          type: "dispatch_accepted",
+          runId: currentRunId,
+        },
+        eagerDrain: false,
+      });
     } finally {
       drainSpy.mockRestore();
     }
 
-    // Stale run_completed now transitions to gating_review (runId guard removed).
-    // The workflow accepts it to avoid getting stuck when runIds diverge.
     const staleRunCompleted = await appendEventAndAdvance({
       db,
       workflowId,
@@ -1142,12 +1134,13 @@ describe("v3 durable delivery loop", () => {
       idempotencyKey: `oof:${workflowId}:out-of-order`,
       event: {
         type: "run_completed",
-        runId: staleRunId,
+        runId: currentRunId,
+        runSeq: 2,
         headSha: "stale-head-sha",
       },
       eagerDrain: false,
     });
-    expect(staleRunCompleted.transitioned).toBe(true);
+    expect(staleRunCompleted.transitioned).toBe(false);
 
     const headAfterStale = await db.query.deliveryWorkflowHeadV3.findFirst({
       where: eq(schema.deliveryWorkflowHeadV3.workflowId, workflowId),
@@ -1156,9 +1149,10 @@ describe("v3 durable delivery loop", () => {
     if (!headAfterStale) {
       throw new Error("Expected workflow head after stale run signal");
     }
-    // Accepted stale run_completed → now in gating_review with stale headSha
-    expect(headAfterStale.state).toBe("gating_review");
-    expect(headAfterStale.headSha).toBe("stale-head-sha");
+    expect(headAfterStale.state).toBe("implementing");
+    expect(headAfterStale.activeRunSeq).toBe(1);
+    expect(headAfterStale.activeRunId).toBe(currentRunId);
+    expect(headAfterStale.headSha).toBeNull();
   });
 
   it("routes review pass to awaiting_pr_creation when no PR is linked", async () => {
@@ -1252,6 +1246,9 @@ describe("v3 durable delivery loop", () => {
         activeGate: "ci",
         headSha: "sha-no-pr",
         activeRunId: null,
+        activeRunSeq: 7,
+        leaseExpiresAt: new Date(staleTime.getTime() + 10_000),
+        lastTerminalRunSeq: 6,
         updatedAt: staleTime,
         lastActivityAt: staleTime,
       },
@@ -1271,6 +1268,9 @@ describe("v3 durable delivery loop", () => {
     expect(head?.state).toBe("awaiting_pr_creation");
     expect(head?.activeGate).toBeNull();
     expect(head?.blockedReason).toBe("Awaiting PR creation");
+    expect(head?.activeRunSeq).toBeNull();
+    expect(head?.leaseExpiresAt).toBeNull();
+    expect(head?.lastTerminalRunSeq).toBeNull();
 
     const effectRows = await db.query.deliveryEffectLedgerV3.findMany({
       where: eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
@@ -1302,5 +1302,91 @@ describe("v3 durable delivery loop", () => {
     }
     expect(current.version).toBe(head.version);
     expect(current.blockedReason).toBeNull();
+  });
+
+  it("rejects CAS updates when activeRunSeq no longer matches", async () => {
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) {
+      throw new Error("Expected workflow head for activeRunSeq CAS test");
+    }
+
+    const leased = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        activeRunSeq: 7,
+      },
+      expectedVersion: head.version,
+      expectedActiveRunSeq: head.activeRunSeq,
+    });
+    expect(leased).toBe(true);
+
+    const current = await getWorkflowHead({ db, workflowId });
+    expect(current).not.toBeNull();
+    if (!current) {
+      throw new Error("Expected workflow head after leasing activeRunSeq");
+    }
+
+    const staleLeaseUpdate = await updateWorkflowHead({
+      db,
+      head: {
+        ...current,
+        version: current.version + 1,
+        blockedReason: "stale lease update",
+      },
+      expectedVersion: current.version,
+      expectedActiveRunSeq: null,
+    });
+    expect(staleLeaseUpdate).toBe(false);
+
+    const unchanged = await getWorkflowHead({ db, workflowId });
+    expect(unchanged).not.toBeNull();
+    if (!unchanged) {
+      throw new Error("Expected workflow head after stale activeRunSeq CAS");
+    }
+
+    expect(unchanged.version).toBe(current.version);
+    expect(unchanged.activeRunSeq).toBe(7);
+    expect(unchanged.blockedReason).toBeNull();
+  });
+
+  it("round-trips run lease fields through updateWorkflowHead/getWorkflowHead", async () => {
+    const workflowId = await createWorkflowFixture();
+    const head = await ensureWorkflowHead({ db, workflowId });
+    if (!head) {
+      throw new Error("Expected workflow head for run lease round-trip test");
+    }
+
+    const leaseExpiresAt = new Date("2026-03-18T11:15:00.000Z");
+    const now = new Date("2026-03-18T11:00:00.000Z");
+    const updated = await updateWorkflowHead({
+      db,
+      head: {
+        ...head,
+        version: head.version + 1,
+        activeRunId: "run-lease-test",
+        activeRunSeq: 42,
+        leaseExpiresAt,
+        lastTerminalRunSeq: 41,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: head.version,
+    });
+    expect(updated).toBe(true);
+
+    const current = await getWorkflowHead({ db, workflowId });
+    expect(current).not.toBeNull();
+    if (!current) {
+      throw new Error("Expected workflow head after run lease update");
+    }
+    expect(current.activeRunId).toBe("run-lease-test");
+    expect(current.activeRunSeq).toBe(42);
+    expect(current.leaseExpiresAt?.toISOString()).toBe(
+      leaseExpiresAt.toISOString(),
+    );
+    expect(current.lastTerminalRunSeq).toBe(41);
   });
 });

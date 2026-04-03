@@ -89,16 +89,39 @@ function toDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function toOptionalInteger(value: unknown): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return undefined;
+  }
+  return value;
+}
+
 export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
   switch (event.type) {
     case "bootstrap":
-    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
       return { type: event.type };
+    case "planning_run_completed":
+      return {
+        type: event.type,
+        runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
+      };
     case "plan_failed":
-      return { type: event.type, reason: event.reason };
+      return {
+        type: event.type,
+        reason: event.reason,
+        runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
+      };
     case "dispatch_queued":
     case "dispatch_sent":
       return {
@@ -122,12 +145,14 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return {
         type: event.type,
         runId: event.runId,
+        runSeq: event.runSeq ?? null,
         headSha: event.headSha ?? null,
       };
     case "run_failed":
       return {
         type: event.type,
         runId: event.runId,
+        runSeq: event.runSeq ?? null,
         message: event.message,
         category: event.category,
         lane: event.lane ?? null,
@@ -136,6 +161,8 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
+        headSha: event.headSha ?? null,
         prNumber: event.prNumber ?? null,
       };
     case "pr_linked":
@@ -147,18 +174,21 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         reason: event.reason ?? null,
       };
     case "gate_ci_passed":
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         headSha: event.headSha ?? null,
       };
     case "gate_ci_failed":
       return {
         type: event.type,
         runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
         headSha: event.headSha ?? null,
         reason: event.reason ?? null,
       };
@@ -177,16 +207,38 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
 
   switch (payload.type) {
     case "bootstrap":
-    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
       return { type: payload.type };
+    case "planning_run_completed":
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
+      return {
+        type: "planning_run_completed",
+        runId: typeof payload.runId === "string" ? payload.runId : null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
+      };
     case "plan_failed":
       if (typeof payload.reason !== "string") {
         return null;
       }
-      return { type: "plan_failed", reason: payload.reason };
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
+      return {
+        type: "plan_failed",
+        reason: payload.reason,
+        runId: typeof payload.runId === "string" ? payload.runId : null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
+      };
     case "dispatch_queued":
     case "dispatch_sent": {
       if (typeof payload.runId !== "string") {
@@ -225,6 +277,12 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
+      if (
         payload.headSha !== undefined &&
         payload.headSha !== null &&
         typeof payload.headSha !== "string"
@@ -234,6 +292,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       return {
         type: "run_completed",
         runId: payload.runId,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
       };
     case "run_failed":
@@ -254,9 +313,16 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
       return {
         type: "run_failed",
         runId: payload.runId,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         message: payload.message,
         category: (payload.category as string | null | undefined) ?? null,
         lane:
@@ -273,6 +339,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       if (
+        payload.headSha !== undefined &&
+        payload.headSha !== null &&
+        typeof payload.headSha !== "string"
+      ) {
+        return null;
+      }
+      if (
         payload.prNumber !== undefined &&
         payload.prNumber !== null &&
         (typeof payload.prNumber !== "number" ||
@@ -280,9 +353,17 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
       return {
         type: "gate_review_passed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
+        headSha: (payload.headSha as string | null | undefined) ?? null,
         prNumber: (payload.prNumber as number | null | undefined) ?? null,
       };
     case "pr_linked":
@@ -313,9 +394,16 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
       return {
         type: "gate_review_failed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         reason: (payload.reason as string | null | undefined) ?? null,
       };
     case "gate_ci_failed":
@@ -340,9 +428,16 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
       return {
         type: "gate_ci_failed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
         reason: (payload.reason as string | null | undefined) ?? null,
       };
@@ -361,9 +456,16 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       ) {
         return null;
       }
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
       return {
         type: "gate_ci_passed",
         runId: (payload.runId as string | null | undefined) ?? null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
       };
     case "pr_closed":
@@ -393,6 +495,7 @@ export function serializeEffectPayload(
       };
     case "dispatch_gate_review":
       return { kind: payload.kind, gate: payload.gate };
+    case "run_lease_expiry_check":
     case "ack_timeout_check":
       return {
         kind: payload.kind,
@@ -438,6 +541,17 @@ export function parseEffectPayload(payload: unknown): EffectPayload | null {
   }
   if (payload.kind === "dispatch_gate_review" && payload.gate === "review") {
     return { kind: "dispatch_gate_review", gate: "review" };
+  }
+  if (
+    payload.kind === "run_lease_expiry_check" &&
+    typeof payload.runId === "string" &&
+    typeof payload.workflowVersion === "number"
+  ) {
+    return {
+      kind: "run_lease_expiry_check",
+      runId: payload.runId,
+      workflowVersion: payload.workflowVersion,
+    };
   }
   if (
     payload.kind === "ack_timeout_check" &&

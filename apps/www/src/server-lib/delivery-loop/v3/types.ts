@@ -10,6 +10,7 @@ import {
 export type WorkflowState =
   | "planning"
   | "implementing"
+  // Legacy persisted state; normalize to implementing on read/reduce.
   | "awaiting_implementation_acceptance"
   | "gating_review"
   | "gating_ci"
@@ -23,9 +24,18 @@ export type WorkflowState =
 
 export type LoopEvent =
   | { type: "bootstrap" }
-  | { type: "planning_run_completed" }
+  | {
+      type: "planning_run_completed";
+      runId?: string | null;
+      runSeq?: number | null;
+    }
   | { type: "plan_completed" }
-  | { type: "plan_failed"; reason: string }
+  | {
+      type: "plan_failed";
+      reason: string;
+      runId?: string | null;
+      runSeq?: number | null;
+    }
   | { type: "dispatch_queued"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_claimed"; runId: string }
   | { type: "dispatch_accepted"; runId: string }
@@ -33,10 +43,16 @@ export type LoopEvent =
   | { type: "dispatch_sent"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_acked"; runId: string }
   | { type: "dispatch_ack_timeout"; runId: string }
-  | { type: "run_completed"; runId: string; headSha?: string | null }
+  | {
+      type: "run_completed";
+      runId: string;
+      runSeq?: number | null;
+      headSha?: string | null;
+    }
   | {
       type: "run_failed";
       runId: string;
+      runSeq?: number | null;
       message: string;
       category: string | null;
       lane?: FailureLane;
@@ -44,22 +60,27 @@ export type LoopEvent =
   | {
       type: "gate_review_passed";
       runId?: string | null;
+      runSeq?: number | null;
+      headSha?: string | null;
       prNumber?: number | null;
     }
   | { type: "pr_linked"; prNumber?: number | null }
   | {
       type: "gate_review_failed";
       runId?: string | null;
+      runSeq?: number | null;
       reason?: string | null;
     }
   | {
       type: "gate_ci_passed";
       runId?: string | null;
+      runSeq?: number | null;
       headSha?: string | null;
     }
   | {
       type: "gate_ci_failed";
       runId?: string | null;
+      runSeq?: number | null;
       headSha?: string | null;
       reason?: string | null;
     }
@@ -79,6 +100,12 @@ export type EffectPayload =
     }
   | { kind: "dispatch_gate_review"; gate: "review" }
   | {
+      kind: "run_lease_expiry_check";
+      runId: string;
+      workflowVersion: number;
+    }
+  | {
+      // Legacy persisted effect kind retained during the migration window.
       kind: "ack_timeout_check";
       runId: string;
       workflowVersion: number;
@@ -133,6 +160,9 @@ export type EffectResult =
       ackDeadlineAt: Date;
     }
   | { kind: "dispatch_implementing"; outcome: "failed"; reason: string }
+  // run_lease_expiry_check results
+  | { kind: "run_lease_expiry_check"; outcome: "fired"; runId: string }
+  | { kind: "run_lease_expiry_check"; outcome: "stale" }
   // ack_timeout_check results
   | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
   | { kind: "ack_timeout_check"; outcome: "stale" }
@@ -156,6 +186,9 @@ export type WorkflowHead = {
   activeGate: string | null;
   headSha: string | null;
   activeRunId: string | null;
+  activeRunSeq: number | null;
+  leaseExpiresAt: Date | null;
+  lastTerminalRunSeq: number | null;
   fixAttemptCount: number;
   infraRetryCount: number;
   maxFixAttempts: number;

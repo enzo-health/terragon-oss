@@ -158,6 +158,7 @@ export async function appendEventAndAdvance(params: {
       db: tx,
       head: reduced.head,
       expectedVersion: head.version,
+      expectedActiveRunSeq: head.activeRunSeq,
     });
 
     if (!updated) {

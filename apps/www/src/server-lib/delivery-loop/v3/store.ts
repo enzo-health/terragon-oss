@@ -30,7 +30,9 @@ const OUTBOX_LEASE_TTL_MS = 2 * 60 * 1000;
 function normalizeHeadState(state: string): WorkflowHead["state"] {
   switch (state) {
     case "planning":
+      return state;
     case "awaiting_implementation_acceptance":
+      return "implementing";
     case "implementing":
     case "gating_review":
     case "gating_ci":
@@ -57,6 +59,9 @@ function toWorkflowHead(row: DeliveryWorkflowHeadV3Row): WorkflowHead {
     activeGate: row.activeGate,
     headSha: row.headSha,
     activeRunId: row.activeRunId,
+    activeRunSeq: row.activeRunSeq,
+    leaseExpiresAt: row.leaseExpiresAt,
+    lastTerminalRunSeq: row.lastTerminalRunSeq,
     fixAttemptCount: row.fixAttemptCount,
     infraRetryCount: row.infraRetryCount,
     maxFixAttempts: row.maxFixAttempts,
@@ -178,6 +183,9 @@ async function reconcileHeadFromProjection(params: {
       activeGate: null,
       headSha: params.headSha,
       activeRunId: null,
+      activeRunSeq: null,
+      leaseExpiresAt: null,
+      lastTerminalRunSeq: null,
       blockedReason: params.projection.blockedReason,
       updatedAt: params.now,
       lastActivityAt: params.now,
@@ -373,6 +381,9 @@ export async function ensureWorkflowHead(params: {
       state: projection.state,
       activeGate: legacy.kind === "gating" ? "review" : null,
       headSha: legacy.headSha ?? null,
+      activeRunSeq: null,
+      leaseExpiresAt: null,
+      lastTerminalRunSeq: null,
       fixAttemptCount: legacy.fixAttemptCount ?? 0,
       infraRetryCount: legacy.infraRetryCount ?? 0,
       maxFixAttempts: legacy.maxFixAttempts ?? 6,
@@ -417,7 +428,17 @@ export async function updateWorkflowHead(params: {
   db: Pick<DB, "update">;
   head: WorkflowHead;
   expectedVersion: number;
+  expectedActiveRunSeq?: number | null;
 }): Promise<boolean> {
+  const activeRunSeqGuard =
+    params.expectedActiveRunSeq === undefined
+      ? undefined
+      : params.expectedActiveRunSeq === null
+        ? isNull(schema.deliveryWorkflowHeadV3.activeRunSeq)
+        : eq(
+            schema.deliveryWorkflowHeadV3.activeRunSeq,
+            params.expectedActiveRunSeq,
+          );
   const [row] = await params.db
     .update(schema.deliveryWorkflowHeadV3)
     .set({
@@ -426,6 +447,9 @@ export async function updateWorkflowHead(params: {
       activeGate: params.head.activeGate,
       headSha: params.head.headSha,
       activeRunId: params.head.activeRunId,
+      activeRunSeq: params.head.activeRunSeq,
+      leaseExpiresAt: params.head.leaseExpiresAt,
+      lastTerminalRunSeq: params.head.lastTerminalRunSeq,
       fixAttemptCount: params.head.fixAttemptCount,
       infraRetryCount: params.head.infraRetryCount,
       blockedReason: params.head.blockedReason,
@@ -436,6 +460,7 @@ export async function updateWorkflowHead(params: {
       and(
         eq(schema.deliveryWorkflowHeadV3.workflowId, params.head.workflowId),
         eq(schema.deliveryWorkflowHeadV3.version, params.expectedVersion),
+        activeRunSeqGuard,
       ),
     )
     .returning({ workflowId: schema.deliveryWorkflowHeadV3.workflowId });

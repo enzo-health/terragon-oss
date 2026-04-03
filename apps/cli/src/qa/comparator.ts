@@ -232,32 +232,6 @@ export class ComparatorEngine {
           });
         }
 
-        if (!hasActiveRun && containerRunning) {
-          // This could be a cleanup delay, so only warning
-          return this.createDiscrepancy({
-            type: "container_db_mismatch",
-            severity: "info",
-            threadId: dbWorkflow.threadId,
-            sources: [
-              {
-                snapshot: sources.database.workflow,
-                field: "activeRunId",
-                value: null,
-              },
-              {
-                snapshot: sources.container,
-                field: "daemonRunning",
-                value: true,
-              },
-            ],
-            description:
-              "Container daemon is running but database shows no active run",
-            impact: "May indicate cleanup delay or orphaned process",
-            recommendedFix:
-              "Verify daemon shutdown logic and container cleanup timing",
-          });
-        }
-
         return null;
       },
     };
@@ -327,6 +301,21 @@ export class ComparatorEngine {
 
         const dbSha = sources.database.workflow.data.headSha;
         const containerSha = sources.container.data.gitStatus?.headSha;
+        const state = sources.database.workflow.data.state;
+        const hasActiveRun = !!sources.database.workflow.data.activeRunId;
+
+        // Only suppress SHA checks while the workflow is actively implementing
+        // with a leased run. Gating states still need drift detection even when
+        // the lease model keeps `activeRunId` populated.
+        if (
+          (state === "implementing" && hasActiveRun) ||
+          state === "awaiting_pr_lifecycle" ||
+          state === "done" ||
+          state === "stopped" ||
+          state === "terminated"
+        ) {
+          return null;
+        }
 
         if (!dbSha || !containerSha) {
           return null; // Can't compare if either is missing

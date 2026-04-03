@@ -8,7 +8,6 @@ import {
 
 const DISPATCH_COHERENT_STATES = new Set([
   "planning",
-  "awaiting_implementation_acceptance",
   "implementing",
   "gating_review",
   "gating_ci",
@@ -167,7 +166,19 @@ function applyInvariantMiddleware(params: {
 function isOutOfOrderRunSignal(params: {
   head: WorkflowHead;
   runId: string | null | undefined;
+  runSeq?: number | null;
 }): boolean {
+  if (params.runSeq != null) {
+    return (
+      params.head.activeRunSeq == null ||
+      params.runSeq !== params.head.activeRunSeq
+    );
+  }
+
+  if (params.head.activeRunSeq == null) {
+    return true;
+  }
+
   if (params.head.activeRunId == null) {
     return false;
   }
@@ -178,10 +189,83 @@ function isOutOfOrderRunSignal(params: {
   return params.runId !== params.head.activeRunId;
 }
 
+function isOutOfOrderFailureSignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+  category: string | null;
+  lane?: "agent" | "infra";
+}): boolean {
+  return isOutOfOrderRunSignal({
+    head: params.head,
+    runId: params.runId,
+    runSeq: params.runSeq,
+  });
+}
+
+function isOutOfOrderAwaitingPrRetrySignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+}): boolean {
+  if (params.runSeq != null) {
+    return (
+      params.head.activeRunSeq == null ||
+      params.runSeq !== params.head.activeRunSeq
+    );
+  }
+
+  if (params.head.activeRunId != null) {
+    if (params.runId == null) {
+      return true;
+    }
+    return params.runId !== params.head.activeRunId;
+  }
+
+  // Awaiting PR creation can legitimately emit lane-less failures (for example
+  // ensure_pr no-diff/failure) after legacy reconciliation clears active lease.
+  // Treat those as in-order so the workflow can retry implementation.
+  return false;
+}
+
+function isOutOfOrderGateSignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+}): boolean {
+  if (params.runSeq != null) {
+    return (
+      params.head.activeRunSeq == null ||
+      params.runSeq !== params.head.activeRunSeq
+    );
+  }
+
+  if (params.head.activeRunSeq == null) {
+    return true;
+  }
+
+  if (params.runId == null || params.head.activeRunId == null) {
+    return false;
+  }
+
+  return params.runId !== params.head.activeRunId;
+}
+
 function isOutOfOrderCiSignal(params: {
   head: WorkflowHead;
   event: Extract<LoopEvent, { type: "gate_ci_passed" | "gate_ci_failed" }>;
 }): boolean {
+  if (params.event.runSeq != null) {
+    if (params.head.activeRunSeq == null) {
+      return true;
+    }
+    if (params.event.runSeq !== params.head.activeRunSeq) {
+      return true;
+    }
+  } else if (params.head.activeRunSeq == null) {
+    return true;
+  }
+
   const signalHeadSha = params.event.headSha ?? null;
   if (!signalHeadSha) {
     return true;
@@ -195,9 +279,13 @@ function isOutOfOrderCiSignal(params: {
     return false;
   }
 
+  if (params.event.runSeq != null) {
+    return false;
+  }
+
   const signalRunId = params.event.runId ?? null;
   if (signalRunId === null) {
-    return true;
+    return false;
   }
 
   return signalRunId !== params.head.activeRunId;
@@ -209,6 +297,17 @@ function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
     version: head.version + 1,
     updatedAt: now,
     lastActivityAt: now,
+  };
+}
+
+function normalizeHeadForReduction(head: WorkflowHead): WorkflowHead {
+  if (head.state !== "awaiting_implementation_acceptance") {
+    return head;
+  }
+
+  return {
+    ...head,
+    state: "implementing",
   };
 }
 
@@ -227,6 +326,55 @@ function computeRetryBackoffMs(attempt: number): number {
   const MAX_MS = 30_000;
   const exponential = Math.min(MAX_MS, BASE_MS * Math.pow(2, attempt));
   return Math.floor(Math.random() * exponential);
+}
+
+function nextActiveRunSeq(head: WorkflowHead): number {
+  return Math.max(head.activeRunSeq ?? 0, head.lastTerminalRunSeq ?? 0) + 1;
+}
+
+function allocateImplementationLease(params: {
+  head: WorkflowHead;
+  consumeCurrent: boolean;
+}): Pick<
+  WorkflowHead,
+  "activeRunId" | "activeRunSeq" | "leaseExpiresAt" | "lastTerminalRunSeq"
+> {
+  return {
+    activeRunId: null,
+    activeRunSeq: nextActiveRunSeq(params.head),
+    leaseExpiresAt: null,
+    lastTerminalRunSeq: params.consumeCurrent
+      ? (params.head.activeRunSeq ?? params.head.lastTerminalRunSeq)
+      : params.head.lastTerminalRunSeq,
+  };
+}
+
+function continueActiveLease(
+  head: WorkflowHead,
+): Pick<
+  WorkflowHead,
+  "activeRunId" | "activeRunSeq" | "leaseExpiresAt" | "lastTerminalRunSeq"
+> {
+  return {
+    activeRunId: head.activeRunId,
+    activeRunSeq: head.activeRunSeq,
+    leaseExpiresAt: head.leaseExpiresAt,
+    lastTerminalRunSeq: head.lastTerminalRunSeq,
+  };
+}
+
+function clearActiveLease(
+  head: WorkflowHead,
+): Pick<
+  WorkflowHead,
+  "activeRunId" | "activeRunSeq" | "leaseExpiresAt" | "lastTerminalRunSeq"
+> {
+  return {
+    activeRunId: null,
+    activeRunSeq: null,
+    leaseExpiresAt: null,
+    lastTerminalRunSeq: head.activeRunSeq ?? head.lastTerminalRunSeq,
+  };
 }
 
 function dispatchImplementingEffect(
@@ -317,7 +465,7 @@ function retryToImplementing(params: {
       ...next,
       state: laneUpdate.blockedState,
       activeGate: null,
-      activeRunId: null,
+      ...clearActiveLease(params.head),
       blockedReason:
         params.reason ??
         (params.lane === "infra"
@@ -335,9 +483,86 @@ function retryToImplementing(params: {
 
   const retryHead = {
     ...next,
-    state: "awaiting_implementation_acceptance" as const,
+    state: "implementing" as const,
     activeGate: null,
-    activeRunId: null,
+    ...allocateImplementationLease({
+      head: params.head,
+      consumeCurrent: true,
+    }),
+    blockedReason: params.reason ?? null,
+    fixAttemptCount: laneUpdate.fixAttemptCount,
+    infraRetryCount: laneUpdate.infraRetryCount,
+  };
+  return {
+    head: retryHead,
+    effects: [
+      dispatchImplementingEffect(
+        next,
+        params.now,
+        params.lane,
+        laneUpdate.infraRetryCount,
+        laneUpdate.count,
+        params.reason,
+      ),
+      publishStatusEffect(next, params.now),
+    ],
+    invariantActions: [],
+  };
+}
+
+function retryInPlanning(params: {
+  head: WorkflowHead;
+  now: Date;
+  lane: "agent" | "infra";
+  reason: string | null;
+}): ReduceResult {
+  const next = withVersion(params.head, params.now);
+  const laneUpdate =
+    params.lane === "infra"
+      ? {
+          infraRetryCount: params.head.infraRetryCount + 1,
+          fixAttemptCount: params.head.fixAttemptCount,
+          max: params.head.maxInfraRetries,
+          count: params.head.infraRetryCount + 1,
+          blockedState: "awaiting_operator_action" as const,
+        }
+      : {
+          infraRetryCount: params.head.infraRetryCount,
+          fixAttemptCount: params.head.fixAttemptCount + 1,
+          max: params.head.maxFixAttempts,
+          count: params.head.fixAttemptCount + 1,
+          blockedState: "awaiting_manual_fix" as const,
+        };
+
+  if (laneUpdate.count >= laneUpdate.max) {
+    const blockedHead = {
+      ...next,
+      state: laneUpdate.blockedState,
+      activeGate: null,
+      ...clearActiveLease(params.head),
+      blockedReason:
+        params.reason ??
+        (params.lane === "infra"
+          ? "Infrastructure retry budget exhausted"
+          : "Fix attempt budget exhausted"),
+      fixAttemptCount: laneUpdate.fixAttemptCount,
+      infraRetryCount: laneUpdate.infraRetryCount,
+    };
+    return {
+      head: blockedHead,
+      effects: [publishStatusEffect(next, params.now)],
+      invariantActions: [],
+    };
+  }
+
+  const retryHead = {
+    ...next,
+    state: "planning" as const,
+    activeGate: null,
+    ...allocateImplementationLease({
+      head: params.head,
+      consumeCurrent: true,
+    }),
     blockedReason: params.reason ?? null,
     fixAttemptCount: laneUpdate.fixAttemptCount,
     infraRetryCount: laneUpdate.infraRetryCount,
@@ -365,7 +590,7 @@ export function reduce(params: {
   now?: Date;
 }): ReduceResult {
   const now = params.now ?? new Date();
-  const head = params.head;
+  const head = normalizeHeadForReduction(params.head);
   const event = params.event;
 
   let result: ReduceResult;
@@ -382,7 +607,11 @@ export function reduce(params: {
   } else if (event.type === "stop_requested") {
     const next = withVersion(head, now);
     result = {
-      head: { ...next, state: "stopped", blockedReason: "Stopped by user" },
+      head: {
+        ...next,
+        state: "stopped",
+        blockedReason: "Stopped by user",
+      },
       effects: [publishStatusEffect(next, now)],
       invariantActions: [],
     };
@@ -407,6 +636,7 @@ export function reduce(params: {
               ...next,
               state: "planning",
               activeGate: null,
+              ...clearActiveLease(head),
               blockedReason: null,
             },
             effects: [
@@ -429,6 +659,7 @@ export function reduce(params: {
               ...next,
               state: "awaiting_manual_fix",
               activeGate: null,
+              ...clearActiveLease(head),
               blockedReason: event.reason,
             },
             effects: [publishStatusEffect(next, now)],
@@ -441,9 +672,12 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: "awaiting_implementation_acceptance",
+              state: "planning",
               activeGate: null,
-              activeRunId: null,
+              ...allocateImplementationLease({
+                head,
+                consumeCurrent: false,
+              }),
               blockedReason: null,
             },
             effects: [
@@ -459,6 +693,98 @@ export function reduce(params: {
           };
           break;
         }
+        if (event.type === "dispatch_queued") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "planning",
+              activeRunId: event.runId,
+              activeRunSeq: head.activeRunSeq,
+              leaseExpiresAt: event.ackDeadlineAt,
+              lastTerminalRunSeq: head.lastTerminalRunSeq,
+              blockedReason: null,
+            },
+            effects: [
+              {
+                kind: "run_lease_expiry_check",
+                effectKey: `${head.workflowId}:${event.runId}:lease_expiry`,
+                dueAt: event.ackDeadlineAt,
+                payload: {
+                  kind: "run_lease_expiry_check",
+                  runId: event.runId,
+                  workflowVersion: next.version,
+                },
+              },
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (
+          event.type === "dispatch_claimed" ||
+          event.type === "dispatch_accepted"
+        ) {
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "dispatch_ack_timeout") {
+          if (
+            isOutOfOrderRunSignal({
+              head,
+              runId: event.runId,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          result = retryInPlanning({
+            head,
+            now,
+            lane: "infra",
+            reason: `Dispatch ack timeout for planning run ${event.runId}`,
+          });
+          break;
+        }
+        if (event.type === "run_failed") {
+          if (
+            isOutOfOrderFailureSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              category: event.category,
+              lane: event.lane,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const lane =
+            event.lane ??
+            classifyFailureLane({
+              category: event.category,
+              message: event.message,
+            });
+          result = retryInPlanning({
+            head,
+            now,
+            lane,
+            reason: event.message,
+          });
+          break;
+        }
         if (event.type !== "plan_completed") {
           result = {
             head,
@@ -471,9 +797,12 @@ export function reduce(params: {
         result = {
           head: {
             ...next,
-            state: "awaiting_implementation_acceptance",
+            state: "implementing",
             activeGate: null,
-            activeRunId: null,
+            ...allocateImplementationLease({
+              head,
+              consumeCurrent: false,
+            }),
             blockedReason: null,
           },
           effects: [
@@ -489,27 +818,29 @@ export function reduce(params: {
         };
         break;
       }
-      case "awaiting_implementation_acceptance": {
+      case "implementing": {
         if (event.type === "dispatch_queued") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = { head, effects: [], invariantActions: [] };
-            break;
-          }
+          // Queueing is authoritative for which run currently owns the active
+          // implementation lease and when that lease expires if the daemon
+          // never reaches a terminal handoff.
           const next = withVersion(head, now);
           result = {
             head: {
               ...next,
-              state: "awaiting_implementation_acceptance",
+              state: "implementing",
               activeRunId: event.runId,
+              activeRunSeq: head.activeRunSeq,
+              leaseExpiresAt: event.ackDeadlineAt,
+              lastTerminalRunSeq: head.lastTerminalRunSeq,
               blockedReason: null,
             },
             effects: [
               {
-                kind: "ack_timeout_check",
-                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
+                kind: "run_lease_expiry_check",
+                effectKey: `${head.workflowId}:${event.runId}:lease_expiry`,
                 dueAt: event.ackDeadlineAt,
                 payload: {
-                  kind: "ack_timeout_check",
+                  kind: "run_lease_expiry_check",
                   runId: event.runId,
                   workflowVersion: next.version,
                 },
@@ -520,43 +851,28 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_claimed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = { head, effects: [], invariantActions: [] };
-            break;
-          }
-          const next = withVersion(head, now);
           result = {
-            head: {
-              ...next,
-              state: "awaiting_implementation_acceptance",
-              activeRunId: event.runId,
-              blockedReason: null,
-            },
+            head,
             effects: [],
             invariantActions: [],
           };
           break;
         }
         if (event.type === "dispatch_accepted") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = { head, effects: [], invariantActions: [] };
-            break;
-          }
-          const next = withVersion(head, now);
           result = {
-            head: {
-              ...next,
-              state: "implementing",
-              activeRunId: event.runId,
-              blockedReason: null,
-            },
-            effects: [publishStatusEffect(next, now)],
+            head,
+            effects: [],
             invariantActions: [],
           };
           break;
         }
         if (event.type === "dispatch_ack_timeout") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderRunSignal({
+              head,
+              runId: event.runId,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -572,34 +888,21 @@ export function reduce(params: {
           });
           break;
         }
-        if (event.type === "run_failed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
-            result = { head, effects: [], invariantActions: [] };
+        if (event.type === "run_completed") {
+          if (
+            isOutOfOrderRunSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
             break;
           }
-          const lane =
-            event.lane ??
-            classifyFailureLane({
-              category: event.category,
-              message: event.message,
-            });
-          result = retryToImplementing({
-            head,
-            now,
-            lane,
-            reason: event.message,
-          });
-          break;
-        }
-        result = {
-          head,
-          effects: [],
-          invariantActions: [],
-        };
-        break;
-      }
-      case "implementing": {
-        if (event.type === "run_completed") {
           const completedHeadSha = event.headSha ?? head.headSha;
           if (!completedHeadSha) {
             result = retryToImplementing({
@@ -629,7 +932,7 @@ export function reduce(params: {
               state: "gating_review",
               activeGate: "review",
               headSha: completedHeadSha,
-              activeRunId: null,
+              ...continueActiveLease(head),
               blockedReason: null,
             },
             effects: [
@@ -641,6 +944,22 @@ export function reduce(params: {
           break;
         }
         if (event.type === "run_failed") {
+          if (
+            isOutOfOrderFailureSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              category: event.category,
+              lane: event.lane,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
           const lane =
             event.lane ??
             classifyFailureLane({
@@ -664,7 +983,13 @@ export function reduce(params: {
       }
       case "gating_review": {
         if (event.type === "gate_review_passed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderGateSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -674,12 +999,14 @@ export function reduce(params: {
           }
           const next = withVersion(head, now);
           const hasLinkedPr = typeof event.prNumber === "number";
+          const nextHeadSha = event.headSha ?? head.headSha;
           result = {
             head: {
               ...next,
               state: hasLinkedPr ? "gating_ci" : "awaiting_pr_creation",
               activeGate: hasLinkedPr ? "ci" : null,
-              activeRunId: null,
+              headSha: nextHeadSha,
+              ...continueActiveLease(head),
               blockedReason: hasLinkedPr ? null : AWAITING_PR_CREATION_REASON,
             },
             effects: hasLinkedPr
@@ -690,7 +1017,13 @@ export function reduce(params: {
           break;
         }
         if (event.type === "gate_review_failed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderGateSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -707,7 +1040,15 @@ export function reduce(params: {
           break;
         }
         if (event.type === "run_failed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderFailureSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              category: event.category,
+              lane: event.lane,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -752,7 +1093,7 @@ export function reduce(params: {
               ...next,
               state: "awaiting_pr_lifecycle",
               activeGate: null,
-              activeRunId: null,
+              ...clearActiveLease(head),
               blockedReason: null,
             },
             effects: [publishStatusEffect(next, now)],
@@ -778,7 +1119,15 @@ export function reduce(params: {
           break;
         }
         if (event.type === "run_failed") {
-          if (isOutOfOrderRunSignal({ head, runId: event.runId })) {
+          if (
+            isOutOfOrderFailureSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              category: event.category,
+              lane: event.lane,
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -823,7 +1172,9 @@ export function reduce(params: {
               ...next,
               state: "gating_ci",
               activeGate: "ci",
-              activeRunId: null,
+              activeRunSeq: head.activeRunSeq,
+              leaseExpiresAt: head.leaseExpiresAt,
+              lastTerminalRunSeq: head.lastTerminalRunSeq,
               blockedReason: null,
             },
             effects: [
@@ -835,6 +1186,20 @@ export function reduce(params: {
           break;
         }
         if (event.type === "gate_review_failed") {
+          if (
+            isOutOfOrderAwaitingPrRetrySignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
           result = retryToImplementing({
             head,
             now,
@@ -872,9 +1237,12 @@ export function reduce(params: {
         result = {
           head: {
             ...next,
-            state: "awaiting_implementation_acceptance",
+            state: "implementing",
             activeGate: null,
-            activeRunId: null,
+            ...allocateImplementationLease({
+              head,
+              consumeCurrent: false,
+            }),
             blockedReason: null,
           },
           effects: [
