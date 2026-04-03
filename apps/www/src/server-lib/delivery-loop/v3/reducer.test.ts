@@ -251,7 +251,7 @@ describe("reduce", () => {
     });
   });
 
-  it("implementing treats dispatch_accepted as a legacy runId refresh", () => {
+  it("implementing treats dispatch_accepted as telemetry only", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
       head: {
@@ -266,8 +266,28 @@ describe("reduce", () => {
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.head.activeRunId).toBe("run-fresh");
-    expect(result.head.version).toBe(3);
+    expect(result.head.activeRunId).toBe("run-stale");
+    expect(result.head.version).toBe(2);
+    expect(result.effects).toHaveLength(0);
+  });
+
+  it("dispatch_claimed does not rewrite run identity", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("implementing"),
+        activeRunId: "run-stale",
+      },
+      event: {
+        type: "dispatch_claimed",
+        runId: "run-fresh",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("implementing");
+    expect(result.head.activeRunId).toBe("run-stale");
+    expect(result.head.version).toBe(2);
     expect(result.effects).toHaveLength(0);
   });
 
@@ -286,8 +306,8 @@ describe("reduce", () => {
     });
 
     expect(result.head.state).toBe("implementing");
-    expect(result.head.activeRunId).toBe("run-fresh");
-    expect(result.head.version).toBe(3);
+    expect(result.head.activeRunId).toBe("run-stale");
+    expect(result.head.version).toBe(2);
     expect(result.effects).toHaveLength(0);
   });
 
@@ -993,7 +1013,7 @@ describe("reduce", () => {
       expect(result.head.version).toBe(h.version);
     });
 
-    it("dispatch_acked with different runId is dropped (out-of-order guard)", () => {
+    it("dispatch_acked with different runId is ignored as telemetry", () => {
       const h = { ...head("implementing"), activeRunId: "r-1" };
       const result = reduce({
         head: h,
@@ -1068,7 +1088,7 @@ describe("reduce", () => {
     expect(result.head.version).toBe(h.version);
   });
 
-  it("dispatch_acked with matching runId in implementing sets activeRunId", () => {
+  it("dispatch_acked with matching runId in implementing is a no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const h = { ...head("implementing"), activeRunId: "run-1" };
     const result = reduce({
@@ -1078,6 +1098,7 @@ describe("reduce", () => {
     });
     expect(result.head.state).toBe("implementing");
     expect(result.head.activeRunId).toBe("run-1");
+    expect(result.head.version).toBe(h.version);
   });
 
   it("dispatch_sent in gating_review is a legacy no-op", () => {

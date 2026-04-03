@@ -1000,8 +1000,10 @@ export async function POST(request: Request) {
   const effectiveLoopId = runContext?.workflowId ?? v2Workflow?.id ?? null;
 
   // Acknowledge dispatch intent once the run context is still in a
-  // dispatch-pending state. Envelope v2 starts at seq=0, so this must be
-  // status-based (idempotent), not seq-based.
+  // dispatch-pending state. Envelope v2 starts at seq=0, so this stays
+  // status-based (idempotent), not seq-based. The workflow reducer no longer
+  // depends on ack/start events for progression; terminal signals remain
+  // authoritative when fenced by runSeq.
   if (
     effectiveLoopId &&
     envelopeV2 &&
@@ -1022,22 +1024,6 @@ export async function POST(request: Request) {
         threadChatId,
         runId: envelopeV2.runId,
         error: ackError,
-      });
-    }
-
-    try {
-      await appendEventAndAdvance({
-        db,
-        workflowId: effectiveLoopId,
-        source: "daemon",
-        idempotencyKey: `ack:${envelopeV2.runId}`,
-        event: { type: "dispatch_acked", runId: envelopeV2.runId },
-      });
-    } catch (err) {
-      console.warn("[delivery-loop] dispatch_acked journal write failed", {
-        loopId: effectiveLoopId,
-        runId: envelopeV2.runId,
-        error: err,
       });
     }
   }
@@ -1298,29 +1284,22 @@ export async function POST(request: Request) {
     daemonRunStatusFromMessages !== "processing"
   ) {
     try {
-      // First observed daemon terminal event for a run is an implicit ack.
-      await appendEventAndAdvance({
-        db,
-        workflowId: effectiveLoopId,
-        source: "daemon",
-        idempotencyKey: `ack:${envelopeV2.runId}`,
-        event: {
-          type: "dispatch_acked",
-          runId: envelopeV2.runId,
-        },
-      });
-
-      // Read head AFTER the ack so it reflects post-ack state.
-      const headAfterAck = await getWorkflowHead({
+      const headAtTerminal = await getWorkflowHead({
         db,
         workflowId: effectiveLoopId,
       });
-      const terminalState = headAfterAck?.state;
-      const terminalRunSeq = runContext?.runSeq ?? null;
+      const terminalState = headAtTerminal?.state;
+      const terminalRunSeq =
+        runContext?.runSeq ??
+        (headAtTerminal?.activeRunId === null ||
+        headAtTerminal?.activeRunId === envelopeV2.runId
+          ? (headAtTerminal?.activeRunSeq ?? null)
+          : null);
       if (terminalRunSeq == null) {
         // Migration-window fallback: keep bridging terminal events even when
-        // older run-context rows lack runSeq. Fencing by runSeq is still used
-        // whenever available.
+        // older run-context rows lack runSeq or the active head cannot be
+        // correlated to this run. Fencing by runSeq is still used whenever
+        // available.
         console.warn(
           "[daemon-event] bridging terminal event without persisted runSeq (legacy fallback)",
           {

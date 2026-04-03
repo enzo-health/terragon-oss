@@ -679,47 +679,16 @@ export function reduce(params: {
           break;
         }
         if (event.type === "dispatch_claimed") {
-          // Claimed dispatch events identify the daemon that now owns the
-          // active implementation lease.
-          const next = withVersion(head, now);
           result = {
-            head: {
-              ...next,
-              state: "implementing",
-              activeRunId: event.runId,
-              activeRunSeq: head.activeRunSeq,
-              leaseExpiresAt: head.leaseExpiresAt,
-              lastTerminalRunSeq: head.lastTerminalRunSeq,
-              blockedReason: null,
-            },
+            head,
             effects: [],
             invariantActions: [],
           };
           break;
         }
         if (event.type === "dispatch_accepted") {
-          if (head.activeRunId === event.runId) {
-            result = {
-              head,
-              effects: [],
-              invariantActions: [],
-            };
-            break;
-          }
-
-          // Legacy acked/accepted signals can still refresh run identity, but
-          // they no longer advance the state machine.
-          const next = withVersion(head, now);
           result = {
-            head: {
-              ...next,
-              state: "implementing",
-              activeRunId: event.runId,
-              activeRunSeq: head.activeRunSeq,
-              leaseExpiresAt: head.leaseExpiresAt,
-              lastTerminalRunSeq: head.lastTerminalRunSeq,
-              blockedReason: null,
-            },
+            head,
             effects: [],
             invariantActions: [],
           };

@@ -207,8 +207,8 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
       target: "stay",
       effects: ["run_lease_expiry_check"],
     },
-    dispatch_claimed: { target: "stay", effects: [] },
-    dispatch_accepted: { target: "stay", effects: [] },
+    dispatch_claimed: { target: "noop", effects: [] },
+    dispatch_accepted: { target: "noop", effects: [] },
     dispatch_sent: { target: "noop", effects: [] },
     dispatch_acked: { target: "noop", effects: [] },
     dispatch_ack_timeout: {
@@ -441,11 +441,11 @@ export const BRANCH_CASES: BranchTransitionCase[] = [
     expectedEffects: ["run_lease_expiry_check"],
   },
   {
-    name: "implementing(activeRunId=null) + dispatch_claimed -> stay",
+    name: "implementing(activeRunId=null) + dispatch_claimed -> noop",
     head: makeContractHead("implementing"),
     event: { type: "dispatch_claimed", runId: "r-2" },
     expectedState: "implementing",
-    expectedVersionDelta: 1,
+    expectedVersionDelta: 0,
     expectedEffects: [],
   },
   {
@@ -456,18 +456,18 @@ export const BRANCH_CASES: BranchTransitionCase[] = [
     },
     event: { type: "dispatch_claimed", runId: "r-2" },
     expectedState: "implementing",
-    expectedVersionDelta: 1,
+    expectedVersionDelta: 0,
     expectedEffects: [],
   },
   {
-    name: "implementing(activeRunId=null) + dispatch_accepted refreshes runId without changing phase",
+    name: "implementing(activeRunId=null) + dispatch_accepted -> noop",
     head: {
       ...makeContractHead("implementing"),
       activeRunId: null,
     },
     event: { type: "dispatch_accepted", runId: "r-2" },
     expectedState: "implementing",
-    expectedVersionDelta: 1,
+    expectedVersionDelta: 0,
     expectedEffects: [],
   },
   {

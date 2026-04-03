@@ -1744,15 +1744,9 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledTimes(1);
       expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
         1,
-        expect.objectContaining({
-          workflowId: "wf-pure-v2",
-          event: { type: "dispatch_acked", runId: "run-1" },
-        }),
-      );
-      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
-        2,
         expect.objectContaining({
           workflowId: "wf-pure-v2",
           event: {
@@ -1808,18 +1802,73 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledTimes(1);
       expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
           workflowId: "wf-pure-v2",
-          event: { type: "dispatch_acked", runId: "run-1" },
+          event: { type: "planning_run_completed" },
         }),
       );
-      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
-        2,
+    });
+
+    it("uses the active workflow head runSeq for implementing terminals when legacy runContext rows are missing it", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: null,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+        state: "implementing",
+        activeRunId: "run-1",
+        activeRunSeq: 7,
+      });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-implementing-terminal",
+          runId: "run-1",
+          seq: 10,
+          headShaAtCompletion: "sha-complete",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledTimes(1);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledWith(
         expect.objectContaining({
           workflowId: "wf-pure-v2",
-          event: { type: "planning_run_completed" },
+          event: {
+            type: "run_completed",
+            runId: "run-1",
+            runSeq: 7,
+            headSha: "sha-complete",
+          },
         }),
       );
     });
