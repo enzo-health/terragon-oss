@@ -564,6 +564,7 @@ function isDeliveryEffectKind(
   return (
     kind === "dispatch_implementing" ||
     kind === "dispatch_gate_review" ||
+    kind === "run_lease_expiry_check" ||
     kind === "ack_timeout_check" ||
     kind === "ensure_pr" ||
     kind === "create_plan_artifact" ||

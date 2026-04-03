@@ -648,8 +648,9 @@ export function reduce(params: {
       }
       case "implementing": {
         if (event.type === "dispatch_queued") {
-          // Queueing is authoritative for which run is currently holding the
-          // active implementation lease.
+          // Queueing is authoritative for which run currently owns the active
+          // implementation lease and when that lease expires if the daemon
+          // never reaches a terminal handoff.
           const next = withVersion(head, now);
           result = {
             head: {
@@ -657,17 +658,17 @@ export function reduce(params: {
               state: "implementing",
               activeRunId: event.runId,
               activeRunSeq: head.activeRunSeq,
-              leaseExpiresAt: head.leaseExpiresAt,
+              leaseExpiresAt: event.ackDeadlineAt,
               lastTerminalRunSeq: head.lastTerminalRunSeq,
               blockedReason: null,
             },
             effects: [
               {
-                kind: "ack_timeout_check",
-                effectKey: `${head.workflowId}:${event.runId}:ack_timeout`,
+                kind: "run_lease_expiry_check",
+                effectKey: `${head.workflowId}:${event.runId}:lease_expiry`,
                 dueAt: event.ackDeadlineAt,
                 payload: {
-                  kind: "ack_timeout_check",
+                  kind: "run_lease_expiry_check",
                   runId: event.runId,
                   workflowVersion: next.version,
                 },

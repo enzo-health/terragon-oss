@@ -99,6 +99,12 @@ export type EffectPayload =
     }
   | { kind: "dispatch_gate_review"; gate: "review" }
   | {
+      kind: "run_lease_expiry_check";
+      runId: string;
+      workflowVersion: number;
+    }
+  | {
+      // Legacy persisted effect kind retained during the migration window.
       kind: "ack_timeout_check";
       runId: string;
       workflowVersion: number;
@@ -153,6 +159,9 @@ export type EffectResult =
       ackDeadlineAt: Date;
     }
   | { kind: "dispatch_implementing"; outcome: "failed"; reason: string }
+  // run_lease_expiry_check results
+  | { kind: "run_lease_expiry_check"; outcome: "fired"; runId: string }
+  | { kind: "run_lease_expiry_check"; outcome: "stale" }
   // ack_timeout_check results
   | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
   | { kind: "ack_timeout_check"; outcome: "stale" }

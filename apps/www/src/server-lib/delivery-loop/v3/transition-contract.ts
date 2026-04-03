@@ -205,7 +205,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     plan_failed: { target: "noop", effects: [] },
     dispatch_queued: {
       target: "stay",
-      effects: ["ack_timeout_check"],
+      effects: ["run_lease_expiry_check"],
     },
     dispatch_claimed: { target: "stay", effects: [] },
     dispatch_accepted: { target: "stay", effects: [] },
@@ -438,7 +438,7 @@ export const BRANCH_CASES: BranchTransitionCase[] = [
     },
     expectedState: "implementing",
     expectedVersionDelta: 1,
-    expectedEffects: ["ack_timeout_check"],
+    expectedEffects: ["run_lease_expiry_check"],
   },
   {
     name: "implementing(activeRunId=null) + dispatch_claimed -> stay",

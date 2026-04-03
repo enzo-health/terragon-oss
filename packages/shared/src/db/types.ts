@@ -88,6 +88,7 @@ export type DeliverySignalSourceV3 =
 export type DeliveryEffectKindV3 =
   | "dispatch_implementing"
   | "dispatch_gate_review"
+  | "run_lease_expiry_check"
   | "ack_timeout_check"
   | "ensure_pr"
   | "create_plan_artifact"

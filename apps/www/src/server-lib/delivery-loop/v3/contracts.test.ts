@@ -217,13 +217,27 @@ describe("v3 contracts", () => {
     ).toBeNull();
   });
 
-  it("round-trips effect payload contracts", () => {
+  it("round-trips lease expiry effect payload contracts", () => {
     const serialized = serializeEffectPayload({
-      kind: "ack_timeout_check",
+      kind: "run_lease_expiry_check",
       runId: "run-ack",
       workflowVersion: 7,
     });
     const parsed = parseEffectPayload(serialized);
+
+    expect(parsed).toEqual({
+      kind: "run_lease_expiry_check",
+      runId: "run-ack",
+      workflowVersion: 7,
+    });
+  });
+
+  it("parses legacy ack timeout payload contracts during migration", () => {
+    const parsed = parseEffectPayload({
+      kind: "ack_timeout_check",
+      runId: "run-ack",
+      workflowVersion: 7,
+    });
 
     expect(parsed).toEqual({
       kind: "ack_timeout_check",

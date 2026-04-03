@@ -37,6 +37,7 @@ import {
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
 import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import {
+  type EffectPayload,
   isTerminalState,
   type EffectResult,
   type LoopEvent,
@@ -54,7 +55,7 @@ function summarizeRetryReason(reason: string): string {
 /**
  * Pure mapping from effect result to the LoopEvent that should be fired.
  * Returns null for results that don't require a state transition (e.g., human
- * approval pending, stale ack timeout).
+ * approval pending, stale lease expiry).
  */
 export function effectResultToEvent(
   result: EffectResult,
@@ -108,10 +109,11 @@ export function effectResultToEvent(
         lane: "infra",
       };
 
+    case "run_lease_expiry_check":
     case "ack_timeout_check":
       if (result.outcome === "fired")
         return { type: "dispatch_ack_timeout", runId: result.runId };
-      return null; // Stale timeout, version already advanced
+      return null; // Lease expired after the workflow had already advanced
 
     case "gate_staleness_check":
       if (result.outcome === "ci_passed")
@@ -165,6 +167,9 @@ async function executeStateBlockingEffect(params: {
         break;
       case "dispatch_implementing":
         result = { kind: "dispatch_implementing", outcome: "failed", reason };
+        break;
+      case "run_lease_expiry_check":
+        result = { kind: "run_lease_expiry_check", outcome: "stale" };
         break;
       case "ack_timeout_check":
         result = { kind: "ack_timeout_check", outcome: "stale" };
@@ -802,25 +807,49 @@ async function handleCreatePlanArtifact(params: {
   };
 }
 
-async function handleAckTimeoutCheck(params: {
+async function handleRunLeaseExpiryCheck(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
-  payload: { runId: string; workflowVersion: number };
+  payload: Extract<
+    EffectPayload,
+    { kind: "run_lease_expiry_check" | "ack_timeout_check" }
+  >;
 }): Promise<EffectResult> {
+  const staleResult =
+    params.payload.kind === "run_lease_expiry_check"
+      ? ({ kind: "run_lease_expiry_check", outcome: "stale" } as const)
+      : ({ kind: "ack_timeout_check", outcome: "stale" } as const);
+  const firedResult = {
+    kind: params.payload.kind,
+    outcome: "fired",
+    runId: params.payload.runId,
+  } as const;
   const [head, workflow] = await Promise.all([
     getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
     getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),
   ]);
   if (!head || head.version !== params.payload.workflowVersion) {
-    return { kind: "ack_timeout_check", outcome: "stale" };
+    return staleResult;
   }
 
-  // If the daemon has actually started processing THIS run, the ack timeout
-  // is a false alarm.  We verify by checking the agent_run_context table —
-  // a row only exists after startAgentMessage delivers the run to the daemon.
-  // Previously we checked threadChat.status === "working", but that can be
-  // stale from a PRIOR run, causing false suppression and a permanent stuck
-  // state when the new dispatch never reached the daemon.
+  if (
+    head.state !== "implementing" &&
+    head.state !== "awaiting_implementation_acceptance"
+  ) {
+    return staleResult;
+  }
+
+  const hasMatchingLease =
+    head.leaseExpiresAt !== null &&
+    head.leaseExpiresAt.getTime() <= params.effect.dueAt.getTime();
+  const isLegacyAckTimeout = params.payload.kind === "ack_timeout_check";
+  if (
+    head.activeRunId !== params.payload.runId ||
+    (!hasMatchingLease && !isLegacyAckTimeout)
+  ) {
+    return staleResult;
+  }
+
   if (workflow) {
     const { getAgentRunContextByRunId } = await import(
       "@terragon/shared/model/agent-run-context"
@@ -830,22 +859,12 @@ async function handleAckTimeoutCheck(params: {
       runId: params.payload.runId,
       userId: workflow.userId,
     });
-    if (
-      runContext &&
-      (runContext.status === "pending" ||
-        runContext.status === "dispatched" ||
-        runContext.status === "processing")
-    ) {
-      // The daemon genuinely has this run — suppress the timeout
-      return { kind: "ack_timeout_check", outcome: "stale" };
+    if (runContext) {
+      return staleResult;
     }
   }
 
-  return {
-    kind: "ack_timeout_check",
-    outcome: "fired",
-    runId: params.payload.runId,
-  };
+  return firedResult;
 }
 
 const MAX_GATE_STALENESS_POLLS = 50;
@@ -1091,14 +1110,16 @@ async function processSingleEffect(params: {
       return;
     }
 
-    // ack_timeout_check
-    if (payload.kind === "ack_timeout_check") {
+    if (
+      payload.kind === "run_lease_expiry_check" ||
+      payload.kind === "ack_timeout_check"
+    ) {
       await executeStateBlockingEffect({
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
         handler: () =>
-          handleAckTimeoutCheck({
+          handleRunLeaseExpiryCheck({
             db: params.db,
             effect: params.effect,
             payload,

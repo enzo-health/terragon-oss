@@ -239,12 +239,13 @@ describe("reduce", () => {
 
     expect(result.head.state).toBe("implementing");
     expect(result.head.activeRunId).toBe("run-fresh");
+    expect(result.head.leaseExpiresAt).toEqual(ackDeadlineAt);
     expect(result.head.version).toBe(3);
     expect(result.effects).toHaveLength(1);
     expect(result.effects[0]).toMatchObject({
-      kind: "ack_timeout_check",
+      kind: "run_lease_expiry_check",
       payload: {
-        kind: "ack_timeout_check",
+        kind: "run_lease_expiry_check",
         runId: "run-fresh",
       },
     });

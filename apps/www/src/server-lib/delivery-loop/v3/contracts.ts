@@ -468,6 +468,7 @@ export function serializeEffectPayload(
       };
     case "dispatch_gate_review":
       return { kind: payload.kind, gate: payload.gate };
+    case "run_lease_expiry_check":
     case "ack_timeout_check":
       return {
         kind: payload.kind,
@@ -513,6 +514,17 @@ export function parseEffectPayload(payload: unknown): EffectPayload | null {
   }
   if (payload.kind === "dispatch_gate_review" && payload.gate === "review") {
     return { kind: "dispatch_gate_review", gate: "review" };
+  }
+  if (
+    payload.kind === "run_lease_expiry_check" &&
+    typeof payload.runId === "string" &&
+    typeof payload.workflowVersion === "number"
+  ) {
+    return {
+      kind: "run_lease_expiry_check",
+      runId: payload.runId,
+      workflowVersion: payload.workflowVersion,
+    };
   }
   if (
     payload.kind === "ack_timeout_check" &&
