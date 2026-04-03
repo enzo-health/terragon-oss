@@ -468,18 +468,32 @@ async function processImplementingDispatchEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const queueResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
+    if (!queueResult.dispatchLaunched) {
+      const failureReason = `follow_up_dispatch_not_started:${queueResult.reason}`;
+      console.warn("[delivery-loop] dispatch_implementing did not launch", {
+        workflowId,
+        runId,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        followUpReason: queueResult.reason,
+        retryCount: queueResult.retryCount ?? null,
+        maxRetries: queueResult.maxRetries ?? null,
+      });
+      throw new Error(failureReason);
+    }
   } catch (followUpErr) {
-    console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
+    console.warn("[delivery-loop] follow-up queue trigger failed", {
       workflowId,
       runId,
       error: followUpErr instanceof Error ? followUpErr.message : followUpErr,
     });
+    throw followUpErr;
   }
 
   const ackDeadlineAt = new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS);
