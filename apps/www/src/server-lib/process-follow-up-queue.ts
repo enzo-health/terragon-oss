@@ -590,6 +590,38 @@ export async function maybeProcessFollowUpQueue({
         createNewBranch: false,
         branchName: threadBranchName,
       });
+      if (!result.dispatchLaunched) {
+        const failure = await handleFollowUpFailure({
+          userId,
+          threadId,
+          threadChatId,
+          messages: threadChat.messages,
+          queuedMessagesForRetry: queuedMessagesSnapshot,
+          error: new Error(
+            "startAgentMessage completed without launching a dispatch run",
+          ),
+        });
+        let failureReason: FollowUpQueueProcessingResult["reason"] =
+          "dispatch_retry_persistence_failed";
+        if (failure.exhausted) {
+          failureReason = "dispatch_retry_exhausted";
+        } else if (failure.retryPersisted) {
+          failureReason = "dispatch_retry_scheduled";
+        }
+        return ensureDispatchRetryPersistenceOwnership({
+          owner: "process-follow-up-queue",
+          userId,
+          threadId,
+          threadChatId,
+          result: {
+            processed: false,
+            dispatchLaunched: false,
+            reason: failureReason,
+            retryCount: failure.retriesUsed,
+            maxRetries: MAX_FOLLOW_UP_RETRIES,
+          },
+        });
+      }
       return {
         processed: true,
         dispatchLaunched: result.dispatchLaunched,
@@ -668,11 +700,36 @@ export async function maybeProcessFollowUpQueue({
         reason: "dispatch_started_batch",
       };
     }
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "dispatch_not_started",
-    };
+    const failure = await handleFollowUpFailure({
+      userId,
+      threadId,
+      threadChatId,
+      messages: threadChat.messages,
+      queuedMessagesForRetry: queuedMessagesSnapshot,
+      error: new Error(
+        "startAgentMessage completed without launching a dispatch run",
+      ),
+    });
+    let failureReason: FollowUpQueueProcessingResult["reason"] =
+      "dispatch_retry_persistence_failed";
+    if (failure.exhausted) {
+      failureReason = "dispatch_retry_exhausted";
+    } else if (failure.retryPersisted) {
+      failureReason = "dispatch_retry_scheduled";
+    }
+    return ensureDispatchRetryPersistenceOwnership({
+      owner: "process-follow-up-queue",
+      userId,
+      threadId,
+      threadChatId,
+      result: {
+        processed: false,
+        dispatchLaunched: false,
+        reason: failureReason,
+        retryCount: failure.retriesUsed,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      },
+    });
   } catch (error) {
     console.error("Follow-up processing failed", {
       threadId,
