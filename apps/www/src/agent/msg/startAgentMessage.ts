@@ -736,6 +736,13 @@ export async function startAgentMessage({
             : null;
           const workflowId = v2Workflow?.id ?? null;
           const workflowRunSeq = v3Head?.activeRunSeq ?? null;
+          if (workflowId !== null && workflowRunSeq === null) {
+            throw new ThreadError(
+              "unknown-error",
+              "Delivery Loop run linkage missing active run sequence",
+              null,
+            );
+          }
           const durableIntent =
             workflowId && !activeIntent
               ? await getLatestActiveDispatchIntentForThreadChat(db, {

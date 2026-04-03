@@ -513,7 +513,7 @@ function buildCompletedEvent(
 ) {
   switch (state) {
     case "planning":
-      return { type: "planning_run_completed" as const };
+      return { type: "planning_run_completed" as const, runId, runSeq };
     case "gating_review":
       return { type: "gate_review_passed" as const, runId, runSeq };
     case "gating_ci":
@@ -536,6 +536,8 @@ function buildFailedEvent(
       return {
         type: "plan_failed" as const,
         reason: errorMessage ?? "Planning run failed",
+        runId,
+        runSeq,
       };
     case "gating_review":
       return {
@@ -1308,9 +1310,8 @@ export async function POST(request: Request) {
       });
       const terminalState = headAfterAck?.state;
       const terminalRunSeq = runContext?.runSeq ?? null;
-      const requiresRunSeqForTerminalEvent = terminalState !== "planning";
 
-      if (requiresRunSeqForTerminalEvent && terminalRunSeq == null) {
+      if (terminalRunSeq == null) {
         console.warn(
           "[daemon-event] skipping terminal v3 bridge without persisted runSeq",
           {

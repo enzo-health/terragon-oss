@@ -105,13 +105,23 @@ function toOptionalInteger(value: unknown): number | null | undefined {
 export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
   switch (event.type) {
     case "bootstrap":
-    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
       return { type: event.type };
+    case "planning_run_completed":
+      return {
+        type: event.type,
+        runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
+      };
     case "plan_failed":
-      return { type: event.type, reason: event.reason };
+      return {
+        type: event.type,
+        reason: event.reason,
+        runId: event.runId ?? null,
+        runSeq: event.runSeq ?? null,
+      };
     case "dispatch_queued":
     case "dispatch_sent":
       return {
@@ -196,16 +206,38 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
 
   switch (payload.type) {
     case "bootstrap":
-    case "planning_run_completed":
     case "plan_completed":
     case "resume_requested":
     case "stop_requested":
       return { type: payload.type };
+    case "planning_run_completed":
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
+      return {
+        type: "planning_run_completed",
+        runId: typeof payload.runId === "string" ? payload.runId : null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
+      };
     case "plan_failed":
       if (typeof payload.reason !== "string") {
         return null;
       }
-      return { type: "plan_failed", reason: payload.reason };
+      if (
+        payload.runSeq !== undefined &&
+        toOptionalInteger(payload.runSeq) === undefined
+      ) {
+        return null;
+      }
+      return {
+        type: "plan_failed",
+        reason: payload.reason,
+        runId: typeof payload.runId === "string" ? payload.runId : null,
+        runSeq: toOptionalInteger(payload.runSeq) ?? null,
+      };
     case "dispatch_queued":
     case "dispatch_sent": {
       if (typeof payload.runId !== "string") {

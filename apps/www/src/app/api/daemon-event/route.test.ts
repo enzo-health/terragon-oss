@@ -123,6 +123,11 @@ const deltaBroadcastMocks = vi.hoisted(() => ({
   publishDeltaBroadcast: vi.fn(),
 }));
 
+const v3BridgeMocks = vi.hoisted(() => ({
+  appendEventAndAdvance: vi.fn(),
+  getWorkflowHead: vi.fn(),
+}));
+
 vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
 }));
@@ -190,6 +195,14 @@ vi.mock("@terragon/shared/model/token-stream-event", () => ({
 
 vi.mock("@terragon/shared/broadcast-server", () => ({
   publishDeltaBroadcast: deltaBroadcastMocks.publishDeltaBroadcast,
+}));
+
+vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({
+  appendEventAndAdvance: v3BridgeMocks.appendEventAndAdvance,
+}));
+
+vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
+  getWorkflowHead: v3BridgeMocks.getWorkflowHead,
 }));
 
 const redisMocks = vi.hoisted(() => {
@@ -355,6 +368,8 @@ describe("daemon-event route", () => {
     dispatchIntentMocks.storeSelfDispatchReplay.mockResolvedValue(undefined);
     dispatchIntentMocks.getReplayableSelfDispatch.mockResolvedValue(null);
     dispatchIntentMocks.updateDispatchIntent.mockResolvedValue(undefined);
+    v3BridgeMocks.appendEventAndAdvance.mockResolvedValue(undefined);
+    v3BridgeMocks.getWorkflowHead.mockResolvedValue(null);
     dbMocks.execute.mockResolvedValue({ rows: [] });
     dbMocks.selectWhere.mockResolvedValue([]);
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
@@ -1683,6 +1698,70 @@ describe("daemon-event route", () => {
         expect.objectContaining({ status: "completed" }),
       );
       expect(markDispatchIntentCompleted).toHaveBeenCalled();
+    });
+
+    it("fences planning terminal completions with persisted runSeq", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: 4,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+        state: "planning",
+      });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-planning-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          event: { type: "dispatch_acked", runId: "run-1" },
+        }),
+      );
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          event: {
+            type: "planning_run_completed",
+            runId: "run-1",
+            runSeq: 4,
+          },
+        }),
+      );
     });
 
     it("rejects pure v2 daemon event without v2 envelope", async () => {

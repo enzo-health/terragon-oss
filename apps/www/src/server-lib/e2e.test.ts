@@ -958,6 +958,86 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChatUpdated!.errorMessageInfo).toBe("transient daemon hiccup");
   });
 
+  it("rejects partial delivery-loop linkage in agent run context writes", async () => {
+    const testUserAndAccount = await createTestUser({ db });
+    const user = testUserAndAccount.user;
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      enableThreadChatCreation: true,
+      overrides: {
+        codesandboxId: "mock-sandbox-id",
+        disableGitCheckpointing: true,
+      },
+    });
+
+    await expect(
+      upsertAgentRunContext({
+        db,
+        runId: `run-${user.id}-missing-run-seq`,
+        workflowId: `workflow-${user.id}`,
+        runSeq: null,
+        userId: user.id,
+        threadId,
+        threadChatId,
+        sandboxId: "mock-sandbox-id",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "pending",
+        tokenNonce: `nonce-${user.id}-missing-run-seq`,
+      }),
+    ).rejects.toThrow(/workflowId without runSeq/);
+
+    await expect(
+      upsertAgentRunContext({
+        db,
+        runId: `run-${user.id}-missing-workflow`,
+        workflowId: null,
+        runSeq: 1,
+        userId: user.id,
+        threadId,
+        threadChatId,
+        sandboxId: "mock-sandbox-id",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "pending",
+        tokenNonce: `nonce-${user.id}-missing-workflow`,
+      }),
+    ).rejects.toThrow(/runSeq without workflowId/);
+
+    await expect(
+      upsertAgentRunContext({
+        db,
+        runId: `run-${user.id}-non-delivery`,
+        workflowId: null,
+        runSeq: null,
+        userId: user.id,
+        threadId,
+        threadChatId,
+        sandboxId: "mock-sandbox-id",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "pending",
+        tokenNonce: `nonce-${user.id}-non-delivery`,
+      }),
+    ).resolves.toMatchObject({
+      workflowId: null,
+      runSeq: null,
+    });
+  });
+
   it("new thread -> checkpoint error -> retry git checkpoint", async () => {
     const testUserAndAccount = await createTestUser({ db });
     const user = testUserAndAccount.user;

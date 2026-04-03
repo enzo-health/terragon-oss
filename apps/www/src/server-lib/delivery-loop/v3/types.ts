@@ -23,9 +23,18 @@ export type WorkflowState =
 
 export type LoopEvent =
   | { type: "bootstrap" }
-  | { type: "planning_run_completed" }
+  | {
+      type: "planning_run_completed";
+      runId?: string | null;
+      runSeq?: number | null;
+    }
   | { type: "plan_completed" }
-  | { type: "plan_failed"; reason: string }
+  | {
+      type: "plan_failed";
+      reason: string;
+      runId?: string | null;
+      runSeq?: number | null;
+    }
   | { type: "dispatch_queued"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_claimed"; runId: string }
   | { type: "dispatch_accepted"; runId: string }
