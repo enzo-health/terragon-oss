@@ -156,12 +156,23 @@ async function scheduleRetryAfterDispatchNotStarted({
   userId,
   threadId,
   threadChatId,
+  dispatchAttempt,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
+  dispatchAttempt: number;
 }): Promise<FollowUpQueueProcessingResult> {
-  const retryCount = 1;
+  const retryCount = Math.max(1, Math.trunc(dispatchAttempt) + 1);
+  if (retryCount > MAX_FOLLOW_UP_RETRIES) {
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_exhausted",
+      retryCount: MAX_FOLLOW_UP_RETRIES,
+      maxRetries: MAX_FOLLOW_UP_RETRIES,
+    };
+  }
   const runAt = new Date(Date.now() + retryDelayMsForAttempt(retryCount));
   try {
     await scheduleFollowUpRetryJob({
@@ -410,6 +421,7 @@ export async function maybeProcessFollowUpQueue({
   threadChatId,
   runId = null,
   bypassBusyCheck = false,
+  dispatchAttempt = 0,
 }: {
   userId: string;
   threadId: string;
@@ -419,6 +431,7 @@ export async function maybeProcessFollowUpQueue({
    *  dispatch a new run even when the threadChat is still in an active status
    *  from a prior run that has logically completed. */
   bypassBusyCheck?: boolean;
+  dispatchAttempt?: number;
 }): Promise<FollowUpQueueProcessingResult> {
   console.log("Checking if we have queued follow up messages", {
     threadId,
@@ -641,6 +654,7 @@ export async function maybeProcessFollowUpQueue({
           userId,
           threadId,
           threadChatId,
+          dispatchAttempt,
         });
       }
       return {
@@ -725,6 +739,7 @@ export async function maybeProcessFollowUpQueue({
       userId,
       threadId,
       threadChatId,
+      dispatchAttempt,
     });
   } catch (error) {
     console.error("Follow-up processing failed", {

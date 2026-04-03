@@ -296,6 +296,37 @@ describe("maybeProcessFollowUpQueue", () => {
     expect(scheduleFollowUpRetryJob).toHaveBeenCalledTimes(1);
   });
 
+  it("returns retry exhausted when dispatch attempt exceeds max retries", async () => {
+    const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
+      await loadSubject({
+        initialThreadChat: {
+          id: "chat-1",
+          status: "complete",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [TEST_USER_MESSAGE],
+          messages: [],
+        },
+        startAgentMessageResult: { dispatchLaunched: false },
+      });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      dispatchAttempt: 3,
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_exhausted",
+      retryCount: 3,
+      maxRetries: 3,
+    });
+    expect(scheduleFollowUpRetryJob).not.toHaveBeenCalled();
+  });
+
   it("schedules retry when runId is provided but run context is not terminal", async () => {
     const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
       await loadSubject({
