@@ -485,6 +485,11 @@ async function processImplementingDispatchEffect(params: {
           maxRetries: followUpResult.maxRetries,
         },
       );
+      if (followUpResult.reason === "dispatch_retry_persistence_failed") {
+        throw new Error(
+          `follow-up queue retry persistence failed for implementing dispatch (runId=${runId})`,
+        );
+      }
     }
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {

@@ -265,6 +265,35 @@ describe("maybeProcessFollowUpQueue", () => {
     );
   });
 
+  it("returns dispatch_not_started for non-launched dispatch when invoked from retry job", async () => {
+    const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
+      await loadSubject({
+        initialThreadChat: {
+          id: "chat-1",
+          status: "complete",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [TEST_USER_MESSAGE],
+          messages: [],
+        },
+        startAgentMessageResult: { dispatchLaunched: false },
+      });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      fromRetryJob: true,
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_not_started",
+    });
+    expect(scheduleFollowUpRetryJob).not.toHaveBeenCalled();
+  });
+
   it("schedules retry when runId is provided but run context is not terminal", async () => {
     const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
       await loadSubject({
