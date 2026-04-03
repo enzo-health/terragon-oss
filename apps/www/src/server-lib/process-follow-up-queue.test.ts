@@ -222,8 +222,12 @@ describe("maybeProcessFollowUpQueue", () => {
     expect(startAgentMessage).not.toHaveBeenCalled();
   });
 
-  it("returns dispatch_not_started when startAgentMessage does not launch a run", async () => {
-    const { maybeProcessFollowUpQueue, startAgentMessage } = await loadSubject({
+  it("schedules retry when startAgentMessage does not launch a run", async () => {
+    const {
+      maybeProcessFollowUpQueue,
+      startAgentMessage,
+      scheduleFollowUpRetryJob,
+    } = await loadSubject({
       initialThreadChat: {
         id: "chat-1",
         status: "complete",
@@ -245,8 +249,51 @@ describe("maybeProcessFollowUpQueue", () => {
     expect(result).toEqual({
       processed: false,
       dispatchLaunched: false,
-      reason: "dispatch_not_started",
+      reason: "dispatch_retry_scheduled",
+      retryCount: 1,
+      maxRetries: 3,
     });
+    expect(scheduleFollowUpRetryJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        dispatchAttempt: 1,
+        deferCount: 0,
+        runAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it("returns persistence failure when dispatch does not launch and retry scheduling fails", async () => {
+    const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
+      await loadSubject({
+        initialThreadChat: {
+          id: "chat-1",
+          status: "complete",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [TEST_USER_MESSAGE],
+          messages: [],
+        },
+        startAgentMessageResult: { dispatchLaunched: false },
+        scheduleFollowUpRetryError: new Error("redis unavailable"),
+      });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_persistence_failed",
+      retryCount: 1,
+      maxRetries: 3,
+    });
+    expect(scheduleFollowUpRetryJob).toHaveBeenCalledTimes(1);
   });
 
   it("schedules retry when runId is provided but run context is not terminal", async () => {
