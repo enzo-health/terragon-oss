@@ -270,7 +270,6 @@ async function processGateReviewEffect(params: {
       executionClass: "gate_runtime",
       dispatchMechanism: "self_dispatch",
     });
-    await markDispatchIntentDispatched(params.db, runId);
   } catch {
     // Non-fatal: Redis intent + cron sweep handle recovery
   }
@@ -330,6 +329,21 @@ async function processGateReviewEffect(params: {
         maxRetries: queueResult.maxRetries ?? null,
       });
       throw new Error(failureReason);
+    }
+    try {
+      await markDispatchIntentDispatched(params.db, runId);
+    } catch (intentStateError) {
+      console.warn(
+        "[delivery-loop] failed to mark gate dispatch intent as dispatched",
+        {
+          workflowId,
+          runId,
+          error:
+            intentStateError instanceof Error
+              ? intentStateError.message
+              : intentStateError,
+        },
+      );
     }
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up gate queue trigger failed", {
@@ -441,7 +455,6 @@ async function processImplementingDispatchEffect(params: {
       executionClass: params.executionClass,
       dispatchMechanism: "self_dispatch",
     });
-    await markDispatchIntentDispatched(params.db, runId);
   } catch (dbIntentErr) {
     console.warn(
       "[delivery-loop] DB dispatch intent persistence failed (non-fatal)",
@@ -506,6 +519,21 @@ async function processImplementingDispatchEffect(params: {
         maxRetries: queueResult.maxRetries ?? null,
       });
       throw new Error(failureReason);
+    }
+    try {
+      await markDispatchIntentDispatched(params.db, runId);
+    } catch (intentStateError) {
+      console.warn(
+        "[delivery-loop] failed to mark implementing dispatch intent as dispatched",
+        {
+          workflowId,
+          runId,
+          error:
+            intentStateError instanceof Error
+              ? intentStateError.message
+              : intentStateError,
+        },
+      );
     }
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed", {
