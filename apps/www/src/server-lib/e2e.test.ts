@@ -958,7 +958,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChatUpdated!.errorMessageInfo).toBe("transient daemon hiccup");
   });
 
-  it("rejects partial delivery-loop linkage in agent run context writes", async () => {
+  it("allows degraded delivery-loop linkage in agent run context writes", async () => {
     const testUserAndAccount = await createTestUser({ db });
     const user = testUserAndAccount.user;
     const { threadId, threadChatId } = await createTestThread({
@@ -970,12 +970,22 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         disableGitCheckpointing: true,
       },
     });
+    const workflowId = `workflow-${user.id}`;
+    await db.insert(schema.deliveryWorkflow).values({
+      id: workflowId,
+      threadId,
+      generation: 1,
+      kind: "delivery",
+      stateJson: {},
+      userId: user.id,
+      repoFullName: "terragon/test-repo",
+    });
 
     await expect(
       upsertAgentRunContext({
         db,
         runId: `run-${user.id}-missing-run-seq`,
-        workflowId: `workflow-${user.id}`,
+        workflowId,
         runSeq: null,
         userId: user.id,
         threadId,
@@ -990,7 +1000,10 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         status: "pending",
         tokenNonce: `nonce-${user.id}-missing-run-seq`,
       }),
-    ).rejects.toThrow(/workflowId without runSeq/);
+    ).resolves.toMatchObject({
+      workflowId,
+      runSeq: null,
+    });
 
     await expect(
       upsertAgentRunContext({
@@ -1011,7 +1024,10 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         status: "pending",
         tokenNonce: `nonce-${user.id}-missing-workflow`,
       }),
-    ).rejects.toThrow(/runSeq without workflowId/);
+    ).resolves.toMatchObject({
+      workflowId: null,
+      runSeq: 1,
+    });
 
     await expect(
       upsertAgentRunContext({

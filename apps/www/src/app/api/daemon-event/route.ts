@@ -513,7 +513,9 @@ function buildCompletedEvent(
 ) {
   switch (state) {
     case "planning":
-      return { type: "planning_run_completed" as const, runId, runSeq };
+      return runSeq == null
+        ? { type: "planning_run_completed" as const }
+        : { type: "planning_run_completed" as const, runId, runSeq };
     case "gating_review":
       return { type: "gate_review_passed" as const, runId, runSeq };
     case "gating_ci":
@@ -533,12 +535,17 @@ function buildFailedEvent(
 ) {
   switch (state) {
     case "planning":
-      return {
-        type: "plan_failed" as const,
-        reason: errorMessage ?? "Planning run failed",
-        runId,
-        runSeq,
-      };
+      return runSeq == null
+        ? {
+            type: "plan_failed" as const,
+            reason: errorMessage ?? "Planning run failed",
+          }
+        : {
+            type: "plan_failed" as const,
+            reason: errorMessage ?? "Planning run failed",
+            runId,
+            runSeq,
+          };
     case "gating_review":
       return {
         type: "gate_review_failed" as const,
@@ -1310,8 +1317,10 @@ export async function POST(request: Request) {
       });
       const terminalState = headAfterAck?.state;
       const terminalRunSeq = runContext?.runSeq ?? null;
+      const allowLegacyPlanningTerminalEvent =
+        terminalState === "planning" && terminalRunSeq == null;
 
-      if (terminalRunSeq == null) {
+      if (terminalRunSeq == null && !allowLegacyPlanningTerminalEvent) {
         console.warn(
           "[daemon-event] skipping terminal v3 bridge without persisted runSeq",
           {
@@ -1320,6 +1329,48 @@ export async function POST(request: Request) {
             state: terminalState,
           },
         );
+      } else if (allowLegacyPlanningTerminalEvent) {
+        // Planning completions used to be unfenced. Keep that fallback for
+        // legacy or partially enrolled runs so the workflow cannot deadlock in
+        // planning while newer happy-path runs continue to carry runSeq.
+        console.warn(
+          "[daemon-event] bridging legacy planning terminal event without persisted runSeq",
+          {
+            loopId: effectiveLoopId,
+            runId: envelopeV2.runId,
+          },
+        );
+        if (daemonRunStatusFromMessages === "completed") {
+          await appendEventAndAdvance({
+            db,
+            workflowId: effectiveLoopId,
+            source: "daemon",
+            idempotencyKey: `planning-terminal:${envelopeV2.eventId}`,
+            event: buildCompletedEvent(
+              terminalState,
+              envelopeV2.runId,
+              null,
+              daemonHeadShaAtCompletion,
+            ),
+          });
+        } else if (daemonRunStatusFromMessages === "failed") {
+          await appendEventAndAdvance({
+            db,
+            workflowId: effectiveLoopId,
+            source: "daemon",
+            idempotencyKey: `planning-terminal:${envelopeV2.eventId}`,
+            event: buildFailedEvent(
+              terminalState,
+              envelopeV2.runId,
+              null,
+              daemonHeadShaAtCompletion,
+              daemonTerminalErrorInfo.errorMessage ?? undefined,
+              daemonTerminalErrorInfo.errorCategory,
+            ),
+          });
+        }
+      } else if (daemonRunStatusFromMessages === "stopped") {
+        // Preserve prior behavior: stopped terminals do not advance the v3 loop.
       } else if (daemonRunStatusFromMessages === "completed") {
         await appendEventAndAdvance({
           db,

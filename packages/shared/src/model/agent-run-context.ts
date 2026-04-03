@@ -10,7 +10,7 @@ import {
 } from "../db/types";
 import { AIAgent } from "@terragon/agent/types";
 
-function assertWorkflowRunLinkage({
+function warnOnPartialWorkflowRunLinkage({
   runId,
   workflowId,
   runSeq,
@@ -27,14 +27,17 @@ function assertWorkflowRunLinkage({
   }
 
   if (normalizedWorkflowId === null) {
-    throw new Error(
-      `agent run context ${runId} cannot persist runSeq without workflowId`,
+    console.warn(
+      "[agent-run-context] persisting degraded run linkage without workflowId",
+      { runId, runSeq: normalizedRunSeq },
     );
+    return;
   }
 
   if (normalizedRunSeq === null) {
-    throw new Error(
-      `agent run context ${runId} cannot persist workflowId without runSeq`,
+    console.warn(
+      "[agent-run-context] persisting degraded run linkage without runSeq",
+      { runId, workflowId: normalizedWorkflowId },
     );
   }
 }
@@ -76,7 +79,7 @@ export async function upsertAgentRunContext({
   tokenNonce: string;
   daemonTokenKeyId?: string | null;
 }): Promise<AgentRunContext> {
-  assertWorkflowRunLinkage({ runId, workflowId, runSeq });
+  warnOnPartialWorkflowRunLinkage({ runId, workflowId, runSeq });
 
   const values: AgentRunContextInsert = {
     runId,

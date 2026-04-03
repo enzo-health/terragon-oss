@@ -1764,6 +1764,66 @@ describe("daemon-event route", () => {
       );
     });
 
+    it("falls back to legacy planning terminal completion when runSeq is missing to avoid planning deadlock", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: null,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+        state: "planning",
+      });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-planning-terminal-legacy",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          event: { type: "dispatch_acked", runId: "run-1" },
+        }),
+      );
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          event: { type: "planning_run_completed" },
+        }),
+      );
+    });
+
     it("rejects pure v2 daemon event without v2 envelope", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<

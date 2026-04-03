@@ -737,10 +737,13 @@ export async function startAgentMessage({
           const workflowId = v2Workflow?.id ?? null;
           const workflowRunSeq = v3Head?.activeRunSeq ?? null;
           if (workflowId !== null && workflowRunSeq === null) {
-            throw new ThreadError(
-              "unknown-error",
-              "Delivery Loop run linkage missing active run sequence",
-              null,
+            console.warn(
+              "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
+              {
+                threadId,
+                threadChatId,
+                workflowId,
+              },
             );
           }
           const durableIntent =
