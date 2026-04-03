@@ -510,6 +510,80 @@ function retryToImplementing(params: {
   };
 }
 
+function retryInPlanning(params: {
+  head: WorkflowHead;
+  now: Date;
+  lane: "agent" | "infra";
+  reason: string | null;
+}): ReduceResult {
+  const next = withVersion(params.head, params.now);
+  const laneUpdate =
+    params.lane === "infra"
+      ? {
+          infraRetryCount: params.head.infraRetryCount + 1,
+          fixAttemptCount: params.head.fixAttemptCount,
+          max: params.head.maxInfraRetries,
+          count: params.head.infraRetryCount + 1,
+          blockedState: "awaiting_operator_action" as const,
+        }
+      : {
+          infraRetryCount: params.head.infraRetryCount,
+          fixAttemptCount: params.head.fixAttemptCount + 1,
+          max: params.head.maxFixAttempts,
+          count: params.head.fixAttemptCount + 1,
+          blockedState: "awaiting_manual_fix" as const,
+        };
+
+  if (laneUpdate.count >= laneUpdate.max) {
+    const blockedHead = {
+      ...next,
+      state: laneUpdate.blockedState,
+      activeGate: null,
+      ...clearActiveLease(params.head),
+      blockedReason:
+        params.reason ??
+        (params.lane === "infra"
+          ? "Infrastructure retry budget exhausted"
+          : "Fix attempt budget exhausted"),
+      fixAttemptCount: laneUpdate.fixAttemptCount,
+      infraRetryCount: laneUpdate.infraRetryCount,
+    };
+    return {
+      head: blockedHead,
+      effects: [publishStatusEffect(next, params.now)],
+      invariantActions: [],
+    };
+  }
+
+  const retryHead = {
+    ...next,
+    state: "planning" as const,
+    activeGate: null,
+    ...allocateImplementationLease({
+      head: params.head,
+      consumeCurrent: true,
+    }),
+    blockedReason: params.reason ?? null,
+    fixAttemptCount: laneUpdate.fixAttemptCount,
+    infraRetryCount: laneUpdate.infraRetryCount,
+  };
+  return {
+    head: retryHead,
+    effects: [
+      dispatchImplementingEffect(
+        next,
+        params.now,
+        params.lane,
+        laneUpdate.infraRetryCount,
+        laneUpdate.count,
+        params.reason,
+      ),
+      publishStatusEffect(next, params.now),
+    ],
+    invariantActions: [],
+  };
+}
+
 export function reduce(params: {
   head: WorkflowHead;
   event: LoopEvent;
@@ -562,6 +636,7 @@ export function reduce(params: {
               ...next,
               state: "planning",
               activeGate: null,
+              ...clearActiveLease(head),
               blockedReason: null,
             },
             effects: [
@@ -584,6 +659,7 @@ export function reduce(params: {
               ...next,
               state: "awaiting_manual_fix",
               activeGate: null,
+              ...clearActiveLease(head),
               blockedReason: event.reason,
             },
             effects: [publishStatusEffect(next, now)],
@@ -598,6 +674,10 @@ export function reduce(params: {
               ...next,
               state: "planning",
               activeGate: null,
+              ...allocateImplementationLease({
+                head,
+                consumeCurrent: false,
+              }),
               blockedReason: null,
             },
             effects: [
@@ -611,6 +691,98 @@ export function reduce(params: {
             ],
             invariantActions: [],
           };
+          break;
+        }
+        if (event.type === "dispatch_queued") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "planning",
+              activeRunId: event.runId,
+              activeRunSeq: head.activeRunSeq,
+              leaseExpiresAt: event.ackDeadlineAt,
+              lastTerminalRunSeq: head.lastTerminalRunSeq,
+              blockedReason: null,
+            },
+            effects: [
+              {
+                kind: "run_lease_expiry_check",
+                effectKey: `${head.workflowId}:${event.runId}:lease_expiry`,
+                dueAt: event.ackDeadlineAt,
+                payload: {
+                  kind: "run_lease_expiry_check",
+                  runId: event.runId,
+                  workflowVersion: next.version,
+                },
+              },
+            ],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (
+          event.type === "dispatch_claimed" ||
+          event.type === "dispatch_accepted"
+        ) {
+          result = {
+            head,
+            effects: [],
+            invariantActions: [],
+          };
+          break;
+        }
+        if (event.type === "dispatch_ack_timeout") {
+          if (
+            isOutOfOrderRunSignal({
+              head,
+              runId: event.runId,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          result = retryInPlanning({
+            head,
+            now,
+            lane: "infra",
+            reason: `Dispatch ack timeout for planning run ${event.runId}`,
+          });
+          break;
+        }
+        if (event.type === "run_failed") {
+          if (
+            isOutOfOrderFailureSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              category: event.category,
+              lane: event.lane,
+            })
+          ) {
+            result = {
+              head,
+              effects: [],
+              invariantActions: [],
+            };
+            break;
+          }
+          const lane =
+            event.lane ??
+            classifyFailureLane({
+              category: event.category,
+              message: event.message,
+            });
+          result = retryInPlanning({
+            head,
+            now,
+            lane,
+            reason: event.message,
+          });
           break;
         }
         if (event.type !== "plan_completed") {

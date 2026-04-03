@@ -333,12 +333,19 @@ async function processGateReviewEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const followUpResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
+    if (!followUpResult.dispatchLaunched) {
+      return {
+        kind: "dispatch_gate_review",
+        outcome: "failed",
+        reason: `Follow-up dispatch did not launch (${followUpResult.reason})`,
+      };
+    }
   } catch {
     // Non-fatal: cron will pick up pending follow-ups
   }
@@ -491,12 +498,19 @@ async function processImplementingDispatchEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const followUpResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
+    if (!followUpResult.dispatchLaunched) {
+      return {
+        kind: "dispatch_implementing",
+        outcome: "failed",
+        reason: `Follow-up dispatch did not launch (${followUpResult.reason})`,
+      };
+    }
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
       workflowId,

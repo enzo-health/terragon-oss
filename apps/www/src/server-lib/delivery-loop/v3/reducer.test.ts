@@ -54,7 +54,7 @@ describe("reduce", () => {
     });
 
     expect(result.head.state).toBe("planning");
-    expect(result.head.activeRunSeq).toBeNull();
+    expect(result.head.activeRunSeq).toBe(1);
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0]).toMatchObject({
       kind: "dispatch_implementing",
