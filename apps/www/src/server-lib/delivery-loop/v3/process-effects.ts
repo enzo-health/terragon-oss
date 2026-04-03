@@ -275,33 +275,35 @@ async function processGateReviewEffect(params: {
     // Non-fatal: Redis intent + cron sweep handle recovery
   }
 
-  // Queue a "Continue gate check." message for the follow-up queue,
-  // but only on retries — on the first gate run the prior context is sufficient.
+  // Always queue a gate message so maybeProcessFollowUpQueue always has
+  // runnable input. Without this, first gate dispatches can report success
+  // while never launching a daemon run when queuedMessages is empty.
   const head = await getWorkflowHead({ db: params.db, workflowId });
   const isRetry =
     !!head &&
     (head.fixAttemptCount > 0 ||
       head.infraRetryCount > 0 ||
       head.generation > 1);
-  if (isRetry) {
-    const { updateThreadChat } = await import("@terragon/shared/model/threads");
-    await updateThreadChat({
-      db: params.db,
-      userId: workflow.userId,
-      threadId: workflow.threadId,
-      threadChatId: threadChat.id,
-      updates: {
-        appendQueuedMessages: [
-          {
-            type: "user" as const,
-            model: null,
-            timestamp: new Date().toISOString(),
-            parts: [{ type: "text" as const, text: "Continue gate check." }],
-          },
-        ],
-      },
-    });
-  }
+  const gateMessageText = isRetry
+    ? "Continue gate check."
+    : "Begin gate check.";
+  const { updateThreadChat } = await import("@terragon/shared/model/threads");
+  await updateThreadChat({
+    db: params.db,
+    userId: workflow.userId,
+    threadId: workflow.threadId,
+    threadChatId: threadChat.id,
+    updates: {
+      appendQueuedMessages: [
+        {
+          type: "user" as const,
+          model: null,
+          timestamp: new Date().toISOString(),
+          parts: [{ type: "text" as const, text: gateMessageText }],
+        },
+      ],
+    },
+  });
 
   // Trigger the follow-up queue to launch the sandbox run.
   // This is best-effort — the dispatch intent + queued message are already
@@ -310,14 +312,32 @@ async function processGateReviewEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const queueResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
-  } catch {
-    // Non-fatal: cron will pick up pending follow-ups
+    if (!queueResult.dispatchLaunched) {
+      const failureReason = `follow_up_gate_dispatch_not_started:${queueResult.reason}`;
+      console.warn("[delivery-loop] dispatch_gate_review did not launch", {
+        workflowId,
+        runId,
+        threadId: workflow.threadId,
+        threadChatId: threadChat.id,
+        followUpReason: queueResult.reason,
+        retryCount: queueResult.retryCount ?? null,
+        maxRetries: queueResult.maxRetries ?? null,
+      });
+      throw new Error(failureReason);
+    }
+  } catch (followUpErr) {
+    console.warn("[delivery-loop] follow-up gate queue trigger failed", {
+      workflowId,
+      runId,
+      error: followUpErr instanceof Error ? followUpErr.message : followUpErr,
+    });
+    throw followUpErr;
   }
 
   return {
