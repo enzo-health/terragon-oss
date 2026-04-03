@@ -223,7 +223,10 @@ function isOutOfOrderAwaitingPrRetrySignal(params: {
     return params.runId !== params.head.activeRunId;
   }
 
-  return true;
+  // Awaiting PR creation can legitimately emit lane-less failures (for example
+  // ensure_pr no-diff/failure) after legacy reconciliation clears active lease.
+  // Treat those as in-order so the workflow can retry implementation.
+  return false;
 }
 
 function isOutOfOrderGateSignal(params: {

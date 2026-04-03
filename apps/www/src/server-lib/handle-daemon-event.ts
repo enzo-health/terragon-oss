@@ -732,7 +732,7 @@ export async function handleDaemonEvent({
   if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
     try {
       let sdlcPhase: string | null = null;
-      if (runContext?.workflowId && runContext.runSeq != null) {
+      if (runContext?.workflowId) {
         const { getWorkflowHead } = await import(
           "@/server-lib/delivery-loop/v3/store"
         );
@@ -743,7 +743,10 @@ export async function handleDaemonEvent({
         if (!v3Head) {
           throw new Error(`No v3 head for workflow ${runContext.workflowId}`);
         }
-        if (v3Head.activeRunSeq !== runContext.runSeq) {
+        if (
+          runContext.runSeq != null &&
+          v3Head.activeRunSeq !== runContext.runSeq
+        ) {
           console.log(
             "[handle-daemon-event] skipping SDLC auto-retry for stale terminal event",
             {

@@ -698,6 +698,40 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
+  it("awaiting_pr_creation retries when no active lease and gate_review_failed has no lane", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const h = {
+      ...head("awaiting_pr_creation"),
+      activeRunId: null,
+      activeRunSeq: null,
+      blockedReason: "Awaiting PR creation",
+    };
+    const result = reduce({
+      head: h,
+      event: {
+        type: "gate_review_failed",
+        reason: "No code changes detected to open PR",
+      },
+      now,
+    });
+
+    expect(result.head.state).toBe("awaiting_implementation_acceptance");
+    expect(result.head.fixAttemptCount).toBe(1);
+    expect(result.head.activeRunSeq).toBe(1);
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]).toMatchObject({
+      kind: "dispatch_implementing",
+      payload: {
+        kind: "dispatch_implementing",
+        executionClass: "implementation_runtime",
+      },
+    });
+    expect(result.effects[1]).toMatchObject({
+      kind: "publish_status",
+      payload: { kind: "publish_status" },
+    });
+  });
+
   it("dispatch coherence clears stale activeRunId in non-dispatch state", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({

@@ -43,10 +43,6 @@ import {
   type WorkflowState,
 } from "./types";
 
-function isLegacyAckTimeoutCorrectnessEnabled(): boolean {
-  return process.env.DELIVERY_LOOP_V3_ENABLE_ACK_TIMEOUT_CORRECTNESS === "true";
-}
-
 function summarizeRetryReason(reason: string): string {
   const normalized = reason.replace(/\s+/g, " ").trim();
   if (normalized.length <= 180) {
@@ -811,22 +807,6 @@ async function handleAckTimeoutCheck(params: {
   effect: DeliveryEffectLedgerV3Row;
   payload: { runId: string; workflowVersion: number };
 }): Promise<EffectResult> {
-  // Queue lifecycle events (queued/claimed/accepted) are the active correctness
-  // path. Ack timeout is retained only as an opt-in legacy fallback.
-  if (!isLegacyAckTimeoutCorrectnessEnabled()) {
-    console.warn(
-      "[delivery-loop] ack_timeout_check received while legacy correctness path is disabled",
-      {
-        metric: "delivery_loop_v3_ack_timeout_ignored",
-        workflowId: params.effect.workflowId,
-        effectId: params.effect.id,
-        runId: params.payload.runId,
-        workflowVersion: params.payload.workflowVersion,
-      },
-    );
-    return { kind: "ack_timeout_check", outcome: "stale" };
-  }
-
   const [head, workflow] = await Promise.all([
     getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
     getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),

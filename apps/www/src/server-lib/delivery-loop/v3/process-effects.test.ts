@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid/non-secure";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -18,30 +18,7 @@ import { drainDueEffects, effectResultToEvent } from "./process-effects";
 import type { EffectResult, EffectSpec } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
-const ACK_TIMEOUT_CORRECTNESS_ENV_KEY =
-  "DELIVERY_LOOP_V3_ENABLE_ACK_TIMEOUT_CORRECTNESS";
-const ORIGINAL_ACK_TIMEOUT_CORRECTNESS_ENV =
-  process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY];
-
-function setAckTimeoutCorrectnessEnv(value: "true" | "false" | undefined) {
-  if (value === undefined) {
-    delete process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY];
-    return;
-  }
-  process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY] = value;
-}
-
-beforeEach(() => {
-  setAckTimeoutCorrectnessEnv(undefined);
-});
-
 afterEach(() => {
-  if (ORIGINAL_ACK_TIMEOUT_CORRECTNESS_ENV === undefined) {
-    delete process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY];
-  } else {
-    process.env[ACK_TIMEOUT_CORRECTNESS_ENV_KEY] =
-      ORIGINAL_ACK_TIMEOUT_CORRECTNESS_ENV;
-  }
   vi.restoreAllMocks();
 });
 
@@ -118,6 +95,23 @@ describe("effectResultToEvent", () => {
     });
   });
 
+  it("gate review failure carries the active runSeq when provided", () => {
+    const result = effectResultToEvent(
+      {
+        kind: "dispatch_gate_review",
+        outcome: "failed",
+        reason: "no sandbox",
+      },
+      { activeRunSeq: 7 },
+    );
+    expect(result).toMatchObject({
+      type: "run_failed",
+      runSeq: 7,
+      category: "effect_failure",
+      lane: "infra",
+    });
+  });
+
   // ensure_pr
   it("PR linked → pr_linked", () => {
     const result = effectResultToEvent({
@@ -136,6 +130,7 @@ describe("effectResultToEvent", () => {
     });
     expect(result).toEqual({
       type: "gate_review_failed",
+      runSeq: null,
       reason: "No code changes",
     });
   });
@@ -148,6 +143,23 @@ describe("effectResultToEvent", () => {
     });
     expect(result).toEqual({
       type: "gate_review_failed",
+      runSeq: null,
+      reason: "sandbox error",
+    });
+  });
+
+  it("ensure_pr failures carry the active runSeq when provided", () => {
+    const result = effectResultToEvent(
+      {
+        kind: "ensure_pr",
+        outcome: "failed",
+        reason: "sandbox error",
+      },
+      { activeRunSeq: 9 },
+    );
+    expect(result).toEqual({
+      type: "gate_review_failed",
+      runSeq: 9,
       reason: "sandbox error",
     });
   });
@@ -195,6 +207,23 @@ describe("effectResultToEvent", () => {
     expect(result).toMatchObject({
       type: "run_failed",
       message: "sandbox unavailable",
+      category: "effect_failure",
+      lane: "infra",
+    });
+  });
+
+  it("implementing dispatch failure carries the active runSeq when provided", () => {
+    const result = effectResultToEvent(
+      {
+        kind: "dispatch_implementing",
+        outcome: "failed",
+        reason: "sandbox unavailable",
+      },
+      { activeRunSeq: 11 },
+    );
+    expect(result).toMatchObject({
+      type: "run_failed",
+      runSeq: 11,
       category: "effect_failure",
       lane: "infra",
     });
@@ -358,8 +387,7 @@ describe("drainDueEffects", () => {
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
   });
 
-  it("emits dispatch_ack_timeout when legacy correctness is enabled", async () => {
-    setAckTimeoutCorrectnessEnv("true");
+  it("emits dispatch_ack_timeout when ack timeout expires", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
@@ -481,10 +509,7 @@ describe("drainDueEffects", () => {
       .where(eq(schema.deliveryEffectLedgerV3.workflowId, workflowId));
   });
 
-  it("ack timeout defaults to stale when legacy correctness is unset", async () => {
-    setAckTimeoutCorrectnessEnv(undefined);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
+  it("suppresses ack timeout when daemon run context confirms the run is active", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
@@ -509,6 +534,36 @@ describe("drainDueEffects", () => {
       expectedVersion: head.version,
     });
     expect(hydrated).toBe(true);
+
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: eq(schema.deliveryWorkflow.id, workflowId),
+    });
+    if (!workflow) {
+      throw new Error("Expected workflow row for run-context suppression test");
+    }
+
+    const [threadChat] = await db
+      .insert(schema.threadChat)
+      .values({
+        threadId: workflow.threadId,
+        userId: workflow.userId,
+        status: "working",
+      })
+      .returning({ id: schema.threadChat.id });
+    if (!threadChat) {
+      throw new Error("Expected thread chat row for run-context suppression");
+    }
+
+    await db.insert(schema.agentRunContext).values({
+      runId: dispatchRunId,
+      userId: workflow.userId,
+      threadId: workflow.threadId,
+      threadChatId: threadChat.id,
+      sandboxId: `sandbox-${nanoid()}`,
+      agent: "claudeCode",
+      tokenNonce: nanoid(),
+      status: "processing",
+    });
 
     await db
       .delete(schema.deliveryEffectLedgerV3)
@@ -547,7 +602,7 @@ describe("drainDueEffects", () => {
     if (!afterDrain) {
       throw new Error("Expected workflow head after draining timer");
     }
-    expect(afterDrain.state).not.toBe("awaiting_operator_action");
+    expect(afterDrain.state).toBe("awaiting_implementation_acceptance");
     expect(afterDrain.activeRunId).toBe(dispatchRunId);
     expect(afterDrain.infraRetryCount).toBe(0);
     expect(afterDrain.version).toBe(head.version + 1);
@@ -568,16 +623,6 @@ describe("drainDueEffects", () => {
     ).toBe(false);
     expect(effectRows.some((row) => row.effectKind === "publish_status")).toBe(
       false,
-    );
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[delivery-loop] ack_timeout_check received while legacy correctness path is disabled",
-      expect.objectContaining({
-        metric: "delivery_loop_v3_ack_timeout_ignored",
-        workflowId,
-        runId: dispatchRunId,
-        workflowVersion: head.version + 1,
-      }),
     );
   });
 
@@ -611,6 +656,7 @@ describe("drainDueEffects", () => {
         state: "awaiting_pr_creation",
         activeGate: null,
         activeRunId: null,
+        activeRunSeq: 3,
         blockedReason: "stale marker should not block ensure_pr",
         updatedAt: now,
         lastActivityAt: now,
@@ -665,7 +711,6 @@ describe("drainDueEffects", () => {
   });
 
   it("fires ack timeout when daemon appears working but activeRunId was not journaled", async () => {
-    setAckTimeoutCorrectnessEnv("true");
     // Regression test for: daemon acked (dispatch intent = "acknowledged") but
     // dispatch_acked journal event was never written. The head's activeRunId
     // still holds the dispatched runId from dispatch_sent, but no journal ack
@@ -767,7 +812,6 @@ describe("drainDueEffects", () => {
   });
 
   it("suppresses ack timeout when daemon is working AND activeRunId matches", async () => {
-    setAckTimeoutCorrectnessEnv("true");
     // Verify the happy path: daemon is working, ack was journaled (activeRunId
     // matches the effect's runId), timeout should be suppressed as stale.
     const now = new Date("2026-03-18T10:00:00.000Z");
@@ -866,7 +910,6 @@ describe("drainDueEffects", () => {
   });
 
   it("ack timeout with version mismatch returns stale (no event fired)", async () => {
-    setAckTimeoutCorrectnessEnv("true");
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
@@ -937,7 +980,6 @@ describe("drainDueEffects", () => {
   });
 
   it("ack timeout fires when no threadChat exists", async () => {
-    setAckTimeoutCorrectnessEnv("true");
     const now = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });

@@ -1317,66 +1317,31 @@ export async function POST(request: Request) {
       });
       const terminalState = headAfterAck?.state;
       const terminalRunSeq = runContext?.runSeq ?? null;
-      const allowLegacyPlanningTerminalEvent =
-        terminalState === "planning" && terminalRunSeq == null;
-
-      if (terminalRunSeq == null && !allowLegacyPlanningTerminalEvent) {
+      if (terminalRunSeq == null) {
+        // Migration-window fallback: keep bridging terminal events even when
+        // older run-context rows lack runSeq. Fencing by runSeq is still used
+        // whenever available.
         console.warn(
-          "[daemon-event] skipping terminal v3 bridge without persisted runSeq",
+          "[daemon-event] bridging terminal event without persisted runSeq (legacy fallback)",
           {
             loopId: effectiveLoopId,
             runId: envelopeV2.runId,
             state: terminalState,
           },
         );
-      } else if (allowLegacyPlanningTerminalEvent) {
-        // Planning completions used to be unfenced. Keep that fallback for
-        // legacy or partially enrolled runs so the workflow cannot deadlock in
-        // planning while newer happy-path runs continue to carry runSeq.
-        console.warn(
-          "[daemon-event] bridging legacy planning terminal event without persisted runSeq",
-          {
-            loopId: effectiveLoopId,
-            runId: envelopeV2.runId,
-          },
-        );
-        if (daemonRunStatusFromMessages === "completed") {
-          await appendEventAndAdvance({
-            db,
-            workflowId: effectiveLoopId,
-            source: "daemon",
-            idempotencyKey: `planning-terminal:${envelopeV2.eventId}`,
-            event: buildCompletedEvent(
-              terminalState,
-              envelopeV2.runId,
-              null,
-              daemonHeadShaAtCompletion,
-            ),
-          });
-        } else if (daemonRunStatusFromMessages === "failed") {
-          await appendEventAndAdvance({
-            db,
-            workflowId: effectiveLoopId,
-            source: "daemon",
-            idempotencyKey: `planning-terminal:${envelopeV2.eventId}`,
-            event: buildFailedEvent(
-              terminalState,
-              envelopeV2.runId,
-              null,
-              daemonHeadShaAtCompletion,
-              daemonTerminalErrorInfo.errorMessage ?? undefined,
-              daemonTerminalErrorInfo.errorCategory,
-            ),
-          });
-        }
-      } else if (daemonRunStatusFromMessages === "stopped") {
+      }
+
+      if (daemonRunStatusFromMessages === "stopped") {
         // Preserve prior behavior: stopped terminals do not advance the v3 loop.
       } else if (daemonRunStatusFromMessages === "completed") {
         await appendEventAndAdvance({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
-          idempotencyKey: `run-completed:${envelopeV2.eventId}`,
+          idempotencyKey:
+            terminalState === "planning" && terminalRunSeq == null
+              ? `planning-terminal:${envelopeV2.eventId}`
+              : `run-completed:${envelopeV2.eventId}`,
           event: buildCompletedEvent(
             terminalState,
             envelopeV2.runId,
@@ -1389,7 +1354,10 @@ export async function POST(request: Request) {
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
-          idempotencyKey: `run-failed:${envelopeV2.eventId}`,
+          idempotencyKey:
+            terminalState === "planning" && terminalRunSeq == null
+              ? `planning-terminal:${envelopeV2.eventId}`
+              : `run-failed:${envelopeV2.eventId}`,
           event: buildFailedEvent(
             terminalState,
             envelopeV2.runId,
