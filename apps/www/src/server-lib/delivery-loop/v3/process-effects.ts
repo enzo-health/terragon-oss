@@ -468,12 +468,24 @@ async function processImplementingDispatchEffect(params: {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
     );
-    await maybeProcessFollowUpQueue({
+    const followUpResult = await maybeProcessFollowUpQueue({
       userId: workflow.userId,
       threadId: workflow.threadId,
       threadChatId: threadChat.id,
       bypassBusyCheck: true,
     });
+    if (!followUpResult.dispatchLaunched) {
+      console.warn(
+        "[delivery-loop] follow-up queue trigger did not launch dispatch",
+        {
+          workflowId,
+          runId,
+          reason: followUpResult.reason,
+          retryCount: followUpResult.retryCount,
+          maxRetries: followUpResult.maxRetries,
+        },
+      );
+    }
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
       workflowId,
