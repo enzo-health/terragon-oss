@@ -999,11 +999,13 @@ export function reduce(params: {
           }
           const next = withVersion(head, now);
           const hasLinkedPr = typeof event.prNumber === "number";
+          const nextHeadSha = event.headSha ?? head.headSha;
           result = {
             head: {
               ...next,
               state: hasLinkedPr ? "gating_ci" : "awaiting_pr_creation",
               activeGate: hasLinkedPr ? "ci" : null,
+              headSha: nextHeadSha,
               ...continueActiveLease(head),
               blockedReason: hasLinkedPr ? null : AWAITING_PR_CREATION_REASON,
             },

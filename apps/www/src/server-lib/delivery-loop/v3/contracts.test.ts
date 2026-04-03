@@ -129,6 +129,7 @@ describe("v3 contracts", () => {
       type: "gate_review_passed",
       runId: "run-review-1",
       runSeq: 9,
+      headSha: "sha-review-1",
       prNumber: 123,
     });
     const parsed = parseLoopEvent(serialized);
@@ -137,6 +138,7 @@ describe("v3 contracts", () => {
       type: "gate_review_passed",
       runId: "run-review-1",
       runSeq: 9,
+      headSha: "sha-review-1",
       prNumber: 123,
     });
   });
@@ -201,6 +203,12 @@ describe("v3 contracts", () => {
       parseLoopEvent({
         type: "gate_ci_failed",
         runId: 123,
+      }),
+    ).toBeNull();
+    expect(
+      parseLoopEvent({
+        type: "gate_review_passed",
+        headSha: 123,
       }),
     ).toBeNull();
     expect(

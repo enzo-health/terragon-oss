@@ -536,6 +536,7 @@ describe("reduce", () => {
         type: "gate_review_passed",
         runId: "run-review",
         prNumber: 42,
+        headSha: "sha-after-review",
       },
       now,
     });
@@ -544,6 +545,7 @@ describe("reduce", () => {
     expect(result.head.activeGate).toBe("ci");
     expect(result.head.activeRunId).toBe("run-review");
     expect(result.head.activeRunSeq).toBe(1);
+    expect(result.head.headSha).toBe("sha-after-review");
   });
 
   it("gate_review_passed with mismatched runSeq is ignored", () => {

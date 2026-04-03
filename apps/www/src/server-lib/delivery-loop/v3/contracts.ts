@@ -162,6 +162,7 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
         type: event.type,
         runId: event.runId ?? null,
         runSeq: event.runSeq ?? null,
+        headSha: event.headSha ?? null,
         prNumber: event.prNumber ?? null,
       };
     case "pr_linked":
@@ -332,6 +333,13 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       if (
+        payload.headSha !== undefined &&
+        payload.headSha !== null &&
+        typeof payload.headSha !== "string"
+      ) {
+        return null;
+      }
+      if (
         payload.prNumber !== undefined &&
         payload.prNumber !== null &&
         (typeof payload.prNumber !== "number" ||
@@ -346,6 +354,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         type: "gate_review_passed",
         runId: (payload.runId as string | null | undefined) ?? null,
         runSeq: toOptionalInteger(payload.runSeq) ?? null,
+        headSha: (payload.headSha as string | null | undefined) ?? null,
         prNumber: (payload.prNumber as number | null | undefined) ?? null,
       };
     case "pr_linked":

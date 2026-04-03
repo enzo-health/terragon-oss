@@ -61,6 +61,7 @@ export type LoopEvent =
       type: "gate_review_passed";
       runId?: string | null;
       runSeq?: number | null;
+      headSha?: string | null;
       prNumber?: number | null;
     }
   | { type: "pr_linked"; prNumber?: number | null }

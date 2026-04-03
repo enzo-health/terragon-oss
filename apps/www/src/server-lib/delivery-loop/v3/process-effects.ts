@@ -511,6 +511,14 @@ async function processImplementingDispatchEffect(params: {
         reason: `Follow-up dispatch did not launch (${followUpResult.reason})`,
       };
     }
+
+    // Keep thread-level status in sync with workflow-level implementing phase.
+    // startAgentMessage usually flips this, but delivery-loop retries can launch
+    // from queued follow-up paths where thread.status is still queued.
+    await params.db
+      .update(schema.thread)
+      .set({ status: "working", updatedAt: new Date() })
+      .where(eq(schema.thread.id, workflow.threadId));
   } catch (followUpErr) {
     console.warn("[delivery-loop] follow-up queue trigger failed (non-fatal)", {
       workflowId,

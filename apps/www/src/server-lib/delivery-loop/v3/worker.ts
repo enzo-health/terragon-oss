@@ -243,6 +243,12 @@ function parseLegacySignalEnvelopeToLoopEvent(
             : null;
       const reviewRunSeq =
         toOptionalRunSeq(rawEvent.runSeq) ?? toOptionalRunSeq(rawResult.runSeq);
+      const reviewHeadSha =
+        typeof rawEvent.headSha === "string"
+          ? rawEvent.headSha
+          : typeof rawResult.headSha === "string"
+            ? rawResult.headSha
+            : null;
       if (!reviewRunId) {
         return {
           kind: "noop",
@@ -256,6 +262,7 @@ function parseLegacySignalEnvelopeToLoopEvent(
             type: "gate_review_passed",
             runId: reviewRunId,
             runSeq: reviewRunSeq,
+            headSha: reviewHeadSha,
           },
         };
       }

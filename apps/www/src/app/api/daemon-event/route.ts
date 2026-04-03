@@ -517,7 +517,7 @@ function buildCompletedEvent(
         ? { type: "planning_run_completed" as const }
         : { type: "planning_run_completed" as const, runId, runSeq };
     case "gating_review":
-      return { type: "gate_review_passed" as const, runId, runSeq };
+      return { type: "gate_review_passed" as const, runId, runSeq, headSha };
     case "gating_ci":
       return { type: "gate_ci_passed" as const, runId, runSeq, headSha };
     default:
