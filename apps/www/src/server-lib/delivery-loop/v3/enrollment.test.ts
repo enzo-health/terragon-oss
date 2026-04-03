@@ -52,11 +52,11 @@ describe("enrollWorkflow", () => {
       workflowId: result.workflowId,
     });
     expect(head).toBeTruthy();
-    // Bootstrap preserves the planning boundary; implementation starts after
-    // plan completion, not during enrollment.
+    // Enrollment preserves the planning boundary, but eager effect draining can
+    // already allocate/queue the planning run lease before we read the head.
     expect(head!.state).toBe("planning");
     expect(head!.version).toBeGreaterThan(0);
-    expect(head!.activeRunSeq).toBeNull();
+    expect(head!.activeRunSeq).toBeGreaterThan(0);
   });
 
   it("inserts a bootstrap journal event", async () => {
