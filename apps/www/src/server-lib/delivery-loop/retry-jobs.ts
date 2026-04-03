@@ -343,6 +343,7 @@ export async function drainDueDeliveryLoopRetryJobs({
       userId: job.userId,
       threadId: job.threadId,
       threadChatId: job.threadChatId,
+      dispatchAttempt: job.dispatchAttempt,
     });
 
     let effectiveResult = result;
@@ -355,6 +356,7 @@ export async function drainDueDeliveryLoopRetryJobs({
         userId: job.userId,
         threadId: job.threadId,
         threadChatId: job.threadChatId,
+        dispatchAttempt: job.dispatchAttempt,
       });
     }
 
