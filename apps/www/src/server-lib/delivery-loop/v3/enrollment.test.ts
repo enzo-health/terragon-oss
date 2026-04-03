@@ -39,7 +39,7 @@ describe("enrollWorkflow", () => {
     expect(workflow!.userId).toBe(testUserId);
   });
 
-  it("creates a v3 head row that transitions to awaiting implementation acceptance after bootstrap", async () => {
+  it("creates a v3 head row that stays in planning after bootstrap", async () => {
     const result = await enrollWorkflow({
       db,
       threadId: testThreadId,
@@ -52,9 +52,11 @@ describe("enrollWorkflow", () => {
       workflowId: result.workflowId,
     });
     expect(head).toBeTruthy();
-    // bootstrap now queues dispatch and waits for explicit acceptance before implementing
-    expect(head!.state).toBe("awaiting_implementation_acceptance");
+    // Bootstrap preserves the planning boundary; implementation starts after
+    // plan completion, not during enrollment.
+    expect(head!.state).toBe("planning");
     expect(head!.version).toBeGreaterThan(0);
+    expect(head!.activeRunSeq).toBeNull();
   });
 
   it("inserts a bootstrap journal event", async () => {

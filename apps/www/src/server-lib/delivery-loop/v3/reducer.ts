@@ -596,12 +596,8 @@ export function reduce(params: {
           result = {
             head: {
               ...next,
-              state: "implementing",
+              state: "planning",
               activeGate: null,
-              ...allocateImplementationLease({
-                head,
-                consumeCurrent: false,
-              }),
               blockedReason: null,
             },
             effects: [

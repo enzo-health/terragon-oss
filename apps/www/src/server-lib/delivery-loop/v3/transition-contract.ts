@@ -166,7 +166,7 @@ function makeNoopTransitionRow(): TransitionRow {
 export const EXPECTED_TRANSITIONS: TransitionMatrix = {
   planning: {
     bootstrap: {
-      target: "implementing",
+      target: "stay",
       effects: ["dispatch_implementing", "publish_status"],
     },
     planning_run_completed: {
@@ -409,6 +409,14 @@ export type BranchTransitionCase = {
 };
 
 export const BRANCH_CASES: BranchTransitionCase[] = [
+  {
+    name: "planning + bootstrap -> stay",
+    head: makeContractHead("planning"),
+    event: { type: "bootstrap" },
+    expectedState: "planning",
+    expectedVersionDelta: 1,
+    expectedEffects: ["dispatch_implementing", "publish_status"],
+  },
   {
     name: "planning + plan_completed -> implementing",
     head: makeContractHead("planning"),
