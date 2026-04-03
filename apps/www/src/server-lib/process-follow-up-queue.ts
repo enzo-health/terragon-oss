@@ -668,11 +668,38 @@ export async function maybeProcessFollowUpQueue({
         reason: "dispatch_started_batch",
       };
     }
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "dispatch_not_started",
-    };
+    const retryCount = 1;
+    const runAt = new Date(Date.now() + retryDelayMsForAttempt(retryCount));
+    try {
+      await scheduleFollowUpRetryJob({
+        userId,
+        threadId,
+        threadChatId,
+        dispatchAttempt: retryCount,
+        deferCount: 0,
+        runAt,
+      });
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "dispatch_retry_scheduled",
+        retryCount,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      };
+    } catch (retryError) {
+      console.error("Failed to persist retry after dispatch did not launch", {
+        threadId,
+        threadChatId,
+        retryError,
+      });
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "dispatch_retry_persistence_failed",
+        retryCount,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      };
+    }
   } catch (error) {
     console.error("Follow-up processing failed", {
       threadId,
