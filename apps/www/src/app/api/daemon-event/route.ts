@@ -32,14 +32,16 @@ import {
 } from "@terragon/shared/model/agent-run-context";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
 import { and, eq } from "drizzle-orm";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
   isLocalRedisHttpMode,
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
 import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
-import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import {
+  getActiveWorkflowForThreadV3,
+  getWorkflowHead,
+} from "@/server-lib/delivery-loop/v3/store";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
   buildDeltaSequenceKey,
@@ -997,8 +999,9 @@ export async function POST(request: Request) {
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
 
-  const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-  const effectiveLoopId = runContext?.workflowId ?? v2Workflow?.id ?? null;
+  const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+  const effectiveLoopId =
+    runContext?.workflowId ?? activeWorkflow?.workflow.id ?? null;
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this stays

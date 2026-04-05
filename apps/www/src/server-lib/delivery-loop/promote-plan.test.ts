@@ -7,7 +7,7 @@ const mockCreatePlanArtifactForLoop = vi.hoisted(() => vi.fn());
 const mockApprovePlanArtifactForLoop = vi.hoisted(() => vi.fn());
 const mockReplacePlanTasksForArtifact = vi.hoisted(() => vi.fn());
 const mockTransitionSdlcLoopStateWithArtifact = vi.hoisted(() => vi.fn());
-const mockGetActiveWorkflowForThread = vi.hoisted(() => vi.fn());
+const mockGetActiveWorkflowForThreadV3 = vi.hoisted(() => vi.fn());
 
 vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
   createPlanArtifact: mockCreatePlanArtifactForLoop,
@@ -15,8 +15,8 @@ vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
   replacePlanTasksForArtifact: mockReplacePlanTasksForArtifact,
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
-  getActiveWorkflowForThread: mockGetActiveWorkflowForThread,
+vi.mock("./v3/store", () => ({
+  getActiveWorkflowForThreadV3: mockGetActiveWorkflowForThreadV3,
 }));
 
 // ─── import SUT after mocks ───────────────────────────────────
@@ -87,7 +87,7 @@ function makeArtifact(overrides?: Record<string, unknown>) {
 describe("plan deduplication (via approve mode)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetActiveWorkflowForThread.mockResolvedValue(null);
+    mockGetActiveWorkflowForThreadV3.mockResolvedValue(null);
   });
 
   it("reuses existing matching artifact instead of creating a new one", async () => {
@@ -329,7 +329,7 @@ describe("plan deduplication (via approve mode)", () => {
 describe("promotePlanToImplementing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetActiveWorkflowForThread.mockResolvedValue(null);
+    mockGetActiveWorkflowForThreadV3.mockResolvedValue(null);
   });
 
   describe("mode: checkpoint", () => {
@@ -587,11 +587,39 @@ describe("promotePlanToImplementing", () => {
     });
   });
 
-  describe("v2 workflow lookup", () => {
-    it("passes workflowId from v2 workflow when threadId is provided", async () => {
-      mockGetActiveWorkflowForThread.mockResolvedValue({
-        id: "wf-1",
+  describe("workflow id resolution", () => {
+    it("prefers the explicit workflowId when provided", async () => {
+      const artifact = makeArtifact({
+        id: "art-explicit-wf",
+        status: "generated",
+      });
+      mockCreatePlanArtifactForLoop.mockResolvedValue(artifact);
+      mockReplacePlanTasksForArtifact.mockResolvedValue(undefined);
+
+      await promotePlanToImplementing({
+        db: fakeDb,
+        loop: makeLoop({ planApprovalPolicy: "human_required" }),
+        parsedPlan: makeParsedPlan(),
+        mode: "checkpoint",
+        workflowId: "wf-explicit",
         threadId: "thread-1",
+      });
+
+      expect(mockGetActiveWorkflowForThreadV3).not.toHaveBeenCalled();
+      expect(mockCreatePlanArtifactForLoop).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowId: "wf-explicit" }),
+      );
+    });
+
+    it("passes workflowId from active v3 workflow when threadId is provided", async () => {
+      mockGetActiveWorkflowForThreadV3.mockResolvedValue({
+        workflow: {
+          id: "wf-1",
+          threadId: "thread-1",
+        },
+        head: {
+          state: "planning",
+        },
       });
 
       const artifact = makeArtifact({ id: "art-wf", status: "generated" });
@@ -606,7 +634,7 @@ describe("promotePlanToImplementing", () => {
         threadId: "thread-1",
       });
 
-      expect(mockGetActiveWorkflowForThread).toHaveBeenCalledWith(
+      expect(mockGetActiveWorkflowForThreadV3).toHaveBeenCalledWith(
         expect.objectContaining({ threadId: "thread-1" }),
       );
       expect(mockCreatePlanArtifactForLoop).toHaveBeenCalledWith(
@@ -626,14 +654,14 @@ describe("promotePlanToImplementing", () => {
         mode: "checkpoint",
       });
 
-      expect(mockGetActiveWorkflowForThread).not.toHaveBeenCalled();
+      expect(mockGetActiveWorkflowForThreadV3).not.toHaveBeenCalled();
       expect(mockCreatePlanArtifactForLoop).toHaveBeenCalledWith(
         expect.objectContaining({ workflowId: null }),
       );
     });
 
     it("passes null workflowId when workflow lookup returns null", async () => {
-      mockGetActiveWorkflowForThread.mockResolvedValue(null);
+      mockGetActiveWorkflowForThreadV3.mockResolvedValue(null);
 
       const artifact = makeArtifact({ id: "art-null-wf", status: "generated" });
       mockCreatePlanArtifactForLoop.mockResolvedValue(artifact);

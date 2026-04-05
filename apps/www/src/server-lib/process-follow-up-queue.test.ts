@@ -10,8 +10,11 @@ const TEST_USER_MESSAGE = {
 async function loadSubject(options: {
   initialThreadChat: Record<string, unknown> | null;
   latestThreadChat?: Record<string, unknown> | null;
+  threadChatResponses?: Array<Record<string, unknown> | null>;
   latestRunContextForThreadChat?: Record<string, unknown> | null;
   runContextByRunId?: Record<string, unknown> | null;
+  activeDispatchIntent?: Record<string, unknown> | null;
+  activeDispatchIntentSequence?: Array<Record<string, unknown> | null>;
   didUpdateStatus?: boolean;
   slashCommand?: { name: string } | null;
   startAgentMessageResult?: { dispatchLaunched: boolean };
@@ -23,10 +26,18 @@ async function loadSubject(options: {
     id: "thread-1",
     branchName: "terragon/test-branch",
   });
-  getThreadChat.mockResolvedValueOnce(options.initialThreadChat);
-  if (options.latestThreadChat !== undefined) {
-    getThreadChat.mockResolvedValueOnce(options.latestThreadChat);
+  const threadChatResponses =
+    options.threadChatResponses ??
+    [
+      options.initialThreadChat,
+      ...(options.latestThreadChat !== undefined ? [options.latestThreadChat] : []),
+    ];
+  for (const response of threadChatResponses) {
+    getThreadChat.mockResolvedValueOnce(response);
   }
+  getThreadChat.mockResolvedValue(
+    threadChatResponses[threadChatResponses.length - 1] ?? null,
+  );
 
   const updateThreadChatWithTransition = vi.fn().mockResolvedValue({
     didUpdateStatus: options.didUpdateStatus ?? true,
@@ -49,6 +60,17 @@ async function loadSubject(options: {
   const getSlashCommandOrNull = vi
     .fn()
     .mockReturnValue(options.slashCommand ?? null);
+
+  const getLatestActiveDispatchIntentForThreadChat = vi.fn();
+  const activeDispatchIntentResponses =
+    options.activeDispatchIntentSequence ?? [options.activeDispatchIntent ?? null];
+  for (const response of activeDispatchIntentResponses) {
+    getLatestActiveDispatchIntentForThreadChat.mockResolvedValueOnce(response);
+  }
+  getLatestActiveDispatchIntentForThreadChat.mockResolvedValue(
+    activeDispatchIntentResponses[activeDispatchIntentResponses.length - 1] ??
+      null,
+  );
 
   vi.resetModules();
   vi.doMock("@/lib/db", () => ({
@@ -78,6 +100,12 @@ async function loadSubject(options: {
       .fn()
       .mockResolvedValue(options.latestRunContextForThreadChat ?? null),
   }));
+  vi.doMock(
+    "@terragon/shared/delivery-loop/store/dispatch-intent-store",
+    () => ({
+      getLatestActiveDispatchIntentForThreadChat,
+    }),
+  );
   vi.doMock("@/lib/db-message-helpers", () => ({
     getLastUserMessageModel: vi.fn(() => null),
   }));
@@ -249,6 +277,78 @@ describe("maybeProcessFollowUpQueue", () => {
     });
   });
 
+  it("launches delivery-loop work from dispatch intent without queued messages", async () => {
+    const { maybeProcessFollowUpQueue, startAgentMessage } = await loadSubject({
+      initialThreadChat: {
+        id: "chat-1",
+        status: "complete",
+        agent: "claudeCode",
+        agentVersion: 0,
+        queuedMessages: [],
+        messages: [],
+      },
+      activeDispatchIntent: {
+        targetPhase: "implementing",
+      },
+    });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(startAgentMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db: {},
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        isNewThread: false,
+        createNewBranch: false,
+        branchName: "terragon/test-branch",
+      }),
+    );
+    expect(result).toEqual({
+      processed: true,
+      dispatchLaunched: true,
+      reason: "dispatch_started_batch",
+    });
+  });
+
+  it("does not launch intent-only dispatch after the durable intent disappears", async () => {
+    const { maybeProcessFollowUpQueue, startAgentMessage } = await loadSubject({
+      initialThreadChat: {
+        id: "chat-1",
+        status: "complete",
+        agent: "claudeCode",
+        agentVersion: 0,
+        queuedMessages: [],
+        messages: [],
+      },
+      latestThreadChat: {
+        id: "chat-1",
+        status: "working",
+        queuedMessages: [],
+        messages: [],
+      },
+      activeDispatchIntentSequence: [{ targetPhase: "implementing" }, null],
+    });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    });
+    expect(startAgentMessage).not.toHaveBeenCalled();
+  });
+
   it("schedules retry when runId is provided but run context is not terminal", async () => {
     const { maybeProcessFollowUpQueue, scheduleFollowUpRetryJob } =
       await loadSubject({
@@ -325,6 +425,48 @@ describe("maybeProcessFollowUpQueue", () => {
         dispatchAttempt: 1,
         deferCount: 0,
         runAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it("preserves newly queued messages when intent-only dispatch fails", async () => {
+    const { maybeProcessFollowUpQueue, updateThreadChatWithTransition } =
+      await loadSubject({
+        initialThreadChat: {
+          id: "chat-1",
+          status: "complete",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [],
+          messages: [],
+        },
+        latestThreadChat: {
+          id: "chat-1",
+          status: "working",
+          agent: "claudeCode",
+          agentVersion: 0,
+          queuedMessages: [TEST_USER_MESSAGE],
+          messages: [],
+        },
+        activeDispatchIntentSequence: [
+          { targetPhase: "implementing" },
+          { targetPhase: "implementing" },
+        ],
+        startAgentMessageError: new Error("boom"),
+      });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(result.reason).toBe("dispatch_retry_scheduled");
+    expect(updateThreadChatWithTransition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatUpdates: expect.objectContaining({
+          replaceQueuedMessages: [TEST_USER_MESSAGE],
+        }),
       }),
     );
   });

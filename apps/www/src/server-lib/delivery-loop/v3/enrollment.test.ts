@@ -6,8 +6,9 @@ import {
   createTestUser,
   createTestThread,
 } from "@terragon/shared/model/test-helpers";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { enrollWorkflow } from "./enrollment";
-import { getWorkflowHead } from "./store";
+import { getActiveWorkflowForThreadV3, getWorkflowHead } from "./store";
 
 let testUserId: string;
 let testThreadId: string;
@@ -162,6 +163,13 @@ describe("enrollWorkflow", () => {
       .update(schema.deliveryWorkflow)
       .set({ kind: "terminated" })
       .where(eq(schema.deliveryWorkflow.id, first.workflowId));
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "terminated",
+        blockedReason: "done",
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, first.workflowId));
 
     const second = await enrollWorkflow({
       db,
@@ -176,5 +184,70 @@ describe("enrollWorkflow", () => {
       where: eq(schema.deliveryWorkflow.id, second.workflowId),
     });
     expect(secondWorkflow!.generation).toBe(2);
+  });
+
+  it("treats a non-terminal v3 head as the existing workflow even if the legacy row is terminal", async () => {
+    const first = await enrollWorkflow({
+      db,
+      threadId: testThreadId,
+      userId: testUserId,
+      repoFullName: "test-org/test-repo",
+    });
+
+    await db
+      .update(schema.deliveryWorkflow)
+      .set({ kind: "terminated" })
+      .where(eq(schema.deliveryWorkflow.id, first.workflowId));
+
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "implementing",
+        blockedReason: null,
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, first.workflowId));
+
+    const second = await enrollWorkflow({
+      db,
+      threadId: testThreadId,
+      userId: testUserId,
+      repoFullName: "test-org/test-repo",
+    });
+
+    expect(second.workflowId).toBe(first.workflowId);
+
+    const workflows = await db.query.deliveryWorkflow.findMany({
+      where: eq(schema.deliveryWorkflow.threadId, testThreadId),
+    });
+    expect(workflows).toHaveLength(1);
+  });
+
+  it("recovers a planning workflow row that exists without a v3 head", async () => {
+    const orphan = await createWorkflow({
+      db,
+      threadId: testThreadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "test-org/test-repo",
+      userId: testUserId,
+    });
+
+    const result = await enrollWorkflow({
+      db,
+      threadId: testThreadId,
+      userId: testUserId,
+      repoFullName: "test-org/test-repo",
+    });
+
+    expect(result.workflowId).toBe(orphan.id);
+    await expect(
+      getActiveWorkflowForThreadV3({ db, threadId: testThreadId }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        workflow: expect.objectContaining({ id: orphan.id }),
+        head: expect.objectContaining({ workflowId: orphan.id }),
+      }),
+    );
   });
 });

@@ -21,9 +21,11 @@ import {
   getUnresolvedBlockingDeepReviewFindings,
 } from "@terragon/shared/delivery-loop/store/gate-persistence";
 import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
-import type { DeliveryWorkflow } from "@terragon/shared/delivery-loop/domain/workflow";
+import {
+  getActiveWorkflowForThreadV3,
+  type ActiveWorkflowForThreadV3,
+} from "@/server-lib/delivery-loop/v3/store";
+import { normalizePlanApprovalPolicy } from "@/server-lib/delivery-loop/v3/types";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 
@@ -275,34 +277,6 @@ function buildNeedsAttention({
     blockerCount: blockers.length,
     topBlockers: blockers.slice(0, 3),
   };
-}
-
-/**
- * Reconstruct the v2 DeliveryWorkflow aggregate from the DB row.
- * The DB stores `kind` + `stateJson`; we merge them into the
- * discriminated union the domain layer expects.
- */
-function hydrateV2Workflow(
-  row: Awaited<ReturnType<typeof getActiveWorkflowForThread>>,
-): DeliveryWorkflow | null {
-  if (!row) return null;
-  const base = {
-    workflowId:
-      row.id as import("@terragon/shared/delivery-loop/domain/workflow").WorkflowId,
-    threadId:
-      row.threadId as import("@terragon/shared/delivery-loop/domain/workflow").ThreadId,
-    generation: row.generation,
-    version: row.version,
-    fixAttemptCount: row.fixAttemptCount,
-    infraRetryCount: row.infraRetryCount ?? 0,
-    maxFixAttempts: row.maxFixAttempts,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    lastActivityAt: row.lastActivityAt,
-  };
-  const state = row.stateJson as Record<string, unknown>;
-  // Merge the common fields with the state-specific fields
-  return { ...base, kind: row.kind, ...state } as unknown as DeliveryWorkflow;
 }
 
 /**
@@ -570,25 +544,13 @@ async function assembleLoopStatusData(params: {
 }
 
 /**
- * Build the full DeliveryLoopStatus from a v2 delivery workflow.
+ * Build the full DeliveryLoopStatus from the active workflow/head pair.
  */
-async function buildStatusFromV2Workflow(params: {
-  workflow: DeliveryWorkflow;
-  workflowRow: NonNullable<
-    Awaited<ReturnType<typeof getActiveWorkflowForThread>>
-  >;
+async function buildStatusFromActiveWorkflow(params: {
+  workflowRow: ActiveWorkflowForThreadV3["workflow"];
+  v3Head: ActiveWorkflowForThreadV3["head"];
 }): Promise<DeliveryLoopStatus> {
-  const { workflow, workflowRow } = params;
-
-  // Derive v3 head — sole source for state, snapshot, and blocked reason
-  const v3Head = await getWorkflowHead({
-    db,
-    workflowId: workflow.workflowId,
-  });
-
-  if (!v3Head) {
-    throw new Error(`No v3 head for workflow ${workflow.workflowId}`);
-  }
+  const { workflowRow, v3Head } = params;
 
   const loopSnapshot = buildSnapshotFromV3Head(v3Head);
   const loopState = loopSnapshot.kind;
@@ -610,10 +572,9 @@ async function buildStatusFromV2Workflow(params: {
   const explanation = blockedReason
     ? `${stateSummary.explanation} Reason: ${blockedReason}.`
     : stateSummary.explanation;
-  const planApprovalPolicy: "auto" | "human_required" =
-    loopState === "planning" && workflowRow.planApprovalPolicy === "human"
-      ? "human_required"
-      : (workflowRow.planApprovalPolicy as "auto" | "human_required");
+  const planApprovalPolicy = normalizePlanApprovalPolicy(
+    workflowRow.planApprovalPolicy,
+  );
 
   return {
     loopId: workflowRow.id,
@@ -664,19 +625,14 @@ export const getDeliveryLoopStatusAction = userOnlyAction(
       }
     }
 
-    const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row) {
+    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    if (!activeWorkflow) {
       return null;
     }
 
-    const workflow = hydrateV2Workflow(v2Row);
-    if (!workflow) {
-      return null;
-    }
-
-    const response = await buildStatusFromV2Workflow({
-      workflow,
-      workflowRow: v2Row,
+    const response = await buildStatusFromActiveWorkflow({
+      workflowRow: activeWorkflow.workflow,
+      v3Head: activeWorkflow.head,
     });
     return deliveryLoopStatusSchema.parse(response) as DeliveryLoopStatus;
   },

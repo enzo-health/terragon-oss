@@ -10,6 +10,8 @@ import type {
   DeliveryLoopBlockedState,
   DeliveryLoopSnapshot,
 } from "@terragon/shared/delivery-loop/domain/snapshot-types";
+import type { ThreadStatus } from "@terragon/shared";
+import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
 export type DeliveryLoopStatusCheckKey =
   | "ci"
@@ -68,6 +70,10 @@ export type DeliveryLoopStatusStateSummary = {
   explanation: string;
   progressPercent: number;
 };
+
+function assertNever(value: never, context: string): never {
+  throw new Error(`Unhandled ${context}: ${String(value)}`);
+}
 
 const TOP_PROGRESS_PHASE_LABELS: Record<
   DeliveryLoopTopProgressPhaseKey,
@@ -243,6 +249,104 @@ export function getDeliveryLoopSnapshotStateSummary(
   }
 }
 
+export function isDeliveryLoopStateActivelyWorking(
+  state: DeliveryLoopState | null | undefined,
+): boolean {
+  if (state === null || state === undefined) {
+    return false;
+  }
+  switch (state) {
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+    case "babysitting":
+      return true;
+    case "awaiting_pr_link":
+    case "blocked":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+    case "done":
+    case "stopped":
+      return false;
+    default:
+      return assertNever(state, "delivery loop state");
+  }
+}
+
+export function getDeliveryLoopAwareThreadStatus(params: {
+  threadStatus: ThreadStatus | null;
+  deliveryLoopState: DeliveryLoopState | null | undefined;
+}): ThreadStatus | null {
+  if (!isDeliveryLoopStateActivelyWorking(params.deliveryLoopState)) {
+    return params.threadStatus;
+  }
+
+  if (params.threadStatus === null) {
+    return "working";
+  }
+
+  switch (params.threadStatus) {
+    case "queued":
+    case "queued-blocked":
+    case "queued-sandbox-creation-rate-limit":
+    case "queued-tasks-concurrency":
+    case "queued-agent-rate-limit":
+    case "booting":
+    case "working":
+    case "stopping":
+    case "working-stopped":
+    case "working-error":
+    case "working-done":
+    case "checkpointing":
+      return params.threadStatus;
+    case "draft":
+    case "scheduled":
+    case "stopped":
+    case "complete":
+    case "error":
+      return "working";
+    default:
+      return assertNever(params.threadStatus, "thread status");
+  }
+}
+
+function isAgentMessageLike(message: unknown): boolean {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    (message as { type?: unknown }).type === "agent"
+  );
+}
+
+export function shouldRefreshDeliveryLoopStatusFromThreadPatch(
+  patch: BroadcastThreadPatch,
+): boolean {
+  if (patch.op === "delete" || patch.op === "delta") {
+    return false;
+  }
+
+  if (patch.op === "refetch") {
+    return true;
+  }
+
+  if ((patch.refetch ?? []).some((target) => target === "shell")) {
+    return true;
+  }
+
+  if (patch.shell !== undefined) {
+    return true;
+  }
+
+  if (patch.chat?.status !== undefined || patch.chat?.updatedAt !== undefined) {
+    return true;
+  }
+
+  return (patch.appendMessages ?? []).some(isAgentMessageLike);
+}
+
 function getEffectiveLoopStateForChecks(
   snapshot: DeliveryLoopSnapshot,
 ):
@@ -265,6 +369,7 @@ function inferCiStatusFromLoopState(
       return "not_started";
     case "ci_gate":
       return "pending";
+    case "ui_gate":
     case "babysitting":
     case "awaiting_pr_link":
     case "done":
@@ -274,7 +379,7 @@ function inferCiStatusFromLoopState(
     case "stopped":
       return "degraded";
     default:
-      return "pending";
+      return assertNever(loopState, "loop state for CI fallback");
   }
 }
 
@@ -299,7 +404,7 @@ function inferReviewThreadsStatusFromLoopState(
     case "stopped":
       return "degraded";
     default:
-      return "pending";
+      return assertNever(loopState, "loop state for review-thread fallback");
   }
 }
 
@@ -324,7 +429,7 @@ function inferReviewGateStatusFromLoopState(
     case "stopped":
       return "degraded";
     default:
-      return "pending";
+      return assertNever(loopState, "loop state for review-gate fallback");
   }
 }
 

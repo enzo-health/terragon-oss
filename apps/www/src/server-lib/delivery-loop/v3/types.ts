@@ -199,6 +199,8 @@ export type WorkflowHead = {
   lastActivityAt: Date | null;
 };
 
+export type NormalizedPlanApprovalPolicy = "auto" | "human_required";
+
 export function stateToDeliveryLoopState(
   state: WorkflowState | "awaiting_pr",
 ): DeliveryLoopState {
@@ -237,9 +239,40 @@ export function stateToDeliveryLoopState(
 }
 
 export const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
+export const TERMINAL_WORKFLOW_STATES = [
+  "done",
+  "stopped",
+  "terminated",
+] as const;
+const TERMINAL_WORKFLOW_STATE_SET: ReadonlySet<WorkflowState> = new Set(
+  TERMINAL_WORKFLOW_STATES,
+);
 
 export function isTerminalState(state: WorkflowState): boolean {
-  return state === "done" || state === "stopped" || state === "terminated";
+  return TERMINAL_WORKFLOW_STATE_SET.has(state);
+}
+
+export function normalizePlanApprovalPolicy(
+  policy: string | null | undefined,
+): NormalizedPlanApprovalPolicy {
+  switch (policy) {
+    case "human":
+    case "human_required":
+      return "human_required";
+    case "auto":
+    case null:
+    case undefined:
+    default:
+      return "auto";
+  }
+}
+
+export function normalizeEffectApprovalPolicy(
+  policy: string | null | undefined,
+): "auto" | "human" {
+  return normalizePlanApprovalPolicy(policy) === "human_required"
+    ? "human"
+    : "auto";
 }
 
 export function classifyFailureLane(params: {
