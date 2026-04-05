@@ -10,6 +10,8 @@ import type {
   DeliveryLoopBlockedState,
   DeliveryLoopSnapshot,
 } from "@terragon/shared/delivery-loop/domain/snapshot-types";
+import type { ThreadStatus } from "@terragon/shared";
+import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
 export type DeliveryLoopStatusCheckKey =
   | "ci"
@@ -241,6 +243,96 @@ export function getDeliveryLoopSnapshotStateSummary(
     case "terminated_pr_merged":
       return DELIVERY_STATE_SUMMARY[snapshot.kind];
   }
+}
+
+export function isDeliveryLoopStateActivelyWorking(
+  state: DeliveryLoopState | null | undefined,
+): boolean {
+  switch (state) {
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "ui_gate":
+    case "babysitting":
+      return true;
+    case "awaiting_pr_link":
+    case "blocked":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+    case "done":
+    case "stopped":
+    case null:
+    case undefined:
+      return false;
+  }
+}
+
+export function getDeliveryLoopAwareThreadStatus(params: {
+  threadStatus: ThreadStatus | null;
+  deliveryLoopState: DeliveryLoopState | null | undefined;
+}): ThreadStatus | null {
+  if (!isDeliveryLoopStateActivelyWorking(params.deliveryLoopState)) {
+    return params.threadStatus;
+  }
+
+  switch (params.threadStatus) {
+    case "queued":
+    case "queued-blocked":
+    case "queued-sandbox-creation-rate-limit":
+    case "queued-tasks-concurrency":
+    case "queued-agent-rate-limit":
+    case "booting":
+    case "working":
+    case "stopping":
+    case "working-stopped":
+    case "working-error":
+    case "working-done":
+    case "checkpointing":
+      return params.threadStatus;
+    case "draft":
+    case "scheduled":
+    case "stopped":
+    case "complete":
+    case "error":
+    case null:
+      return "working";
+  }
+}
+
+function isAgentMessageLike(message: unknown): boolean {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    (message as { type?: unknown }).type === "agent"
+  );
+}
+
+export function shouldRefreshDeliveryLoopStatusFromThreadPatch(
+  patch: BroadcastThreadPatch,
+): boolean {
+  if (patch.op === "delete" || patch.op === "delta") {
+    return false;
+  }
+
+  if (patch.op === "refetch") {
+    return true;
+  }
+
+  if ((patch.refetch ?? []).some((target) => target === "shell")) {
+    return true;
+  }
+
+  if (patch.shell !== undefined) {
+    return true;
+  }
+
+  if (patch.chat?.status !== undefined || patch.chat?.updatedAt !== undefined) {
+    return true;
+  }
+
+  return (patch.appendMessages ?? []).some(isAgentMessageLike);
 }
 
 function getEffectiveLoopStateForChecks(

@@ -19,11 +19,9 @@ import {
   replacePlanTasksForArtifact,
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
-import * as workflowStore from "@terragon/shared/delivery-loop/store/workflow-store";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
-import * as v3Store from "@/server-lib/delivery-loop/v3/store";
 import * as schema from "@terragon/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -48,17 +46,6 @@ const TERMINAL_STATUS_CASES = [
   },
 ] as const;
 
-type TerminalStatusCase = (typeof TERMINAL_STATUS_CASES)[number];
-
-function buildTerminalActionExplanation(
-  terminalCase: Pick<
-    TerminalStatusCase,
-    "blockedReason" | "expectedSummaryExplanation"
-  >,
-): string {
-  return `${terminalCase.expectedSummaryExplanation} Reason: ${terminalCase.blockedReason}.`;
-}
-
 describe("getDeliveryLoopStatusAction", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -68,77 +55,44 @@ describe("getDeliveryLoopStatusAction", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(TERMINAL_STATUS_CASES)(
-    "returns a consistent terminal status payload for $blockedReason",
-    async ({
-      blockedReason,
-      expectedState,
-      expectedLabel,
-      expectedSummaryExplanation,
-    }) => {
-      const { user, session } = await createTestUser({ db });
-      const { threadId } = await createTestThread({
-        db,
-        userId: user.id,
-        overrides: {
-          githubRepoFullName: "owner/repo",
-        },
-      });
-      await mockLoggedInUser(session);
+  it("uses the v3 head to resolve an active loop even when the legacy row is terminal", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
 
-      const workflow = await createWorkflow({
-        db,
-        threadId,
-        generation: 1,
-        kind: "implementing",
-        stateJson: {},
-        userId: user.id,
-        repoFullName: "owner/repo",
-      });
+    const workflow = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      kind: "terminated",
+      stateJson: {},
+      userId: user.id,
+      repoFullName: "owner/repo",
+    });
+    await ensureWorkflowHead({ db, workflowId: workflow.id });
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "implementing",
+        blockedReason: null,
+        updatedAt: new Date("2026-03-18T00:00:00.000Z"),
+        lastActivityAt: new Date("2026-03-18T00:00:00.000Z"),
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, workflow.id));
 
-      vi.spyOn(v3Store, "getWorkflowHead").mockResolvedValue({
-        workflowId: workflow.id,
-        threadId,
-        generation: workflow.generation,
-        version: workflow.version,
-        state: "terminated",
-        activeGate: null,
-        headSha: null,
-        activeRunId: null,
-        activeRunSeq: null,
-        leaseExpiresAt: null,
-        lastTerminalRunSeq: null,
-        fixAttemptCount: 0,
-        infraRetryCount: 0,
-        maxFixAttempts: workflow.maxFixAttempts,
-        maxInfraRetries: 10,
-        blockedReason,
-        createdAt: workflow.createdAt,
-        updatedAt: workflow.updatedAt,
-        lastActivityAt: workflow.lastActivityAt,
-      });
+    const status = await getDeliveryLoopStatus(threadId);
 
-      vi.spyOn(workflowStore, "getActiveWorkflowForThread").mockResolvedValue({
-        ...workflow,
-        kind: "implementing",
-        stateJson: {},
-      });
-
-      const status = await getDeliveryLoopStatus(threadId);
-
-      expect(status).not.toBeNull();
-      expect(status?.state).toBe(expectedState);
-      expect(status?.stateLabel).toBe(expectedLabel);
-      expect(status?.actions.canBypassOnce).toBe(false);
-      expect(status?.explanation).toBe(
-        buildTerminalActionExplanation({
-          blockedReason,
-          expectedSummaryExplanation,
-        }),
-      );
-      expect(status?.progressPercent).toBe(100);
-    },
-  );
+    expect(status).not.toBeNull();
+    expect(status?.loopId).toBe(workflow.id);
+    expect(status?.state).toBe("implementing");
+    expect(status?.actions.canApprovePlan).toBe(false);
+  });
 
   it.each(TERMINAL_STATUS_CASES)(
     "projects terminated workflow heads consistently for $blockedReason",

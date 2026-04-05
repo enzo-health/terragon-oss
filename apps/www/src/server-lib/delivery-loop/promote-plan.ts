@@ -6,7 +6,7 @@ import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getActiveWorkflowForThreadV3 } from "./v3/store";
 import type { ParsedPlanSpec } from "./parse-plan-spec";
 
 type PlanningLoopContext = {
@@ -293,15 +293,17 @@ export async function promotePlanToImplementing(params: {
   parsedPlan: ParsedPlanSpec & { source?: PlanSpecSource };
   mode: PromotePlanMode;
   approvedByUserId?: string;
+  workflowId?: string | null;
   threadId?: string;
 }): Promise<PromotePlanToImplementingResult> {
-  const v2Workflow = params.threadId
-    ? await getActiveWorkflowForThread({
-        db: params.db,
-        threadId: params.threadId,
-      })
-    : null;
-  const workflowId = v2Workflow?.id ?? null;
+  const activeWorkflow =
+    params.workflowId == null && params.threadId
+      ? await getActiveWorkflowForThreadV3({
+          db: params.db,
+          threadId: params.threadId,
+        })
+      : null;
+  const workflowId = params.workflowId ?? activeWorkflow?.workflow.id ?? null;
 
   if (params.mode === "checkpoint") {
     const loopVersion = nextLoopVersion(params.loop.loopVersion);

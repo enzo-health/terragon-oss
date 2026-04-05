@@ -8,6 +8,8 @@ import {
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import * as schema from "@terragon/shared/db/schema";
+import { eq } from "drizzle-orm";
 import {
   requestDeliveryLoopBypassCurrentGateOnce,
   requestDeliveryLoopResumeFromBlocked,
@@ -53,6 +55,38 @@ describe("delivery-loop-interventions", () => {
     await ensureWorkflowHead({ db, workflowId: loopBlocked.id });
 
     // Should not throw — workflow is in a blocked kind
+    await resumeFromBlocked({ threadId, threadChatId: null });
+  });
+
+  it("resumes when the legacy workflow row is terminal but the v3 head is blocked", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: { githubRepoFullName: "owner/repo" },
+    });
+    await mockLoggedInUser(session);
+
+    const loopBlocked = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      kind: "terminated",
+      stateJson: {},
+      userId: user.id,
+      repoFullName: "owner/repo",
+    });
+    await ensureWorkflowHead({ db, workflowId: loopBlocked.id });
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "awaiting_manual_fix",
+        blockedReason: "needs human fix",
+        updatedAt: new Date("2026-03-09T16:00:00.000Z"),
+        lastActivityAt: new Date("2026-03-09T16:00:00.000Z"),
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, loopBlocked.id));
+
     await resumeFromBlocked({ threadId, threadChatId: null });
   });
 

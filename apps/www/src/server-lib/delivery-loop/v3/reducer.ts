@@ -2,6 +2,7 @@ import {
   AWAITING_PR_CREATION_REASON,
   classifyFailureLane,
   type EffectSpec,
+  isTerminalState,
   type LoopEvent,
   type WorkflowHead,
 } from "./types";
@@ -594,11 +595,7 @@ export function reduce(params: {
   const event = params.event;
 
   let result: ReduceResult;
-  if (
-    head.state === "done" ||
-    head.state === "stopped" ||
-    head.state === "terminated"
-  ) {
+  if (isTerminalState(head.state)) {
     result = {
       head,
       effects: [],

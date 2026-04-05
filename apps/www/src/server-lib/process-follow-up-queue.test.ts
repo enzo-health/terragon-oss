@@ -12,6 +12,7 @@ async function loadSubject(options: {
   latestThreadChat?: Record<string, unknown> | null;
   latestRunContextForThreadChat?: Record<string, unknown> | null;
   runContextByRunId?: Record<string, unknown> | null;
+  activeDispatchIntent?: Record<string, unknown> | null;
   didUpdateStatus?: boolean;
   slashCommand?: { name: string } | null;
   startAgentMessageResult?: { dispatchLaunched: boolean };
@@ -78,6 +79,14 @@ async function loadSubject(options: {
       .fn()
       .mockResolvedValue(options.latestRunContextForThreadChat ?? null),
   }));
+  vi.doMock(
+    "@terragon/shared/delivery-loop/store/dispatch-intent-store",
+    () => ({
+      getLatestActiveDispatchIntentForThreadChat: vi
+        .fn()
+        .mockResolvedValue(options.activeDispatchIntent ?? null),
+    }),
+  );
   vi.doMock("@/lib/db-message-helpers", () => ({
     getLastUserMessageModel: vi.fn(() => null),
   }));
@@ -246,6 +255,45 @@ describe("maybeProcessFollowUpQueue", () => {
       processed: false,
       dispatchLaunched: false,
       reason: "dispatch_not_started",
+    });
+  });
+
+  it("launches delivery-loop work from dispatch intent without queued messages", async () => {
+    const { maybeProcessFollowUpQueue, startAgentMessage } = await loadSubject({
+      initialThreadChat: {
+        id: "chat-1",
+        status: "complete",
+        agent: "claudeCode",
+        agentVersion: 0,
+        queuedMessages: [],
+        messages: [],
+      },
+      activeDispatchIntent: {
+        targetPhase: "implementing",
+      },
+    });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(startAgentMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db: {},
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        isNewThread: false,
+        createNewBranch: false,
+        branchName: "terragon/test-branch",
+      }),
+    );
+    expect(result).toEqual({
+      processed: true,
+      dispatchLaunched: true,
+      reason: "dispatch_started_batch",
     });
   });
 

@@ -68,6 +68,14 @@ import dynamic from "next/dynamic";
 import { ThreadInfoFull } from "@terragon/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
 import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
+import {
+  deliveryLoopStatusQueryKeys,
+  useDeliveryLoopStatusQuery,
+} from "@/queries/delivery-loop-status-queries";
+import {
+  getDeliveryLoopAwareThreadStatus,
+  shouldRefreshDeliveryLoopStatusFromThreadPatch,
+} from "@/lib/delivery-loop-status";
 
 function isThreadStatusWorking(status: ThreadStatus): boolean {
   return [
@@ -294,10 +302,14 @@ function ChatUI({
   useRealtimeThread(threadId, threadChatId, (patches) => {
     let hasMaterializedMessages = false;
     let latestPatchedStatus: ThreadStatus | null = null;
+    let shouldRefreshDeliveryLoopStatus = false;
     for (const patch of patches) {
       if (patch.op === "delta") {
         applyDelta(patch);
       } else {
+        if (shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)) {
+          shouldRefreshDeliveryLoopStatus = true;
+        }
         if (patch.chat?.status) {
           latestPatchedStatus = patch.chat.status;
         }
@@ -325,6 +337,11 @@ function ChatUI({
       !isThreadStatusWorking(latestPatchedStatus)
     ) {
       clearDeltasForThread();
+    }
+    if (shouldShowDeliveryLoopStatus && shouldRefreshDeliveryLoopStatus) {
+      queryClient.invalidateQueries({
+        queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
+      });
     }
   });
 
@@ -419,6 +436,18 @@ function ChatUI({
       threadId,
     ],
   );
+  const { data: deliveryLoopStatus } = useDeliveryLoopStatusQuery({
+    threadId,
+    enabled: shouldShowDeliveryLoopStatus,
+  });
+  const effectiveThreadStatus = useMemo(
+    () =>
+      getDeliveryLoopAwareThreadStatus({
+        threadStatus: threadChat?.status ?? null,
+        deliveryLoopState: deliveryLoopStatus?.state,
+      }),
+    [deliveryLoopStatus?.state, threadChat?.status],
+  );
   const messages = useIncrementalUIMessages({
     dbMessages,
     agent: chatAgent,
@@ -484,9 +513,8 @@ function ChatUI({
     threadId,
   ]);
 
-  const isAgentCurrentlyWorking = threadChat
-    ? isAgentWorking(threadChat.status)
-    : false;
+  const isAgentCurrentlyWorking =
+    effectiveThreadStatus !== null && isAgentWorking(effectiveThreadStatus);
   const previousAgentWorkingRef = useRef<boolean | null>(null);
 
   useEffect(() => {
@@ -650,7 +678,7 @@ function ChatUI({
                   threadChat.errorMessage ||
                   threadChat.errorMessageInfo) && (
                   <ChatError
-                    status={threadChat.status}
+                    status={effectiveThreadStatus ?? threadChat.status}
                     errorType={threadChat.errorMessage || ""}
                     errorInfo={
                       error ||
@@ -665,7 +693,7 @@ function ChatUI({
                 {isAgentCurrentlyWorking && (
                   <WorkingMessage
                     agent={chatAgent}
-                    status={threadChat.status}
+                    status={effectiveThreadStatus ?? "working"}
                     bootingSubstatus={thread.bootingSubstatus ?? undefined}
                     reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
                   />
@@ -686,7 +714,7 @@ function ChatUI({
                 <ChatPromptBox
                   threadId={thread.id}
                   threadChatId={threadChat.id}
-                  threadStatus={threadChat.status}
+                  threadStatus={effectiveThreadStatus}
                   queuedMessages={queuedMessages}
                   permissionMode={threadChat.permissionMode ?? "allowAll"}
                   prStatus={thread.prStatus}

@@ -237,9 +237,17 @@ export function stateToDeliveryLoopState(
 }
 
 export const AWAITING_PR_CREATION_REASON = "Awaiting PR creation";
+export const TERMINAL_WORKFLOW_STATES = [
+  "done",
+  "stopped",
+  "terminated",
+] as const;
+const TERMINAL_WORKFLOW_STATE_SET: ReadonlySet<WorkflowState> = new Set(
+  TERMINAL_WORKFLOW_STATES,
+);
 
 export function isTerminalState(state: WorkflowState): boolean {
-  return state === "done" || state === "stopped" || state === "terminated";
+  return TERMINAL_WORKFLOW_STATE_SET.has(state);
 }
 
 export function classifyFailureLane(params: {
