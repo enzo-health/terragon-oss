@@ -33,6 +33,7 @@ import {
   updateThreadChat,
 } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
+import { z } from "zod";
 import { sendDaemonMessage } from "@/agent/daemon";
 import { ThreadError } from "@/agent/error";
 import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
@@ -75,6 +76,19 @@ const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
 const FOLLOW_UP_TTFR_START_TTL_SECONDS = 60 * 60;
+
+const planArtifactPromptPayloadSchema = z.object({
+  planText: z.string().min(1),
+  tasks: z
+    .array(
+      z.object({
+        stableTaskId: z.string().min(1),
+        title: z.string().min(1),
+        description: z.string().nullable().optional(),
+      }),
+    )
+    .default([]),
+});
 
 function getUpstreamPullKey(threadId: string) {
   return `${LAST_UPSTREAM_PULL_PREFIX}${threadId}`;
@@ -628,19 +642,22 @@ export async function startAgentMessage({
                 includeApprovedForPlanning: true,
               });
               if (artifact?.payload) {
-                const payload = artifact.payload as {
-                  planText?: string;
-                  tasks?: Array<{
-                    stableTaskId: string;
-                    title: string;
-                    description?: string | null;
-                  }>;
-                };
-                if (payload.planText) {
+                const payload = planArtifactPromptPayloadSchema.safeParse(
+                  artifact.payload,
+                );
+                if (payload.success) {
                   planContext = {
-                    planText: payload.planText,
-                    tasks: payload.tasks ?? [],
+                    planText: payload.data.planText,
+                    tasks: payload.data.tasks,
                   };
+                } else {
+                  console.warn(
+                    "[startAgentMessage] ignored invalid plan artifact payload for implementing phase",
+                    {
+                      loopId: effectiveLoopId,
+                      issues: payload.error.issues,
+                    },
+                  );
                 }
               }
             } catch (err) {
