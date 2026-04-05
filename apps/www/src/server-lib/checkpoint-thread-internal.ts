@@ -32,6 +32,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { sendSystemMessage } from "./send-system-message";
+import { getActiveWorkflowForThreadV3 } from "./delivery-loop/v3/store";
 
 const DELIVERY_PLAN_TOOL_NAMES = {
   EXIT_PLAN_MODE: "ExitPlanMode",
@@ -454,22 +455,9 @@ export async function checkpointThreadAndPush({
     // V2-enrolled threads beyond implementing are handled entirely by the
     // v2 delivery loop coordinator — skip the legacy checkpoint path.
     // We allow `implementing` through so the first PR gets created.
-    const { getActiveWorkflowForThread } = await import(
-      "@terragon/shared/delivery-loop/store/workflow-store"
-    );
-    const v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-    if (v2Workflow) {
-      const { getWorkflowHead } = await import(
-        "@/server-lib/delivery-loop/v3/store"
-      );
-      const v3Head = await getWorkflowHead({
-        db,
-        workflowId: v2Workflow.id,
-      });
-      if (!v3Head) {
-        throw new Error(`No v3 head for workflow ${v2Workflow.id}`);
-      }
-      const currentState = v3Head.state;
+    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    if (activeWorkflow) {
+      const currentState = activeWorkflow.head.state;
       if (currentState !== "planning" && currentState !== "implementing") {
         return;
       }

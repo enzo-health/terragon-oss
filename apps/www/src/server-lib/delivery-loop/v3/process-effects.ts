@@ -45,14 +45,6 @@ import {
   type WorkflowState,
 } from "./types";
 
-function summarizeRetryReason(reason: string): string {
-  const normalized = reason.replace(/\s+/g, " ").trim();
-  if (normalized.length <= 180) {
-    return normalized;
-  }
-  return `${normalized.slice(0, 180)}...`;
-}
-
 const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>(["processing"]);
 
 /**
@@ -308,37 +300,9 @@ async function processGateReviewEffect(params: {
     // Non-fatal: Redis intent + cron sweep handle recovery
   }
 
-  // Queue a "Continue gate check." message for the follow-up queue,
-  // but only on retries — on the first gate run the prior context is sufficient.
-  const head = await getWorkflowHead({ db: params.db, workflowId });
-  const isRetry =
-    !!head &&
-    (head.fixAttemptCount > 0 ||
-      head.infraRetryCount > 0 ||
-      head.generation > 1);
-  if (isRetry) {
-    const { updateThreadChat } = await import("@terragon/shared/model/threads");
-    await updateThreadChat({
-      db: params.db,
-      userId: workflow.userId,
-      threadId: workflow.threadId,
-      threadChatId: threadChat.id,
-      updates: {
-        appendQueuedMessages: [
-          {
-            type: "user" as const,
-            model: null,
-            timestamp: new Date().toISOString(),
-            parts: [{ type: "text" as const, text: "Continue gate check." }],
-          },
-        ],
-      },
-    });
-  }
-
   // Trigger the follow-up queue to launch the sandbox run.
-  // This is best-effort — the dispatch intent + queued message are already
-  // persisted, so the cron will pick them up even if this fails.
+  // This is best-effort — the dispatch intent is already persisted, so the
+  // cron will pick it up even if this eager trigger fails.
   try {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
@@ -418,22 +382,14 @@ async function processImplementingDispatchEffect(params: {
     throw new Error(`No threadChat for threadId ${workflow.threadId}`);
   }
 
-  // Resolve retry/generation info early for logging
-  const head = await getWorkflowHead({ db: params.db, workflowId });
-  const isRetry =
-    !!head &&
-    (head.fixAttemptCount > 0 ||
-      head.infraRetryCount > 0 ||
-      head.generation > 1);
-
   const runId = randomUUID();
 
   if (process.env.DELIVERY_LOOP_DEBUG === "true") {
     console.log("[delivery-loop] processImplementingDispatchEffect start", {
       workflowId,
       threadId: workflow.threadId,
-      isRetry,
-      generation: head?.generation ?? 0,
+      generation:
+        (await getWorkflowHead({ db: params.db, workflowId }))?.generation ?? 0,
     });
   }
 
@@ -477,37 +433,9 @@ async function processImplementingDispatchEffect(params: {
     );
   }
 
-  // Always queue a message so maybeProcessFollowUpQueue has something to
-  // dispatch.  Without this the first post-planning run gets orphaned because
-  // the follow-up queue finds an empty queuedMessages array and returns early.
-  {
-    const messageText = isRetry
-      ? params.retryReason
-        ? `Previous attempt failed: ${summarizeRetryReason(params.retryReason)}. Fix the issue and continue implementation.`
-        : "Continue implementation."
-      : "Begin implementation.";
-    const { updateThreadChat } = await import("@terragon/shared/model/threads");
-    await updateThreadChat({
-      db: params.db,
-      userId: workflow.userId,
-      threadId: workflow.threadId,
-      threadChatId: threadChat.id,
-      updates: {
-        appendQueuedMessages: [
-          {
-            type: "user" as const,
-            model: null,
-            timestamp: new Date().toISOString(),
-            parts: [{ type: "text" as const, text: messageText }],
-          },
-        ],
-      },
-    });
-  }
-
   // Trigger the follow-up queue to launch the sandbox run.
-  // This is best-effort — the dispatch intent + queued message are already
-  // persisted, so the cron will pick them up even if this fails.
+  // This is best-effort — the dispatch intent is already persisted, so the
+  // cron will pick it up even if this eager trigger fails.
   try {
     const { maybeProcessFollowUpQueue } = await import(
       "@/server-lib/process-follow-up-queue"
@@ -546,7 +474,7 @@ async function processImplementingDispatchEffect(params: {
     workflowId,
     runId,
     ackDeadlineAt: ackDeadlineAt.toISOString(),
-    isRetry,
+    isRetry: params.retryReason != null,
   });
 
   return {

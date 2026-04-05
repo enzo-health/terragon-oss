@@ -5,9 +5,8 @@ import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { DBUserMessage } from "@terragon/shared";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
-import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
@@ -56,17 +55,14 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       }
     }
 
-    const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row) {
+    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    if (!activeWorkflow) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",
       );
     }
 
-    const v3Head = await getWorkflowHead({ db, workflowId: v2Row.id });
-    if (!v3Head) {
-      throw new Error(`No v3 head for workflow ${v2Row.id}`);
-    }
+    const { workflow: v2Row, head: v3Head } = activeWorkflow;
     const currentState = v3Head.state;
     const blockedStates = new Set([
       "awaiting_manual_fix",

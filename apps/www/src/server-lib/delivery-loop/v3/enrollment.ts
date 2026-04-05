@@ -8,11 +8,9 @@ import { desc, eq } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
-import {
-  createWorkflow,
-  getActiveWorkflowForThread,
-} from "@terragon/shared/delivery-loop/store/workflow-store";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendEventAndAdvance } from "./kernel";
+import { getActiveWorkflowForThreadV3 } from "./store";
 
 export async function enrollWorkflow(params: {
   db: DB;
@@ -23,12 +21,12 @@ export async function enrollWorkflow(params: {
   planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }): Promise<{ workflowId: string }> {
   // 1. Idempotency: if a workflow already exists for this thread, return it
-  const existing = await getActiveWorkflowForThread({
+  const existing = await getActiveWorkflowForThreadV3({
     db: params.db,
     threadId: params.threadId,
   });
   if (existing) {
-    return { workflowId: existing.id };
+    return { workflowId: existing.workflow.id };
   }
 
   // 2. Compute next generation
@@ -68,12 +66,12 @@ export async function enrollWorkflow(params: {
     return { workflowId: workflow.id };
   } catch (err) {
     // Race: concurrent caller may have inserted between our check and insert.
-    const raceWinner = await getActiveWorkflowForThread({
+    const raceWinner = await getActiveWorkflowForThreadV3({
       db: params.db,
       threadId: params.threadId,
     });
     if (raceWinner) {
-      return { workflowId: raceWinner.id };
+      return { workflowId: raceWinner.workflow.id };
     }
     throw err;
   }

@@ -18,10 +18,9 @@ import {
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
 import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import {
@@ -47,6 +46,7 @@ import { withThreadChat } from "@/agent/thread-resource";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   convertToPrompt,
+  getLastUserMessageModel,
   getUserMessageToSend,
 } from "@/lib/db-message-helpers";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -473,16 +473,15 @@ export async function startAgentMessage({
               userId,
             }))!;
           }
-          const userMessageToSend = getUserMessageToSend({
+          let userMessageToSend = getUserMessageToSend({
             messages: threadChat.messages ?? [],
             currentMessage: message ?? null,
           });
-          if (!userMessageToSend) {
-            throw new ThreadError("no-user-message", "", null);
-          }
           // Update permission mode if it's different from the thread's permission mode
           const newPermissionMode =
-            userMessageToSend.permissionMode || "allowAll";
+            userMessageToSend?.permissionMode ??
+            threadChat.permissionMode ??
+            "allowAll";
           const currentPermissionMode = threadChat.permissionMode || "allowAll";
           if (newPermissionMode !== currentPermissionMode) {
             await updateThreadChat({
@@ -518,17 +517,30 @@ export async function startAgentMessage({
             threadId,
             threadChatId,
           });
+          const compactSummarySuffix =
+            didCompact && summary
+              ? `\n\n---\n\nThe user has run out of context. This is a summary of what has been done: <summary>\n${summary}\n</summary>\n\n`
+              : null;
           if (didCompact && summary) {
-            userMessageToSend.parts.push({
-              type: "text",
-              text: `\n\n---\n\nThe user has run out of context. This is a summary of what has been done: <summary>\n${summary}\n</summary>\n\n`,
-            });
+            if (userMessageToSend) {
+              userMessageToSend = {
+                ...userMessageToSend,
+                parts: [
+                  ...userMessageToSend.parts,
+                  {
+                    type: "text",
+                    text: compactSummarySuffix!,
+                  },
+                ],
+              };
+            }
             sessionId = null;
             codexPreviousResponseId = null;
           }
           // Prepare prompt based on model
           const model =
-            userMessageToSend.model ??
+            userMessageToSend?.model ??
+            getLastUserMessageModel(threadChat.messages ?? []) ??
             getDefaultModelForAgent({
               agent: threadChat.agent,
               agentVersion: threadChat.agentVersion,
@@ -547,21 +559,28 @@ export async function startAgentMessage({
           }
 
           const agentForModel = modelToAgent(model);
-          const { prompt: finalPrompt } = await preparePromptForModel({
-            model,
-            agent: threadChat.agent,
-            agentVersion: threadChat.agentVersion,
-            userMessageToSend,
-            threadMessages: threadChat.messages ?? [],
-            session,
-          });
+          const finalPrompt = userMessageToSend
+            ? (
+                await preparePromptForModel({
+                  model,
+                  agent: threadChat.agent,
+                  agentVersion: threadChat.agentVersion,
+                  userMessageToSend,
+                  threadMessages: threadChat.messages ?? [],
+                  session,
+                })
+              ).prompt
+            : (compactSummarySuffix ?? "");
           const deliveryEligibleForThread =
             isDeliveryLoopEnrollmentAllowedForThread({
               sourceType: thread?.sourceType ?? null,
               sourceMetadata: thread?.sourceMetadata ?? null,
             });
-          let v2Workflow = await getActiveWorkflowForThread({ db, threadId });
-          if (deliveryEligibleForThread && !v2Workflow) {
+          let activeWorkflow = await getActiveWorkflowForThreadV3({
+            db,
+            threadId,
+          });
+          if (deliveryEligibleForThread && !activeWorkflow) {
             try {
               const planApprovalPolicy =
                 thread?.sourceMetadata?.type === "www"
@@ -573,7 +592,10 @@ export async function startAgentMessage({
                 threadId,
                 planApprovalPolicy,
               });
-              v2Workflow = await getActiveWorkflowForThread({ db, threadId });
+              activeWorkflow = await getActiveWorkflowForThreadV3({
+                db,
+                threadId,
+              });
             } catch (error) {
               console.warn(
                 "[startAgentMessage] failed to self-heal Delivery Loop enrollment",
@@ -586,7 +608,7 @@ export async function startAgentMessage({
               );
             }
           }
-          if (deliveryEligibleForThread && !v2Workflow) {
+          if (deliveryEligibleForThread && !activeWorkflow) {
             throw new ThreadError(
               "unknown-error",
               "Delivery Loop enrollment missing for eligible thread",
@@ -594,13 +616,9 @@ export async function startAgentMessage({
             );
           }
           // Read authoritative state from v3 head
-          let effectiveState: DeliveryLoopState | null = null;
-          const v3Head = v2Workflow
-            ? await getWorkflowHead({ db, workflowId: v2Workflow.id })
+          const effectiveState: DeliveryLoopState | null = activeWorkflow
+            ? stateToDeliveryLoopState(activeWorkflow.head.state)
             : null;
-          if (v3Head) {
-            effectiveState = stateToDeliveryLoopState(v3Head.state);
-          }
           let planContext: {
             planText: string;
             tasks: Array<{
@@ -609,7 +627,7 @@ export async function startAgentMessage({
               description?: string | null;
             }>;
           } | null = null;
-          const effectiveLoopId = v2Workflow?.id;
+          const effectiveLoopId = activeWorkflow?.workflow.id;
           if (effectiveState === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
@@ -649,9 +667,9 @@ export async function startAgentMessage({
           }
           const deliveryLoopPhasePromptPrefix =
             buildDeliveryLoopPhasePromptPrefix(effectiveState, planContext, {
-              blockedReason: v3Head?.blockedReason ?? null,
-              fixAttemptCount: v3Head?.fixAttemptCount ?? 0,
-              infraRetryCount: v3Head?.infraRetryCount ?? 0,
+              blockedReason: activeWorkflow?.head.blockedReason ?? null,
+              fixAttemptCount: activeWorkflow?.head.fixAttemptCount ?? 0,
+              infraRetryCount: activeWorkflow?.head.infraRetryCount ?? 0,
             });
 
           const sanitizedPrompt = finalPrompt.replace(
@@ -731,11 +749,11 @@ export async function startAgentMessage({
           // runId so ack timeout and daemon events share the same identity.
           // Fall back to the durable DB dispatch-intent row when Redis
           // real-time intent lookup is unavailable in local redis-http mode.
-          const activeIntent = v2Workflow
+          const activeIntent = activeWorkflow
             ? await getActiveDispatchIntent(threadChatId)
             : null;
-          const workflowId = v2Workflow?.id ?? null;
-          const workflowRunSeq = v3Head?.activeRunSeq ?? null;
+          const workflowId = activeWorkflow?.workflow.id ?? null;
+          const workflowRunSeq = activeWorkflow?.head.activeRunSeq ?? null;
           if (workflowId !== null && workflowRunSeq === null) {
             console.warn(
               "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
@@ -773,7 +791,7 @@ export async function startAgentMessage({
             activeIntent?.runId ?? durableIntent?.runId ?? randomUUID();
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
-          const effectivePermissionMode = v2Workflow
+          const effectivePermissionMode = activeWorkflow
             ? "allowAll"
             : rawPermissionMode;
           const implementationDispatch = resolveImplementationRuntimeAdapter(
@@ -1057,16 +1075,17 @@ function buildDeliveryLoopPhasePromptPrefix(
     case "review_gate":
       return [
         "Delivery Loop phase: review_gate.",
-        "Perform deep bug review and architecture review until there are zero blocking findings.",
-        "If findings exist, fix them before proceeding.",
+        "Audit the current implementation for correctness, regressions, edge cases, and maintainability.",
+        "If you find a blocking issue, fix it in this run instead of just reporting it.",
+        "Only move forward once there are zero blocking findings left.",
       ].join(" ");
     // v3-reachable: ci_gate (mapped from "gating_ci")
     case "ci_gate":
       return [
         "Delivery Loop phase: ci_gate.",
-        "Run lint, typecheck, and tests locally. Fix any failures before proceeding.",
-        "If a specific CI check is failing (e.g., format, lint, typecheck), run the corresponding command locally, fix the errors, and commit the fix.",
-        "Common fixes: run the project's formatter (prettier, eslint --fix), fix type errors, update failing test assertions.",
+        "Verify the change exactly the way CI will verify it: lint, typecheck, and targeted tests.",
+        "If a check fails, fix the underlying issue and rerun the relevant command until it passes.",
+        "Do not hand off with known local quality failures.",
       ].join(" ");
     // v3-reachable: awaiting_pr_link (mapped from "awaiting_pr")
     case "awaiting_pr_link":

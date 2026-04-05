@@ -162,6 +162,13 @@ describe("enrollWorkflow", () => {
       .update(schema.deliveryWorkflow)
       .set({ kind: "terminated" })
       .where(eq(schema.deliveryWorkflow.id, first.workflowId));
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "terminated",
+        blockedReason: "done",
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, first.workflowId));
 
     const second = await enrollWorkflow({
       db,
@@ -176,5 +183,41 @@ describe("enrollWorkflow", () => {
       where: eq(schema.deliveryWorkflow.id, second.workflowId),
     });
     expect(secondWorkflow!.generation).toBe(2);
+  });
+
+  it("treats a non-terminal v3 head as the existing workflow even if the legacy row is terminal", async () => {
+    const first = await enrollWorkflow({
+      db,
+      threadId: testThreadId,
+      userId: testUserId,
+      repoFullName: "test-org/test-repo",
+    });
+
+    await db
+      .update(schema.deliveryWorkflow)
+      .set({ kind: "terminated" })
+      .where(eq(schema.deliveryWorkflow.id, first.workflowId));
+
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "implementing",
+        blockedReason: null,
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, first.workflowId));
+
+    const second = await enrollWorkflow({
+      db,
+      threadId: testThreadId,
+      userId: testUserId,
+      repoFullName: "test-org/test-repo",
+    });
+
+    expect(second.workflowId).toBe(first.workflowId);
+
+    const workflows = await db.query.deliveryWorkflow.findMany({
+      where: eq(schema.deliveryWorkflow.threadId, testThreadId),
+    });
+    expect(workflows).toHaveLength(1);
   });
 });

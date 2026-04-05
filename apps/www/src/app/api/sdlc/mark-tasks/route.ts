@@ -4,8 +4,8 @@ import {
   getLatestAcceptedArtifact,
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import type { DeliveryPlanTaskCompletionEvidence } from "@terragon/shared/db/types";
+import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
 
 export async function POST(request: Request) {
   const authContext = await getDaemonTokenAuthContextOrNull(request);
@@ -37,14 +37,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const v2Row = await getActiveWorkflowForThread({ db, threadId });
-  if (!v2Row) {
+  const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+  if (!activeWorkflow) {
     return Response.json(
       { success: false, error: "no_active_loop" },
       { status: 404 },
     );
   }
-  const loopId = v2Row.id;
+  const loopId = activeWorkflow.workflow.id;
 
   const acceptedPlanArtifact = await getLatestAcceptedArtifact({
     db,

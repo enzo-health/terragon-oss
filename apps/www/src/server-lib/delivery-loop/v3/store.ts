@@ -1,16 +1,28 @@
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type {
   DeliveryEffectLedgerV3Row,
   DeliveryOutboxV3Row,
   DeliverySignalSourceV3,
+  DeliveryWorkflowRow,
   DeliveryWorkflowHeadV3Row,
   DeliveryTimerLedgerV3Row,
 } from "@terragon/shared/db/types";
 import {
   AWAITING_PR_CREATION_REASON,
   type EffectSpec,
+  TERMINAL_WORKFLOW_STATES,
   type WorkflowHead,
 } from "./types";
 import {
@@ -26,7 +38,6 @@ import {
 const EFFECT_LEASE_TTL_MS = 2 * 60 * 1000;
 const TIMER_LEASE_TTL_MS = 2 * 60 * 1000;
 const OUTBOX_LEASE_TTL_MS = 2 * 60 * 1000;
-
 function normalizeHeadState(state: string): WorkflowHead["state"] {
   switch (state) {
     case "planning":
@@ -398,6 +409,45 @@ export async function ensureWorkflowHead(params: {
     return toWorkflowHead(inserted);
   }
   return getWorkflowHead({ db: params.db, workflowId: params.workflowId });
+}
+
+export type ActiveWorkflowForThreadV3 = {
+  workflow: DeliveryWorkflowRow;
+  head: WorkflowHead;
+};
+
+export async function getActiveWorkflowForThreadV3(params: {
+  db: Pick<DB, "query" | "select">;
+  threadId: string;
+}): Promise<ActiveWorkflowForThreadV3 | null> {
+  const headTable = schema.deliveryWorkflowHeadV3;
+  const legacyTable = schema.deliveryWorkflow;
+
+  const row = await params.db
+    .select({
+      workflow: legacyTable,
+      head: headTable,
+    })
+    .from(headTable)
+    .innerJoin(legacyTable, eq(headTable.workflowId, legacyTable.id))
+    .where(
+      and(
+        eq(headTable.threadId, params.threadId),
+        notInArray(headTable.state, [...TERMINAL_WORKFLOW_STATES]),
+      ),
+    )
+    .orderBy(desc(headTable.generation), desc(headTable.version))
+    .limit(1);
+
+  if (row.length === 0) {
+    return null;
+  }
+
+  const firstRow = row[0]!;
+  return {
+    workflow: firstRow.workflow,
+    head: toWorkflowHead(firstRow.head),
+  };
 }
 
 export async function appendJournalEvent(params: {

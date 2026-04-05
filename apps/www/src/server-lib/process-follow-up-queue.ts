@@ -12,6 +12,7 @@ import {
   getAgentRunContextByRunId,
   getLatestAgentRunContextForThreadChat,
 } from "@terragon/shared/model/agent-run-context";
+import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
 import type {
   DBMessage,
@@ -139,6 +140,22 @@ export type FollowUpQueueProcessingResult = {
   retryCount?: number;
   maxRetries?: number;
 };
+
+function isIntentOnlyDeliveryLoopDispatchActive(
+  intent:
+    | {
+        targetPhase?: string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  return (
+    intent?.targetPhase === "implementing" ||
+    intent?.targetPhase === "review_gate" ||
+    intent?.targetPhase === "ci_gate" ||
+    intent?.targetPhase === "ui_gate"
+  );
+}
 
 type RetryPersistenceOwner =
   | "follow-up"
@@ -520,12 +537,101 @@ export async function maybeProcessFollowUpQueue({
       reason: "scheduled_not_runnable",
     };
   }
+  const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
+    db,
+    {
+      threadChatId,
+    },
+  );
+  const allowIntentOnlyDispatch =
+    isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent);
   if (!threadChat.queuedMessages || threadChat.queuedMessages.length === 0) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
+    if (!allowIntentOnlyDispatch) {
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "no_queued_messages",
+      };
+    }
+
+    const { didUpdateStatus } = await updateThreadChatWithTransition({
+      userId,
+      threadId,
+      threadChatId,
+      eventType: "user.message",
+      requireStatusTransitionForChatUpdates: !bypassBusyCheck,
+    });
+    if (!didUpdateStatus && !bypassBusyCheck) {
+      const noopResult = await checkNoopBusy({
+        threadId,
+        threadChatId,
+        userId,
+      });
+      if (noopResult) return noopResult;
+    }
+    console.log("Processing delivery-loop follow-up without queued messages", {
+      threadId,
+      threadChatId,
+      targetPhase: activeDispatchIntent?.targetPhase ?? null,
+    });
+    try {
+      const result = await startAgentMessage({
+        db,
+        userId,
+        threadId,
+        threadChatId,
+        isNewThread: false,
+        createNewBranch: false,
+        branchName: threadBranchName,
+      });
+      if (result.dispatchLaunched) {
+        return {
+          processed: true,
+          dispatchLaunched: true,
+          reason: "dispatch_started_batch",
+        };
+      }
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "dispatch_not_started",
+      };
+    } catch (error) {
+      console.error("Delivery-loop follow-up processing failed", {
+        threadId,
+        threadChatId,
+        error,
+        targetPhase: activeDispatchIntent?.targetPhase ?? null,
+      });
+      const failure = await handleFollowUpFailure({
+        userId,
+        threadId,
+        threadChatId,
+        messages: threadChat.messages,
+        queuedMessagesForRetry: [],
+        error,
+      });
+      let failureReason: FollowUpQueueProcessingResult["reason"] =
+        "dispatch_retry_persistence_failed";
+      if (failure.exhausted) {
+        failureReason = "dispatch_retry_exhausted";
+      } else if (failure.retryPersisted) {
+        failureReason = "dispatch_retry_scheduled";
+      }
+      return ensureDispatchRetryPersistenceOwnership({
+        owner: "process-follow-up-queue",
+        userId,
+        threadId,
+        threadChatId,
+        result: {
+          processed: false,
+          dispatchLaunched: false,
+          reason: failureReason,
+          retryCount: failure.retriesUsed,
+          maxRetries: MAX_FOLLOW_UP_RETRIES,
+        },
+      });
+    }
   }
   console.log("Processing queued follow up messages on thread", {
     threadId,

@@ -324,6 +324,86 @@ describe("approvePlan", () => {
     expect(planningArtifacts[0]?.status).toBe("approved");
   });
 
+  it("approves a planning head even when the legacy workflow row is terminal", async () => {
+    const { user, session } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    await mockLoggedInUser(session);
+
+    const loop = await createWorkflow({
+      db,
+      threadId,
+      generation: 1,
+      kind: "terminated",
+      stateJson: { planVersion: null },
+      repoFullName: "owner/repo",
+      userId: user.id,
+      planApprovalPolicy: "human_required",
+    });
+    await ensureWorkflowHead({ db, workflowId: loop.id });
+    await db
+      .update(schema.deliveryWorkflowHeadV3)
+      .set({
+        state: "planning",
+        blockedReason: null,
+        updatedAt: new Date("2026-03-09T15:00:00.000Z"),
+        lastActivityAt: new Date("2026-03-09T15:00:00.000Z"),
+      })
+      .where(eq(schema.deliveryWorkflowHeadV3.workflowId, loop.id));
+
+    await updateThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      updates: {
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "exit-plan-terminal-legacy",
+            name: "ExitPlanMode",
+            parent_tool_use_id: null,
+            parameters: {
+              plan: JSON.stringify({
+                planText: "Terminal legacy row, active planning head",
+                tasks: [
+                  {
+                    stableTaskId: "task-1",
+                    title: "Task one",
+                    acceptance: ["Done"],
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      },
+    });
+
+    await approvePlan({ threadId, threadChatId });
+
+    const planningArtifacts = await db.query.deliveryPhaseArtifact.findMany({
+      where: and(
+        eq(schema.deliveryPhaseArtifact.loopId, loop.id),
+        eq(schema.deliveryPhaseArtifact.phase, "planning"),
+      ),
+    });
+    expect(planningArtifacts).toHaveLength(1);
+    expect(planningArtifacts[0]?.status).toBe("approved");
+    expect(queueFollowUpInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: user.id,
+        threadId,
+        threadChatId,
+      }),
+    );
+  });
+
   it("promotes an existing approved artifact instead of stale generated candidate", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId, threadChatId } = await createTestThread({

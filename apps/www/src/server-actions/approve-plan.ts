@@ -6,11 +6,10 @@ import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { getWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
+import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
 
 export const approvePlan = userOnlyAction(
   async function approvePlan(
@@ -23,7 +22,6 @@ export const approvePlan = userOnlyAction(
       threadChatId: string;
     },
   ) {
-    console.log("approvePlan", { threadId, threadChatId });
     const threadChat = await getThreadChat({
       db,
       threadId,
@@ -34,18 +32,15 @@ export const approvePlan = userOnlyAction(
       throw new UserFacingError("Task not found");
     }
 
-    const v2Row = await getActiveWorkflowForThread({ db, threadId });
-    if (!v2Row) {
+    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    if (!activeWorkflow) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",
       );
     }
 
-    // Validate state — plan approval only valid in planning
-    const v3Head = await getWorkflowHead({ db, workflowId: v2Row.id });
-    if (!v3Head) {
-      throw new Error(`No v3 head for workflow ${v2Row.id}`);
-    }
+    const { workflow: v2Row, head: v3Head } = activeWorkflow;
+
     const currentState = v3Head.state;
     if (currentState !== "planning") {
       throw new UserFacingError(
@@ -88,6 +83,7 @@ export const approvePlan = userOnlyAction(
       parsedPlan,
       mode: "approve",
       approvedByUserId: userId,
+      workflowId: loopId,
       threadId,
     });
     if (promotionResult.outcome !== "promoted") {
