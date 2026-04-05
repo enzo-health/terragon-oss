@@ -6,8 +6,9 @@ import {
   createTestUser,
   createTestThread,
 } from "@terragon/shared/model/test-helpers";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { enrollWorkflow } from "./enrollment";
-import { getWorkflowHead } from "./store";
+import { getActiveWorkflowForThreadV3, getWorkflowHead } from "./store";
 
 let testUserId: string;
 let testThreadId: string;
@@ -219,5 +220,34 @@ describe("enrollWorkflow", () => {
       where: eq(schema.deliveryWorkflow.threadId, testThreadId),
     });
     expect(workflows).toHaveLength(1);
+  });
+
+  it("recovers a planning workflow row that exists without a v3 head", async () => {
+    const orphan = await createWorkflow({
+      db,
+      threadId: testThreadId,
+      generation: 1,
+      kind: "planning",
+      stateJson: { planVersion: null },
+      repoFullName: "test-org/test-repo",
+      userId: testUserId,
+    });
+
+    const result = await enrollWorkflow({
+      db,
+      threadId: testThreadId,
+      userId: testUserId,
+      repoFullName: "test-org/test-repo",
+    });
+
+    expect(result.workflowId).toBe(orphan.id);
+    await expect(
+      getActiveWorkflowForThreadV3({ db, threadId: testThreadId }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        workflow: expect.objectContaining({ id: orphan.id }),
+        head: expect.objectContaining({ workflowId: orphan.id }),
+      }),
+    );
   });
 });

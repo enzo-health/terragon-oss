@@ -231,6 +231,34 @@ describe("getDeliveryLoopStatusAction", () => {
     ]);
   });
 
+  it("treats CI as passed once the loop reaches the UI gate", () => {
+    const checks = buildDeliveryLoopStatusChecks({
+      loopSnapshot: {
+        kind: "ui_gate",
+        gate: {
+          gateRunId: "run-ui",
+          lastFailureCategory: null,
+        },
+      },
+      currentHeadSha: "sha-ui-1",
+      ciRun: null,
+      reviewThreadRun: null,
+      deepReviewRun: null,
+      carmackReviewRun: null,
+      unresolvedDeepFindingCount: 0,
+      unresolvedCarmackFindingCount: 0,
+      videoCaptureStatus: "not_started",
+      videoFailureMessage: null,
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        key: "ci",
+        status: "passed",
+      }),
+    );
+  });
+
   it("returns artifact readiness and planned task summary", async () => {
     const { user, session } = await createTestUser({ db });
     const { threadId } = await createTestThread({

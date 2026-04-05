@@ -521,7 +521,7 @@ export async function startAgentMessage({
             didCompact && summary
               ? `\n\n---\n\nThe user has run out of context. This is a summary of what has been done: <summary>\n${summary}\n</summary>\n\n`
               : null;
-          if (didCompact && summary) {
+          if (compactSummarySuffix) {
             if (userMessageToSend) {
               userMessageToSend = {
                 ...userMessageToSend,
@@ -529,7 +529,7 @@ export async function startAgentMessage({
                   ...userMessageToSend.parts,
                   {
                     type: "text",
-                    text: compactSummarySuffix!,
+                    text: compactSummarySuffix,
                   },
                 ],
               };
@@ -559,18 +559,6 @@ export async function startAgentMessage({
           }
 
           const agentForModel = modelToAgent(model);
-          const finalPrompt = userMessageToSend
-            ? (
-                await preparePromptForModel({
-                  model,
-                  agent: threadChat.agent,
-                  agentVersion: threadChat.agentVersion,
-                  userMessageToSend,
-                  threadMessages: threadChat.messages ?? [],
-                  session,
-                })
-              ).prompt
-            : (compactSummarySuffix ?? "");
           const deliveryEligibleForThread =
             isDeliveryLoopEnrollmentAllowedForThread({
               sourceType: thread?.sourceType ?? null,
@@ -671,6 +659,23 @@ export async function startAgentMessage({
               fixAttemptCount: activeWorkflow?.head.fixAttemptCount ?? 0,
               infraRetryCount: activeWorkflow?.head.infraRetryCount ?? 0,
             });
+
+          if (!userMessageToSend && deliveryLoopPhasePromptPrefix === null) {
+            throw new ThreadError("no-user-message", "", null);
+          }
+
+          const finalPrompt = userMessageToSend
+            ? (
+                await preparePromptForModel({
+                  model,
+                  agent: threadChat.agent,
+                  agentVersion: threadChat.agentVersion,
+                  userMessageToSend,
+                  threadMessages: threadChat.messages ?? [],
+                  session,
+                })
+              ).prompt
+            : "";
 
           const sanitizedPrompt = finalPrompt.replace(
             /(?:^|\s)\/compact(?=\s|$)/g,

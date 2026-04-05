@@ -8,7 +8,10 @@ import { desc, eq } from "drizzle-orm";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import {
+  createWorkflow,
+  getActiveWorkflowForThread,
+} from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendEventAndAdvance } from "./kernel";
 import { getActiveWorkflowForThreadV3 } from "./store";
 
@@ -29,6 +32,27 @@ export async function enrollWorkflow(params: {
     return { workflowId: existing.workflow.id };
   }
 
+  const orphanedLegacyWorkflow = await getActiveWorkflowForThread({
+    db: params.db,
+    threadId: params.threadId,
+  });
+  if (orphanedLegacyWorkflow?.kind === "planning") {
+    await appendEventAndAdvance({
+      db: params.db,
+      workflowId: orphanedLegacyWorkflow.id,
+      source: "system",
+      idempotencyKey: `${orphanedLegacyWorkflow.id}:bootstrap`,
+      event: { type: "bootstrap" },
+    });
+    const healed = await getActiveWorkflowForThreadV3({
+      db: params.db,
+      threadId: params.threadId,
+    });
+    if (healed) {
+      return { workflowId: healed.workflow.id };
+    }
+  }
+
   // 2. Compute next generation
   let generation = params.generation;
   if (generation === undefined) {
@@ -41,6 +65,7 @@ export async function enrollWorkflow(params: {
   }
 
   // 3. Create the legacy workflow row (needed for FK refs from threads, artifacts, etc.)
+  let workflowId: string | null = null;
   try {
     const workflow = await createWorkflow({
       db: params.db,
@@ -52,19 +77,41 @@ export async function enrollWorkflow(params: {
       userId: params.userId,
       planApprovalPolicy: params.planApprovalPolicy ?? "auto",
     });
+    workflowId = workflow.id;
 
     // 4. Create v3 head row + insert bootstrap journal event.
     //    The kernel reducer handles bootstrap: stays in planning + dispatches planning run.
     await appendEventAndAdvance({
       db: params.db,
-      workflowId: workflow.id,
+      workflowId,
       source: "system",
-      idempotencyKey: `${workflow.id}:bootstrap`,
+      idempotencyKey: `${workflowId}:bootstrap`,
       event: { type: "bootstrap" },
     });
 
-    return { workflowId: workflow.id };
+    return { workflowId };
   } catch (err) {
+    if (workflowId) {
+      try {
+        await appendEventAndAdvance({
+          db: params.db,
+          workflowId,
+          source: "system",
+          idempotencyKey: `${workflowId}:bootstrap`,
+          event: { type: "bootstrap" },
+        });
+        const recovered = await getActiveWorkflowForThreadV3({
+          db: params.db,
+          threadId: params.threadId,
+        });
+        if (recovered?.workflow.id === workflowId) {
+          return { workflowId };
+        }
+      } catch {
+        // Fall through to race-winner detection so transient bootstrap failures
+        // do not create duplicate workflows on the next enroll attempt.
+      }
+    }
     // Race: concurrent caller may have inserted between our check and insert.
     const raceWinner = await getActiveWorkflowForThreadV3({
       db: params.db,

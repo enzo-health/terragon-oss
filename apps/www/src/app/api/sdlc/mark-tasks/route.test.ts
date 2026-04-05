@@ -19,27 +19,36 @@ vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
 }));
 
+function buildDaemonAuthContext(params?: {
+  threadId?: string;
+  threadChatId?: string;
+}) {
+  return {
+    userId: "daemon-user",
+    keyId: "daemon-key",
+    claims: {
+      kind: "daemon-run" as const,
+      runId: "run-1",
+      threadId: params?.threadId ?? "thread-1",
+      threadChatId: params?.threadChatId ?? "chat-1",
+      sandboxId: "sandbox-1",
+      agent: "claudeCode",
+      transportMode: "acp" as const,
+      protocolVersion: 2,
+      providers: ["anthropic" as const],
+      nonce: "nonce-1",
+      issuedAt: Date.now(),
+      exp: Date.now() + 60_000,
+    },
+  };
+}
+
 describe("sdlc/mark-tasks route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
-      userId: "daemon-user",
-      keyId: "daemon-key",
-      claims: {
-        kind: "daemon-run",
-        runId: "run-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        sandboxId: "sandbox-1",
-        agent: "claudeCode",
-        transportMode: "acp",
-        protocolVersion: 2,
-        providers: ["anthropic"],
-        nonce: "nonce-1",
-        issuedAt: Date.now(),
-        exp: Date.now() + 60_000,
-      },
-    });
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(
+      buildDaemonAuthContext(),
+    );
   });
 
   it("uses the v3 head to resolve the active loop when the legacy row is terminal", async () => {
@@ -51,6 +60,9 @@ describe("sdlc/mark-tasks route", () => {
         githubRepoFullName: "owner/repo",
       },
     });
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(
+      buildDaemonAuthContext({ threadId, threadChatId }),
+    );
 
     const workflow = await createWorkflow({
       db,
@@ -146,6 +158,9 @@ describe("sdlc/mark-tasks route", () => {
         githubRepoFullName: "owner/repo",
       },
     });
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(
+      buildDaemonAuthContext({ threadId, threadChatId }),
+    );
 
     const workflow = await createWorkflow({
       db,
@@ -181,6 +196,61 @@ describe("sdlc/mark-tasks route", () => {
     await expect(response.json()).resolves.toEqual({
       success: false,
       error: "no_active_loop",
+    });
+  });
+
+  it("rejects requests whose daemon token does not match the target thread chat", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(
+      buildDaemonAuthContext({
+        threadId: "different-thread",
+        threadChatId: threadChatId,
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/sdlc/mark-tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          threadChatId,
+          completedTasks: [{ stableTaskId: "task-1" }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      success: false,
+      error: "token_thread_mismatch",
+    });
+  });
+
+  it("rejects malformed completion payloads", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/sdlc/mark-tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          completedTasks: [],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      success: false,
+      error: "missing_required_fields",
     });
   });
 });

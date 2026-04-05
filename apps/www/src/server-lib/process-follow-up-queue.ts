@@ -253,6 +253,42 @@ function formatFollowUpError(error: unknown): string {
   }
 }
 
+async function getLatestRetrySnapshot(params: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  fallbackMessages: DBMessage[] | null;
+  fallbackQueuedMessages: DBUserMessage[];
+}): Promise<{
+  messages: DBMessage[] | null;
+  queuedMessagesForRetry: DBUserMessage[];
+}> {
+  try {
+    const latestThreadChat = await getThreadChat({
+      db,
+      userId: params.userId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+    });
+    return {
+      messages: latestThreadChat?.messages ?? params.fallbackMessages,
+      queuedMessagesForRetry: [
+        ...(latestThreadChat?.queuedMessages ?? params.fallbackQueuedMessages),
+      ],
+    };
+  } catch (error) {
+    console.warn("Failed to refresh retry snapshot from latest thread chat", {
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      error,
+    });
+    return {
+      messages: params.fallbackMessages,
+      queuedMessagesForRetry: params.fallbackQueuedMessages,
+    };
+  }
+}
+
 async function handleFollowUpFailure({
   userId,
   threadId,
@@ -569,10 +605,35 @@ export async function maybeProcessFollowUpQueue({
       });
       if (noopResult) return noopResult;
     }
+    const latestRetrySnapshot = await getLatestRetrySnapshot({
+      userId,
+      threadId,
+      threadChatId,
+      fallbackMessages: threadChat.messages ?? null,
+      fallbackQueuedMessages: [],
+    });
+    const latestDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
+      db,
+      {
+        threadChatId,
+      },
+    );
+    const stillAllowIntentOnlyDispatch =
+      isIntentOnlyDeliveryLoopDispatchActive(latestDispatchIntent);
+    if (
+      latestRetrySnapshot.queuedMessagesForRetry.length === 0 &&
+      !stillAllowIntentOnlyDispatch
+    ) {
+      return {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "no_queued_messages",
+      };
+    }
     console.log("Processing delivery-loop follow-up without queued messages", {
       threadId,
       threadChatId,
-      targetPhase: activeDispatchIntent?.targetPhase ?? null,
+      targetPhase: latestDispatchIntent?.targetPhase ?? null,
     });
     try {
       const result = await startAgentMessage({
@@ -601,14 +662,14 @@ export async function maybeProcessFollowUpQueue({
         threadId,
         threadChatId,
         error,
-        targetPhase: activeDispatchIntent?.targetPhase ?? null,
+        targetPhase: latestDispatchIntent?.targetPhase ?? null,
       });
       const failure = await handleFollowUpFailure({
         userId,
         threadId,
         threadChatId,
-        messages: threadChat.messages,
-        queuedMessagesForRetry: [],
+        messages: latestRetrySnapshot.messages,
+        queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
         error,
       });
       let failureReason: FollowUpQueueProcessingResult["reason"] =
@@ -707,12 +768,19 @@ export async function maybeProcessFollowUpQueue({
         threadChatId,
         error,
       });
+      const latestRetrySnapshot = await getLatestRetrySnapshot({
+        userId,
+        threadId,
+        threadChatId,
+        fallbackMessages: threadChat.messages ?? null,
+        fallbackQueuedMessages: queuedMessagesSnapshot,
+      });
       const failure = await handleFollowUpFailure({
         userId,
         threadId,
         threadChatId,
-        messages: threadChat.messages,
-        queuedMessagesForRetry: queuedMessagesSnapshot,
+        messages: latestRetrySnapshot.messages,
+        queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
         error,
       });
       let failureReason: FollowUpQueueProcessingResult["reason"] =
@@ -785,12 +853,19 @@ export async function maybeProcessFollowUpQueue({
       threadChatId,
       error,
     });
+    const latestRetrySnapshot = await getLatestRetrySnapshot({
+      userId,
+      threadId,
+      threadChatId,
+      fallbackMessages: threadChat.messages ?? null,
+      fallbackQueuedMessages: queuedMessagesSnapshot,
+    });
     const failure = await handleFollowUpFailure({
       userId,
       threadId,
       threadChatId,
-      messages: threadChat.messages,
-      queuedMessagesForRetry: queuedMessagesSnapshot,
+      messages: latestRetrySnapshot.messages,
+      queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
       error,
     });
     let failureReason: FollowUpQueueProcessingResult["reason"] =

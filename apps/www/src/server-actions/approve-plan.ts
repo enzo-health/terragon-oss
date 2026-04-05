@@ -10,6 +10,7 @@ import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
 import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { normalizePlanApprovalPolicy } from "@/server-lib/delivery-loop/v3/types";
 
 export const approvePlan = userOnlyAction(
   async function approvePlan(
@@ -50,9 +51,9 @@ export const approvePlan = userOnlyAction(
 
     const loopId = v2Row.id;
     const loopVersion = v2Row.version;
-    const planApprovalPolicy = v2Row.planApprovalPolicy as
-      | "auto"
-      | "human_required";
+    const planApprovalPolicy = normalizePlanApprovalPolicy(
+      v2Row.planApprovalPolicy,
+    );
 
     const extracted = extractLatestPlanText(threadChat.messages ?? []);
     if (!extracted) {

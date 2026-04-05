@@ -25,6 +25,7 @@ import {
   getActiveWorkflowForThreadV3,
   type ActiveWorkflowForThreadV3,
 } from "@/server-lib/delivery-loop/v3/store";
+import { normalizePlanApprovalPolicy } from "@/server-lib/delivery-loop/v3/types";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import * as z from "zod/v4";
 
@@ -571,10 +572,9 @@ async function buildStatusFromActiveWorkflow(params: {
   const explanation = blockedReason
     ? `${stateSummary.explanation} Reason: ${blockedReason}.`
     : stateSummary.explanation;
-  const planApprovalPolicy: "auto" | "human_required" =
-    loopState === "planning" && workflowRow.planApprovalPolicy === "human"
-      ? "human_required"
-      : (workflowRow.planApprovalPolicy as "auto" | "human_required");
+  const planApprovalPolicy = normalizePlanApprovalPolicy(
+    workflowRow.planApprovalPolicy,
+  );
 
   return {
     loopId: workflowRow.id,

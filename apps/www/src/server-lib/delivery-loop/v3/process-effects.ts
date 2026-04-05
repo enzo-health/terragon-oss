@@ -40,6 +40,7 @@ import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-
 import {
   type EffectPayload,
   isTerminalState,
+  normalizeEffectApprovalPolicy,
   type EffectResult,
   type LoopEvent,
   type WorkflowState,
@@ -769,8 +770,7 @@ async function handleCreatePlanArtifact(params: {
   return {
     kind: "create_plan_artifact",
     outcome: "created",
-    approvalPolicy:
-      (workflow?.planApprovalPolicy as "auto" | "human") ?? "auto",
+    approvalPolicy: normalizeEffectApprovalPolicy(workflow?.planApprovalPolicy),
   };
 }
 
