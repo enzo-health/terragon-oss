@@ -11,7 +11,7 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ThreadInfo } from "@terragon/shared";
 import { getThreadInfoCollection } from "@/collections/thread-info-collection";
-import { useThreadInfoList } from "@/hooks/use-thread-info-list";
+import { useInfiniteThreadList } from "@/queries/thread-queries";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { HandleUpdate } from "./promptbox/use-promptbox";
 import { cn } from "@/lib/utils";
@@ -147,8 +147,8 @@ export function Dashboard({
   const selectedModel = useAtomValue(selectedModelAtom);
 
   // Show recommended tasks when user has few active threads
-  const { threads: activeThreads } = useThreadInfoList({ archived: false });
-  const showRecommendedTasks = activeThreads.length < 3;
+  const { data: threadPages } = useInfiniteThreadList({ archived: false });
+  const showRecommendedTasks = (threadPages?.pages[0]?.length ?? 0) < 3;
 
   return (
     <div
