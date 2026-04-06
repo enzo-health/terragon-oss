@@ -68,19 +68,15 @@ import dynamic from "next/dynamic";
 import { ThreadInfoFull } from "@terragon/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
 import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
-import type {
-  ThreadPageShell,
-  ThreadPageChat,
-} from "@terragon/shared/db/types";
 import {
-  getThreadShellCollection,
   seedShell,
   applyShellPatchToCollection,
+  useShellFromCollection,
 } from "@/collections/thread-shell-collection";
 import {
-  getThreadChatCollection,
   seedChat,
   applyChatPatchToCollection,
+  useChatFromCollection,
 } from "@/collections/thread-chat-collection";
 import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
 import {
@@ -184,37 +180,22 @@ function ChatUI({
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  // Shell: React Query handles SSR hydration. We seed the TanStack DB collection
-  // so that switching back to this thread later is instant (no loading spinner).
-  // On initial mount, try the collection first (instant if hover-prefetched).
-  // Read from collection cache for instant switching (if previously visited or hover-prefetched).
-  // Use initialData so React Query shows it immediately but still refetches in background.
-  const shellCollection = getThreadShellCollection();
-  const cachedShell =
-    shellCollection.status === "ready"
-      ? (shellCollection.state.get(threadId) as ThreadPageShell | undefined)
-      : undefined;
-  const { data: shellFromQuery, isLoading: isShellQueryLoading } = useQuery({
+  // TanStack DB collection is the primary read path (reactive to WebSocket patches).
+  // React Query fetches in the background and seeds collections on delivery.
+  // Hover-prefetch (prefetch.ts) pre-populates before mount for instant switching.
+  const { data: shellFromQuery, isLoading: isShellFetching } = useQuery({
     ...threadShellQueryOptions(threadId),
-    initialData: cachedShell,
-    // Treat cached data as slightly stale so React Query refetches in background
-    initialDataUpdatedAt: cachedShell ? Date.now() - 30_000 : undefined,
   });
-  const shell = shellFromQuery ?? null;
-  const isShellLoading = !shell && isShellQueryLoading;
   useEffect(() => {
-    if (shell) seedShell(shell);
-  }, [shell]);
+    if (shellFromQuery) seedShell(shellFromQuery);
+  }, [shellFromQuery]);
+
+  const shellFromCollection = useShellFromCollection(threadId);
+  const shell = shellFromCollection ?? shellFromQuery ?? null;
+  const isShellLoading = !shell && isShellFetching;
 
   const threadChatId = shell?.primaryThreadChatId;
-
-  const chatCollection = getThreadChatCollection();
-  const cachedChatKey = threadChatId ? `${threadId}:${threadChatId}` : null;
-  const cachedChat =
-    cachedChatKey && chatCollection.status === "ready"
-      ? (chatCollection.state.get(cachedChatKey) as ThreadPageChat | undefined)
-      : undefined;
-  const { data: threadChat, isLoading: isThreadChatLoading } = useQuery({
+  const { data: chatFromQuery, isLoading: isChatFetching } = useQuery({
     ...(threadChatId
       ? threadChatQueryOptions({ threadId, threadChatId })
       : threadChatQueryOptions({
@@ -222,12 +203,14 @@ function ChatUI({
           threadChatId: "missing-thread-chat-id",
         })),
     enabled: threadChatId !== undefined,
-    initialData: cachedChat,
-    initialDataUpdatedAt: cachedChat ? Date.now() - 30_000 : undefined,
   });
   useEffect(() => {
-    if (threadChat) seedChat(threadChat);
-  }, [threadChat]);
+    if (chatFromQuery) seedChat(chatFromQuery);
+  }, [chatFromQuery]);
+
+  const chatFromCollection = useChatFromCollection(threadId, threadChatId);
+  const threadChat = chatFromCollection ?? chatFromQuery ?? null;
+  const isThreadChatLoading = !threadChat && isChatFetching;
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -1022,4 +1005,6 @@ const ChatPromptBox = memo(
 
 const ChatUIMemo = memo(ChatUI);
 
-export default ChatUIMemo;
+// Client-only: useLiveQuery requires useSyncExternalStore (no getServerSnapshot).
+// page.tsx still prefetches into React Query for first-visit hydration.
+export default dynamic(() => Promise.resolve(ChatUIMemo), { ssr: false });

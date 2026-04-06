@@ -1,8 +1,11 @@
 "use client";
 
+import { useRef } from "react";
 import {
   createCollection,
   localOnlyCollectionOptions,
+  useLiveQuery,
+  eq,
 } from "@tanstack/react-db";
 import { ThreadPageChat } from "@terragon/shared/db/types";
 import { BroadcastThreadPatch } from "@terragon/types/broadcast";
@@ -55,4 +58,25 @@ export function seedChat(chat: ThreadPageChat): void {
   } else {
     c.insert(chat);
   }
+}
+
+/**
+ * Reactive read from TanStack DB collection. Returns undefined if not yet seeded
+ * or if threadChatId is not provided. Client-only (useLiveQuery needs useSyncExternalStore).
+ */
+export function useChatFromCollection(
+  threadId: string,
+  threadChatId: string | undefined,
+): ThreadPageChat | undefined {
+  const collectionRef = useRef(getCollection());
+  const result = useLiveQuery(
+    (q) =>
+      q
+        .from({ c: collectionRef.current })
+        .where(({ c }) => eq(c.threadId, threadId))
+        .where(({ c }) => eq(c.id, threadChatId ?? "")),
+    [threadId, threadChatId],
+  );
+  if (!threadChatId) return undefined;
+  return result.data?.[0] ?? undefined;
 }

@@ -1,8 +1,11 @@
 "use client";
 
+import { useRef } from "react";
 import {
   createCollection,
   localOnlyCollectionOptions,
+  useLiveQuery,
+  eq,
 } from "@tanstack/react-db";
 import { ThreadPageShell } from "@terragon/shared/db/types";
 import { BroadcastThreadPatch } from "@terragon/types/broadcast";
@@ -46,4 +49,20 @@ export function seedShell(shell: ThreadPageShell): void {
   } else {
     c.insert(shell);
   }
+}
+
+/**
+ * Reactive read from TanStack DB collection. Returns undefined if not yet seeded.
+ * Client-only (useLiveQuery needs useSyncExternalStore).
+ */
+export function useShellFromCollection(
+  threadId: string,
+): ThreadPageShell | undefined {
+  const collectionRef = useRef(getCollection());
+  const result = useLiveQuery(
+    (q) =>
+      q.from({ s: collectionRef.current }).where(({ s }) => eq(s.id, threadId)),
+    [threadId],
+  );
+  return result.data?.[0] ?? undefined;
 }
