@@ -119,6 +119,7 @@ describe("secondary-panel artifact shell helpers", () => {
     const items = getArtifactWorkspaceItems({
       messages: [
         {
+          id: "agent-0",
           role: "agent",
           agent: "claudeCode",
           parts: [
@@ -152,6 +153,7 @@ describe("secondary-panel artifact shell helpers", () => {
     const items = getArtifactWorkspaceItems({
       messages: [
         {
+          id: "agent-0",
           role: "agent",
           agent: "claudeCode",
           parts: [

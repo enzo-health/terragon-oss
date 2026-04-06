@@ -22,7 +22,6 @@ import {
   AlertTriangle,
   Check,
   ExternalLink,
-  FileDiff,
   LayoutDashboard,
   Loader2,
   Maximize2,
@@ -703,63 +702,44 @@ function ArtifactWorkspaceShell({
   return (
     <div
       id={ARTIFACT_WORKSPACE_PANEL_ID}
-      className="flex h-full min-h-0 flex-col bg-background"
+      className="flex h-full min-h-0 flex-col bg-white"
     >
-      <div className="border-b px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold text-foreground">
-                <FileDiff className="size-3" />
-                Artifact workspace
-              </span>
-              {activeArtifact && (
-                <>
-                  <ArtifactWorkspaceChip>
-                    {activeArtifact.kind}
-                  </ArtifactWorkspaceChip>
-                  {activeArtifact.sourceLabel && (
-                    <ArtifactWorkspaceChip>
-                      {activeArtifact.sourceLabel}
-                    </ArtifactWorkspaceChip>
-                  )}
-                  {activeArtifact.responseActionLabel && (
-                    <ArtifactWorkspaceChip>
-                      {activeArtifact.responseActionLabel}
-                    </ArtifactWorkspaceChip>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="mt-2 min-w-0">
-              <h2
-                className="truncate text-sm font-semibold text-foreground"
-                title={headerTitle}
-              >
-                {headerTitle}
-              </h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {headerSummary}
-              </p>
-            </div>
+      {/* Compact header — single row with title, controls, and artifact tabs */}
+      <div className="border-b">
+        <div className="flex items-center justify-between gap-2 px-3 h-10">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <h2
+              className="truncate text-[13px] font-medium text-foreground"
+              title={headerTitle}
+            >
+              {headerTitle}
+            </h2>
+            {headerSummary && (
+              <>
+                <span className="text-muted-foreground/30 shrink-0">·</span>
+                <span className="text-[11px] text-muted-foreground truncate shrink-0">
+                  {headerSummary}
+                </span>
+              </>
+            )}
           </div>
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-0.5 shrink-0">
             {onToggleMaximize && (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-7"
+                className="size-6 rounded hover:bg-accent"
                 onClick={onToggleMaximize}
                 aria-label={
                   isMaximized ? "Restore panel size" : "Maximize panel"
                 }
-                title={isMaximized ? "Restore panel size" : "Maximize panel"}
+                title={isMaximized ? "Restore" : "Maximize"}
               >
                 {isMaximized ? (
-                  <Minimize2 className="size-3.5" />
+                  <Minimize2 className="size-3.5 opacity-50" />
                 ) : (
-                  <Maximize2 className="size-3.5" />
+                  <Maximize2 className="size-3.5 opacity-50" />
                 )}
               </Button>
             )}
@@ -768,11 +748,11 @@ function ArtifactWorkspaceShell({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-7"
+                className="size-6 rounded hover:bg-accent"
                 onClick={onClose}
-                aria-label="Close artifact workspace"
+                aria-label="Close panel"
               >
-                <X className="size-3.5" />
+                <X className="size-3.5 opacity-50" />
               </Button>
             )}
           </div>
@@ -782,7 +762,7 @@ function ArtifactWorkspaceShell({
             ref={tablistRef}
             role="tablist"
             aria-label="Artifacts"
-            className="mt-3 flex flex-wrap gap-2"
+            className="flex gap-0 px-3 border-t border-border/50"
           >
             {artifacts.map((artifact) => {
               const isActive = artifact.id === resolvedActiveArtifactId;
@@ -797,10 +777,10 @@ function ArtifactWorkspaceShell({
                   tabIndex={isActive ? 0 : -1}
                   data-artifact-id={artifact.id}
                   className={cn(
-                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    "px-3 py-1.5 text-[11px] font-medium transition-colors border-b-2",
                     isActive
-                      ? "border-foreground/20 bg-muted text-foreground"
-                      : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      ? "text-foreground border-foreground"
+                      : "text-muted-foreground border-transparent hover:text-foreground",
                   )}
                   onClick={() => onActiveArtifactChange(artifact.id)}
                   onKeyDown={handleTabKeyDown}
@@ -863,14 +843,6 @@ function ArtifactWorkspaceShell({
         )}
       </div>
     </div>
-  );
-}
-
-function ArtifactWorkspaceChip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold text-foreground">
-      {children}
-    </span>
   );
 }
 

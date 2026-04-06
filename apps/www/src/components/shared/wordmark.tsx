@@ -25,8 +25,12 @@ export function Wordmark({
       {showText && (
         <span
           className={cn(
-            "text-xl font-extrabold font-[Cabin]",
-            size === "sm" ? "text-lg" : size === "md" ? "text-xl" : "text-2xl",
+            "font-display font-[300] tracking-tight text-foreground",
+            size === "sm"
+              ? "text-lg"
+              : size === "md"
+                ? "text-xl"
+                : "text-[28px]",
           )}
         >
           Terragon

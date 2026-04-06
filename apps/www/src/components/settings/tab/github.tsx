@@ -30,7 +30,7 @@ export function GitHubSettings() {
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-12">
       {/* Repository Configuration */}
       <SettingsSection label="Repository Configuration">
         <div className="flex flex-col gap-4">

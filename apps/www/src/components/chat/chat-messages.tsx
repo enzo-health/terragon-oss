@@ -135,7 +135,7 @@ export const ChatMessages = memo(function ChatMessages({
           isAgentWorking && isLatestMessage && message.role === "agent";
         return (
           <ChatMessageWithToolbar
-            key={index}
+            key={message.id}
             message={message}
             useAiElementsLayout={useAiElementsLayout}
             messageIndex={index}
@@ -164,7 +164,9 @@ export const ChatMessages = memo(function ChatMessages({
   if (useAiElementsLayout) {
     return (
       <Conversation>
-        <ConversationContent>{messageList}</ConversationContent>
+        <ConversationContent className="gap-12">
+          {messageList}
+        </ConversationContent>
       </Conversation>
     );
   }

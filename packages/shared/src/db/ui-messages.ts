@@ -9,6 +9,7 @@ import { AIModel } from "@terragon/agent/types";
 export type UIMessage = UIUserMessage | UIAgentMessage | UISystemMessage;
 
 export type UIUserMessage = {
+  id: string;
   role: "user";
   parts: (
     | UITextPart
@@ -22,6 +23,7 @@ export type UIUserMessage = {
 };
 
 export type UIAgentMessage = {
+  id: string;
   role: "agent";
   agent: AIAgent;
   parts: UIPart[];
@@ -34,16 +36,19 @@ export type UIAgentMessage = {
 
 export type UISystemMessage =
   | {
+      id: string;
       role: "system";
       message_type: DBSystemMessage["message_type"];
       parts: UITextPart[];
     }
   | {
+      id: string;
       role: "system";
       message_type: "stop";
       parts: UIStopPart[];
     }
   | {
+      id: string;
       role: "system";
       message_type: "git-diff";
       parts: UIGitDiffPart[];

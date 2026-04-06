@@ -100,11 +100,11 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <>
       <div
-        className="flex w-full items-center justify-between px-4 border-b bg-card/80 backdrop-blur gap-2 sm:gap-4 overflow-hidden h-[62px]"
+        className="flex w-full items-center justify-between px-6 border-b bg-white/80 backdrop-blur-md gap-4 overflow-hidden h-[56px] shadow-outline-ring relative z-10"
         onClick={isMobile ? onHeaderClick : undefined}
         style={isMobile ? { cursor: "pointer" } : undefined}
       >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {isMobile && <SidebarTrigger className="px-0 size-auto w-fit mr-2" />}
           {canCollapseThreadList && isThreadListCollapsed && (
             <Button
@@ -117,10 +117,12 @@ export const ChatHeader = memo(function ChatHeader({
               <PanelRightClose className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex flex-col min-w-0 w-full">
-            <div className="flex items-center gap-2 w-full">
-              <ThreadStatusIndicator thread={thread} />
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <div className="flex flex-col min-w-0 w-full gap-0.5">
+            <div className="flex items-center gap-3 w-full">
+              <div className="opacity-80 scale-110">
+                <ThreadStatusIndicator thread={thread} />
+              </div>
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
                 {isEditing ? (
                   <Input
                     ref={inputRef}
@@ -128,21 +130,23 @@ export const ChatHeader = memo(function ChatHeader({
                     onChange={(e) => setEditedName(e.target.value)}
                     onBlur={handleSave}
                     onKeyDown={handleKeyDown}
-                    className="h-auto py-0 px-0 text-sm font-bold border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm -ml-0.5 w-full"
+                    className="h-auto py-0 px-0 text-xl font-display font-[300] border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm -ml-0.5 w-full"
                     placeholder={getThreadTitle(thread)}
-                    style={{ minWidth: "100px" }}
+                    style={{ minWidth: "150px" }}
                     autoComplete="off"
                     autoCorrect="off"
                     autoCapitalize="off"
                     spellCheck={false}
                   />
                 ) : (
-                  <span className="font-bold text-sm text-foreground truncate">
+                  <span className="font-display font-[400] text-[17px] text-foreground truncate leading-tight tracking-tight">
                     {getThreadTitle(thread)}
                   </span>
                 )}
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <ThreadAgentIcon thread={thread} />
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="opacity-70 scale-90">
+                    <ThreadAgentIcon thread={thread} />
+                  </div>
                   {thread.githubPRNumber && thread.prStatus && (
                     <PRStatusPill
                       checksStatus={thread.prChecksStatus}
@@ -155,12 +159,12 @@ export const ChatHeader = memo(function ChatHeader({
               </div>
             </div>
             {/* metadata */}
-            <div className="text-muted-foreground text-xs font-mono flex items-center gap-1.5 h-5 min-w-0">
-              <span className="flex-shrink-0 whitespace-nowrap">
+            <div className="text-muted-foreground/70 text-[13px] font-sans tracking-[0.14px] flex items-center gap-2 h-5 min-w-0">
+              <span className="flex-shrink-0 whitespace-nowrap opacity-80">
                 {thread.githubRepoFullName}
               </span>
               {thread.branchName && thread.repoBaseBranchName && (
-                <span className="hidden sm:inline-flex items-center gap-0.5 min-w-0 overflow-hidden">
+                <span className="hidden sm:inline-flex items-center gap-1 min-w-0 overflow-hidden opacity-60 hover:opacity-100 transition-opacity">
                   <span className="flex-shrink-0">(</span>
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
@@ -171,9 +175,7 @@ export const ChatHeader = memo(function ChatHeader({
                   >
                     {thread.repoBaseBranchName}
                   </a>
-                  <span className="text-muted-foreground flex-shrink-0 mx-1">
-                    ←
-                  </span>
+                  <span className="flex-shrink-0 mx-1">←</span>
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.branchName}`}
                     target="_blank"
@@ -185,7 +187,7 @@ export const ChatHeader = memo(function ChatHeader({
                   </a>
                   <button
                     type="button"
-                    className="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors cursor-pointer ml-1"
+                    className="inline-flex items-center hover:text-foreground transition-colors cursor-pointer ml-1"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -209,10 +211,10 @@ export const ChatHeader = memo(function ChatHeader({
                   className="inline-flex items-center ml-1 align-middle"
                   title="Git checkpointing disabled"
                 >
-                  <CloudOff className="h-3 w-3 text-muted-foreground opacity-70" />
+                  <CloudOff className="h-3 w-3 opacity-60" />
                 </span>
               )}
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-2">
                 {thread.automationId && (
                   <AutomationPill
                     automationId={thread.automationId}

@@ -16,6 +16,7 @@ describe("getArtifactDescriptors", () => {
     };
     const messages: UIMessage[] = [
       {
+        id: "user-0",
         role: "user",
         timestamp: "2024-01-01T00:00:00Z",
         model: null,
@@ -65,6 +66,7 @@ describe("getArtifactDescriptors", () => {
     };
 
     const buildMessage = (includeLeadingText: boolean): UIMessage => ({
+      id: "agent-0",
       role: "agent",
       agent: "claudeCode",
       parts: [
@@ -134,6 +136,7 @@ describe("getArtifactDescriptors", () => {
 
   it("keeps tool-backed artifact ids stable when streamed tool content changes in place", () => {
     const buildMessage = (richText: string, fileUrl: string): UIMessage => ({
+      id: "agent-0",
       role: "agent",
       agent: "claudeCode",
       parts: [
@@ -178,6 +181,7 @@ describe("getArtifactDescriptors", () => {
   it("omits top-level streamed agent artifacts until a durable source id exists", () => {
     const messages: UIMessage[] = [
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -248,6 +252,7 @@ describe("getArtifactDescriptors", () => {
     };
     const messages: UIMessage[] = [
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [exitPlanToolPart],
@@ -276,6 +281,7 @@ describe("getArtifactDescriptors", () => {
   it("creates separate artifacts for multiple ExitPlanMode calls with unique IDs", () => {
     const messages: UIMessage[] = [
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -313,6 +319,7 @@ describe("getArtifactDescriptors", () => {
   it("creates a plan artifact from an ExitPlanMode tool call even with empty plan text", () => {
     const messages: UIMessage[] = [
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -339,6 +346,7 @@ describe("getArtifactDescriptors", () => {
   it("creates a plan artifact from agent text with proposed_plan tags", () => {
     const messages: UIMessage[] = [
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -372,6 +380,7 @@ describe("getArtifactDescriptors", () => {
   it("does not create plan artifacts from user text with proposed_plan tags", () => {
     const messages: UIMessage[] = [
       {
+        id: "user-0",
         role: "user",
         model: null,
         parts: [
@@ -397,6 +406,7 @@ describe("getArtifactDescriptors", () => {
     };
     const messages: UIMessage[] = [
       {
+        id: "system-0",
         role: "system",
         message_type: "git-diff",
         parts: [gitDiffPart],

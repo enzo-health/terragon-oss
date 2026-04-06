@@ -486,29 +486,21 @@ export function FilesChangedHeader({
   fileTreeId: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 px-4 py-3">
-      <div className="flex items-center gap-3 min-w-0 overflow-hidden flex-1">
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <FileDiff className="size-4 flex-shrink-0" />
-          <h2 className="text-sm font-medium whitespace-nowrap">
-            Files Changed
-          </h2>
-          {fileCount > 0 && (
-            <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 text-xs font-medium rounded-full bg-neutral-200 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-200 flex-shrink-0">
-              {fileCount}
-            </span>
-          )}
-        </div>
+    <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-accent/30">
+      <div className="flex items-center gap-2 min-w-0 overflow-hidden flex-1">
+        <span className="text-[12px] font-medium text-foreground/80 whitespace-nowrap">
+          {fileCount} file{fileCount !== 1 ? "s" : ""}
+        </span>
         {(additions > 0 || deletions > 0) && (
-          <div className="flex items-center gap-2 text-xs font-medium flex-shrink-0 min-w-0">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium flex-shrink-0">
             {additions > 0 && (
-              <span className="flex items-center gap-1 text-green-600 dark:text-green-400 whitespace-nowrap">
-                <span>+{additions}</span>
+              <span className="text-green-600 dark:text-green-400">
+                +{additions}
               </span>
             )}
             {deletions > 0 && (
-              <span className="flex items-center gap-1 text-red-600 dark:text-red-400 whitespace-nowrap">
-                <span>-{deletions}</span>
+              <span className="text-red-600 dark:text-red-400">
+                -{deletions}
               </span>
             )}
           </div>

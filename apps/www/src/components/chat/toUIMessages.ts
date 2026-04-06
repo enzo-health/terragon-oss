@@ -225,6 +225,7 @@ function buildUIMessagesWithRanges({
     }
     currentAgentMessageStartDbIndex = -1;
     currentAgentMessage = {
+      id: `agent-${uiMessages.length}`,
       role: "agent",
       agent,
       parts: [],
@@ -238,6 +239,7 @@ function buildUIMessagesWithRanges({
     }
     currentUserMessageStartDbIndex = -1;
     currentUserMessage = {
+      id: `user-${uiMessages.length}`,
       role: "user",
       parts: [],
     };
@@ -322,6 +324,7 @@ function buildUIMessagesWithRanges({
       clearCurrentAgentMessage(dbIndex - 1);
       clearCurrentUserMessage(dbIndex - 1);
       uiMessages.push({
+        id: `system-${dbIndex}`,
         role: "system",
         message_type: dbMessage.message_type,
         parts: dbMessage.parts,
@@ -412,6 +415,7 @@ function buildUIMessagesWithRanges({
         description: dbMessage.description,
       };
       uiMessages.push({
+        id: `git-diff-${dbIndex}`,
         role: "system",
         message_type: "git-diff",
         parts: [gitDiffPart],
@@ -423,6 +427,7 @@ function buildUIMessagesWithRanges({
       clearCurrentAgentMessage(dbIndex - 1);
       clearCurrentUserMessage(dbIndex - 1);
       uiMessages.push({
+        id: `stop-${dbIndex}`,
         role: "system",
         message_type: "stop",
         parts: [{ type: "stop" }],
@@ -524,6 +529,7 @@ function appendDeltaMessages(
   if (parts.length === 0) return messages;
 
   const deltaMessage: UIAgentMessage = {
+    id: "delta-streaming",
     role: "agent",
     agent,
     parts,

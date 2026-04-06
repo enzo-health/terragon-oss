@@ -42,7 +42,7 @@ export function DataTable<TData, TValue>({
   });
   const sortingKey = sorting.map((s) => `${s.id}-${s.desc}`).join("-");
   return (
-    <div className="rounded-md border">
+    <div className="rounded-2xl border">
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
@@ -98,7 +98,10 @@ export function DataTable<TData, TValue>({
             ))
           ) : (
             <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center">
+              <TableCell
+                colSpan={columns.length}
+                className="h-24 text-center text-muted-foreground/80"
+              >
                 No results.
               </TableCell>
             </TableRow>

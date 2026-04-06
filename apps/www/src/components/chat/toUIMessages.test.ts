@@ -38,8 +38,15 @@ describe("toUIMessages", () => {
 
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
-      { role: "user", parts: [{ type: "text", text: "hi" }], model: null },
       {
+        id: "user-0",
+        role: "user",
+        parts: [{ type: "text", text: "hi" }],
+        model: null,
+        timestamp: undefined,
+      },
+      {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -110,11 +117,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "run a task" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -199,8 +209,15 @@ describe("toUIMessages", () => {
 
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
-      { role: "user", parts: [{ type: "text", text: "start" }], model: null },
       {
+        id: "user-0",
+        role: "user",
+        parts: [{ type: "text", text: "start" }],
+        model: null,
+        timestamp: undefined,
+      },
+      {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -282,21 +299,27 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "first question" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "first answer" }],
       },
       {
+        id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "second question" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-3",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -340,8 +363,15 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     // Orphaned tool results should be ignored
     expect(result).toEqual([
-      { role: "user", parts: [{ type: "text", text: "test" }], model: null },
       {
+        id: "user-0",
+        role: "user",
+        parts: [{ type: "text", text: "test" }],
+        model: null,
+        timestamp: undefined,
+      },
+      {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "Done" }],
@@ -408,11 +438,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "do multiple things" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -493,11 +526,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "analyze files" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -547,6 +583,7 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -580,11 +617,13 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "Processing..." }],
       },
       {
+        id: "stop-1",
         role: "system",
         message_type: "stop",
         parts: [{ type: "stop" }],
@@ -611,11 +650,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "show changes" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "git-diff-1",
         role: "system",
         message_type: "git-diff",
         parts: [
@@ -667,11 +709,14 @@ describe("toUIMessages", () => {
     // Meta messages should be ignored, but result-success attaches meta to agent message
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "run a task" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "Task started" }],
@@ -718,22 +763,28 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         model: null,
         parts: [{ type: "text", text: "first user" }],
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "first agent" }],
         meta: { cost_usd: 0.01, duration_ms: 1000, num_turns: 1 },
       },
       {
+        id: "user-2",
         role: "user",
         model: null,
         parts: [{ type: "text", text: "second user" }],
+        timestamp: undefined,
       },
       {
+        id: "agent-3",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "second agent" }],
@@ -808,6 +859,7 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "agent-0",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -900,11 +952,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "manage todos" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -979,11 +1034,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "manage todos and read file" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1080,11 +1138,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "complex task" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1134,6 +1195,7 @@ describe("toUIMessages", () => {
 
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result[0]).toEqual({
+      id: "user-0",
       role: "user",
       parts: [{ type: "text", text: "Hello" }],
       timestamp,
@@ -1172,11 +1234,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "manage stuff" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1223,11 +1288,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Create a PR" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "system-1",
         role: "system",
         message_type: "retry-git-commit-and-push",
         parts: [
@@ -1238,6 +1306,7 @@ describe("toUIMessages", () => {
         ],
       },
       {
+        id: "agent-2",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "I'll retry the git operation" }],
@@ -1264,11 +1333,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Test message" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "system-1",
         role: "system",
         message_type: "retry-git-commit-and-push",
         parts: [{ type: "text", text: "System message with timestamp" }],
@@ -1316,12 +1388,14 @@ describe("toUIMessages", () => {
     // The user message is preserved and tool-call triggers an agent message
     expect(result).toHaveLength(4);
     expect(result[0]).toEqual({
+      id: "user-0",
       role: "user",
       parts: [{ type: "text", text: "Push changes" }],
       timestamp: undefined,
       model: null,
     });
     expect(result[1]).toEqual({
+      id: "agent-1",
       role: "agent",
       agent: "claudeCode",
       parts: [
@@ -1338,6 +1412,7 @@ describe("toUIMessages", () => {
       ],
     });
     expect(result[2]).toEqual({
+      id: "system-3",
       role: "system",
       message_type: "retry-git-commit-and-push",
       parts: [
@@ -1345,6 +1420,7 @@ describe("toUIMessages", () => {
       ],
     });
     expect(result[3]).toEqual({
+      id: "agent-3",
       role: "agent",
       agent: "claudeCode",
       parts: [{ type: "text", text: "I'll handle the git push failure" }],
@@ -1376,6 +1452,7 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [
           { type: "text", text: "First message" },
@@ -1410,19 +1487,24 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "First question" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "First answer" }],
       },
       {
+        id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "Follow-up question" }],
         model: null,
+        timestamp: undefined,
       },
     ]);
   });
@@ -1449,19 +1531,24 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "User message" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "system-1",
         role: "system",
         message_type: "retry-git-commit-and-push",
         parts: [{ type: "text", text: "System interruption" }],
       },
       {
+        id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "New user message" }],
         model: null,
+        timestamp: undefined,
       },
     ]);
   });
@@ -1489,11 +1576,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Show me the changes" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "git-diff-1",
         role: "system",
         message_type: "git-diff",
         parts: [
@@ -1506,9 +1596,11 @@ describe("toUIMessages", () => {
         ],
       },
       {
+        id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "Another request" }],
         model: null,
+        timestamp: undefined,
       },
     ]);
   });
@@ -1533,17 +1625,20 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
-        timestamp: undefined,
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "stop-1",
         role: "system",
         message_type: "stop",
         parts: [{ type: "stop" }],
       },
       {
+        id: "agent-2",
         role: "agent",
         agent: "claudeCode",
         parts: [{ type: "text", text: "Task stopped" }],
@@ -1575,6 +1670,7 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [
           { type: "text", text: "Text part" },
@@ -1586,6 +1682,7 @@ describe("toUIMessages", () => {
           { type: "text", text: "Image description" },
         ],
         model: null,
+        timestamp: undefined,
       },
     ]);
   });
@@ -1615,11 +1712,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1636,9 +1736,11 @@ describe("toUIMessages", () => {
         ],
       },
       {
+        id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "Never mind, do something else" }],
         model: null,
+        timestamp: undefined,
       },
     ]);
   });
@@ -1669,11 +1771,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Make changes" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1690,6 +1795,7 @@ describe("toUIMessages", () => {
         ],
       },
       {
+        id: "git-diff-2",
         role: "system",
         message_type: "git-diff",
         parts: [
@@ -1736,11 +1842,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do multiple things" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1767,9 +1876,11 @@ describe("toUIMessages", () => {
         ],
       },
       {
+        id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "Actually, do something different" }],
         model: null,
+        timestamp: undefined,
       },
     ]);
   });
@@ -1797,11 +1908,14 @@ describe("toUIMessages", () => {
     const result = toUIMessages({ dbMessages, agent: "claudeCode" });
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1818,6 +1932,7 @@ describe("toUIMessages", () => {
         ],
       },
       {
+        id: "stop-2",
         role: "system",
         message_type: "stop",
         parts: [{ type: "stop" }],
@@ -1852,11 +1967,14 @@ describe("toUIMessages", () => {
     // Error messages are not shown in UI messages
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1906,11 +2024,14 @@ describe("toUIMessages", () => {
     // Meta messages are not shown in UI messages
     expect(result).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something complex" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1953,11 +2074,14 @@ describe("toUIMessages", () => {
     });
     expect(resultWithoutStatus).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -1982,11 +2106,14 @@ describe("toUIMessages", () => {
     });
     expect(resultWithCompleteStatus).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [
@@ -2012,11 +2139,14 @@ describe("toUIMessages", () => {
     });
     expect(resultWithWorkingStatus).toEqual([
       {
+        id: "user-0",
         role: "user",
         parts: [{ type: "text", text: "Do something" }],
         model: null,
+        timestamp: undefined,
       },
       {
+        id: "agent-1",
         role: "agent",
         agent: "claudeCode",
         parts: [

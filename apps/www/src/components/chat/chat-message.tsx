@@ -448,10 +448,11 @@ export const ChatMessage = memo(function ChatMessage({
     <div
       style={{ overflowAnchor: "none" }}
       className={cn(
-        "p-2 rounded-md w-full break-words",
+        "p-4 rounded-xl w-full break-words transition-all duration-200 animate-in fade-in slide-in-from-bottom-2 duration-300",
         {
-          "bg-primary/10 ml-auto max-w-[80%] w-fit": message.role === "user",
-          "mr-auto": message.role === "agent",
+          "bg-[var(--warm-stone)] ml-auto max-w-[85%] w-fit shadow-warm-lift":
+            message.role === "user",
+          "mr-auto bg-white shadow-outline-ring": message.role === "agent",
         },
         className,
       )}
@@ -676,30 +677,27 @@ function SystemMessage({
     );
   }
   return (
-    <div className="p-2 rounded-md mr-auto w-fit flex flex-col gap-2">
+    <div className="py-2 px-4 rounded-xl mr-auto w-fit flex flex-col gap-2">
       <div className="flex flex-col gap-2">
         <div
-          className="grid grid-cols-[auto_1fr] gap-2 text-muted-foreground"
+          className="grid grid-cols-[auto_1fr] gap-3 text-muted-foreground/60 transition-colors hover:text-muted-foreground cursor-pointer group/system"
           onClick={() => setIsCollapsed(!isCollapsed)}
         >
-          <span className="h-6 flex items-center">
+          <span className="h-5 flex items-center">
             <span
               className={cn(
-                "shrink-0 size-2 rounded-full inline-block",
+                "shrink-0 size-1.5 rounded-full inline-block",
                 getDotClassName(),
               )}
               aria-hidden="true"
             />
           </span>
-          <span>
+          <span className="text-[13px] font-sans tracking-[0.14px]">
             <span>{getLabel()}</span>
             {showMoreButton && (
               <>
                 &nbsp;
-                <span
-                  className="inline-block text-muted-foreground/70 select-none"
-                  onClick={() => setIsCollapsed(!isCollapsed)}
-                >
+                <span className="inline-block opacity-60 group-hover/system:opacity-100 transition-opacity select-none">
                   ({isCollapsed ? "Show more" : "Show less"})
                 </span>
               </>
@@ -707,8 +705,8 @@ function SystemMessage({
           </span>
         </div>
         {!isCollapsed && showMoreButton && (
-          <div className="max-h-[150px] overflow-auto border border-border rounded-md p-1 mr-2">
-            <pre className="whitespace-pre-wrap text-xs font-mono">
+          <div className="max-h-[200px] overflow-auto border border-border/30 rounded-xl p-3 bg-white/50 shadow-inset-edge">
+            <pre className="whitespace-pre-wrap text-[11px] font-mono leading-relaxed text-muted-foreground/80">
               {message.parts.map((part, partIndex) => {
                 return part.text;
               })}
@@ -773,7 +771,7 @@ function CollapsibleAgentActivityGroup({
         )}
       </button>
       {!isCollapsed && (
-        <div className="flex flex-col gap-2 p-2 max-h-[50dvh] overflow-y-auto border rounded-md">
+        <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-xl bg-white shadow-inset-edge">
           {group.parts.map((part, partIndex) => {
             return (
               <MessagePart

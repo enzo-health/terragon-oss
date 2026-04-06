@@ -2,6 +2,7 @@ import { combineThreadStatuses } from "@/agent/thread-status";
 import { cn } from "@/lib/utils";
 import { ThreadInfo, ThreadStatus } from "@terragon/shared";
 import { Clock, Check, CircleDashed, X, File, Calendar } from "lucide-react";
+import { memo } from "react";
 
 type MinimalThreadStatus =
   | "unread" // Thread is unread
@@ -70,7 +71,7 @@ function getStatusLabel({
   return labels[status] || status;
 }
 
-export function ThreadStatusIndicator({
+export const ThreadStatusIndicator = memo(function ThreadStatusIndicator({
   thread,
 }: {
   thread: Pick<ThreadInfo, "isUnread" | "threadChats" | "draftMessage">;
@@ -87,7 +88,7 @@ export function ThreadStatusIndicator({
       isError={isError}
     />
   );
-}
+});
 
 function MinimalStatusIndicator({
   isUnread,
@@ -112,12 +113,11 @@ function MinimalStatusIndicator({
     minimalStatus = "draft";
   }
 
-  const strokeWidth = 3;
-  const size = "size-3";
-  // Icon variant
+  const strokeWidth = 2.5;
+  const size = "size-3.5";
   const icons = {
     draft: (
-      <File strokeWidth={2.5} className={cn("text-muted-foreground", size)} />
+      <File strokeWidth={2} className={cn("text-muted-foreground", size)} />
     ),
     scheduled: (
       <Calendar
@@ -126,16 +126,13 @@ function MinimalStatusIndicator({
       />
     ),
     pending: (
-      <Clock
-        strokeWidth={strokeWidth}
-        className={cn("text-yellow-600/90", size)}
-      />
+      <Clock strokeWidth={strokeWidth} className={cn("text-amber-600", size)} />
     ),
     active: (
       <CircleDashed
         strokeWidth={2}
         className={cn(
-          "text-muted-foreground animate-[spin_1.5s_linear_infinite]",
+          "text-foreground/60 animate-[spin_2s_linear_infinite]",
           size,
         )}
       />
@@ -143,19 +140,17 @@ function MinimalStatusIndicator({
     finishing: (
       <Check
         strokeWidth={strokeWidth}
-        className={cn("text-green-600/90", size)}
+        className={cn("text-emerald-600", size)}
       />
     ),
     complete: (
       <Check
         strokeWidth={strokeWidth}
-        className={cn("text-green-600/90", size)}
+        className={cn("text-emerald-600", size)}
       />
     ),
-    error: (
-      <X strokeWidth={strokeWidth} className={cn("text-red-600/90", size)} />
-    ),
-    unread: <div className="w-1 h-1 rounded-full bg-blue-500" />,
+    error: <X strokeWidth={strokeWidth} className={cn("text-red-600", size)} />,
+    unread: <div className="w-2 h-2 rounded-full bg-blue-500" />,
   };
   return (
     <div

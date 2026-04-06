@@ -69,6 +69,17 @@ import { ThreadInfoFull } from "@terragon/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
 import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
 import {
+  seedShell,
+  applyShellPatchToCollection,
+  useShellFromCollection,
+} from "@/collections/thread-shell-collection";
+import {
+  seedChat,
+  applyChatPatchToCollection,
+  useChatFromCollection,
+} from "@/collections/thread-chat-collection";
+import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
+import {
   deliveryLoopStatusQueryKeys,
   useDeliveryLoopStatusQuery,
 } from "@/queries/delivery-loop-status-queries";
@@ -169,11 +180,22 @@ function ChatUI({
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  const { data: shell, isLoading: isShellLoading } = useQuery({
+  // TanStack DB collection is the primary read path (reactive to WebSocket patches).
+  // React Query fetches in the background and seeds collections on delivery.
+  // Hover-prefetch (prefetch.ts) pre-populates before mount for instant switching.
+  const { data: shellFromQuery, isLoading: isShellFetching } = useQuery({
     ...threadShellQueryOptions(threadId),
   });
+  useEffect(() => {
+    if (shellFromQuery) seedShell(shellFromQuery);
+  }, [shellFromQuery]);
+
+  const shellFromCollection = useShellFromCollection(threadId);
+  const shell = shellFromCollection ?? shellFromQuery ?? null;
+  const isShellLoading = !shell && isShellFetching;
+
   const threadChatId = shell?.primaryThreadChatId;
-  const { data: threadChat, isLoading: isThreadChatLoading } = useQuery({
+  const { data: chatFromQuery, isLoading: isChatFetching } = useQuery({
     ...(threadChatId
       ? threadChatQueryOptions({ threadId, threadChatId })
       : threadChatQueryOptions({
@@ -182,6 +204,13 @@ function ChatUI({
         })),
     enabled: threadChatId !== undefined,
   });
+  useEffect(() => {
+    if (chatFromQuery) seedChat(chatFromQuery);
+  }, [chatFromQuery]);
+
+  const chatFromCollection = useChatFromCollection(threadId, threadChatId);
+  const threadChat = chatFromCollection ?? chatFromQuery ?? null;
+  const isThreadChatLoading = !threadChat && isChatFetching;
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -326,6 +355,11 @@ function ChatUI({
         ) {
           hasMaterializedMessages = true;
         }
+        // Write to TanStack DB collections (primary data path)
+        applyShellPatchToCollection(patch);
+        applyChatPatchToCollection(patch);
+        applyThreadPatchToCollection(patch);
+        // Dual-write to React Query cache (diff invalidation + legacy consumers)
         applyThreadPatchToQueryClient({ queryClient, patch });
       }
     }
@@ -657,7 +691,7 @@ function ChatUI({
             >
               <div
                 ref={transcriptRef}
-                className="flex flex-col flex-1 gap-2 w-full max-w-[800px] mx-auto px-4 mt-2 mb-4"
+                className="flex flex-col flex-1 gap-8 w-full max-w-[850px] mx-auto px-6 mt-12 mb-20"
               >
                 <ChatMessages
                   messages={messages}
@@ -899,15 +933,15 @@ const ChatPromptBox = memo(
     );
 
     return (
-      <div className="sticky bottom-0 z-10 bg-background chat-prompt-box px-6 max-w-[800px] w-full mx-auto">
+      <div className="sticky bottom-0 z-10 bg-background/95 backdrop-blur-sm chat-prompt-box px-6 pb-8 max-w-[850px] w-full mx-auto [mask-image:linear-gradient(to_bottom,transparent,black_40px)]">
         <div className="flex h-0 items-center justify-center">
           <button
             onClick={forceScrollToBottom}
             className={cn(
-              "z-20 -mt-20 flex size-8 items-center justify-center rounded-full bg-background/80 border border-foreground/20 backdrop-blur-md shadow-md transition-all duration-200 hover:bg-background/90 hover:border-foreground/30",
+              "z-20 -mt-24 flex size-9 items-center justify-center rounded-full bg-white border shadow-card transition-all duration-300 hover:scale-110",
               showScrollButton && !isAtBottom
                 ? "opacity-100 translate-y-0"
-                : "opacity-0 translate-y-2 pointer-events-none",
+                : "opacity-0 translate-y-4 pointer-events-none",
             )}
             aria-label="Scroll to bottom"
           >
@@ -971,4 +1005,6 @@ const ChatPromptBox = memo(
 
 const ChatUIMemo = memo(ChatUI);
 
-export default ChatUIMemo;
+// Client-only: useLiveQuery requires useSyncExternalStore (no getServerSnapshot).
+// page.tsx still prefetches into React Query for first-visit hydration.
+export default dynamic(() => Promise.resolve(ChatUIMemo), { ssr: false });

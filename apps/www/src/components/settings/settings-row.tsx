@@ -26,7 +26,7 @@ export function SettingsCheckbox({
         className="mt-0.5"
       />
       <div className="flex flex-col gap-1 flex-1">
-        <span className="text-sm font-semibold">{label}</span>
+        <span className="text-sm font-medium">{label}</span>
         {description && (
           <span className="text-xs text-muted-foreground">{description}</span>
         )}
@@ -57,7 +57,7 @@ export function SettingsWithCTA({
       )}
     >
       <div className="flex flex-col gap-1 flex-1">
-        <Label className="text-sm font-semibold">{label}</Label>
+        <Label className="text-sm font-medium">{label}</Label>
         {description && (
           <span className="text-xs text-muted-foreground">{description}</span>
         )}
@@ -79,17 +79,17 @@ export function SettingsSection({
   cta?: React.ReactNode;
 }) {
   return (
-    <div className="space-y-4 pb-4">
-      <div className="border-b pb-2 flex items-start justify-between gap-4">
+    <div className="bg-card rounded-[16px] border shadow-card p-6 space-y-6">
+      <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
-          <h3 className="text-base font-semibold">{label}</h3>
+          <h3 className="text-lg font-display font-[300]">{label}</h3>
           {description && (
-            <p className="text-sm text-muted-foreground">{description}</p>
+            <p className="text-sm text-muted-foreground mt-1">{description}</p>
           )}
         </div>
         {cta && <div className="flex-shrink-0">{cta}</div>}
       </div>
-      <div className="space-y-4">{children}</div>
+      <div className="space-y-6">{children}</div>
     </div>
   );
 }

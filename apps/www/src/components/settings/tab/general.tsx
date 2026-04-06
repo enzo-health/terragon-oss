@@ -17,7 +17,7 @@ export function GeneralSettings() {
     return null;
   }
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-12">
       {/* Appearance Section */}
       <SettingsSection label="General">
         <div className="flex flex-col gap-4">

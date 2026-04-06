@@ -41,10 +41,11 @@ export function MessageContent({
   return (
     <div
       className={cn(
-        "flex flex-col gap-2 rounded-md p-2 break-words",
-        from === "user" && "bg-primary/10 ml-auto max-w-[80%] w-fit",
-        from === "assistant" && "mr-auto w-full",
-        from === "system" && "w-full",
+        "flex flex-col gap-3 rounded-xl p-4 break-words transition-all duration-200",
+        from === "user" &&
+          "bg-[var(--warm-stone)] ml-auto max-w-[85%] w-fit shadow-warm-lift",
+        from === "assistant" && "mr-auto w-full bg-white shadow-outline-ring",
+        from === "system" && "w-full text-center text-muted-foreground italic",
         className,
       )}
       {...props}
@@ -62,7 +63,10 @@ export function MessageResponse({
   ...props
 }: MessageResponseProps) {
   return (
-    <div className={cn("flex flex-col gap-2 text-sm", className)} {...props}>
+    <div
+      className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}
+      {...props}
+    >
       {children}
     </div>
   );
@@ -77,7 +81,10 @@ export function MessagePart({
 }: MessagePartProps) {
   return (
     <div
-      className={cn("rounded-md border border-border/50 p-2", className)}
+      className={cn(
+        "rounded-lg border border-border/40 p-3 bg-white/50",
+        className,
+      )}
       {...props}
     >
       {children}
