@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useMemo } from "react";
+import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
 import type { SetSelectedModel } from "@/hooks/use-selected-model";
@@ -126,10 +127,13 @@ export function SimplePromptBox({
   return (
     <DragDropWrapper
       onFilesDropped={handleFilesAttached}
-      className={borderClassName}
+      className={cn(
+        "bg-white rounded-xl shadow-card transition-shadow duration-300 hover:shadow-lg focus-within:shadow-premium p-2 flex flex-col gap-2",
+        borderClassName,
+      )}
     >
       <ScrollArea
-        className="max-h-[calc(80dvh)] overflow-auto"
+        className="max-h-[calc(60dvh)] overflow-auto"
         onClick={() => {
           // Focus editor when clicking in the scroll area
           if (editor && !editor.isFocused) {
@@ -137,11 +141,14 @@ export function SimplePromptBox({
           }
         }}
       >
-        <EditorContent editor={editor} className={className} />
+        <EditorContent
+          editor={editor}
+          className={cn("px-4 py-2 min-h-[44px]", className)}
+        />
       </ScrollArea>
       <AttachedFiles attachedFiles={attachedFiles} onRemoveFile={removeFile} />
-      <div className="flex flex-row gap-4 items-center px-4">
-        <div className="flex flex-row gap-1 items-center flex-1 min-w-0">
+      <div className="flex flex-row gap-3 items-center px-2 pb-1">
+        <div className="flex flex-row gap-1.5 items-center flex-1 min-w-0">
           {!hideModelSelector && (
             <ModelSelector
               className="flex-initial"
@@ -166,7 +173,7 @@ export function SimplePromptBox({
               />
             )}
         </div>
-        <div className="flex-shrink-0 flex flex-row items-center gap-1">
+        <div className="flex-shrink-0 flex flex-row items-center gap-1.5">
           {!hideAddContextButton && (
             <AddContextButton
               editor={editor}

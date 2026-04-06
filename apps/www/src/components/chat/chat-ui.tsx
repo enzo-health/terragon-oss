@@ -68,6 +68,21 @@ import dynamic from "next/dynamic";
 import { ThreadInfoFull } from "@terragon/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
 import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
+import type {
+  ThreadPageShell,
+  ThreadPageChat,
+} from "@terragon/shared/db/types";
+import {
+  getThreadShellCollection,
+  seedShell,
+  applyShellPatchToCollection,
+} from "@/collections/thread-shell-collection";
+import {
+  getThreadChatCollection,
+  seedChat,
+  applyChatPatchToCollection,
+} from "@/collections/thread-chat-collection";
+import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
 import {
   deliveryLoopStatusQueryKeys,
   useDeliveryLoopStatusQuery,
@@ -169,10 +184,36 @@ function ChatUI({
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  const { data: shell, isLoading: isShellLoading } = useQuery({
+  // Shell: React Query handles SSR hydration. We seed the TanStack DB collection
+  // so that switching back to this thread later is instant (no loading spinner).
+  // On initial mount, try the collection first (instant if hover-prefetched).
+  // Read from collection cache for instant switching (if previously visited or hover-prefetched).
+  // Use initialData so React Query shows it immediately but still refetches in background.
+  const shellCollection = getThreadShellCollection();
+  const cachedShell =
+    shellCollection.status === "ready"
+      ? (shellCollection.state.get(threadId) as ThreadPageShell | undefined)
+      : undefined;
+  const { data: shellFromQuery, isLoading: isShellQueryLoading } = useQuery({
     ...threadShellQueryOptions(threadId),
+    initialData: cachedShell,
+    // Treat cached data as slightly stale so React Query refetches in background
+    initialDataUpdatedAt: cachedShell ? Date.now() - 30_000 : undefined,
   });
+  const shell = shellFromQuery ?? null;
+  const isShellLoading = !shell && isShellQueryLoading;
+  useEffect(() => {
+    if (shell) seedShell(shell);
+  }, [shell]);
+
   const threadChatId = shell?.primaryThreadChatId;
+
+  const chatCollection = getThreadChatCollection();
+  const cachedChatKey = threadChatId ? `${threadId}:${threadChatId}` : null;
+  const cachedChat =
+    cachedChatKey && chatCollection.status === "ready"
+      ? (chatCollection.state.get(cachedChatKey) as ThreadPageChat | undefined)
+      : undefined;
   const { data: threadChat, isLoading: isThreadChatLoading } = useQuery({
     ...(threadChatId
       ? threadChatQueryOptions({ threadId, threadChatId })
@@ -181,7 +222,12 @@ function ChatUI({
           threadChatId: "missing-thread-chat-id",
         })),
     enabled: threadChatId !== undefined,
+    initialData: cachedChat,
+    initialDataUpdatedAt: cachedChat ? Date.now() - 30_000 : undefined,
   });
+  useEffect(() => {
+    if (threadChat) seedChat(threadChat);
+  }, [threadChat]);
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -326,6 +372,11 @@ function ChatUI({
         ) {
           hasMaterializedMessages = true;
         }
+        // Write to TanStack DB collections (primary data path)
+        applyShellPatchToCollection(patch);
+        applyChatPatchToCollection(patch);
+        applyThreadPatchToCollection(patch);
+        // Dual-write to React Query cache (diff invalidation + legacy consumers)
         applyThreadPatchToQueryClient({ queryClient, patch });
       }
     }
@@ -657,7 +708,7 @@ function ChatUI({
             >
               <div
                 ref={transcriptRef}
-                className="flex flex-col flex-1 gap-2 w-full max-w-[800px] mx-auto px-4 mt-2 mb-4"
+                className="flex flex-col flex-1 gap-8 w-full max-w-[850px] mx-auto px-6 mt-12 mb-20"
               >
                 <ChatMessages
                   messages={messages}
@@ -899,15 +950,15 @@ const ChatPromptBox = memo(
     );
 
     return (
-      <div className="sticky bottom-0 z-10 bg-background chat-prompt-box px-6 max-w-[800px] w-full mx-auto">
+      <div className="sticky bottom-0 z-10 bg-background/95 backdrop-blur-sm chat-prompt-box px-6 pb-8 max-w-[850px] w-full mx-auto [mask-image:linear-gradient(to_bottom,transparent,black_40px)]">
         <div className="flex h-0 items-center justify-center">
           <button
             onClick={forceScrollToBottom}
             className={cn(
-              "z-20 -mt-20 flex size-8 items-center justify-center rounded-full bg-background/80 border border-foreground/20 backdrop-blur-md shadow-md transition-all duration-200 hover:bg-background/90 hover:border-foreground/30",
+              "z-20 -mt-24 flex size-9 items-center justify-center rounded-full bg-white border shadow-card transition-all duration-300 hover:scale-110",
               showScrollButton && !isAtBottom
                 ? "opacity-100 translate-y-0"
-                : "opacity-0 translate-y-2 pointer-events-none",
+                : "opacity-0 translate-y-4 pointer-events-none",
             )}
             aria-label="Scroll to bottom"
           >

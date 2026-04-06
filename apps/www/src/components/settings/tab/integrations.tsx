@@ -32,7 +32,7 @@ export function IntegrationsSettings({
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-12">
       {/* Slack Integration */}
       <SettingsSection
         label="Slack"

@@ -22,10 +22,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { SheetOrMenu } from "@/components/ui/sheet-or-menu";
 import { RecommendedTasks } from "../recommended-tasks";
-import {
-  ThreadListFilters,
-  useInfiniteThreadList,
-} from "@/queries/thread-queries";
+import { ThreadListFilters } from "@/queries/thread-queries";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   threadListCollapsedSectionsAtom,
@@ -37,8 +34,11 @@ import { selectedModelAtom } from "@/atoms/user-flags";
 import { cn } from "@/lib/utils";
 import { ThreadListGroupBy } from "@/lib/cookies";
 import { sortThreadsUpdatedAt } from "@/lib/thread-sorting";
-import { useQueryClient } from "@tanstack/react-query";
+import { useThreadInfoList } from "@/hooks/use-thread-info-list";
+import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
 import { applyThreadPatchToListQueries } from "@/queries/thread-patch-cache";
+import { useQueryClient } from "@tanstack/react-query";
+import { ThreadListContentsClient } from "./thread-list-contents-client";
 
 export const ThreadListHeader = memo(function ThreadListHeader({
   className,
@@ -55,26 +55,31 @@ export const ThreadListHeader = memo(function ThreadListHeader({
   return (
     <div
       className={cn(
-        "px-4 flex items-center justify-between min-h-8",
+        "px-4 flex items-center justify-between min-h-12 border-b border-border/20 mb-2",
         className,
       )}
     >
-      <h2 className="font-semibold text-sm">Tasks</h2>
-      <div className="flex items-center gap-0.5">
+      <h2 className="font-display font-[300] text-[18px] tracking-tight text-foreground/90">
+        Tasks
+      </h2>
+      <div className="flex items-center gap-1">
         {viewFilter !== "all" && (
           <SheetOrMenu
             trigger={
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-fit px-1 hover:bg-sidebar-accent/50 group flex items-center gap-1"
+                className="h-8 w-fit px-2 hover:bg-accent rounded-full group flex items-center gap-1.5 transition-all duration-200"
               >
                 {viewFilter === "active" ? (
-                  <Inbox className="h-3.5 w-3.5" />
+                  <Inbox className="h-3.5 w-3.5 opacity-70" />
                 ) : (
-                  <Archive className="h-3.5 w-3.5" />
+                  <Archive className="h-3.5 w-3.5 opacity-70" />
                 )}
-                <ChevronDown className="size-3 opacity-50" />
+                <span className="text-[13px] font-sans font-medium opacity-70">
+                  {viewFilter === "active" ? "Inbox" : "Archived"}
+                </span>
+                <ChevronDown className="size-3 opacity-40 group-hover:opacity-100 transition-opacity" />
               </Button>
             }
             title="Tasks Filter"
@@ -109,9 +114,9 @@ export const ThreadListHeader = memo(function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-fit px-1 hover:bg-sidebar-accent/50 group flex items-center gap-1"
+                className="h-8 w-8 hover:bg-accent rounded-full group flex items-center justify-center transition-all duration-200"
               >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
+                <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
               </Button>
             }
             title="Group Tasks By"
@@ -169,18 +174,20 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
   return (
     <h3
       className={cn(
-        "group py-1 text-xs font-medium text-muted-foreground flex items-center gap-1 cursor-pointer select-none hover:text-foreground transition-colors sticky top-[28px] z-30 bg-background pl-0.5",
+        "group py-1.5 text-[11px] uppercase tracking-[0.6px] font-semibold text-muted-foreground/70 flex items-center gap-1.5 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-3",
         className,
       )}
       onClick={onToggle}
     >
       {isCollapsed ? (
-        <ChevronRight className="size-3 opacity-50 transition-opacity" />
+        <ChevronRight className="size-3 opacity-50" />
       ) : (
-        <ChevronDown className="size-3 opacity-50 sm:opacity-0 group-hover:opacity-50 transition-opacity" />
+        <ChevronDown className="size-3 opacity-50" />
       )}
       {title}
-      <span className="text-muted-foreground/50">({numThreads})</span>
+      <span className="text-muted-foreground/50 font-sans text-[10px] font-medium">
+        {numThreads}
+      </span>
     </h3>
   );
 });
@@ -214,16 +221,16 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
     return null;
   }
   return (
-    <div className="space-y-1">
+    <div className="mb-6">
       <ThreadListSectionHeader
         title={title}
         numThreads={numThreads}
         isCollapsed={isCollapsed}
         onToggle={onToggle}
-        className={isSidebar ? "top-0 pr-3 bg-sidebar" : undefined}
+        className={isSidebar ? "top-0 pr-3" : undefined}
       />
       {!isCollapsed && (
-        <div className={cn("space-y-0.5", isSidebar ? "px-2" : undefined)}>
+        <div className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}>
           {threads.map((thread) => (
             <ThreadListItem
               key={thread.id}
@@ -291,62 +298,40 @@ function useThreadList({
 }) {
   const [timeZone] = useAtom(timeZoneAtom);
   const queryClient = useQueryClient();
+
   const {
-    data,
+    threads: collectionThreads,
     isLoading,
     isError,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-  } = useInfiniteThreadList(queryFilters);
-  const threads = useMemo(
-    () => data?.pages.flatMap((page) => page) ?? [],
-    [data],
-  );
-  const { threadGroups, threadIds } = useMemo<{
-    threadGroups: ThreadGroups;
-    threadIds: Set<string>;
-  }>(() => {
-    const seenThreadIds = new Set<string>();
-    const filteredThreads = threads.filter((thread) => {
-      if (viewFilter === "active" && thread.archived) {
-        return false;
-      }
-      if (viewFilter === "archived" && !thread.archived) {
-        return false;
-      }
-      if (!seenThreadIds.has(thread.id)) {
-        seenThreadIds.add(thread.id);
-        return true;
-      }
-      return false;
+  } = useThreadInfoList({
+    archived: queryFilters.archived,
+    automationId: queryFilters.automationId,
+  });
+
+  const threads = useMemo(() => {
+    return collectionThreads.filter((thread) => {
+      if (viewFilter === "active" && thread.archived) return false;
+      if (viewFilter === "archived" && !thread.archived) return false;
+      return true;
     });
+  }, [collectionThreads, viewFilter]);
+
+  const threadGroups = useMemo<ThreadGroups>(() => {
     switch (groupBy) {
       case "repository": {
-        // Group by repository
         const repoGroups: Record<string, ThreadInfo[]> = {};
-        for (const thread of filteredThreads) {
+        for (const thread of threads) {
           const repoName = thread.githubRepoFullName || "Unknown Repository";
-          if (!repoGroups[repoName]) {
-            repoGroups[repoName] = [];
-          }
+          if (!repoGroups[repoName]) repoGroups[repoName] = [];
           repoGroups[repoName].push(thread);
         }
-
-        // Sort repositories alphabetically
-        const sortedRepoNames = Object.keys(repoGroups).sort();
-        const threadGroups: ThreadGroup[] = [];
-        for (const repoName of sortedRepoNames) {
-          threadGroups.push({
+        return Object.keys(repoGroups)
+          .sort()
+          .map((repoName) => ({
             id: `repo-${repoName}`,
             title: repoName,
             threads: repoGroups[repoName] || [],
-          });
-        }
-        return {
-          threadGroups,
-          threadIds: seenThreadIds,
-        };
+          }));
       }
       case "createdAt":
       case "lastUpdated": {
@@ -370,13 +355,8 @@ function useThreadList({
           title: "Older",
           threads: [],
         };
-        const threadGroups: ThreadGroup[] = [
-          todayGroup,
-          yesterdayGroup,
-          thisWeekGroup,
-          olderGroup,
-        ];
-        for (const thread of filteredThreads) {
+        const groups = [todayGroup, yesterdayGroup, thisWeekGroup, olderGroup];
+        for (const thread of threads) {
           const dateToUse = new Date(
             groupBy === "createdAt" ? thread.createdAt : thread.updatedAt,
           );
@@ -392,80 +372,45 @@ function useThreadList({
             olderGroup.threads.push(thread);
           }
         }
-        // Apply stable sorting to each group if grouping by last updated
         if (groupBy === "lastUpdated") {
           todayGroup.threads = sortThreadsUpdatedAt(todayGroup.threads);
           yesterdayGroup.threads = sortThreadsUpdatedAt(yesterdayGroup.threads);
           thisWeekGroup.threads = sortThreadsUpdatedAt(thisWeekGroup.threads);
           olderGroup.threads = sortThreadsUpdatedAt(olderGroup.threads);
         }
-        return {
-          threadGroups,
-          threadIds: seenThreadIds,
-        };
+        return groups;
       }
       default: {
         const _exhaustiveCheck: never = groupBy;
         console.error("Unhandled thread list group by:", _exhaustiveCheck);
-        return {
-          threadGroups: [],
-          threadIds: seenThreadIds,
-        };
+        return [];
       }
     }
-  }, [threads, viewFilter, timeZone, groupBy]);
+  }, [threads, timeZone, groupBy]);
 
-  const showArchived = viewFilter === "archived";
-  const automationId = queryFilters.automationId;
-  const matchThread = useCallback(
-    (patch: BroadcastThreadPatch) => {
-      const hasListVisibleChatChange =
-        patch.chat?.status !== undefined ||
-        patch.chat?.errorMessage !== undefined ||
-        patch.chat?.agent !== undefined;
-      if (
-        !patch.shell &&
-        !hasListVisibleChatChange &&
-        !(patch.refetch ?? []).includes("list")
-      ) {
-        return false;
-      }
-      if (threadIds.has(patch.threadId)) {
-        return true;
-      }
-      if (patch.op === "delete") {
-        return true;
-      }
-      if ((patch.refetch ?? []).includes("list")) {
-        return true;
-      }
-      if (automationId && patch.shell?.automationId !== automationId) {
-        return false;
-      }
-      if (patch.shell?.archived !== undefined) {
-        return showArchived === patch.shell.archived;
-      }
-      return patch.op === "upsert";
-    },
-    [threadIds, showArchived, automationId],
-  );
-  useRealtimeThreadMatch({
-    matchThread,
-    onThreadChange: (patches) => {
+  // WebSocket patches write to both TanStack DB (primary) and React Query (legacy)
+  const matchThread = useCallback((patch: BroadcastThreadPatch) => {
+    if (patch.op === "delete") return true;
+    if ((patch.refetch ?? []).includes("list")) return true;
+    if (patch.shell) return true;
+    return !!(
+      patch.chat?.status !== undefined ||
+      patch.chat?.errorMessage !== undefined ||
+      patch.chat?.agent !== undefined
+    );
+  }, []);
+  const onThreadChange = useCallback(
+    (patches: BroadcastThreadPatch[]) => {
       patches.forEach((patch) => {
+        applyThreadPatchToCollection(patch);
         applyThreadPatchToListQueries({ queryClient, patch });
       });
     },
-  });
-  return {
-    threadGroups,
-    threads,
-    hasNextPage,
-    isLoading,
-    isError,
-    fetchNextPage,
-    isFetchingNextPage,
-  };
+    [queryClient],
+  );
+  useRealtimeThreadMatch({ matchThread, onThreadChange });
+
+  return { threadGroups, threads, isLoading, isError };
 }
 
 export const ThreadListContents = memo(function ThreadListContents({
@@ -487,15 +432,7 @@ export const ThreadListContents = memo(function ThreadListContents({
   const collapsedSections = useAtomValue(threadListCollapsedSectionsAtom);
   const groupBy = useAtomValue(threadListGroupByAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
-  const {
-    threadGroups,
-    threads,
-    isLoading,
-    isError,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useThreadList({
+  const { threadGroups, threads, isLoading, isError } = useThreadList({
     viewFilter,
     queryFilters,
     groupBy: allowGroupBy ? groupBy : "lastUpdated",
@@ -536,31 +473,6 @@ export const ThreadListContents = memo(function ThreadListContents({
         </div>
         {threads.length === 0 && (
           <EmptyThreadList queryFilters={queryFilters} />
-        )}
-        {hasNextPage && threads.length > 0 && (
-          <div
-            className={cn(
-              "flex justify-center",
-              isSidebar ? "px-2" : undefined,
-            )}
-          >
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchNextPage()}
-              disabled={isFetchingNextPage}
-              className="w-full"
-            >
-              {isFetchingNextPage ? (
-                <>
-                  <LoaderCircle className="size-3 animate-spin mr-2" />
-                  Loading...
-                </>
-              ) : (
-                "Load more"
-              )}
-            </Button>
-          </div>
         )}
         {viewFilter === "active" && showSuggestedTasks && (
           <div className="space-y-2">
@@ -613,7 +525,7 @@ export const ThreadListMain = memo(function ThreadListMain({
         setViewFilter={setViewFilter}
         allowGroupBy={allowGroupBy}
       />
-      <ThreadListContents
+      <ThreadListContentsClient
         viewFilter={viewFilter}
         queryFilters={queryFilters}
         showSuggestedTasks={showSuggestedTasks}

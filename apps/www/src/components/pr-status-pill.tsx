@@ -6,6 +6,7 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
 } from "lucide-react";
+import { memo } from "react";
 
 const checksSuccessIcon =
   "https://github.githubassets.com/favicons/favicon-success.png";
@@ -20,7 +21,7 @@ const checksPendingIcon =
 const checksPendingDarkIcon =
   "https://github.githubassets.com/favicons/favicon-pending-dark.png";
 
-export const PRStatusPill = ({
+export const PRStatusPill = memo(function PRStatusPill({
   status,
   checksStatus,
   prNumber,
@@ -30,36 +31,38 @@ export const PRStatusPill = ({
   checksStatus: GithubCheckStatus | null;
   prNumber: number;
   repoFullName: string;
-}) => {
-  const iconClassName = "size-4 mr-1";
+}) {
+  const iconClassName = "size-3.5 mr-1";
   const getIcon = () => {
     switch (status) {
       case "open":
         return (
           <GitPullRequestArrow
-            className={cn(iconClassName, "shrink-0 text-[#238636]")}
+            className={cn(iconClassName, "shrink-0 text-green-600/70")}
           />
         );
       case "closed":
         return (
           <GitPullRequestClosed
-            className={cn(iconClassName, "shrink-0 text-[#da3633]")}
+            className={cn(iconClassName, "shrink-0 text-red-600/70")}
           />
         );
       case "merged":
         return (
-          <GitMerge className={cn(iconClassName, "shrink-0 text-[#8957e5]")} />
+          <GitMerge
+            className={cn(iconClassName, "shrink-0 text-purple-600/70")}
+          />
         );
       case "draft":
         return (
           <GitPullRequestDraft
-            className={cn(iconClassName, "shrink-0 text-[#656c76]")}
+            className={cn(iconClassName, "shrink-0 text-muted-foreground/60")}
           />
         );
     }
   };
 
-  const checkStatusClassName = "size-4";
+  const checkStatusClassName = "size-3.5";
   let checkStatusIcon = null;
   if (status === "open" || status === "draft") {
     if (checksStatus === "failure") {
@@ -68,12 +71,12 @@ export const PRStatusPill = ({
           <img
             src={checksFailureIcon}
             alt="Checks failure"
-            className={cn(checkStatusClassName, "dark:hidden")}
+            className={cn(checkStatusClassName, "dark:hidden opacity-80")}
           />
           <img
             src={checksFailureDarkIcon}
             alt="Checks failure"
-            className={cn(checkStatusClassName, "hidden dark:block")}
+            className={cn(checkStatusClassName, "hidden dark:block opacity-80")}
           />
         </>
       );
@@ -84,13 +87,13 @@ export const PRStatusPill = ({
           <img
             src={checksSuccessIcon}
             alt="Checks success"
-            className={cn(checkStatusClassName, "dark:hidden")}
+            className={cn(checkStatusClassName, "dark:hidden opacity-80")}
           />
 
           <img
             src={checksSuccessDarkIcon}
             alt="Checks success"
-            className={cn(checkStatusClassName, "hidden dark:block")}
+            className={cn(checkStatusClassName, "hidden dark:block opacity-80")}
           />
         </>
       );
@@ -101,12 +104,12 @@ export const PRStatusPill = ({
           <img
             src={checksPendingIcon}
             alt="Checks pending"
-            className={cn(checkStatusClassName, "dark:hidden")}
+            className={cn(checkStatusClassName, "dark:hidden opacity-80")}
           />
           <img
             src={checksPendingDarkIcon}
             alt="Checks pending"
-            className={cn(checkStatusClassName, "hidden dark:block")}
+            className={cn(checkStatusClassName, "hidden dark:block opacity-80")}
           />
         </>
       );
@@ -129,7 +132,7 @@ export const PRStatusPill = ({
   return (
     <div
       title={getTitle()}
-      className="flex items-center gap-1 cursor-pointer"
+      className="flex items-center gap-1.5 cursor-pointer bg-white border border-border/40 shadow-inset-edge px-2 py-0.5 rounded-full transition-all duration-200 hover:shadow-card hover:scale-[1.02]"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -139,8 +142,13 @@ export const PRStatusPill = ({
         );
       }}
     >
-      {getIcon()}
-      {checkStatusIcon}
+      <div className="flex items-center">
+        {getIcon()}
+        {checkStatusIcon}
+      </div>
+      <span className="text-[10px] font-sans font-bold text-muted-foreground/60 tracking-tight">
+        #{prNumber}
+      </span>
     </div>
   );
-};
+});

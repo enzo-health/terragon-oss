@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap");
 
 @import "tailwindcss";
@@ -7,128 +7,106 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: #f8f5f0;
-  --foreground: #3e2723;
-  --card: #f8f5f0;
-  --card-foreground: #3e2723;
-  --popover: #f8f5f0;
-  --popover-foreground: #3e2723;
-  --primary: #2e7d32;
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #000000;
   --primary-foreground: #ffffff;
-  --secondary: #e8f5e9;
-  --secondary-foreground: #1b5e20;
-  --muted: #f0e9e0;
-  --disabled: #d4cec4;
-  --muted-foreground: #6d4c41;
-  --accent: #c8e6c9;
-  --accent-foreground: #1b5e20;
+  --secondary: #ffffff;
+  --secondary-foreground: #000000;
+  --muted: #f5f5f5;
+  --muted-foreground: #4e4e4e;
+  --accent: #f5f2ef;
+  --accent-foreground: #000000;
   --destructive: #c62828;
   --destructive-foreground: #ffffff;
-  --border: #e0d6c9;
-  --input: #e0d6c9;
-  --ring: #2e7d32;
-  --chart-1: #4caf50;
-  --chart-2: #388e3c;
-  --chart-3: #2e7d32;
-  --chart-4: #1b5e20;
-  --chart-5: #0a1f0c;
-  --sidebar: #fcfaf8;
-  --sidebar-foreground: #3e2723;
-  --sidebar-primary: #2e7d32;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: rgb(147 197 253 / 0.5);
+  --chart-1: #000000;
+  --chart-2: #4e4e4e;
+  --chart-3: #777169;
+  --chart-4: #f5f5f5;
+  --chart-5: #ffffff;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #000000;
+  --sidebar-primary: #000000;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f5f2ed;
-  --sidebar-accent-foreground: #3e2723;
-  --sidebar-border: #e8e0d6;
-  --sidebar-ring: #2e7d32;
-  --font-geist-sans: "Geist", sans-serif;
+  --sidebar-accent: #f5f5f5;
+  --sidebar-accent-foreground: #000000;
+  --sidebar-border: #e5e5e5;
+  --sidebar-ring: rgb(147 197 253 / 0.5);
+
+  --warm-stone: rgba(245, 242, 239, 0.8);
+  --warm-gray: #777169;
+
+  --font-inter: "Inter", sans-serif;
   --font-geist-mono: "Geist Mono", monospace;
-  --font-sans: var(--font-geist-sans);
-  --font-serif: Merriweather, serif;
+  --font-display: "Inter", sans-serif;
+  --font-display-bold: "Inter", sans-serif;
+
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
+
   --radius: 0.5rem;
-  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-sm:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow-md:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
-  --shadow-lg:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
-  --shadow-xl:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
-  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+
+  --shadow-inset-edge: rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
+  --shadow-outline-ring: rgba(0, 0, 0, 0.06) 0px 0px 0px 1px;
+  --shadow-card:
+    rgba(0, 0, 0, 0.04) 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 4px 4px,
+    rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
+  --shadow-warm-lift:
+    rgba(78, 50, 23, 0.04) 0px 6px 16px,
+    rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
+  --shadow-premium:
+    0 0 0 1px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.05),
+    0 4px 6px -2px rgba(0, 0, 0, 0.02);
+
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-900);
   --info: var(--color-violet-500);
   --info-foreground: var(--color-violet-900);
   --warning: var(--color-yellow-500);
   --warning-foreground: var(--color-yellow-900);
-  --invert: var(--color-zinc-900);
-  --invert-foreground: var(--color-zinc-50);
+  --invert: #000000;
+  --invert-foreground: #ffffff;
 }
 
 .dark {
-  --background: #1a1a1a;
-  --foreground: #f0ebe5;
-  --card: #242424;
-  --card-foreground: #f0ebe5;
-  --popover: #242424;
-  --popover-foreground: #f0ebe5;
-  --primary: #4caf50;
-  --primary-foreground: #0a1f0c;
-  --secondary: #333333;
-  --secondary-foreground: #d7e0d6;
-  --muted: #2a2a2a;
-  --disabled: #3a3a3a;
-  --muted-foreground: #d7cfc4;
-  --accent: #2e7d32;
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #0a0a0a;
+  --card-foreground: #ffffff;
+  --popover: #0a0a0a;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #0a0a0a;
+  --secondary-foreground: #ffffff;
+  --muted: #1a1a1a;
+  --muted-foreground: #a0a0a0;
+  --accent: #1a1a1a;
   --accent-foreground: #ffffff;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
-  --border: #4a4a4a;
-  --input: #4a4a4a;
-  --ring: #4caf50;
-  --chart-1: #81c784;
-  --chart-2: #66bb6a;
-  --chart-3: #4caf50;
-  --chart-4: #43a047;
-  --chart-5: #388e3c;
-  --sidebar: #161616;
-  --sidebar-foreground: #f0ebe5;
-  --sidebar-primary: #4caf50;
-  --sidebar-primary-foreground: #0a1f0c;
-  --sidebar-accent: #202020;
+  --border: #262626;
+  --input: #262626;
+  --ring: rgb(147 197 253 / 0.3);
+  --sidebar: #050505;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #1a1a1a;
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #4a4a4a;
-  --sidebar-ring: #4caf50;
-  --font-geist-sans: "Geist", sans-serif;
-  --font-geist-mono: "Geist Mono", monospace;
-  --font-cabin: "Cabin", sans-serif;
-  --font-sans: var(--font-geist-sans);
-  --font-serif: Merriweather, serif;
-  --font-mono: var(--font-geist-mono);
-  --radius: 0.5rem;
-  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-sm:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow-md:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
-  --shadow-lg:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
-  --shadow-xl:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
-  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-600);
-  --info: var(--color-violet-500);
-  --info-foreground: var(--color-violet-600);
-  --warning: var(--color-yellow-500);
-  --warning-foreground: var(--color-yellow-600);
-  --invert: var(--color-zinc-700);
-  --invert-foreground: var(--color-zinc-50);
+  --sidebar-border: #262626;
+  --sidebar-ring: rgb(147 197 253 / 0.3);
+
+  --invert: #ffffff;
+  --invert-foreground: #000000;
+  --warm-stone: rgba(40, 38, 36, 0.8);
 }
 
 @theme inline {
@@ -143,7 +121,6 @@
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
-  --color-disabled: var(--disabled);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
@@ -152,11 +129,6 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -168,38 +140,27 @@
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-serif: var(--font-serif);
+  --font-display: var(--font-display);
+  --font-display-bold: var(--font-display-bold);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  --shadow-2xs: var(--shadow-2xs);
-  --shadow-xs: var(--shadow-xs);
-  --shadow-sm: var(--shadow-sm);
-  --shadow: var(--shadow);
-  --shadow-md: var(--shadow-md);
-  --shadow-lg: var(--shadow-lg);
-  --shadow-xl: var(--shadow-xl);
-  --shadow-2xl: var(--shadow-2xl);
-
-  --breakpoint-xs: 24rem;
+  --shadow-inset-edge: var(--shadow-inset-edge);
+  --shadow-outline-ring: var(--shadow-outline-ring);
+  --shadow-card: var(--shadow-card);
+  --shadow-warm-lift: var(--shadow-warm-lift);
+  --shadow-premium: var(--shadow-premium);
 
   --color-invert-foreground: var(--invert-foreground);
-
   --color-invert: var(--invert);
-
   --color-warning-foreground: var(--warning-foreground);
-
   --color-warning: var(--warning);
-
   --color-info-foreground: var(--info-foreground);
-
   --color-info: var(--info);
-
   --color-success-foreground: var(--success-foreground);
-
   --color-success: var(--success);
 }
 @layer base {
@@ -210,12 +171,23 @@
     @apply bg-background;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground tracking-[0.16px];
+    font-family: var(--font-sans);
     /* Handle safe areas for PWA */
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
+    font-weight: 300;
   }
 
   /* Safe area utility class for PWA bottom padding */
@@ -241,6 +213,34 @@
   select:focus-visible,
   textarea:focus-visible {
     @apply outline-2 outline-offset-2 outline-primary;
+  }
+
+  /* ElevenLabs Whisper Scrollbars */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 10px;
+    transition: background 0.2s ease;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.1);
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
 }
 

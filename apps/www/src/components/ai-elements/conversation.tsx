@@ -11,7 +11,7 @@ export function Conversation({
   ...props
 }: ConversationProps) {
   return (
-    <div className={cn("flex flex-col gap-2 w-full", className)} {...props}>
+    <div className={cn("flex flex-col gap-8 w-full", className)} {...props}>
       {children}
     </div>
   );
@@ -25,7 +25,7 @@ export function ConversationContent({
   ...props
 }: ConversationContentProps) {
   return (
-    <div className={cn("flex flex-col gap-2 w-full", className)} {...props}>
+    <div className={cn("flex flex-col gap-12 w-full", className)} {...props}>
       {children}
     </div>
   );

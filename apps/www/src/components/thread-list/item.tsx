@@ -13,6 +13,143 @@ import { Input } from "../ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
 import { DraftTaskDialog } from "../chat/draft-task-dialog";
 import { ThreadAgentIcon } from "../thread-agent-icon";
+import { toast } from "sonner";
+import { prefetchThreadIntoCollections } from "@/collections/prefetch";
+
+/**
+ * Inline name editor — only mounted when the user clicks "Rename".
+ * This keeps useUpdateThreadNameMutation out of the default render path,
+ * avoiding a TanStack Query mutation observer per list item.
+ */
+const InlineNameEditor = memo(function InlineNameEditor({
+  thread,
+  onDone,
+}: {
+  thread: ThreadInfo;
+  onDone: () => void;
+}) {
+  const [editedName, setEditedName] = useState(thread.name || "");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const updateNameMutation = useUpdateThreadNameMutation();
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const handleSave = () => {
+    const trimmedName = editedName.trim();
+    if (!trimmedName || trimmedName === thread.name) {
+      onDone();
+      return;
+    }
+    updateNameMutation.mutate(
+      { threadId: thread.id, name: trimmedName },
+      {
+        onSuccess: () => onDone(),
+        onError: () => toast.error("Failed to rename task"),
+      },
+    );
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleSave();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onDone();
+    }
+  };
+
+  return (
+    <Input
+      ref={inputRef}
+      value={editedName}
+      onChange={(e) => setEditedName(e.target.value)}
+      onBlur={handleSave}
+      onKeyDown={handleKeyDown}
+      className="h-auto py-0 px-1 text-[15px] font-medium border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm flex-1 min-w-0"
+      placeholder={getThreadTitle(thread)}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onTouchStart={(e) => {
+        e.stopPropagation();
+      }}
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+    />
+  );
+});
+
+/**
+ * Lazy menu trigger — renders just the icon button initially.
+ * The full ThreadMenuDropdown (with its 4 mutation hooks) only mounts
+ * on pointer interaction, saving ~400 mutation observers for a 100-item list.
+ */
+const LazyThreadListMenu = memo(function LazyThreadListMenu({
+  thread,
+  onRenameClick,
+  onMenuOpenChange,
+}: {
+  thread: ThreadInfo;
+  onRenameClick: () => void;
+  onMenuOpenChange: (open: boolean) => void;
+}) {
+  const [activated, setActivated] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [pendingClick, setPendingClick] = useState(false);
+
+  // After mounting the real dropdown, simulate a click to open it (fixes 2-tap issue on touch)
+  useEffect(() => {
+    if (activated && pendingClick && triggerRef.current) {
+      triggerRef.current.click();
+      setPendingClick(false);
+    }
+  }, [activated, pendingClick]);
+
+  const menuTrigger = (
+    <Button
+      ref={triggerRef}
+      variant="ghost"
+      size="icon"
+      className="w-fit px-1 hover:bg-transparent cursor-pointer"
+    >
+      <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors" />
+    </Button>
+  );
+
+  if (!activated) {
+    return (
+      <div
+        onPointerEnter={() => setActivated(true)}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setActivated(true);
+          setPendingClick(true);
+        }}
+      >
+        {menuTrigger}
+      </div>
+    );
+  }
+
+  return (
+    <ThreadMenuDropdown
+      thread={thread}
+      trigger={menuTrigger}
+      showReadUnreadActions
+      showRenameAction
+      onRenameClick={onRenameClick}
+      onMenuOpenChange={onMenuOpenChange}
+    />
+  );
+});
 
 export const ThreadListItem = memo(function ThreadListItem({
   thread,
@@ -32,55 +169,7 @@ export const ThreadListItem = memo(function ThreadListItem({
     [thread.updatedAt],
   );
   const [isEditingName, setIsEditingName] = useState(false);
-  const [editedName, setEditedName] = useState(thread.name || "");
-  const inputRef = useRef<HTMLInputElement>(null);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
-  const updateNameMutation = useUpdateThreadNameMutation();
-
-  useEffect(() => {
-    if (isEditingName && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditingName]);
-
-  const handleSave = () => {
-    const trimmedName = editedName.trim();
-    if (!trimmedName || trimmedName === thread.name) {
-      setIsEditingName(false);
-      setEditedName(thread.name || "");
-      return;
-    }
-    updateNameMutation.mutate(
-      {
-        threadId: thread.id,
-        name: trimmedName,
-      },
-      {
-        onSuccess: () => {
-          setIsEditingName(false);
-        },
-        onError: () => {
-          setEditedName(thread.name || "");
-        },
-      },
-    );
-  };
-
-  const handleCancel = () => {
-    setIsEditingName(false);
-    setEditedName(thread.name || "");
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSave();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      handleCancel();
-    }
-  };
 
   return (
     <>
@@ -88,13 +177,14 @@ export const ThreadListItem = memo(function ThreadListItem({
         <Link
           href={`/task/${thread.id}`}
           className={cn(
-            "block rounded-md transition-colors p-2 relative pr-8",
+            "block rounded-lg transition-all duration-200 px-3 py-2 relative pr-9 border border-transparent",
             pathname === `/task/${thread.id}`
-              ? "bg-muted"
-              : "hover:bg-muted/50",
-            isMenuOpen && "bg-muted/50",
+              ? "bg-accent shadow-outline-ring"
+              : "hover:bg-accent/40 hover:border-border/30",
+            isMenuOpen && "bg-accent",
             className,
           )}
+          onMouseEnter={() => prefetchThreadIntoCollections(thread.id)}
           onClick={(e) => {
             if (!e.defaultPrevented && thread.draftMessage) {
               e.preventDefault();
@@ -102,43 +192,27 @@ export const ThreadListItem = memo(function ThreadListItem({
             }
           }}
         >
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 flex-shrink-0 flex items-center justify-center">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
                 <ThreadStatusIndicator thread={thread} />
               </div>
               {isEditingName ? (
-                <Input
-                  ref={inputRef}
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  onBlur={handleSave}
-                  onKeyDown={handleKeyDown}
-                  className="h-auto py-0 px-1 text-sm font-medium border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm flex-1 min-w-0"
-                  placeholder={getThreadTitle(thread)}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onTouchStart={(e) => {
-                    e.stopPropagation();
-                  }}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
+                <InlineNameEditor
+                  thread={thread}
+                  onDone={() => setIsEditingName(false)}
                 />
               ) : (
                 <p
-                  className="text-sm flex-1 truncate font-medium"
+                  className="text-[14px] flex-1 truncate font-medium leading-snug"
                   title={title}
                 >
                   {title}
                 </p>
               )}
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground min-w-0">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[13px] text-muted-foreground min-w-0 font-sans tracking-[0.14px]">
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
@@ -147,9 +221,9 @@ export const ThreadListItem = memo(function ThreadListItem({
                 </span>
                 {thread.githubRepoFullName && !hideRepository && (
                   <>
-                    <span className="flex-shrink-0">·</span>
+                    <span className="flex-shrink-0 opacity-60">·</span>
                     <span
-                      className="truncate"
+                      className="truncate opacity-80"
                       title={thread.githubRepoFullName}
                     >
                       {thread.githubRepoFullName}
@@ -157,7 +231,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 {thread.automationId && (
                   <SmallAutomationIndicator
                     automationId={thread.automationId}
@@ -171,7 +245,9 @@ export const ThreadListItem = memo(function ThreadListItem({
                     repoFullName={thread.githubRepoFullName}
                   />
                 )}
-                <ThreadAgentIcon thread={thread} />
+                <div className="opacity-80 scale-90">
+                  <ThreadAgentIcon thread={thread} />
+                </div>
               </div>
             </div>
           </div>
@@ -185,19 +261,8 @@ export const ThreadListItem = memo(function ThreadListItem({
             e.preventDefault();
           }}
         >
-          <ThreadMenuDropdown
+          <LazyThreadListMenu
             thread={thread}
-            trigger={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="w-fit px-1 hover:bg-transparent cursor-pointer"
-              >
-                <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors" />
-              </Button>
-            }
-            showReadUnreadActions
-            showRenameAction
             onRenameClick={() => setIsEditingName(true)}
             onMenuOpenChange={setIsMenuOpen}
           />

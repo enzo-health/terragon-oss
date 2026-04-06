@@ -160,7 +160,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   }, [props.promptText, editor]);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-6">
       <SimplePromptBox
         forcedAgent={null}
         forcedAgentVersion={null}
@@ -174,7 +174,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         isSubmitDisabled={isSubmitDisabled}
         showStopButton={false}
         hideSubmitButton={false}
-        className="min-h-[120px]"
+        className="min-h-[140px]"
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         selectedModels={selectedModels}
@@ -189,31 +189,33 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         onPermissionModeChange={setPermissionMode}
       />
       <CredentialsWarning selectedModel={selectedModel} />
-      <div className="flex items-center justify-between w-full">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between w-full gap-4 px-2">
         <RepoBranchSelector
           selectedRepoFullName={repoFullName || null}
           selectedBranch={branchName || null}
           onChange={onRepoBranchChange}
         />
 
-        <PromptBoxToolBelt
-          showSkipSetup={true}
-          skipSetupValue={skipSetup}
-          onSkipSetupChange={setSkipSetup}
-          skipSetupDisabled={!repoFullName}
-          showCheckpoint={true}
-          checkpointValue={disableGitCheckpointing}
-          onCheckpointChange={setDisableGitCheckpointing}
-          checkpointDisabled={!repoFullName}
-          showCreateNewBranchOption={true}
-          createNewBranchValue={createNewBranch}
-          onCreateNewBranchChange={setCreateNewBranch}
-          createNewBranchDisabled={!repoFullName}
-          showDeliveryLoopOptIn={true}
-          deliveryLoopOptInValue={runInDeliveryLoop}
-          onDeliveryLoopOptInChange={setRunInDeliveryLoop}
-          deliveryLoopOptInDisabled={!repoFullName}
-        />
+        <div className="opacity-80 scale-95 origin-right">
+          <PromptBoxToolBelt
+            showSkipSetup={true}
+            skipSetupValue={skipSetup}
+            onSkipSetupChange={setSkipSetup}
+            skipSetupDisabled={!repoFullName}
+            showCheckpoint={true}
+            checkpointValue={disableGitCheckpointing}
+            onCheckpointChange={setDisableGitCheckpointing}
+            checkpointDisabled={!repoFullName}
+            showCreateNewBranchOption={true}
+            createNewBranchValue={createNewBranch}
+            onCreateNewBranchChange={setCreateNewBranch}
+            createNewBranchDisabled={!repoFullName}
+            showDeliveryLoopOptIn={true}
+            deliveryLoopOptInValue={runInDeliveryLoop}
+            onDeliveryLoopOptInChange={setRunInDeliveryLoop}
+            deliveryLoopOptInDisabled={!repoFullName}
+          />
+        </div>
       </div>
     </div>
   );

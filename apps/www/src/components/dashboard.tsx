@@ -7,14 +7,11 @@ import {
 import { ThreadListMain } from "./thread-list/main";
 import { newThread } from "@/server-actions/new-thread";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
-import { useCallback, useMemo, useState } from "react";
-import { InfiniteData, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import {
-  threadQueryKeys,
-  useInfiniteThreadList,
-} from "@/queries/thread-queries";
 import { ThreadInfo } from "@terragon/shared";
+import { getThreadInfoCollection } from "@/collections/thread-info-collection";
+import { useThreadInfoList } from "@/hooks/use-thread-info-list";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { HandleUpdate } from "./promptbox/use-promptbox";
 import { cn } from "@/lib/utils";
@@ -30,7 +27,6 @@ export function Dashboard({
 }) {
   const [typewriterEffectEnabled, setTypewriterEffectEnabled] = useState(true);
   const placeholder = useTypewriterEffect(typewriterEffectEnabled);
-  const queryClient = useQueryClient();
   const handleSubmit = useCallback<DashboardPromptBoxHandleSubmit>(
     async ({
       userMessage,
@@ -89,26 +85,17 @@ export function Dashboard({
           {
             id: "optimistic-chat",
             agent: "claudeCode",
-            status: saveAsDraft
-              ? ("draft" as any)
-              : scheduleAt
-                ? ("scheduled" as any)
-                : "queued",
+            status: saveAsDraft ? "draft" : scheduleAt ? "scheduled" : "queued",
             errorMessage: null,
           },
         ],
       };
 
-      // Optimistically prepend to all matching list queries (sidebar + mobile)
-      await queryClient.cancelQueries({ queryKey: threadQueryKeys.list(null) });
-      queryClient.setQueriesData<InfiniteData<ThreadInfo[]>>(
-        { queryKey: threadQueryKeys.list(null) },
-        (old) => {
-          if (!old) return old;
-          const [firstPage = [], ...rest] = old.pages;
-          return { ...old, pages: [[optimisticThread, ...firstPage], ...rest] };
-        },
-      );
+      // Optimistically insert into the TanStack DB collection
+      const collection = getThreadInfoCollection();
+      if (collection.status === "ready") {
+        collection.insert(optimisticThread);
+      }
 
       try {
         unwrapResult(
@@ -128,30 +115,20 @@ export function Dashboard({
         if (saveAsDraft) {
           toast.success("Task saved as draft successfully.");
         }
-        // Refetch to replace optimistic entry with real data
-        queryClient.invalidateQueries({
-          queryKey: threadQueryKeys.list(null),
-        });
       } catch (error: any) {
-        // Roll back optimistic update from all list queries
-        queryClient.setQueriesData<InfiniteData<ThreadInfo[]>>(
-          { queryKey: threadQueryKeys.list(null) },
-          (old) => {
-            if (!old) return old;
-            return {
-              ...old,
-              pages: old.pages.map((page) =>
-                page.filter((t) => t.id !== optimisticId),
-              ),
-            };
-          },
-        );
+        // Roll back optimistic insert
+        if (
+          collection.status === "ready" &&
+          collection.state.has(optimisticId)
+        ) {
+          collection.delete(optimisticId);
+        }
         console.error("Failed to create thread:", error);
         toast.error(unwrapError(error), { duration: 5000 });
         throw error;
       }
     },
-    [queryClient],
+    [],
   );
 
   const handleStop = useCallback(async () => {
@@ -169,20 +146,22 @@ export function Dashboard({
   const [promptText, setPromptText] = useState<string | null>(null);
   const selectedModel = useAtomValue(selectedModelAtom);
 
-  // Determine if there are any active tasks; used for Sawyer UI empty state
-  const { data } = useInfiniteThreadList({ archived: false });
-  const showRecommendedTasks = useMemo(() => {
-    const totalThreads =
-      data?.pages.reduce((sum, page) => sum + page.length, 0) ?? 0;
-    return totalThreads < 3;
-  }, [data]);
+  // Show recommended tasks when user has few active threads
+  const { threads: activeThreads } = useThreadInfoList({ archived: false });
+  const showRecommendedTasks = activeThreads.length < 3;
 
   return (
     <div
       className={cn(
-        "flex flex-col h-full max-w-2xl w-full mx-auto gap-8 justify-start pt-2.5",
+        "flex flex-col h-full max-w-[850px] w-full mx-auto gap-6 justify-start pt-8 pb-20 px-6",
       )}
     >
+      <div className="flex flex-col gap-1">
+        <h1 className="text-[22px] font-display font-[400] tracking-tight leading-tight text-foreground">
+          What would you like to build?
+        </h1>
+      </div>
+
       <DashboardPromptBox
         placeholder={placeholder}
         status={null}
@@ -193,8 +172,8 @@ export function Dashboard({
         promptText={promptText ?? undefined}
       />
       {showRecommendedTasks && (
-        <div className="space-y-2 hidden lg:block">
-          <h3 className="text-sm font-medium text-muted-foreground/70">
+        <div className="space-y-6 hidden lg:block">
+          <h3 className="text-[13px] font-display-bold uppercase tracking-[0.8px] font-bold text-muted-foreground/50">
             Suggested tasks
           </h3>
           <RecommendedTasks

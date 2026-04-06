@@ -30,14 +30,14 @@ const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
   return (
     <button
       onClick={handleClick}
-      className="block rounded-md transition-colors py-2 hover:bg-muted/50 w-full cursor-pointer"
+      className="block rounded-xl transition-all duration-300 py-3 px-4 bg-white border border-border/30 shadow-outline-ring hover:shadow-card hover:scale-[1.01] w-full cursor-pointer text-left group"
     >
-      <div className="flex flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 flex-shrink-0 flex items-center justify-center">
-            <Sparkles className="size-3 text-muted-foreground/50" />
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2.5">
+          <div className="size-5 flex-shrink-0 flex items-center justify-center rounded-full bg-accent/50 group-hover:bg-accent transition-colors">
+            <Sparkles className="size-3 text-muted-foreground/60" />
           </div>
-          <p className="text-sm truncate font-medium text-muted-foreground/50">
+          <p className="text-[14px] truncate font-medium text-foreground/80 font-sans tracking-[0.14px]">
             {task.label}
           </p>
         </div>
@@ -55,7 +55,7 @@ export function RecommendedTasks({
 
   return (
     <div className="w-full">
-      <div className="space-y-0">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {tasks.map((task) => (
           <ListRecommendedTaskItem
             key={task.id}

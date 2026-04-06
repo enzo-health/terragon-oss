@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { UserAtomsHydratorServer } from "@/components/system/user-atoms-server";
-import { Cabin, Geist, Geist_Mono } from "next/font/google";
+import { Inter, Geist, Geist_Mono } from "next/font/google";
 import { ServerProviders } from "@/components/system/server-providers";
 import { KonamiVideo } from "@/components/konami-video";
 
@@ -39,9 +39,9 @@ export const viewport: Viewport = {
   interactiveWidget: "resizes-content",
 };
 
-const cabin = Cabin({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-cabin",
+  variable: "--font-inter",
 });
 
 const geist = Geist({
@@ -69,20 +69,20 @@ export default function RootLayout({
         )}
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="theme-color" content="#f8f5f0" />
+        <meta name="theme-color" content="#ffffff" />
         <meta
           name="theme-color"
-          content="#f8f5f0"
+          content="#ffffff"
           media="(prefers-color-scheme: light)"
         />
         <meta
           name="theme-color"
-          content="#1a1a1a"
+          content="#000000"
           media="(prefers-color-scheme: dark)"
         />
       </head>
       <body
-        className={`${cabin.variable} ${geist.variable} ${geistMono.variable} font-sans antialiased`}
+        className={`${inter.variable} ${geist.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <ServerProviders>
           <UserAtomsHydratorServer>

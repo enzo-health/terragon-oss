@@ -10,7 +10,13 @@ import {
   getBroadcastChannelStr,
 } from "@terragon/types/broadcast";
 import PartySocket from "partysocket";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { publicBroadcastHost } from "@terragon/env/next-public";
 import { SandboxProvider } from "@terragon/types/sandbox";
 
@@ -121,24 +127,36 @@ function useRealtimeBase({
     disconnectOnDismount,
   });
 
-  const debouncedOnMessage = useDebouncedCallback(onMessage, debounceMs);
+  // Use refs for callbacks to stabilize the event listener — avoids
+  // removing/re-adding the socket listener on every render.
+  const matchesRef = useRef(matches);
+  const onMessageRef = useRef(onMessage);
+  useLayoutEffect(() => {
+    matchesRef.current = matches;
+    onMessageRef.current = onMessage;
+  });
+
+  const debouncedOnMessage = useDebouncedCallback(
+    (msg: BroadcastMessage) => onMessageRef.current(msg),
+    debounceMs,
+  );
 
   const onMessageWrapper = useCallback(
     (event: MessageEvent) => {
       try {
         const message = JSON.parse(event.data);
-        if (matches(message)) {
+        if (matchesRef.current(message)) {
           if (debounceMs > 0) {
             debouncedOnMessage(message);
           } else {
-            onMessage(message);
+            onMessageRef.current(message);
           }
         }
       } catch (error) {
         console.error(`[broadcast] error parsing message`, event.data, error);
       }
     },
-    [debouncedOnMessage, matches, debounceMs, onMessage],
+    [debouncedOnMessage, debounceMs],
   );
 
   useEffect(() => {

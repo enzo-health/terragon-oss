@@ -536,7 +536,7 @@ function threadShellToListThread(shell: ThreadPageShell): ThreadInfo {
   };
 }
 
-function threadPatchToListThread(
+export function threadPatchToListThread(
   patch: BroadcastThreadPatch,
   fallbackThread?: ThreadInfo,
 ): ThreadInfo | undefined {
@@ -622,7 +622,7 @@ function threadPatchToListThread(
   };
 }
 
-function applyThreadPatchToListThread(
+export function applyThreadPatchToListThread(
   thread: ThreadInfo,
   patch: BroadcastThreadPatch,
 ): ThreadInfo {

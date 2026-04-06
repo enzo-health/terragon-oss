@@ -9,6 +9,7 @@ export default {
 
 export const UserMessage: Story = () => {
   const message: UIMessage = {
+    id: "user-0",
     role: "user",
     parts: [
       {
@@ -45,6 +46,7 @@ export const UserMessage: Story = () => {
 
 export const SystemMessageRetryGitCommitAndPush: Story = () => {
   const message: UIMessage = {
+    id: "system-1",
     role: "system",
     message_type: "retry-git-commit-and-push",
     parts: [
@@ -63,6 +65,7 @@ export const SystemMessageRetryGitCommitAndPush: Story = () => {
 
 export const SystemMessageClearContext: Story = () => {
   const message: UIMessage = {
+    id: "system-2",
     role: "system",
     message_type: "clear-context",
     parts: [],

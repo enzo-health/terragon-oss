@@ -50,7 +50,7 @@ export function AgentSettings() {
     return null;
   }
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-12">
       <SettingsSection
         label="Agent Configuration"
         description="Customize how the coding agent behaves across all your tasks"
