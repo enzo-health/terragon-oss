@@ -21,8 +21,7 @@ const buttonVariants = cva(
           "hover:bg-muted/50 rounded-full hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-foreground-primary underline-offset-4 hover:underline",
         warm: "bg-[var(--warm-stone)] text-black rounded-[30px] shadow-warm-lift px-5 py-3 pr-6",
-        uppercase:
-          "font-display-bold uppercase tracking-[0.7px] text-[14px] font-bold",
+        uppercase: "uppercase tracking-[0.7px] text-[14px] font-bold",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

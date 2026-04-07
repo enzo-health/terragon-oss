@@ -36,7 +36,7 @@ export function ThreadListSidebar() {
   }
   return (
     <div
-      className="hidden lg:flex sticky top-0 h-screen border-r bg-background flex-shrink-0 z-20"
+      className="hidden md:flex sticky top-0 h-screen border-r bg-background flex-shrink-0 z-20"
       style={{ width: `${width}px` }}
     >
       <div className="flex flex-col h-full w-full overflow-hidden">
@@ -82,8 +82,8 @@ export function ThreadListSidebar() {
       {/* Resize handle — 2px visual, wider hit target via padding */}
       <div
         className={cn(
-          "absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-blue-500/30 transition-colors z-30",
-          isResizing && "bg-blue-500/30",
+          "absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-accent transition-colors z-30",
+          isResizing && "bg-accent",
         )}
         onMouseDown={handleMouseDown}
       />

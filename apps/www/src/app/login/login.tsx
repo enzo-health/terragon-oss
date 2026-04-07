@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signInWithGithub } from "@/components/auth";
 import { Wordmark } from "@/components/shared/wordmark";
@@ -18,9 +19,9 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
   };
 
   return (
-    <div className="min-h-[100dvh] w-full bg-[#fcfcfc] flex items-center justify-center">
+    <div className="min-h-[100dvh] w-full bg-background flex items-center justify-center">
       <div className="flex flex-col p-8 items-center justify-center w-full max-w-md">
-        <div className="w-full space-y-12 bg-white p-12 rounded-3xl shadow-card border border-border/40">
+        <div className="w-full space-y-12 bg-card p-12 rounded-3xl shadow-card border border-border/40">
           <div className="flex flex-col items-center text-center space-y-4">
             <Wordmark showLogo showText size="lg" />
             <div className="space-y-2 pt-4">
@@ -42,7 +43,10 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
               disabled={isLoading}
             >
               {isLoading ? (
-                "Signing in..."
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Signing in...
+                </>
               ) : (
                 <>
                   <Image

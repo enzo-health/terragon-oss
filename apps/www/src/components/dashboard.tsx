@@ -115,7 +115,7 @@ export function Dashboard({
         if (saveAsDraft) {
           toast.success("Task saved as draft successfully.");
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Roll back optimistic insert
         if (
           collection.status === "ready" &&
@@ -172,8 +172,8 @@ export function Dashboard({
         promptText={promptText ?? undefined}
       />
       {showRecommendedTasks && (
-        <div className="space-y-6 hidden lg:block">
-          <h3 className="text-[13px] font-display-bold uppercase tracking-[0.8px] font-bold text-muted-foreground/50">
+        <div className="space-y-6 hidden md:block">
+          <h3 className="text-[13px] uppercase tracking-[0.8px] font-bold text-muted-foreground/50">
             Suggested tasks
           </h3>
           <RecommendedTasks
@@ -182,7 +182,7 @@ export function Dashboard({
           />
         </div>
       )}
-      <div className="lg:hidden">
+      <div className="md:hidden">
         <ThreadListMain
           queryFilters={{ archived: showArchived }}
           viewFilter={showArchived ? "archived" : "active"}

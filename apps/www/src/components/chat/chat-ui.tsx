@@ -56,6 +56,7 @@ import {
 } from "@/lib/db-message-helpers";
 import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
+import { LeafLoading } from "./leaf-loading";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
@@ -113,7 +114,7 @@ const SecondaryPanel = dynamic(
 
 const DeliveryLoopTopProgressStepper = dynamic(
   () =>
-    import("@/components/patterns/p-stepper-7").then(
+    import("@/components/patterns/delivery-loop-top-progress-stepper").then(
       (mod) => mod.DeliveryLoopTopProgressStepper,
     ),
   { ssr: false },
@@ -661,7 +662,7 @@ function ChatUI({
   ) {
     return (
       <div className="flex flex-col h-[100dvh] w-full items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+        <LeafLoading message="Loading task…" />
       </div>
     );
   }
@@ -847,12 +848,12 @@ const ChatPromptBox = memo(
     const chatAgent = ensureAgent(agent);
     const showContextUsageChip = useFeatureFlag("contextUsageChip");
     // Don't immediately show the scroll button - wait for the page to scroll to the bottom first.
-    const [showScrollButton, setShowScrollButton] = useState(false);
+    const [hasInitialized, setHasInitialized] = useState(false);
     useEffect(() => {
-      const timeout = setTimeout(() => {
-        setShowScrollButton(true);
-      }, 1000);
-      return () => clearTimeout(timeout);
+      // Defer one frame so the scroll observer can emit its first value,
+      // then mark as initialized. This prevents a flash before the auto-scroll-to-bottom runs.
+      const raf = requestAnimationFrame(() => setHasInitialized(true));
+      return () => cancelAnimationFrame(raf);
     }, []);
 
     const updateThreadChat = useOptimisticUpdateThreadChat({
@@ -934,12 +935,12 @@ const ChatPromptBox = memo(
 
     return (
       <div className="sticky bottom-0 z-10 bg-background/95 backdrop-blur-sm chat-prompt-box px-6 pb-8 max-w-[850px] w-full mx-auto [mask-image:linear-gradient(to_bottom,transparent,black_40px)]">
-        <div className="flex h-0 items-center justify-center">
+        <div className="relative h-0 flex justify-center">
           <button
             onClick={forceScrollToBottom}
             className={cn(
-              "z-20 -mt-24 flex size-9 items-center justify-center rounded-full bg-white border shadow-card transition-all duration-300 hover:scale-110",
-              showScrollButton && !isAtBottom
+              "absolute -top-16 z-20 flex size-9 items-center justify-center rounded-full bg-background border shadow-card transition-all duration-300 hover:scale-110",
+              hasInitialized && !isAtBottom
                 ? "opacity-100 translate-y-0"
                 : "opacity-0 translate-y-4 pointer-events-none",
             )}

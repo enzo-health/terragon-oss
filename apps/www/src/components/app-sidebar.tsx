@@ -101,146 +101,158 @@ function AppMenuItem({
 export function AppSidebar() {
   const user = useAtomValue(userAtom);
   const isAdmin = user?.role === "admin";
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
-    <>
-      <Sidebar collapsible="icon" className="bg-background border-r">
-        <SidebarHeader
-          className={cn(
-            "p-4 pb-2 justify-center group-data-[collapsible=icon]:p-2",
-            headerClassName,
-          )}
-        >
-          <SidebarHeaderContent />
-        </SidebarHeader>
-        <SidebarContent className="px-2 group-data-[collapsible=icon]:px-1.5">
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                <Item
-                  title="Home"
-                  href="/dashboard"
-                  icon={<Home className="h-4 w-4" />}
-                />
-                <Item
-                  title="Automations"
-                  href="/automations"
-                  icon={<Workflow className="h-4 w-4" />}
-                />
-                <Item
-                  title="Stats"
-                  href="/stats"
-                  icon={<ChartColumnBig className="h-4 w-4" />}
-                />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-          <SidebarGroup className="mt-4">
+    <Sidebar collapsible="icon" className="bg-background border-r">
+      <SidebarHeader
+        className={cn(
+          "p-4 pb-2 justify-center group-data-[collapsible=icon]:p-2",
+          headerClassName,
+        )}
+      >
+        <SidebarHeaderContent />
+      </SidebarHeader>
+      <SidebarContent className="px-2 group-data-[collapsible=icon]:px-1.5">
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-0.5">
+              <Item
+                title="Home"
+                href="/dashboard"
+                icon={<Home className="h-4 w-4" />}
+              />
+              <Item
+                title="Automations"
+                href="/automations"
+                icon={<Workflow className="h-4 w-4" />}
+              />
+              <Item
+                title="Stats"
+                href="/stats"
+                icon={<ChartColumnBig className="h-4 w-4" />}
+              />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup className="mt-4">
+          <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
+            Configure
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-0.5">
+              <Item
+                title="Environments"
+                href="/environments"
+                icon={<Container className="h-4 w-4" />}
+              />
+              <Item
+                title="Settings"
+                href="/settings"
+                icon={<Settings className="h-4 w-4" />}
+              />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        {isAdmin && (
+          <SidebarGroup className="mt-8">
             <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
-              Configure
+              Admin
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 <Item
-                  title="Environments"
-                  href="/environments"
-                  icon={<Container className="h-4 w-4" />}
-                />
-                <Item
-                  title="Settings"
-                  href="/settings"
-                  icon={<Settings className="h-4 w-4" />}
+                  title="Admin Panel"
+                  href="/internal/admin"
+                  icon={<Shield className="h-4 w-4" />}
                 />
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          {isAdmin && (
-            <SidebarGroup className="mt-8">
-              <SidebarGroupLabel className="font-display-bold uppercase tracking-[0.8px] text-[10px] font-bold text-muted-foreground/50 mb-3 px-4">
-                Admin
-              </SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu className="gap-0.5">
-                  <Item
-                    title="Admin Panel"
-                    href="/internal/admin"
-                    icon={<Shield className="h-4 w-4" />}
-                  />
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
+        )}
 
-          <SidebarGroup className="mt-4">
-            <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
-              Support
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                <AppMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    tooltip="Documentation"
-                    className="font-sans font-medium text-[13px] rounded-lg h-8 px-3"
-                  >
-                    <a
-                      href={publicDocsUrl()}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <BookOpen className="h-5 w-5 opacity-70" />
-                      <span>Documentation</span>
-                    </a>
-                  </SidebarMenuButton>
-                </AppMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter className="sidebar-footer-pwa p-3 border-t">
-          <SidebarMenu>
-            <AppMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton
-                    tooltip={user?.name ?? "Account"}
-                    className="group-data-[collapsible=icon]:justify-center h-10 rounded-lg hover:bg-accent transition-colors"
-                  >
-                    <Avatar className="size-7 group-data-[collapsible=icon]:mr-0 mr-3 shadow-card">
-                      <AvatarImage src={user?.image ?? undefined} />
-                      <AvatarFallback className="bg-[var(--warm-stone)] text-black text-xs font-bold">
-                        {user?.name.charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="group-data-[collapsible=icon]:hidden font-sans font-medium text-[13px]">
-                      {user?.name}
-                    </span>
-                    <ChevronUp className="ml-auto group-data-[collapsible=icon]:hidden size-4 opacity-50" />
-                  </SidebarMenuButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  side="top"
-                  align="start"
-                  alignOffset={1}
-                  className="w-(--radix-popper-anchor-width) rounded-xl shadow-card"
+        <SidebarGroup className="mt-4">
+          <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
+            Support
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-0.5">
+              <AppMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Documentation"
+                  className="font-sans font-medium text-[13px] rounded-lg h-8 px-3"
                 >
-                  <DropdownMenuItem asChild>
-                    <ThemeToggle />
-                  </DropdownMenuItem>
+                  <a
+                    href={publicDocsUrl()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <BookOpen className="h-5 w-5 opacity-70" />
+                    <span>Documentation</span>
+                  </a>
+                </SidebarMenuButton>
+              </AppMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter className="sidebar-footer-pwa p-3 border-t">
+        <SidebarMenu>
+          <AppMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton
+                  tooltip={user?.name ?? "Account"}
+                  className="group-data-[collapsible=icon]:justify-center h-10 rounded-lg hover:bg-accent transition-colors"
+                >
+                  <Avatar className="size-7 group-data-[collapsible=icon]:mr-0 mr-3 shadow-card">
+                    <AvatarImage src={user?.image ?? undefined} />
+                    <AvatarFallback className="bg-[var(--warm-stone)] text-foreground text-xs font-bold">
+                      {user?.name.charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="group-data-[collapsible=icon]:hidden font-sans font-medium text-[13px]">
+                    {user?.name}
+                  </span>
+                  <ChevronUp className="ml-auto group-data-[collapsible=icon]:hidden size-4 opacity-50" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                alignOffset={1}
+                className="w-(--radix-popper-anchor-width) rounded-xl shadow-card"
+              >
+                {mounted && (
                   <DropdownMenuItem
-                    onClick={() => signOut()}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setTheme(resolvedTheme === "light" ? "dark" : "light");
+                    }}
                     className="rounded-lg"
                   >
-                    <span>Sign out</span>
+                    <ThemeToggle resolvedTheme={resolvedTheme} />
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </AppMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-        <SidebarRail />
-      </Sidebar>
-    </>
+                )}
+                <DropdownMenuItem
+                  onClick={() => signOut()}
+                  className="rounded-lg"
+                >
+                  <span>Sign out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </AppMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
   );
 }
 
@@ -257,13 +269,6 @@ function Item({
 }) {
   const pathname = usePathname();
   const isActive = pathname === href;
-  const { isMobile, setOpenMobile } = useSidebar();
-
-  const handleClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-  }, [isMobile, setOpenMobile]);
 
   return (
     <AppMenuItem>
@@ -276,7 +281,7 @@ function Item({
           isActive ? "bg-accent" : "hover:bg-accent/50",
         )}
       >
-        <Link href={href} onClick={handleClick}>
+        <Link href={href}>
           <span
             className={cn(
               "transition-colors",
@@ -289,7 +294,7 @@ function Item({
         </Link>
       </SidebarMenuButton>
       {!!count && (
-        <SidebarMenuBadge className="bg-[var(--warm-stone)] text-black rounded-full font-bold text-[10px]">
+        <SidebarMenuBadge className="bg-[var(--warm-stone)] text-foreground rounded-full font-bold text-[10px]">
           {count}
         </SidebarMenuBadge>
       )}
@@ -297,38 +302,15 @@ function Item({
   );
 }
 
-function ThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return null;
-  }
-
+function ThemeToggle({ resolvedTheme }: { resolvedTheme: string | undefined }) {
   return (
-    <div
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (resolvedTheme === "light") {
-          setTheme("dark");
-        } else {
-          setTheme("light");
-        }
-      }}
-      className="text-sm text-muted-foreground hover:text-foreground transition-colors p-2 flex items-center gap-2 hover:bg-accent rounded-md cursor-pointer"
-      aria-label="Toggle theme"
-    >
+    <span className="text-sm text-muted-foreground flex items-center gap-2 w-full">
       {resolvedTheme === "light" ? "Light Mode" : "Dark Mode"}
       {resolvedTheme === "light" ? (
         <SunIcon className="size-4 text-foreground/50" />
       ) : (
         <MoonIcon className="size-4 text-foreground/50" />
       )}
-    </div>
+    </span>
   );
 }

@@ -34,8 +34,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   interactiveWidget: "resizes-content",
 };
 
@@ -69,7 +67,6 @@ export default function RootLayout({
         )}
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="theme-color" content="#ffffff" />
         <meta
           name="theme-color"
           content="#ffffff"
