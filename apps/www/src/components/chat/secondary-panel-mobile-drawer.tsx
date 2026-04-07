@@ -13,6 +13,12 @@ import type { PromptBoxRef } from "./thread-context";
 
 const MOBILE_DRAWER_SNAP_POINTS = [0.6, 0.95] as const;
 const MOBILE_DRAWER_DEFAULT_SNAP = 0.6;
+/**
+ * Pixel tolerance for sub-pixel rounding when deciding whether the drawer
+ * has more content scrollable below the visible area. Below this threshold
+ * we treat the user as already at the bottom and hide the scroll fade.
+ */
+const SCROLL_FADE_TOLERANCE_PX = 8;
 
 export function MobileArtifactDrawer({
   isOpen,
@@ -51,7 +57,9 @@ export function MobileArtifactDrawer({
       setShowScrollFade(false);
       return;
     }
-    const hasMoreBelow = el.scrollHeight - el.scrollTop - el.clientHeight > 8;
+    const hasMoreBelow =
+      el.scrollHeight - el.scrollTop - el.clientHeight >
+      SCROLL_FADE_TOLERANCE_PX;
     setShowScrollFade(hasMoreBelow);
   }, []);
 

@@ -4,6 +4,7 @@ import React from "react";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import { ThreadInfoFull } from "@terragon/shared";
 import { X } from "lucide-react";
+import { toast } from "sonner";
 import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";
 import { Button } from "@/components/ui/button";
 import { convertToPlainText } from "@/lib/db-message-helpers";
@@ -60,6 +61,9 @@ export function CommentWidget({
       parts: [{ type: "text", text: contextPrefix }, ...userMessage.parts],
     };
 
+    // Snapshot pre-update state so we can revert on failure.
+    const prevMessages = threadMessages;
+
     // Optimistic update
     updateThreadChat({
       messages: [...threadMessages, contextualMessage],
@@ -70,11 +74,27 @@ export function CommentWidget({
 
     onClose();
 
-    await followUp({
+    const result = await followUp({
       threadId: thread.id,
       threadChatId,
       message: contextualMessage,
     });
+
+    if (!result.success) {
+      // Revert the optimistic message and surface the error to the user.
+      updateThreadChat({
+        messages: prevMessages,
+        errorMessage: result.errorMessage,
+        errorMessageInfo: null,
+        status: "complete",
+      });
+      toast.error("Failed to post comment", {
+        description:
+          typeof result.errorMessage === "string"
+            ? result.errorMessage
+            : "An unknown error occurred. Please try again.",
+      });
+    }
   };
   return (
     <div

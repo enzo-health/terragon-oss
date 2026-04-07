@@ -32,13 +32,21 @@ export interface ArtifactWorkspaceItem extends ArtifactWorkspaceItemSummary {
 
 export type ArtifactWorkspaceComparablePart = UIPart | UIGitDiffPart;
 
+/**
+ * Resolves which artifact should be the active one in the workspace.
+ *
+ * Returns the requested `activeArtifactId` if it is still present in the
+ * `artifacts` list. Otherwise falls back to the first artifact in the list
+ * (so the workspace always displays *something* when artifacts exist).
+ * Returns `null` only when the list is empty.
+ */
 export function resolveActiveArtifactId({
   artifacts,
   activeArtifactId,
 }: {
   artifacts: Array<Pick<ArtifactWorkspaceItemSummary, "id">>;
   activeArtifactId?: string | null;
-}) {
+}): string | null {
   if (artifacts.length === 0) {
     return null;
   }
@@ -53,13 +61,29 @@ export function resolveActiveArtifactId({
   return artifacts[0]?.id ?? null;
 }
 
+/**
+ * Locates the artifact descriptor that owns a given message part. Used by
+ * the chat surface to "open in workspace" a part the user clicked on.
+ *
+ * Two-phase match:
+ * 1. **Reference equality** — fast path for parts that are still the exact
+ *    object instance the descriptor was built from.
+ * 2. **Content equality** — fallback for cases where normalization (e.g.
+ *    `normalizeToolCall`) shallow-cloned the part, breaking reference
+ *    equality. Returns a content match only when exactly one artifact has
+ *    the same identifying field, to avoid mis-resolving when duplicates
+ *    share a URL or text body.
+ *
+ * Returns `null` when there are zero matches OR multiple ambiguous content
+ * matches.
+ */
 export function findArtifactDescriptorForPart({
   artifacts,
   part,
 }: {
   artifacts: Pick<ArtifactDescriptor, "id" | "part">[];
   part: ArtifactWorkspaceComparablePart;
-}) {
+}): Pick<ArtifactDescriptor, "id" | "part"> | null {
   // Fast path: reference equality (same object instance).
   const refMatch = artifacts.find((artifact) => artifact.part === part);
   if (refMatch) return refMatch;
@@ -108,7 +132,7 @@ function partsContentEqual(
 
 export function getArtifactWorkspaceViewState(
   artifact?: Pick<ArtifactWorkspaceItemSummary, "status"> | null,
-) {
+): "empty" | "loading" | "error" | "ready" {
   if (!artifact) {
     return "empty" as const;
   }
@@ -130,7 +154,7 @@ export function getArtifactWorkspaceItems({
 }: {
   messages: Parameters<typeof getArtifactDescriptors>[0]["messages"];
   thread?: Parameters<typeof getArtifactDescriptors>[0]["thread"];
-}) {
+}): ArtifactWorkspaceItemSummary[] {
   const descriptors = getArtifactDescriptors({ messages, thread });
   return descriptors.map((descriptor) =>
     getArtifactWorkspaceItemSummary(descriptor),

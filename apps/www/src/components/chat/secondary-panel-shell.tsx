@@ -153,7 +153,7 @@ function ArtifactWorkspaceShell({
   return (
     <div
       id={ARTIFACT_WORKSPACE_PANEL_ID}
-      className="flex h-full min-h-0 flex-col bg-white"
+      className="flex h-full min-h-0 flex-col bg-background"
     >
       {/* Compact header — single row with title, controls, and artifact tabs */}
       <div className="border-b">

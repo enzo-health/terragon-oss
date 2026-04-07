@@ -47,12 +47,14 @@ export function buildFileTree(files: ParsedDiffFile[]): FileTreeNode[] {
 }
 
 /**
- * Returns the appropriate icon for a file change type
+ * Returns the appropriate icon for a file change type, or `undefined` if the
+ * `changeType` does not match any known case (defensive against future
+ * additions to `FileChangeType`).
  */
 export function getFileIcon(
   changeType: FileChangeType,
   isImage: boolean = false,
-) {
+): React.ReactElement | undefined {
   if (isImage) {
     const colorClass =
       changeType === "added"

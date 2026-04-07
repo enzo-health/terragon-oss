@@ -2,10 +2,7 @@ import { AllToolParts, UIMessage, UIPart } from "@terragon/shared";
 import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import { PartGroup, UIUserOrAgentPart } from "./chat-message.types";
 
-export function toolPartContainsName(
-  part: AllToolParts,
-  toolName: string,
-): boolean {
+function toolPartContainsName(part: AllToolParts, toolName: string): boolean {
   if (part.name === toolName) {
     return true;
   }
@@ -31,14 +28,14 @@ export function messageContainsToolName(
 }
 
 // Never collapse these tool names
-export const nonCollapsibleToolNames = new Set<string>([
+const nonCollapsibleToolNames = new Set<string>([
   "SuggestFollowupTask",
   "mcp__terry__SuggestFollowupTask",
   "ExitPlanMode",
   "PermissionRequest",
 ]);
 
-export function getPartGroupType({
+function getPartGroupType({
   part,
   partIdx,
   numParts,
@@ -75,7 +72,23 @@ export function getPartGroupType({
   }
 }
 
-// Group image parts together and identify collapsible tool sequences
+/**
+ * Groups consecutive message parts for rendering. Image parts are grouped
+ * together so they render as a row, and runs of agent activity (text /
+ * thinking / tool parts that are NOT in `nonCollapsibleToolNames`) are
+ * grouped under a `collapsible-agent-activity` type so the UI can collapse
+ * them behind a single expander.
+ *
+ * Special cases:
+ * - The last part of a message always renders as its own group (never
+ *   collapses), so the most recent content is always visible.
+ * - Anything at or after the last text part also never collapses, so
+ *   trailing tool calls following the final assistant text stay expanded.
+ *
+ * `isLatestMessage` and `isAgentWorking` are accepted for parity with the
+ * call site but are reserved for future grouping rules; current logic does
+ * not branch on them.
+ */
 export function groupParts({
   parts,
   isLatestMessage,
