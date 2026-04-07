@@ -88,7 +88,10 @@ const SiteHeaderBreadcrumbs = memo(function SiteHeaderBreadcrumbs() {
           <React.Fragment key={index}>
             {index > 0 && <BreadcrumbSeparator />}
             <BreadcrumbItem
-              className={cn("truncate block", index === 0 && "font-bold")}
+              className={cn(
+                "truncate block",
+                index === breadcrumbs.length - 1 && "font-bold",
+              )}
             >
               {item.href ? (
                 <BreadcrumbLink href={item.href}>{item.label}</BreadcrumbLink>
