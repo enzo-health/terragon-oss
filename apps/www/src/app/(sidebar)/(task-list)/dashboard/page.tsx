@@ -1,7 +1,7 @@
 import { getUserInfoOrRedirect } from "@/lib/auth-server";
 import { Dashboard } from "@/components/dashboard";
 import type { Metadata } from "next";
-import { SiteHeader } from "@/components/system/site-header";
+import { PageFrame } from "@/components/system/page-frame";
 import { threadListQueryOptions } from "@/queries/thread-queries";
 import {
   dehydrate,
@@ -36,10 +36,9 @@ export default async function DashboardPage({
   }
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <SiteHeader />
-      <div className="flex-1 w-full px-4 overflow-auto">
+      <PageFrame>
         <Dashboard showArchived={showArchived} />
-      </div>
+      </PageFrame>
     </HydrationBoundary>
   );
 }

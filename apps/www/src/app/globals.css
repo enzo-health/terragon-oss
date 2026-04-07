@@ -149,7 +149,15 @@
   --font-mono: var(--font-mono);
   --font-display: var(--font-display);
 
-  --spacing-chat-max: var(--chat-max-width);
+  /* Type scale — produces text-display, text-title, text-lead, text-caption, text-micro utilities */
+  --text-display: 36px;
+  --text-title: 22px;
+  --text-lead: 15px;
+  --text-caption: 13px;
+  --text-micro: 11px;
+
+  /* Container scale — produces max-w-chat utility */
+  --container-chat: var(--chat-max-width);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

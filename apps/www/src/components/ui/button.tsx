@@ -16,12 +16,12 @@ const buttonVariants = cva(
         outline:
           "border bg-background rounded-full hover:bg-muted/50 hover:text-muted-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
         secondary:
-          "bg-white text-black rounded-full shadow-card hover:bg-muted",
+          "bg-card text-card-foreground rounded-full shadow-card hover:bg-muted",
         ghost:
           "hover:bg-muted/50 rounded-full hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-foreground-primary underline-offset-4 hover:underline",
-        warm: "bg-[var(--warm-stone)] text-black rounded-[30px] shadow-warm-lift px-5 py-3 pr-6",
-        uppercase: "uppercase tracking-[0.7px] text-[14px] font-bold",
+        warm: "bg-[var(--warm-stone)] text-foreground rounded-[30px] shadow-warm-lift px-5 py-3 pr-6",
+        uppercase: "uppercase tracking-[0.7px] text-sm font-bold",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

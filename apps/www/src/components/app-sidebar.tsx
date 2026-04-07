@@ -186,7 +186,7 @@ export function AppSidebar() {
                 <SidebarMenuButton
                   asChild
                   tooltip="Documentation"
-                  className="font-sans font-medium text-[13px] rounded-lg h-8 px-3"
+                  className="font-sans font-medium text-caption rounded-lg h-8 px-3"
                 >
                   <a
                     href={publicDocsUrl()}
@@ -217,7 +217,7 @@ export function AppSidebar() {
                       {user?.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="group-data-[collapsible=icon]:hidden font-sans font-medium text-[13px]">
+                  <span className="group-data-[collapsible=icon]:hidden font-sans font-medium text-caption">
                     {user?.name}
                   </span>
                   <ChevronUp className="ml-auto group-data-[collapsible=icon]:hidden size-4 opacity-50" />
@@ -277,7 +277,7 @@ function Item({
         isActive={isActive}
         tooltip={title}
         className={cn(
-          "font-sans font-medium text-[13px] rounded-lg h-8 px-3 transition-colors group-data-[collapsible=icon]:justify-center",
+          "font-sans font-medium text-caption rounded-lg h-8 px-3 transition-colors group-data-[collapsible=icon]:justify-center",
           isActive ? "bg-accent" : "hover:bg-accent/50",
         )}
       >

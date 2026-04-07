@@ -45,7 +45,7 @@ export function ThreadListSidebar() {
         >
           <Link
             href="/dashboard"
-            className="flex-1 flex items-center gap-2 rounded-lg transition-colors duration-150 hover:bg-accent border border-border/40 py-1.5 px-3 text-[13px] font-medium"
+            className="flex-1 flex items-center gap-2 rounded-lg transition-colors duration-150 hover:bg-accent border border-border/40 py-1.5 px-3 text-caption font-medium"
           >
             <SquarePen className="h-3.5 w-3.5 opacity-60" />
             <span>New Task</span>

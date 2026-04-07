@@ -692,7 +692,7 @@ function ChatUI({
             >
               <div
                 ref={transcriptRef}
-                className="flex flex-col flex-1 gap-8 w-full max-w-[850px] mx-auto px-6 mt-12 mb-20"
+                className="flex flex-col flex-1 gap-8 w-full max-w-chat mx-auto px-6 mt-12 mb-20"
               >
                 <ChatMessages
                   messages={messages}
@@ -798,211 +798,188 @@ function ChatUI({
   );
 }
 
-const ChatPromptBox = memo(
-  function ChatPromptBox({
+const ChatPromptBox = memo(function ChatPromptBox({
+  threadId,
+  threadChatId,
+  threadStatus,
+  queuedMessages,
+  permissionMode,
+  prStatus,
+  prChecksStatus,
+  githubPRNumber,
+  sandboxId,
+  repoFullName,
+  branchName,
+  agent,
+  agentVersion,
+  lastUsedModel,
+  contextLength,
+  setError,
+  refetch,
+  isAtBottom,
+  forceScrollToBottom,
+  promptBoxRef,
+}: {
+  threadId: string;
+  threadChatId: string;
+  threadStatus: ThreadStatus | null;
+  queuedMessages: DBUserMessage[] | null;
+  permissionMode: "allowAll" | "plan";
+  prStatus: GithubPRStatus | null;
+  prChecksStatus: GithubCheckStatus | null;
+  githubPRNumber: number | null;
+  sandboxId: string | null;
+  repoFullName: string;
+  branchName: string;
+  agent: AIAgent;
+  agentVersion: number;
+  lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
+  contextLength: number | null;
+  setError: (error: ThreadErrorMessage | null) => void;
+  isAtBottom: boolean;
+  forceScrollToBottom: () => void;
+  refetch: () => Promise<unknown>;
+  promptBoxRef: React.RefObject<{
+    focus: () => void;
+    setPermissionMode: (mode: "allowAll" | "plan") => void;
+  } | null>;
+}) {
+  const chatAgent = ensureAgent(agent);
+  const showContextUsageChip = useFeatureFlag("contextUsageChip");
+  // Don't immediately show the scroll button - wait for the page to scroll to the bottom first.
+  const [hasInitialized, setHasInitialized] = useState(false);
+  useEffect(() => {
+    // Defer one frame so the scroll observer can emit its first value,
+    // then mark as initialized. This prevents a flash before the auto-scroll-to-bottom runs.
+    const raf = requestAnimationFrame(() => setHasInitialized(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const updateThreadChat = useOptimisticUpdateThreadChat({
     threadId,
     threadChatId,
-    threadStatus,
-    queuedMessages,
-    permissionMode,
-    prStatus,
-    prChecksStatus,
-    githubPRNumber,
-    sandboxId,
-    repoFullName,
-    branchName,
-    agent,
-    agentVersion,
-    lastUsedModel,
-    contextLength,
-    setError,
-    refetch,
-    isAtBottom,
-    forceScrollToBottom,
-    promptBoxRef,
-  }: {
-    threadId: string;
-    threadChatId: string;
-    threadStatus: ThreadStatus | null;
-    queuedMessages: DBUserMessage[] | null;
-    permissionMode: "allowAll" | "plan";
-    prStatus: GithubPRStatus | null;
-    prChecksStatus: GithubCheckStatus | null;
-    githubPRNumber: number | null;
-    sandboxId: string | null;
-    repoFullName: string;
-    branchName: string;
-    agent: AIAgent;
-    agentVersion: number;
-    lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
-    contextLength: number | null;
-    setError: (error: ThreadErrorMessage | null) => void;
-    isAtBottom: boolean;
-    forceScrollToBottom: () => void;
-    refetch: () => Promise<unknown>;
-    promptBoxRef: React.RefObject<{
-      focus: () => void;
-      setPermissionMode: (mode: "allowAll" | "plan") => void;
-    } | null>;
-  }) {
-    const chatAgent = ensureAgent(agent);
-    const showContextUsageChip = useFeatureFlag("contextUsageChip");
-    // Don't immediately show the scroll button - wait for the page to scroll to the bottom first.
-    const [hasInitialized, setHasInitialized] = useState(false);
-    useEffect(() => {
-      // Defer one frame so the scroll observer can emit its first value,
-      // then mark as initialized. This prevents a flash before the auto-scroll-to-bottom runs.
-      const raf = requestAnimationFrame(() => setHasInitialized(true));
-      return () => cancelAnimationFrame(raf);
-    }, []);
+  });
 
-    const updateThreadChat = useOptimisticUpdateThreadChat({
-      threadId,
-      threadChatId,
-    });
-
-    const handleSubmit = useCallback<HandleSubmit>(
-      async ({ userMessage }) => {
-        const plainText = convertToPlainText({ message: userMessage });
-        if (plainText.length === 0) {
-          return;
-        }
-        forceScrollToBottom();
-        setError(null);
-        // Optimistically add the message to the thread
-        const optimisticStatus =
-          plainText.trim() === "/clear" ? "complete" : "booting";
-        updateThreadChat((currentChat) => ({
-          messages: [...(currentChat.messages ?? []), userMessage],
-          errorMessage: null,
-          errorMessageInfo: null,
-          status: optimisticStatus,
-        }));
-        const followUpResult = await followUp({
-          threadId,
-          threadChatId,
-          message: userMessage,
-        });
-        if (!followUpResult.success) {
-          setError(followUpResult.errorMessage);
-          // Revert optimistic update on error
-          refetch();
-          return;
-        }
-      },
-      [
+  const handleSubmit = useCallback<HandleSubmit>(
+    async ({ userMessage }) => {
+      const plainText = convertToPlainText({ message: userMessage });
+      if (plainText.length === 0) {
+        return;
+      }
+      forceScrollToBottom();
+      setError(null);
+      // Optimistically add the message to the thread
+      const optimisticStatus =
+        plainText.trim() === "/clear" ? "complete" : "booting";
+      updateThreadChat((currentChat) => ({
+        messages: [...(currentChat.messages ?? []), userMessage],
+        errorMessage: null,
+        errorMessageInfo: null,
+        status: optimisticStatus,
+      }));
+      const followUpResult = await followUp({
         threadId,
         threadChatId,
-        updateThreadChat,
-        refetch,
-        setError,
-        forceScrollToBottom,
-      ],
-    );
+        message: userMessage,
+      });
+      if (!followUpResult.success) {
+        setError(followUpResult.errorMessage);
+        // Revert optimistic update on error
+        refetch();
+        return;
+      }
+    },
+    [
+      threadId,
+      threadChatId,
+      updateThreadChat,
+      refetch,
+      setError,
+      forceScrollToBottom,
+    ],
+  );
 
-    const handleStop = useCallback(async () => {
-      await stopThread({ threadId, threadChatId });
-      await refetch();
-    }, [threadId, threadChatId, refetch]);
+  const handleStop = useCallback(async () => {
+    await stopThread({ threadId, threadChatId });
+    await refetch();
+  }, [threadId, threadChatId, refetch]);
 
-    const updateQueuedMessages = useCallback(
-      async (messages: DBUserMessage[]) => {
-        updateThreadChat({ queuedMessages: messages });
-        const queueFollowUpResult = await queueFollowUp({
-          threadId,
-          threadChatId,
-          messages,
-        });
-        if (!queueFollowUpResult.success) {
-          setError(queueFollowUpResult.errorMessage);
-          refetch();
-          return;
-        }
-      },
-      [threadId, threadChatId, updateThreadChat, refetch, setError],
-    );
+  const updateQueuedMessages = useCallback(
+    async (messages: DBUserMessage[]) => {
+      updateThreadChat({ queuedMessages: messages });
+      const queueFollowUpResult = await queueFollowUp({
+        threadId,
+        threadChatId,
+        messages,
+      });
+      if (!queueFollowUpResult.success) {
+        setError(queueFollowUpResult.errorMessage);
+        refetch();
+        return;
+      }
+    },
+    [threadId, threadChatId, updateThreadChat, refetch, setError],
+  );
 
-    const handleQueueMessage = useCallback(
-      async ({ userMessage }: { userMessage: DBUserMessage }) => {
-        const plainText = convertToPlainText({ message: userMessage });
-        if (plainText.length === 0) {
-          return;
-        }
-        updateQueuedMessages([...(queuedMessages ?? []), userMessage]);
-      },
-      [queuedMessages, updateQueuedMessages],
-    );
+  const handleQueueMessage = useCallback(
+    async ({ userMessage }: { userMessage: DBUserMessage }) => {
+      const plainText = convertToPlainText({ message: userMessage });
+      if (plainText.length === 0) {
+        return;
+      }
+      updateQueuedMessages([...(queuedMessages ?? []), userMessage]);
+    },
+    [queuedMessages, updateQueuedMessages],
+  );
 
-    return (
-      <div className="sticky bottom-0 z-10 bg-background/95 backdrop-blur-sm chat-prompt-box px-6 pb-8 max-w-[850px] w-full mx-auto [mask-image:linear-gradient(to_bottom,transparent,black_40px)]">
-        <div className="relative h-0 flex justify-center">
-          <button
-            onClick={forceScrollToBottom}
-            className={cn(
-              "absolute -top-16 z-20 flex size-9 items-center justify-center rounded-full bg-background border shadow-card transition-all duration-300 hover:scale-110",
-              hasInitialized && !isAtBottom
-                ? "opacity-100 translate-y-0"
-                : "opacity-0 translate-y-4 pointer-events-none",
-            )}
-            aria-label="Scroll to bottom"
-          >
-            <ArrowDown className="size-5" />
-          </button>
-        </div>
-        {showContextUsageChip ? (
-          <ContextChip
-            contextLength={contextLength}
-            showAlways={chatAgent === "claudeCode"}
-          />
-        ) : (
-          <ContextWarning contextLength={contextLength} />
-        )}
-        <ThreadPromptBox
-          ref={promptBoxRef}
-          threadId={threadId}
-          threadChatId={threadChatId}
-          status={threadStatus}
-          prStatus={prStatus}
-          prChecksStatus={prChecksStatus}
-          githubPRNumber={githubPRNumber}
-          sandboxId={sandboxId}
-          repoFullName={repoFullName}
-          branchName={branchName}
-          agent={chatAgent}
-          agentVersion={agentVersion}
-          lastUsedModel={lastUsedModel}
-          permissionMode={permissionMode}
-          handleStop={handleStop}
-          handleSubmit={handleSubmit}
-          queuedMessages={queuedMessages}
-          handleQueueMessage={handleQueueMessage}
-          onUpdateQueuedMessage={updateQueuedMessages}
-        />
+  return (
+    <div className="sticky bottom-0 z-10 bg-background/95 backdrop-blur-sm chat-prompt-box px-6 pb-8 max-w-chat w-full mx-auto [mask-image:linear-gradient(to_bottom,transparent,black_40px)]">
+      <div className="relative h-0 flex justify-center">
+        <button
+          onClick={forceScrollToBottom}
+          className={cn(
+            "absolute -top-16 z-20 flex size-9 items-center justify-center rounded-full bg-background border shadow-card transition-all duration-300 hover:scale-110",
+            hasInitialized && !isAtBottom
+              ? "opacity-100 translate-y-0"
+              : "opacity-0 translate-y-4 pointer-events-none",
+          )}
+          aria-label="Scroll to bottom"
+        >
+          <ArrowDown className="size-5" />
+        </button>
       </div>
-    );
-  },
-  (prev, next) =>
-    prev.threadId === next.threadId &&
-    prev.threadChatId === next.threadChatId &&
-    prev.threadStatus === next.threadStatus &&
-    prev.queuedMessages === next.queuedMessages &&
-    prev.permissionMode === next.permissionMode &&
-    prev.prStatus === next.prStatus &&
-    prev.prChecksStatus === next.prChecksStatus &&
-    prev.githubPRNumber === next.githubPRNumber &&
-    prev.sandboxId === next.sandboxId &&
-    prev.repoFullName === next.repoFullName &&
-    prev.branchName === next.branchName &&
-    prev.agent === next.agent &&
-    prev.agentVersion === next.agentVersion &&
-    prev.lastUsedModel === next.lastUsedModel &&
-    prev.contextLength === next.contextLength &&
-    prev.isAtBottom === next.isAtBottom &&
-    prev.forceScrollToBottom === next.forceScrollToBottom &&
-    prev.refetch === next.refetch &&
-    prev.setError === next.setError &&
-    prev.promptBoxRef === next.promptBoxRef,
-);
+      {showContextUsageChip ? (
+        <ContextChip
+          contextLength={contextLength}
+          showAlways={chatAgent === "claudeCode"}
+        />
+      ) : (
+        <ContextWarning contextLength={contextLength} />
+      )}
+      <ThreadPromptBox
+        ref={promptBoxRef}
+        threadId={threadId}
+        threadChatId={threadChatId}
+        status={threadStatus}
+        prStatus={prStatus}
+        prChecksStatus={prChecksStatus}
+        githubPRNumber={githubPRNumber}
+        sandboxId={sandboxId}
+        repoFullName={repoFullName}
+        branchName={branchName}
+        agent={chatAgent}
+        agentVersion={agentVersion}
+        lastUsedModel={lastUsedModel}
+        permissionMode={permissionMode}
+        handleStop={handleStop}
+        handleSubmit={handleSubmit}
+        queuedMessages={queuedMessages}
+        handleQueueMessage={handleQueueMessage}
+        onUpdateQueuedMessage={updateQueuedMessages}
+      />
+    </div>
+  );
+});
 
 const ChatUIMemo = memo(ChatUI);
 

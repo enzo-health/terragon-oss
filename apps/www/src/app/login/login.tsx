@@ -25,10 +25,10 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
           <div className="flex flex-col items-center text-center space-y-4">
             <Wordmark showLogo showText size="lg" />
             <div className="space-y-2 pt-4">
-              <h1 className="text-[36px] font-display font-[300] tracking-tight leading-tight text-foreground">
+              <h1 className="text-display font-display font-[300] tracking-tight leading-tight text-foreground">
                 Sign in
               </h1>
-              <p className="text-[15px] font-sans text-muted-foreground/70 tracking-[0.15px]">
+              <p className="text-lead font-sans text-muted-foreground/70 tracking-[0.15px]">
                 Welcome back. Sign in to continue to Terragon.
               </p>
             </div>
@@ -67,7 +67,7 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
                 </>
               )}
             </Button>
-            <p className="text-[11px] text-center text-muted-foreground/50 font-sans tracking-[0.02em] uppercase">
+            <p className="text-micro text-center text-muted-foreground/50 font-sans tracking-[0.02em] uppercase">
               Secure authentication via GitHub
             </p>
           </div>
