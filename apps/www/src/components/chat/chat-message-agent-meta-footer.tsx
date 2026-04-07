@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { UIAgentMessage } from "@terragon/shared";
 import { formatDuration } from "./chat-message.utils";
 

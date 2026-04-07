@@ -1,3 +1,4 @@
+import React from "react";
 import { AlertTriangle, LayoutDashboard, Loader2 } from "lucide-react";
 
 export function ArtifactWorkspaceState({

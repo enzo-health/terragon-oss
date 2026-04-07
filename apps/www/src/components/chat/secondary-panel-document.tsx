@@ -1,3 +1,4 @@
+import React from "react";
 import { type UIRichTextPart } from "@terragon/shared";
 import { RichTextPart } from "./rich-text-part";
 

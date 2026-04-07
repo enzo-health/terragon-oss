@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { toast } from "sonner";
 import { ThreadInfo, ThreadInfoFull } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";

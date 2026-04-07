@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import { ThreadInfoFull } from "@terragon/shared";
 import { X } from "lucide-react";

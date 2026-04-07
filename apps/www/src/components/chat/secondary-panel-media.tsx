@@ -1,3 +1,4 @@
+import React from "react";
 import { type UIImagePart, type UIPdfPart } from "@terragon/shared";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";

@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { ChevronDown, ChevronRight, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "./git-diff-view.types";

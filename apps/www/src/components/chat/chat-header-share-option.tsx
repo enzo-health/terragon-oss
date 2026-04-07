@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { ThreadVisibility } from "@terragon/shared";
 import { Check, Lock, Users, Globe } from "lucide-react";
 

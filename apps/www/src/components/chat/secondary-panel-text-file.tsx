@@ -1,3 +1,4 @@
+import React from "react";
 import { type UITextFilePart } from "@terragon/shared";
 import { AlertTriangle, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";

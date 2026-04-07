@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useState } from "react";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { MessagePart } from "./message-part";

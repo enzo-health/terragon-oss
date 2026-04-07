@@ -1,3 +1,4 @@
+import React from "react";
 import { FileDiff, FilePlus, FileX, Image } from "lucide-react";
 import type { FileChangeType, ParsedDiffFile } from "@/lib/git-diff";
 import { cn } from "@/lib/utils";

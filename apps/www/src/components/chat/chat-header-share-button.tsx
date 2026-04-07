@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { toast } from "sonner";
 import { ThreadInfo, ThreadVisibility } from "@terragon/shared";
 import { useState } from "react";
