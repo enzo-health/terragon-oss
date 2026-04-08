@@ -759,6 +759,13 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
       return;
     }
 
+    // Real mode: enforce web URL guard in non-development environments
+    if (!webUrl && process.env.NODE_ENV !== "development") {
+      throw new Error(
+        "e2e real mode requires --web-url or TERRAGON_WEB_URL in non-development environments",
+      );
+    }
+
     const resolvedUserId = args.userId ?? "";
     const repoFullName = args.repo ?? "";
     const minimalTaskMessage =
@@ -793,12 +800,6 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
 
     while (Date.now() <= deadline) {
       pollCount += 1;
-      if (!webUrl && process.env.NODE_ENV !== "development") {
-        throw new Error(
-          "e2e real mode requires --web-url or TERRAGON_WEB_URL in non-development environments",
-        );
-      }
-
       const cronResult = await triggerScheduledTasksCron(cronBaseUrl);
       lastCronStatus = cronResult.status;
       lastCronText = cronResult.text;
