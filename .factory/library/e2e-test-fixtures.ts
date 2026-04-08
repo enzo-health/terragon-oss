@@ -103,7 +103,7 @@ export async function seedE2EFixtures(): Promise<E2EFixtureData> {
 
     // Create GitHub account for the user
     await client.query(
-      `INSERT INTO account (id, "userId", "providerId", "accountId", "accessToken", "refreshToken", created_at, updated_at)
+      `INSERT INTO account (id, user_id, provider_id, account_id, access_token, refresh_token, created_at, updated_at)
        VALUES ($1, $2, 'github', $3, 'test-token', 'test-refresh', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [
@@ -115,7 +115,7 @@ export async function seedE2EFixtures(): Promise<E2EFixtureData> {
 
     // Create session for the user
     await client.query(
-      `INSERT INTO session (id, "userId", token, expires_at, created_at, updated_at)
+      `INSERT INTO session (id, user_id, token, expires_at, created_at, updated_at)
        VALUES ($1, $2, $3, NOW() + INTERVAL '30 days', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [
@@ -156,13 +156,13 @@ export async function cleanupE2EFixtures(): Promise<void> {
     ]);
 
     // Delete user data
-    await client.query(`DELETE FROM session WHERE "userId" = $1`, [
+    await client.query(`DELETE FROM session WHERE user_id = $1`, [
       E2E_FIXTURE_USER_ID,
     ]);
-    await client.query(`DELETE FROM account WHERE "userId" = $1`, [
+    await client.query(`DELETE FROM account WHERE user_id = $1`, [
       E2E_FIXTURE_USER_ID,
     ]);
-    await client.query(`DELETE FROM subscription WHERE "referenceId" = $1`, [
+    await client.query(`DELETE FROM subscription WHERE reference_id = $1`, [
       E2E_FIXTURE_USER_ID,
     ]);
     await client.query(`DELETE FROM "user" WHERE id = $1`, [

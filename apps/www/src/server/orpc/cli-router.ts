@@ -17,7 +17,7 @@ import { checkCliTaskCreationRateLimit } from "@/lib/rate-limit";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { combineThreadStatuses } from "@/agent/thread-status";
-import { getDeliveryLoopStatusAction } from "@/server-actions/get-delivery-loop-status";
+import { getDeliveryLoopStatusCore } from "@/server-actions/get-delivery-loop-status";
 
 const os = implement(cliAPIContract)
   .$context<{
@@ -141,12 +141,8 @@ const deliveryLoopStatus = os.threads.deliveryLoopStatus.handler(
     const { threadId } = input;
 
     try {
-      const result = await getDeliveryLoopStatusAction(threadId);
-      // Unwrap the server action result to get the actual data
-      if (!result.success) {
-        throw new Error(result.errorMessage);
-      }
-      return result.data;
+      const data = await getDeliveryLoopStatusCore(context.userId, threadId);
+      return data;
     } catch (error) {
       // getDeliveryLoopStatusAction throws UserFacingError for unauthorized access
       if (error instanceof Error && error.message.includes("Unauthorized")) {
