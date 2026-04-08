@@ -26,18 +26,6 @@ export async function getActiveWorkflowForThread(params: {
   });
 }
 
-export async function listActiveWorkflowIds(params: {
-  db: Pick<DB, "query">;
-  limit?: number;
-}) {
-  const rows = await params.db.query.deliveryWorkflow.findMany({
-    where: notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
-    columns: { id: true, threadId: true },
-    ...(params.limit !== undefined ? { limit: params.limit } : {}),
-  });
-  return rows;
-}
-
 export async function createWorkflow(params: {
   db: Pick<DB, "insert">;
   threadId: string;
@@ -85,18 +73,6 @@ export async function getActiveWorkflowForGithubPR(params: {
   });
 }
 
-export async function getActiveWorkflowsForRepo(params: {
-  db: Pick<DB, "query">;
-  repoFullName: string;
-}) {
-  return params.db.query.deliveryWorkflow.findMany({
-    where: and(
-      eq(schema.deliveryWorkflow.repoFullName, params.repoFullName),
-      notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
-    ),
-  });
-}
-
 export async function updateWorkflowPR(params: {
   db: Pick<DB, "update">;
   workflowId: string;
@@ -108,24 +84,6 @@ export async function updateWorkflowPR(params: {
     .update(schema.deliveryWorkflow)
     .set({
       prNumber: params.prNumber,
-      updatedAt: now,
-    })
-    .where(eq(schema.deliveryWorkflow.id, params.workflowId))
-    .returning({ id: schema.deliveryWorkflow.id });
-  return result.length > 0;
-}
-
-export async function updateWorkflowHeadSha(params: {
-  db: Pick<DB, "update">;
-  workflowId: string;
-  currentHeadSha: string;
-  now?: Date;
-}): Promise<boolean> {
-  const now = params.now ?? new Date();
-  const result = await params.db
-    .update(schema.deliveryWorkflow)
-    .set({
-      currentHeadSha: params.currentHeadSha,
       updatedAt: now,
     })
     .where(eq(schema.deliveryWorkflow.id, params.workflowId))

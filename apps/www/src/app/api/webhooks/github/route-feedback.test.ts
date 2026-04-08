@@ -185,7 +185,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       id: "thread-1",
       threadChats: [{ id: "chat-1" }],
       sourceType: "www",
-      sourceMetadata: { type: "www", sdlcLoopOptIn: false },
+      sourceMetadata: { type: "www", deliveryLoopOptIn: false },
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
     vi.mocked(isDeliveryLoopEnrollmentAllowedForThread).mockReturnValue(false);
 

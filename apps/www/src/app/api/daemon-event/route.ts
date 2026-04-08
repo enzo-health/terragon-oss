@@ -37,7 +37,7 @@ import {
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
-import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
+import { appendEventAndAdvanceExplicit } from "@/server-lib/delivery-loop/v3/kernel";
 import {
   getActiveWorkflowForThreadV3,
   getWorkflowHead,
@@ -1319,7 +1319,7 @@ export async function POST(request: Request) {
       if (daemonRunStatusFromMessages === "stopped") {
         // Preserve prior behavior: stopped terminals do not advance the v3 loop.
       } else if (daemonRunStatusFromMessages === "completed") {
-        await appendEventAndAdvance({
+        await appendEventAndAdvanceExplicit({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
@@ -1333,9 +1333,13 @@ export async function POST(request: Request) {
             terminalRunSeq,
             daemonHeadShaAtCompletion,
           ),
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
         });
       } else if (daemonRunStatusFromMessages === "failed") {
-        await appendEventAndAdvance({
+        await appendEventAndAdvanceExplicit({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
@@ -1351,6 +1355,10 @@ export async function POST(request: Request) {
             daemonTerminalErrorInfo.errorMessage ?? undefined,
             daemonTerminalErrorInfo.errorCategory,
           ),
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
         });
       }
     } catch (v3Err) {
@@ -1361,8 +1369,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // NOTE: Explicit inline drain removed — the kernel's appendEventAndAdvance
-    // now eagerly drains effects inline (eagerDrain defaults to true).
+    // NOTE: kernel advance is configured for eager effect drain in this path.
     // The cron at /api/internal/cron/dispatch-ack-timeout remains as safety net.
   }
 

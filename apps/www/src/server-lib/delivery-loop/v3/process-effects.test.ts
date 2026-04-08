@@ -1730,4 +1730,121 @@ describe("drainDueEffects", () => {
       }),
     );
   });
+
+  it("treats implementing launch exceptions as non-fatal and keeps queued dispatch", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: eq(schema.deliveryWorkflow.id, workflowId),
+    });
+    if (!workflow) {
+      throw new Error(
+        "Expected workflow row for implementing dispatch warning test",
+      );
+    }
+
+    const [threadChat] = await db
+      .insert(schema.threadChat)
+      .values({
+        threadId: workflow.threadId,
+        userId: workflow.userId,
+        status: "working",
+      })
+      .returning({ id: schema.threadChat.id });
+    if (!threadChat) {
+      throw new Error(
+        "Expected thread chat row for implementing dispatch warning test",
+      );
+    }
+
+    const seededHead = await ensureWorkflowHead({ db, workflowId });
+    if (!seededHead) {
+      throw new Error(
+        "Expected workflow head for implementing dispatch warning test",
+      );
+    }
+
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...seededHead,
+        version: seededHead.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: null,
+        activeRunSeq: 2,
+        leaseExpiresAt: null,
+        headSha: "sha-impl-test",
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: seededHead.version,
+    });
+    expect(moved).toBe(true);
+
+    vi.spyOn(dispatchIntentModule, "createDispatchIntent").mockResolvedValue(
+      {} as Awaited<
+        ReturnType<typeof dispatchIntentModule.createDispatchIntent>
+      >,
+    );
+    vi.spyOn(
+      dispatchIntentStoreModule,
+      "createDispatchIntent",
+    ).mockResolvedValue("dispatch-intent-row-id");
+    vi.spyOn(
+      dispatchIntentStoreModule,
+      "markDispatchIntentDispatched",
+    ).mockResolvedValue(undefined);
+    vi.spyOn(
+      followUpQueueModule,
+      "launchDeliveryLoopDispatchFromIntent",
+    ).mockRejectedValue(new Error("impl queue exploded"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: seededHead.version + 1,
+      effects: [
+        {
+          kind: "dispatch_implementing",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:implementing-follow-up-warning`,
+          dueAt: now,
+          payload: {
+            kind: "dispatch_implementing",
+            executionClass: "implementation_runtime",
+          },
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      workflowId,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(
+      journalRows.filter((row) => row.eventType === "dispatch_queued"),
+    ).toHaveLength(1);
+    expect(
+      journalRows.filter((row) => row.eventType === "run_failed"),
+    ).toHaveLength(0);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[delivery-loop] follow-up queue trigger failed (non-fatal)",
+      expect.objectContaining({
+        workflowId,
+        error: "impl queue exploded",
+      }),
+    );
+  });
 });

@@ -130,7 +130,7 @@ export type EffectSpec = {
 /**
  * Typed result returned by state-blocking effect handlers.
  * The framework maps these to LoopEvent via effectResultToEvent().
- * Handlers return data; they never call appendEventAndAdvance directly.
+ * Handlers return data; they never call kernel advance APIs directly.
  */
 export type EffectResult =
   // create_plan_artifact results

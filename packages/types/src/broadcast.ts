@@ -35,7 +35,6 @@ const BroadcastBootingSubstatusSchema = z.enum([
   "provisioning-done",
   "cloning-repo",
   "installing-agent",
-  "installing-sandbox-scripts",
   "running-setup-script",
   "booting-done",
 ]);

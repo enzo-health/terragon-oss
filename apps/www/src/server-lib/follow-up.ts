@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { DBUserMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
 import {
   estimateMessageSize,
@@ -95,7 +95,7 @@ export async function followUpInternal({
   };
   const thread = await getThreadMinimal({ db, threadId, userId });
   waitUntil(
-    startAgentMessage({
+    dispatchAgentMessage({
       db,
       message: messageWithModel,
       userId,

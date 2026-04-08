@@ -3,7 +3,7 @@
 import { userOnlyAction } from "@/lib/auth-server";
 import { waitUntil } from "@vercel/functions";
 import { db } from "@/lib/db";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { ensureThreadChatHasUserMessage } from "@/server-lib/retry-thread";
@@ -63,7 +63,7 @@ export const retryThread = userOnlyAction(
 
     const thread = await getThreadMinimal({ db, threadId, userId });
     waitUntil(
-      startAgentMessage({
+      dispatchAgentMessage({
         db,
         userId,
         threadId,

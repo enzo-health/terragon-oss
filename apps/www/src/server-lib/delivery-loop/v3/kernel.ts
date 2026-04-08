@@ -60,7 +60,7 @@ async function appendInvariantJournalActions(params: {
   }
 }
 
-function normalizeLegacyLoopEvent(event: LoopEvent): LoopEvent {
+export function normalizeLoopEventForKernel(event: LoopEvent): LoopEvent {
   switch (event.type) {
     case "dispatch_sent":
       return {
@@ -78,24 +78,53 @@ function normalizeLegacyLoopEvent(event: LoopEvent): LoopEvent {
   }
 }
 
-export async function appendEventAndAdvance(params: {
+type KernelAdvanceResult = {
+  inserted: boolean;
+  transitioned: boolean;
+  effectsInserted: number;
+  stateBefore: string | null;
+  stateAfter: string | null;
+};
+
+type KernelAdvanceParams = {
   db: DB;
   workflowId: string;
   source: DeliverySignalSourceV3;
   idempotencyKey: string;
   event: LoopEvent;
   now?: Date;
-  /** When true, auto-injects bypass events for gating states (edge-triggered). */
-  skipGates?: boolean;
-  /** Set to false to skip inline effect drain (default: true — drains eagerly). */
-  eagerDrain?: boolean;
-}): Promise<{
-  inserted: boolean;
-  transitioned: boolean;
-  effectsInserted: number;
-  stateBefore: string | null;
-  stateAfter: string | null;
-}> {
+};
+
+type KernelAdvanceBehavior = {
+  applyGateBypass: boolean;
+  drainEffects: boolean;
+};
+
+export async function appendEventAndAdvanceExplicit(
+  params: KernelAdvanceParams & {
+    behavior: KernelAdvanceBehavior;
+  },
+): Promise<KernelAdvanceResult> {
+  return appendEventAndAdvanceInternal({
+    db: params.db,
+    workflowId: params.workflowId,
+    source: params.source,
+    idempotencyKey: params.idempotencyKey,
+    event: params.event,
+    now: params.now,
+    behavior: params.behavior,
+  });
+}
+
+async function appendEventAndAdvanceInternal(params: {
+  db: DB;
+  workflowId: string;
+  source: DeliverySignalSourceV3;
+  idempotencyKey: string;
+  event: LoopEvent;
+  now?: Date;
+  behavior: KernelAdvanceBehavior;
+}): Promise<KernelAdvanceResult> {
   const now = params.now ?? new Date();
 
   const result = await params.db.transaction(async (tx) => {
@@ -118,7 +147,7 @@ export async function appendEventAndAdvance(params: {
       workflowId: params.workflowId,
       event: params.event,
     });
-    const event = normalizeLegacyLoopEvent(eventWithContext);
+    const event = normalizeLoopEventForKernel(eventWithContext);
 
     const signal = buildSignalJournalContract({
       workflowId: params.workflowId,
@@ -199,25 +228,25 @@ export async function appendEventAndAdvance(params: {
   });
 
   // Edge-triggered gate bypass: if we just entered a gating state and
-  // skipGates is on, immediately inject the corresponding bypass event.
-  if (params.skipGates && result.transitioned) {
+  // behavior enables bypassing, immediately inject the corresponding event.
+  if (params.behavior.applyGateBypass && result.transitioned) {
     const bypassEvent = gateBypassEvent(result.stateAfter);
     if (bypassEvent) {
-      await appendEventAndAdvance({
+      await appendEventAndAdvanceInternal({
         db: params.db,
         workflowId: params.workflowId,
         source: "system",
         idempotencyKey: `${params.idempotencyKey}:gate-bypass:${result.stateAfter}`,
         event: bypassEvent,
         now: params.now,
-        skipGates: true,
+        behavior: params.behavior,
       });
     }
   }
 
   // Eagerly drain effects inline instead of waiting for the cron.
   // The cron is a safety net; this awaited drain is the primary path.
-  if (result.effectsInserted > 0 && params.eagerDrain !== false) {
+  if (result.effectsInserted > 0 && params.behavior.drainEffects) {
     try {
       const { drainDueEffects } = await import("./process-effects");
       await drainDueEffects({

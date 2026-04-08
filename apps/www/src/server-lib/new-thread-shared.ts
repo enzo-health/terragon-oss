@@ -16,7 +16,7 @@ import { modelToAgent } from "@terragon/agent/utils";
 import { UserFacingError } from "@/lib/server-actions";
 import { getUserSettings } from "@terragon/shared/model/user";
 import { waitUntil } from "@vercel/functions";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getSandboxProvider } from "@/agent/sandbox";
 import { userMessageToPlainText } from "@/components/promptbox/tiptap-to-richtext";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -171,7 +171,6 @@ export async function createNewThread({
 
   const sandboxProvider = await getSandboxProvider({
     userSetting: userSettings?.sandboxProvider,
-    sandboxSize,
     userId,
   });
 
@@ -422,7 +421,7 @@ export async function createNewThread({
 
   // Start processing the message
   waitUntil(
-    startAgentMessage({
+    dispatchAgentMessage({
       db,
       userId,
       message: messageWithModel,
@@ -435,7 +434,7 @@ export async function createNewThread({
         : headBranchName || baseBranchName,
       delayMs,
     }).catch((error) => {
-      console.error("Error in startAgentMessage:", error);
+      console.error("Error in dispatchAgentMessage:", error);
     }),
   );
   updateThreadMetadata();

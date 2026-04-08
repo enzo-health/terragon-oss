@@ -163,17 +163,83 @@ async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   }
 }
 
-export async function startAgentMessage({
+async function resolveDispatchRunIdentity({
   db,
-  userId,
-  message,
   threadId,
   threadChatId,
-  isNewThread,
-  createNewBranch = true,
-  branchName,
-  delayMs = 0,
+  workflowId,
+  workflowRunSeq,
 }: {
+  db: DB;
+  threadId: string;
+  threadChatId: string;
+  workflowId: string | null;
+  workflowRunSeq: number | null;
+}): Promise<{
+  workflowId: string | null;
+  workflowRunSeq: number | null;
+  runId: string;
+}> {
+  if (workflowId !== null && workflowRunSeq === null) {
+    console.warn(
+      "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
+      {
+        threadId,
+        threadChatId,
+        workflowId,
+      },
+    );
+  }
+
+  // DB intent is canonical. Redis intent is a realtime cache and may
+  // be stale or unavailable in local redis-http mode.
+  const durableIntent =
+    workflowId === null
+      ? null
+      : await getLatestActiveDispatchIntentForThreadChat(db, {
+          threadChatId,
+          loopId: workflowId,
+        });
+  const activeIntent =
+    workflowId === null ? null : await getActiveDispatchIntent(threadChatId);
+
+  if (
+    activeIntent &&
+    durableIntent &&
+    activeIntent.runId !== durableIntent.runId
+  ) {
+    console.warn(
+      "[startAgentMessage] dispatch run identity mismatch between redis and db",
+      {
+        threadId,
+        threadChatId,
+        workflowId,
+        redisRunId: activeIntent.runId,
+        dbRunId: durableIntent.runId,
+      },
+    );
+  }
+
+  if (workflowId !== null && !durableIntent && activeIntent) {
+    console.warn(
+      "[startAgentMessage] missing durable dispatch intent for delivery-loop run; using redis fallback",
+      {
+        threadId,
+        threadChatId,
+        workflowId,
+        redisRunId: activeIntent.runId,
+      },
+    );
+  }
+
+  return {
+    workflowId,
+    workflowRunSeq,
+    runId: durableIntent?.runId ?? activeIntent?.runId ?? randomUUID(),
+  };
+}
+
+export type StartAgentMessageParams = {
   db: DB;
   userId: string;
   // In some cases, the message we want to send to claude is already in the DB.
@@ -186,7 +252,25 @@ export async function startAgentMessage({
   createNewBranch?: boolean;
   branchName?: string;
   delayMs?: number;
-}): Promise<StartAgentMessageResult> {
+};
+
+export async function dispatchAgentMessage(
+  params: StartAgentMessageParams,
+): Promise<StartAgentMessageResult> {
+  return startAgentMessage(params);
+}
+
+export async function startAgentMessage({
+  db,
+  userId,
+  message,
+  threadId,
+  threadChatId,
+  isNewThread,
+  createNewBranch = true,
+  branchName,
+  delayMs = 0,
+}: StartAgentMessageParams): Promise<StartAgentMessageResult> {
   let dispatchLaunched = false;
   console.log("Starting agent message", { threadId, threadChatId });
   if (!isNewThread) {
@@ -767,50 +851,16 @@ export async function startAgentMessage({
             userCredentials,
           );
 
-          // When dispatched by the delivery loop, reuse the dispatch intent's
-          // runId so ack timeout and daemon events share the same identity.
-          // Fall back to the durable DB dispatch-intent row when Redis
-          // real-time intent lookup is unavailable in local redis-http mode.
-          const activeIntent = activeWorkflow
-            ? await getActiveDispatchIntent(threadChatId)
-            : null;
-          const workflowId = activeWorkflow?.workflow.id ?? null;
-          const workflowRunSeq = activeWorkflow?.head.activeRunSeq ?? null;
-          if (workflowId !== null && workflowRunSeq === null) {
-            console.warn(
-              "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
-              {
-                threadId,
-                threadChatId,
-                workflowId,
-              },
-            );
-          }
-          const durableIntent =
-            workflowId && !activeIntent
-              ? await getLatestActiveDispatchIntentForThreadChat(db, {
-                  threadChatId,
-                  loopId: workflowId,
-                })
-              : null;
-          if (
-            activeIntent &&
-            durableIntent &&
-            activeIntent.runId !== durableIntent.runId
-          ) {
-            console.warn(
-              "[startAgentMessage] dispatch run identity mismatch between redis and db",
-              {
-                threadId,
-                threadChatId,
-                workflowId,
-                redisRunId: activeIntent.runId,
-                dbRunId: durableIntent.runId,
-              },
-            );
-          }
-          const runId =
-            activeIntent?.runId ?? durableIntent?.runId ?? randomUUID();
+          // When dispatched by the delivery loop, reuse the canonical dispatch
+          // run identity so timeout checks and daemon events stay correlated.
+          const { workflowId, workflowRunSeq, runId } =
+            await resolveDispatchRunIdentity({
+              db,
+              threadId,
+              threadChatId,
+              workflowId: activeWorkflow?.workflow.id ?? null,
+              workflowRunSeq: activeWorkflow?.head.activeRunSeq ?? null,
+            });
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
           const effectivePermissionMode = activeWorkflow
@@ -828,7 +878,6 @@ export async function startAgentMessage({
             sessionId,
             codexPreviousResponseId,
             shouldUseCredits,
-            threadChatId,
             enableAcpTransport: acpTransportEnabled,
           });
           if (

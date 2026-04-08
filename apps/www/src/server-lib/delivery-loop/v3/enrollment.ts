@@ -12,7 +12,7 @@ import {
   createWorkflow,
   getActiveWorkflowForThread,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { appendEventAndAdvance } from "./kernel";
+import { appendEventAndAdvanceExplicit } from "./kernel";
 import { getActiveWorkflowForThreadV3 } from "./store";
 
 export async function enrollWorkflow(params: {
@@ -37,12 +37,16 @@ export async function enrollWorkflow(params: {
     threadId: params.threadId,
   });
   if (orphanedLegacyWorkflow?.kind === "planning") {
-    await appendEventAndAdvance({
+    await appendEventAndAdvanceExplicit({
       db: params.db,
       workflowId: orphanedLegacyWorkflow.id,
       source: "system",
       idempotencyKey: `${orphanedLegacyWorkflow.id}:bootstrap`,
       event: { type: "bootstrap" },
+      behavior: {
+        applyGateBypass: false,
+        drainEffects: true,
+      },
     });
     const healed = await getActiveWorkflowForThreadV3({
       db: params.db,
@@ -81,24 +85,32 @@ export async function enrollWorkflow(params: {
 
     // 4. Create v3 head row + insert bootstrap journal event.
     //    The kernel reducer handles bootstrap: stays in planning + dispatches planning run.
-    await appendEventAndAdvance({
+    await appendEventAndAdvanceExplicit({
       db: params.db,
       workflowId,
       source: "system",
       idempotencyKey: `${workflowId}:bootstrap`,
       event: { type: "bootstrap" },
+      behavior: {
+        applyGateBypass: false,
+        drainEffects: true,
+      },
     });
 
     return { workflowId };
   } catch (err) {
     if (workflowId) {
       try {
-        await appendEventAndAdvance({
+        await appendEventAndAdvanceExplicit({
           db: params.db,
           workflowId,
           source: "system",
           idempotencyKey: `${workflowId}:bootstrap`,
           event: { type: "bootstrap" },
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
         });
         const recovered = await getActiveWorkflowForThreadV3({
           db: params.db,

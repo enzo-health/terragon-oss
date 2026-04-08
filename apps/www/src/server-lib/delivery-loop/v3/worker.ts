@@ -1,7 +1,10 @@
 import { and, asc, eq, gt, or } from "drizzle-orm";
-import { parseLoopEvent } from "./contracts";
-import { appendEventAndAdvance } from "./kernel";
 import { type OutboxPayload } from "./contracts";
+import { parseLoopEvent } from "./contracts";
+import {
+  appendEventAndAdvanceExplicit,
+  normalizeLoopEventForKernel,
+} from "./kernel";
 import type { LoopEvent } from "./types";
 import { env } from "@terragon/env/apps-www";
 import type { DB } from "@terragon/shared/db";
@@ -940,13 +943,16 @@ async function applySignalMessage(params: {
 
   const event = parseLoopEvent(journal.payloadJson);
   if (event) {
-    await appendEventAndAdvance({
+    await appendEventAndAdvanceExplicit({
       db: params.db,
       workflowId: params.message.workflowId,
       source: journal.source,
       idempotencyKey: params.message.idempotencyKey,
-      event,
-      eagerDrain: true,
+      event: normalizeLoopEventForKernel(event),
+      behavior: {
+        applyGateBypass: false,
+        drainEffects: true,
+      },
     });
     return;
   }
@@ -969,13 +975,16 @@ async function applySignalMessage(params: {
     );
   }
 
-  await appendEventAndAdvance({
+  await appendEventAndAdvanceExplicit({
     db: params.db,
     workflowId: params.message.workflowId,
     source: journal.source,
     idempotencyKey: params.message.idempotencyKey,
-    event: legacyEvent.event,
-    eagerDrain: true,
+    event: normalizeLoopEventForKernel(legacyEvent.event),
+    behavior: {
+      applyGateBypass: false,
+      drainEffects: true,
+    },
   });
 }
 
