@@ -1,0 +1,43 @@
+{
+  "milestone": "core-state-machine-simplification",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "pnpm -C packages/shared exec vitest run src/delivery-loop/domain/failure-signature.test.ts src/delivery-loop/store/dispatch-intent-store.test.ts && pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/reducer.test.ts src/server-lib/delivery-loop/v3/process-effects.test.ts src/app/api/daemon-event/route.test.ts && pnpm -C apps/www exec vitest run src/server-lib/e2e.test.ts",
+      "exitCode": 0,
+      "summary": "446 tests passed across packages/shared and apps/www"
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "pnpm tsc-check",
+      "exitCode": 0,
+      "summary": "16 packages successful"
+    },
+    "lint": {
+      "passed": true,
+      "command": "pnpm turbo lint",
+      "exitCode": 0,
+      "summary": "2 packages linted successfully"
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document the out-of-order signal detection pattern with configurable strictness modes (strict, lenient, ci-verdict). This pattern is critical for maintaining correct event ordering semantics in the delivery loop and appears in multiple features.",
+      "evidence": "Used in both m2-simplify-reducer-transition-core (unified isOutOfOrderSignal) and m2-enforce-canonical-parity-and-correlation (lane-based routing with isOutOfOrderGateSignal and isOutOfOrderFailureSignal). The lane-based routing (infra vs agent) is a critical behavioral contract for deterministic retry/dead-letter semantics.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}
