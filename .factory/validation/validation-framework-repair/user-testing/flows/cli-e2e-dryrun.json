@@ -1,0 +1,61 @@
+{
+  "groupId": "cli-e2e-dryrun",
+  "testedAt": "2026-04-08T18:00:00Z",
+  "isolation": {
+    "postgresHost": "localhost",
+    "postgresPort": 5432,
+    "postgresDatabase": "postgres",
+    "redisHost": "localhost",
+    "redisPort": 6379,
+    "workingDirectory": "/Users/tylersheffield/.superset/worktrees/terragon-oss/tyler/leather-glazer",
+    "cliTool": "pnpm delivery-loop:local"
+  },
+  "toolsUsed": ["Execute (CLI commands)"],
+  "assertions": [
+    {
+      "id": "VAL-CLI-007",
+      "title": "Dry-run e2e validates existing PR linkage contract",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Query database for threads with linked PRs",
+          "expected": "Find at least one thread with github_pr.number",
+          "observed": "Found thread 0e28b4ab-a354-4856-b9a0-35ecf0710e91 with PR #103"
+        },
+        {
+          "action": "Run 'pnpm delivery-loop:local e2e --dry-run --thread-id <thread_id>'",
+          "expected": "Command exits successfully with diagnostics JSON and PR link verification message",
+          "observed": "Exit code 0, complete diagnostics JSON output, 'Dry-run PR link verified' message present"
+        }
+      ],
+      "evidence": {
+        "command": "pnpm delivery-loop:local e2e --dry-run --thread-id 0e28b4ab-a354-4856-b9a0-35ecf0710e91",
+        "exitCode": 0,
+        "threadId": "0e28b4ab-a354-4856-b9a0-35ecf0710e91",
+        "workflowId": "c00ce733-f97a-4945-8fa9-e6bcfa292d2e",
+        "githubPrNumber": 103,
+        "diagnosticsKeys": [
+          "threadId",
+          "workflowId",
+          "thread",
+          "workflow",
+          "threadChat",
+          "githubPr",
+          "workflowEvents",
+          "signalInbox",
+          "v3Head",
+          "v3Journal",
+          "v3Effects",
+          "v3Timers",
+          "workItems"
+        ],
+        "verificationMessage": "Dry-run PR link verified: thread 0e28b4ab-a354-4856-b9a0-35ecf0710e91 -> PR #103",
+        "outputFile": "validation-framework-repair/cli-e2e-dryrun/VAL-CLI-007-output.txt"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 1 assertion: 1 passed. VAL-CLI-007: Dry-run e2e validates existing PR linkage contract - Successfully verified that dry-run mode returns exit code 0, complete diagnostics JSON, and explicit PR link verification message."
+}
