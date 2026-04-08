@@ -127,7 +127,7 @@ export async function seedE2EFixtures(): Promise<E2EFixtureData> {
 
     // Create subscription for access tier
     await client.query(
-      `INSERT INTO subscription (id, plan, status, "periodStart", "periodEnd", "referenceId", created_at, updated_at)
+      `INSERT INTO subscription (id, plan, status, period_start, period_end, reference_id, created_at, updated_at)
        VALUES ($1, 'core', 'active', NOW() - INTERVAL '30 days', NOW() + INTERVAL '30 days', $2, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [`e2e-sub-${E2E_FIXTURE_USER_ID}`, E2E_FIXTURE_USER_ID],
