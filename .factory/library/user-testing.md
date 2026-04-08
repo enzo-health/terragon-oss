@@ -47,6 +47,6 @@ Operational guidance:
 
 ## Validation Readiness Notes
 
-- Process validation path currently depends on repairing stale `delivery-loop:local run --profile fast` test references.
-- Direct vitest suites for representative delivery-loop unit/integration/e2e checks are executable now.
+- Direct vitest suites for representative delivery-loop unit/integration/e2e checks are executable.
 - Real e2e validation requires repo/user inputs and reachable web URL configuration in non-development mode.
+- Mission decision: real e2e success-path validation should use **local Docker sandbox** execution.

@@ -14,6 +14,7 @@ Environment variables, external dependencies, and setup notes for this mission.
   - DB connectivity (`DATABASE_URL` or default local fallback)
   - cron endpoint auth handling via `CRON_SECRET` resolution
   - optional `TERRAGON_WEB_URL` / `--web-url` for real e2e mode
+  - local Docker sandbox availability for real e2e success-path validation in this mission
 
 ## Known Environment Constraints
 

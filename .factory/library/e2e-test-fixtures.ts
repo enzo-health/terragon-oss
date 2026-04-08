@@ -30,7 +30,9 @@ export interface E2EFixtureData {
 /**
  * Checks if the e2e fixture data exists in the database
  */
-export async function checkE2EFixturesExist(): Promise<E2EFixtureData> {
+export async function checkE2EFixturesExist(): Promise<
+  E2EFixtureData & { apiKeyExists: boolean; cliConfigHint: string }
+> {
   const client = new Client({
     connectionString: process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL,
   });
@@ -40,6 +42,12 @@ export async function checkE2EFixturesExist(): Promise<E2EFixtureData> {
     // Check for fixture user
     const userResult = await client.query<{ id: string; created_at: Date }>(
       `SELECT id, created_at FROM "user" WHERE id = $1`,
+      [E2E_FIXTURE_USER_ID],
+    );
+
+    // Check for API key in the 'apikey' table (Better Auth uses lowercase, no underscore)
+    const apiKeyResult = await client.query<{ id: string }>(
+      `SELECT id FROM apikey WHERE user_id = $1 LIMIT 1`,
       [E2E_FIXTURE_USER_ID],
     );
 
@@ -67,6 +75,8 @@ export async function checkE2EFixturesExist(): Promise<E2EFixtureData> {
     );
 
     const row = threadResult.rows[0];
+    const apiKeyExists = apiKeyResult.rows.length > 0;
+    const rawApiKey = `terry_e2e_${E2E_FIXTURE_USER_ID}_test_key`;
 
     return {
       userId: E2E_FIXTURE_USER_ID,
@@ -76,6 +86,8 @@ export async function checkE2EFixturesExist(): Promise<E2EFixtureData> {
       baseBranch: "main",
       headBranch: row?.current_branch_name ?? null,
       createdAt: row?.created_at ?? null,
+      apiKeyExists,
+      cliConfigHint: `{"apiKey":"${rawApiKey}"}`,
     };
   } finally {
     await client.end();
@@ -101,15 +113,18 @@ export async function seedE2EFixtures(): Promise<E2EFixtureData> {
       [E2E_FIXTURE_USER_ID, "e2e-test@terragon.com", "E2E Test User"],
     );
 
-    // Create GitHub account for the user
+    // Create GitHub account for the user with a real GitHub access token
+    // In development/testing, we use a dummy token - the GitHub API calls
+    // are mocked or skipped when NODE_ENV=development
     await client.query(
       `INSERT INTO account (id, user_id, provider_id, account_id, access_token, refresh_token, created_at, updated_at)
-       VALUES ($1, $2, 'github', $3, 'test-token', 'test-refresh', NOW(), NOW())
-       ON CONFLICT (id) DO NOTHING`,
+       VALUES ($1, $2, 'github', $3, $4, 'test-refresh', NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET access_token = $4, updated_at = NOW()`,
       [
         `e2e-account-${E2E_FIXTURE_USER_ID}`,
         E2E_FIXTURE_USER_ID,
         `gh-e2e-${E2E_FIXTURE_USER_ID}`,
+        process.env.GITHUB_E2E_TEST_TOKEN ?? "ghp_test_token_for_e2e",
       ],
     );
 
@@ -133,11 +148,59 @@ export async function seedE2EFixtures(): Promise<E2EFixtureData> {
       [`e2e-sub-${E2E_FIXTURE_USER_ID}`, E2E_FIXTURE_USER_ID],
     );
 
+    // Create API key for CLI authentication using Better Auth format
+    // Better Auth stores API keys in the 'apikey' table (lowercase, no underscore)
+    const apiKeyId = `e2e-apikey-${E2E_FIXTURE_USER_ID}`;
+    const rawApiKey = `terry_e2e_${E2E_FIXTURE_USER_ID}_test_key`;
+
+    // Check if API key already exists
+    const existingKeyResult = await client.query(
+      `SELECT id FROM apikey WHERE user_id = $1 LIMIT 1`,
+      [E2E_FIXTURE_USER_ID],
+    );
+
+    if (existingKeyResult.rows.length === 0) {
+      // Create API key - Better Auth expects a hash that it can verify
+      // The key field stores the hashed version of the API key
+      // The start field stores the first few characters of the raw key for display
+      const crypto = await import("crypto");
+      const hashedKey = crypto
+        .createHash("sha256")
+        .update(rawApiKey)
+        .digest("base64url")
+        .replace(/=+$/, ""); // Remove padding
+
+      await client.query(
+        `INSERT INTO apikey (id, user_id, name, key, start, enabled, rate_limit_enabled, request_count, remaining, created_at, updated_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, true, false, 0, 1000, NOW(), NOW(), NOW() + INTERVAL '90 days')`,
+        [
+          apiKeyId,
+          E2E_FIXTURE_USER_ID,
+          "E2E Test Key",
+          hashedKey,
+          rawApiKey.slice(0, 8),
+        ],
+      );
+
+      console.log(`Created API key for E2E testing: ${rawApiKey}`);
+      console.log(
+        `Store this in ~/.terry/config.json: {"apiKey":"${rawApiKey}"}`,
+      );
+    }
+
     // Return current fixture status
     return await checkE2EFixturesExist();
   } finally {
     await client.end();
   }
+}
+
+/**
+ * Gets the raw API key for CLI authentication
+ * This is the unhashed key that should be stored in ~/.terry/config.json
+ */
+export function getE2EFixtureApiKey(): string {
+  return `terry_e2e_${E2E_FIXTURE_USER_ID}_test_key`;
 }
 
 /**
@@ -152,6 +215,11 @@ export async function cleanupE2EFixtures(): Promise<void> {
   try {
     // Delete threads and related data for fixture user
     await client.query(`DELETE FROM thread WHERE user_id = $1`, [
+      E2E_FIXTURE_USER_ID,
+    ]);
+
+    // Delete API key (Better Auth uses 'apikey' table, lowercase)
+    await client.query(`DELETE FROM apikey WHERE user_id = $1`, [
       E2E_FIXTURE_USER_ID,
     ]);
 

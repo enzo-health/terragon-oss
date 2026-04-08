@@ -245,13 +245,35 @@ async function readTerryApiKey(): Promise<string> {
   const settingsDir =
     process.env.TERRY_SETTINGS_DIR?.trim() || `${homedir()}/.terry`;
   const configPath = resolve(settingsDir, "config.json");
-  const configText = await readFile(configPath, "utf-8");
-  const parsed = JSON.parse(configText) as { apiKey?: unknown };
-  const apiKey = parsed.apiKey;
-  if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
-    throw new Error(`No API key found in ${configPath}`);
+
+  // Try to read from config file first
+  try {
+    const configText = await readFile(configPath, "utf-8");
+    const parsed = JSON.parse(configText) as { apiKey?: unknown };
+    const apiKey = parsed.apiKey;
+    if (typeof apiKey === "string" && apiKey.trim().length > 0) {
+      return apiKey.trim();
+    }
+  } catch {
+    // Config file doesn't exist or is invalid - fall through to e2e fixture key
   }
-  return apiKey.trim();
+
+  // In development/test mode, fallback to e2e fixture API key
+  if (
+    process.env.NODE_ENV === "development" ||
+    process.env.NODE_ENV === "test"
+  ) {
+    const { getE2EFixtureApiKey } = await importLocalModule<{
+      getE2EFixtureApiKey: () => string;
+    }>(".factory/library/e2e-test-fixtures.ts");
+    const e2eKey = getE2EFixtureApiKey();
+    console.log(`Using E2E fixture API key for local testing`);
+    return e2eKey;
+  }
+
+  throw new Error(
+    `No API key found in ${configPath} and not in dev/test mode for fallback`,
+  );
 }
 
 async function createCliApiClient(): Promise<{
