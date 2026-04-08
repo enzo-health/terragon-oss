@@ -10,9 +10,16 @@ import type { ContractRouterClient } from "@orpc/contract";
 import type { DBUserMessage } from "@terragon/shared/db/db-message";
 import { cliAPIContract } from "@terragon/cli-api-contract";
 
-type CommandName = "help" | "preflight" | "snapshot" | "run" | "e2e";
+type CommandName =
+  | "help"
+  | "preflight"
+  | "snapshot"
+  | "run"
+  | "e2e"
+  | "fixtures";
 type RunProfile = "fast" | "full";
 type E2EMode = "real" | "dry-run";
+type FixtureCommand = "check" | "seed" | "cleanup";
 
 type ParsedArgs = {
   command: CommandName;
@@ -28,6 +35,7 @@ type ParsedArgs = {
   mode: E2EMode;
   timeoutMs: number;
   pollIntervalMs: number;
+  fixtureCommand: FixtureCommand;
 };
 
 const DEFAULT_DATABASE_URL =
@@ -59,7 +67,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       candidate === "preflight" ||
       candidate === "snapshot" ||
       candidate === "run" ||
-      candidate === "e2e"
+      candidate === "e2e" ||
+      candidate === "fixtures"
     ) {
       command = candidate;
     }
@@ -139,6 +148,19 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
+  // Parse fixture command from positional args if command is fixtures
+  let fixtureCommand: FixtureCommand = "check";
+  if (command === "fixtures" && argv.length > 1) {
+    const fixtureArg = argv[1];
+    if (
+      fixtureArg === "check" ||
+      fixtureArg === "seed" ||
+      fixtureArg === "cleanup"
+    ) {
+      fixtureCommand = fixtureArg;
+    }
+  }
+
   return {
     command,
     profile,
@@ -153,6 +175,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     mode,
     timeoutMs,
     pollIntervalMs,
+    fixtureCommand,
   };
 }
 
@@ -167,6 +190,7 @@ Usage:
   pnpm delivery-loop:local run --profile full
   pnpm delivery-loop:local e2e --repo <owner/repo> --user-id <id>
   pnpm delivery-loop:local e2e --dry-run --thread-id <id>
+  pnpm delivery-loop:local fixtures [check|seed|cleanup]
 
 Options:
   --profile fast|full     Test suite profile (default: fast)
@@ -978,6 +1002,54 @@ async function main(): Promise<void> {
     }
     case "e2e": {
       await commandE2E(args);
+      return;
+    }
+    case "fixtures": {
+      await commandFixtures(args.fixtureCommand);
+      return;
+    }
+  }
+}
+
+async function commandFixtures(fixtureCommand: FixtureCommand): Promise<void> {
+  const { checkE2EFixturesExist, seedE2EFixtures, cleanupE2EFixtures } =
+    await importLocalModule<{
+      checkE2EFixturesExist: () => Promise<{
+        userId: string;
+        repoFullName: string;
+        threadId: string | null;
+        workflowId: string | null;
+        baseBranch: string;
+        headBranch: string | null;
+        createdAt: Date | null;
+      }>;
+      seedE2EFixtures: () => Promise<{
+        userId: string;
+        repoFullName: string;
+        threadId: string | null;
+        workflowId: string | null;
+        baseBranch: string;
+        headBranch: string | null;
+        createdAt: Date | null;
+      }>;
+      cleanupE2EFixtures: () => Promise<void>;
+    }>(".factory/library/e2e-test-fixtures.ts");
+
+  switch (fixtureCommand) {
+    case "check": {
+      const fixtures = await checkE2EFixturesExist();
+      console.log(JSON.stringify(fixtures, null, 2));
+      return;
+    }
+    case "seed": {
+      const fixtures = await seedE2EFixtures();
+      console.log("E2E fixtures seeded:");
+      console.log(JSON.stringify(fixtures, null, 2));
+      return;
+    }
+    case "cleanup": {
+      await cleanupE2EFixtures();
+      console.log("E2E fixtures cleaned up");
       return;
     }
   }

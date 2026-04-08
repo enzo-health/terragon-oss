@@ -18,7 +18,6 @@ import { ensureAgent } from "@terragon/agent/utils";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { combineThreadStatuses } from "@/agent/thread-status";
 import { getDeliveryLoopStatusAction } from "@/server-actions/get-delivery-loop-status";
-import { unwrapResult } from "@/lib/server-actions";
 
 const os = implement(cliAPIContract)
   .$context<{
@@ -142,13 +141,12 @@ const deliveryLoopStatus = os.threads.deliveryLoopStatus.handler(
     const { threadId } = input;
 
     try {
-      const result = await getDeliveryLoopStatusAction(
-        context.userId,
-        threadId,
-      );
+      const result = await getDeliveryLoopStatusAction(threadId);
       // Unwrap the server action result to get the actual data
-      const status = unwrapResult(result);
-      return status;
+      if (!result.success) {
+        throw new Error(result.errorMessage);
+      }
+      return result.data;
     } catch (error) {
       // getDeliveryLoopStatusAction throws UserFacingError for unauthorized access
       if (error instanceof Error && error.message.includes("Unauthorized")) {
