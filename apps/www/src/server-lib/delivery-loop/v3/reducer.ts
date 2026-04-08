@@ -167,6 +167,47 @@ function applyInvariantMiddleware(params: {
 // Unified out-of-order signal detection with configurable strictness
 type OutOfOrderCheckMode = "strict" | "lenient" | "ci-verdict";
 
+// Specialized out-of-order check for gate signals (review/CI)
+// Uses lenient mode to allow signals without runId when there's an active lease
+function isOutOfOrderGateSignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+}): boolean {
+  return isOutOfOrderSignal({ ...params, mode: "lenient" });
+}
+
+// Specialized out-of-order check for failure signals with lane classification
+function isOutOfOrderFailureSignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+  category?: string | null;
+  lane?: "agent" | "infra" | null;
+}): boolean {
+  // Always allow signals without runId (for gate-state failure retries)
+  if (params.runId == null) {
+    return false; // NOT out of order - process the signal
+  }
+
+  // Use lenient mode for infra lane failures (allows signals without full run context)
+  if (params.lane === "infra") {
+    return isOutOfOrderSignal({
+      head: params.head,
+      runId: params.runId,
+      runSeq: params.runSeq,
+      mode: "lenient",
+    });
+  }
+  // Use strict mode for agent lane failures
+  return isOutOfOrderSignal({
+    head: params.head,
+    runId: params.runId,
+    runSeq: params.runSeq,
+    mode: "strict",
+  });
+}
+
 function isOutOfOrderSignal(params: {
   head: WorkflowHead;
   runId: string | null | undefined;
@@ -202,7 +243,8 @@ function isOutOfOrderSignal(params: {
     return false;
   }
 
-  // Lenient mode: allow signals without runId when no active lease
+  // Lenient mode: allow signals without runId (for gate verdicts)
+  // This supports gate verdicts that may not include full run context
   if (params.mode === "lenient") {
     if (params.runSeq != null) {
       return (
@@ -211,12 +253,15 @@ function isOutOfOrderSignal(params: {
       );
     }
 
-    // Allow lane-less signals when no active lease (for PR retry scenarios)
-    if (params.head.activeRunId == null) {
-      return false;
+    // Allow signals without runId - gate verdicts may not include full run context
+    if (params.runId == null) {
+      return false; // NOT out of order - process the signal
     }
 
-    if (params.runId == null) return true;
+    if (params.head.activeRunId == null) {
+      return false; // NOT out of order - no active lease to mismatch against
+    }
+
     return params.runId !== params.head.activeRunId;
   }
 
@@ -886,7 +931,7 @@ export function reduce(params: {
               head,
               runId: event.runId,
               runSeq: event.runSeq,
-              mode: "strict",
+              mode: "lenient",
             })
           ) {
             result = {
