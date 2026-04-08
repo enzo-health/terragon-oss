@@ -125,6 +125,7 @@ const deltaBroadcastMocks = vi.hoisted(() => ({
 
 const v3BridgeMocks = vi.hoisted(() => ({
   appendEventAndAdvance: vi.fn(),
+  appendEventAndAdvanceExplicit: vi.fn(),
   getWorkflowHead: vi.fn(),
   getActiveWorkflowForThreadV3: vi.fn(),
 }));
@@ -200,6 +201,7 @@ vi.mock("@terragon/shared/broadcast-server", () => ({
 
 vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({
   appendEventAndAdvance: v3BridgeMocks.appendEventAndAdvance,
+  appendEventAndAdvanceExplicit: v3BridgeMocks.appendEventAndAdvance,
 }));
 
 vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
