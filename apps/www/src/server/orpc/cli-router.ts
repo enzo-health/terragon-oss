@@ -31,7 +31,7 @@ const os = implement(cliAPIContract)
       headers,
     });
     if (!userId) {
-      throw errors.UNAUTHORIZED();
+      throw errors.UNAUTHORIZED({ message: "Unauthorized" });
     }
     return next({
       context: {
@@ -152,14 +152,15 @@ const deliveryLoopStatus = os.threads.deliveryLoopStatus.handler(
     } catch (error) {
       // getDeliveryLoopStatusAction throws UserFacingError for unauthorized access
       if (error instanceof Error && error.message.includes("Unauthorized")) {
-        throw errors.UNAUTHORIZED();
+        throw errors.UNAUTHORIZED({ message: "Unauthorized" });
       }
       // Re-throw other errors as internal error
-      throw errors.INTERNAL_ERROR(
-        error instanceof Error
-          ? error.message
-          : "Failed to get delivery loop status",
-      );
+      throw errors.INTERNAL_ERROR({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to get delivery loop status",
+      });
     }
   },
 );
