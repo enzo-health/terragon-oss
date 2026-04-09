@@ -959,18 +959,13 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
 }
 
 function commandTestStreams(): void {
-  // Run durable-delivery stream tests against real Redis (port 6379)
-  // This bypasses the HTTP Redis (port 18079) that causes stream tests to skip
+  // Run durable-delivery stream tests against real Redis via HTTP proxy (port 8079)
+  // This bypasses the test HTTP Redis (port 18079) that causes stream tests to skip.
   //
-  // The key insight: the durable-delivery tests check REDIS_URL for "localhost:18079"
-  // to detect HTTP Redis mode. When running against real Redis (6379), this check
-  // returns false and the tests execute normally.
-  //
-  // We use SKIP_TEST_GLOBAL_SETUP to prevent the test setup from overriding our
-  // REDIS_URL with the test container's HTTP Redis URL.
-  // Use dev HTTP Redis proxy (port 8079) which proxies to real Redis (port 6379)
-  // The Upstash Redis client requires HTTP URLs, not redis:// URLs
-  // Port 8079 is NOT 18079, so the test skip condition returns false and tests run
+  // The key insight: durable-delivery tests check REDIS_URL for "localhost:18079"
+  // to detect test HTTP Redis mode. Port 8079 (dev HTTP proxy to real Redis) is NOT
+  // 18079, so the test skip condition returns false and tests execute normally.
+  // The Upstash Redis client requires HTTP URLs (not redis://), so we use the proxy.
   const realRedisHttpUrl = "http://localhost:8079";
 
   console.log(
