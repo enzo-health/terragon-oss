@@ -16,7 +16,8 @@ type CommandName =
   | "snapshot"
   | "run"
   | "e2e"
-  | "fixtures";
+  | "fixtures"
+  | "test-streams";
 type RunProfile = "fast" | "full";
 type E2EMode = "real" | "dry-run";
 type FixtureCommand = "check" | "seed" | "cleanup";
@@ -68,7 +69,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       candidate === "snapshot" ||
       candidate === "run" ||
       candidate === "e2e" ||
-      candidate === "fixtures"
+      candidate === "fixtures" ||
+      candidate === "test-streams"
     ) {
       command = candidate;
     }
@@ -191,6 +193,15 @@ Usage:
   pnpm delivery-loop:local e2e --repo <owner/repo> --user-id <id>
   pnpm delivery-loop:local e2e --dry-run --thread-id <id>
   pnpm delivery-loop:local fixtures [check|seed|cleanup]
+  pnpm delivery-loop:local test-streams
+
+Commands:
+  preflight         Print readiness checks for delivery-loop tables
+  snapshot          Print workflow diagnostics JSON
+  run               Run validation test suites
+  e2e               Execute end-to-end task-to-PR lifecycle
+  fixtures          Manage E2E test fixtures
+  test-streams      Run durable-delivery stream tests against real Redis
 
 Options:
   --profile fast|full     Test suite profile (default: fast)
@@ -947,6 +958,77 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
   });
 }
 
+function commandTestStreams(): void {
+  // Run durable-delivery stream tests against real Redis (port 6379)
+  // This bypasses the HTTP Redis (port 18079) that causes stream tests to skip
+  //
+  // The key insight: the durable-delivery tests check REDIS_URL for "localhost:18079"
+  // to detect HTTP Redis mode. When running against real Redis (6379), this check
+  // returns false and the tests execute normally.
+  //
+  // We use SKIP_TEST_GLOBAL_SETUP to prevent the test setup from overriding our
+  // REDIS_URL with the test container's HTTP Redis URL.
+  const realRedisUrl = "redis://localhost:6379";
+
+  console.log(
+    `\nRunning durable-delivery stream tests against real Redis at ${realRedisUrl}`,
+  );
+  console.log(
+    "(This executes stream coverage assertions that are normally skipped with HTTP Redis)\n",
+  );
+
+  // First verify Redis is accessible
+  const pingResult = spawnSync("redis-cli", ["-p", "6379", "ping"], {
+    encoding: "utf-8",
+    stdio: "pipe",
+  });
+  if (pingResult.status !== 0 || !pingResult.stdout.includes("PONG")) {
+    console.error(
+      "Error: Redis on port 6379 is not accessible. Please ensure Redis is running.",
+    );
+    console.error("You can start it with: pnpm delivery-loop:local preflight");
+    throw new Error("Redis connection failed - cannot run stream tests");
+  }
+  console.log("✓ Redis ping successful on port 6379\n");
+
+  const result = spawnSync(
+    "pnpm",
+    [
+      "-C",
+      "apps/www",
+      "exec",
+      "vitest",
+      "run",
+      "src/server-lib/delivery-loop/v3/durable-delivery.test.ts",
+    ],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        // Use real Redis URL (not HTTP Redis) so stream tests execute
+        REDIS_URL: realRedisUrl,
+        REDIS_TOKEN: "",
+        // Skip the test-global-setup that would override our REDIS_URL
+        // The test-global-setup.ts checks this flag and skips container setup
+        SKIP_TEST_GLOBAL_SETUP: "true",
+        // Point to dev database instead of test database
+        DATABASE_URL:
+          process.env.DATABASE_URL ??
+          "postgresql://postgres:postgres@localhost:5432/postgres",
+      },
+      cwd: REPO_ROOT,
+    },
+  );
+
+  if (result.status !== 0) {
+    throw new Error(
+      "test-streams command failed: durable-delivery stream tests did not pass",
+    );
+  }
+
+  console.log("\n✓ Stream tests completed successfully against real Redis");
+}
+
 function commandRun(profile: RunProfile): void {
   const fastCommands: Array<{ cmd: string; args: string[] }> = [
     { cmd: "pnpm", args: ["tsc-check"] },
@@ -1028,6 +1110,10 @@ async function main(): Promise<void> {
     }
     case "fixtures": {
       await commandFixtures(args.fixtureCommand);
+      return;
+    }
+    case "test-streams": {
+      commandTestStreams();
       return;
     }
   }
