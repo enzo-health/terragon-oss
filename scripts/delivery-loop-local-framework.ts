@@ -968,28 +968,42 @@ function commandTestStreams(): void {
   //
   // We use SKIP_TEST_GLOBAL_SETUP to prevent the test setup from overriding our
   // REDIS_URL with the test container's HTTP Redis URL.
-  const realRedisUrl = "redis://localhost:6379";
+  // Use dev HTTP Redis proxy (port 8079) which proxies to real Redis (port 6379)
+  // The Upstash Redis client requires HTTP URLs, not redis:// URLs
+  // Port 8079 is NOT 18079, so the test skip condition returns false and tests run
+  const realRedisHttpUrl = "http://localhost:8079";
 
   console.log(
-    `\nRunning durable-delivery stream tests against real Redis at ${realRedisUrl}`,
+    `\nRunning durable-delivery stream tests against real Redis via HTTP proxy at ${realRedisHttpUrl}`,
   );
   console.log(
-    "(This executes stream coverage assertions that are normally skipped with HTTP Redis)\n",
+    "(This executes stream coverage assertions that are normally skipped with test HTTP Redis on port 18079)\n",
   );
 
-  // First verify Redis is accessible
-  const pingResult = spawnSync("redis-cli", ["-p", "6379", "ping"], {
-    encoding: "utf-8",
-    stdio: "pipe",
-  });
-  if (pingResult.status !== 0 || !pingResult.stdout.includes("PONG")) {
+  // First verify Redis HTTP proxy is accessible
+  // The proxy returns 401 without token, but any HTTP response means it's running
+  const pingResult = spawnSync(
+    "curl",
+    ["-s", "-o", "/dev/null", "-w", "%{http_code}", "http://localhost:8079"],
+    {
+      encoding: "utf-8",
+      stdio: "pipe",
+    },
+  );
+  const httpCode = pingResult.stdout?.trim() ?? "";
+  // 401 is expected (no auth token), connection refused would give empty/exit code
+  if (httpCode === "000" || httpCode === "" || httpCode === "7") {
     console.error(
-      "Error: Redis on port 6379 is not accessible. Please ensure Redis is running.",
+      "Error: Redis HTTP proxy on port 8079 is not accessible. Please ensure dev containers are running.",
     );
-    console.error("You can start it with: pnpm delivery-loop:local preflight");
-    throw new Error("Redis connection failed - cannot run stream tests");
+    console.error(
+      "You can start them with: pnpm delivery-loop:local preflight",
+    );
+    throw new Error(
+      "Redis HTTP proxy connection failed - cannot run stream tests",
+    );
   }
-  console.log("✓ Redis ping successful on port 6379\n");
+  console.log("✓ Redis HTTP proxy is accessible on port 8079\n");
 
   const result = spawnSync(
     "pnpm",
@@ -1005,11 +1019,11 @@ function commandTestStreams(): void {
       stdio: "inherit",
       env: {
         ...process.env,
-        // Use real Redis URL (not HTTP Redis) so stream tests execute
-        REDIS_URL: realRedisUrl,
-        REDIS_TOKEN: "",
+        // Use dev HTTP Redis proxy (port 8079) which proxies to real Redis
+        // Port 8079 != 18079, so the test skip condition returns false
+        REDIS_URL: realRedisHttpUrl,
+        REDIS_TOKEN: "redis_dev_token",
         // Skip the test-global-setup that would override our REDIS_URL
-        // The test-global-setup.ts checks this flag and skips container setup
         SKIP_TEST_GLOBAL_SETUP: "true",
         // Point to dev database instead of test database
         DATABASE_URL:
