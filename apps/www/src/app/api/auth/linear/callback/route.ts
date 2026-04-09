@@ -242,7 +242,7 @@ export async function GET(request: NextRequest) {
       linearUserEmail = viewer.email;
       organizationId = viewerOrg.id;
     } catch (err) {
-      console.error("Linear viewer fetch error:", err);
+      console.error("Linear viewer fetch error:", { userId, flowType, err });
       redirect(
         "/settings/integrations?integration=linear&status=error&code=auth_error",
       );
