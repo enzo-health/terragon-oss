@@ -4,7 +4,7 @@
  * Uses `LinearClient.createAgentActivity()` from @linear/sdk (typed SDK — no raw GraphQL).
  * Activity content shapes per Linear Agent Interaction docs:
  *   - thought: { type: "thought", body: string }
- *   - action:  { type: "action", action: string, result?: string }
+ *   - action:  { type: "action", action: string, parameter: string, result?: string }
  *   - response: { type: "response", body: string }
  *   - error:   { type: "error", body: string }
  */
