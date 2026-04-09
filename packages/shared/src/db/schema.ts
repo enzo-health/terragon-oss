@@ -917,6 +917,10 @@ export const linearSettings = pgTable(
     organizationId: text("organization_id").notNull(),
     defaultRepoFullName: text("default_repo_full_name"),
     defaultModel: text("default_model").$type<AIModel>(),
+    deliveryLoopOptIn: boolean("delivery_loop_opt_in").default(false).notNull(),
+    deliveryPlanApprovalPolicy: text("delivery_plan_approval_policy").$type<
+      "auto" | "human_required"
+    >(),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" })
       .defaultNow()

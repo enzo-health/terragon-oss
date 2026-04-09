@@ -183,6 +183,13 @@
       "when": 1775126400000,
       "tag": "0025_agent_run_context_run_seq_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1775731200000,
+      "tag": "0026_linear_delivery_loop_settings",
+      "breakpoints": true
     }
   ]
 }

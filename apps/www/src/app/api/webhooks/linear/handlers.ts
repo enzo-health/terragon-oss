@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { publicAppUrl } from "@terragon/env/next-public";
+import type { LinearMentionSourceMetadataInsert } from "@terragon/shared/db/types";
 import {
   getLinearAccountForLinearUserId,
   getLinearSettingsForUserAndOrg,
@@ -567,6 +568,9 @@ async function createThreadRecord({
   const defaultModel = linearSettings?.defaultModel
     ? linearSettings.defaultModel
     : await getDefaultModel({ userId });
+  const deliveryLoopOptIn = linearSettings?.deliveryLoopOptIn ?? false;
+  const deliveryPlanApprovalPolicy =
+    linearSettings?.deliveryPlanApprovalPolicy ?? "auto";
 
   // Build message — use Linear's promptContext (formatted string with issue
   // details, comments, and guidance) when available, falling back to basic info.
@@ -588,7 +592,21 @@ async function createThreadRecord({
   console.log("[linear webhook] Creating thread for user", {
     userId,
     agentSessionId,
+    deliveryLoopOptIn,
+    deliveryPlanApprovalPolicy,
   });
+
+  const sourceMetadata: LinearMentionSourceMetadataInsert = {
+    type: "linear-mention",
+    organizationId,
+    issueId,
+    issueIdentifier,
+    issueUrl,
+    agentSessionId,
+    deliveryLoopOptIn,
+    deliveryPlanApprovalPolicy,
+    ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
+  };
 
   const { threadId } = await newThreadInternal({
     userId,
@@ -602,15 +620,7 @@ async function createThreadRecord({
     baseBranchName: null,
     headBranchName: null,
     sourceType: "linear-mention",
-    sourceMetadata: {
-      type: "linear-mention",
-      organizationId,
-      issueId,
-      issueIdentifier,
-      issueUrl,
-      agentSessionId,
-      ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
-    },
+    sourceMetadata,
   });
 
   const taskUrl = `${publicAppUrl()}/task/${threadId}`;

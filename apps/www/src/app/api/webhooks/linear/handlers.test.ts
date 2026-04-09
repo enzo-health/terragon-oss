@@ -281,6 +281,37 @@ describe("handlers", () => {
             organizationId: "org-123",
             issueId: "issue-xyz",
             linearDeliveryId: "delivery-2",
+            deliveryLoopOptIn: false,
+          }),
+        }),
+      );
+    });
+
+    it("passes delivery loop settings through to Linear-created threads", async () => {
+      await upsertLinearSettings({
+        db,
+        userId: user.id,
+        organizationId: "org-123",
+        settings: {
+          defaultRepoFullName: "owner/default-repo",
+          defaultModel: "sonnet",
+          deliveryLoopOptIn: true,
+          deliveryPlanApprovalPolicy: "human_required",
+        },
+      });
+
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-delivery-loop", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+
+      expect(newThreadInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceMetadata: expect.objectContaining({
+            deliveryLoopOptIn: true,
+            deliveryPlanApprovalPolicy: "human_required",
           }),
         }),
       );

@@ -253,6 +253,8 @@ export type ThreadSourceMetadata =
       issueId: string;
       issueIdentifier: string;
       issueUrl: string;
+      deliveryLoopOptIn?: boolean;
+      deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
       /** Optional — agent sessions from delegation/assignment have no comment */
       commentId?: string;
       /** Webhook delivery ID for idempotency */
