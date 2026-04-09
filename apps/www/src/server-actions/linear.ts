@@ -6,9 +6,7 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import {
-  getLinearAccountForLinearUserId,
   getLinearInstallationForOrg,
-  upsertLinearAccount,
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
   deactivateLinearInstallation,
@@ -27,6 +25,36 @@ async function assertLinearEnabled(userId: string) {
   if (!enabled) {
     throw new UserFacingError("Linear integration is not enabled");
   }
+}
+
+// State payload types for the shared /api/auth/linear/callback route.
+// "agent_install" is the workspace-level app-actor OAuth (installs the Linear
+// Agent). "account_link" is the per-user OAuth flow that identifies which
+// Linear user a Terragon user owns — we discard the returned token immediately
+// after calling `viewer`; all ongoing API calls use the workspace install's
+// app token via refreshLinearTokenIfNeeded.
+export type LinearOAuthStateType = "agent_install" | "account_link";
+
+/**
+ * Builds an encrypted CSRF state payload for Linear OAuth flows. Both the
+ * agent install and the personal account link flows reuse the same callback
+ * route (/api/auth/linear/callback), so the state discriminates between them.
+ */
+function buildLinearOAuthState({
+  userId,
+  type,
+}: {
+  userId: string;
+  type: LinearOAuthStateType;
+}): string {
+  return encryptValue(
+    JSON.stringify({
+      userId,
+      timestamp: Date.now(),
+      type,
+    }),
+    env.ENCRYPTION_MASTER_KEY,
+  );
 }
 
 // Generates the OAuth 2.0 authorization URL for installing the Linear Agent.
@@ -51,77 +79,45 @@ export const getLinearAgentInstallUrl = userOnlyAction(
     );
     // actor=app makes the OAuth token act as the app, not a user
     linearAuthUrl.searchParams.set("actor", "app");
-    // Encrypted CSRF state with userId, timestamp, and type
-    const state = encryptValue(
-      JSON.stringify({
-        userId,
-        timestamp: Date.now(),
-        type: "agent_install",
-      }),
-      env.ENCRYPTION_MASTER_KEY,
+    linearAuthUrl.searchParams.set(
+      "state",
+      buildLinearOAuthState({ userId, type: "agent_install" }),
     );
-    linearAuthUrl.searchParams.set("state", state);
     return linearAuthUrl.toString();
   },
   { defaultErrorMessage: "Failed to get Linear agent install URL" },
 );
 
-// v1 DESIGN DECISION: Manual account linking without OAuth/ownership proof.
-// This is an accepted limitation documented in the epic spec. The
-// linearIntegration feature flag gates access to trusted users only.
-// The DB unique index on (linearUserId, organizationId) prevents duplicate
-// claims. A challenge-based ownership verification flow is planned for v2.
-export const connectLinearAccount = userOnlyAction(
-  async function connectLinearAccount(
-    userId: string,
-    {
-      organizationId,
-      linearUserId,
-      linearUserName,
-      linearUserEmail,
-    }: {
-      organizationId: string;
-      linearUserId: string;
-      linearUserName: string;
-      linearUserEmail: string;
-    },
-  ): Promise<void> {
+// Generates the OAuth 2.0 authorization URL for linking a personal Linear
+// account to a Terragon user. Uses the default actor=user mode so the returned
+// token represents the authenticating human, enabling a `viewer` query that
+// returns the user's Linear id/name/email/organization. Linear's docs
+// explicitly recommend this pattern for "per-user personal account linking"
+// (see https://linear.app/developers/oauth-actor-authorization). Only the
+// `read` scope is needed — we never mutate and never persist the returned
+// token, we just call viewer once in the callback and discard it.
+export const getLinearAccountConnectUrl = userOnlyAction(
+  async function getLinearAccountConnectUrl(userId: string): Promise<string> {
     await assertLinearEnabled(userId);
-
-    // Pre-check for friendly error message (non-atomic, see catch below)
-    const existing = await getLinearAccountForLinearUserId({
-      db,
-      organizationId,
-      linearUserId,
-    });
-    if (existing && existing.userId !== userId) {
-      throw new UserFacingError(
-        "This Linear user ID is already linked to another Terragon account",
-      );
+    if (!env.LINEAR_CLIENT_ID || !env.LINEAR_CLIENT_SECRET) {
+      throw new Error("Linear OAuth is not configured");
     }
-
-    try {
-      await upsertLinearAccount({
-        db,
-        userId,
-        organizationId,
-        account: {
-          linearUserId,
-          linearUserName,
-          linearUserEmail,
-        },
-      });
-    } catch (error: any) {
-      // Handle race condition: concurrent claim slipping past pre-check
-      if (error?.code === "23505") {
-        throw new UserFacingError(
-          "This Linear user ID is already linked to another Terragon account",
-        );
-      }
-      throw error;
-    }
+    const redirectUri = `${nonLocalhostPublicAppUrl()}/api/auth/linear/callback`;
+    const linearAuthUrl = new URL("https://linear.app/oauth/authorize");
+    linearAuthUrl.searchParams.set("client_id", env.LINEAR_CLIENT_ID);
+    linearAuthUrl.searchParams.set("redirect_uri", redirectUri);
+    linearAuthUrl.searchParams.set("response_type", "code");
+    // Only need read scope — we call viewer() once and throw away the token.
+    // Intentionally NO actor=app: we want a user-scoped token here so that
+    // `viewer` returns the authenticating human, not the app itself.
+    linearAuthUrl.searchParams.set("scope", "read");
+    linearAuthUrl.searchParams.set(
+      "state",
+      buildLinearOAuthState({ userId, type: "account_link" }),
+    );
+    return linearAuthUrl.toString();
   },
-  { defaultErrorMessage: "Failed to connect Linear account" },
+  { defaultErrorMessage: "Failed to get Linear account connect URL" },
 );
 
 // Per-user disconnect: removes linearAccount + linearSettings for the current

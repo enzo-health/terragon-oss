@@ -2,15 +2,14 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SquareKanban } from "lucide-react";
 import { useUpdateLinearSettings } from "@/queries/linear-mutations";
 import { ConnectionStatusPill } from "../../credentials/connection-status-pill";
 import { toast } from "sonner";
 import {
-  connectLinearAccount,
   disconnectLinearAccount,
+  getLinearAccountConnectUrl,
   getLinearAgentInstallUrl,
   uninstallLinearWorkspace,
 } from "@/server-actions/linear";
@@ -298,89 +297,51 @@ function LinearAccountItem({
   );
 }
 
-// ── Manual Connect Form ───────────────────────────────────────────────────────
+// ── OAuth Connect Button ──────────────────────────────────────────────────────
 
-function LinearConnectForm() {
-  const router = useRouter();
-  const [organizationId, setOrganizationId] = useState("");
-  const [linearUserId, setLinearUserId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
-
-  const connectMutation = useServerActionMutation({
-    mutationFn: connectLinearAccount,
-    onSuccess: () => {
-      toast.success("Linear account connected");
-      setOrganizationId("");
-      setLinearUserId("");
-      setDisplayName("");
-      setEmail("");
-      router.refresh();
+function LinearConnectButton() {
+  // We track two independent busy states:
+  //   - connectUrlMutation.isPending covers the server-action round trip
+  //   - isRedirecting covers the gap between mutateAsync() resolving and the
+  //     browser actually navigating away. Without this, a fast double-click
+  //     could trigger two OAuth starts (two valid CSRF states), either of
+  //     which could be consumed by a racing callback.
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const connectUrlMutation = useServerActionMutation({
+    mutationFn: getLinearAccountConnectUrl,
+    onError: () => {
+      // Reset the redirect lock on failure so the user can retry. The error
+      // toast itself is fired by useServerActionMutation's built-in onError,
+      // so we deliberately do NOT raise a second toast here.
+      setIsRedirecting(false);
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!organizationId || !linearUserId || !displayName || !email) {
-      toast.error("All fields are required");
-      return;
+  const busy = connectUrlMutation.isPending || isRedirecting;
+
+  const handleConnect = async () => {
+    if (busy) return;
+    setIsRedirecting(true);
+    const url = await connectUrlMutation.mutateAsync().catch(() => null);
+    if (url) {
+      window.location.href = url;
     }
-    connectMutation.mutate({
-      organizationId,
-      linearUserId,
-      linearUserName: displayName,
-      linearUserEmail: email,
-    });
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="flex flex-col gap-2 rounded-lg border p-4">
       <p className="text-sm">
         Link your Linear account to identify you when the agent receives
-        mentions in your workspace.
+        mentions in your workspace. You will be redirected to Linear to
+        authorize the connection.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="space-y-1">
-          <Label className="text-sm">Organization ID</Label>
-          <Input
-            placeholder="e.g. abc123-def456"
-            value={organizationId}
-            onChange={(e) => setOrganizationId(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-sm">User ID</Label>
-          <Input
-            placeholder="Your Linear user ID"
-            value={linearUserId}
-            onChange={(e) => setLinearUserId(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-sm">Display Name</Label>
-          <Input
-            placeholder="Your name in Linear"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-sm">Email</Label>
-          <Input
-            type="email"
-            placeholder="Your Linear email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-      </div>
       <div className="flex">
-        <Button type="submit" size="sm" disabled={connectMutation.isPending}>
+        <Button size="sm" onClick={handleConnect} disabled={busy}>
           <SquareKanban className="h-4 w-4" />
-          {connectMutation.isPending ? "Connecting..." : "Link Linear Account"}
+          {busy ? "Redirecting..." : "Connect Linear Account"}
         </Button>
       </div>
-    </form>
+    </div>
   );
 }
 
@@ -419,7 +380,7 @@ export function LinearAccountSettings({
           <p className="text-sm font-medium text-muted-foreground">
             Your account link
           </p>
-          <LinearConnectForm />
+          <LinearConnectButton />
         </div>
       )}
     </div>

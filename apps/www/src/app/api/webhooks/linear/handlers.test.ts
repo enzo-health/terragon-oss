@@ -92,19 +92,16 @@ function makeCreatedPayload(overrides: Record<string, unknown> = {}) {
     type: "AgentSessionEvent" as const,
     action: "created" as const,
     organizationId: "org-123",
-    data: {
+    promptContext: "Issue ENG-42: Fix the bug\n\nSomething is broken",
+    agentSession: {
       id: "session-abc",
-      agentSession: {
-        id: "session-abc",
-        actorId: "linear-user-1",
-        promptContext: {
-          issueId: "issue-xyz",
-          issueIdentifier: "ENG-42",
-          issueTitle: "Fix the bug",
-          issueDescription: "Something is broken",
-          issueUrl: "https://linear.app/team/issue/ENG-42",
-          actorId: "linear-user-1",
-        },
+      creatorId: "linear-user-1",
+      issueId: "issue-xyz",
+      issue: {
+        id: "issue-xyz",
+        identifier: "ENG-42",
+        title: "Fix the bug",
+        url: "https://linear.app/team/issue/ENG-42",
       },
     },
     ...overrides,
@@ -116,14 +113,13 @@ function makePromptedPayload(overrides: Record<string, unknown> = {}) {
     type: "AgentSessionEvent" as const,
     action: "prompted" as const,
     organizationId: "org-123",
-    data: {
+    agentSession: {
       id: "session-abc",
-      agentActivity: { body: "Continue the work please" },
-      ...((overrides.data as Record<string, unknown>) ?? {}),
     },
-    ...Object.fromEntries(
-      Object.entries(overrides).filter(([k]) => k !== "data"),
-    ),
+    agentActivity: {
+      content: { type: "response", body: "Continue the work please" },
+    },
+    ...overrides,
   };
 }
 
@@ -430,7 +426,8 @@ describe("handlers", () => {
   describe("handleAgentSessionEvent (prompted)", () => {
     it("logs warning and skips if no thread found for agentSessionId", async () => {
       const payload = makePromptedPayload({
-        data: { id: "session-no-thread", agentActivity: { body: "Continue" } },
+        agentSession: { id: "session-no-thread" },
+        agentActivity: { content: { type: "response", body: "Continue" } },
       });
 
       // Should not throw and should not queue follow-up
@@ -479,9 +476,9 @@ describe("handlers", () => {
         >);
 
       const payload = makePromptedPayload({
-        data: {
-          id: "session-abc",
-          agentActivity: { body: "Please continue with the task." },
+        agentSession: { id: "session-abc" },
+        agentActivity: {
+          content: { type: "response", body: "Please continue with the task." },
         },
       });
 
@@ -533,9 +530,9 @@ describe("handlers", () => {
       for (const body of ["", "   ", "\t\n"]) {
         vi.mocked(queueFollowUpInternal).mockClear();
         const payload = makePromptedPayload({
-          data: {
-            id: "session-empty-body",
-            agentActivity: { body },
+          agentSession: { id: "session-empty-body" },
+          agentActivity: {
+            content: { type: "response", body },
           },
         });
         await handleAgentSessionEvent(payload, undefined, {
