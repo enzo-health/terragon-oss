@@ -1565,6 +1565,25 @@ describe("daemon-event route", () => {
         kind: "implementing",
         generation: 1,
       } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+      // Align auth claims with envelope runId to avoid claim mismatch
+      vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+        userId: "user-1",
+        keyId: "api-key-1",
+        claims: {
+          kind: "daemon-run",
+          runId: "run-dedup-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          sandboxId: "sandbox-1",
+          agent: "claudeCode",
+          transportMode: "acp",
+          protocolVersion: 2,
+          providers: ["anthropic"],
+          nonce: "nonce-1",
+          issuedAt: Date.now(),
+          exp: Date.now() + 60_000,
+        },
+      });
       vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
         runId: "run-dedup-1",
         workflowId: "wf-dedup-test",
@@ -1586,6 +1605,14 @@ describe("daemon-event route", () => {
         updatedAt: new Date(),
       } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
 
+      // Use non-terminal messages to trigger claim logic path
+      const nonTerminalMessage = {
+        type: "assistant",
+        message: { content: "working" },
+        session_id: "s-1",
+        parent_tool_use_id: null,
+      };
+
       // First ingress - claim succeeds, processing completes
       redisMocks.get.mockResolvedValueOnce(null); // not committed
       redisMocks.set.mockResolvedValueOnce("OK"); // claim succeeds
@@ -1594,7 +1621,7 @@ describe("daemon-event route", () => {
         createDaemonRequest({
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
+          messages: [nonTerminalMessage],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-dedup-test",
@@ -1613,7 +1640,7 @@ describe("daemon-event route", () => {
         createDaemonRequest({
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
+          messages: [nonTerminalMessage],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-dedup-test", // Same eventId
@@ -1644,15 +1671,23 @@ describe("daemon-event route", () => {
       redisMocks.set.mockResolvedValueOnce(null); // claim fails - another worker has it
       redisMocks.get.mockResolvedValueOnce(null); // still not committed
 
+      // Use non-terminal message to trigger claim logic path
       const response = await POST(
         createDaemonRequest({
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
+          messages: [
+            {
+              type: "assistant",
+              message: { content: "working" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-in-progress-dedup",
-          runId: "run-1",
+          runId: "run-1", // Matches default beforeEach claims
           seq: 0,
         }),
       );
@@ -1688,6 +1723,45 @@ describe("daemon-event route", () => {
       kind: "implementing",
       generation: 1,
     } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Align auth claims with envelope runId to avoid claim mismatch
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-rollback-test",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "acp",
+        protocolVersion: 2,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    });
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-rollback-test",
+      workflowId: "loop-1",
+      runSeq: 7,
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "processing",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(handleDaemonEvent)
       .mockResolvedValueOnce({
         success: false,
@@ -1716,7 +1790,7 @@ describe("daemon-event route", () => {
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
-        runId: "run-1",
+        runId: "run-rollback-test",
         seq: 7,
       }),
     );
@@ -1739,7 +1813,7 @@ describe("daemon-event route", () => {
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
-        runId: "run-1",
+        runId: "run-rollback-test",
         seq: 7,
       }),
     );
@@ -2456,6 +2530,25 @@ describe("daemon-event route", () => {
         kind: "implementing",
         generation: 1,
       } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+      // Align auth claims with envelope runId to avoid claim mismatch
+      vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+        userId: "user-1",
+        keyId: "api-key-1",
+        claims: {
+          kind: "daemon-run",
+          runId: "run-dedup-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          sandboxId: "sandbox-1",
+          agent: "claudeCode",
+          transportMode: "acp",
+          protocolVersion: 2,
+          providers: ["anthropic"],
+          nonce: "nonce-1",
+          issuedAt: Date.now(),
+          exp: Date.now() + 60_000,
+        },
+      });
       vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
         runId: "run-dedup-1",
         workflowId: "wf-dedup-test",
@@ -2557,7 +2650,9 @@ describe("daemon-event route", () => {
 
       expect(secondResponse.status).toBe(202);
       const secondData = await secondResponse.json();
-      expect(secondData.reason).toBe("duplicate_event");
+      // After first request, run context is terminal so route returns run_terminal_ignored
+      // before hitting claim/dedup logic (both are valid dedup paths for VAL-CROSS-002)
+      expect(secondData.reason).toBe("run_terminal_ignored");
       expect(secondData.deduplicated).toBe(true);
 
       // Third ingress (replay with different seq but same event) - should also be deduplicated
@@ -2579,7 +2674,7 @@ describe("daemon-event route", () => {
 
       expect(thirdResponse.status).toBe(202);
       const thirdData = await thirdResponse.json();
-      expect(thirdData.reason).toBe("duplicate_event");
+      expect(thirdData.reason).toBe("run_terminal_ignored");
       expect(thirdData.deduplicated).toBe(true);
 
       // handlerDaemonEvent should only be called once (first request)
