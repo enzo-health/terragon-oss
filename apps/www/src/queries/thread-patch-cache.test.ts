@@ -9,6 +9,7 @@ import {
   applyThreadPatchToListQueries,
   applyThreadPatchToQueryClient,
 } from "./thread-patch-cache";
+import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 import { threadQueryKeys } from "./thread-queries";
 
 const INITIAL_CHAT_UPDATED_AT = "2026-03-09T00:00:00.000Z";
@@ -204,6 +205,53 @@ describe("applyThreadPatchToQueryClient", () => {
 
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
       queryKey: threadQueryKeys.diff("thread-1"),
+    });
+  });
+
+  it("invalidates delivery-loop status when patch requests delivery-loop refetch", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.shell("thread-1"),
+      createThreadShell(),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        op: "refetch",
+        refetch: ["delivery-loop"],
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+    });
+  });
+
+  it("invalidates multiple refetch targets including delivery-loop", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.shell("thread-1"),
+      createThreadShell(),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        op: "refetch",
+        refetch: ["shell", "chat", "delivery-loop"],
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.shell("thread-1"),
+    });
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
     });
   });
 

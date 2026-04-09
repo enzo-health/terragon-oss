@@ -14,6 +14,7 @@ import {
   BroadcastThreadShellRealtimeFields,
   BroadcastActiveChatRealtimeFields,
 } from "@terragon/types/broadcast";
+import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 import {
   isMatchingThreadForFilter,
   isValidThreadListFilter,
@@ -924,6 +925,11 @@ export function invalidateThreadPatchRefetchTargets(
       case "diff":
         queryClient.invalidateQueries({
           queryKey: threadQueryKeys.diff(patch.threadId),
+        });
+        break;
+      case "delivery-loop":
+        queryClient.invalidateQueries({
+          queryKey: deliveryLoopStatusQueryKeys.detail(patch.threadId),
         });
         break;
       case "list":
