@@ -1,0 +1,59 @@
+{
+  "milestone": "end-to-end-hardening",
+  "flowId": "e2e-lifecycle-tests",
+  "assertionsTested": ["VAL-CROSS-001"],
+  "tool": "vitest",
+  "status": "completed",
+  "results": {
+    "passed": true,
+    "testFiles": 1,
+    "testsPassed": 20,
+    "testsFailed": 0
+  },
+  "evidence": {
+    "testCommand": "pnpm -C apps/www exec vitest run src/server-lib/e2e.test.ts",
+    "testOutputSummary": "20 end-to-end tests passed",
+    "keyTestResults": [
+      {
+        "test": "new thread -> done -> follow up",
+        "status": "passed",
+        "duration": "300ms",
+        "assertion": "VAL-CROSS-001: End-to-end task-to-PR lifecycle"
+      },
+      {
+        "test": "new thread -> stop -> follow up",
+        "status": "passed",
+        "assertion": "Lifecycle includes stop handling"
+      },
+      {
+        "test": "new thread -> queue-concurrency-limit -> queued",
+        "status": "passed",
+        "assertion": "Concurrency gating works"
+      },
+      {
+        "test": "new thread -> error -> retry",
+        "status": "passed",
+        "assertion": "Error recovery path"
+      },
+      {
+        "test": "delivery-loop run context persists workflow lease and fences stale terminal errors",
+        "status": "passed",
+        "assertion": "Terminal state fencing"
+      },
+      {
+        "test": "new thread -> checkpoint error -> retry git checkpoint",
+        "status": "passed",
+        "assertion": "Git checkpoint recovery"
+      },
+      {
+        "test": "scheduled thread -> runs when scheduled time arrives",
+        "status": "passed",
+        "duration": "20938ms"
+      }
+    ]
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["vitest"],
+  "timestamp": "2026-04-08T23:53:24Z"
+}

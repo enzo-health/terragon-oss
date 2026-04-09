@@ -88,15 +88,8 @@ describe("delivery-loop-status runtime helpers", () => {
   });
 
   describe("shouldRefreshDeliveryLoopStatusFromThreadPatch", () => {
-    it("refreshes for shell, status, refetch, and agent-message patches", () => {
+    it("refreshes for shell status changes, refetch, and agent-message patches", () => {
       const patches: BroadcastThreadPatch[] = [
-        {
-          threadId: "thread-1",
-          op: "upsert",
-          shell: {
-            updatedAt: new Date().toISOString(),
-          },
-        },
         {
           threadId: "thread-1",
           op: "upsert",

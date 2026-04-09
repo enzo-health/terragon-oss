@@ -1,0 +1,26 @@
+{
+  "featureId": "m5-lock-end-to-end-lifecycle-contract",
+  "reviewedAt": "2026-04-08T14:45:00.000Z",
+  "commitId": "a0d8276",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation fixes TypeScript field name mismatches in delivery-loop-status.ts to align with BroadcastThreadShellRealtimeFieldsSchema. Changes include: status -> prStatus, prNumber -> githubPRNumber, removal of prUrl (not in schema), and addition of prChecksStatus as a refresh condition. Corresponding tests were updated to use correct field names.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The BroadcastThreadShellRealtimeFieldsSchema defines canonical field names (prStatus, githubPRNumber, prChecksStatus) that must be used consistently across the UI projection layer. Prior work introduced type regressions by using mismatched field names (status, prNumber, prUrl).",
+      "evidence": "apps/www/src/lib/delivery-loop-status.ts:341-355 - The refresh logic now correctly checks prStatus, githubPRNumber, and prChecksStatus fields which align with the BroadcastThreadShellRealtimeFieldsSchema defined in the types package."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The architecture.md documents UI/status projection contracts, but there is no explicit cross-reference to the BroadcastThreadShellRealtimeFieldsSchema in AGENTS.md or the architecture document. This gap made it possible for field name mismatches to persist until runtime validation revealed them.",
+      "evidence": "The .factory/library/architecture.md mentions 'User-visible status must stay consistent with canonical state semantics' but doesn't specify the exact schema field names that should trigger refreshes in the delivery-loop-status projection layer."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "This is a clean bug fix that corrects field name mismatches in the delivery loop status projection layer. The worker followed the delivery-loop-runtime-worker skill procedure correctly and achieved VAL-CROSS-001 verification through e2e test suite execution (20 tests passed). The commit is minimal and focused, touching only the affected files without unnecessary changes."
+}
