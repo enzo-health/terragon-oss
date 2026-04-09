@@ -1,0 +1,15 @@
+{
+  "featureId": "m1-extend-broadcast-schema",
+  "reviewedAt": "2026-04-09T12:25:00Z",
+  "commitId": "0bb80b7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly extends the BroadcastThreadPatchSchema to support 'delivery-loop' as a new refetch target. The refetch enum is updated from [\"shell\", \"chat\", \"diff\", \"list\"] to include \"delivery-loop\", allowing broadcast messages to signal delivery-loop refetching via refetch: [\"delivery-loop\"] payload.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Feature m1-extend-broadcast-schema has been successfully implemented. The BroadcastThreadPatchSchema in packages/types/src/broadcast.ts now accepts 'delivery-loop' as a valid refetch target. TypeScript compilation passes, Zod validation will work correctly for the new enum value, and the change is backward compatible with existing refetch targets (shell, chat, diff, list). The worker followed the skill procedure correctly and all verification steps passed."
+}
