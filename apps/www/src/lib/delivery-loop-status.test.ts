@@ -160,5 +160,69 @@ describe("delivery-loop-status runtime helpers", () => {
         );
       }
     });
+
+    it("refreshes for PR link and status field changes (VAL-UI-004, VAL-UI-005)", () => {
+      const patches: BroadcastThreadPatch[] = [
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            status: "working",
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            prNumber: 123,
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            prUrl: "https://github.com/owner/repo/pull/123",
+          },
+        },
+      ];
+
+      for (const patch of patches) {
+        expect(shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)).toBe(
+          true,
+        );
+      }
+    });
+
+    it("ignores non-status shell field changes", () => {
+      const patches: BroadcastThreadPatch[] = [
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            title: "Updated title",
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            sandboxId: "new-sandbox-id",
+          },
+        },
+      ];
+
+      for (const patch of patches) {
+        expect(shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)).toBe(
+          false,
+        );
+      }
+    });
   });
 });
