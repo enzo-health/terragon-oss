@@ -4,7 +4,10 @@ import { decryptValue, encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { redirect, notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { upsertLinearInstallation } from "@terragon/shared/model/linear";
+import {
+  upsertLinearAccount,
+  upsertLinearInstallation,
+} from "@terragon/shared/model/linear";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { LinearClient } from "@linear/sdk";
 
@@ -48,23 +51,28 @@ export async function GET(request: NextRequest) {
 
   let stateUserId: string;
   let timestamp: number;
+  let flowType: "agent_install" | "account_link";
   try {
     const decryptedState = decryptValue(state, env.ENCRYPTION_MASTER_KEY);
     const parsed = JSON.parse(decryptedState);
     stateUserId = parsed.userId;
     timestamp = parsed.timestamp;
     // Validate shape: prevent cross-flow state reuse and bypass via missing
-    // or non-finite timestamp (NaN < cutoff is false — expiry skipped)
+    // or non-finite timestamp (NaN < cutoff is false — expiry skipped).
+    // Accept either the workspace agent install flow or the per-user account
+    // link flow — both are dispatched through this callback with a state
+    // discriminator (see apps/www/src/server-actions/linear.ts).
     if (
       typeof stateUserId !== "string" ||
       !Number.isFinite(timestamp) ||
-      parsed.type !== "agent_install"
+      (parsed.type !== "agent_install" && parsed.type !== "account_link")
     ) {
       redirect(
         "/settings/integrations?integration=linear&status=error&code=invalid_state",
       );
       return;
     }
+    flowType = parsed.type;
   } catch {
     redirect(
       "/settings/integrations?integration=linear&status=error&code=invalid_state",
@@ -141,17 +149,128 @@ export async function GET(request: NextRequest) {
 
   tokenData = await tokenResponse.json();
 
-  // 7. tokenExpiresAt computed from expires_in (seconds)
+  // 7. Defense-in-depth: verify the token's granted scope matches the scope
+  //    our flow requested. This blocks a cross-flow state substitution where
+  //    an attacker swaps an `account_link` state into an `agent_install` auth
+  //    URL (or vice versa) — the encrypted state's userId check already
+  //    prevents cross-user confusion, but scope-matching closes the
+  //    self-race case where the same user has both flows in flight.
+  //
+  //    - account_link requests `read` only → granted scope must be exactly
+  //      "read" (Linear returns comma-separated scopes).
+  //    - agent_install requests `read,write,app:assignable,app:mentionable`
+  //      → granted scope must include both app:* scopes (the distinctive
+  //      markers of the agent flow).
+  const grantedScope = tokenData.scope ?? "";
+  const grantedScopes = grantedScope
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (flowType === "account_link") {
+    const hasOnlyRead =
+      grantedScopes.length > 0 && grantedScopes.every((s) => s === "read");
+    if (!hasOnlyRead) {
+      console.error(
+        "Linear account_link flow received unexpected scope:",
+        grantedScope,
+      );
+      redirect(
+        "/settings/integrations?integration=linear&status=error&code=invalid_state",
+      );
+      return;
+    }
+  } else {
+    // agent_install
+    const hasAppScopes =
+      grantedScopes.includes("app:assignable") &&
+      grantedScopes.includes("app:mentionable");
+    if (!hasAppScopes) {
+      console.error(
+        "Linear agent_install flow received unexpected scope:",
+        grantedScope,
+      );
+      redirect(
+        "/settings/integrations?integration=linear&status=error&code=invalid_state",
+      );
+      return;
+    }
+  }
+
+  // 8. Branch on flow type.
+  //
+  //    - agent_install: token is workspace-app-scoped (actor=app). Fetch the
+  //      organization, encrypt and persist the tokens in linearInstallation.
+  //    - account_link: token is user-scoped (default actor=user). Call viewer
+  //      once to get the authenticating user's identity, upsert it into
+  //      linearAccount, and DISCARD the token — all ongoing API calls use
+  //      the workspace install's app token via refreshLinearTokenIfNeeded.
+  const linearClient = new LinearClient({
+    accessToken: tokenData.access_token,
+  });
+
+  if (flowType === "account_link") {
+    // 8a. Per-user identity link — Linear's docs explicitly recommend this
+    //     pattern (see https://linear.app/developers/oauth-actor-authorization).
+    let linearUserId: string;
+    let linearUserName: string;
+    let linearUserEmail: string;
+    let organizationId: string;
+    try {
+      const viewer = await linearClient.viewer;
+      const viewerOrg = await viewer.organization;
+      linearUserId = viewer.id;
+      linearUserName = viewer.name;
+      linearUserEmail = viewer.email;
+      organizationId = viewerOrg.id;
+    } catch (err) {
+      console.error("Linear viewer fetch error:", err);
+      redirect(
+        "/settings/integrations?integration=linear&status=error&code=auth_error",
+      );
+      return;
+    }
+
+    try {
+      await upsertLinearAccount({
+        db,
+        userId,
+        organizationId,
+        account: {
+          linearUserId,
+          linearUserName,
+          linearUserEmail,
+        },
+      });
+    } catch (err: unknown) {
+      // Unique index (linearUserId, organizationId) — another Terragon user
+      // has already claimed this Linear identity in this workspace.
+      const isUniqueViolation =
+        typeof err === "object" &&
+        err !== null &&
+        "code" in err &&
+        (err as { code: unknown }).code === "23505";
+      if (isUniqueViolation) {
+        redirect(
+          "/settings/integrations?integration=linear&status=error&code=already_linked",
+        );
+        return;
+      }
+      throw err;
+    }
+
+    redirect(
+      "/settings/integrations?integration=linear&status=success&code=account_linked",
+    );
+    return;
+  }
+
+  // 8b. Workspace agent install — fetch org info and persist tokens.
   const tokenExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000);
 
-  // 8. Fetch org info via LinearClient with the new access token
   let organizationId: string;
   let organizationName: string;
-
   try {
-    const linearClient = new LinearClient({
-      accessToken: tokenData.access_token,
-    });
     const org = await linearClient.organization;
     organizationId = org.id;
     organizationName = org.name;
@@ -163,7 +282,6 @@ export async function GET(request: NextRequest) {
     return;
   }
 
-  // 9. Upsert linearInstallation with encrypted tokens
   await upsertLinearInstallation({
     db,
     installation: {
@@ -183,7 +301,6 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  // 10. Redirect to success
   redirect(
     "/settings/integrations?integration=linear&status=success&code=agent_installed",
   );
