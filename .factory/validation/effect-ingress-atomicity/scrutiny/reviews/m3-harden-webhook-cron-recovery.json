@@ -1,0 +1,31 @@
+{
+  "featureId": "m3-harden-webhook-cron-recovery",
+  "reviewedAt": "2026-04-09T02:50:00.000Z",
+  "commitId": "4dc9e62c6bb24c6fe318b2f15d47ba12f2803d9e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation comprehensively hardens webhook claim/idempotency semantics and cron recovery endpoints. It adds 4 new test files and enhances existing tests to cover all targeted validation assertions (VAL-API-006 through VAL-API-010, VAL-CROSS-004, and VAL-CROSS-008). The worker correctly followed TDD principles, added failing tests first, then implemented minimal changes to make them pass.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The worker followed the established pattern for exposing internal functions for testability by exporting runDispatchAckTimeoutCron from route.ts.",
+      "evidence": "apps/www/src/app/api/internal/cron/dispatch-ack-timeout/route.ts:18 - export added for runDispatchAckTimeoutCron function"
+    },
+    {
+      "area": "conventions",
+      "observation": "All new tests use the standardized lease owner prefix pattern (e.g., 'cron:dispatch-ack-timeout', 'cron:v3') for preventing duplicate processing across parallel workers.",
+      "evidence": "apps/www/src/app/api/internal/cron/dispatch-ack-timeout/route.test.ts:70-73, scheduled-tasks/route.test.ts:198-216"
+    },
+    {
+      "area": "skills",
+      "observation": "The worker correctly followed the delivery-loop-runtime-worker skill procedure: identified impacted runtime paths, added failing characterization tests first, implemented minimum changes, and ran targeted validators.",
+      "evidence": "Handoff shows: 1) dispatch-ack-timeout tests (4 tests) for VAL-API-009/010, 2) scheduled-tasks tests (9 tests) for VAL-API-008/VAL-CROSS-004/008, 3) webhook tests (6 tests) for VAL-API-006/007"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature m3-harden-webhook-cron-recovery successfully implements comprehensive test coverage for webhook claim/idempotency semantics and cron recovery endpoints. All 19 new tests pass, covering VAL-API-006 through VAL-API-010, VAL-CROSS-004, and VAL-CROSS-008. The implementation properly hardens the delivery-loop ingress layer against duplicate processing and ensures deterministic watchdog behavior."
+}

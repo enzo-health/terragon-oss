@@ -1,0 +1,26 @@
+{
+  "featureId": "m3-harden-daemon-ingress-idempotency",
+  "reviewedAt": "2026-04-09T03:00:00.000Z",
+  "commitId": "95ba103",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "This feature hardens daemon ingress auth/idempotency/run-context handling and canonical pure-v2 terminal bridge behavior. The implementation adds comprehensive test coverage for VAL-API-001 through VAL-API-005 (daemon event auth, capability contract, claim conflict, dedup, rollback-retry) and VAL-API-011 through VAL-API-014 (run-id mismatch, missing/expired claims, run-context mismatch, pure-v2 terminal bridge). The test-only changes fix assertion regressions by aligning auth claims mocks with envelope runId values and using non-terminal messages to properly exercise claim/dedup/rollback logic paths.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The test file uses a pattern where auth claims runId must align with the envelope runId to avoid 401 mismatch errors. This is implicit in the route behavior but could be documented in AGENTS.md for future test writers.",
+      "evidence": "apps/www/src/app/api/daemon-event/route.test.ts - The fix adds explicit auth claims mock with matching runId to the envelope runId used in tests."
+    },
+    {
+      "area": "conventions",
+      "observation": "The route has a subtle behavior where terminal messages bypass claim logic and go straight to run_terminal_ignored, while non-terminal messages trigger the claim/dedup path. This distinction is important for testing idempotency.",
+      "evidence": "apps/www/src/app/api/daemon-event/route.test.ts - Using non-terminal messages (assistant messages) instead of createSuccessResultMessage() (terminal) properly exercises claim/dedup logic."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The worker successfully implemented hardening for daemon ingress idempotency by fixing assertion regressions in route tests. The changes align auth claims mocks with envelope runId values (fixing 401 auth failures) and use non-terminal messages to properly trigger claim/dedup logic paths. All 47 daemon-event tests pass, and the API behavior remains contract-compatible - fixes were purely in test mocks and expectations. The implementation satisfies VAL-API-001..005 and VAL-API-011..014 contract assertions."
+}
