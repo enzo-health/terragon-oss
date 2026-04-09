@@ -1,0 +1,38 @@
+{
+  "groupId": "val-broadcast-001",
+  "testedAt": "2026-04-09T00:00:00Z",
+  "isolation": {
+    "path": "/Users/tylersheffield/.superset/worktrees/terragon-oss/tyler/leather-glazer/packages/types/src/broadcast.ts",
+    "namespace": "broadcast-infrastructure"
+  },
+  "toolsUsed": ["file-read", "tsc"],
+  "assertions": [
+    {
+      "id": "VAL-BROADCAST-001",
+      "title": "Broadcast Schema - Delivery-Loop Refetch Enum",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read BroadcastThreadPatch schema definition",
+          "expected": "refetch field includes 'delivery-loop' in enum values",
+          "observed": "Line 169-171 contains refetch array with z.enum including 'delivery-loop'"
+        },
+        {
+          "action": "Run TypeScript compilation check",
+          "expected": "No TypeScript errors",
+          "observed": "tsc --noEmit exits with code 0, no errors"
+        }
+      ],
+      "evidence": {
+        "codeExcerpt": "refetch: z\n    .array(z.enum(['shell', 'chat', 'diff', 'list', 'delivery-loop']))\n    .optional(),",
+        "lineNumbers": ["169-171"],
+        "filePath": "packages/types/src/broadcast.ts",
+        "typescriptCompilation": "PASS - exit code 0, no errors"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 1 assertion: 1 passed. BroadcastThreadPatch schema successfully includes 'delivery-loop' in the refetch enum values (line 169-171 in packages/types/src/broadcast.ts). TypeScript compilation passes without errors."
+}
