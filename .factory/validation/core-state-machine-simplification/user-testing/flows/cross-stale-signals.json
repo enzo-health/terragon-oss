@@ -1,0 +1,68 @@
+{
+  "groupId": "cross-stale-signals",
+  "testedAt": "2026-04-08T17:00:15.000Z",
+  "isolation": {
+    "testType": "process-level vitest",
+    "testDatabase": "PostgreSQL on port 15432",
+    "testRedis": "Redis on port 16379",
+    "namespace": "test containers (terragon-test)"
+  },
+  "toolsUsed": ["vitest"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-003",
+      "title": "Out-of-order terminal signals cannot regress active flow",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run reducer.test.ts test suite",
+          "expected": "All tests pass including stale signal suppression tests",
+          "observed": "299 tests passed, including comprehensive stale signal fencing tests"
+        },
+        {
+          "action": "Verify runSeq mismatch handling",
+          "expected": "run_completed with mismatched runSeq is ignored even when runId matches",
+          "observed": "Test confirms: activeRunSeq 7 vs event runSeq 8 -> no transition, version unchanged"
+        },
+        {
+          "action": "Verify runId mismatch handling in implementing state",
+          "expected": "Stale runId events are fenced and ignored",
+          "observed": "All 4 fence tests pass: run_completed, dispatch_acked, run_failed, dispatch_ack_timeout with different runId are ignored"
+        },
+        {
+          "action": "Verify headSha correlation for CI gates",
+          "expected": "Stale CI verdicts with mismatched headSha are ignored",
+          "observed": "Test confirms: headSha 'sha-current' vs event 'sha-stale' -> no transition"
+        },
+        {
+          "action": "Verify terminal state absorption",
+          "expected": "Terminal states (done, stopped, terminated) absorb all events without regression",
+          "observed": "All terminal absorption tests pass - no state regression possible from terminal states"
+        },
+        {
+          "action": "Verify runSeq ordering protection",
+          "expected": "Older runSeq values cannot cause regressions",
+          "observed": "awaiting_pr_creation ignores gate_review_failed with stale runSeq (3 vs active 4)"
+        }
+      ],
+      "evidence": {
+        "testOutput": "core-state-machine-simplification/cross-stale-signals/VAL-CROSS-003-test-output.txt",
+        "testCount": "299 passed",
+        "testFile": "src/server-lib/delivery-loop/v3/reducer.test.ts",
+        "keyTestCases": [
+          "implementing run_completed with mismatched runSeq is ignored even when runId matches",
+          "gate_review_passed with mismatched runSeq is ignored",
+          "gate_ci_passed with mismatched runSeq is ignored even when headSha matches",
+          "implementing state fences stale runIds (4 test cases)",
+          "ignores stale CI verdicts with mismatched headSha",
+          "awaiting_pr_creation ignores gate_review_failed from a stale runSeq",
+          "terminal states absorb all events (done, stopped, terminated)"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested VAL-CROSS-003: All stale signal suppression behaviors verified. The reducer correctly fences on runId, runSeq, and headSha to prevent out-of-order terminal signals from regressing active flow. 299 tests passed including comprehensive coverage of terminal state absorption and stale event suppression."
+}

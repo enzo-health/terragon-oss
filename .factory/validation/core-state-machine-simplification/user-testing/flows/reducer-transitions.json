@@ -1,0 +1,178 @@
+{
+  "groupId": "reducer-transitions",
+  "testedAt": "2026-04-08T17:05:00.000Z",
+  "isolation": {
+    "testEnvironment": "vitest",
+    "testFiles": [
+      "src/server-lib/delivery-loop/v3/reducer.test.ts",
+      "src/server-lib/delivery-loop/v3/invariants.test.ts",
+      "src/server-lib/delivery-loop/v3/reachability.test.ts",
+      "src/server-lib/delivery-loop/v3/contracts.test.ts"
+    ],
+    "testDatabase": "PostgreSQL (test container)",
+    "parallelWorkers": "isolated process-level tests - no shared state"
+  },
+  "toolsUsed": ["vitest"],
+  "assertions": [
+    {
+      "id": "VAL-PROC-001",
+      "title": "Terminal states remain absorbing under all representative ingress events",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run reducer.test.ts - property-based test for terminal state absorption",
+          "expected": "Terminal states (done, stopped, terminated) should not change under any event",
+          "observed": "Test 'terminal states are absorbing — no event changes them' passed with 100 property-based iterations"
+        },
+        {
+          "action": "Verify effects array is empty for terminal state events",
+          "expected": "expect(result.effects).toHaveLength(0)",
+          "observed": "All events on terminal states produce zero effects"
+        }
+      ],
+      "evidence": {
+        "testFile": "src/server-lib/delivery-loop/v3/reducer.test.ts",
+        "testName": "terminal states are absorbing — no event changes them",
+        "testCount": "299 tests in reducer.test.ts passed",
+        "logPath": "/Users/tylersheffield/.factory/missions/58761276-c4ca-4e8c-b040-eeb0557b9012/evidence/core-state-machine-simplification/reducer-transitions/test-execution-logs.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROC-002",
+      "title": "Global stop/pr-close transitions preempt active states correctly",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Test stop_requested transitions from all non-terminal states",
+          "expected": "All non-terminal states should transition to 'stopped' with publish_status effect",
+          "observed": "Property-based test 'stop_requested always reaches stopped from any non-terminal state' passed"
+        },
+        {
+          "action": "Test pr_closed transitions from all non-terminal states",
+          "expected": "All non-terminal states should transition to 'terminated' with publish_status effect",
+          "observed": "Property-based test 'pr_closed always reaches terminated from any non-terminal state' passed"
+        },
+        {
+          "action": "Verify terminal states remain unchanged by stop/pr_close",
+          "expected": "done/stopped/terminated stay as-is (absorbing)",
+          "observed": "Terminal state tests confirmed absorbing behavior"
+        }
+      ],
+      "evidence": {
+        "testFile": "src/server-lib/delivery-loop/v3/reducer.test.ts",
+        "testNames": [
+          "stop_requested always reaches stopped from any non-terminal state",
+          "pr_closed always reaches terminated from any non-terminal state"
+        ],
+        "testCount": "All preempt tests passed across 8 non-terminal states"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROC-003",
+      "title": "Out-of-order/stale run and gate signals are no-ops",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Test stale run_completed signal with mismatched runId",
+          "expected": "State unchanged, activeRunId preserved, no effects emitted",
+          "observed": "Test 'stale terminal run signals do not consume the active lease' passed - state remained 'implementing', activeRunId stayed 'run-current'"
+        },
+        {
+          "action": "Test mismatched runSeq gate verdicts",
+          "expected": "Gate verdicts with wrong runSeq should be no-ops",
+          "observed": "Test 'mismatched runSeq gate verdicts are no-ops' passed - gating_review state unchanged"
+        },
+        {
+          "action": "Verify dispatch_acked is always telemetry-only",
+          "expected": "dispatch_acked never changes state regardless of runId match",
+          "observed": "Property test 'dispatch_acked never changes state' passed for all states with/without activeRunId"
+        }
+      ],
+      "evidence": {
+        "testFile": "src/server-lib/delivery-loop/v3/reducer.test.ts",
+        "testNames": [
+          "stale terminal run signals do not consume the active lease",
+          "mismatched runSeq gate verdicts are no-ops",
+          "dispatch_acked never changes state"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROC-004",
+      "title": "Reducer invariants remain valid after each transition",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run property-based invariant tests with random event sequences",
+          "expected": "Invariants must hold: activeGate matches state, activeRunId only in dispatch-coherent states, version never decreases, effects is array",
+          "observed": "contracts.test.ts (19 tests) and reducer.test.ts invariant tests all passed"
+        },
+        {
+          "action": "Verify activeGate middleware invariant",
+          "expected": "activeGate must be 'review' for gating_review, 'ci' for gating_ci, null otherwise",
+          "observed": "Property test 'activeGate always matches state' passed across all random sequences"
+        },
+        {
+          "action": "Verify activeRunId dispatch-coherence invariant",
+          "expected": "activeRunId must be null outside planning/implementing/gating_review/gating_ci",
+          "observed": "Property test 'activeRunId is null outside dispatch-coherent states' passed"
+        },
+        {
+          "action": "Verify version monotonicity",
+          "expected": "version >= previous version after each transition",
+          "observed": "Property test 'version never decreases' passed"
+        }
+      ],
+      "evidence": {
+        "testFile": "src/server-lib/delivery-loop/v3/contracts.test.ts",
+        "testCount": "19 property-based invariant tests passed",
+        "invariantsTested": [
+          "activeGate matches state after middleware",
+          "activeRunId only in dispatch-coherent states",
+          "version never decreases",
+          "effects is always an array",
+          "retry budgets never negative"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROC-005",
+      "title": "Legacy compatibility normalization preserves canonical behavior",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Test legacy awaiting_implementation_acceptance normalization",
+          "expected": "Legacy state should normalize to 'implementing' on dispatch events",
+          "observed": "Test 'legacy awaiting_implementation_acceptance heads normalize into implementing' passed"
+        },
+        {
+          "action": "Verify legacy dispatch_sent events are no-ops",
+          "expected": "dispatch_sent in planning/gating_review should not change state (legacy migration artifact)",
+          "observed": "Tests 'planning dispatch_sent is a legacy no-op' and 'gating_review dispatch_sent is a legacy no-op' passed"
+        },
+        {
+          "action": "Test BRANCH_CASES for legacy transition handling",
+          "expected": "All legacy branch cases should normalize correctly",
+          "observed": "All 15 BRANCH_CASES in transition-contract.ts executed correctly"
+        }
+      ],
+      "evidence": {
+        "testFile": "src/server-lib/delivery-loop/v3/transition-contract.ts",
+        "branchCases": "15 branch transition cases tested",
+        "testNames": [
+          "legacy awaiting_implementation_acceptance normalizes into implementing",
+          "planning dispatch_sent is a legacy no-op",
+          "gating_review dispatch_sent is a legacy no-op"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "All 5 assertions passed (5/5). Tested 564 total assertions across 4 test files. The v3 reducer transition core correctly handles: (1) terminal state absorption, (2) global preempt transitions, (3) stale signal filtering, (4) invariant preservation, and (5) legacy compatibility normalization."
+}

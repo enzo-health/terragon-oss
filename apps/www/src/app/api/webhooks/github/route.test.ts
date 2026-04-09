@@ -110,7 +110,7 @@ describe("GitHub webhook route", () => {
     vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValue([]);
   });
 
-  describe("webhook validation", () => {
+  describe("webhook validation (VAL-API-006)", () => {
     it("should return 401 for invalid signature", async () => {
       const request = await createMockRequest(
         { action: "opened" },
@@ -120,6 +120,33 @@ describe("GitHub webhook route", () => {
       const data = await response.json();
       expect(response.status).toBe(401);
       expect(data.error).toBe("Invalid signature");
+    });
+
+    it("should reject requests with missing delivery-id", async () => {
+      const payload = JSON.stringify({
+        action: "opened",
+        pull_request: { number: 123 },
+        repository: { full_name: "owner/repo" },
+      });
+      const signature = createSignature(payload, env.GITHUB_WEBHOOK_SECRET);
+      const request = await createMockNextRequest(
+        {
+          action: "opened",
+          pull_request: { number: 123 },
+          repository: { full_name: "owner/repo" },
+        },
+        {
+          "x-github-delivery": "",
+          "x-hub-signature-256": signature,
+          "x-github-event": "pull_request",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe("Missing GitHub delivery ID");
     });
 
     it("should accept valid signature", async () => {
@@ -134,7 +161,7 @@ describe("GitHub webhook route", () => {
       expect(data.claimOutcome).toBe("claimed_new");
     });
 
-    it("should return already_completed for duplicate delivery IDs", async () => {
+    it("should return already_completed for duplicate delivery IDs (VAL-API-007)", async () => {
       const body = {
         action: "opened",
         pull_request: { number: 123 },
@@ -157,6 +184,44 @@ describe("GitHub webhook route", () => {
       expect(firstData.claimOutcome).toBe("claimed_new");
       expect(secondResponse.status).toBe(200);
       expect(secondData.claimOutcome).toBe("already_completed");
+    });
+
+    it("idempotently handles claim transitions without duplicate side effects (VAL-API-007)", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const deliveryId = "idempotency-test-delivery";
+      const body = createPullRequestBody({
+        action: "opened",
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+
+      // First request: claimed_new, processes the handler
+      const firstRequest = await createMockRequest(body, {
+        "x-github-delivery": deliveryId,
+      });
+      const firstResponse = await POST(firstRequest);
+      const firstData = await firstResponse.json();
+
+      expect(firstResponse.status).toBe(202);
+      expect(firstData.claimOutcome).toBe("claimed_new");
+      expect(firstData.success).toBe(true);
+
+      // Capture the side-effect count after first request
+      const firstCallCount = vi.mocked(updateGitHubPR).mock.calls.length;
+
+      // Second request: already_completed, should NOT reprocess handler
+      const secondRequest = await createMockRequest(body, {
+        "x-github-delivery": deliveryId,
+      });
+      const secondResponse = await POST(secondRequest);
+      const secondData = await secondResponse.json();
+
+      expect(secondResponse.status).toBe(200);
+      expect(secondData.claimOutcome).toBe("already_completed");
+      expect(secondData.success).toBe(true);
+
+      // Handler should NOT have been called again - side effect count unchanged
+      expect(vi.mocked(updateGitHubPR).mock.calls.length).toBe(firstCallCount);
     });
 
     it("returns accepted no-op while a matching delivery is still in progress", async () => {
