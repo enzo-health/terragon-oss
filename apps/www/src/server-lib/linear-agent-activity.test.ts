@@ -103,7 +103,8 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
       agentSessionId: "session-throttle-1",
       content: {
         type: "action",
-        action: "Running tests on auth module",
+        action: "Working",
+        parameter: "Running tests on auth module",
       },
     });
   });
@@ -154,7 +155,7 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
     expect(mockCreateAgentActivity).toHaveBeenCalledOnce();
     expect(mockCreateAgentActivity).toHaveBeenCalledWith({
       agentSessionId: "session-throttle-3",
-      content: { type: "action", action: "Step 2 done" },
+      content: { type: "action", action: "Working", parameter: "Step 2 done" },
     });
   });
 
@@ -301,7 +302,7 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
 
     const call = mockCreateAgentActivity.mock.calls[0]![0];
     expect(call.content.type).toBe("action");
-    expect(call.content.action.length).toBe(200);
+    expect(call.content.parameter.length).toBe(200);
   });
 
   it("skips all logic when token refresh returns non-ok status", async () => {

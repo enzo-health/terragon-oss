@@ -4,7 +4,7 @@
  * Uses `LinearClient.createAgentActivity()` from @linear/sdk (typed SDK — no raw GraphQL).
  * Activity content shapes per Linear Agent Interaction docs:
  *   - thought: { type: "thought", body: string }
- *   - action:  { type: "action", action: string, result?: string }
+ *   - action:  { type: "action", action: string, parameter: string, result?: string }
  *   - response: { type: "response", body: string }
  *   - error:   { type: "error", body: string }
  */
@@ -35,7 +35,7 @@ const defaultClientFactory: LinearClientFactory = (accessToken: string) =>
 
 export type AgentActivityContent =
   | { type: "thought"; body: string }
-  | { type: "action"; action: string; result?: string }
+  | { type: "action"; action: string; parameter: string; result?: string }
   | { type: "response"; body: string }
   | { type: "error"; body: string };
 
@@ -251,7 +251,7 @@ export async function emitLinearActivitiesForDaemonEvent(
     await emitAgentActivity({
       agentSessionId,
       accessToken,
-      content: { type: "action", action: summary },
+      content: { type: "action", action: "Working", parameter: summary },
       createClient,
     });
     return;
