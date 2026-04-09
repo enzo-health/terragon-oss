@@ -1,52 +1,83 @@
-# User Testing
+# User Testing Guide: Legacy-Dead-Flaky-Removal
 
-Validation surface and execution guidance for this mission.
+## Overview
 
-## Validation Surface
+This document captures testing knowledge for the legacy-dead-flaky-removal milestone validation.
 
-- **Browser surface**
+## Services
 
-  - Primary tool: `agent-browser`
-  - Fallback: Playwright (only when `agent-browser` is blocked)
-  - Scope: delivery-loop progression UI, blocked/manual-fix visibility, terminal-state rendering, PR-link visibility, refresh behavior
+- PostgreSQL: localhost:5432 (terragon-db container)
+- Redis: localhost:6379 (terragon-db container)
 
-- **API surface**
+## Testing Tools Available
 
-  - Tools: `vitest` route tests + targeted `curl`
-  - Scope: daemon-event ingress, webhook ingress, scheduled-tasks cron, dispatch-ack-timeout cron
+### 1. CLI Testing via `pnpm delivery-loop:local`
 
-- **CLI surface**
+- `pnpm delivery-loop:local preflight` - Readiness check
+- `pnpm delivery-loop:local snapshot --workflow-id <id>` - Diagnostics
+- `pnpm delivery-loop:local snapshot --thread-id <id>` - Thread diagnostics
+- `pnpm -C apps/www exec vitest run` - Unit tests
 
-  - Tools: `pnpm delivery-loop:local ...`
-  - Scope: preflight/run/snapshot/e2e contracts, deterministic failure guardrails, diagnostics emission
+### 2. Database Access
 
-- **Process surface**
-  - Tools: `vitest` runtime suites
-  - Scope: reducer transitions, invariants, effect processing, durable worker/relay behavior, retry/dead-letter semantics
+- Direct DB access via Drizzle ORM
+- Test fixtures can be created via scripts in packages/shared
 
 ## Validation Concurrency
 
-Resource basis from dry run:
+- **API surface**: 3 concurrent validators max
+- **Process surface**: 2 concurrent validators max
+- **CLI surface**: 1 concurrent validator max (sequential commands)
 
-- CPU cores: `14`
-- Total memory: ~`48.0 GiB`
-- Post-exercise available memory: ~`9.61 GiB`
-- Headroom policy: use `70%` of available memory
+## Flow Validator Guidance: API/Process Surface
 
-Computed conservative max concurrent validators per surface:
+### Isolation Boundaries for VAL-CROSS-006
 
-- Browser: `5`
-- API: `5`
-- CLI: `5`
-- Process: `5`
+**Test**: Post-terminal ingress cannot mutate workflow or PR linkage
 
-Operational guidance:
+**Approach**:
 
-- Start with `3` concurrent validators by default and scale to `5` only if host remains stable.
-- Prefer grouping heavy process assertions together to avoid redundant app/service startup churn.
+1. Use existing database fixtures or create isolated test workflow/thread records
+2. Drive workflow to terminal state via API replay or direct state manipulation
+3. Replay ingress events (daemon/webhook/human) against terminal workflow
+4. Verify no state mutation occurs
 
-## Validation Readiness Notes
+**What to Avoid**:
 
-- Direct vitest suites for representative delivery-loop unit/integration/e2e checks are executable.
-- Real e2e validation requires repo/user inputs and reachable web URL configuration in non-development mode.
-- Mission decision: real e2e success-path validation should use **local Docker sandbox** execution.
+- Do not test against production workflows
+- Do not create fixtures that could interfere with parallel test runs
+- Use isolated workflow/thread IDs with unique prefixes
+
+**Evidence Collection**:
+
+- Diagnostics snapshots before/after ingress replay
+- State diffs showing no mutation occurred
+- PR linkage stability verification
+
+## Assertion: VAL-CROSS-006
+
+**Requirement**: After terminalization, additional daemon/webhook/human ingress cannot mutate workflow state or PR linkage.
+
+**Tool**: `vitest` route tests + workflow diagnostics
+
+**Evidence Needed**:
+
+1. Workflow in terminal state (done/stopped/terminated)
+2. Replay duplicate ingress (daemon events, webhook deliveries)
+3. Capture diagnostics showing stable terminal state
+4. Verify no mutating events appended
+5. Verify PR linkage remains stable
+
+**Test Command**:
+
+```bash
+pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/reducer.test.ts
+pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts
+pnpm -C apps/www exec vitest run src/app/api/webhooks/github/route.test.ts
+```
+
+**Success Criteria**:
+
+- All tests pass
+- No regression in terminal absorption behavior
+- Post-terminal ingress returns appropriate no-op/dedup responses

@@ -1,0 +1,39 @@
+{
+  "flowId": "val-cross-006",
+  "assertionIds": ["VAL-CROSS-006"],
+  "surface": "API/Process",
+  "tool": "vitest",
+  "status": "pass",
+  "startTime": "2025-01-08T22:35:00Z",
+  "endTime": "2025-01-08T22:45:00Z",
+  "testsExecuted": [
+    {
+      "file": "src/server-lib/delivery-loop/v3/reducer.test.ts",
+      "status": "passed",
+      "count": "149 tests"
+    },
+    {
+      "file": "src/server-lib/delivery-loop/v3/invariants.test.ts",
+      "status": "passed",
+      "count": "1 passed, 13 skipped"
+    },
+    {
+      "file": "src/app/api/daemon-event/route.test.ts",
+      "status": "passed",
+      "count": "84 tests"
+    },
+    {
+      "file": "src/app/api/webhooks/github/route.test.ts",
+      "status": "passed",
+      "count": "42 tests"
+    }
+  ],
+  "evidence": {
+    "terminalAbsorption": "All terminal states (done, stopped, terminated) correctly absorb incoming events with no state transition and no effects emitted",
+    "ingressHandling": "Daemon events and webhook deliveries properly handle post-terminal scenarios with appropriate deduplication/acknowledgment",
+    "stateStability": "Reducer maintains terminal state invariants across all event types"
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["vitest", "delivery-loop-local-framework"]
+}

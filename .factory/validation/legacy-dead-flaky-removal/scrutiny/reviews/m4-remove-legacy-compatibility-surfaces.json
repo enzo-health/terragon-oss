@@ -1,0 +1,31 @@
+{
+  "featureId": "m4-remove-legacy-compatibility-surfaces",
+  "reviewedAt": "2026-04-08T22:45:00Z",
+  "commitId": "414e5ce",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The worker successfully removed high-confidence legacy v2-to-v3 signal envelope compatibility code. The parseLegacySignalEnvelopeToLoopEvent function (~220 lines), its associated helper functions (isRecord, toOptionalRunSeq), and the LegacySignalEnvelopeParseResult type were all removed from worker.ts. The associated test coverage (~140 lines across 4 test cases) was pruned from worker.test.ts. The applySignalMessage function was simplified to exclusively use the canonical parseLoopEvent from contracts.ts, with clean error handling that throws on invalid events rather than attempting legacy fallback parsing.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The delivery-loop-cleanup-worker skill was followed correctly. The worker enumerated cleanup candidates, classified them as high-confidence dead code, removed them incrementally, and re-ran targeted tests after each removal cluster. The handoff properly documented deleted surfaces and verification results.",
+      "evidence": "Handoff shows: followedProcedure=true, no deviations, and all 382 targeted tests passed (worker.test.ts: 6, reducer.test.ts: 294, process-effects.test.ts: 35, daemon-event/route.test.ts: 47)"
+    },
+    {
+      "area": "conventions",
+      "observation": "The code removal was appropriately scoped and surgical. The isRecord helper function that was removed was indeed only used by the legacy parser - contracts.ts has its own isRecord implementation, confirming this was duplicate code. The toOptionalRunSeq helper was only referenced internally by the removed legacy parser.",
+      "evidence": "Grep confirmed no remaining references to toOptionalRunSeq, parseLegacySignalEnvelopeToLoopEvent, or LegacySignalEnvelopeParseResult in the codebase after the cleanup"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The worker correctly identified that pre-existing TypeScript errors (24 errors from effect-ingress-atomicity milestone) were unrelated to this cleanup. This was a good call - the type errors were in ack_timeout_check and awaiting_implementation_acceptance paths, completely separate from the legacy signal envelope parsing code being removed.",
+      "evidence": "Typecheck showed exit code 2 with pre-existing errors; worker documented this as a non-blocking discovered issue and proceeded with commit"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS - The legacy compatibility surface removal was executed correctly and safely. The parseLegacySignalEnvelopeToLoopEvent function and all associated dead code were removed. The outbox worker now exclusively uses the canonical parseLoopEvent from contracts.ts. Test coverage was appropriately pruned (4 test cases, ~140 lines removed from worker.test.ts). All 382 targeted delivery-loop tests passed. The pre-existing typecheck failures are unrelated to this cleanup (they stem from prior milestone work). The simplification reduces code complexity while preserving all active contract behavior - specifically VAL-CROSS-006 (post-terminal ingress remains non-mutating) is maintained since the code path now exclusively uses the canonical v3 event parsing that properly handles terminal absorption."
+}

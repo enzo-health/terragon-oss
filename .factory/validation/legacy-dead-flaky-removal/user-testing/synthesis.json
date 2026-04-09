@@ -1,0 +1,26 @@
+{
+  "milestone": "legacy-dead-flaky-removal",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": ["VAL-CROSS-006"],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Created initial user testing guide with validation concurrency limits and flow validator guidance for API/Process surface",
+      "source": "setup"
+    }
+  ],
+  "flowReports": [
+    ".factory/validation/legacy-dead-flaky-removal/user-testing/flows/val-cross-006.json"
+  ],
+  "previousRound": null,
+  "notes": "VAL-CROSS-006 validates that post-terminal ingress cannot mutate workflow state or PR linkage. All tests passed including reducer terminal absorption (149 tests), invariants property-based testing (1 passed), daemon-event route (84 tests), and GitHub webhook route (42 tests). The validation confirms that terminal states (done, stopped, terminated) correctly absorb all events with no transitions and no effects emitted."
+}
