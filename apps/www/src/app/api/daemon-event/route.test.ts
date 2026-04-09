@@ -197,6 +197,7 @@ vi.mock("@terragon/shared/model/token-stream-event", () => ({
 
 vi.mock("@terragon/shared/broadcast-server", () => ({
   publishDeltaBroadcast: deltaBroadcastMocks.publishDeltaBroadcast,
+  publishBroadcastUserMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({

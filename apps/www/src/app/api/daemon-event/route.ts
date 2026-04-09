@@ -1,6 +1,9 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import {
+  publishBroadcastUserMessage,
+  publishDeltaBroadcast,
+} from "@terragon/shared/broadcast-server";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -1377,6 +1380,7 @@ export async function POST(request: Request) {
   // This was deferred from the postHandleOps block so that a tick failure
   // keeps the run non-terminal and allows daemon retries to re-enter the
   // main processing path. Both writes are awaited to prevent silent drops.
+  let didUpdateTerminalDispatchStatus = false;
   {
     const terminalOps: Array<Promise<unknown>> = [];
     if (runContext && resolvedStatus !== "processing") {
@@ -1395,6 +1399,9 @@ export async function POST(request: Request) {
           daemonRunStatus: daemonRunStatusFromMessages,
           daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
           daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+        }).then((result) => {
+          didUpdateTerminalDispatchStatus = true;
+          return result;
         }),
       );
     }
@@ -1415,6 +1422,37 @@ export async function POST(request: Request) {
         }
       }
     }
+  }
+
+  // Broadcast delivery-loop refetch on terminal daemon events that materially
+  // changed the delivery-loop state. This enables event-driven UI updates.
+  if (
+    didUpdateTerminalDispatchStatus &&
+    effectiveLoopId &&
+    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    publishBroadcastUserMessage({
+      type: "user",
+      id: userId,
+      data: {
+        threadPatches: [
+          {
+            threadId,
+            threadChatId,
+            op: "refetch",
+            refetch: ["delivery-loop"],
+          },
+        ],
+      },
+    }).catch((error) => {
+      console.warn("[daemon-event] delivery-loop broadcast failed", {
+        threadId,
+        threadChatId,
+        loopId: effectiveLoopId,
+        error,
+      });
+    });
   }
 
   return jsonTerminalAckResponse(
