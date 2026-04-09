@@ -1,0 +1,15 @@
+{
+  "featureId": "m2-process-effects-broadcast",
+  "reviewedAt": "2026-04-09T19:00:00.000Z",
+  "commitId": "53b287525b39641ba3fcafa79eb9c43d8419c216",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly wires process-effects paths to broadcast delivery-loop updates on material state transitions. The `broadcastDeliveryLoopRefetch()` helper function is well-designed and properly integrated into `executeStateBlockingEffect()`. The broadcast is triggered only when `advanceResult.transitioned` is true (stateBefore !== stateAfter), ensuring broadcasts are only sent on material transitions. The implementation is best-effort with proper error handling - failures are logged but don't block effect processing.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "This feature implementation successfully wires process-effects paths to broadcast delivery-loop updates. The implementation: (1) Only broadcasts on material state transitions by checking `advanceResult.transitioned` and `stateBefore !== stateAfter`, (2) Uses best-effort broadcast pattern with try-catch that logs failures but doesn't block effect processing, (3) Properly queries for threadChatId from the database, (4) Follows the established pattern from daemon-event integration by using `publishBroadcastUserMessage` from @terragon/shared/broadcast-server. All 35 process-effects tests and 47 daemon-event tests pass, and TypeScript compilation succeeds with no errors."
+}
