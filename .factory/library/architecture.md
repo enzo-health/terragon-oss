@@ -90,8 +90,13 @@ User-visible behavior is driven by transitions of that canonical head and surfac
 Compatibility paths still in scope and must only be removed with characterization coverage:
 
 - legacy event aliases (`dispatch_sent`, `dispatch_acked`, old acceptance state normalization)
-- legacy signal envelope handling in worker/relay ingress
 - legacy timeout compatibility paths referenced by `ack_timeout_check`
+
+### Recently Removed (2025-04-08)
+
+The following legacy surfaces have been removed as part of milestone `legacy-dead-flaky-removal`:
+
+- **Legacy signal envelope handling** (`parseLegacySignalEnvelopeToLoopEvent` in worker.ts): The v2-to-v3 signal envelope format `{ source, event: { kind } }` is no longer supported. Invalid formats are now rejected at the worker boundary and dead-lettered. The worker exclusively uses the canonical `parseLoopEvent` from contracts.ts.
 
 Any other legacy/dead branch is a removal candidate once assertions that depend on it are preserved.
 
