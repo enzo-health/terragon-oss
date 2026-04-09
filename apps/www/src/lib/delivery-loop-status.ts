@@ -338,12 +338,16 @@ export function shouldRefreshDeliveryLoopStatusFromThreadPatch(
 
   // Status and URL changes that affect PR link visibility
   if (patch.shell !== undefined) {
-    // Refresh for status changes that might transition delivery loop phases
-    if (patch.shell.status !== undefined) {
+    // Refresh for PR status changes that might transition delivery loop phases
+    if (patch.shell.prStatus !== undefined) {
       return true;
     }
-    // Refresh for PR-related field changes
-    if (patch.shell.prNumber !== undefined || patch.shell.prUrl !== undefined) {
+    // Refresh for PR number field changes
+    if (patch.shell.githubPRNumber !== undefined) {
+      return true;
+    }
+    // Refresh for PR checks status changes
+    if (patch.shell.prChecksStatus !== undefined) {
       return true;
     }
     return false;

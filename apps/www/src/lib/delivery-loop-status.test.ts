@@ -167,21 +167,21 @@ describe("delivery-loop-status runtime helpers", () => {
           threadId: "thread-1",
           op: "upsert",
           shell: {
-            status: "working",
+            prStatus: "open",
           },
         },
         {
           threadId: "thread-1",
           op: "upsert",
           shell: {
-            prNumber: 123,
+            githubPRNumber: 123,
           },
         },
         {
           threadId: "thread-1",
           op: "upsert",
           shell: {
-            prUrl: "https://github.com/owner/repo/pull/123",
+            prChecksStatus: "pending",
           },
         },
       ];
@@ -199,7 +199,7 @@ describe("delivery-loop-status runtime helpers", () => {
           threadId: "thread-1",
           op: "upsert",
           shell: {
-            title: "Updated title",
+            name: "Updated name",
           },
         },
         {
@@ -213,7 +213,7 @@ describe("delivery-loop-status runtime helpers", () => {
           threadId: "thread-1",
           op: "upsert",
           shell: {
-            sandboxId: "new-sandbox-id",
+            codesandboxId: "new-sandbox-id",
           },
         },
       ];
