@@ -1,6 +1,9 @@
 import { describe, it, vi, beforeEach, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { uninstallLinearWorkspace as uninstallLinearWorkspaceAction } from "./linear";
+import {
+  getLinearAccountConnectUrl as getLinearAccountConnectUrlAction,
+  uninstallLinearWorkspace as uninstallLinearWorkspaceAction,
+} from "./linear";
 import { db } from "@/lib/db";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
@@ -12,10 +15,16 @@ import {
 import { User, Session } from "@terragon/shared";
 import { unwrapResult } from "@/lib/server-actions";
 import * as schema from "@terragon/shared/db/schema";
+import { decryptValue } from "@terragon/utils/encryption";
+import { env } from "@terragon/env/apps-www";
 
 // Helper to call the action and unwrap
 const uninstallLinearWorkspace = async (args: { organizationId: string }) => {
   return unwrapResult(await uninstallLinearWorkspaceAction(args));
+};
+
+const getLinearAccountConnectUrl = async () => {
+  return unwrapResult(await getLinearAccountConnectUrlAction());
 };
 
 // Helper to create a linear installation for a given installer user
@@ -155,5 +164,78 @@ describe("uninstallLinearWorkspace", () => {
     await expect(
       uninstallLinearWorkspace({ organizationId: ORG_ID }),
     ).rejects.toThrow("Unauthorized");
+  });
+});
+
+describe("getLinearAccountConnectUrl", () => {
+  let user: User;
+  let session: Session;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const result = await createTestUser({ db });
+    user = result.user;
+    session = result.session;
+  });
+
+  it("returns a Linear OAuth URL with scope=read, no actor=app, and decryptable account_link state", async () => {
+    await enableLinearFeatureFlag(user.id);
+    await mockLoggedInUser(session);
+
+    const urlString = await getLinearAccountConnectUrl();
+    const url = new URL(urlString);
+
+    // Base URL check
+    expect(url.origin + url.pathname).toBe(
+      "https://linear.app/oauth/authorize",
+    );
+
+    // OAuth params
+    expect(url.searchParams.get("client_id")).toBe("LINEAR_CLIENT_ID_TEST");
+    expect(url.searchParams.get("response_type")).toBe("code");
+    expect(url.searchParams.get("scope")).toBe("read");
+    // Critical: this is the per-user identity flow — NO actor=app here.
+    // If we regress and pass actor=app, the returned token would be
+    // app-scoped and viewer() would return the app instead of the user.
+    expect(url.searchParams.get("actor")).toBeNull();
+    expect(url.searchParams.get("redirect_uri")).toContain(
+      "/api/auth/linear/callback",
+    );
+
+    // State must decrypt to an account_link payload for the current user
+    const rawState = url.searchParams.get("state");
+    expect(rawState).not.toBeNull();
+    const decrypted = decryptValue(rawState!, env.ENCRYPTION_MASTER_KEY);
+    const parsed = JSON.parse(decrypted) as {
+      userId: string;
+      timestamp: number;
+      type: string;
+    };
+    expect(parsed.userId).toBe(user.id);
+    expect(parsed.type).toBe("account_link");
+    // Timestamp should be recent (within the last minute)
+    const age = Date.now() - parsed.timestamp;
+    expect(age).toBeGreaterThanOrEqual(0);
+    expect(age).toBeLessThan(60_000);
+  });
+
+  it("throws when the linearIntegration feature flag is disabled", async () => {
+    // Do NOT enable the feature flag for this user
+    await upsertFeatureFlag({
+      db,
+      name: "linearIntegration",
+      updates: { defaultValue: false },
+    });
+    await mockLoggedInUser(session);
+
+    await expect(getLinearAccountConnectUrl()).rejects.toThrow(
+      "Linear integration is not enabled",
+    );
+  });
+
+  it("throws when the user is not authenticated", async () => {
+    await mockLoggedOutUser();
+
+    await expect(getLinearAccountConnectUrl()).rejects.toThrow("Unauthorized");
   });
 });

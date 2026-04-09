@@ -147,7 +147,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const deliveryId = req.headers.get("Linear-Delivery-Id") ?? undefined;
+  const deliveryId =
+    req.headers.get("Linear-Delivery") ??
+    req.headers.get("Linear-Delivery-Id") ??
+    undefined;
 
   console.log(
     "[linear webhook] Received event type:",

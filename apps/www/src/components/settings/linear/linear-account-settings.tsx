@@ -309,6 +309,12 @@ function LinearConnectButton() {
   const [isRedirecting, setIsRedirecting] = useState(false);
   const connectUrlMutation = useServerActionMutation({
     mutationFn: getLinearAccountConnectUrl,
+    onError: () => {
+      // Reset the redirect lock on failure so the user can retry. The error
+      // toast itself is fired by useServerActionMutation's built-in onError,
+      // so we deliberately do NOT raise a second toast here.
+      setIsRedirecting(false);
+    },
   });
 
   const busy = connectUrlMutation.isPending || isRedirecting;
@@ -316,14 +322,9 @@ function LinearConnectButton() {
   const handleConnect = async () => {
     if (busy) return;
     setIsRedirecting(true);
-    try {
-      const url = await connectUrlMutation.mutateAsync();
+    const url = await connectUrlMutation.mutateAsync().catch(() => null);
+    if (url) {
       window.location.href = url;
-    } catch (err) {
-      setIsRedirecting(false);
-      toast.error(
-        err instanceof Error ? err.message : "Failed to start Linear connect",
-      );
     }
   };
 

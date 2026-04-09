@@ -10,6 +10,10 @@ import {
 } from "@terragon/shared/model/linear";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { LinearClient } from "@linear/sdk";
+import type { LinearOAuthStateType } from "@/server-actions/linear";
+
+/** PostgreSQL SQLSTATE for unique constraint violation. */
+const PG_UNIQUE_VIOLATION = "23505";
 
 export async function GET(request: NextRequest) {
   // 1. Verify userId from session — redirect to notFound if missing
@@ -51,7 +55,7 @@ export async function GET(request: NextRequest) {
 
   let stateUserId: string;
   let timestamp: number;
-  let flowType: "agent_install" | "account_link";
+  let flowType: LinearOAuthStateType;
   try {
     const decryptedState = decryptValue(state, env.ENCRYPTION_MASTER_KEY);
     const parsed = JSON.parse(decryptedState);
@@ -161,7 +165,21 @@ export async function GET(request: NextRequest) {
   //    - agent_install requests `read,write,app:assignable,app:mentionable`
   //      → granted scope must include both app:* scopes (the distinctive
   //      markers of the agent flow).
-  const grantedScope = tokenData.scope ?? "";
+  // Defensive: tokenResponse.json() returns `any`, so tokenData.scope could
+  // be anything at runtime even though the type annotation says `string`.
+  // Reject anything that isn't a non-empty string before attempting to parse.
+  if (typeof tokenData.scope !== "string" || tokenData.scope.length === 0) {
+    console.error(
+      "Linear token response missing or malformed scope:",
+      tokenData.scope,
+    );
+    redirect(
+      "/settings/integrations?integration=linear&status=error&code=invalid_state",
+    );
+    return;
+  }
+
+  const grantedScope: string = tokenData.scope;
   const grantedScopes = grantedScope
     .split(",")
     .map((s) => s.trim())
@@ -249,7 +267,7 @@ export async function GET(request: NextRequest) {
         typeof err === "object" &&
         err !== null &&
         "code" in err &&
-        (err as { code: unknown }).code === "23505";
+        (err as { code: unknown }).code === PG_UNIQUE_VIOLATION;
       if (isUniqueViolation) {
         redirect(
           "/settings/integrations?integration=linear&status=error&code=already_linked",
