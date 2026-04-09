@@ -435,7 +435,6 @@ describe("v3 durable delivery loop", () => {
       event: {
         type: "dispatch_sent",
         runId,
-        ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
       },
       eagerDrain: false,
     });
@@ -576,7 +575,6 @@ describe("v3 durable delivery loop", () => {
       event: {
         type: "dispatch_sent",
         runId: runIdStale,
-        ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
       },
       eagerDrain: false,
     });
@@ -589,7 +587,6 @@ describe("v3 durable delivery loop", () => {
       event: {
         type: "dispatch_sent",
         runId: runIdCurrent,
-        ackDeadlineAt: new Date("2026-03-18T10:01:10.000Z"),
       },
       eagerDrain: false,
     });
@@ -745,7 +742,6 @@ describe("v3 durable delivery loop", () => {
       event: {
         type: "dispatch_sent",
         runId,
-        ackDeadlineAt: new Date("2026-03-18T10:01:00.000Z"),
       },
       eagerDrain: false,
     });
@@ -1048,7 +1044,6 @@ describe("v3 durable delivery loop", () => {
       event: {
         type: "dispatch_sent",
         runId,
-        ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
       },
       eagerDrain: false,
     });
@@ -1138,7 +1133,6 @@ describe("v3 durable delivery loop", () => {
         event: {
           type: "dispatch_sent",
           runId: currentRunId,
-          ackDeadlineAt: new Date("2026-03-18T11:00:10.000Z"),
         },
         eagerDrain: false,
       });
@@ -1223,7 +1217,6 @@ describe("v3 durable delivery loop", () => {
       event: {
         type: "dispatch_sent",
         runId: "run-no-pr",
-        ackDeadlineAt: new Date("2026-03-18T11:00:00.000Z"),
       },
       eagerDrain: false,
     });

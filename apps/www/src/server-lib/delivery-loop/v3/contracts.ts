@@ -134,6 +134,12 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
         type: event.type,
         runId: event.runId,
       };
+    case "dispatch_sent":
+    case "dispatch_acked":
+      return {
+        type: event.type,
+        runId: event.runId,
+      };
     case "run_completed":
       return {
         type: event.type,
@@ -232,8 +238,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         runId: typeof payload.runId === "string" ? payload.runId : null,
         runSeq: toOptionalInteger(payload.runSeq) ?? null,
       };
-    case "dispatch_queued":
-    case "dispatch_sent": {
+    case "dispatch_queued": {
       if (typeof payload.runId !== "string") {
         return null;
       }
@@ -242,7 +247,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       return {
-        type: payload.type,
+        type: "dispatch_queued",
         runId: payload.runId,
         ackDeadlineAt,
       };
@@ -257,6 +262,15 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
       };
     case "dispatch_accepted":
     case "dispatch_ack_timeout":
+      if (typeof payload.runId !== "string") {
+        return null;
+      }
+      return {
+        type: payload.type,
+        runId: payload.runId,
+      };
+    case "dispatch_sent":
+    case "dispatch_acked":
       if (typeof payload.runId !== "string") {
         return null;
       }

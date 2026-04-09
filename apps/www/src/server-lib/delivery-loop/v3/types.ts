@@ -10,6 +10,7 @@ import {
 export type WorkflowState =
   | "planning"
   | "implementing"
+  | "awaiting_implementation_acceptance"
   | "gating_review"
   | "gating_ci"
   | "awaiting_pr_creation"
@@ -38,6 +39,8 @@ export type LoopEvent =
   | { type: "dispatch_claimed"; runId: string }
   | { type: "dispatch_accepted"; runId: string }
   | { type: "dispatch_ack_timeout"; runId: string }
+  | { type: "dispatch_sent"; runId: string }
+  | { type: "dispatch_acked"; runId: string }
   | {
       type: "run_completed";
       runId: string;
@@ -99,6 +102,11 @@ export type EffectPayload =
       runId: string;
       workflowVersion: number;
     }
+  | {
+      kind: "ack_timeout_check";
+      runId: string;
+      workflowVersion: number;
+    }
   | { kind: "ensure_pr" }
   | { kind: "create_plan_artifact" }
   | { kind: "publish_status" }
@@ -152,6 +160,9 @@ export type EffectResult =
   // run_lease_expiry_check results
   | { kind: "run_lease_expiry_check"; outcome: "fired"; runId: string }
   | { kind: "run_lease_expiry_check"; outcome: "stale" }
+  // ack_timeout_check results
+  | { kind: "ack_timeout_check"; outcome: "fired"; runId: string }
+  | { kind: "ack_timeout_check"; outcome: "stale" }
   // gate_staleness_check results
   | { kind: "gate_staleness_check"; outcome: "ci_passed"; headSha: string }
   | {

@@ -155,10 +155,14 @@ export function effectResultToEvent(
       };
 
     case "run_lease_expiry_check":
-    case "ack_timeout_check":
       if (result.outcome === "fired")
         return { type: "dispatch_ack_timeout", runId: result.runId };
       return null; // Lease expired after the workflow had already advanced
+
+    case "ack_timeout_check":
+      if (result.outcome === "fired")
+        return { type: "dispatch_ack_timeout", runId: result.runId };
+      return null; // ACK timeout fired after workflow had already advanced
 
     case "gate_staleness_check":
       if (result.outcome === "ci_passed")

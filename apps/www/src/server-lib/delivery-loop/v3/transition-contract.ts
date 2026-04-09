@@ -119,11 +119,7 @@ export const ALL_CANONICAL_EVENTS: LoopEvent[] = [
   },
   { type: "dispatch_claimed", runId: "r-1" },
   { type: "dispatch_accepted", runId: "r-1" },
-  {
-    type: "dispatch_sent",
-    runId: "r-1",
-    ackDeadlineAt: new Date("2030-01-01"),
-  },
+  { type: "dispatch_sent", runId: "r-1" },
   { type: "dispatch_acked", runId: "r-1" },
   { type: "dispatch_ack_timeout", runId: "r-1" },
   { type: "run_completed", runId: "r-1", headSha: "abc123" },
