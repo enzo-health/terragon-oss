@@ -16,8 +16,6 @@ import {
   getWorkflowHead,
   insertEffects,
   updateWorkflowHead,
-  claimNextEffect,
-  markEffectSucceeded,
 } from "./store";
 import { drainDueEffects, effectResultToEvent } from "./process-effects";
 import type { EffectResult, EffectSpec } from "./types";

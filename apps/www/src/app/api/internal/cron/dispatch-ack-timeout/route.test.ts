@@ -21,8 +21,7 @@ describe("dispatch-ack-timeout cron route", () => {
 
   describe("production auth enforcement (VAL-API-009)", () => {
     it("rejects requests without auth header in production", async () => {
-      const originalNodeEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = "production";
+      vi.stubEnv("NODE_ENV", "production" as NodeJS.ProcessEnv["NODE_ENV"]);
 
       const request = {
         headers: new Headers({}),
@@ -37,12 +36,11 @@ describe("dispatch-ack-timeout cron route", () => {
       // Drain should not be called when auth fails
       expect(drainDueEffects).not.toHaveBeenCalled();
 
-      process.env.NODE_ENV = originalNodeEnv;
+      vi.unstubAllEnvs();
     });
 
     it("rejects requests with invalid auth header in production", async () => {
-      const originalNodeEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = "production";
+      vi.stubEnv("NODE_ENV", "production" as NodeJS.ProcessEnv["NODE_ENV"]);
 
       const request = {
         headers: new Headers({
@@ -55,7 +53,7 @@ describe("dispatch-ack-timeout cron route", () => {
       expect(response.status).toBe(401);
       expect(drainDueEffects).not.toHaveBeenCalled();
 
-      process.env.NODE_ENV = originalNodeEnv;
+      vi.unstubAllEnvs();
     });
   });
 

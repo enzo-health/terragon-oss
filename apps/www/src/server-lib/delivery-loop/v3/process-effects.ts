@@ -192,6 +192,7 @@ async function executeStateBlockingEffect(params: {
   effect: DeliveryEffectLedgerV3Row;
   leaseOwner: string;
   handler: () => Promise<EffectResult>;
+  now: Date;
 }): Promise<void> {
   let result: EffectResult;
   try {
@@ -1234,6 +1235,7 @@ async function processSingleEffect(params: {
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        now: params.now,
         handler: () =>
           processImplementingDispatchEffect({
             db: params.db,
@@ -1252,6 +1254,7 @@ async function processSingleEffect(params: {
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        now: params.now,
         handler: () =>
           processGateReviewEffect({
             db: params.db,
@@ -1269,6 +1272,7 @@ async function processSingleEffect(params: {
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        now: params.now,
         handler: () =>
           processEnsurePrEffect({
             db: params.db,
@@ -1294,6 +1298,7 @@ async function processSingleEffect(params: {
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        now: params.now,
         handler: () =>
           handleCreatePlanArtifact({
             db: params.db,
@@ -1312,6 +1317,7 @@ async function processSingleEffect(params: {
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        now: params.now,
         handler: () =>
           handleRunLeaseExpiryCheck({
             db: params.db,
@@ -1327,6 +1333,7 @@ async function processSingleEffect(params: {
         db: params.db,
         effect: params.effect,
         leaseOwner: params.leaseOwner,
+        now: params.now,
         handler: () =>
           handleGateStalenessCheck({
             db: params.db,
