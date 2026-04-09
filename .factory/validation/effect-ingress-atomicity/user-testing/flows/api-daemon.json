@@ -1,0 +1,18 @@
+{
+  "assertionResults": [
+    {"id": "VAL-API-001", "status": "pass", "evidence": "daemon-event route tests: unauthorized requests rejected with 401"},
+    {"id": "VAL-API-002", "status": "pass", "evidence": "daemon-event route tests: invalid envelope/capability combinations rejected"},
+    {"id": "VAL-API-003", "status": "pass", "evidence": "daemon-event route tests: in-progress claim conflict returns 409"},
+    {"id": "VAL-API-004", "status": "pass", "evidence": "daemon-event route tests: duplicate envelopes return 202 for idempotency"},
+    {"id": "VAL-API-005", "status": "pass", "evidence": "daemon-event route tests: claim rollback enables retry after failure"},
+    {"id": "VAL-API-011", "status": "pass", "evidence": "daemon-event route tests: run-id claim mismatch rejected"},
+    {"id": "VAL-API-012", "status": "pass", "evidence": "daemon-event route tests: missing/expired daemon claims rejected"},
+    {"id": "VAL-API-013", "status": "pass", "evidence": "daemon-event route tests: run-context mismatch conflict rejected"},
+    {"id": "VAL-API-014", "status": "pass", "evidence": "daemon-event route tests: pure-v2 terminal events bridge exactly once to v3"}
+  ],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["vitest"],
+  "commandsRun": ["pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts"]
+}
+</invoke>

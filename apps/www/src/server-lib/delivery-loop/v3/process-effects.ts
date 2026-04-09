@@ -1005,20 +1005,17 @@ async function handleCreatePlanArtifact(params: {
 async function handleRunLeaseExpiryCheck(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
-  payload: Extract<
-    EffectPayload,
-    { kind: "run_lease_expiry_check" | "ack_timeout_check" }
-  >;
+  payload: Extract<EffectPayload, { kind: "run_lease_expiry_check" }>;
 }): Promise<EffectResult> {
-  const staleResult =
-    params.payload.kind === "run_lease_expiry_check"
-      ? ({ kind: "run_lease_expiry_check", outcome: "stale" } as const)
-      : ({ kind: "ack_timeout_check", outcome: "stale" } as const);
+  const staleResult = {
+    kind: "run_lease_expiry_check" as const,
+    outcome: "stale" as const,
+  };
   const firedResult = {
-    kind: params.payload.kind,
-    outcome: "fired",
+    kind: "run_lease_expiry_check" as const,
+    outcome: "fired" as const,
     runId: params.payload.runId,
-  } as const;
+  };
   const [head, workflow] = await Promise.all([
     getWorkflowHead({ db: params.db, workflowId: params.effect.workflowId }),
     getWorkflow({ db: params.db, workflowId: params.effect.workflowId }),
@@ -1027,21 +1024,14 @@ async function handleRunLeaseExpiryCheck(params: {
     return staleResult;
   }
 
-  if (
-    head.state !== "implementing" &&
-    head.state !== "awaiting_implementation_acceptance"
-  ) {
+  if (head.state !== "implementing") {
     return staleResult;
   }
 
   const hasMatchingLease =
     head.leaseExpiresAt !== null &&
     head.leaseExpiresAt.getTime() <= params.effect.dueAt.getTime();
-  const isLegacyAckTimeout = params.payload.kind === "ack_timeout_check";
-  if (
-    head.activeRunId !== params.payload.runId ||
-    (!hasMatchingLease && !isLegacyAckTimeout)
-  ) {
+  if (head.activeRunId !== params.payload.runId || !hasMatchingLease) {
     return staleResult;
   }
 
@@ -1309,10 +1299,7 @@ async function processSingleEffect(params: {
       return;
     }
 
-    if (
-      payload.kind === "run_lease_expiry_check" ||
-      payload.kind === "ack_timeout_check"
-    ) {
+    if (payload.kind === "run_lease_expiry_check") {
       await executeStateBlockingEffect({
         db: params.db,
         effect: params.effect,

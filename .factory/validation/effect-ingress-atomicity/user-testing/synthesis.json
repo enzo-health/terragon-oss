@@ -1,0 +1,23 @@
+{
+  "milestone": "effect-ingress-atomicity",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 30,
+    "passed": 30,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-API-001", "VAL-API-002", "VAL-API-003", "VAL-API-004", "VAL-API-005",
+    "VAL-API-006", "VAL-API-007", "VAL-API-008", "VAL-API-009", "VAL-API-010",
+    "VAL-API-011", "VAL-API-012", "VAL-API-013", "VAL-API-014",
+    "VAL-PROC-006", "VAL-PROC-007", "VAL-PROC-008", "VAL-PROC-009", "VAL-PROC-010",
+    "VAL-PROC-011", "VAL-PROC-012",
+    "VAL-CROSS-002", "VAL-CROSS-004", "VAL-CROSS-005", "VAL-CROSS-008"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}

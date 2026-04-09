@@ -61,21 +61,8 @@ async function appendInvariantJournalActions(params: {
 }
 
 export function normalizeLoopEventForKernel(event: LoopEvent): LoopEvent {
-  switch (event.type) {
-    case "dispatch_sent":
-      return {
-        type: "dispatch_queued",
-        runId: event.runId,
-        ackDeadlineAt: event.ackDeadlineAt,
-      };
-    case "dispatch_acked":
-      return {
-        type: "dispatch_accepted",
-        runId: event.runId,
-      };
-    default:
-      return event;
-  }
+  // No legacy event normalization needed - all events are canonical v3 format
+  return event;
 }
 
 type KernelAdvanceResult = {

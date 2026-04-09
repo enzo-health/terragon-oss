@@ -185,17 +185,7 @@ describe("effectResultToEvent", () => {
     expect(result).toBeNull();
   });
 
-  it("legacy ack timeout results still map to dispatch_ack_timeout", () => {
-    const result = effectResultToEvent({
-      kind: "ack_timeout_check",
-      outcome: "fired",
-      runId: "r-legacy",
-    });
-    expect(result).toEqual({
-      type: "dispatch_ack_timeout",
-      runId: "r-legacy",
-    });
-  });
+
 
   // dispatch_implementing
   it("implementing dispatch dispatched → dispatch_queued", () => {
@@ -1300,66 +1290,7 @@ describe("drainDueEffects", () => {
     );
   });
 
-  it("keeps legacy ack timeout effects working during the migration window", async () => {
-    const now = new Date("2026-03-18T10:00:00.000Z");
-    const workflowId = await createWorkflowFixture();
-    const head = await ensureWorkflowHead({ db, workflowId });
-    if (!head) throw new Error("Expected workflow head");
 
-    const dispatchRunId = `run-${nanoid()}`;
-    const moved = await updateWorkflowHead({
-      db,
-      head: {
-        ...head,
-        version: head.version + 1,
-        state: "awaiting_implementation_acceptance",
-        activeGate: null,
-        activeRunId: dispatchRunId,
-        activeRunSeq: 1,
-        leaseExpiresAt: null,
-        blockedReason: null,
-        updatedAt: now,
-        lastActivityAt: now,
-      },
-      expectedVersion: head.version,
-    });
-    expect(moved).toBe(true);
-
-    const effect: EffectSpec = {
-      kind: "ack_timeout_check",
-      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:legacy-ack-timeout`,
-      dueAt: now,
-      payload: {
-        kind: "ack_timeout_check",
-        runId: dispatchRunId,
-        workflowVersion: head.version + 1,
-      },
-    };
-
-    const inserted = await insertEffects({
-      db,
-      workflowId,
-      workflowVersion: head.version + 1,
-      effects: [effect],
-    });
-    expect(inserted).toBe(1);
-
-    const drain = await drainDueEffects({
-      db,
-      workflowId,
-      maxItems: 1,
-      leaseOwnerPrefix: "test:v3-effects",
-      now,
-    });
-    expect(drain.processed).toBe(1);
-
-    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
-      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
-    });
-    expect(
-      journalRows.filter((row) => row.eventType === "dispatch_ack_timeout"),
-    ).toHaveLength(1);
-  });
 
   it("lease expiry fires when no daemon run context exists", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");

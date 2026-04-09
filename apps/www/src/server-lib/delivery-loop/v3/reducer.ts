@@ -297,17 +297,6 @@ function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
   };
 }
 
-function normalizeHeadForReduction(head: WorkflowHead): WorkflowHead {
-  if (head.state !== "awaiting_implementation_acceptance") {
-    return head;
-  }
-
-  return {
-    ...head,
-    state: "implementing",
-  };
-}
-
 function publishStatusEffect(head: WorkflowHead, now: Date): EffectSpec {
   return {
     kind: "publish_status",
@@ -536,7 +525,7 @@ export function reduce(params: {
   now?: Date;
 }): ReduceResult {
   const now = params.now ?? new Date();
-  const head = normalizeHeadForReduction(params.head);
+  const head = params.head;
   const event = params.event;
 
   let result: ReduceResult;
@@ -1232,3 +1221,6 @@ export function reduce(params: {
     effects: result.effects,
   });
 }
+
+// Keep for backward compatibility - re-export the unified retry logic
+export { executeRetry };

@@ -485,17 +485,7 @@ export const BRANCH_CASES: BranchTransitionCase[] = [
     expectedVersionDelta: 0,
     expectedEffects: [],
   },
-  {
-    name: "legacy awaiting_implementation_acceptance normalizes to implementing on dispatch_claimed",
-    head: {
-      ...makeContractHead("implementing"),
-      state: "awaiting_implementation_acceptance",
-    },
-    event: { type: "dispatch_claimed", runId: "r-2" },
-    expectedState: "implementing",
-    expectedVersionDelta: 0,
-    expectedEffects: [],
-  },
+
   {
     name: "implementing(activeRunId=null) + dispatch_accepted -> noop",
     head: {

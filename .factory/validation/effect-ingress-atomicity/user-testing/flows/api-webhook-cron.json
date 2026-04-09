@@ -1,0 +1,17 @@
+{
+  "assertionResults": [
+    {"id": "VAL-API-006", "status": "pass", "evidence": "webhook route tests: signature and delivery-id guards enforced"},
+    {"id": "VAL-API-007", "status": "pass", "evidence": "webhook route tests: GitHub delivery claims are idempotent across retries"},
+    {"id": "VAL-API-008", "status": "pass", "evidence": "scheduled-tasks cron tests: reports explicit pass/failure fields"},
+    {"id": "VAL-API-009", "status": "pass", "evidence": "dispatch-ack-timeout tests: enforces prod auth requirement"},
+    {"id": "VAL-API-010", "status": "pass", "evidence": "dispatch-ack-timeout tests: drains due effect checks correctly"}
+  ],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["vitest"],
+  "commandsRun": [
+    "pnpm -C apps/www exec vitest run src/app/api/webhooks/github/route.test.ts",
+    "pnpm -C apps/www exec vitest run src/app/api/internal/cron/scheduled-tasks/route.test.ts",
+    "pnpm -C apps/www exec vitest run src/app/api/internal/cron/dispatch-ack-timeout/route.test.ts"
+  ]
+}

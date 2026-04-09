@@ -1,0 +1,15 @@
+{
+  "assertionResults": [
+    {"id": "VAL-CROSS-002", "status": "pass", "evidence": "durable-delivery tests: duplicate ingress across API and runtime remains idempotent"},
+    {"id": "VAL-CROSS-004", "status": "pass", "evidence": "e2e tests: timeout and watchdog recovery paths restore forward progress"},
+    {"id": "VAL-CROSS-005", "status": "pass", "evidence": "e2e tests: transient infra failures use retry lane without burning fix lane"},
+    {"id": "VAL-CROSS-008", "status": "pass", "evidence": "e2e tests: repeated watchdog ticks do not duplicate dispatch progression"}
+  ],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["vitest"],
+  "commandsRun": [
+    "pnpm -C apps/www exec vitest run src/server-lib/delivery-loop/v3/durable-delivery.test.ts",
+    "pnpm -C apps/www exec vitest run src/server-lib/e2e.test.ts"
+  ]
+}
