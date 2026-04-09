@@ -49,6 +49,7 @@ import {
   type LoopEvent,
   type WorkflowState,
 } from "./types";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 
 const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>(["processing"]);
 type DeliveryWorkflowRecord = NonNullable<
@@ -275,7 +276,7 @@ async function executeStateBlockingEffect(params: {
   });
   if (event) {
     try {
-      await appendEventAndAdvanceExplicit({
+      const advanceResult = await appendEventAndAdvanceExplicit({
         db: params.db,
         workflowId: params.effect.workflowId,
         source: "system",
@@ -286,6 +287,24 @@ async function executeStateBlockingEffect(params: {
           drainEffects: false, // prevent recursive drain — outer drainDueEffects loop handles follow-on effects
         },
       });
+
+      // Broadcast delivery-loop refetch on material state transitions
+      if (advanceResult.transitioned) {
+        const workflow = await getWorkflow({
+          db: params.db,
+          workflowId: params.effect.workflowId,
+        });
+        if (workflow) {
+          await broadcastDeliveryLoopRefetch({
+            db: params.db,
+            workflowId: params.effect.workflowId,
+            threadId: workflow.threadId,
+            userId: workflow.userId,
+            stateBefore: advanceResult.stateBefore,
+            stateAfter: advanceResult.stateAfter,
+          });
+        }
+      }
     } catch (error) {
       // VAL-PROC-011: Prevent silent succeeded-without-transition state.
       // If transition append fails, mark the effect as failed so the system
@@ -731,6 +750,60 @@ const STATE_LABELS: Record<string, string> = {
   stopped: "Delivery loop stopped",
   terminated: "Delivery loop terminated",
 };
+
+/**
+ * Broadcast delivery-loop refetch to notify clients of state changes.
+ * Best-effort: failures are logged but don't block effect processing.
+ */
+async function broadcastDeliveryLoopRefetch(params: {
+  db: DB;
+  workflowId: string;
+  threadId: string;
+  userId: string;
+  stateBefore: string | null;
+  stateAfter: string | null;
+}): Promise<void> {
+  // Only broadcast on material state transitions (not idempotent/no-op)
+  if (params.stateBefore === params.stateAfter) {
+    return;
+  }
+
+  // Get threadChatId from the workflow head or latest threadChat
+  try {
+    const threadChat = await params.db.query.threadChat.findFirst({
+      where: eq(schema.threadChat.threadId, params.threadId),
+      orderBy: [desc(schema.threadChat.createdAt)],
+      columns: { id: true },
+    });
+    const threadChatId = threadChat?.id ?? params.threadId;
+
+    await publishBroadcastUserMessage({
+      type: "user",
+      id: params.userId,
+      data: {
+        threadPatches: [
+          {
+            threadId: params.threadId,
+            threadChatId,
+            op: "refetch",
+            refetch: ["delivery-loop"],
+          },
+        ],
+      },
+    });
+  } catch (error) {
+    console.warn(
+      "[delivery-loop] broadcast failed (non-blocking) — state transition still applied",
+      {
+        workflowId: params.workflowId,
+        threadId: params.threadId,
+        stateBefore: params.stateBefore,
+        stateAfter: params.stateAfter,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
+}
 
 function formatStatusBodyV3(state: string): string {
   const label = STATE_LABELS[state] ?? `State: ${state}`;
