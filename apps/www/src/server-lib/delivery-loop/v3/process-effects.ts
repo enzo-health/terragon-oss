@@ -227,13 +227,24 @@ async function executeStateBlockingEffect(params: {
     }
   }
 
-  // Mark effect succeeded — the effect did its work regardless of outcome
-  await markEffectSucceeded({
+  // Mark effect succeeded — the effect did its work regardless of outcome.
+  // If lease ownership was lost (markEffectSucceeded returns false), suppress
+  // the transition to prevent stale workers from mutating workflow state.
+  const leaseStillHeld = await markEffectSucceeded({
     db: params.db,
     effectId: params.effect.id,
     leaseOwner: params.leaseOwner,
     leaseEpoch: params.effect.leaseEpoch,
   });
+
+  if (!leaseStillHeld) {
+    console.warn("[delivery-loop] lease lost during effect processing", {
+      workflowId: params.effect.workflowId,
+      effectId: params.effect.id,
+      effectKind: result.kind,
+    });
+    return;
+  }
 
   // Map result to event and fire if non-null
   const currentHead = await getWorkflowHead({
@@ -258,17 +269,41 @@ async function executeStateBlockingEffect(params: {
     activeRunSeq: eventRunSeq,
   });
   if (event) {
-    await appendEventAndAdvanceExplicit({
-      db: params.db,
-      workflowId: params.effect.workflowId,
-      source: "system",
-      idempotencyKey: `effect-result:${params.effect.id}`,
-      event,
-      behavior: {
-        applyGateBypass: false,
-        drainEffects: false, // prevent recursive drain — outer drainDueEffects loop handles follow-on effects
-      },
-    });
+    try {
+      await appendEventAndAdvanceExplicit({
+        db: params.db,
+        workflowId: params.effect.workflowId,
+        source: "system",
+        idempotencyKey: `effect-result:${params.effect.id}`,
+        event,
+        behavior: {
+          applyGateBypass: false,
+          drainEffects: false, // prevent recursive drain — outer drainDueEffects loop handles follow-on effects
+        },
+      });
+    } catch (error) {
+      // VAL-PROC-011: Prevent silent succeeded-without-transition state.
+      // If transition append fails, mark the effect as failed so the system
+      // will retry rather than leaving an unrecoverable silently-succeeded state.
+      console.error(
+        "[delivery-loop] effect transition append failed — marking effect for retry",
+        {
+          workflowId: params.effect.workflowId,
+          effectId: params.effect.id,
+          eventType: event.type,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      await markEffectFailed({
+        db: params.db,
+        effectId: params.effect.id,
+        leaseOwner: params.leaseOwner,
+        leaseEpoch: params.effect.leaseEpoch,
+        errorCode: "transition_append_failed",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        retryAt: addMilliseconds(params.now, 2_000),
+      });
+    }
   }
 }
 
