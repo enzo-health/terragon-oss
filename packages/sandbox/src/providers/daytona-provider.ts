@@ -44,19 +44,22 @@ async function reconcileLifecyclePolicy(
     },
   ];
 
-  for (const lifecycleUpdate of lifecycleUpdates) {
-    if (lifecycleUpdate.currentValue === lifecycleUpdate.nextValue) {
-      continue;
-    }
-
-    try {
-      await lifecycleUpdate.apply();
-    } catch (error) {
-      console.warn(
-        `[daytona] Failed to reconcile ${lifecycleUpdate.name} lifecycle policy for sandbox ${sandbox.id}: ${formatError(error)}`,
-      );
-    }
-  }
+  await Promise.all(
+    lifecycleUpdates
+      .filter(
+        (lifecycleUpdate) =>
+          lifecycleUpdate.currentValue !== lifecycleUpdate.nextValue,
+      )
+      .map(async (lifecycleUpdate) => {
+        try {
+          await lifecycleUpdate.apply();
+        } catch (error) {
+          console.warn(
+            `[daytona] Failed to reconcile ${lifecycleUpdate.name} lifecycle policy for sandbox ${sandbox.id}: ${formatError(error)}`,
+          );
+        }
+      }),
+  );
 }
 
 async function resumeWithRetry(sandboxId: string): Promise<DaytonaSandbox> {

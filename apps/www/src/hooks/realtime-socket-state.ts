@@ -13,7 +13,7 @@ export function getOrCreateRealtimePartySocket(params: {
   return partykitByChannel[params.channel]!;
 }
 
-export function disconnectRealtimePartySocket(channel: string) {
+export function disconnectRealtimePartySocket(channel: string): void {
   const socket = partykitByChannel[channel];
   if (socket) {
     socket.close();
@@ -21,7 +21,7 @@ export function disconnectRealtimePartySocket(channel: string) {
   }
 }
 
-export function incrementRealtimeChannelUsage(channel: string) {
+export function incrementRealtimeChannelUsage(channel: string): void {
   usageCountByChannel[channel] = (usageCountByChannel[channel] || 0) + 1;
 }
 
@@ -30,7 +30,7 @@ export function decrementRealtimeChannelUsage(channel: string): number {
   return usageCountByChannel[channel] || 0;
 }
 
-export function resetRealtimeStateForTests() {
+export function resetRealtimeStateForTests(): void {
   for (const channel of Object.keys(partykitByChannel)) {
     disconnectRealtimePartySocket(channel);
   }

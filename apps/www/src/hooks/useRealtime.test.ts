@@ -544,6 +544,271 @@ describe("useRealtimeThread", () => {
     expect(replayUrl.searchParams.get("fromSeq")).toBe("5");
   });
 
+  it("falls back to live patches when replay fetch fails in the active context", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network fail"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread(
+        "thread-1",
+        "chat-1",
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: 5 },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    const gapPatchMessage: BroadcastUserMessage = {
+      type: "user",
+      id: "message-gap-failure",
+      data: {
+        threadPatches: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            op: "upsert",
+            chatSequence: 8,
+            messageSeq: 8,
+            appendMessages: [{ type: "agent", parts: [] }],
+          },
+        ],
+      },
+    };
+
+    await act(async () => {
+      socket?.dispatchUserMessage(gapPatchMessage);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(receivedPatches).toEqual([gapPatchMessage.data.threadPatches]);
+  });
+
+  it("falls back to live patches when replay payload validation fails", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: "bad-shape",
+        deltaEntries: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread(
+        "thread-1",
+        "chat-1",
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: 5 },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    const gapPatchMessage: BroadcastUserMessage = {
+      type: "user",
+      id: "message-gap-invalid-payload",
+      data: {
+        threadPatches: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            op: "upsert",
+            chatSequence: 9,
+            messageSeq: 9,
+            appendMessages: [{ type: "agent", parts: [] }],
+          },
+        ],
+      },
+    };
+
+    await act(async () => {
+      socket?.dispatchUserMessage(gapPatchMessage);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(receivedPatches).toEqual([gapPatchMessage.data.threadPatches]);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[broadcast] replay fetch failed, applying patches directly",
+      expect.any(Error),
+    );
+  });
+
+  it("drops stale replay failures after the active chat context changes", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    const deferredReplay = createDeferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => deferredReplay.promise)
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          entries: [],
+          deltaEntries: [],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness({
+      activeThreadChatId,
+      baselineMessageSeq,
+    }: {
+      activeThreadChatId: string;
+      baselineMessageSeq: number;
+    }) {
+      useRealtimeThread(
+        "thread-1",
+        activeThreadChatId,
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: baselineMessageSeq },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(
+        createElement(Harness, {
+          activeThreadChatId: "chat-1",
+          baselineMessageSeq: 5,
+        }),
+      );
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root?.render(
+        createElement(Harness, {
+          activeThreadChatId: "chat-2",
+          baselineMessageSeq: 2,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    deferredReplay.reject(new Error("late replay failure"));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(receivedPatches).toHaveLength(0);
+    expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+      "[broadcast] replay fetch failed, applying patches directly",
+      expect.any(Error),
+    );
+  });
+
+  it("aborts an in-flight reconnect replay so the next reconnect retries immediately", async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!(signal instanceof AbortSignal)) {
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread("thread-1", "chat-1", () => {}, { messageSeq: 5 });
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      socket?.dispatchClose();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("drops stale replay responses after the active chat context switches", async () => {
     const receivedPatches: BroadcastThreadPatch[][] = [];
     const deferredReplay = createDeferred<{
