@@ -72,6 +72,9 @@ function getDefaultBreadcrumbs(pathname: string): BreadcrumbItem[] | null {
   if (pathname === "/automations") {
     return [{ label: "Automations", href: "/automations" }];
   }
+  if (pathname === "/reviews") {
+    return [{ label: "Reviews", href: "/reviews" }];
+  }
   if (pathname === "/stats") {
     return [{ label: "Usage Statistics", href: "/stats" }];
   }

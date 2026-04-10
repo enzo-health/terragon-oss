@@ -9,6 +9,7 @@ import {
   ChevronUp,
   Workflow,
   ChartColumnBig,
+  GitPullRequestArrow,
   SunIcon,
   MoonIcon,
 } from "lucide-react";
@@ -131,6 +132,11 @@ export function AppSidebar() {
                 title="Automations"
                 href="/automations"
                 icon={<Workflow className="h-4 w-4" />}
+              />
+              <Item
+                title="Reviews"
+                href="/reviews"
+                icon={<GitPullRequestArrow className="h-4 w-4" />}
               />
               <Item
                 title="Stats"
