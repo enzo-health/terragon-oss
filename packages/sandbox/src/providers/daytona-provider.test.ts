@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreateSandboxOptions } from "../types";
 
 const daytonaCreateMock = vi.fn();
@@ -117,6 +117,10 @@ describe("DaytonaProvider lifecycle policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("DAYTONA_API_KEY", "test-api-key");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("creates new sandboxes with the intended lifecycle policy", async () => {

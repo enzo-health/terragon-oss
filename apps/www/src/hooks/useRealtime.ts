@@ -19,13 +19,16 @@ import {
 } from "react";
 import { publicBroadcastHost } from "@terragon/env/next-public";
 import { SandboxProvider } from "@terragon/types/sandbox";
+import {
+  decrementRealtimeChannelUsage,
+  disconnectRealtimePartySocket,
+  getOrCreateRealtimePartySocket,
+  incrementRealtimeChannelUsage,
+} from "./realtime-socket-state";
 
 function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;
 }
-
-const usageCountByChannel: Record<string, number> = {};
-const partykitByChannel: Record<string, PartySocket> = {};
 
 function getOrCreatePartySocket({
   party,
@@ -36,47 +39,32 @@ function getOrCreatePartySocket({
   channel: string;
   authToken: string;
 }) {
-  if (!partykitByChannel[channel]) {
-    const socket = new PartySocket({
-      host: publicBroadcastHost(),
-      party,
-      room: channel,
-      maxRetries: 10,
-      maxReconnectionDelay: 5 * 60 * 1000,
-      reconnectionDelayGrowFactor: 2,
-      query: () => ({
-        token: authToken,
-      }),
-    });
-    socket.addEventListener("open", () => {
-      console.log(`[broadcast] connected to channel: ${channel}`);
-    });
-    socket.addEventListener("close", () => {
-      console.log(`[broadcast] disconnected from channel: ${channel}`);
-    });
-    socket.addEventListener("error", (error) => {
-      console.error(`[broadcast] socket error on channel ${channel}:`, error);
-    });
-    partykitByChannel[channel] = socket;
-  }
-  return partykitByChannel[channel];
-}
-
-function disconnectPartySocket(channel: string) {
-  const socket = partykitByChannel[channel];
-  if (socket) {
-    socket.close();
-    delete partykitByChannel[channel];
-  }
-}
-
-export function resetRealtimeStateForTests() {
-  for (const channel of Object.keys(partykitByChannel)) {
-    disconnectPartySocket(channel);
-  }
-  for (const channel of Object.keys(usageCountByChannel)) {
-    delete usageCountByChannel[channel];
-  }
+  return getOrCreateRealtimePartySocket({
+    channel,
+    createSocket: () => {
+      const socket = new PartySocket({
+        host: publicBroadcastHost(),
+        party,
+        room: channel,
+        maxRetries: 10,
+        maxReconnectionDelay: 5 * 60 * 1000,
+        reconnectionDelayGrowFactor: 2,
+        query: () => ({
+          token: authToken,
+        }),
+      });
+      socket.addEventListener("open", () => {
+        console.log(`[broadcast] connected to channel: ${channel}`);
+      });
+      socket.addEventListener("close", () => {
+        console.log(`[broadcast] disconnected from channel: ${channel}`);
+      });
+      socket.addEventListener("error", (error) => {
+        console.error(`[broadcast] socket error on channel ${channel}:`, error);
+      });
+      return socket;
+    },
+  });
 }
 
 function usePartySocket({
@@ -97,11 +85,11 @@ function usePartySocket({
     }
   }, [socket, party, channel, authToken]);
   useEffect(() => {
-    usageCountByChannel[channel] = (usageCountByChannel[channel] || 0) + 1;
+    incrementRealtimeChannelUsage(channel);
     return () => {
-      usageCountByChannel[channel] = (usageCountByChannel[channel] || 0) - 1;
-      if (usageCountByChannel[channel] === 0 && disconnectOnDismount) {
-        disconnectPartySocket(channel);
+      const remainingUsageCount = decrementRealtimeChannelUsage(channel);
+      if (remainingUsageCount === 0 && disconnectOnDismount) {
+        disconnectRealtimePartySocket(channel);
       }
     };
   }, [disconnectOnDismount, channel]);

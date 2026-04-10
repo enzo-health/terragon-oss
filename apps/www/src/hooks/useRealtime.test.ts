@@ -5,11 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import type { BroadcastUserMessage } from "@terragon/types/broadcast";
-import {
-  resetRealtimeStateForTests,
-  shouldProcessThreadPatch,
-  useRealtimeThread,
-} from "./useRealtime";
+import { shouldProcessThreadPatch, useRealtimeThread } from "./useRealtime";
+import { resetRealtimeStateForTests } from "./realtime-socket-state";
 
 interface MockPartySocketLike extends EventTarget {
   messageListeners: number;
