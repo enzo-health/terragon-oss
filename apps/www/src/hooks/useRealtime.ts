@@ -180,6 +180,7 @@ function useRealtimeBase({
     if (!socket || !trackReadyState) {
       return;
     }
+    setSocketReadyState(socket.readyState);
     const onReadyStateChange = () => {
       setSocketReadyState(socket.readyState);
     };
@@ -334,6 +335,17 @@ export function useRealtimeThread(
     [],
   );
 
+  const applyPatches = useCallback(
+    (patches: BroadcastThreadPatch[]) => {
+      if (patches.length === 0) {
+        return;
+      }
+      updateSequenceTrackers(patches);
+      onThreadPatchesRef.current(patches);
+    },
+    [updateSequenceTrackers],
+  );
+
   const fetchReplay = useCallback(
     async ({
       replayMessages,
@@ -353,6 +365,7 @@ export function useRealtimeThread(
         (!shouldReplayMessages && !shouldReplayDeltas) ||
         replayInFlightRef.current
       ) {
+        applyPatches(livePatches);
         return false;
       }
 
@@ -423,10 +436,7 @@ export function useRealtimeThread(
         }
 
         const combinedPatches = [...replayPatches, ...livePatches];
-        if (combinedPatches.length > 0) {
-          updateSequenceTrackers(combinedPatches);
-          onThreadPatchesRef.current(combinedPatches);
-        }
+        applyPatches(combinedPatches);
       } catch (error) {
         if (
           replayGenerationRef.current !== replayGeneration ||
@@ -438,10 +448,7 @@ export function useRealtimeThread(
           "[broadcast] replay fetch failed, applying patches directly",
           error,
         );
-        if (livePatches.length > 0) {
-          updateSequenceTrackers(livePatches);
-          onThreadPatchesRef.current(livePatches);
-        }
+        applyPatches(livePatches);
       } finally {
         if (
           replayGenerationRef.current === replayGeneration &&
@@ -453,7 +460,7 @@ export function useRealtimeThread(
 
       return true;
     },
-    [threadChatId, threadId, updateSequenceTrackers],
+    [applyPatches, threadChatId, threadId],
   );
 
   const { socketReadyState } = useRealtimeUser({
@@ -524,11 +531,10 @@ export function useRealtimeThread(
           !(hasMessageGap || hasDeltaGap) ||
           replayInFlightRef.current
         ) {
-          updateSequenceTrackers(patches);
-          onThreadPatchesRef.current(patches);
+          applyPatches(patches);
         }
       },
-      [fetchReplay, threadChatId, threadId, updateSequenceTrackers],
+      [applyPatches, fetchReplay, threadChatId, threadId],
     ),
   });
 
