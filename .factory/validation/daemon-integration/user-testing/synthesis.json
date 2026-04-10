@@ -1,6 +1,6 @@
 {
   "milestone": "daemon-integration",
-  "round": 3,
+  "round": 4,
   "status": "pass",
   "assertionsSummary": {
     "total": 3,
@@ -17,9 +17,9 @@
   "blockedAssertions": [],
   "frictions": [
     {
-      "description": "Initial local stack was missing required env wiring (`LOCALHOST_PUBLIC_DOMAIN` for web, `BETTER_AUTH_URL` injection for PartyKit), causing early 500/401 failures during live capture setup.",
+      "description": "Live rerun was initially blocked by environment drift: earlier evidence targeted stale fixtures, the active listeners moved between `3000/1999` and `3100/2999`, and PartyKit websocket auth only succeeded once it was restarted with explicit runtime vars instead of relying on wrapper-script env propagation.",
       "affectedAssertions": ["VAL-CROSS-001"],
-      "resolution": "Reran against an isolated local stack (`web:3100`, `broadcast:2999`) with correct env injection and captured successful websocket broadcast evidence for terminal daemon-event test-auth flow."
+      "resolution": "Seeded a fresh isolated fixture user/workflow, restarted a coherent local stack (`web:3100`, `broadcast:1999`) with `LOCALHOST_PUBLIC_DOMAIN`, `BETTER_AUTH_URL`, `NEXT_PUBLIC_BROADCAST_URL`, and `INTERNAL_SHARED_SECRET` aligned, then captured a real terminal daemon-event ack plus user-channel websocket `refetch:[\"delivery-loop\"]` delivery."
     }
   ],
   "appliedUpdates": [
@@ -50,7 +50,7 @@
       "status": "pass",
       "summary": "Daemon terminal events trigger broadcast with delivery-loop refetch wiring in daemon-event route.",
       "toolsUsed": ["code-analysis", "unit-test-review"],
-      "evidence": ["apps/www/src/app/api/daemon-event/route.ts:1468-1482"]
+      "evidence": ["apps/www/src/app/api/daemon-event/route.ts:1539-1567"]
     },
     {
       "assertionId": "VAL-BROADCAST-005",
@@ -58,20 +58,26 @@
       "summary": "No-spam behavior remains protected by material-change checks and route dedup/idempotency tests.",
       "toolsUsed": ["code-analysis", "unit-test-review"],
       "evidence": [
-        "apps/www/src/app/api/daemon-event/route.ts:1468-1482",
+        "apps/www/src/app/api/daemon-event/route.ts:1495-1567",
         "apps/www/src/app/api/daemon-event/route.test.ts"
       ]
     },
     {
       "assertionId": "VAL-CROSS-001",
       "status": "pass",
-      "summary": "Authentication blocker is removed in test context and proven live: terminal v2 daemon-event under test-auth acknowledged and emitted websocket `refetch:[\"delivery-loop\"]` patch for the target thread/chat.",
-      "toolsUsed": ["vitest", "code-analysis", "psql", "node-websocket"],
+      "summary": "Authentication blocker is removed in test context and proven live: a freshly seeded terminal v2 daemon-event under test-auth acknowledged on `web:3100` and emitted websocket `refetch:[\"delivery-loop\"]` on `broadcast:1999` for the fresh thread/chat.",
+      "toolsUsed": [
+        "vitest",
+        "code-analysis",
+        "psql",
+        "node-websocket",
+        "agent-browser"
+      ],
       "evidence": [
         "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts",
-        "live runId=val-cross-live-run-4 eventId=event-live-1775842533838 seq=31",
+        "live runId=val-cross-live-1775844336645 eventId=event-live-1775844336645 seq=10",
         "http://localhost:3100/api/daemon-event -> 200 ack",
-        "ws://127.0.0.1:2999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k -> refetch:[\"delivery-loop\"]",
+        "ws://127.0.0.1:1999/parties/main/user:e2e-test-user-001 -> refetch:[\"delivery-loop\"]",
         ".factory/validation/daemon-integration/user-testing/flows/VAL-CROSS-001.json"
       ]
     }

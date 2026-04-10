@@ -1,12 +1,18 @@
 {
   "groupId": "VAL-CROSS-001",
-  "testedAt": "2026-04-10T17:35:33.838Z",
+  "testedAt": "2026-04-10T18:05:36.645Z",
   "isolation": {
     "sessionId": "val-cross-001-live-test-auth-path",
     "environment": "local live daemon-event + broadcast validation",
     "surface": "/api/daemon-event + PartyKit user channel"
   },
-  "toolsUsed": ["vitest", "code-analysis", "psql", "node-websocket"],
+  "toolsUsed": [
+    "vitest",
+    "code-analysis",
+    "psql",
+    "node-websocket",
+    "agent-browser"
+  ],
   "assertions": [
     {
       "id": "VAL-CROSS-001",
@@ -21,27 +27,32 @@
         {
           "action": "Execute live terminal daemon-event path under test auth and capture PartyKit user-channel broadcast",
           "expected": "Terminal v2 daemon-event should process and publish refetch:[\"delivery-loop\"] over websocket",
-          "observed": "Live run `val-cross-live-run-4` returned `200` ack for `event-live-1775842533838` and websocket capture observed thread patch `{ op: \"refetch\", refetch: [\"delivery-loop\"] }` for thread `0e28b4ab-a354-4856-b9a0-35ecf0710e91` / chat `785991e1-0cda-4c07-88d1-284f403deee4`."
+          "observed": "After seeding a fresh workflow/thread for fixture user `e2e-test-user-001` and restarting a coherent local stack (`web:3100`, `broadcast:1999`) with explicit runtime vars, live run `val-cross-live-1775844336645` returned `200` ack for `event-live-1775844336645` and websocket capture observed thread patch `{ op: \"refetch\", refetch: [\"delivery-loop\"] }` for fresh thread `7c47b8e0-25bd-4e3a-82d6-6d7e8b154254` / chat `27a944bc-fbe4-45c3-8ee5-b6194b19d460`."
         }
       ],
       "evidence": {
         "commands": [
           "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts",
-          "psql ... insert agent_run_context run_id=val-cross-live-run-4",
-          "node websocket+POST validator script against web=http://localhost:3100, broadcast=ws://127.0.0.1:2999"
+          "pnpm delivery-loop:local fixtures seed",
+          "signed Better Auth fixture session cookie -> GET http://127.0.0.1:3100/api/internal/daemon-token",
+          "agent-browser websocket probe against ws://127.0.0.1:1999/parties/main/user:e2e-test-user-001?apiKey=<daemon-token>",
+          "psql ... insert fresh thread/thread_chat/delivery_workflow/delivery_workflow_head_v3/agent_run_context rows",
+          "node websocket+POST validator script against web=http://localhost:3100, broadcast=ws://127.0.0.1:1999"
         ],
         "commandResults": [
           "PASS: 52 tests passed",
-          "PASS: HTTP 200 ack {\"success\":true,\"acknowledgedEventId\":\"event-live-1775842533838\",\"acknowledgedSeq\":31}",
-          "PASS: websocket payload contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]} for target thread/chat"
+          "PASS: fixture daemon token minted from http://127.0.0.1:3100/api/internal/daemon-token and accepted by http://127.0.0.1:3100/api/internal/broadcast?channel=user:e2e-test-user-001",
+          "PASS: browser websocket probe stayed open on ws://127.0.0.1:1999/parties/main/user:e2e-test-user-001?apiKey=<daemon-token> and received direct PartyKit broadcast payloads",
+          "PASS: HTTP 200 ack {\"success\":true,\"acknowledgedEventId\":\"event-live-1775844336645\",\"acknowledgedSeq\":10}",
+          "PASS: websocket payload contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]} for fresh target thread/chat and run context advanced to completed"
         ],
         "codeReferences": [
           "apps/www/src/app/api/daemon-event/route.ts:597-633",
           "apps/www/src/app/api/daemon-event/route.ts:662-668",
           "apps/www/src/app/api/daemon-event/route.ts:772-842",
-          "apps/www/src/app/api/daemon-event/route.ts:1468-1482",
-          "apps/www/src/app/api/daemon-event/route.test.ts:424-521",
-          "apps/www/src/app/api/daemon-event/route.test.ts:2452-2510"
+          "apps/www/src/app/api/daemon-event/route.ts:1495-1567",
+          "apps/www/src/app/api/daemon-event/route.test.ts:425-540",
+          "apps/www/src/app/api/daemon-event/route.test.ts:2447-2512"
         ]
       },
       "issues": null
