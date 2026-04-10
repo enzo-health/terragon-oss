@@ -212,6 +212,14 @@ function ChatUI({
   const chatFromCollection = useChatFromCollection(threadId, threadChatId);
   const threadChat = chatFromCollection ?? chatFromQuery ?? null;
   const isThreadChatLoading = !threadChat && isChatFetching;
+  const realtimeReplayBaseline = useMemo(() => {
+    const canonicalMessageSeq = Math.max(
+      shell?.primaryThreadChat.messageSeq ?? 0,
+      threadChat?.messageSeq ?? 0,
+    );
+
+    return canonicalMessageSeq > 0 ? { messageSeq: canonicalMessageSeq } : null;
+  }, [shell?.primaryThreadChat.messageSeq, threadChat?.messageSeq]);
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -329,56 +337,61 @@ function ChatUI({
     isReadOnly,
   });
   const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
-  useRealtimeThread(threadId, threadChatId, (patches) => {
-    let hasMaterializedMessages = false;
-    let latestPatchedStatus: ThreadStatus | null = null;
-    let shouldRefreshDeliveryLoopStatus = false;
-    for (const patch of patches) {
-      if (patch.op === "delta") {
-        applyDelta(patch);
-      } else {
-        if (shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)) {
-          shouldRefreshDeliveryLoopStatus = true;
+  useRealtimeThread(
+    threadId,
+    threadChatId,
+    (patches) => {
+      let hasMaterializedMessages = false;
+      let latestPatchedStatus: ThreadStatus | null = null;
+      let shouldRefreshDeliveryLoopStatus = false;
+      for (const patch of patches) {
+        if (patch.op === "delta") {
+          applyDelta(patch);
+        } else {
+          if (shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)) {
+            shouldRefreshDeliveryLoopStatus = true;
+          }
+          if (patch.chat?.status) {
+            latestPatchedStatus = patch.chat.status;
+          }
+          if (
+            patch.appendMessages !== undefined &&
+            patch.appendMessages.length > 0 &&
+            patch.appendMessages.some(
+              (message) =>
+                typeof message === "object" &&
+                message !== null &&
+                "type" in message &&
+                (message as { type?: unknown }).type === "agent",
+            )
+          ) {
+            hasMaterializedMessages = true;
+          }
+          // Write to TanStack DB collections (primary data path)
+          applyShellPatchToCollection(patch);
+          applyChatPatchToCollection(patch);
+          applyThreadPatchToCollection(patch);
+          // Dual-write to React Query cache (diff invalidation + legacy consumers)
+          applyThreadPatchToQueryClient({ queryClient, patch });
         }
-        if (patch.chat?.status) {
-          latestPatchedStatus = patch.chat.status;
-        }
-        if (
-          patch.appendMessages !== undefined &&
-          patch.appendMessages.length > 0 &&
-          patch.appendMessages.some(
-            (message) =>
-              typeof message === "object" &&
-              message !== null &&
-              "type" in message &&
-              (message as { type?: unknown }).type === "agent",
-          )
-        ) {
-          hasMaterializedMessages = true;
-        }
-        // Write to TanStack DB collections (primary data path)
-        applyShellPatchToCollection(patch);
-        applyChatPatchToCollection(patch);
-        applyThreadPatchToCollection(patch);
-        // Dual-write to React Query cache (diff invalidation + legacy consumers)
-        applyThreadPatchToQueryClient({ queryClient, patch });
       }
-    }
-    // When a complete message arrives, clear accumulated deltas since the
-    // DB message now contains the full text.
-    if (
-      hasMaterializedMessages &&
-      latestPatchedStatus != null &&
-      !isThreadStatusWorking(latestPatchedStatus)
-    ) {
-      clearDeltasForThread();
-    }
-    if (shouldShowDeliveryLoopStatus && shouldRefreshDeliveryLoopStatus) {
-      queryClient.invalidateQueries({
-        queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
-      });
-    }
-  });
+      // When a complete message arrives, clear accumulated deltas since the
+      // DB message now contains the full text.
+      if (
+        hasMaterializedMessages &&
+        latestPatchedStatus != null &&
+        !isThreadStatusWorking(latestPatchedStatus)
+      ) {
+        clearDeltasForThread();
+      }
+      if (shouldShowDeliveryLoopStatus && shouldRefreshDeliveryLoopStatus) {
+        queryClient.invalidateQueries({
+          queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
+        });
+      }
+    },
+    realtimeReplayBaseline ?? undefined,
+  );
 
   const chatAgent = ensureAgent(threadChat?.agent);
   const hasCheckpoint = useMemo(

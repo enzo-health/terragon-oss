@@ -5,11 +5,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import type { BroadcastUserMessage } from "@terragon/types/broadcast";
-import { shouldProcessThreadPatch, useRealtimeThread } from "./useRealtime";
+import {
+  resetRealtimeStateForTests,
+  shouldProcessThreadPatch,
+  useRealtimeThread,
+} from "./useRealtime";
 
 interface MockPartySocketLike extends EventTarget {
   messageListeners: number;
+  readyState: number;
   dispatchUserMessage(message: BroadcastUserMessage): void;
+  dispatchOpen(): void;
+  dispatchClose(): void;
   close: ReturnType<typeof vi.fn>;
   reconnect: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
@@ -22,6 +29,7 @@ const mockPartySocketState = vi.hoisted(() => ({
 vi.mock("partysocket", () => {
   class MockPartySocket extends EventTarget implements MockPartySocketLike {
     messageListeners = 0;
+    readyState: number = WebSocket.CONNECTING;
     close = vi.fn();
     reconnect = vi.fn();
     send = vi.fn();
@@ -68,6 +76,16 @@ vi.mock("partysocket", () => {
         new MessageEvent("message", { data: JSON.stringify(message) }),
       );
     }
+
+    dispatchOpen(): void {
+      this.readyState = WebSocket.OPEN;
+      this.dispatchEvent(new Event("open"));
+    }
+
+    dispatchClose(): void {
+      this.readyState = WebSocket.CLOSED;
+      this.dispatchEvent(new CloseEvent("close"));
+    }
   }
 
   return {
@@ -87,8 +105,10 @@ afterEach(() => {
   root = null;
   container?.remove();
   container = null;
+  resetRealtimeStateForTests();
   mockPartySocketState.sockets.splice(0);
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("shouldProcessThreadPatch", () => {
@@ -167,6 +187,11 @@ describe("useRealtimeThread", () => {
     await act(async () => {
       root?.render(createElement(Harness));
     });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     const socket = mockPartySocketState.sockets.at(-1);
     expect(socket).toBeDefined();
@@ -207,6 +232,73 @@ describe("useRealtimeThread", () => {
         shell: {
           primaryThreadChatId: "chat-2",
         },
+      },
+    ]);
+  });
+
+  it("replays missed messages immediately after reconnect from the fetched baseline", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            seq: 6,
+            messages: [{ type: "agent", parts: [] }],
+          },
+        ],
+        deltaEntries: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread(
+        "thread-1",
+        "chat-1",
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: 5 },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      await Promise.resolve();
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(replayUrl.pathname).toBe("/api/thread-replay");
+    expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
+    expect(replayUrl.searchParams.get("fromSeq")).toBe("5");
+    expect(replayUrl.searchParams.get("threadChatId")).toBeNull();
+    expect(replayUrl.searchParams.get("fromDeltaSeq")).toBeNull();
+    expect(receivedPatches).toHaveLength(1);
+    expect(receivedPatches[0]).toEqual([
+      {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chatSequence: 6,
+        messageSeq: 6,
+        appendMessages: [{ type: "agent", parts: [] }],
       },
     ]);
   });
