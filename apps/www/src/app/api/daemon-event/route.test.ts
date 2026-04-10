@@ -22,6 +22,7 @@ import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
 import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import { env } from "@terragon/env/apps-www";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -416,6 +417,124 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(401);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("accepts daemon-event requests with test auth in non-production", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-test-auth",
+          runId: "run-1",
+          seq: 0,
+        },
+        {
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        success: true,
+        acknowledgedEventId: "event-test-auth",
+        acknowledgedSeq: 0,
+      }),
+    );
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        runId: "run-1",
+      }),
+    );
+  });
+
+  it("rejects daemon-event test auth when secret is invalid", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+        },
+        {
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": "invalid",
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(401);
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass daemon-token auth when X-Daemon-Token is present", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-token-present",
+          runId: "run-1",
+          seq: 0,
+        },
+        {
+          "X-Daemon-Token": "invalid-token",
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(401);
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects test auth path in production even with valid test headers", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+    vi.stubEnv("NODE_ENV", "production");
+
+    try {
+      const response = await POST(
+        createDaemonRequest(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messages: [createSuccessResultMessage()],
+            timezone: "UTC",
+          },
+          {
+            "X-Terragon-Test-Daemon-Auth": "enabled",
+            "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+            "X-Terragon-Test-User-Id": "user-1",
+          },
+        ),
+      );
+
+      expect(response.status).toBe(401);
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("persists deltas with deterministic idempotency and broadcasts in stream order", async () => {

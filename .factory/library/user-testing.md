@@ -119,6 +119,14 @@ When web service cannot start:
 
 ### VAL-CROSS-001: End-to-end task-to-PR lifecycle
 
+**Daemon-event test auth path (non-production only)**:
+
+- `/api/daemon-event` now accepts test-context auth when all headers below are present:
+- `X-Terragon-Test-Daemon-Auth: enabled`
+- `X-Terragon-Test-User-Id: <target-user-id>`
+- `X-Terragon-Secret: <INTERNAL_SHARED_SECRET>`
+- This path is disabled in `NODE_ENV=production` and does not replace token auth when `X-Daemon-Token` is supplied.
+
 **Test Approach**:
 
 1. Start with CLI `delivery-loop:local e2e` for the framework path

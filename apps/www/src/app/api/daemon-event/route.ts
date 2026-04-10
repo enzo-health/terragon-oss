@@ -1,4 +1,7 @@
-import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
+import {
+  getDaemonTokenAuthContextOrNull,
+  type DaemonTokenAuthContext,
+} from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   publishBroadcastUserMessage,
@@ -53,6 +56,7 @@ import {
   filterDeltasByKnownMaxSeq,
   normalizeDeltasForPersistence,
 } from "@/server-lib/token-stream-guards";
+import { env } from "@terragon/env/apps-www";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -64,6 +68,9 @@ type DaemonEventEnvelopeV2 = {
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 const DELTA_SEQ_MAX_TTL_SECONDS = 60 * 60 * 24;
+const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
+const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
+const DAEMON_TEST_AUTH_ENABLED_VALUE = "enabled";
 
 type DaemonProcessingEventClaimResult =
   | {
@@ -587,6 +594,40 @@ function hasRequiredThreadChatIdForNonLegacyPayload(
   );
 }
 
+function getDaemonTestAuthContextOrNull(
+  request: Pick<Request, "headers">,
+): DaemonTokenAuthContext | null {
+  if (process.env.NODE_ENV === "production") {
+    return null;
+  }
+
+  if (request.headers.get("X-Daemon-Token")) {
+    return null;
+  }
+
+  if (
+    request.headers.get(DAEMON_TEST_AUTH_HEADER) !==
+    DAEMON_TEST_AUTH_ENABLED_VALUE
+  ) {
+    return null;
+  }
+
+  if (request.headers.get("X-Terragon-Secret") !== env.INTERNAL_SHARED_SECRET) {
+    return null;
+  }
+
+  const userId = request.headers.get(DAEMON_TEST_USER_ID_HEADER);
+  if (!userId || userId.length === 0) {
+    return null;
+  }
+
+  return {
+    userId,
+    keyId: null,
+    claims: null,
+  };
+}
+
 export async function POST(request: Request) {
   const json: DaemonEventAPIBody = await request.json();
   const daemonVersionHeader =
@@ -619,7 +660,12 @@ export async function POST(request: Request) {
       : LEGACY_THREAD_CHAT_ID;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
   let selfDispatchPayload: SdlcSelfDispatchPayload | null = null;
-  const daemonAuthContext = await getDaemonTokenAuthContextOrNull(request);
+  const daemonTokenAuthContext = await getDaemonTokenAuthContextOrNull(request);
+  const daemonTestAuthContext = daemonTokenAuthContext
+    ? null
+    : getDaemonTestAuthContextOrNull(request);
+  const daemonAuthContext = daemonTokenAuthContext ?? daemonTestAuthContext;
+  const usingDaemonTestAuth = daemonTestAuthContext !== null;
   if (!daemonAuthContext) {
     return new Response("Unauthorized", { status: 401 });
   }
@@ -724,14 +770,80 @@ export async function POST(request: Request) {
   }
 
   if (envelopeV2 && !claims) {
-    return Response.json(
-      {
-        success: false,
-        error: "daemon_token_claims_required",
-        runId: envelopeV2.runId,
-      },
-      { status: 401 },
-    );
+    if (!usingDaemonTestAuth) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_claims_required",
+          runId: envelopeV2.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (!runContext) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_not_found",
+          runId: envelopeV2.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      runContext.threadId !== threadId ||
+      runContext.threadChatId !== threadChatId
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      transportMode !== runContext.transportMode ||
+      protocolVersion !== runContext.protocolVersion
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_transport_context_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped"
+    ) {
+      const replayedSelfDispatch =
+        threadChatId !== LEGACY_THREAD_CHAT_ID
+          ? await getReplayableSelfDispatch({
+              threadChatId,
+              sourceEventId: envelopeV2.eventId,
+              sourceSeq: envelopeV2.seq,
+              sourceRunId: runContext.runId,
+            })
+          : null;
+      return jsonTerminalAckResponse(
+        buildTerminalAckState(
+          {
+            status: 202,
+            deduplicated: true,
+            reason: "run_terminal_ignored",
+            runId: runContext.runId,
+            acknowledgedEventId: envelopeV2.eventId,
+            acknowledgedSeq: envelopeV2.seq,
+          },
+          replayedSelfDispatch,
+        ),
+      );
+    }
   }
 
   if (claims) {
