@@ -100,6 +100,16 @@ vi.mock("@terragon/env/next-public", () => ({
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 afterEach(() => {
   root?.unmount();
   root = null;
@@ -362,5 +372,126 @@ describe("useRealtimeThread", () => {
     expect(replayUrl.searchParams.get("fromSeq")).toBe("2");
     expect(replayUrl.searchParams.get("threadChatId")).toBeNull();
     expect(replayUrl.searchParams.get("fromDeltaSeq")).toBeNull();
+  });
+
+  it("drops stale replay responses after the active chat context switches", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const deferredReplay = createDeferred<{
+      ok: boolean;
+      json: () => Promise<{
+        entries: Array<{ seq: number; messages: unknown[] }>;
+        deltaEntries: unknown[];
+      }>;
+    }>();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => deferredReplay.promise)
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          entries: [],
+          deltaEntries: [],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness({
+      activeThreadChatId,
+      baselineMessageSeq,
+    }: {
+      activeThreadChatId: string;
+      baselineMessageSeq: number;
+    }) {
+      useRealtimeThread(
+        "thread-1",
+        activeThreadChatId,
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: baselineMessageSeq },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(
+        createElement(Harness, {
+          activeThreadChatId: "chat-1",
+          baselineMessageSeq: 5,
+        }),
+      );
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.get("fromSeq"),
+    ).toBe("5");
+
+    await act(async () => {
+      root?.render(
+        createElement(Harness, {
+          activeThreadChatId: "chat-2",
+          baselineMessageSeq: 2,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      new URL(String(fetchMock.mock.calls[1]?.[0])).searchParams.get("fromSeq"),
+    ).toBe("2");
+
+    deferredReplay.resolve({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            seq: 6,
+            messages: [{ type: "agent", parts: [] }],
+          },
+        ],
+        deltaEntries: [],
+      }),
+    });
+
+    await act(async () => {
+      await deferredReplay.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(receivedPatches).toHaveLength(0);
+
+    await act(async () => {
+      socket?.dispatchClose();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      new URL(String(fetchMock.mock.calls[2]?.[0])).searchParams.get("fromSeq"),
+    ).toBe("2");
+    expect(receivedPatches).toHaveLength(0);
   });
 });

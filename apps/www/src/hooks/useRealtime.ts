@@ -290,6 +290,15 @@ export function useRealtimeThread(
   const lastDeltaSeqRef = useRef<number | null>(null);
   const replayInFlightRef = useRef(false);
   const activeReplayContextRef = useRef<string | null>(null);
+  const replayGenerationRef = useRef(0);
+  const onThreadPatchesRef = useRef(onThreadPatches);
+  const previousSocketReadyStateRef = useRef<number>(WebSocket.CONNECTING);
+  const socketOpenCycleRef = useRef(0);
+  const replayAttemptMarkerRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    onThreadPatchesRef.current = onThreadPatches;
+  }, [onThreadPatches]);
 
   const updateSequenceTrackers = useCallback(
     (patches: BroadcastThreadPatch[]) => {
@@ -347,6 +356,8 @@ export function useRealtimeThread(
         return false;
       }
 
+      const replayGeneration = replayGenerationRef.current;
+      const replayContext = activeReplayContextRef.current;
       replayInFlightRef.current = true;
       const replayUrl = new URL("/api/thread-replay", window.location.origin);
       replayUrl.searchParams.set("threadId", threadId);
@@ -361,6 +372,12 @@ export function useRealtimeThread(
       try {
         const res = await fetch(replayUrl.toString());
         const data = res.ok ? await res.json() : null;
+        if (
+          replayGenerationRef.current !== replayGeneration ||
+          activeReplayContextRef.current !== replayContext
+        ) {
+          return false;
+        }
         const replayPatches: BroadcastThreadPatch[] = [];
 
         if (data?.entries?.length > 0) {
@@ -408,24 +425,35 @@ export function useRealtimeThread(
         const combinedPatches = [...replayPatches, ...livePatches];
         if (combinedPatches.length > 0) {
           updateSequenceTrackers(combinedPatches);
-          onThreadPatches(combinedPatches);
+          onThreadPatchesRef.current(combinedPatches);
         }
       } catch (error) {
+        if (
+          replayGenerationRef.current !== replayGeneration ||
+          activeReplayContextRef.current !== replayContext
+        ) {
+          return false;
+        }
         console.warn(
           "[broadcast] replay fetch failed, applying patches directly",
           error,
         );
         if (livePatches.length > 0) {
           updateSequenceTrackers(livePatches);
-          onThreadPatches(livePatches);
+          onThreadPatchesRef.current(livePatches);
         }
       } finally {
-        replayInFlightRef.current = false;
+        if (
+          replayGenerationRef.current === replayGeneration &&
+          activeReplayContextRef.current === replayContext
+        ) {
+          replayInFlightRef.current = false;
+        }
       }
 
       return true;
     },
-    [onThreadPatches, threadChatId, threadId, updateSequenceTrackers],
+    [threadChatId, threadId, updateSequenceTrackers],
   );
 
   const { socketReadyState } = useRealtimeUser({
@@ -497,16 +525,10 @@ export function useRealtimeThread(
           replayInFlightRef.current
         ) {
           updateSequenceTrackers(patches);
-          onThreadPatches(patches);
+          onThreadPatchesRef.current(patches);
         }
       },
-      [
-        fetchReplay,
-        onThreadPatches,
-        threadChatId,
-        threadId,
-        updateSequenceTrackers,
-      ],
+      [fetchReplay, threadChatId, threadId, updateSequenceTrackers],
     ),
   });
 
@@ -514,9 +536,11 @@ export function useRealtimeThread(
     const nextReplayContext = `${threadId}:${threadChatId ?? "no-chat"}`;
     if (activeReplayContextRef.current !== nextReplayContext) {
       activeReplayContextRef.current = nextReplayContext;
+      replayGenerationRef.current += 1;
       lastMessageSeqRef.current = replayBaseline?.messageSeq ?? null;
       lastDeltaSeqRef.current = replayBaseline?.deltaSeq ?? null;
       replayInFlightRef.current = false;
+      replayAttemptMarkerRef.current = null;
       return;
     }
 
@@ -545,15 +569,38 @@ export function useRealtimeThread(
   ]);
 
   useEffect(() => {
+    if (
+      socketReadyState === WebSocket.OPEN &&
+      previousSocketReadyStateRef.current !== WebSocket.OPEN
+    ) {
+      socketOpenCycleRef.current += 1;
+      replayAttemptMarkerRef.current = null;
+    }
+    previousSocketReadyStateRef.current = socketReadyState;
+  }, [socketReadyState]);
+
+  useEffect(() => {
     if (socketReadyState !== WebSocket.OPEN) {
       return;
     }
 
+    const replayAttemptMarker = `${activeReplayContextRef.current ?? "unknown"}:${socketOpenCycleRef.current}`;
+    if (replayAttemptMarkerRef.current === replayAttemptMarker) {
+      return;
+    }
+
+    const shouldReplayMessages =
+      replayBaseline?.messageSeq != null || lastMessageSeqRef.current != null;
+    const shouldReplayDeltas =
+      replayBaseline?.deltaSeq != null || lastDeltaSeqRef.current != null;
+    if (!shouldReplayMessages && !shouldReplayDeltas) {
+      return;
+    }
+
+    replayAttemptMarkerRef.current = replayAttemptMarker;
     void fetchReplay({
-      replayMessages:
-        replayBaseline?.messageSeq != null || lastMessageSeqRef.current != null,
-      replayDeltas:
-        replayBaseline?.deltaSeq != null || lastDeltaSeqRef.current != null,
+      replayMessages: shouldReplayMessages,
+      replayDeltas: shouldReplayDeltas,
     });
   }, [
     fetchReplay,
