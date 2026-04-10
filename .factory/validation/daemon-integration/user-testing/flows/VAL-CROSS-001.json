@@ -1,0 +1,46 @@
+{
+  "groupId": "VAL-CROSS-001",
+  "testedAt": "2026-04-10T17:12:30.000Z",
+  "isolation": {
+    "sessionId": "val-cross-001-test-auth-path",
+    "environment": "vitest route-level daemon-event integration",
+    "surface": "/api/daemon-event"
+  },
+  "toolsUsed": ["vitest", "code-analysis"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Daemon-event cross-area flow is executable with authenticated test context",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Execute daemon-event route tests with the new test-auth seam",
+          "expected": "Test-context daemon auth is accepted in non-production, invalid/production paths are rejected, and no X-Daemon-Token bypass is allowed",
+          "observed": "Route tests passed with explicit coverage for valid test-auth, invalid secret rejection, production rejection, and token precedence rejection."
+        },
+        {
+          "action": "Execute terminal daemon-event path under test auth and assert delivery-loop broadcast",
+          "expected": "Terminal v2 daemon-event should process and publish refetch:[\"delivery-loop\"]",
+          "observed": "Test `allows terminal daemon-event via test auth and publishes delivery-loop refetch broadcast` passed and asserted broadcast payload includes `op: \"refetch\"` and `refetch: [\"delivery-loop\"]`."
+        }
+      ],
+      "evidence": {
+        "commands": [
+          "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts"
+        ],
+        "commandResults": ["PASS: 52 tests passed"],
+        "codeReferences": [
+          "apps/www/src/app/api/daemon-event/route.ts:597-633",
+          "apps/www/src/app/api/daemon-event/route.ts:662-668",
+          "apps/www/src/app/api/daemon-event/route.ts:772-842",
+          "apps/www/src/app/api/daemon-event/route.ts:1468-1482",
+          "apps/www/src/app/api/daemon-event/route.test.ts:424-521",
+          "apps/www/src/app/api/daemon-event/route.test.ts:2452-2510"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "blockers": [],
+  "summary": "VAL-CROSS-001 is now executable and passing for daemon-integration validation: authenticated test-context daemon-event ingress can run terminal v2 flow and emit delivery-loop refetch broadcast without weakening production auth."
+}

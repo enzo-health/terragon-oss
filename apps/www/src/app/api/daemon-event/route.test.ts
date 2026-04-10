@@ -21,7 +21,10 @@ import {
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import {
+  publishBroadcastUserMessage,
+  publishDeltaBroadcast,
+} from "@terragon/shared/broadcast-server";
 import { env } from "@terragon/env/apps-www";
 
 const dbMocks = vi.hoisted(() => {
@@ -2439,6 +2442,73 @@ describe("daemon-event route", () => {
         expect.objectContaining({ status: "completed" }),
       );
       expect(markDispatchIntentCompleted).toHaveBeenCalled();
+    });
+
+    it("allows terminal daemon-event via test auth and publishes delivery-loop refetch broadcast", async () => {
+      vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: 2,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messages: [createSuccessResultMessage()],
+            timezone: "UTC",
+            payloadVersion: 2,
+            eventId: "event-test-auth-terminal-broadcast",
+            runId: "run-1",
+            seq: 10,
+          },
+          {
+            "X-Terragon-Test-Daemon-Auth": "enabled",
+            "X-Terragon-Test-User-Id": "user-1",
+            "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          },
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(publishBroadcastUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "user-1",
+          type: "user",
+          data: expect.objectContaining({
+            threadPatches: expect.arrayContaining([
+              expect.objectContaining({
+                threadId: "thread-1",
+                threadChatId: "chat-1",
+                op: "refetch",
+                refetch: ["delivery-loop"],
+              }),
+            ]),
+          }),
+        }),
+      );
     });
 
     it("fences planning terminal completions with persisted runSeq", async () => {
