@@ -1,12 +1,12 @@
 {
   "groupId": "VAL-CROSS-001",
-  "testedAt": "2026-04-10T17:12:30.000Z",
+  "testedAt": "2026-04-10T17:35:33.838Z",
   "isolation": {
-    "sessionId": "val-cross-001-test-auth-path",
-    "environment": "vitest route-level daemon-event integration",
-    "surface": "/api/daemon-event"
+    "sessionId": "val-cross-001-live-test-auth-path",
+    "environment": "local live daemon-event + broadcast validation",
+    "surface": "/api/daemon-event + PartyKit user channel"
   },
-  "toolsUsed": ["vitest", "code-analysis"],
+  "toolsUsed": ["vitest", "code-analysis", "psql", "node-websocket"],
   "assertions": [
     {
       "id": "VAL-CROSS-001",
@@ -19,16 +19,22 @@
           "observed": "Route tests passed with explicit coverage for valid test-auth, invalid secret rejection, production rejection, and token precedence rejection."
         },
         {
-          "action": "Execute terminal daemon-event path under test auth and assert delivery-loop broadcast",
-          "expected": "Terminal v2 daemon-event should process and publish refetch:[\"delivery-loop\"]",
-          "observed": "Test `allows terminal daemon-event via test auth and publishes delivery-loop refetch broadcast` passed and asserted broadcast payload includes `op: \"refetch\"` and `refetch: [\"delivery-loop\"]`."
+          "action": "Execute live terminal daemon-event path under test auth and capture PartyKit user-channel broadcast",
+          "expected": "Terminal v2 daemon-event should process and publish refetch:[\"delivery-loop\"] over websocket",
+          "observed": "Live run `val-cross-live-run-4` returned `200` ack for `event-live-1775842533838` and websocket capture observed thread patch `{ op: \"refetch\", refetch: [\"delivery-loop\"] }` for thread `0e28b4ab-a354-4856-b9a0-35ecf0710e91` / chat `785991e1-0cda-4c07-88d1-284f403deee4`."
         }
       ],
       "evidence": {
         "commands": [
-          "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts"
+          "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts",
+          "psql ... insert agent_run_context run_id=val-cross-live-run-4",
+          "node websocket+POST validator script against web=http://localhost:3100, broadcast=ws://127.0.0.1:2999"
         ],
-        "commandResults": ["PASS: 52 tests passed"],
+        "commandResults": [
+          "PASS: 52 tests passed",
+          "PASS: HTTP 200 ack {\"success\":true,\"acknowledgedEventId\":\"event-live-1775842533838\",\"acknowledgedSeq\":31}",
+          "PASS: websocket payload contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]} for target thread/chat"
+        ],
         "codeReferences": [
           "apps/www/src/app/api/daemon-event/route.ts:597-633",
           "apps/www/src/app/api/daemon-event/route.ts:662-668",
@@ -42,5 +48,5 @@
     }
   ],
   "blockers": [],
-  "summary": "VAL-CROSS-001 is now executable and passing for daemon-integration validation: authenticated test-context daemon-event ingress can run terminal v2 flow and emit delivery-loop refetch broadcast without weakening production auth."
+  "summary": "VAL-CROSS-001 is executable and passing with live evidence: authenticated test-context daemon-event ingress completed end-to-end `/api/daemon-event` -> broadcast websocket `refetch:[\"delivery-loop\"]` flow without weakening production auth behavior."
 }

@@ -1,6 +1,6 @@
 {
   "milestone": "daemon-integration",
-  "round": 2,
+  "round": 3,
   "status": "pass",
   "assertionsSummary": {
     "total": 3,
@@ -17,9 +17,9 @@
   "blockedAssertions": [],
   "frictions": [
     {
-      "description": "No live local web/broadcast listeners were active (ports 3000/3100/1999), so browser-network latency capture was not executed in this validation round.",
+      "description": "Initial local stack was missing required env wiring (`LOCALHOST_PUBLIC_DOMAIN` for web, `BETTER_AUTH_URL` injection for PartyKit), causing early 500/401 failures during live capture setup.",
       "affectedAssertions": ["VAL-CROSS-001"],
-      "resolution": "Used route-level executable evidence to prove auth-path removals of the blocker and terminal daemon-event -> delivery-loop refetch broadcast behavior in one flow."
+      "resolution": "Reran against an isolated local stack (`web:3100`, `broadcast:2999`) with correct env injection and captured successful websocket broadcast evidence for terminal daemon-event test-auth flow."
     }
   ],
   "appliedUpdates": [
@@ -35,14 +35,14 @@
     },
     {
       "target": ".factory/validation/daemon-integration/user-testing/flows/VAL-CROSS-001.json",
-      "description": "Added executable validator evidence flow for VAL-CROSS-001 showing auth seam + terminal broadcast path.",
+      "description": "Upgraded VAL-CROSS-001 report with live end-to-end evidence: daemon-event ack + websocket delivery-loop refetch capture.",
       "source": "validation"
     }
   ],
   "previousRound": {
-    "round": 1,
-    "status": "fail",
-    "failedAssertions": ["VAL-CROSS-001"]
+    "round": 2,
+    "status": "pass",
+    "failedAssertions": []
   },
   "flowReports": [
     {
@@ -65,10 +65,13 @@
     {
       "assertionId": "VAL-CROSS-001",
       "status": "pass",
-      "summary": "Authentication blocker is removed in test context and the flow is executable: terminal v2 daemon-event under test-auth reaches delivery-loop refetch broadcast path.",
-      "toolsUsed": ["vitest", "code-analysis"],
+      "summary": "Authentication blocker is removed in test context and proven live: terminal v2 daemon-event under test-auth acknowledged and emitted websocket `refetch:[\"delivery-loop\"]` patch for the target thread/chat.",
+      "toolsUsed": ["vitest", "code-analysis", "psql", "node-websocket"],
       "evidence": [
         "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts",
+        "live runId=val-cross-live-run-4 eventId=event-live-1775842533838 seq=31",
+        "http://localhost:3100/api/daemon-event -> 200 ack",
+        "ws://127.0.0.1:2999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k -> refetch:[\"delivery-loop\"]",
         ".factory/validation/daemon-integration/user-testing/flows/VAL-CROSS-001.json"
       ]
     }
