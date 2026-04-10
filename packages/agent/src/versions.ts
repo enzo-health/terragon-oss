@@ -7,4 +7,5 @@
 // 2: gpt-5.1 support
 // 3: gpt-5.2 support
 // 4: gpt-5.3-codex and gpt-5.3-codex-spark support
-export const AGENT_VERSION = 4;
+// 5: gpt-5.4, gpt-5.4-mini, and gpt-5.4-nano support
+export const AGENT_VERSION = 5;

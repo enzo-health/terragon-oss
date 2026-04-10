@@ -80,35 +80,37 @@ The model selected for a github mention is selected based on the following prior
 4. The last model used in the task (If not creating a new task)
 5. Your last selected model in the dashboard.
 
-If an `@terragon-labs` mention will follow up on an existing task, the first selected model that is valid for the agent will be used. For example, if using Claude Code for a task, specifying `@terragon-labs [gpt-5.1] ...` will have no effect on the model selected.
+If an `@terragon-labs` mention will follow up on an existing task, the first selected model that is valid for the agent will be used. For example, if using Claude Code for a task, specifying `@terragon-labs [gpt-5.4] ...` will have no effect on the model selected.
 
 Here's a table of how to specify the model for each agent directly in the the github mention comment:
 
-| Agent       | Model                    | Example                                                                                            |
-| ----------- | ------------------------ | -------------------------------------------------------------------------------------------------- |
-| Claude Code | Sonnet                   | `@terragon-labs [sonnet] ...`                                                                      |
-| Claude Code | Haiku                    | `@terragon-labs [haiku] ...`                                                                       |
-| Claude Code | Opus                     | `@terragon-labs [opus] ...`                                                                        |
-| Codex       | GPT-5.2                  | `@terragon-labs [gpt-5.2] ...` OR <br /> `@terragon-labs [gpt-5.2-medium] ...`                     |
-| Codex       | GPT-5.2-Low              | `@terragon-labs [gpt-5.2-low] ...`                                                                 |
-| Codex       | GPT-5.2-High             | `@terragon-labs [gpt-5.2-high] ...`                                                                |
-| Codex       | GPT-5.1                  | `@terragon-labs [gpt-5.1] ...` OR <br /> `@terragon-labs [gpt-5.1-medium] ...`                     |
-| Codex       | GPT-5.1-Codex-Max-Low    | `@terragon-labs [gpt-5.1-codex-max-low] ...`                                                       |
-| Codex       | GPT-5.1-Codex-Max-Medium | `@terragon-labs [gpt-5.1-codex-max] ...` OR <br /> `@terragon-labs [gpt-5.1-codex-max-medium] ...` |
-| Codex       | GPT-5.1-Codex-Max-High   | `@terragon-labs [gpt-5.1-codex-max-high] ...`                                                      |
-| Codex       | GPT-5.1-Codex-Max-XHigh  | `@terragon-labs [gpt-5.1-codex-max-xhigh] ...`                                                     |
-| Codex       | GPT-5.1-Codex-Low        | `@terragon-labs [gpt-5.1-codex-low] ...`                                                           |
-| Codex       | GPT-5.1-Codex-Medium     | `@terragon-labs [gpt-5.1-codex-medium] ...`                                                        |
-| Codex       | GPT-5.1-Codex-High       | `@terragon-labs [gpt-5.1-codex-high] ...`                                                          |
-| Codex       | GPT-5                    | `@terragon-labs [gpt-5] ...`                                                                       |
-| Gemini      | Gemini 3 Pro             | `@terragon-labs [gemini-3-pro] ...`                                                                |
-| Gemini      | Gemini 2.5 Pro           | `@terragon-labs [gemini-2.5-pro] ...`                                                              |
-| OpenCode    | Grok Code Fast 1         | `@terragon-labs [grok-code] ...`                                                                   |
-| OpenCode    | Qwen3 Coder 480B         | `@terragon-labs [qwen3-coder] ...`                                                                 |
-| OpenCode    | Kimi K2                  | `@terragon-labs [kimi-k2] ...`                                                                     |
-| OpenCode    | GLM 4.6                  | `@terragon-labs [glm-4.6] ...`                                                                     |
-| OpenCode    | Gemini 2.5 Pro           | `@terragon-labs [opencode/gemini-2.5-pro] ...`                                                     |
-| Amp         | Amp                      | `@terragon-labs [amp] ...`                                                                         |
+| Agent       | Model              | Example                                                                                  |
+| ----------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| Claude Code | Sonnet             | `@terragon-labs [sonnet] ...`                                                            |
+| Claude Code | Sonnet 1M          | `@terragon-labs [sonnet[1m]] ...`                                                        |
+| Claude Code | Haiku              | `@terragon-labs [haiku] ...`                                                             |
+| Claude Code | Opus               | `@terragon-labs [opus] ...`                                                              |
+| Claude Code | Opus 1M            | `@terragon-labs [opus[1m]] ...`                                                          |
+| Codex       | GPT-5.4            | `@terragon-labs [gpt-5.4] ...` OR <br /> `@terragon-labs [gpt-5.4-medium] ...`           |
+| Codex       | GPT-5.4-Low        | `@terragon-labs [gpt-5.4-low] ...`                                                       |
+| Codex       | GPT-5.4-High       | `@terragon-labs [gpt-5.4-high] ...`                                                      |
+| Codex       | GPT-5.4-XHigh      | `@terragon-labs [gpt-5.4-xhigh] ...`                                                     |
+| Codex       | GPT-5.4 Mini       | `@terragon-labs [gpt-5.4-mini] ...` OR <br /> `@terragon-labs [gpt-5.4-mini-medium] ...` |
+| Codex       | GPT-5.4 Mini-Low   | `@terragon-labs [gpt-5.4-mini-low] ...`                                                  |
+| Codex       | GPT-5.4 Mini-High  | `@terragon-labs [gpt-5.4-mini-high] ...`                                                 |
+| Codex       | GPT-5.4 Mini-XHigh | `@terragon-labs [gpt-5.4-mini-xhigh] ...`                                                |
+| Codex       | GPT-5.4 Nano       | `@terragon-labs [gpt-5.4-nano] ...` OR <br /> `@terragon-labs [gpt-5.4-nano-medium] ...` |
+| Codex       | GPT-5.4 Nano-Low   | `@terragon-labs [gpt-5.4-nano-low] ...`                                                  |
+| Codex       | GPT-5.4 Nano-High  | `@terragon-labs [gpt-5.4-nano-high] ...`                                                 |
+| Codex       | GPT-5.4 Nano-XHigh | `@terragon-labs [gpt-5.4-nano-xhigh] ...`                                                |
+| Gemini      | Gemini 3 Pro       | `@terragon-labs [gemini-3-pro] ...`                                                      |
+| Gemini      | Gemini 2.5 Pro     | `@terragon-labs [gemini-2.5-pro] ...`                                                    |
+| OpenCode    | Grok Code Fast 1   | `@terragon-labs [grok-code] ...`                                                         |
+| OpenCode    | Qwen3 Coder 480B   | `@terragon-labs [qwen3-coder] ...`                                                       |
+| OpenCode    | Kimi K2.5          | `@terragon-labs [kimi-k2.5] ...`                                                         |
+| OpenCode    | GLM 5.1            | `@terragon-labs [glm-5.1] ...`                                                           |
+| OpenCode    | Gemini 2.5 Pro     | `@terragon-labs [opencode/gemini-2.5-pro] ...`                                           |
+| Amp         | Amp                | `@terragon-labs [amp] ...`                                                               |
 
 #### Prompt & Trigger Customizations
 

@@ -3,7 +3,9 @@ import * as z from "zod/v4";
 export const AIModelSchema = z.enum([
   // claude code
   "opus",
+  "opus[1m]",
   "sonnet",
+  "sonnet[1m]",
   "haiku",
 
   // gemini
@@ -14,6 +16,18 @@ export const AIModelSchema = z.enum([
   "amp",
 
   // codex
+  "gpt-5.4-low",
+  "gpt-5.4",
+  "gpt-5.4-high",
+  "gpt-5.4-xhigh",
+  "gpt-5.4-mini-low",
+  "gpt-5.4-mini",
+  "gpt-5.4-mini-high",
+  "gpt-5.4-mini-xhigh",
+  "gpt-5.4-nano-low",
+  "gpt-5.4-nano",
+  "gpt-5.4-nano-high",
+  "gpt-5.4-nano-xhigh",
   "gpt-5",
   "gpt-5-low",
   "gpt-5-high",
@@ -49,8 +63,8 @@ export const AIModelSchema = z.enum([
   // opencode
   "opencode/grok-code",
   "opencode/qwen3-coder",
-  "opencode/kimi-k2",
-  "opencode/glm-4.6",
+  "opencode/kimi-k2.5",
+  "opencode/glm-5.1",
   "opencode/gemini-2.5-pro",
   "opencode/gemini-3-pro",
   "opencode-oai/gpt-5",
@@ -61,6 +75,9 @@ export const AIModelSchema = z.enum([
 // Augment AIModelSchema with simpler names for external usage
 export const AIModelExternalSchema = z.enum([
   ...AIModelSchema.options,
+  "gpt-5.4-medium",
+  "gpt-5.4-mini-medium",
+  "gpt-5.4-nano-medium",
   "gpt-5-medium",
   "gpt-5.1-medium",
   "gpt-5.2-medium",
@@ -72,8 +89,8 @@ export const AIModelExternalSchema = z.enum([
   "gpt-5.3-codex-spark",
   "grok-code",
   "qwen3-coder",
-  "kimi-k2",
-  "glm-4.6",
+  "kimi-k2.5",
+  "glm-5.1",
   "opencode/gpt-5",
   "opencode/gpt-5-codex",
   "opencode/sonnet",

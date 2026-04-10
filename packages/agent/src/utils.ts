@@ -43,6 +43,18 @@ export function modelToAgent(model: AIModel | null): AIAgent {
     case "amp": {
       return "amp";
     }
+    case "gpt-5.4-low":
+    case "gpt-5.4":
+    case "gpt-5.4-high":
+    case "gpt-5.4-xhigh":
+    case "gpt-5.4-mini-low":
+    case "gpt-5.4-mini":
+    case "gpt-5.4-mini-high":
+    case "gpt-5.4-mini-xhigh":
+    case "gpt-5.4-nano-low":
+    case "gpt-5.4-nano":
+    case "gpt-5.4-nano-high":
+    case "gpt-5.4-nano-xhigh":
     case "gpt-5":
     case "gpt-5-low":
     case "gpt-5-high":
@@ -77,14 +89,16 @@ export function modelToAgent(model: AIModel | null): AIAgent {
       return "codex";
     }
     case "opus":
+    case "opus[1m]":
     case "haiku":
-    case "sonnet": {
+    case "sonnet":
+    case "sonnet[1m]": {
       return "claudeCode";
     }
     case "opencode/grok-code":
     case "opencode/qwen3-coder":
-    case "opencode/kimi-k2":
-    case "opencode/glm-4.6":
+    case "opencode/kimi-k2.5":
+    case "opencode/glm-5.1":
     case "opencode/gemini-2.5-pro":
     case "opencode/gemini-3-pro":
     case "opencode-oai/gpt-5":
@@ -117,12 +131,28 @@ export function agentToModels(
       return ["gemini-3-pro", "gemini-2.5-pro"];
     }
     case "claudeCode": {
-      return ["haiku", "sonnet", "opus"];
+      return ["haiku", "sonnet", "sonnet[1m]", "opus", "opus[1m]"];
     }
     case "amp": {
       return ["amp"];
     }
     case "codex": {
+      if (options.agentVersion === "latest" || options.agentVersion >= 5) {
+        return [
+          "gpt-5.4-low",
+          "gpt-5.4",
+          "gpt-5.4-high",
+          "gpt-5.4-xhigh",
+          "gpt-5.4-mini-low",
+          "gpt-5.4-mini",
+          "gpt-5.4-mini-high",
+          "gpt-5.4-mini-xhigh",
+          "gpt-5.4-nano-low",
+          "gpt-5.4-nano",
+          "gpt-5.4-nano-high",
+          "gpt-5.4-nano-xhigh",
+        ];
+      }
       let models: AIModel[] = [
         "gpt-5-codex-low",
         "gpt-5-codex-medium",
@@ -131,7 +161,7 @@ export function agentToModels(
         "gpt-5",
         "gpt-5-high",
       ];
-      if (options.agentVersion === "latest" || options.agentVersion >= 2) {
+      if (options.agentVersion >= 2) {
         models.unshift(
           "gpt-5.1-codex-max-low",
           "gpt-5.1-codex-max",
@@ -145,7 +175,7 @@ export function agentToModels(
           "gpt-5.1-high",
         );
       }
-      if (options.agentVersion === "latest" || options.agentVersion >= 3) {
+      if (options.agentVersion >= 3) {
         models.unshift(
           "gpt-5.2-codex-low",
           "gpt-5.2-codex-medium",
@@ -157,7 +187,7 @@ export function agentToModels(
           "gpt-5.2-xhigh",
         );
       }
-      if (options.agentVersion === "latest" || options.agentVersion >= 4) {
+      if (options.agentVersion >= 4) {
         models.unshift(
           "gpt-5.3-codex-low",
           "gpt-5.3-codex-medium",
@@ -172,8 +202,8 @@ export function agentToModels(
     }
     case "opencode": {
       const models: AIModel[] = [
-        "opencode/glm-4.6",
-        "opencode/kimi-k2",
+        "opencode/glm-5.1",
+        "opencode/kimi-k2.5",
         "opencode/grok-code",
         "opencode/qwen3-coder",
         "opencode/gemini-2.5-pro",
@@ -209,7 +239,10 @@ export function getDefaultModelForAgent({
     case "claudeCode":
       return "sonnet";
     case "codex":
-      if (agentVersion === "latest" || agentVersion >= 4) {
+      if (agentVersion === "latest" || agentVersion >= 5) {
+        return "gpt-5.4";
+      }
+      if (agentVersion >= 4) {
         return "gpt-5.3-codex-medium";
       }
       if (agentVersion >= 2) {
@@ -221,7 +254,7 @@ export function getDefaultModelForAgent({
     case "gemini":
       return "gemini-3-pro";
     case "opencode":
-      return "opencode/glm-4.6";
+      return "opencode/glm-5.1";
     default:
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);
@@ -357,11 +390,23 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
         mainName: "Opus",
         subName: "4.6",
       };
+    case "opus[1m]":
+      return {
+        fullName: "Opus 4.6 (1M Context)",
+        mainName: "Opus",
+        subName: "4.6 (1M)",
+      };
     case "sonnet":
       return {
         fullName: "Sonnet 4.6",
         mainName: "Sonnet",
         subName: "4.6",
+      };
+    case "sonnet[1m]":
+      return {
+        fullName: "Sonnet 4.6 (1M Context)",
+        mainName: "Sonnet",
+        subName: "4.6 (1M)",
       };
     case "haiku":
       return {
@@ -392,6 +437,78 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
         fullName: "GPT-5 Medium",
         mainName: "GPT-5",
         subName: "Medium",
+      };
+    case "gpt-5.4":
+      return {
+        fullName: "GPT-5.4",
+        mainName: "GPT-5.4",
+        subName: null,
+      };
+    case "gpt-5.4-low":
+      return {
+        fullName: "GPT-5.4 Low",
+        mainName: "GPT-5.4",
+        subName: "Low",
+      };
+    case "gpt-5.4-high":
+      return {
+        fullName: "GPT-5.4 High",
+        mainName: "GPT-5.4",
+        subName: "High",
+      };
+    case "gpt-5.4-xhigh":
+      return {
+        fullName: "GPT-5.4 X-High",
+        mainName: "GPT-5.4",
+        subName: "X-High",
+      };
+    case "gpt-5.4-mini":
+      return {
+        fullName: "GPT-5.4 Mini",
+        mainName: "GPT-5.4 Mini",
+        subName: null,
+      };
+    case "gpt-5.4-mini-low":
+      return {
+        fullName: "GPT-5.4 Mini Low",
+        mainName: "GPT-5.4 Mini",
+        subName: "Low",
+      };
+    case "gpt-5.4-mini-high":
+      return {
+        fullName: "GPT-5.4 Mini High",
+        mainName: "GPT-5.4 Mini",
+        subName: "High",
+      };
+    case "gpt-5.4-mini-xhigh":
+      return {
+        fullName: "GPT-5.4 Mini X-High",
+        mainName: "GPT-5.4 Mini",
+        subName: "X-High",
+      };
+    case "gpt-5.4-nano":
+      return {
+        fullName: "GPT-5.4 Nano",
+        mainName: "GPT-5.4 Nano",
+        subName: null,
+      };
+    case "gpt-5.4-nano-low":
+      return {
+        fullName: "GPT-5.4 Nano Low",
+        mainName: "GPT-5.4 Nano",
+        subName: "Low",
+      };
+    case "gpt-5.4-nano-high":
+      return {
+        fullName: "GPT-5.4 Nano High",
+        mainName: "GPT-5.4 Nano",
+        subName: "High",
+      };
+    case "gpt-5.4-nano-xhigh":
+      return {
+        fullName: "GPT-5.4 Nano X-High",
+        mainName: "GPT-5.4 Nano",
+        subName: "X-High",
       };
     case "gpt-5-low":
       return {
@@ -585,17 +702,17 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
         mainName: "Qwen3 Coder",
         subName: "480B",
       };
-    case "opencode/kimi-k2":
+    case "opencode/kimi-k2.5":
       return {
-        fullName: "Kimi K2",
-        mainName: "Kimi K2",
-        subName: null,
+        fullName: "Kimi K2.5",
+        mainName: "Kimi",
+        subName: "K2.5",
       };
-    case "opencode/glm-4.6":
+    case "opencode/glm-5.1":
       return {
-        fullName: "GLM 4.6",
+        fullName: "GLM 5.1",
         mainName: "GLM",
-        subName: "4.6",
+        subName: "5.1",
       };
     case "opencode/gemini-2.5-pro":
       return {
@@ -779,7 +896,9 @@ export function isModelEnabledByDefault({
     case "opencode-ant/sonnet":
       return false;
     case "opus":
+    case "opus[1m]":
     case "sonnet":
+    case "sonnet[1m]":
     case "haiku":
       return true;
     case "gemini-3-pro":
@@ -807,9 +926,21 @@ export function isModelEnabledByDefault({
     case "gpt-5.3-codex-spark-low":
     case "gpt-5.3-codex-spark-medium":
     case "gpt-5.3-codex-spark-high":
+    case "gpt-5.4":
+    case "gpt-5.4-low":
+    case "gpt-5.4-high":
+    case "gpt-5.4-xhigh":
+    case "gpt-5.4-mini":
+    case "gpt-5.4-mini-low":
+    case "gpt-5.4-mini-high":
+    case "gpt-5.4-mini-xhigh":
+    case "gpt-5.4-nano":
+    case "gpt-5.4-nano-low":
+    case "gpt-5.4-nano-high":
+    case "gpt-5.4-nano-xhigh":
       return true;
-    case "opencode/kimi-k2":
-    case "opencode/glm-4.6":
+    case "opencode/kimi-k2.5":
+    case "opencode/glm-5.1":
       return true;
     default:
       const _exhaustiveCheck: never = model;
@@ -841,6 +972,16 @@ export function getModelInfo(model: AIModel): string {
   switch (model) {
     case "sonnet":
       return "Recommended for most tasks";
+    case "sonnet[1m]":
+      return "Recommended for large codebases";
+    case "opus[1m]":
+      return "Deep reasoning with a 1M context window";
+    case "gpt-5.4":
+      return "Best for complex coding and agentic work";
+    case "gpt-5.4-mini":
+      return "Fast, lower-cost coding model";
+    case "gpt-5.4-nano":
+      return "Lowest-cost option for lightweight tasks";
   }
   return "";
 }
@@ -866,6 +1007,12 @@ export function parseModelOrNull({
     return modelAsExternal;
   }
   switch (modelAsExternal) {
+    case "gpt-5.4-medium":
+      return "gpt-5.4";
+    case "gpt-5.4-mini-medium":
+      return "gpt-5.4-mini";
+    case "gpt-5.4-nano-medium":
+      return "gpt-5.4-nano";
     case "gpt-5-medium":
       return "gpt-5";
     case "gpt-5.1-medium":
@@ -888,10 +1035,10 @@ export function parseModelOrNull({
       return "opencode/grok-code";
     case "qwen3-coder":
       return "opencode/qwen3-coder";
-    case "kimi-k2":
-      return "opencode/kimi-k2";
-    case "glm-4.6":
-      return "opencode/glm-4.6";
+    case "kimi-k2.5":
+      return "opencode/kimi-k2.5";
+    case "glm-5.1":
+      return "opencode/glm-5.1";
     case "opencode/gpt-5":
       return "opencode-oai/gpt-5";
     case "opencode/gpt-5-codex":
@@ -922,6 +1069,12 @@ export function normalizedModelForDaemon(model: AIModel): string {
   }
   if (model.startsWith("opencode-ant")) {
     return model.replace("opencode-ant/", "terry-ant/");
+  }
+  if (model === "opus[1m]") {
+    return "claude-opus-4-6[1m]";
+  }
+  if (model === "sonnet[1m]") {
+    return "claude-sonnet-4-6[1m]";
   }
   if (model === "gemini-3-pro") {
     return "gemini-3-pro-preview";

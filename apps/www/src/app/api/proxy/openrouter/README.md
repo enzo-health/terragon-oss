@@ -10,8 +10,8 @@ This directory hosts the catch-all Next.js route that forwards requests to OpenR
 - Models:
   - **Grok Code Fast 1** https://openrouter.ai/x-ai/grok-code-fast-1
   - **Qwen3 Coder 480B** https://openrouter.ai/qwen/qwen3-coder:exacto
-  - **Kimi K2** https://openrouter.ai/moonshotai/kimi-k2-0905:exacto
-  - **GLM 4.6** https://openrouter.ai/z-ai/glm-4.6:exacto
+  - **Kimi K2.5** https://openrouter.ai/moonshotai/kimi-k2.5
+  - **GLM 5.1** https://openrouter.ai/z-ai/glm-5.1
 
 ## Behavior
 
@@ -63,13 +63,13 @@ Put this in your `~/.config/opencode/opencode.json`:
           "id": "qwen/qwen3-coder:exacto",
           "name": "Qwen3 Coder 480B"
         },
-        "kimi-k2": {
-          "id": "moonshotai/kimi-k2-0905:exacto",
-          "name": "Kimi K2"
+        "kimi-k2.5": {
+          "id": "moonshotai/kimi-k2.5",
+          "name": "Kimi K2.5"
         },
-        "glm-4.6": {
-          "id": "z-ai/glm-4.6:exacto",
-          "name": "GLM 4.6"
+        "glm-5.1": {
+          "id": "z-ai/glm-5.1",
+          "name": "GLM 5.1"
         }
       }
     }
