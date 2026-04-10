@@ -158,7 +158,7 @@ describe("createNewThread", { timeout: 30_000 }, () => {
       await waitUntilResolvedBestEffort();
 
       const workflow = await getActiveWorkflowForThread({ db, threadId });
-      expect(workflow).toBeNull();
+      expect(workflow).toBeUndefined();
     });
   });
 });
