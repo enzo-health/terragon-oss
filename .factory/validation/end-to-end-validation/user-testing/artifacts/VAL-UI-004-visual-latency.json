@@ -1,0 +1,12 @@
+{
+  "pageId": "5E855305E2E14E991D64F9762870EA57",
+  "post": {
+    "status": 200,
+    "text": "{\"success\":true,\"acknowledgedEventId\":\"visual-page-1775857962137\",\"acknowledgedSeq\":62}"
+  },
+  "visual": {
+    "startMs": 37445.70000000298,
+    "ciGateMs": 38075.30000000447
+  },
+  "visualLatencyMs": 629.6000000014901
+}

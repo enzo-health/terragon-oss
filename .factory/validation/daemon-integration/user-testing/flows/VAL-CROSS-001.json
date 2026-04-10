@@ -1,18 +1,12 @@
 {
   "groupId": "VAL-CROSS-001",
-  "testedAt": "2026-04-10T18:05:36.645Z",
+  "testedAt": "2026-04-10T18:11:25Z",
   "isolation": {
-    "sessionId": "val-cross-001-live-test-auth-path",
-    "environment": "local live daemon-event + broadcast validation",
-    "surface": "/api/daemon-event + PartyKit user channel"
+    "sessionId": "val-cross-browser",
+    "environment": "local live daemon-event + broadcast validation (controlled stack)",
+    "surface": "http://127.0.0.1:3100/api/daemon-event + ws://127.0.0.1:2999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k"
   },
-  "toolsUsed": [
-    "vitest",
-    "code-analysis",
-    "psql",
-    "node-websocket",
-    "agent-browser"
-  ],
+  "toolsUsed": ["vitest", "code-analysis", "psql", "agent-browser"],
   "assertions": [
     {
       "id": "VAL-CROSS-001",
@@ -25,32 +19,31 @@
           "observed": "Route tests passed with explicit coverage for valid test-auth, invalid secret rejection, production rejection, and token precedence rejection."
         },
         {
-          "action": "Execute live terminal daemon-event path under test auth and capture PartyKit user-channel broadcast",
-          "expected": "Terminal v2 daemon-event should process and publish refetch:[\"delivery-loop\"] over websocket",
-          "observed": "After seeding a fresh workflow/thread for fixture user `e2e-test-user-001` and restarting a coherent local stack (`web:3100`, `broadcast:1999`) with explicit runtime vars, live run `val-cross-live-1775844336645` returned `200` ack for `event-live-1775844336645` and websocket capture observed thread patch `{ op: \"refetch\", refetch: [\"delivery-loop\"] }` for fresh thread `7c47b8e0-25bd-4e3a-82d6-6d7e8b154254` / chat `27a944bc-fbe4-45c3-8ee5-b6194b19d460`."
+          "action": "Execute live terminal daemon-event path under test auth and capture the delivery-loop websocket refetch from a browser surface",
+          "expected": "Terminal v2 daemon-event should return 200 and publish `refetch:[\"delivery-loop\"]` to the user channel within 500ms",
+          "observed": "On the controlled local stack (`web:3100`, `broadcast:2999`), an `agent-browser` harness opened the real user-channel websocket, posted a terminal v2 daemon-event, and waited specifically for the `refetch:[\"delivery-loop\"]` frame. The browser capture recorded `postStatus=200`, `postElapsedMs=112.6`, `socketDeltaMs=112.9`, and `within500ms=true`, with frame preview `{\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]}`."
         }
       ],
       "evidence": {
         "commands": [
           "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts",
-          "pnpm delivery-loop:local fixtures seed",
-          "signed Better Auth fixture session cookie -> GET http://127.0.0.1:3100/api/internal/daemon-token",
-          "agent-browser websocket probe against ws://127.0.0.1:1999/parties/main/user:e2e-test-user-001?apiKey=<daemon-token>",
-          "psql ... insert fresh thread/thread_chat/delivery_workflow/delivery_workflow_head_v3/agent_run_context rows",
-          "node websocket+POST validator script against web=http://localhost:3100, broadcast=ws://127.0.0.1:1999"
+          "psql ... update agent_run_context/thread/thread_chat back to processing/working for isolated live fixture `val-cross-browser-run-3100`",
+          "agent-browser --session val-cross-browser open http://127.0.0.1:3100",
+          "agent-browser --session val-cross-browser eval <browser websocket + fetch timing harness filtered to refetch:[\"delivery-loop\"]>",
+          "agent-browser --session val-cross-browser screenshot .factory/validation/daemon-integration/user-testing/artifacts/VAL-CROSS-001-browser-capture.png"
         ],
         "commandResults": [
           "PASS: 52 tests passed",
-          "PASS: fixture daemon token minted from http://127.0.0.1:3100/api/internal/daemon-token and accepted by http://127.0.0.1:3100/api/internal/broadcast?channel=user:e2e-test-user-001",
-          "PASS: browser websocket probe stayed open on ws://127.0.0.1:1999/parties/main/user:e2e-test-user-001?apiKey=<daemon-token> and received direct PartyKit broadcast payloads",
-          "PASS: HTTP 200 ack {\"success\":true,\"acknowledgedEventId\":\"event-live-1775844336645\",\"acknowledgedSeq\":10}",
-          "PASS: websocket payload contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]} for fresh target thread/chat and run context advanced to completed"
+          "PASS: browser websocket probe connected on ws://127.0.0.1:2999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k?apiKey=<daemon-token>",
+          "PASS: browser harness returned {\"postStatus\":200,\"postElapsedMs\":112.6,\"socketDeltaMs\":112.9,\"within500ms\":true}",
+          "PASS: websocket frame preview contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]}",
+          "PASS: screenshot captured at .factory/validation/daemon-integration/user-testing/artifacts/VAL-CROSS-001-browser-capture.png"
         ],
         "codeReferences": [
           "apps/www/src/app/api/daemon-event/route.ts:597-633",
           "apps/www/src/app/api/daemon-event/route.ts:662-668",
           "apps/www/src/app/api/daemon-event/route.ts:772-842",
-          "apps/www/src/app/api/daemon-event/route.ts:1495-1567",
+          "apps/www/src/app/api/daemon-event/route.ts:1539-1567",
           "apps/www/src/app/api/daemon-event/route.test.ts:425-540",
           "apps/www/src/app/api/daemon-event/route.test.ts:2447-2512"
         ]
@@ -59,5 +52,5 @@
     }
   ],
   "blockers": [],
-  "summary": "VAL-CROSS-001 is executable and passing with live evidence: authenticated test-context daemon-event ingress completed end-to-end `/api/daemon-event` -> broadcast websocket `refetch:[\"delivery-loop\"]` flow without weakening production auth behavior."
+  "summary": "VAL-CROSS-001 is executable and passing with browser-backed live evidence: authenticated test-context daemon-event ingress completed end-to-end `/api/daemon-event` -> websocket `refetch:[\"delivery-loop\"]`, and the browser-observed POST-to-frame delta stayed under the 500ms contract."
 }

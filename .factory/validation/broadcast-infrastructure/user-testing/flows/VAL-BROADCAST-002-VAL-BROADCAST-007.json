@@ -1,0 +1,79 @@
+{
+  "groupId": "broadcast-live-and-auth",
+  "testedAt": "2026-04-10T21:53:00Z",
+  "isolation": {
+    "missionDir": "/Users/tylersheffield/.factory/missions/58761276-c4ca-4e8c-b040-eeb0557b9012",
+    "environment": "local PartyKit dev server on 127.0.0.1:1999 with browser-connected user channel",
+    "surface": "http://127.0.0.1:1999/parties/main/user:*"
+  },
+  "toolsUsed": ["curl", "cdp-browser", "code-analysis"],
+  "assertions": [
+    {
+      "id": "VAL-BROADCAST-002",
+      "title": "PartyKit Server Message Delivery",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Restart the broadcast server, allow the real task page to reconnect, and POST a signed BroadcastUserMessage directly to the connected user room.",
+          "expected": "The POST returns 200 and the browser receives the exact `refetch:[\"delivery-loop\"]` payload on the reconnected PartyKit socket.",
+          "observed": "The reconnect probe reopened `ws://127.0.0.1:1999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k?...`, the signed POST returned `200 OK` in `8.94ms`, and the browser captured the matching websocket frame `9.25ms` after the POST started."
+        },
+        {
+          "action": "Watch the task page after that frame.",
+          "expected": "The UI should immediately refetch delivery-loop state from the task surface.",
+          "observed": "A POST to `http://127.0.0.1:3100/task/0e28b4ab-a354-4856-b9a0-35ecf0710e91` was observed `0.20ms` after the websocket frame."
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json"
+        ],
+        "payloadPreview": "{\"type\":\"user\",\"id\":\"67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k\",\"data\":{\"threadPatches\":[{\"threadId\":\"0e28b4ab-a354-4856-b9a0-35ecf0710e91\",\"threadChatId\":\"785991e1-0cda-4c07-88d1-284f403deee4\",\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]}]}}",
+        "timingMs": {
+          "broadcastPostElapsed": 8.942707999995037,
+          "broadcastToFrame": 9.246665999999095,
+          "frameToRequest": 0.1972089999981108
+        }
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BROADCAST-007",
+      "title": "Broadcast Authentication Security",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST to the PartyKit room without `X-Terragon-Secret`.",
+          "expected": "The server rejects the request with `401 Unauthorized`.",
+          "observed": "The request returned HTTP `401` and wrote `Unauthorized` to `.factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-no-secret.txt`."
+        },
+        {
+          "action": "POST to the same room with an incorrect secret.",
+          "expected": "The server rejects the request with `401 Unauthorized`.",
+          "observed": "The request returned HTTP `401` and wrote `Unauthorized` to `.factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-wrong-secret.txt`."
+        },
+        {
+          "action": "POST to the same room with the configured internal shared secret.",
+          "expected": "The server accepts the request.",
+          "observed": "The request returned HTTP `200` and wrote `OK` to `.factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-valid-secret.txt`."
+        }
+      ],
+      "evidence": {
+        "codeReferences": [
+          "apps/broadcast/src/auth.ts",
+          "packages/env/src/apps-broadcast.ts"
+        ],
+        "artifacts": [
+          ".factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-no-secret.txt",
+          ".factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-wrong-secret.txt",
+          ".factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-valid-secret.txt"
+        ],
+        "statusCodes": [401, 401, 200]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "PartyKit delivery and auth are both now proven on the live local stack. A signed direct broadcast reached the reconnected browser client and triggered delivery-loop refetch immediately, while missing or incorrect secrets were rejected with `401`."
+}

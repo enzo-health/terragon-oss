@@ -9,7 +9,6 @@ import {
   applyThreadPatchToListQueries,
   applyThreadPatchToQueryClient,
 } from "./thread-patch-cache";
-import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 import { threadQueryKeys } from "./thread-queries";
 
 const INITIAL_CHAT_UPDATED_AT = "2026-03-09T00:00:00.000Z";
@@ -208,7 +207,7 @@ describe("applyThreadPatchToQueryClient", () => {
     });
   });
 
-  it("invalidates delivery-loop status when patch requests delivery-loop refetch", () => {
+  it("invalidates explicit refetch targets without delivery-loop", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
       threadQueryKeys.shell("thread-1"),
@@ -221,37 +220,12 @@ describe("applyThreadPatchToQueryClient", () => {
       patch: {
         threadId: "thread-1",
         op: "refetch",
-        refetch: ["delivery-loop"],
-      },
-    });
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
-    });
-  });
-
-  it("invalidates multiple refetch targets including delivery-loop", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      threadQueryKeys.shell("thread-1"),
-      createThreadShell(),
-    );
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["shell", "chat", "delivery-loop"],
+        refetch: ["shell"],
       },
     });
 
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
       queryKey: threadQueryKeys.shell("thread-1"),
-    });
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
     });
   });
 
@@ -313,6 +287,35 @@ describe("applyThreadPatchToQueryClient", () => {
       queryClient.getQueryData(threadQueryKeys.chat("thread-1", "chat-1")),
     ).toBe(previousChat);
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("does not invalidate chat for exact delivery-loop refetch patches", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat(),
+    );
+    const previousChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "refetch",
+        refetch: ["delivery-loop"],
+      },
+    });
+
+    expect(
+      queryClient.getQueryData(threadQueryKeys.chat("thread-1", "chat-1")),
+    ).toBe(previousChat);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
     });
   });

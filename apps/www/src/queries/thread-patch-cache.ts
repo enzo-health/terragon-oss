@@ -14,7 +14,6 @@ import {
   BroadcastThreadShellRealtimeFields,
   BroadcastActiveChatRealtimeFields,
 } from "@terragon/types/broadcast";
-import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 import {
   isMatchingThreadForFilter,
   isValidThreadListFilter,
@@ -239,6 +238,17 @@ function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;
 }
 
+function hasExactRefetchTarget(
+  patch: BroadcastThreadPatch,
+  target: "chat" | "delivery-loop",
+): boolean {
+  return (
+    patch.op === "refetch" &&
+    patch.refetch?.length === 1 &&
+    patch.refetch[0] === target
+  );
+}
+
 function applyChatFields(
   chat: ThreadPageChat,
   patch: BroadcastThreadPatch,
@@ -246,7 +256,9 @@ function applyChatFields(
   if (patch.op === "refetch") {
     return {
       chat,
-      shouldInvalidate: !(patch.refetch ?? []).includes("chat"),
+      shouldInvalidate: hasExactRefetchTarget(patch, "delivery-loop")
+        ? false
+        : !(patch.refetch ?? []).includes("chat"),
       shouldIgnore: false,
     };
   }
@@ -925,11 +937,6 @@ export function invalidateThreadPatchRefetchTargets(
       case "diff":
         queryClient.invalidateQueries({
           queryKey: threadQueryKeys.diff(patch.threadId),
-        });
-        break;
-      case "delivery-loop":
-        queryClient.invalidateQueries({
-          queryKey: deliveryLoopStatusQueryKeys.detail(patch.threadId),
         });
         break;
       case "list":

@@ -1,17 +1,32 @@
 {
   "milestone": "broadcast-infrastructure",
-  "round": 1,
+  "round": 2,
   "status": "pass",
   "assertionsSummary": {
-    "total": 2,
-    "passed": 2,
+    "total": 4,
+    "passed": 4,
     "failed": 0,
     "blocked": 0
   },
-  "passedAssertions": ["VAL-BROADCAST-001", "VAL-UI-006"],
+  "passedAssertions": [
+    "VAL-BROADCAST-001",
+    "VAL-BROADCAST-002",
+    "VAL-BROADCAST-007",
+    "VAL-UI-006"
+  ],
   "failedAssertions": [],
   "blockedAssertions": [],
-  "appliedUpdates": [],
-  "previousRound": null,
-  "summary": "User testing validation for broadcast-infrastructure milestone completed successfully. All 2 testable assertions passed. VAL-BROADCAST-001 verified the BroadcastThreadPatch schema correctly includes 'delivery-loop' as a valid refetch target. VAL-UI-006 verified the thread-patch-cache properly invalidates the delivery-loop status query when patches include delivery-loop refetch targets. Services were started successfully (PostgreSQL and Redis)."
+  "appliedUpdates": [
+    {
+      "target": ".factory/validation/broadcast-infrastructure/user-testing/flows/VAL-BROADCAST-002-VAL-BROADCAST-007.json",
+      "description": "Added live PartyKit delivery evidence for direct user-channel broadcasts and explicit auth coverage for missing, wrong, and valid secrets.",
+      "source": "validation"
+    }
+  ],
+  "previousRound": {
+    "round": 1,
+    "status": "pass",
+    "failedAssertions": []
+  },
+  "summary": "Broadcast-infrastructure validation remains green after extending the evidence set. The schema/invalidation contracts still pass, and PartyKit now also has live proof for authenticated message delivery plus explicit `401/401/200` auth enforcement coverage."
 }

@@ -18,7 +18,7 @@ import {
   ThreadChatInfoFull,
 } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
-import { useRealtimeThread } from "@/hooks/useRealtime";
+import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { useIncrementalUIMessages } from "./toUIMessages";
 import {
   ChatMessages,
@@ -58,6 +58,7 @@ import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
 import { LeafLoading } from "./leaf-loading";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { useDeliveryLoopStatusRealtime } from "@/hooks/use-delivery-loop-status-realtime";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
 import { ensureAgent } from "@terragon/agent/utils";
@@ -80,14 +81,8 @@ import {
   useChatFromCollection,
 } from "@/collections/thread-chat-collection";
 import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
-import {
-  deliveryLoopStatusQueryKeys,
-  useDeliveryLoopStatusQuery,
-} from "@/queries/delivery-loop-status-queries";
-import {
-  getDeliveryLoopAwareThreadStatus,
-  shouldRefreshDeliveryLoopStatusFromThreadPatch,
-} from "@/lib/delivery-loop-status";
+import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
+import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";
 
 function isThreadStatusWorking(status: ThreadStatus): boolean {
   return [
@@ -329,55 +324,55 @@ function ChatUI({
     isReadOnly,
   });
   const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
-  useRealtimeThread(threadId, threadChatId, (patches) => {
-    let hasMaterializedMessages = false;
-    let latestPatchedStatus: ThreadStatus | null = null;
-    let shouldRefreshDeliveryLoopStatus = false;
-    for (const patch of patches) {
-      if (patch.op === "delta") {
-        applyDelta(patch);
-      } else {
-        if (shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)) {
-          shouldRefreshDeliveryLoopStatus = true;
+  const handleThreadPatches = useCallback(
+    (patches: BroadcastThreadPatch[]) => {
+      let hasMaterializedMessages = false;
+      let latestPatchedStatus: ThreadStatus | null = null;
+      for (const patch of patches) {
+        if (patch.op === "delta") {
+          applyDelta(patch);
+        } else {
+          if (patch.chat?.status) {
+            latestPatchedStatus = patch.chat.status;
+          }
+          if (
+            patch.appendMessages !== undefined &&
+            patch.appendMessages.length > 0 &&
+            patch.appendMessages.some(
+              (message) =>
+                typeof message === "object" &&
+                message !== null &&
+                "type" in message &&
+                (message as { type?: unknown }).type === "agent",
+            )
+          ) {
+            hasMaterializedMessages = true;
+          }
+          // Write to TanStack DB collections (primary data path)
+          applyShellPatchToCollection(patch);
+          applyChatPatchToCollection(patch);
+          applyThreadPatchToCollection(patch);
+          // Dual-write to React Query cache (diff invalidation + legacy consumers)
+          applyThreadPatchToQueryClient({ queryClient, patch });
         }
-        if (patch.chat?.status) {
-          latestPatchedStatus = patch.chat.status;
-        }
-        if (
-          patch.appendMessages !== undefined &&
-          patch.appendMessages.length > 0 &&
-          patch.appendMessages.some(
-            (message) =>
-              typeof message === "object" &&
-              message !== null &&
-              "type" in message &&
-              (message as { type?: unknown }).type === "agent",
-          )
-        ) {
-          hasMaterializedMessages = true;
-        }
-        // Write to TanStack DB collections (primary data path)
-        applyShellPatchToCollection(patch);
-        applyChatPatchToCollection(patch);
-        applyThreadPatchToCollection(patch);
-        // Dual-write to React Query cache (diff invalidation + legacy consumers)
-        applyThreadPatchToQueryClient({ queryClient, patch });
       }
-    }
-    // When a complete message arrives, clear accumulated deltas since the
-    // DB message now contains the full text.
-    if (
-      hasMaterializedMessages &&
-      latestPatchedStatus != null &&
-      !isThreadStatusWorking(latestPatchedStatus)
-    ) {
-      clearDeltasForThread();
-    }
-    if (shouldShowDeliveryLoopStatus && shouldRefreshDeliveryLoopStatus) {
-      queryClient.invalidateQueries({
-        queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
-      });
-    }
+      // When a complete message arrives, clear accumulated deltas since the
+      // DB message now contains the full text.
+      if (
+        hasMaterializedMessages &&
+        latestPatchedStatus != null &&
+        !isThreadStatusWorking(latestPatchedStatus)
+      ) {
+        clearDeltasForThread();
+      }
+    },
+    [applyDelta, clearDeltasForThread, queryClient],
+  );
+  useDeliveryLoopStatusRealtime({
+    threadId,
+    threadChatId,
+    enabled: shouldShowDeliveryLoopStatus,
+    onThreadPatches: handleThreadPatches,
   });
 
   const chatAgent = ensureAgent(threadChat?.agent);
