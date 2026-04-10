@@ -241,6 +241,30 @@ export function getThreadPatches(
   return message.data.threadPatches ?? [];
 }
 
+export function shouldProcessThreadPatch({
+  patch,
+  threadId,
+  threadChatId,
+}: {
+  patch: BroadcastThreadPatch;
+  threadId: string;
+  threadChatId: string | undefined;
+}): boolean {
+  if (patch.threadId !== threadId) {
+    return false;
+  }
+
+  if (patch.shell !== undefined) {
+    return true;
+  }
+
+  return (
+    threadChatId == null ||
+    patch.threadChatId == null ||
+    patch.threadChatId === threadChatId
+  );
+}
+
 export function useRealtimeThread(
   threadId: string,
   threadChatId: string | undefined,
@@ -288,23 +312,15 @@ export function useRealtimeThread(
     debounceMs: 0,
     matches: useCallback(
       (message) =>
-        getThreadPatches(message).some(
-          (patch) =>
-            patch.threadId === threadId &&
-            (threadChatId == null ||
-              patch.threadChatId == null ||
-              patch.threadChatId === threadChatId),
+        getThreadPatches(message).some((patch) =>
+          shouldProcessThreadPatch({ patch, threadId, threadChatId }),
         ),
       [threadId, threadChatId],
     ),
     onMessage: useCallback(
       (message) => {
-        const patches = getThreadPatches(message).filter(
-          (patch) =>
-            patch.threadId === threadId &&
-            (threadChatId == null ||
-              patch.threadChatId == null ||
-              patch.threadChatId === threadChatId),
+        const patches = getThreadPatches(message).filter((patch) =>
+          shouldProcessThreadPatch({ patch, threadId, threadChatId }),
         );
         if (patches.length === 0) return;
 
