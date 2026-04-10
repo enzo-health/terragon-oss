@@ -350,11 +350,13 @@ export async function setupSandboxEveryTime({
   options: CreateSandboxOptions;
   isCreatingSandbox: boolean;
 }) {
+  const shouldProbeSandboxAgent = !options.fastResume || isCreatingSandbox;
+
   // All setup operations that don't depend on each other run in parallel.
-  const parallelOps: Promise<void>[] = [
-    setupGitCredentials(session, options),
-    probeSandboxAgentEndpoint({ session, options }),
-  ];
+  const parallelOps: Promise<void>[] = [setupGitCredentials(session, options)];
+  if (shouldProbeSandboxAgent) {
+    parallelOps.push(probeSandboxAgentEndpoint({ session, options }));
+  }
   const agent = !options.fastResume ? options.agent : null;
   if (agent) {
     parallelOps.push(

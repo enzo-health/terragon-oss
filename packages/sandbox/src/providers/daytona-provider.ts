@@ -16,6 +16,51 @@ const HOME_DIR = "root";
 const DEFAULT_DIR = `/${HOME_DIR}`;
 const REPO_DIR = "repo";
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
+const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
+const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
+
+async function reconcileLifecyclePolicy(
+  sandbox: DaytonaSandbox,
+): Promise<void> {
+  const lifecycleUpdates = [
+    {
+      currentValue: sandbox.autoStopInterval,
+      nextValue: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
+      name: "auto-stop",
+      apply: async () => {
+        await sandbox.setAutostopInterval(DAYTONA_AUTO_STOP_INTERVAL_MINUTES);
+      },
+    },
+    {
+      currentValue: sandbox.autoArchiveInterval,
+      nextValue: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+      name: "auto-archive",
+      apply: async () => {
+        await sandbox.setAutoArchiveInterval(
+          DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+        );
+      },
+    },
+  ];
+
+  await Promise.all(
+    lifecycleUpdates
+      .filter(
+        (lifecycleUpdate) =>
+          lifecycleUpdate.currentValue !== lifecycleUpdate.nextValue,
+      )
+      .map(async (lifecycleUpdate) => {
+        try {
+          await lifecycleUpdate.apply();
+        } catch (error) {
+          console.warn(
+            `[daytona] Failed to reconcile ${lifecycleUpdate.name} lifecycle policy for sandbox ${sandbox.id}: ${formatError(error)}`,
+          );
+        }
+      }),
+  );
+}
 
 async function resumeWithRetry(sandboxId: string): Promise<DaytonaSandbox> {
   const startTime = Date.now();
@@ -33,6 +78,7 @@ async function resumeWithRetry(sandboxId: string): Promise<DaytonaSandbox> {
       } else {
         await sandbox.start();
       }
+      await reconcileLifecyclePolicy(sandbox);
       console.log(
         `[daytona] Resumed sandbox ${sandboxId} in ${Date.now() - startTime}ms`,
       );
@@ -60,9 +106,9 @@ async function createWithRetry(
         user: "root",
         snapshot: templateId,
         envVars: envs,
-        autoStopInterval: 15, // 15 minutes
-        autoArchiveInterval: 5, // 5 minutes
-        autoDeleteInterval: 60 * 24 * 30, // 30 days
+        autoStopInterval: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
+        autoArchiveInterval: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+        autoDeleteInterval: DAYTONA_AUTO_DELETE_INTERVAL_MINUTES,
       });
       console.log(
         `[daytona] Created sandbox in ${Date.now() - startTime}ms`,
@@ -321,11 +367,18 @@ export class DaytonaProvider implements ISandboxProvider {
   constructor() {}
 
   async extendLife(sandboxId: string): Promise<void> {
-    const sandbox = await this.getSandboxOrNull(sandboxId);
-    if (!sandbox) {
-      throw new Error("Sandbox not found");
-    }
-    await sandbox.runCommand("echo 'hello'");
+    const daytona = getDaytonaOrThrow();
+    await retryAsync(
+      async () => {
+        const sandbox = await daytona.get(sandboxId);
+        await sandbox.refreshData();
+      },
+      {
+        label: `extend life for sandbox ${sandboxId}`,
+        maxAttempts: 3,
+        delayMs: 1000,
+      },
+    );
   }
 
   async getSandboxOrNull(sandboxId: string): Promise<ISandboxSession | null> {

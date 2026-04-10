@@ -16,7 +16,7 @@ vi.mock("./daemon", () => ({
   MCP_SERVER_FILE_PATH: "/tmp/terry-mcp-server.mjs",
 }));
 
-import { installDaemon } from "./daemon";
+import { installDaemon, restartDaemonIfNotRunning } from "./daemon";
 
 const defaultOptions: CreateSandboxOptions = {
   threadName: "test-title",
@@ -372,6 +372,79 @@ describe("sandbox-setup", () => {
         ),
       ).toBe(false);
       expect(installDaemon).not.toHaveBeenCalled();
+    });
+
+    it("should skip sandbox-agent probing during fast resume", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async () => "");
+      vi.mocked(restartDaemonIfNotRunning).mockClear();
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          fastResume: true,
+          environmentVariables: [
+            {
+              key: "SANDBOX_AGENT_BASE_URL",
+              value: "http://127.0.0.1:2468",
+            },
+          ],
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(vi.mocked(restartDaemonIfNotRunning)).toHaveBeenCalledWith({
+        session,
+        options: expect.objectContaining({
+          fastResume: true,
+        }),
+      });
+      expect(
+        runCommandSpy.mock.calls.some(
+          ([cmd]) =>
+            cmd.includes("sandbox-agent") ||
+            cmd.includes("/v1/health") ||
+            cmd.includes("/v1/acp") ||
+            cmd.includes("/v1/rpc"),
+        ),
+      ).toBe(false);
+    });
+
+    it("should still probe sandbox-agent while creating a fast resume sandbox", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async (cmd) => {
+          if (cmd.includes("/v1/acp")) {
+            return "";
+          }
+          return "RUNNING";
+        });
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          fastResume: true,
+          environmentVariables: [
+            {
+              key: "SANDBOX_AGENT_BASE_URL",
+              value: "http://127.0.0.1:2468",
+            },
+          ],
+        },
+        isCreatingSandbox: true,
+      });
+
+      expect(
+        runCommandSpy.mock.calls.some(([cmd]) => cmd.includes("/v1/health")),
+      ).toBe(true);
+      expect(
+        runCommandSpy.mock.calls.some(([cmd]) => cmd.includes("/v1/acp")),
+      ).toBe(true);
     });
   });
 
