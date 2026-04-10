@@ -163,8 +163,8 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "qwen3-coder" })).toBe(
         "opencode/qwen3-coder",
       );
-      expect(parseModelOrNull({ modelName: "kimi-k2" })).toBe(
-        "opencode/kimi-k2",
+      expect(parseModelOrNull({ modelName: "kimi-k2.5" })).toBe(
+        "opencode/kimi-k2.5",
       );
       expect(parseModelOrNull({ modelName: "gpt-5.1-codex-max-medium" })).toBe(
         "gpt-5.1-codex-max",
@@ -176,8 +176,8 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "gpt-5.4-nano-medium" })).toBe(
         "gpt-5.4-nano",
       );
-      expect(parseModelOrNull({ modelName: "glm-4.6" })).toBe(
-        "opencode/glm-4.6",
+      expect(parseModelOrNull({ modelName: "glm-5.1" })).toBe(
+        "opencode/glm-5.1",
       );
     });
 

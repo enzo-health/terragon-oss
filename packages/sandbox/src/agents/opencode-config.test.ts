@@ -49,13 +49,13 @@ describe("buildOpencodeConfig", () => {
               }
             },
             "models": {
-              "glm-4.6": {
-                "id": "z-ai/glm-4.6:exacto",
-                "name": "GLM 4.6"
+              "glm-5.1": {
+                "id": "z-ai/glm-5.1",
+                "name": "GLM 5.1"
               },
-              "kimi-k2": {
-                "id": "moonshotai/kimi-k2-0905:exacto",
-                "name": "Kimi K2"
+              "kimi-k2.5": {
+                "id": "moonshotai/kimi-k2.5",
+                "name": "Kimi K2.5"
               },
               "grok-code": {
                 "id": "x-ai/grok-code-fast-1",

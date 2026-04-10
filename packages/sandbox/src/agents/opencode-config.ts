@@ -10,12 +10,12 @@ export function getModelId(modelName: AIModel): string {
     case "opencode/qwen3-coder":
       // https://openrouter.ai/qwen/qwen3-coder:exacto
       return "qwen/qwen3-coder:exacto";
-    case "opencode/kimi-k2":
-      // https://openrouter.ai/moonshotai/kimi-k2-0905:exacto
-      return "moonshotai/kimi-k2-0905:exacto";
-    case "opencode/glm-4.6":
-      // https://openrouter.ai/z-ai/glm-4.6:exacto
-      return "z-ai/glm-4.6:exacto";
+    case "opencode/kimi-k2.5":
+      // https://openrouter.ai/moonshotai/kimi-k2.5
+      return "moonshotai/kimi-k2.5";
+    case "opencode/glm-5.1":
+      // https://openrouter.ai/z-ai/glm-5.1
+      return "z-ai/glm-5.1";
     case "opencode/gemini-2.5-pro":
       // https://openrouter.ai/google/gemini-2.5-pro
       return "google/gemini-2.5-pro";

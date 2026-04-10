@@ -97,8 +97,8 @@ export function modelToAgent(model: AIModel | null): AIAgent {
     }
     case "opencode/grok-code":
     case "opencode/qwen3-coder":
-    case "opencode/kimi-k2":
-    case "opencode/glm-4.6":
+    case "opencode/kimi-k2.5":
+    case "opencode/glm-5.1":
     case "opencode/gemini-2.5-pro":
     case "opencode/gemini-3-pro":
     case "opencode-oai/gpt-5":
@@ -202,8 +202,8 @@ export function agentToModels(
     }
     case "opencode": {
       const models: AIModel[] = [
-        "opencode/glm-4.6",
-        "opencode/kimi-k2",
+        "opencode/glm-5.1",
+        "opencode/kimi-k2.5",
         "opencode/grok-code",
         "opencode/qwen3-coder",
         "opencode/gemini-2.5-pro",
@@ -254,7 +254,7 @@ export function getDefaultModelForAgent({
     case "gemini":
       return "gemini-3-pro";
     case "opencode":
-      return "opencode/glm-4.6";
+      return "opencode/glm-5.1";
     default:
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);
@@ -702,17 +702,17 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
         mainName: "Qwen3 Coder",
         subName: "480B",
       };
-    case "opencode/kimi-k2":
+    case "opencode/kimi-k2.5":
       return {
-        fullName: "Kimi K2",
-        mainName: "Kimi K2",
-        subName: null,
+        fullName: "Kimi K2.5",
+        mainName: "Kimi",
+        subName: "K2.5",
       };
-    case "opencode/glm-4.6":
+    case "opencode/glm-5.1":
       return {
-        fullName: "GLM 4.6",
+        fullName: "GLM 5.1",
         mainName: "GLM",
-        subName: "4.6",
+        subName: "5.1",
       };
     case "opencode/gemini-2.5-pro":
       return {
@@ -939,8 +939,8 @@ export function isModelEnabledByDefault({
     case "gpt-5.4-nano-high":
     case "gpt-5.4-nano-xhigh":
       return true;
-    case "opencode/kimi-k2":
-    case "opencode/glm-4.6":
+    case "opencode/kimi-k2.5":
+    case "opencode/glm-5.1":
       return true;
     default:
       const _exhaustiveCheck: never = model;
@@ -1035,10 +1035,10 @@ export function parseModelOrNull({
       return "opencode/grok-code";
     case "qwen3-coder":
       return "opencode/qwen3-coder";
-    case "kimi-k2":
-      return "opencode/kimi-k2";
-    case "glm-4.6":
-      return "opencode/glm-4.6";
+    case "kimi-k2.5":
+      return "opencode/kimi-k2.5";
+    case "glm-5.1":
+      return "opencode/glm-5.1";
     case "opencode/gpt-5":
       return "opencode-oai/gpt-5";
     case "opencode/gpt-5-codex":

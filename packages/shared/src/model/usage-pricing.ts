@@ -132,21 +132,21 @@ export const USAGE_SKU_PRICING: Record<UsageSku, UsageSkuPricing> = {
     cacheCreationRatePerToken: 0,
     outputRatePerToken: 1.5 / 1_000_000,
   },
-  // https://openrouter.ai/moonshotai/kimi-k2-0905:exacto
+  // https://openrouter.ai/moonshotai/kimi-k2.5
   [OPENROUTER_KIMI_SKU]: {
     currency: "usd",
-    inputRatePerToken: 0.6 / 1_000_000,
+    inputRatePerToken: 0.3827 / 1_000_000,
     cachedInputRatePerToken: 0,
     cacheCreationRatePerToken: 0,
-    outputRatePerToken: 2.5 / 1_000_000,
+    outputRatePerToken: 1.72 / 1_000_000,
   },
-  // https://openrouter.ai/z-ai/glm-4.6:exacto
+  // https://openrouter.ai/z-ai/glm-5.1
   [OPENROUTER_GLM_SKU]: {
     currency: "usd",
-    inputRatePerToken: 0.45 / 1_000_000,
+    inputRatePerToken: 1.395 / 1_000_000,
     cachedInputRatePerToken: 0,
     cacheCreationRatePerToken: 0,
-    outputRatePerToken: 1.9 / 1_000_000,
+    outputRatePerToken: 4.4 / 1_000_000,
   },
   // https://openrouter.ai/google/gemini-2.5-pro
   [OPENROUTER_GEMINI_SKU]: {
@@ -286,10 +286,10 @@ export function getOpenRouterSkuForModel(model?: string | null): UsageSku {
   if (model.includes("qwen3-coder")) {
     return OPENROUTER_QWEN_SKU;
   }
-  if (model.includes("kimi-k2")) {
+  if (model.includes("kimi-k2.5")) {
     return OPENROUTER_KIMI_SKU;
   }
-  if (model.includes("glm-4.6")) {
+  if (model.includes("glm-5.1")) {
     return OPENROUTER_GLM_SKU;
   }
   if (model.includes("gemini-2.5-pro")) {
