@@ -23,22 +23,39 @@ const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
 async function reconcileLifecyclePolicy(
   sandbox: DaytonaSandbox,
 ): Promise<void> {
-  const lifecycleUpdates: Array<Promise<void>> = [];
+  const lifecycleUpdates = [
+    {
+      currentValue: sandbox.autoStopInterval,
+      nextValue: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
+      name: "auto-stop",
+      apply: async () => {
+        await sandbox.setAutostopInterval(DAYTONA_AUTO_STOP_INTERVAL_MINUTES);
+      },
+    },
+    {
+      currentValue: sandbox.autoArchiveInterval,
+      nextValue: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+      name: "auto-archive",
+      apply: async () => {
+        await sandbox.setAutoArchiveInterval(
+          DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+        );
+      },
+    },
+  ];
 
-  if (sandbox.autoStopInterval !== DAYTONA_AUTO_STOP_INTERVAL_MINUTES) {
-    lifecycleUpdates.push(
-      sandbox.setAutostopInterval(DAYTONA_AUTO_STOP_INTERVAL_MINUTES),
-    );
-  }
+  for (const lifecycleUpdate of lifecycleUpdates) {
+    if (lifecycleUpdate.currentValue === lifecycleUpdate.nextValue) {
+      continue;
+    }
 
-  if (sandbox.autoArchiveInterval !== DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES) {
-    lifecycleUpdates.push(
-      sandbox.setAutoArchiveInterval(DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES),
-    );
-  }
-
-  if (lifecycleUpdates.length > 0) {
-    await Promise.all(lifecycleUpdates);
+    try {
+      await lifecycleUpdate.apply();
+    } catch (error) {
+      console.warn(
+        `[daytona] Failed to reconcile ${lifecycleUpdate.name} lifecycle policy for sandbox ${sandbox.id}: ${formatError(error)}`,
+      );
+    }
   }
 }
 
@@ -348,8 +365,17 @@ export class DaytonaProvider implements ISandboxProvider {
 
   async extendLife(sandboxId: string): Promise<void> {
     const daytona = getDaytonaOrThrow();
-    const sandbox = await daytona.get(sandboxId);
-    await sandbox.refreshData();
+    await retryAsync(
+      async () => {
+        const sandbox = await daytona.get(sandboxId);
+        await sandbox.refreshData();
+      },
+      {
+        label: `extend life for sandbox ${sandboxId}`,
+        maxAttempts: 3,
+        delayMs: 1000,
+      },
+    );
   }
 
   async getSandboxOrNull(sandboxId: string): Promise<ISandboxSession | null> {

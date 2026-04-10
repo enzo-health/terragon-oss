@@ -155,6 +155,7 @@ describe("DaytonaProvider lifecycle policy", () => {
     expect(session.sandboxId).toBe("sandbox-123");
     expect(sandbox.setAutostopInterval).toHaveBeenCalledWith(15);
     expect(sandbox.setAutoArchiveInterval).toHaveBeenCalledWith(360);
+    expect(sandbox.setAutoDeleteInterval).not.toHaveBeenCalled();
   });
 
   it("skips lifecycle updates when the resumed sandbox already matches policy", async () => {
@@ -178,6 +179,48 @@ describe("DaytonaProvider lifecycle policy", () => {
 
     expect(daytonaGetMock).toHaveBeenCalledWith("sandbox-123");
     expect(sandbox.refreshData).toHaveBeenCalledTimes(1);
+    expect(sandbox.start).not.toHaveBeenCalled();
     expect(sandbox.process.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps resume non-blocking when lifecycle reconciliation fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sandbox = createMockSandbox({
+      autoStopInterval: 5,
+      setAutostopInterval: vi.fn().mockRejectedValue(new Error("bad policy")),
+    });
+    daytonaGetMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    const session = await provider.getSandboxOrNull("sandbox-123");
+
+    expect(session?.sandboxId).toBe("sandbox-123");
+    expect(sandbox.setAutostopInterval).toHaveBeenCalledWith(15);
+    expect(sandbox.setAutoArchiveInterval).not.toHaveBeenCalled();
+    expect(sandbox.setAutoDeleteInterval).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain(
+      "Failed to reconcile auto-stop lifecycle policy for sandbox sandbox-123",
+    );
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("bad policy");
+    warnSpy.mockRestore();
+  });
+
+  it("retries keepalive without starting a stopped sandbox", async () => {
+    const sandbox = createMockSandbox({
+      state: "stopped",
+      refreshData: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("transient keepalive failure"))
+        .mockResolvedValue(undefined),
+    });
+    daytonaGetMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    await provider.extendLife("sandbox-123");
+
+    expect(daytonaGetMock).toHaveBeenCalledTimes(2);
+    expect(sandbox.refreshData).toHaveBeenCalledTimes(2);
+    expect(sandbox.start).not.toHaveBeenCalled();
   });
 });
