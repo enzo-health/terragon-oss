@@ -30,6 +30,7 @@ const startsWithMatcher = (value: string): ModelMatchFn => {
 const MODEL_PROVIDER_CONFIG: Record<ModelProvider, ModelValidationConfig> = {
   openai: {
     allowedMatchers: [
+      includesMatcher("gpt-5.4"),
       includesMatcher("gpt-5.2"),
       includesMatcher("gpt-5.1-codex-max"),
       includesMatcher("gpt-5.1"),

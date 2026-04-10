@@ -5,6 +5,7 @@ import {
   sortByAgents,
   getAgentModelGroups,
   parseModelOrNull,
+  normalizedModelForDaemon,
   shouldUseCredits,
 } from "./utils";
 import { AIModel, AIAgent } from "./types";
@@ -32,16 +33,17 @@ describe("model-to-agent", () => {
     it("should map all models back to their original agents", () => {
       const modelAgentPairs: [AIModel, AIAgent][] = [
         ["opus", "claudeCode"],
+        ["opus[1m]", "claudeCode"],
         ["sonnet", "claudeCode"],
+        ["sonnet[1m]", "claudeCode"],
         ["gemini-2.5-pro", "gemini"],
         ["amp", "amp"],
-        ["gpt-5-low", "codex"],
-        ["gpt-5", "codex"],
-        ["gpt-5-high", "codex"],
-        ["gpt-5-codex-low", "codex"],
-        ["gpt-5-codex-medium", "codex"],
-        ["gpt-5-codex-high", "codex"],
-        ["gpt-5.1-codex-max", "codex"],
+        ["gpt-5.4-low", "codex"],
+        ["gpt-5.4", "codex"],
+        ["gpt-5.4-high", "codex"],
+        ["gpt-5.4-xhigh", "codex"],
+        ["gpt-5.4-mini", "codex"],
+        ["gpt-5.4-nano", "codex"],
       ];
 
       modelAgentPairs.forEach(([model, expectedAgent]) => {
@@ -107,16 +109,41 @@ describe("model-to-agent", () => {
         selectedModels: [],
         options,
       });
-      expect(result.models).toContain("gpt-5.1-codex-medium");
-      expect(result.models).not.toContain("gpt-5");
+      expect(result.models).toContain("gpt-5.4");
+      expect(result.models).toContain("gpt-5.4-mini");
+      expect(result.models).not.toContain("gpt-5.3-codex-medium");
+    });
+
+    it("should keep legacy codex models for older agent versions", () => {
+      const result = getAgentModelGroups({
+        agent: "codex",
+        agentModelPreferences: { models: {} },
+        selectedModels: [],
+        options: {
+          ...options,
+          agentVersion: 4,
+        },
+      });
+
+      expect(result.models).toContain("gpt-5.3-codex-medium");
+      expect(result.models).not.toContain("gpt-5.4");
     });
   });
 
   describe("parseModelOrNull", () => {
     it("should parse exact model names", () => {
       expect(parseModelOrNull({ modelName: "opus" })).toBe("opus");
+      expect(parseModelOrNull({ modelName: "opus[1m]" })).toBe("opus[1m]");
       expect(parseModelOrNull({ modelName: "sonnet" })).toBe("sonnet");
+      expect(parseModelOrNull({ modelName: "sonnet[1m]" })).toBe("sonnet[1m]");
       expect(parseModelOrNull({ modelName: "haiku" })).toBe("haiku");
+      expect(parseModelOrNull({ modelName: "gpt-5.4" })).toBe("gpt-5.4");
+      expect(parseModelOrNull({ modelName: "gpt-5.4-mini" })).toBe(
+        "gpt-5.4-mini",
+      );
+      expect(parseModelOrNull({ modelName: "gpt-5.4-nano" })).toBe(
+        "gpt-5.4-nano",
+      );
       expect(parseModelOrNull({ modelName: "gpt-5" })).toBe("gpt-5");
       expect(parseModelOrNull({ modelName: "gpt-5.1-codex-max" })).toBe(
         "gpt-5.1-codex-max",
@@ -142,6 +169,13 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "gpt-5.1-codex-max-medium" })).toBe(
         "gpt-5.1-codex-max",
       );
+      expect(parseModelOrNull({ modelName: "gpt-5.4-medium" })).toBe("gpt-5.4");
+      expect(parseModelOrNull({ modelName: "gpt-5.4-mini-medium" })).toBe(
+        "gpt-5.4-mini",
+      );
+      expect(parseModelOrNull({ modelName: "gpt-5.4-nano-medium" })).toBe(
+        "gpt-5.4-nano",
+      );
       expect(parseModelOrNull({ modelName: "glm-4.6" })).toBe(
         "opencode/glm-4.6",
       );
@@ -151,6 +185,15 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "invalid-model" })).toBe(null);
       expect(parseModelOrNull({ modelName: "" })).toBe(null);
       expect(parseModelOrNull({ modelName: "gpt-4" })).toBe(null);
+    });
+  });
+
+  describe("normalizedModelForDaemon", () => {
+    it("should normalize Claude 1M shortcuts to explicit model IDs", () => {
+      expect(normalizedModelForDaemon("sonnet[1m]")).toBe(
+        "claude-sonnet-4-6[1m]",
+      );
+      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-6[1m]");
     });
   });
 });
