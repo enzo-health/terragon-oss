@@ -1,8 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import type { BroadcastUserMessage } from "@terragon/types/broadcast";
