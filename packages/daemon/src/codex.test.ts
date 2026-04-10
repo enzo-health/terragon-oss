@@ -1016,6 +1016,48 @@ describe("codexCommand", () => {
     );
   });
 
+  test("should generate command for gpt-5.4 with medium reasoning effort", () => {
+    const command = codexCommand({
+      runtime: mockRuntime,
+      prompt: "test prompt",
+      model: "gpt-5.4",
+      sessionId: null,
+    });
+    expect(
+      command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
+    ).toMatchInlineSnapshot(
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.4 --config model_reasoning_effort=medium"`,
+    );
+  });
+
+  test("should generate command for gpt-5.4-mini-high with high reasoning effort", () => {
+    const command = codexCommand({
+      runtime: mockRuntime,
+      prompt: "test prompt",
+      model: "gpt-5.4-mini-high",
+      sessionId: null,
+    });
+    expect(
+      command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
+    ).toMatchInlineSnapshot(
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.4-mini --config model_reasoning_effort=high"`,
+    );
+  });
+
+  test("should generate command for gpt-5.4-nano-low with low reasoning effort", () => {
+    const command = codexCommand({
+      runtime: mockRuntime,
+      prompt: "test prompt",
+      model: "gpt-5.4-nano-low",
+      sessionId: null,
+    });
+    expect(
+      command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
+    ).toMatchInlineSnapshot(
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.4-nano --config model_reasoning_effort=low"`,
+    );
+  });
+
   test("should generate command for gpt-5.1-codex-max-low with low reasoning effort", () => {
     const command = codexCommand({
       runtime: mockRuntime,
@@ -1136,7 +1178,7 @@ describe("codexCommand", () => {
     expect(
       command.replace(/codex-prompt-.*.txt/, "codex-prompt-*.txt"),
     ).toMatchInlineSnapshot(
-      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5"`,
+      `"cat /tmp/codex-prompt-*.txt | codex exec --dangerously-bypass-approvals-and-sandbox --json -c features.multi_agent=true -c features.child_agents_md=true -c agents.max_threads=6 -c suppress_unstable_features_warning=true --model gpt-5.4 --config model_reasoning_effort=medium"`,
     );
   });
 });
@@ -1172,6 +1214,21 @@ describe("codexAppServerStartCommand", () => {
       'model_provider="terry"',
     ]);
   });
+
+  test("maps gpt-5.4-mini to app-server model and reasoning effort", () => {
+    const [command, args] = codexAppServerStartCommand({
+      model: "gpt-5.4-mini",
+    });
+
+    expect(command).toBe("codex");
+    expect(args).toEqual([
+      "app-server",
+      "-c",
+      'model="gpt-5.4-mini"',
+      "-c",
+      'model_reasoning_effort="medium"',
+    ]);
+  });
 });
 
 describe("buildThreadStartParams", () => {
@@ -1184,6 +1241,22 @@ describe("buildThreadStartParams", () => {
     expect(params).toEqual({
       model: "gpt-5.2-codex",
       modelReasoningEffort: "high",
+      stream: true,
+      instructions: "System instructions",
+      sandbox: "danger-full-access",
+      approvalPolicy: "never",
+    });
+  });
+
+  test("builds thread/start params for gpt-5.4 models", () => {
+    const params = buildThreadStartParams({
+      model: "gpt-5.4-xhigh",
+      instructions: "System instructions",
+    });
+
+    expect(params).toEqual({
+      model: "gpt-5.4",
+      modelReasoningEffort: "xhigh",
       stream: true,
       instructions: "System instructions",
       sandbox: "danger-full-access",

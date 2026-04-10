@@ -416,6 +416,30 @@ type ResolvedCodexModel = {
 
 function resolveCodexModel(model: string): ResolvedCodexModel {
   switch (model) {
+    case "gpt-5.4-low":
+      return { modelName: "gpt-5.4", reasoningEffort: "low" };
+    case "gpt-5.4":
+      return { modelName: "gpt-5.4", reasoningEffort: "medium" };
+    case "gpt-5.4-high":
+      return { modelName: "gpt-5.4", reasoningEffort: "high" };
+    case "gpt-5.4-xhigh":
+      return { modelName: "gpt-5.4", reasoningEffort: "xhigh" };
+    case "gpt-5.4-mini-low":
+      return { modelName: "gpt-5.4-mini", reasoningEffort: "low" };
+    case "gpt-5.4-mini":
+      return { modelName: "gpt-5.4-mini", reasoningEffort: "medium" };
+    case "gpt-5.4-mini-high":
+      return { modelName: "gpt-5.4-mini", reasoningEffort: "high" };
+    case "gpt-5.4-mini-xhigh":
+      return { modelName: "gpt-5.4-mini", reasoningEffort: "xhigh" };
+    case "gpt-5.4-nano-low":
+      return { modelName: "gpt-5.4-nano", reasoningEffort: "low" };
+    case "gpt-5.4-nano":
+      return { modelName: "gpt-5.4-nano", reasoningEffort: "medium" };
+    case "gpt-5.4-nano-high":
+      return { modelName: "gpt-5.4-nano", reasoningEffort: "high" };
+    case "gpt-5.4-nano-xhigh":
+      return { modelName: "gpt-5.4-nano", reasoningEffort: "xhigh" };
     case "gpt-5-low":
       return { modelName: "gpt-5", reasoningEffort: "low" };
     case "gpt-5-high":
@@ -479,7 +503,7 @@ function resolveCodexModel(model: string): ResolvedCodexModel {
     case "gpt-5":
       return { modelName: "gpt-5", reasoningEffort: null };
     default:
-      return { modelName: "gpt-5", reasoningEffort: null };
+      return { modelName: "gpt-5.4", reasoningEffort: "medium" };
   }
 }
 

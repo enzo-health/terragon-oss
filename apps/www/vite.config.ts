@@ -46,6 +46,8 @@ export default defineConfig({
       GITHUB_WEBHOOK_SECRET: "GITHUB_WEBHOOK_SECRET_TEST",
       GITHUB_APP_ID: "GITHUB_APP_ID_TEST",
       GITHUB_APP_PRIVATE_KEY: "GITHUB_APP_PRIVATE_KEY_TEST",
+      LINEAR_CLIENT_ID: "LINEAR_CLIENT_ID_TEST",
+      LINEAR_CLIENT_SECRET: "LINEAR_CLIENT_SECRET_TEST",
     },
     setupFiles: ["./src/test-helpers/test-setup.ts"],
     globalSetup: "./src/test-helpers/test-global-setup.ts",

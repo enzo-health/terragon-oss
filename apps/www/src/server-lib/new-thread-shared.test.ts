@@ -110,5 +110,55 @@ describe("createNewThread", { timeout: 30_000 }, () => {
       expect(workflow?.kind).toBe("planning");
       expect(workflow?.planApprovalPolicy).toBe("auto");
     });
+
+    it("enrolls workflow for opted-in linear threads and applies plan approval policy", async () => {
+      await mockWaitUntil();
+      const { threadId } = await createNewThread({
+        userId: user.id,
+        message: mockMessage,
+        githubRepoFullName: repoFullName,
+        baseBranchName: "main",
+        sourceType: "linear-mention",
+        sourceMetadata: {
+          type: "linear-mention",
+          organizationId: "org-123",
+          issueId: "issue-123",
+          issueIdentifier: "ENG-123",
+          issueUrl: "https://linear.app/org/issue/ENG-123/test",
+          agentSessionId: "session-123",
+          deliveryLoopOptIn: true,
+          deliveryPlanApprovalPolicy: "human_required",
+        },
+      });
+      await waitUntilResolvedBestEffort();
+
+      const workflow = await getActiveWorkflowForThread({ db, threadId });
+      expect(workflow).toBeDefined();
+      expect(workflow?.kind).toBe("planning");
+      expect(workflow?.planApprovalPolicy).toBe("human_required");
+    });
+
+    it("does not enroll workflow for linear threads when delivery loop is off", async () => {
+      await mockWaitUntil();
+      const { threadId } = await createNewThread({
+        userId: user.id,
+        message: mockMessage,
+        githubRepoFullName: repoFullName,
+        baseBranchName: "main",
+        sourceType: "linear-mention",
+        sourceMetadata: {
+          type: "linear-mention",
+          organizationId: "org-123",
+          issueId: "issue-124",
+          issueIdentifier: "ENG-124",
+          issueUrl: "https://linear.app/org/issue/ENG-124/test",
+          agentSessionId: "session-124",
+        },
+      });
+      await waitUntilResolvedBestEffort();
+
+      const workflow = await getActiveWorkflowForThread({ db, threadId });
+      expect(workflow).toBeUndefined();
+    });
   });
 });

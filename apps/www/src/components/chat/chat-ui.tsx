@@ -207,6 +207,14 @@ function ChatUI({
   const chatFromCollection = useChatFromCollection(threadId, threadChatId);
   const threadChat = chatFromCollection ?? chatFromQuery ?? null;
   const isThreadChatLoading = !threadChat && isChatFetching;
+  const realtimeReplayBaseline = useMemo(() => {
+    const canonicalMessageSeq = Math.max(
+      shell?.primaryThreadChat.messageSeq ?? 0,
+      threadChat?.messageSeq ?? 0,
+    );
+
+    return canonicalMessageSeq > 0 ? { messageSeq: canonicalMessageSeq } : null;
+  }, [shell?.primaryThreadChat.messageSeq, threadChat?.messageSeq]);
 
   const dbMessages = useMemo(
     () => (threadChat?.messages as DBMessage[]) ?? [],
@@ -373,6 +381,7 @@ function ChatUI({
     threadChatId,
     enabled: shouldShowDeliveryLoopStatus,
     onThreadPatches: handleThreadPatches,
+    replayBaseline: realtimeReplayBaseline ?? undefined,
   });
 
   const chatAgent = ensureAgent(threadChat?.agent);

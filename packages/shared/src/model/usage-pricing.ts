@@ -16,6 +16,12 @@ export type UsageSkuPricing = {
 };
 
 export const OPENAI_RESPONSES_GPT_5_SKU: UsageSku = "openai_responses_gpt_5";
+export const OPENAI_RESPONSES_GPT_5_4_SKU: UsageSku =
+  "openai_responses_gpt_5_4";
+export const OPENAI_RESPONSES_GPT_5_4_MINI_SKU: UsageSku =
+  "openai_responses_gpt_5_4_mini";
+export const OPENAI_RESPONSES_GPT_5_4_NANO_SKU: UsageSku =
+  "openai_responses_gpt_5_4_nano";
 export const OPENAI_RESPONSES_GPT_5_2_SKU: UsageSku =
   "openai_responses_gpt_5_2";
 export const ANTHROPIC_MESSAGES_SONNET_SKU: UsageSku =
@@ -46,6 +52,27 @@ export const USAGE_SKU_PRICING: Record<UsageSku, UsageSkuPricing> = {
     cachedInputRatePerToken: 0.125 / 1_000_000,
     cacheCreationRatePerToken: 0,
     outputRatePerToken: 10 / 1_000_000,
+  },
+  [OPENAI_RESPONSES_GPT_5_4_SKU]: {
+    currency: "usd",
+    inputRatePerToken: 4 / 1_000_000,
+    cachedInputRatePerToken: 1 / 1_000_000,
+    cacheCreationRatePerToken: 0,
+    outputRatePerToken: 32 / 1_000_000,
+  },
+  [OPENAI_RESPONSES_GPT_5_4_MINI_SKU]: {
+    currency: "usd",
+    inputRatePerToken: 0.8 / 1_000_000,
+    cachedInputRatePerToken: 0.2 / 1_000_000,
+    cacheCreationRatePerToken: 0,
+    outputRatePerToken: 6.4 / 1_000_000,
+  },
+  [OPENAI_RESPONSES_GPT_5_4_NANO_SKU]: {
+    currency: "usd",
+    inputRatePerToken: 0.2 / 1_000_000,
+    cachedInputRatePerToken: 0.05 / 1_000_000,
+    cacheCreationRatePerToken: 0,
+    outputRatePerToken: 1.6 / 1_000_000,
   },
   [OPENAI_RESPONSES_GPT_5_2_SKU]: {
     currency: "usd",
@@ -105,21 +132,21 @@ export const USAGE_SKU_PRICING: Record<UsageSku, UsageSkuPricing> = {
     cacheCreationRatePerToken: 0,
     outputRatePerToken: 1.5 / 1_000_000,
   },
-  // https://openrouter.ai/moonshotai/kimi-k2-0905:exacto
+  // https://openrouter.ai/moonshotai/kimi-k2.5
   [OPENROUTER_KIMI_SKU]: {
     currency: "usd",
-    inputRatePerToken: 0.6 / 1_000_000,
+    inputRatePerToken: 0.3827 / 1_000_000,
     cachedInputRatePerToken: 0,
     cacheCreationRatePerToken: 0,
-    outputRatePerToken: 2.5 / 1_000_000,
+    outputRatePerToken: 1.72 / 1_000_000,
   },
-  // https://openrouter.ai/z-ai/glm-4.6:exacto
+  // https://openrouter.ai/z-ai/glm-5.1
   [OPENROUTER_GLM_SKU]: {
     currency: "usd",
-    inputRatePerToken: 0.45 / 1_000_000,
+    inputRatePerToken: 1.395 / 1_000_000,
     cachedInputRatePerToken: 0,
     cacheCreationRatePerToken: 0,
-    outputRatePerToken: 1.9 / 1_000_000,
+    outputRatePerToken: 4.4 / 1_000_000,
   },
   // https://openrouter.ai/google/gemini-2.5-pro
   [OPENROUTER_GEMINI_SKU]: {
@@ -212,6 +239,15 @@ export function calculateUsageCostUsd({
 }
 
 export function getOpenAIResponsesSkuForModel(model?: string | null): UsageSku {
+  if (model?.includes("gpt-5.4-mini")) {
+    return OPENAI_RESPONSES_GPT_5_4_MINI_SKU;
+  }
+  if (model?.includes("gpt-5.4-nano")) {
+    return OPENAI_RESPONSES_GPT_5_4_NANO_SKU;
+  }
+  if (model?.includes("gpt-5.4")) {
+    return OPENAI_RESPONSES_GPT_5_4_SKU;
+  }
   if (model?.includes("gpt-5.2")) {
     return OPENAI_RESPONSES_GPT_5_2_SKU;
   }
@@ -250,10 +286,10 @@ export function getOpenRouterSkuForModel(model?: string | null): UsageSku {
   if (model.includes("qwen3-coder")) {
     return OPENROUTER_QWEN_SKU;
   }
-  if (model.includes("kimi-k2")) {
+  if (model.includes("kimi-k2.5")) {
     return OPENROUTER_KIMI_SKU;
   }
-  if (model.includes("glm-4.6")) {
+  if (model.includes("glm-5.1")) {
     return OPENROUTER_GLM_SKU;
   }
   if (model.includes("gemini-2.5-pro")) {

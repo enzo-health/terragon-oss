@@ -17,15 +17,19 @@ import {
   useRef,
   useState,
 } from "react";
+import { z } from "zod";
 import { publicBroadcastHost } from "@terragon/env/next-public";
 import { SandboxProvider } from "@terragon/types/sandbox";
+import {
+  decrementRealtimeChannelUsage,
+  disconnectRealtimePartySocket,
+  getOrCreateRealtimePartySocket,
+  incrementRealtimeChannelUsage,
+} from "./realtime-socket-state";
 
 function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;
 }
-
-const usageCountByChannel: Record<string, number> = {};
-const partykitByChannel: Record<string, PartySocket> = {};
 
 function getOrCreatePartySocket({
   party,
@@ -36,38 +40,32 @@ function getOrCreatePartySocket({
   channel: string;
   authToken: string;
 }) {
-  if (!partykitByChannel[channel]) {
-    const socket = new PartySocket({
-      host: publicBroadcastHost(),
-      party,
-      room: channel,
-      maxRetries: 10,
-      maxReconnectionDelay: 5 * 60 * 1000,
-      reconnectionDelayGrowFactor: 2,
-      query: () => ({
-        token: authToken,
-      }),
-    });
-    socket.addEventListener("open", () => {
-      console.log(`[broadcast] connected to channel: ${channel}`);
-    });
-    socket.addEventListener("close", () => {
-      console.log(`[broadcast] disconnected from channel: ${channel}`);
-    });
-    socket.addEventListener("error", (error) => {
-      console.error(`[broadcast] socket error on channel ${channel}:`, error);
-    });
-    partykitByChannel[channel] = socket;
-  }
-  return partykitByChannel[channel];
-}
-
-function disconnectPartySocket(channel: string) {
-  const socket = partykitByChannel[channel];
-  if (socket) {
-    socket.close();
-    delete partykitByChannel[channel];
-  }
+  return getOrCreateRealtimePartySocket({
+    channel,
+    createSocket: () => {
+      const socket = new PartySocket({
+        host: publicBroadcastHost(),
+        party,
+        room: channel,
+        maxRetries: 10,
+        maxReconnectionDelay: 5 * 60 * 1000,
+        reconnectionDelayGrowFactor: 2,
+        query: () => ({
+          token: authToken,
+        }),
+      });
+      socket.addEventListener("open", () => {
+        console.log(`[broadcast] connected to channel: ${channel}`);
+      });
+      socket.addEventListener("close", () => {
+        console.log(`[broadcast] disconnected from channel: ${channel}`);
+      });
+      socket.addEventListener("error", (error) => {
+        console.error(`[broadcast] socket error on channel ${channel}:`, error);
+      });
+      return socket;
+    },
+  });
 }
 
 function usePartySocket({
@@ -88,11 +86,11 @@ function usePartySocket({
     }
   }, [socket, party, channel, authToken]);
   useEffect(() => {
-    usageCountByChannel[channel] = (usageCountByChannel[channel] || 0) + 1;
+    incrementRealtimeChannelUsage(channel);
     return () => {
-      usageCountByChannel[channel] = (usageCountByChannel[channel] || 0) - 1;
-      if (usageCountByChannel[channel] === 0 && disconnectOnDismount) {
-        disconnectPartySocket(channel);
+      const remainingUsageCount = decrementRealtimeChannelUsage(channel);
+      if (remainingUsageCount === 0 && disconnectOnDismount) {
+        disconnectRealtimePartySocket(channel);
       }
     };
   }, [disconnectOnDismount, channel]);
@@ -171,6 +169,7 @@ function useRealtimeBase({
     if (!socket || !trackReadyState) {
       return;
     }
+    setSocketReadyState(socket.readyState);
     const onReadyStateChange = () => {
       setSocketReadyState(socket.readyState);
     };
@@ -210,13 +209,15 @@ export function useRealtimeUser({
   matches,
   onMessage,
   debounceMs = 1000,
+  trackReadyState = false,
 }: {
   matches: (message: BroadcastUserMessage) => boolean;
   onMessage: (message: BroadcastUserMessage) => void;
   debounceMs?: number;
+  trackReadyState?: boolean;
 }) {
   const user = useAtomValue(userAtom);
-  useRealtimeBase({
+  return useRealtimeBase({
     party: "main",
     channel: getBroadcastChannelStr({
       type: "user",
@@ -232,6 +233,7 @@ export function useRealtimeUser({
       }
     },
     disconnectOnDismount: false,
+    trackReadyState,
   });
 }
 
@@ -241,14 +243,127 @@ export function getThreadPatches(
   return message.data.threadPatches ?? [];
 }
 
+export function shouldProcessThreadPatch({
+  patch,
+  threadId,
+  threadChatId,
+}: {
+  patch: BroadcastThreadPatch;
+  threadId: string;
+  threadChatId: string | undefined;
+}): boolean {
+  if (patch.threadId !== threadId) {
+    return false;
+  }
+
+  if (patch.shell !== undefined) {
+    return true;
+  }
+
+  return (
+    threadChatId == null ||
+    patch.threadChatId == null ||
+    patch.threadChatId === threadChatId
+  );
+}
+
+const replayMessageEntrySchema = z.object({
+  seq: z.number(),
+  messages: z.array(z.unknown()),
+});
+
+const replayDeltaEntrySchema = z.object({
+  threadId: z.string(),
+  threadChatId: z.string(),
+  messageId: z.string(),
+  partIndex: z.number(),
+  partType: z.enum(["text", "thinking"]),
+  streamSeq: z.number(),
+  idempotencyKey: z.string(),
+  text: z.string(),
+});
+
+const replayResponseSchema = z.object({
+  entries: z.array(replayMessageEntrySchema),
+  deltaEntries: z.array(replayDeltaEntrySchema),
+});
+
+type ReplayResponse = z.infer<typeof replayResponseSchema>;
+
+function parseReplayResponse(data: unknown): ReplayResponse {
+  const parsedReplay = replayResponseSchema.safeParse(data);
+  if (!parsedReplay.success) {
+    throw new Error("Invalid /api/thread-replay response payload");
+  }
+  return parsedReplay.data;
+}
+
+function buildReplayPatches({
+  data,
+  threadId,
+  threadChatId,
+}: {
+  data: ReplayResponse;
+  threadId: string;
+  threadChatId: string | undefined;
+}): BroadcastThreadPatch[] {
+  const replayPatches: BroadcastThreadPatch[] = [];
+
+  if (data.entries.length > 0) {
+    replayPatches.push(
+      ...data.entries.map((entry) => ({
+        threadId,
+        ...(threadChatId ? { threadChatId } : {}),
+        op: "upsert" as const,
+        chatSequence: entry.seq,
+        messageSeq: entry.seq,
+        appendMessages: entry.messages,
+      })),
+    );
+  }
+
+  if (data.deltaEntries.length > 0) {
+    replayPatches.push(
+      ...data.deltaEntries.map((entry) => ({
+        threadId: entry.threadId,
+        threadChatId: entry.threadChatId,
+        op: "delta" as const,
+        messageId: entry.messageId,
+        partIndex: entry.partIndex,
+        deltaSeq: entry.streamSeq,
+        deltaIdempotencyKey: entry.idempotencyKey,
+        deltaKind: entry.partType,
+        text: entry.text,
+      })),
+    );
+  }
+
+  return replayPatches;
+}
+
 export function useRealtimeThread(
   threadId: string,
   threadChatId: string | undefined,
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
+  replayBaseline?: {
+    messageSeq: number | null;
+    deltaSeq?: number | null;
+  },
 ) {
   const lastMessageSeqRef = useRef<number | null>(null);
   const lastDeltaSeqRef = useRef<number | null>(null);
   const replayInFlightRef = useRef(false);
+  const activeReplayContextRef = useRef<string | null>(null);
+  const replayGenerationRef = useRef(0);
+  const onThreadPatchesRef = useRef(onThreadPatches);
+  const previousSocketReadyStateRef = useRef<number>(WebSocket.CONNECTING);
+  const socketOpenCycleRef = useRef(0);
+  const replayAttemptMarkerRef = useRef<string | null>(null);
+  const replayAbortControllerRef = useRef<AbortController | null>(null);
+
+  useLayoutEffect(() => {
+    onThreadPatchesRef.current = onThreadPatches;
+  }, [onThreadPatches]);
 
   const updateSequenceTrackers = useCallback(
     (patches: BroadcastThreadPatch[]) => {
@@ -284,27 +399,122 @@ export function useRealtimeThread(
     [],
   );
 
-  useRealtimeUser({
+  const applyPatches = useCallback(
+    (patches: BroadcastThreadPatch[]) => {
+      if (patches.length === 0) {
+        return;
+      }
+      updateSequenceTrackers(patches);
+      onThreadPatchesRef.current(patches);
+    },
+    [updateSequenceTrackers],
+  );
+
+  const fetchReplay = useCallback(
+    async ({
+      replayMessages,
+      replayDeltas,
+      livePatches = [],
+      abortController,
+    }: {
+      replayMessages: boolean;
+      replayDeltas: boolean;
+      livePatches?: BroadcastThreadPatch[];
+      abortController?: AbortController;
+    }) => {
+      const fromMessageSeq = replayMessages ? lastMessageSeqRef.current : null;
+      const fromDeltaSeq = replayDeltas ? lastDeltaSeqRef.current : null;
+      const shouldReplayMessages = fromMessageSeq != null;
+      const shouldReplayDeltas = threadChatId != null && fromDeltaSeq != null;
+
+      if (
+        (!shouldReplayMessages && !shouldReplayDeltas) ||
+        replayInFlightRef.current
+      ) {
+        applyPatches(livePatches);
+        return false;
+      }
+
+      const replayGeneration = replayGenerationRef.current;
+      const replayContext = activeReplayContextRef.current;
+      const activeAbortController = abortController ?? new AbortController();
+      if (activeAbortController.signal.aborted) {
+        return false;
+      }
+      replayInFlightRef.current = true;
+      replayAbortControllerRef.current = activeAbortController;
+      const replayUrl = new URL("/api/thread-replay", window.location.origin);
+      replayUrl.searchParams.set("threadId", threadId);
+      if (shouldReplayMessages) {
+        replayUrl.searchParams.set("fromSeq", String(fromMessageSeq));
+      }
+      if (shouldReplayDeltas) {
+        replayUrl.searchParams.set("threadChatId", threadChatId);
+        replayUrl.searchParams.set("fromDeltaSeq", String(fromDeltaSeq));
+      }
+
+      try {
+        const res = await fetch(replayUrl.toString(), {
+          signal: activeAbortController.signal,
+        });
+        const data = res.ok ? parseReplayResponse(await res.json()) : null;
+        if (
+          replayGenerationRef.current !== replayGeneration ||
+          activeReplayContextRef.current !== replayContext
+        ) {
+          return false;
+        }
+        const replayPatches = data
+          ? buildReplayPatches({ data, threadId, threadChatId })
+          : [];
+        const combinedPatches = [...replayPatches, ...livePatches];
+        applyPatches(combinedPatches);
+      } catch (error) {
+        if (activeAbortController.signal.aborted) {
+          return false;
+        }
+        if (
+          replayGenerationRef.current !== replayGeneration ||
+          activeReplayContextRef.current !== replayContext
+        ) {
+          return false;
+        }
+        console.warn(
+          "[broadcast] replay fetch failed, applying patches directly",
+          error,
+        );
+        applyPatches(livePatches);
+      } finally {
+        if (replayAbortControllerRef.current === activeAbortController) {
+          replayAbortControllerRef.current = null;
+        }
+        if (
+          replayGenerationRef.current === replayGeneration &&
+          activeReplayContextRef.current === replayContext
+        ) {
+          replayInFlightRef.current = false;
+        }
+      }
+
+      return true;
+    },
+    [applyPatches, threadChatId, threadId],
+  );
+
+  const { socketReadyState } = useRealtimeUser({
     debounceMs: 0,
+    trackReadyState: true,
     matches: useCallback(
       (message) =>
-        getThreadPatches(message).some(
-          (patch) =>
-            patch.threadId === threadId &&
-            (threadChatId == null ||
-              patch.threadChatId == null ||
-              patch.threadChatId === threadChatId),
+        getThreadPatches(message).some((patch) =>
+          shouldProcessThreadPatch({ patch, threadId, threadChatId }),
         ),
       [threadId, threadChatId],
     ),
     onMessage: useCallback(
       (message) => {
-        const patches = getThreadPatches(message).filter(
-          (patch) =>
-            patch.threadId === threadId &&
-            (threadChatId == null ||
-              patch.threadChatId == null ||
-              patch.threadChatId === threadChatId),
+        const patches = getThreadPatches(message).filter((patch) =>
+          shouldProcessThreadPatch({ patch, threadId, threadChatId }),
         );
         if (patches.length === 0) return;
 
@@ -349,103 +559,121 @@ export function useRealtimeThread(
           threadChatId != null &&
           lastDeltaSeqRef.current != null;
 
-        if (
-          (shouldReplayMessages || shouldReplayDeltas) &&
-          !replayInFlightRef.current
-        ) {
-          replayInFlightRef.current = true;
-          const replayUrl = new URL(
-            "/api/thread-replay",
-            window.location.origin,
-          );
-          replayUrl.searchParams.set("threadId", threadId);
-          if (shouldReplayMessages) {
-            replayUrl.searchParams.set(
-              "fromSeq",
-              String(lastMessageSeqRef.current),
-            );
-          }
-          if (shouldReplayDeltas) {
-            replayUrl.searchParams.set("threadChatId", threadChatId);
-            replayUrl.searchParams.set(
-              "fromDeltaSeq",
-              String(lastDeltaSeqRef.current),
-            );
-          }
-          fetch(replayUrl.toString())
-            .then((res) => (res.ok ? res.json() : null))
-            .then((data) => {
-              const replayPatches: BroadcastThreadPatch[] = [];
-              if (data?.entries?.length > 0) {
-                // Build synthetic patches from replayed entries
-                replayPatches.push(
-                  ...data.entries.map(
-                    (entry: { seq: number; messages: unknown[] }) => ({
-                      threadId,
-                      ...(threadChatId ? { threadChatId } : {}),
-                      op: "upsert" as const,
-                      chatSequence: entry.seq,
-                      messageSeq: entry.seq,
-                      appendMessages: entry.messages,
-                    }),
-                  ),
-                );
-              }
-
-              if (data?.deltaEntries?.length > 0) {
-                replayPatches.push(
-                  ...data.deltaEntries.map(
-                    (entry: {
-                      threadId: string;
-                      threadChatId: string;
-                      messageId: string;
-                      partIndex: number;
-                      partType: string;
-                      streamSeq: number;
-                      idempotencyKey: string;
-                      text: string;
-                    }) => ({
-                      threadId: entry.threadId,
-                      threadChatId: entry.threadChatId,
-                      op: "delta" as const,
-                      messageId: entry.messageId,
-                      partIndex: entry.partIndex,
-                      deltaSeq: entry.streamSeq,
-                      deltaIdempotencyKey: entry.idempotencyKey,
-                      deltaKind:
-                        entry.partType === "thinking" ? "thinking" : "text",
-                      text: entry.text,
-                    }),
-                  ),
-                );
-              }
-
-              const combinedPatches = [...replayPatches, ...patches];
-              updateSequenceTrackers(combinedPatches);
-              onThreadPatches(combinedPatches);
-            })
-            .catch((error) => {
-              console.warn(
-                "[broadcast] replay fetch failed, applying patches directly",
-                error,
-              );
-              updateSequenceTrackers(patches);
-              onThreadPatches(patches);
-            })
-            .finally(() => {
-              replayInFlightRef.current = false;
-            });
+        if (shouldReplayMessages || shouldReplayDeltas) {
+          void fetchReplay({
+            replayMessages: shouldReplayMessages,
+            replayDeltas: shouldReplayDeltas,
+            livePatches: patches,
+          });
         } else if (
           !(hasMessageGap || hasDeltaGap) ||
           replayInFlightRef.current
         ) {
-          updateSequenceTrackers(patches);
-          onThreadPatches(patches);
+          applyPatches(patches);
         }
       },
-      [threadId, threadChatId, onThreadPatches, updateSequenceTrackers],
+      [applyPatches, fetchReplay, threadChatId, threadId],
     ),
   });
+
+  useEffect(() => {
+    const nextReplayContext = `${threadId}:${threadChatId ?? "no-chat"}`;
+    if (activeReplayContextRef.current !== nextReplayContext) {
+      replayAbortControllerRef.current?.abort();
+      replayAbortControllerRef.current = null;
+      activeReplayContextRef.current = nextReplayContext;
+      replayGenerationRef.current += 1;
+      lastMessageSeqRef.current = replayBaseline?.messageSeq ?? null;
+      lastDeltaSeqRef.current = replayBaseline?.deltaSeq ?? null;
+      replayInFlightRef.current = false;
+      replayAttemptMarkerRef.current = null;
+      return;
+    }
+
+    const baselineMessageSeq = replayBaseline?.messageSeq;
+    if (
+      baselineMessageSeq != null &&
+      (lastMessageSeqRef.current == null ||
+        baselineMessageSeq > lastMessageSeqRef.current)
+    ) {
+      lastMessageSeqRef.current = baselineMessageSeq;
+    }
+
+    const baselineDeltaSeq = replayBaseline?.deltaSeq;
+    if (
+      baselineDeltaSeq != null &&
+      (lastDeltaSeqRef.current == null ||
+        baselineDeltaSeq > lastDeltaSeqRef.current)
+    ) {
+      lastDeltaSeqRef.current = baselineDeltaSeq;
+    }
+  }, [
+    replayBaseline?.deltaSeq,
+    replayBaseline?.messageSeq,
+    threadChatId,
+    threadId,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      replayAbortControllerRef.current?.abort();
+      replayAbortControllerRef.current = null;
+      replayInFlightRef.current = false;
+      replayAttemptMarkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      socketReadyState === WebSocket.OPEN &&
+      previousSocketReadyStateRef.current !== WebSocket.OPEN
+    ) {
+      socketOpenCycleRef.current += 1;
+      replayAttemptMarkerRef.current = null;
+    }
+    previousSocketReadyStateRef.current = socketReadyState;
+  }, [socketReadyState]);
+
+  useEffect(() => {
+    if (socketReadyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const replayAttemptMarker = `${activeReplayContextRef.current ?? "unknown"}:${socketOpenCycleRef.current}`;
+    if (replayAttemptMarkerRef.current === replayAttemptMarker) {
+      return;
+    }
+
+    const shouldReplayMessages =
+      replayBaseline?.messageSeq != null || lastMessageSeqRef.current != null;
+    const shouldReplayDeltas =
+      replayBaseline?.deltaSeq != null || lastDeltaSeqRef.current != null;
+    if (!shouldReplayMessages && !shouldReplayDeltas) {
+      return;
+    }
+
+    replayAttemptMarkerRef.current = replayAttemptMarker;
+    const abortController = new AbortController();
+    void fetchReplay({
+      replayMessages: shouldReplayMessages,
+      replayDeltas: shouldReplayDeltas,
+      abortController,
+    });
+
+    return () => {
+      abortController.abort();
+      if (replayAbortControllerRef.current === abortController) {
+        replayAbortControllerRef.current = null;
+      }
+      replayInFlightRef.current = false;
+      replayAttemptMarkerRef.current = null;
+    };
+  }, [
+    fetchReplay,
+    replayBaseline?.deltaSeq,
+    replayBaseline?.messageSeq,
+    socketReadyState,
+  ]);
 }
 
 export type BroadcastThreadMatchThread = (

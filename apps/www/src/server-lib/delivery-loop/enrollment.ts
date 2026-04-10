@@ -29,6 +29,13 @@ export function isDeliveryLoopEnrollmentAllowedForThread({
     return true;
   }
 
+  if (sourceType === "linear-mention") {
+    return (
+      sourceMetadata?.type === "linear-mention" &&
+      sourceMetadata.deliveryLoopOptIn === true
+    );
+  }
+
   return false;
 }
 

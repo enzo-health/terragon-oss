@@ -249,6 +249,8 @@ export type ThreadSourceMetadata =
       issueId: string;
       issueIdentifier: string;
       issueUrl: string;
+      deliveryLoopOptIn?: boolean;
+      deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
       /** Optional — agent sessions from delegation/assignment have no comment */
       commentId?: string;
       /** Webhook delivery ID for idempotency */
@@ -579,6 +581,9 @@ export type UsageEventType =
 
 export type UsageSku =
   | "openai_responses_gpt_5"
+  | "openai_responses_gpt_5_4"
+  | "openai_responses_gpt_5_4_mini"
+  | "openai_responses_gpt_5_4_nano"
   | "openai_responses_gpt_5_2"
   | "anthropic_messages_sonnet"
   | "anthropic_messages_haiku"

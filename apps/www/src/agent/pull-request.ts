@@ -81,7 +81,8 @@ export async function openPullRequestForThread({
     }
     try {
       const planApprovalPolicy =
-        thread.sourceMetadata?.type === "www"
+        thread.sourceMetadata?.type === "www" ||
+        thread.sourceMetadata?.type === "linear-mention"
           ? (thread.sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
           : "auto";
       await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({

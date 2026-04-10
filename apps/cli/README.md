@@ -66,8 +66,7 @@ terry create "Refactor the auth module" --mode plan
 
 # Choose a specific model
 terry create "Investigate flaky tests" --model sonnet
-terry create "Run large codegen" --model gpt-5-high
-> GPT-5.1 Codex Max variants require a ChatGPT subscription connected in Settings.
+terry create "Run large codegen" --model gpt-5.4-high
 ```
 
 #### Options
@@ -76,7 +75,7 @@ terry create "Run large codegen" --model gpt-5-high
 - `-b, --branch <branch>`: Base branch name (default: current branch, falls back to main)
 - `--no-new-branch`: Don't create a new branch (default: creates new branch)
 - `-m, --mode <mode>`: Task mode: `plan` or `execute` (default: `execute`)
-- `-M, --model <model>`: AI model to use: `opus`, `sonnet`, `haiku`, `amp`, `gpt-5-low`, `gpt-5-medium`, `gpt-5`, `gpt-5-high`, `gpt-5.2-low`, `gpt-5.2-medium`, `gpt-5.2`, `gpt-5.2-high`, `gpt-5.1-low`, `gpt-5.1-medium`, `gpt-5.1`, `gpt-5.1-high`, `gpt-5.1-codex-max-low`, `gpt-5.1-codex-max-medium`, `gpt-5.1-codex-max`, `gpt-5.1-codex-max-high`, `gpt-5.1-codex-max-xhigh`, `gpt-5-codex-low`, `gpt-5-codex-medium`, `gpt-5-codex-high`, `gpt-5.1-codex-low`, `gpt-5.1-codex-medium`, `gpt-5.1-codex-high`, `gemini-3-pro`, `gemini-2.5-pro`, `grok-code`, `qwen3-coder`, `kimi-k2`, `glm-4.6`, `opencode/gemini-2.5-pro` (optional)
+- `-M, --model <model>`: AI model to use: `opus`, `opus[1m]`, `sonnet`, `sonnet[1m]`, `haiku`, `amp`, `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4`, `gpt-5.4-high`, `gpt-5.4-xhigh`, `gpt-5.4-mini-low`, `gpt-5.4-mini-medium`, `gpt-5.4-mini`, `gpt-5.4-mini-high`, `gpt-5.4-mini-xhigh`, `gpt-5.4-nano-low`, `gpt-5.4-nano-medium`, `gpt-5.4-nano`, `gpt-5.4-nano-high`, `gpt-5.4-nano-xhigh`, `gemini-3-pro`, `gemini-2.5-pro`, `grok-code`, `qwen3-coder`, `kimi-k2.5`, `glm-5.1`, `opencode/gemini-2.5-pro` (optional)
 
 ### `terry pull`
 

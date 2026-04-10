@@ -10,6 +10,12 @@ type UseRealtimeThreadMock = (
   threadId: string,
   threadChatId: string | undefined,
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
+  replayBaseline?:
+    | {
+        messageSeq: number | null;
+        deltaSeq?: number | null;
+      }
+    | undefined,
 ) => void;
 
 const useRealtimeThreadMock = vi.fn<UseRealtimeThreadMock>();
@@ -31,17 +37,23 @@ function TestHarness({
   threadChatId,
   onThreadPatches,
   enabled,
+  replayBaseline,
 }: {
   threadId: string;
   threadChatId: string | undefined;
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void;
   enabled?: boolean;
+  replayBaseline?: {
+    messageSeq: number | null;
+    deltaSeq?: number | null;
+  };
 }): null {
   useDeliveryLoopStatusRealtime({
     threadId,
     threadChatId,
     onThreadPatches,
     enabled,
+    replayBaseline,
   });
   return null;
 }
@@ -85,6 +97,7 @@ describe("useDeliveryLoopStatusRealtime", () => {
       "thread-1",
       "chat-1",
       expect.any(Function),
+      undefined,
     );
 
     activeThreadPatchCallback?.([
@@ -207,6 +220,32 @@ describe("useDeliveryLoopStatusRealtime", () => {
         refetch: ["delivery-loop"],
       },
     ]);
+  });
+
+  it("passes replay baselines through to the realtime subscription", () => {
+    const queryClient = createQueryClient();
+    const onThreadPatches = vi.fn();
+
+    renderToString(
+      <QueryClientProvider client={queryClient}>
+        <TestHarness
+          threadId="thread-1"
+          threadChatId="chat-1"
+          onThreadPatches={onThreadPatches}
+          replayBaseline={{ messageSeq: 7, deltaSeq: 13 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(useRealtimeThreadMock).toHaveBeenCalledWith(
+      "thread-1",
+      "chat-1",
+      expect.any(Function),
+      {
+        messageSeq: 7,
+        deltaSeq: 13,
+      },
+    );
   });
 
   it("preserves interleaved delta ordering around delivery-loop refetch patches", () => {

@@ -225,9 +225,11 @@ export async function createNewThread({
       sourceType === "automation" ||
       sourceType === "github-mention" ||
       sourceType === "cli" ||
-      (sourceMetadata?.type === "www" && sourceMetadata.deliveryLoopOptIn));
+      (sourceMetadata?.type === "www" && sourceMetadata.deliveryLoopOptIn) ||
+      (sourceMetadata?.type === "linear-mention" &&
+        sourceMetadata.deliveryLoopOptIn));
   const planApprovalPolicy =
-    sourceMetadata?.type === "www"
+    sourceMetadata?.type === "www" || sourceMetadata?.type === "linear-mention"
       ? (sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
       : "auto";
   const ensureThreadScopedDeliveryEnrollment = async () => {

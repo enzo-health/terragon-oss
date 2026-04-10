@@ -30,6 +30,7 @@ const startsWithMatcher = (value: string): ModelMatchFn => {
 const MODEL_PROVIDER_CONFIG: Record<ModelProvider, ModelValidationConfig> = {
   openai: {
     allowedMatchers: [
+      includesMatcher("gpt-5.4"),
       includesMatcher("gpt-5.2"),
       includesMatcher("gpt-5.1-codex-max"),
       includesMatcher("gpt-5.1"),
@@ -53,8 +54,8 @@ const MODEL_PROVIDER_CONFIG: Record<ModelProvider, ModelValidationConfig> = {
     allowedMatchers: [
       exactMatcher("x-ai/grok-code-fast-1"),
       startsWithMatcher("qwen/qwen3-coder"),
-      startsWithMatcher("moonshotai/kimi-k2"),
-      startsWithMatcher("z-ai/glm-4.6"),
+      startsWithMatcher("moonshotai/kimi-k2.5"),
+      startsWithMatcher("z-ai/glm-5.1"),
       exactMatcher("google/gemini-2.5-pro"),
       startsWithMatcher("google/gemini-3-pro"),
     ],

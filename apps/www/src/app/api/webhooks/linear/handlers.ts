@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { publicAppUrl } from "@terragon/env/next-public";
+import type { LinearMentionSourceMetadataInsert } from "@terragon/shared/db/types";
 import {
   getLinearAccountForLinearUserId,
   getLinearSettingsForUserAndOrg,
@@ -30,40 +31,43 @@ import { decryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 
 // ---------------------------------------------------------------------------
-// Webhook payload types
+// Webhook payload types (mirrors @linear/sdk AgentSessionEventWebhookPayload)
 // ---------------------------------------------------------------------------
+
+interface AgentSessionChild {
+  id: string;
+  creatorId?: string | null;
+  issueId?: string | null;
+  issue?: {
+    id: string;
+    identifier: string;
+    title: string;
+    url: string;
+  } | null;
+}
 
 interface AgentSessionCreatedPayload {
   type: "AgentSessionEvent";
   action: "created";
   organizationId: string;
-  data: {
-    id: string;
-    agentSession: {
-      id: string;
-      promptContext?: {
-        issueId?: string;
-        issueIdentifier?: string;
-        issueTitle?: string;
-        issueDescription?: string;
-        issueUrl?: string;
-        actorId?: string;
-      };
-      actorId?: string;
-    };
-  };
+  /** Formatted prompt string with issue details, comments, and guidance. */
+  promptContext?: string | null;
+  agentSession: AgentSessionChild;
 }
 
 interface AgentSessionPromptedPayload {
   type: "AgentSessionEvent";
   action: "prompted";
   organizationId: string;
-  data: {
-    id: string;
-    agentActivity?: {
+  promptContext?: string | null;
+  agentSession: AgentSessionChild;
+  agentActivity?: {
+    content?: {
+      type?: string;
       body?: string;
     };
-  };
+    signal?: string | null;
+  } | null;
 }
 
 type AgentSessionEventPayload =
@@ -73,7 +77,7 @@ type AgentSessionEventPayload =
       type: "AgentSessionEvent";
       action: string;
       organizationId: string;
-      data: { id: string };
+      agentSession: { id: string };
     };
 
 interface AppUserNotificationPayload {
@@ -203,7 +207,7 @@ export async function handleAgentSessionEvent(
   opts?: { createClient?: LinearClientFactory },
 ): Promise<void> {
   const { organizationId } = payload;
-  const agentSessionId = payload.data.id;
+  const agentSessionId = payload.agentSession.id;
 
   console.log("[linear webhook] AgentSessionEvent", {
     action: payload.action,
@@ -236,7 +240,7 @@ async function handleAgentSessionCreated(
   opts?: { createClient?: LinearClientFactory },
 ): Promise<void> {
   const { organizationId } = payload;
-  const agentSessionId = payload.data.agentSession.id;
+  const agentSessionId = payload.agentSession.id;
 
   // 1. Look up linearInstallation by organizationId
   const installation = await getLinearInstallationForOrg({
@@ -253,22 +257,20 @@ async function handleAgentSessionCreated(
 
   // 1b. Pre-flight: validate payload fields that require no DB before emitting thought.
   // This prevents optimistic "Starting work..." from appearing when we will silently skip.
-  const promptContext = payload.data.agentSession.promptContext;
-  const preflightIssueId = promptContext?.issueId;
-  const preflightActorId =
-    payload.data.agentSession.actorId ??
-    payload.data.agentSession.promptContext?.actorId;
+  const preflightIssueId =
+    payload.agentSession.issueId ?? payload.agentSession.issue?.id;
+  const preflightActorId = payload.agentSession.creatorId;
 
   if (!preflightIssueId) {
     console.error(
-      "[linear webhook] Pre-flight: no issueId in agentSession promptContext, skipping",
+      "[linear webhook] Pre-flight: no issueId in agentSession, skipping",
       { agentSessionId },
     );
     return;
   }
   if (!preflightActorId) {
     console.error(
-      "[linear webhook] Pre-flight: no actorId in agentSession, skipping",
+      "[linear webhook] Pre-flight: no creatorId in agentSession, skipping",
       { agentSessionId },
     );
     return;
@@ -437,29 +439,24 @@ async function createThreadRecord({
   agentSessionId: string;
   opts?: { createClient?: LinearClientFactory };
 }): Promise<void> {
-  const promptContext = payload.data.agentSession.promptContext;
-  const issueId = promptContext?.issueId;
-  const issueIdentifier = promptContext?.issueIdentifier ?? "";
-  const issueTitle = promptContext?.issueTitle ?? "Untitled Issue";
-  const issueUrl = promptContext?.issueUrl ?? "";
+  const issue = payload.agentSession.issue;
+  const issueId = payload.agentSession.issueId ?? issue?.id;
+  const issueIdentifier = issue?.identifier ?? "";
+  const issueTitle = issue?.title ?? "Untitled Issue";
+  const issueUrl = issue?.url ?? "";
 
   if (!issueId) {
-    console.error(
-      "[linear webhook] No issueId in agentSession promptContext, skipping",
-      {
-        agentSessionId,
-      },
-    );
+    console.error("[linear webhook] No issueId in agentSession, skipping", {
+      agentSessionId,
+    });
     return;
   }
 
-  // Resolve user from agentSession.actorId → linearAccount.linearUserId → Terragon userId
-  const actorId =
-    payload.data.agentSession.actorId ??
-    payload.data.agentSession.promptContext?.actorId;
+  // Resolve user from agentSession.creatorId → linearAccount.linearUserId → Terragon userId
+  const actorId = payload.agentSession.creatorId;
 
   if (!actorId) {
-    console.error("[linear webhook] No actorId in agentSession, skipping", {
+    console.error("[linear webhook] No creatorId in agentSession, skipping", {
       agentSessionId,
     });
     return;
@@ -571,16 +568,18 @@ async function createThreadRecord({
   const defaultModel = linearSettings?.defaultModel
     ? linearSettings.defaultModel
     : await getDefaultModel({ userId });
+  const deliveryLoopOptIn = linearSettings?.deliveryLoopOptIn ?? false;
+  const deliveryPlanApprovalPolicy =
+    linearSettings?.deliveryPlanApprovalPolicy ?? "auto";
 
-  // Build message
+  // Build message — use Linear's promptContext (formatted string with issue
+  // details, comments, and guidance) when available, falling back to basic info.
   const messageParts: string[] = [];
   messageParts.push(
     `You were assigned a Linear issue ${issueIdentifier}: ${issueTitle}`,
   );
-  if (promptContext?.issueDescription) {
-    messageParts.push(
-      `**Issue description:**\n${promptContext.issueDescription}`,
-    );
+  if (payload.promptContext) {
+    messageParts.push(`**Context from Linear:**\n${payload.promptContext}`);
   }
   messageParts.push(
     "Please work on this task. Your work will be sent to the user once you're done.",
@@ -593,7 +592,21 @@ async function createThreadRecord({
   console.log("[linear webhook] Creating thread for user", {
     userId,
     agentSessionId,
+    deliveryLoopOptIn,
+    deliveryPlanApprovalPolicy,
   });
+
+  const sourceMetadata: LinearMentionSourceMetadataInsert = {
+    type: "linear-mention",
+    organizationId,
+    issueId,
+    issueIdentifier,
+    issueUrl,
+    agentSessionId,
+    deliveryLoopOptIn,
+    deliveryPlanApprovalPolicy,
+    ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
+  };
 
   const { threadId } = await newThreadInternal({
     userId,
@@ -607,15 +620,7 @@ async function createThreadRecord({
     baseBranchName: null,
     headBranchName: null,
     sourceType: "linear-mention",
-    sourceMetadata: {
-      type: "linear-mention",
-      organizationId,
-      issueId,
-      issueIdentifier,
-      issueUrl,
-      agentSessionId,
-      ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
-    },
+    sourceMetadata,
   });
 
   const taskUrl = `${publicAppUrl()}/task/${threadId}`;
@@ -647,7 +652,7 @@ async function handleAgentSessionPrompted(
   opts?: { createClient?: LinearClientFactory },
 ): Promise<void> {
   const { organizationId } = payload;
-  const agentSessionId = payload.data.id;
+  const agentSessionId = payload.agentSession.id;
 
   // Look up thread by agentSessionId
   const thread = await getThreadByLinearAgentSessionId({
@@ -673,8 +678,12 @@ async function handleAgentSessionPrompted(
     return;
   }
 
+  // Extract the user's follow-up message from the agent activity content,
+  // falling back to the formatted promptContext string.
+  const promptedPayload = payload as AgentSessionPromptedPayload;
   const promptBody =
-    (payload.data as AgentSessionPromptedPayload["data"]).agentActivity?.body ??
+    promptedPayload.agentActivity?.content?.body ??
+    promptedPayload.promptContext ??
     "";
 
   // Skip empty prompts — no useful work to queue

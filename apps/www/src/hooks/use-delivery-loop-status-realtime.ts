@@ -9,6 +9,10 @@ type UseDeliveryLoopStatusRealtimeArgs = {
   threadChatId: string | undefined;
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void;
   enabled?: boolean;
+  replayBaseline?: {
+    messageSeq: number | null;
+    deltaSeq?: number | null;
+  };
 };
 
 function hasDeliveryLoopRefetchTarget(patch: BroadcastThreadPatch): boolean {
@@ -24,6 +28,7 @@ export function useDeliveryLoopStatusRealtime({
   threadChatId,
   onThreadPatches,
   enabled = true,
+  replayBaseline,
 }: UseDeliveryLoopStatusRealtimeArgs): void {
   const queryClient = useQueryClient();
 
@@ -52,5 +57,6 @@ export function useDeliveryLoopStatusRealtime({
     threadId,
     threadChatId,
     onThreadPatchesWithDeliveryLoopInvalidation,
+    replayBaseline,
   );
 }

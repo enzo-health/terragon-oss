@@ -77,12 +77,12 @@ Options:
   -h, --help                       Show this help message
 
 The daemon will create a unix socket at /tmp/terragon-daemon.sock and listen for JSON messages with:
-{
-  "token": "string",
-  "prompt": "string", 
-  "sessionId": "string|null",
-  "model": "opus|sonnet"
-}
+  {
+   "token": "string",
+   "prompt": "string", 
+   "sessionId": "string|null",
+   "model": "haiku|sonnet|sonnet[1m]|opus|opus[1m]"
+  }
 
 Examples:
   terragon-daemon
