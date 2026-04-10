@@ -29,15 +29,13 @@
           "pnpm -C apps/www exec vitest run src/app/api/daemon-event/route.test.ts",
           "psql ... update agent_run_context/thread/thread_chat back to processing/working for isolated live fixture `val-cross-browser-run-3100`",
           "agent-browser --session val-cross-browser open http://127.0.0.1:3100",
-          "agent-browser --session val-cross-browser eval <browser websocket + fetch timing harness filtered to refetch:[\"delivery-loop\"]>",
-          "agent-browser --session val-cross-browser screenshot .factory/validation/daemon-integration/user-testing/artifacts/VAL-CROSS-001-browser-capture.png"
+          "agent-browser --session val-cross-browser eval <browser websocket + fetch timing harness filtered to refetch:[\"delivery-loop\"]>"
         ],
         "commandResults": [
           "PASS: 52 tests passed",
           "PASS: browser websocket probe connected on ws://127.0.0.1:2999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k?apiKey=<daemon-token>",
           "PASS: browser harness returned {\"postStatus\":200,\"postElapsedMs\":112.6,\"socketDeltaMs\":112.9,\"within500ms\":true}",
-          "PASS: websocket frame preview contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]}",
-          "PASS: screenshot captured at .factory/validation/daemon-integration/user-testing/artifacts/VAL-CROSS-001-browser-capture.png"
+          "PASS: websocket frame preview contained {\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]}"
         ],
         "codeReferences": [
           "apps/www/src/app/api/daemon-event/route.ts:597-633",

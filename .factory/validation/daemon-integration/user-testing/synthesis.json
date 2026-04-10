@@ -35,7 +35,7 @@
     },
     {
       "target": ".factory/validation/daemon-integration/user-testing/flows/VAL-CROSS-001.json",
-      "description": "Upgraded VAL-CROSS-001 report with browser-backed live evidence: daemon-event 200 ack + websocket `refetch:[\"delivery-loop\"]` capture at `112.9ms`, plus persisted screenshot evidence.",
+      "description": "Upgraded VAL-CROSS-001 report with browser-backed live evidence: daemon-event 200 ack + websocket `refetch:[\"delivery-loop\"]` capture at `112.9ms`.",
       "source": "validation"
     }
   ],
@@ -72,7 +72,6 @@
         "live runId=val-cross-browser-run-3100 eventId=event-delivery-loop-1775844754221 seq=56",
         "http://127.0.0.1:3100/api/daemon-event -> 200 ack in 112.6ms",
         "ws://127.0.0.1:2999/parties/main/user:67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k -> refetch:[\"delivery-loop\"] in 112.9ms",
-        ".factory/validation/daemon-integration/user-testing/artifacts/VAL-CROSS-001-browser-capture.png",
         ".factory/validation/daemon-integration/user-testing/flows/VAL-CROSS-001.json"
       ]
     }

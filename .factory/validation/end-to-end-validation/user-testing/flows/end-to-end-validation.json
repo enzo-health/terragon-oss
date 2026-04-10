@@ -20,10 +20,6 @@
         }
       ],
       "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-visual-latency.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-visual-latency-after.png"
-        ],
         "timingMs": {
           "visibleUpdate": 629.6000000014901
         }
@@ -46,12 +42,7 @@
           "observed": "A direct signed broadcast produced the `refetch:[\"delivery-loop\"]` frame and an immediate task refetch, and the UI returned to `Awaiting PR` with no manual refresh."
         }
       ],
-      "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-005-after.png"
-        ]
-      },
+      "evidence": {},
       "issues": null
     },
     {
@@ -66,9 +57,6 @@
         }
       ],
       "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json"
-        ],
         "timingMs": {
           "frameToRequest": 0.1972089999981108
         }
@@ -87,10 +75,6 @@
         }
       ],
       "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-visual-latency.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-fresh-probe-result.json"
-        ],
         "timingMs": {
           "visibleUpdate": 629.6000000014901,
           "eventToFrame": 170.46475000000646,
@@ -111,11 +95,6 @@
         }
       ],
       "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-before.png",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-catchup.png"
-        ],
         "timingMs": {
           "missedStateCatchup": 93.75754199999938
         },
@@ -134,12 +113,7 @@
           "observed": "After restart, the page re-established the same user-channel websocket, received a new `refetch:[\"delivery-loop\"]` broadcast `9.25ms` after POST start, and immediately refetched task state."
         }
       ],
-      "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-005-after.png"
-        ]
-      },
+      "evidence": {},
       "issues": null
     }
   ],

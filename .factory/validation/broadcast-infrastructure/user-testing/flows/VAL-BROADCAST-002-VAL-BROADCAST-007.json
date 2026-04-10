@@ -25,9 +25,6 @@
         }
       ],
       "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json"
-        ],
         "payloadPreview": "{\"type\":\"user\",\"id\":\"67DFFNToBBmnlKm4XPaTQ8QuBe6bWh2k\",\"data\":{\"threadPatches\":[{\"threadId\":\"0e28b4ab-a354-4856-b9a0-35ecf0710e91\",\"threadChatId\":\"785991e1-0cda-4c07-88d1-284f403deee4\",\"op\":\"refetch\",\"refetch\":[\"delivery-loop\"]}]}}",
         "timingMs": {
           "broadcastPostElapsed": 8.942707999995037,
@@ -45,28 +42,23 @@
         {
           "action": "POST to the PartyKit room without `X-Terragon-Secret`.",
           "expected": "The server rejects the request with `401 Unauthorized`.",
-          "observed": "The request returned HTTP `401` and wrote `Unauthorized` to `.factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-no-secret.txt`."
+          "observed": "The request returned HTTP `401 Unauthorized`."
         },
         {
           "action": "POST to the same room with an incorrect secret.",
           "expected": "The server rejects the request with `401 Unauthorized`.",
-          "observed": "The request returned HTTP `401` and wrote `Unauthorized` to `.factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-wrong-secret.txt`."
+          "observed": "The request returned HTTP `401 Unauthorized`."
         },
         {
           "action": "POST to the same room with the configured internal shared secret.",
           "expected": "The server accepts the request.",
-          "observed": "The request returned HTTP `200` and wrote `OK` to `.factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-valid-secret.txt`."
+          "observed": "The request returned HTTP `200 OK`."
         }
       ],
       "evidence": {
         "codeReferences": [
           "apps/broadcast/src/auth.ts",
           "packages/env/src/apps-broadcast.ts"
-        ],
-        "artifacts": [
-          ".factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-no-secret.txt",
-          ".factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-wrong-secret.txt",
-          ".factory/validation/broadcast-infrastructure/user-testing/artifacts/VAL-BROADCAST-007-valid-secret.txt"
         ],
         "statusCodes": [401, 401, 200]
       },

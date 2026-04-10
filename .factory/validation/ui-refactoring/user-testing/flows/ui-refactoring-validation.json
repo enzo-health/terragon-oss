@@ -28,11 +28,6 @@
         "codeReferences": [
           "apps/www/src/queries/delivery-loop-status-queries.ts:10-18"
         ],
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-before.png",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-catchup.png"
-        ],
         "timingMs": {
           "heartbeatCatchup": 93.75754199999938
         }
@@ -71,11 +66,6 @@
         }
       ],
       "evidence": {
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-fresh-probe-result.json",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-before.png",
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-UI-004-after.png"
-        ],
         "timingMs": {
           "frameToRequest": 228.19233299999905
         }
@@ -97,9 +87,6 @@
         "codeReferences": [
           "apps/www/src/queries/delivery-loop-status-queries.ts:10-18",
           "apps/www/src/queries/delivery-loop-status-queries.test.ts:106-111"
-        ],
-        "artifacts": [
-          ".factory/validation/end-to-end-validation/user-testing/artifacts/VAL-CROSS-004-heartbeat-reconnect-result.json"
         ]
       },
       "issues": null
