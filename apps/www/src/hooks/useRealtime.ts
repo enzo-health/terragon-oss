@@ -289,6 +289,7 @@ export function useRealtimeThread(
   const lastMessageSeqRef = useRef<number | null>(null);
   const lastDeltaSeqRef = useRef<number | null>(null);
   const replayInFlightRef = useRef(false);
+  const activeReplayContextRef = useRef<string | null>(null);
 
   const updateSequenceTrackers = useCallback(
     (patches: BroadcastThreadPatch[]) => {
@@ -510,6 +511,15 @@ export function useRealtimeThread(
   });
 
   useEffect(() => {
+    const nextReplayContext = `${threadId}:${threadChatId ?? "no-chat"}`;
+    if (activeReplayContextRef.current !== nextReplayContext) {
+      activeReplayContextRef.current = nextReplayContext;
+      lastMessageSeqRef.current = replayBaseline?.messageSeq ?? null;
+      lastDeltaSeqRef.current = replayBaseline?.deltaSeq ?? null;
+      replayInFlightRef.current = false;
+      return;
+    }
+
     const baselineMessageSeq = replayBaseline?.messageSeq;
     if (
       baselineMessageSeq != null &&
@@ -527,7 +537,12 @@ export function useRealtimeThread(
     ) {
       lastDeltaSeqRef.current = baselineDeltaSeq;
     }
-  }, [replayBaseline?.deltaSeq, replayBaseline?.messageSeq]);
+  }, [
+    replayBaseline?.deltaSeq,
+    replayBaseline?.messageSeq,
+    threadChatId,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (socketReadyState !== WebSocket.OPEN) {

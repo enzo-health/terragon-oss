@@ -302,4 +302,65 @@ describe("useRealtimeThread", () => {
       },
     ]);
   });
+
+  it("reseeds replay cursors when the active chat switches to a lower canonical message sequence", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [],
+        deltaEntries: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness({
+      activeThreadChatId,
+      baselineMessageSeq,
+    }: {
+      activeThreadChatId: string;
+      baselineMessageSeq: number;
+    }) {
+      useRealtimeThread("thread-1", activeThreadChatId, () => {}, {
+        messageSeq: baselineMessageSeq,
+      });
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(
+        createElement(Harness, {
+          activeThreadChatId: "chat-1",
+          baselineMessageSeq: 5,
+        }),
+      );
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      root?.render(
+        createElement(Harness, {
+          activeThreadChatId: "chat-2",
+          baselineMessageSeq: 2,
+        }),
+      );
+      await Promise.resolve();
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
+    expect(replayUrl.searchParams.get("fromSeq")).toBe("2");
+    expect(replayUrl.searchParams.get("threadChatId")).toBeNull();
+    expect(replayUrl.searchParams.get("fromDeltaSeq")).toBeNull();
+  });
 });
