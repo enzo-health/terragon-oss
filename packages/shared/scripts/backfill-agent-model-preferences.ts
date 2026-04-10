@@ -12,7 +12,7 @@
 import { createDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { sql } from "drizzle-orm";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 
 type AgentModelPreferences = {
   agents?: Record<string, boolean>;

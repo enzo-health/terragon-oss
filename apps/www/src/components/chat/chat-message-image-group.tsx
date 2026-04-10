@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useState } from "react";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import { MessagePart } from "./message-part";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { MessagePartRenderProps, PartGroup } from "./chat-message.types";

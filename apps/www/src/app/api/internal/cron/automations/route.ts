@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { env } from "@terragon/env/apps-www";
-import { getScheduledAutomationsDueToRun } from "@terragon/shared/model/automations";
+import { env } from "@leo/env/apps-www";
+import { getScheduledAutomationsDueToRun } from "@leo/shared/model/automations";
 import { runAutomation } from "@/server-lib/automations";
 
 const BATCH_SIZE = 5;

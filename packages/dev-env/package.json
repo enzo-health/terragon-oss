@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/dev-env",
+  "name": "@leo/dev-env",
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -10,10 +10,10 @@
     "tunnel": "dotenv -e .env.development.local -- tsx scripts/tunnel.ts",
     "dev": "pnpm tunnel",
     "dev-setup": "pnpm docker-up-dev",
-    "docker-up-dev": "docker compose --project-name=terragon-db up --remove-orphans -d",
-    "docker-down-dev": "docker compose --project-name=terragon-db down",
-    "docker-up-tests": "ENV=test POSTGRES_PORT=15432 REDIS_PORT=16379 REDIS_HTTP_PORT=18079 REDIS_HTTP_TOKEN=redis_test_token docker compose --project-name terragon-test up --remove-orphans -d --wait",
-    "docker-down-tests": "ENV=test docker compose --project-name terragon-test down -v",
+    "docker-up-dev": "docker compose --project-name=leo-db up --remove-orphans -d",
+    "docker-down-dev": "docker compose --project-name=leo-db down",
+    "docker-up-tests": "ENV=test POSTGRES_PORT=15432 REDIS_PORT=16379 REDIS_HTTP_PORT=18079 REDIS_HTTP_TOKEN=redis_test_token docker compose --project-name leo-test up --remove-orphans -d --wait",
+    "docker-down-tests": "ENV=test docker compose --project-name leo-test down -v",
     "tsc-check": "tsc --noEmit",
     "tsc-watch": "tsc --noEmit --watch --preserveWatchOutput",
     "format": "prettier --write . --ignore-path ../../.prettierignore --config ../../.prettierrc",
@@ -22,10 +22,10 @@
   "packageManager": "pnpm@10.14.0",
   "dependencies": {
     "@ngrok/ngrok": "^1.5.1",
-    "@terragon/env": "workspace:*"
+    "@leo/env": "workspace:*"
   },
   "devDependencies": {
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "@types/node": "^22.15.28",
     "dotenv-cli": "^8.0.0",
     "npm": "^11.4.1",

@@ -1,10 +1,10 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { adminOnly } from "@/lib/auth-server";
-import { getEnvironmentForAdmin as getEnvironmentForAdminModel } from "@terragon/shared/model/environments";
-import * as schema from "@terragon/shared/db/schema";
+import { getEnvironmentForAdmin as getEnvironmentForAdminModel } from "@leo/shared/model/environments";
+import * as schema from "@leo/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
 export type EnvironmentWithUser = NonNullable<

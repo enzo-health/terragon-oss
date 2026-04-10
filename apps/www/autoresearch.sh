@@ -1,5 +1,5 @@
 #!/bin/bash
-# Terragon Performance Benchmark Script
+# Leo Performance Benchmark Script
 # Outputs METRIC lines for the autoresearch framework
 #
 # Usage: ./autoresearch.sh [url]
@@ -9,7 +9,7 @@ set -euo pipefail
 
 URL="${1:-http://localhost:3000}"
 
-echo "=== Terragon Performance Benchmark ==="
+echo "=== Leo Performance Benchmark ==="
 echo "URL: $URL"
 echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""

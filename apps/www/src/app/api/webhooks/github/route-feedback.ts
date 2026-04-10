@@ -1,15 +1,15 @@
-import { DBUserMessage, ThreadSource } from "@terragon/shared";
+import { DBUserMessage, ThreadSource } from "@leo/shared";
 import { db } from "@/lib/db";
 import {
   getGithubPR,
   getThreadForGithubPRAndUser,
   getThreadsForGithubPR,
-} from "@terragon/shared/model/github";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
+} from "@leo/shared/model/github";
+import { getPrimaryThreadChat } from "@leo/shared/utils/thread-utils";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { maybeBatchThreads } from "@/lib/batch-threads";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
+import { getUserIdByGitHubAccountId } from "@leo/shared/model/user";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { getPostHogServer } from "@/lib/posthog-server";
 
@@ -73,8 +73,7 @@ type PullRequestContext = {
 
 const BEGIN_UNTRUSTED_GITHUB_FEEDBACK = "[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]";
 const END_UNTRUSTED_GITHUB_FEEDBACK = "[END_UNTRUSTED_GITHUB_FEEDBACK]";
-const GITHUB_FEEDBACK_DELIVERY_MARKER_PREFIX =
-  "terragon-github-feedback-delivery:";
+const GITHUB_FEEDBACK_DELIVERY_MARKER_PREFIX = "leo-github-feedback-delivery:";
 
 function sanitizeUntrustedFeedbackText(text: string): string {
   return text

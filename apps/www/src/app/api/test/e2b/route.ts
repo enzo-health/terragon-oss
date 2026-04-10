@@ -1,5 +1,5 @@
 import Sandbox from "@e2b/code-interpreter";
-import { getTemplateIdForSize } from "@terragon/sandbox-image";
+import { getTemplateIdForSize } from "@leo/sandbox-image";
 import { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest) {

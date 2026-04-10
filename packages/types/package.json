@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/types",
+  "name": "@leo/types",
   "version": "1.0.0",
   "description": "",
   "main": "./src/index.ts",
@@ -19,7 +19,7 @@
     "zod": "4.1.11"
   },
   "devDependencies": {
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "@types/node": "^22.15.21",
     "typescript": "^5.8.2"
   },

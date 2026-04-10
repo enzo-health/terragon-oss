@@ -1,20 +1,20 @@
 import { implement } from "@orpc/server";
-import { cliAPIContract } from "@terragon/cli-api-contract";
+import { cliAPIContract } from "@leo/cli-api-contract";
 import { db } from "@/lib/db";
 import {
   getThread,
   getThreadMinimal,
   getThreads,
-} from "@terragon/shared/model/threads";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
+} from "@leo/shared/model/threads";
+import { getPrimaryThreadChat } from "@leo/shared/utils/thread-utils";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { DBUserMessage } from "@terragon/shared";
-import type { AIAgent } from "@terragon/agent/types";
-import { parseModelOrNull } from "@terragon/agent/utils";
-import { isAppInstalledOnRepo } from "@terragon/shared/github-app";
+import { DBUserMessage } from "@leo/shared";
+import type { AIAgent } from "@leo/agent/types";
+import { parseModelOrNull } from "@leo/agent/utils";
+import { isAppInstalledOnRepo } from "@leo/shared/github-app";
 import { getClaudeSessionJSONLOrNull } from "@/server-lib/claude-session";
 import { checkCliTaskCreationRateLimit } from "@/lib/rate-limit";
-import { ensureAgent } from "@terragon/agent/utils";
+import { ensureAgent } from "@leo/agent/utils";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { combineThreadStatuses } from "@/agent/thread-status";
 
@@ -182,7 +182,7 @@ const createThread = os.threads.create.handler(
         const isInstalled = await isAppInstalledOnRepo(owner, repo);
         if (!isInstalled) {
           throw errors.INTERNAL_ERROR({
-            message: `GitHub App is not installed on repository ${githubRepoFullName}. Please install the Terragon GitHub App on this repository first.`,
+            message: `GitHub App is not installed on repository ${githubRepoFullName}. Please install the Leo GitHub App on this repository first.`,
           });
         }
       } catch (error) {

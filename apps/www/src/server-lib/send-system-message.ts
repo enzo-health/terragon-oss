@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { DBSystemMessage } from "@terragon/shared";
+import { DBSystemMessage } from "@leo/shared";
 import { waitUntil } from "@vercel/functions";
 
 export async function sendSystemMessage({

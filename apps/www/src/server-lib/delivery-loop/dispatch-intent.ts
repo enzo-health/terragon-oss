@@ -3,13 +3,13 @@ import type {
   DispatchIntent,
   DispatchIntentStatus,
   SelectedAgent,
-} from "@terragon/shared/delivery-loop/domain/dispatch-types";
+} from "@leo/shared/delivery-loop/domain/dispatch-types";
 import type {
   DispatchMechanism,
   ExecutionClass,
-} from "@terragon/shared/delivery-loop/domain/workflow";
-import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
-import type { DeliveryLoopSelfDispatchPayload } from "@terragon/daemon/shared";
+} from "@leo/shared/delivery-loop/domain/workflow";
+import { DeliveryLoopFailureCategory } from "@leo/shared/delivery-loop/domain/failure";
+import type { DeliveryLoopSelfDispatchPayload } from "@leo/daemon/shared";
 import {
   isLocalRedisHttpMode,
   isRedisTransportParseError,

@@ -1,4 +1,4 @@
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 
 export function getThreadTitle(thread: Pick<ThreadInfo, "name">) {
   if (thread.name) {
@@ -11,7 +11,7 @@ export function getThreadDocumentTitle(
   thread: Pick<ThreadInfo, "name" | "isUnread">,
 ) {
   if (thread.isUnread) {
-    return `(1) ${getThreadTitle(thread)} | Terragon`;
+    return `(1) ${getThreadTitle(thread)} | Leo`;
   }
-  return `${getThreadTitle(thread)} | Terragon`;
+  return `${getThreadTitle(thread)} | Leo`;
 }

@@ -3,11 +3,11 @@
 import { useRealtimeSandbox } from "@/hooks/useRealtime";
 import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { type BroadcastSandboxTerminalState } from "@terragon/types/broadcast";
+import { type BroadcastSandboxTerminalState } from "@leo/types/broadcast";
 import { XtermTerminal, type XtermTerminalHandle } from "./xterm-terminal";
 import isEqual from "fast-deep-equal";
 import { cn } from "@/lib/utils";
-import { SandboxProvider } from "@terragon/types/sandbox";
+import { SandboxProvider } from "@leo/types/sandbox";
 
 export function SandboxTerminalEmbedded({
   threadId,

@@ -3,10 +3,10 @@
 import {
   markThreadAsRead,
   markThreadChatAsRead,
-} from "@terragon/shared/model/thread-read-status";
+} from "@leo/shared/model/thread-read-status";
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
-import { getThreadMinimal } from "@terragon/shared/model/threads";
+import { getThreadMinimal } from "@leo/shared/model/threads";
 
 export const readThread = userOnlyAction(
   async function readThread(

@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import { SuggestionProps } from "@tiptap/suggestion";
 import { cn } from "@/lib/utils";
-import type { AIModel, AIAgentSlashCommand } from "@terragon/agent/types";
+import type { AIModel, AIAgentSlashCommand } from "@leo/agent/types";
 
 interface SlashCommandListContentProps {
   items: AIAgentSlashCommand[];

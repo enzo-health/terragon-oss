@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
 import { db } from "@/lib/db";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
-import { getUserCredits } from "@terragon/shared/model/credits";
-import { getUserInfoServerSide } from "@terragon/shared/model/user";
+import { createTestUser } from "@leo/shared/model/test-helpers";
+import { getUserCredits } from "@leo/shared/model/credits";
+import { getUserInfoServerSide } from "@leo/shared/model/user";
 import { nanoid } from "nanoid/non-secure";
 import {
   CREDIT_AUTO_RELOAD_REASON,
@@ -22,6 +22,39 @@ describe("handleStripeCreditTopUpEvent", () => {
     const invoiceId = `in_test_topup_${nanoid()}`;
     const event = {
       id: "evt_test_invoice_paid",
+      type: "invoice.paid",
+      data: {
+        object: {
+          id: invoiceId,
+          object: "invoice",
+          subtotal: 2_000,
+          amount_paid: 2_000,
+          metadata: {
+            leo_user_id: user.id,
+            reason: CREDIT_TOP_UP_REASON,
+          },
+        } as unknown as Stripe.Invoice,
+      },
+    } as unknown as Stripe.Event;
+
+    await handleStripeCreditTopUpEvent(event);
+
+    const credits = await getUserCredits({
+      db,
+      userId: user.id,
+      referenceId: `stripe_invoice:${invoiceId}`,
+      limit: 5,
+    });
+    expect(credits).toHaveLength(1);
+    expect(credits[0]?.amountCents).toBe(2_000);
+    expect(credits[0]?.grantType).toBe("stripe_top_up");
+  });
+
+  it("accepts legacy terragon_user_id metadata", async () => {
+    const { user } = await createTestUser({ db });
+    const invoiceId = `in_test_topup_legacy_${nanoid()}`;
+    const event = {
+      id: "evt_test_invoice_paid_legacy",
       type: "invoice.paid",
       data: {
         object: {
@@ -67,7 +100,7 @@ describe("handleStripeCreditTopUpEvent", () => {
           amount_paid: 2_000,
           subtotal: 2_000,
           metadata: {
-            terragon_user_id: user.id,
+            leo_user_id: user.id,
             reason: CREDIT_TOP_UP_REASON,
           },
         } as unknown as Stripe.Invoice,
@@ -104,7 +137,7 @@ describe("handleStripeCreditTopUpEvent", () => {
           amount_paid: 2_000,
           subtotal: 2_000,
           metadata: {
-            terragon_user_id: user.id,
+            leo_user_id: user.id,
             reason: CREDIT_AUTO_RELOAD_REASON,
           },
         } as unknown as Stripe.Invoice,
@@ -138,7 +171,7 @@ describe("handleStripeCreditTopUpEvent", () => {
           id: `pi_test_123_${nanoid()}`,
           object: "payment_intent",
           metadata: {
-            terragon_user_id: user.id,
+            leo_user_id: user.id,
             reason: CREDIT_TOP_UP_REASON,
           },
           payment_method: "pm_intent_456",

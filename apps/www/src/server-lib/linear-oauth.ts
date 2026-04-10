@@ -11,14 +11,14 @@
  * the installation and surface a "reinstall required" state.
  */
 
-import { env } from "@terragon/env/apps-www";
-import type { DB } from "@terragon/shared/db";
+import { env } from "@leo/env/apps-www";
+import type { DB } from "@leo/shared/db";
 import {
   deactivateLinearInstallation,
   getLinearInstallationForOrg,
   updateLinearInstallationTokens,
-} from "@terragon/shared/model/linear";
-import { decryptValue, encryptValue } from "@terragon/utils/encryption";
+} from "@leo/shared/model/linear";
+import { decryptValue, encryptValue } from "@leo/utils/encryption";
 
 const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";
 

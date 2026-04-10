@@ -60,7 +60,7 @@ Create the webhook endpoint and mention handler for Linear Comment.create events
 - [ ] @mention detected via LINEAR_MENTION_HANDLE (case-insensitive, regex-escaped)
 - [ ] Non-mention comments are ignored
 - [ ] Self-loop prevented: ack comments never contain the mention handle string
-- [ ] Linear user resolved to Terragon user via linearAccount table
+- [ ] Linear user resolved to Leo user via linearAccount table
 - [ ] `linearIntegration` feature flag checked for resolved user; disabled → silently ignore
 - [ ] User access tier checked before thread creation (match GitHub pattern)
 - [ ] Missing account → error comment posted to Linear with settings link
@@ -75,7 +75,7 @@ Create the webhook endpoint and mention handler for Linear Comment.create events
 
 ## Done summary
 
-Implemented webhook route at POST /api/webhooks/linear with HMAC-SHA256 signature verification (SDK + manual fallback) and mention handler that detects @mentions via LINEAR_MENTION_HANDLE, resolves Linear users to Terragon users, checks feature flags and access tiers, fetches issue details/attachments, auto-extracts GitHub repos from attachments, creates threads via newThreadInternal, and posts acknowledgment comments back to Linear. Includes 12 handler tests.
+Implemented webhook route at POST /api/webhooks/linear with HMAC-SHA256 signature verification (SDK + manual fallback) and mention handler that detects @mentions via LINEAR_MENTION_HANDLE, resolves Linear users to Leo users, checks feature flags and access tiers, fetches issue details/attachments, auto-extracts GitHub repos from attachments, creates threads via newThreadInternal, and posts acknowledgment comments back to Linear. Includes 12 handler tests.
 
 ## Evidence
 

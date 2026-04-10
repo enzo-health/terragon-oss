@@ -45,7 +45,7 @@ Add the `linearInstallation` table for workspace-level OAuth tokens, new env var
 - Linear OAuth token endpoint: `POST https://api.linear.app/oauth/token` with `client_id`, `client_secret`, `grant_type=refresh_token`, `refresh_token`
 - Access tokens expire in 24 hours. Must check `tokenExpiresAt` before each API call
 - `encryptValue()`/`decryptValue()` from `packages/utils/src/encryption.ts` for token storage
-- The `agentSessionId` in `ThreadSourceMetadata` maps a Terragon thread to a Linear agent session for activity emission in task 4
+- The `agentSessionId` in `ThreadSourceMetadata` maps a Leo thread to a Linear agent session for activity emission in task 4
 - DB-level CAS prevents race conditions in Vercel serverless (in-memory mutex only protects one instance; multiple concurrent functions can race)
 - Refresh token may be null: Linear's OAuth response includes `refresh_token` optionally. Always handle null case.
 - `getThreadByLinearAgentSessionId` query hits the `sourceMetadata` JSONB column. Ensure there's no performance concern for the query; an index may be added if lookup is slow.

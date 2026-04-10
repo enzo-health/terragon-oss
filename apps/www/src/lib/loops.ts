@@ -1,7 +1,7 @@
 import { LoopsClient, TransactionalVariables } from "loops";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { db } from "./db";
-import { user } from "@terragon/shared/db/schema";
+import { user } from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
 
 /**

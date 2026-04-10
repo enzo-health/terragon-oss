@@ -32,7 +32,7 @@ variable "upstash_email" {
 
 variable "app_url" {
   type        = string
-  description = "Full app URL, e.g. https://terragon-abc123-team.vercel.app (find in Vercel dashboard > Domains)"
+  description = "Full app URL, e.g. https://leo-abc123-team.vercel.app (find in Vercel dashboard > Domains)"
 }
 
 variable "domain" {

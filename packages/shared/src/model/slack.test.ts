@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestUser } from "./test-helpers";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { createDb } from "../db";
 import { User } from "../db/types";
 import * as schema from "../db/schema";

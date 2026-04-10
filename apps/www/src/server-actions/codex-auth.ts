@@ -2,8 +2,8 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { env } from "@terragon/env/apps-www";
-import { insertAgentProviderCredentials } from "@terragon/shared/model/agent-provider-credentials";
+import { env } from "@leo/env/apps-www";
+import { insertAgentProviderCredentials } from "@leo/shared/model/agent-provider-credentials";
 import { UserFacingError } from "@/lib/server-actions";
 import { getPostHogServer } from "@/lib/posthog-server";
 

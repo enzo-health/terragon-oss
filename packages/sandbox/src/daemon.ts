@@ -2,19 +2,19 @@ import {
   DaemonMessage,
   defaultPipePath,
   FeatureFlags,
-} from "@terragon/daemon/shared";
+} from "@leo/daemon/shared";
 import { McpConfig } from "./mcp-config";
 import { getDaemonFile, getMcpServerFile } from "./constants";
 import { CreateSandboxOptions, ISandboxSession } from "./types";
 import { createHash } from "crypto";
 import { buildMergedMcpConfig } from "./utils/mcp-merge";
 import { getEnv } from "./env";
-import { AIAgentCredentials } from "@terragon/agent/types";
+import { AIAgentCredentials } from "@leo/agent/types";
 
-export const DAEMON_FILE_PATH = "/tmp/terragon-daemon.mjs";
+export const DAEMON_FILE_PATH = "/tmp/leo-daemon.mjs";
 export const MCP_SERVER_FILE_PATH = "/tmp/terry-mcp-server.mjs";
 export const MCP_SERVER_JSON_FILE_PATH = "/tmp/mcp-server.json";
-export const DAEMON_LOG_FILE_PATH = "/tmp/terragon-daemon.log";
+export const DAEMON_LOG_FILE_PATH = "/tmp/leo-daemon.log";
 const DAEMON_SEND_MAX_ATTEMPTS = 4;
 const DAEMON_SEND_BASE_BACKOFF_MS = 150;
 const DAEMON_SEND_TIMEOUT_MS = 5000;
@@ -88,6 +88,7 @@ async function startDaemon({
           // 1 minute max timeout for bash commands
           BASH_MAX_TIMEOUT_MS: (60 * 1000).toString(),
           // Pass feature flags as JSON in environment variable
+          LEO_FEATURE_FLAGS: JSON.stringify(featureFlags),
           TERRAGON_FEATURE_FLAGS: JSON.stringify(featureFlags),
         },
       }),
@@ -168,7 +169,7 @@ async function waitForDaemonReady(
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
   throw new Error(
-    `Daemon failed to start within timeout period. Last error: ${lastError?.message || "unknown"}. Check /tmp/terragon-daemon.log for details.`,
+    `Daemon failed to start within timeout period. Last error: ${lastError?.message || "unknown"}. Check /tmp/leo-daemon.log for details.`,
   );
 }
 
@@ -303,7 +304,7 @@ export async function sendMessage({
     .update(jsonMessage)
     .digest("hex")
     .slice(0, 12);
-  const messageFilePath = `/tmp/terragon-daemon-message-${Date.now()}-${messageHash}.json`;
+  const messageFilePath = `/tmp/leo-daemon-message-${Date.now()}-${messageHash}.json`;
 
   console.log("[daemon-send] sending message", {
     messageHash,

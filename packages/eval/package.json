@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/eval",
+  "name": "@leo/eval",
   "version": "1.0.0",
   "description": "Local eval harness for delivery loop trace replay and analysis",
   "private": true,
@@ -11,13 +11,13 @@
   },
   "packageManager": "pnpm@10.14.0",
   "devDependencies": {
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "@types/node": "^22.13.10",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@terragon/shared": "workspace:*",
+    "@leo/shared": "workspace:*",
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.43.1",
     "nanoid": "^5.1.5"

@@ -1,6 +1,6 @@
-import type { DB } from "@terragon/shared/db";
-import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
-import * as schema from "@terragon/shared/db/schema";
+import type { DB } from "@leo/shared/db";
+import type { DeliverySignalSourceV3 } from "@leo/shared/db/types";
+import * as schema from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
 import { reduce, type InvariantActionV3 } from "./reducer";
 import type { LoopEvent } from "./types";

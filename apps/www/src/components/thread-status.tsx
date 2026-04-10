@@ -1,6 +1,6 @@
 import { combineThreadStatuses } from "@/agent/thread-status";
 import { cn } from "@/lib/utils";
-import { ThreadInfo, ThreadStatus } from "@terragon/shared";
+import { ThreadInfo, ThreadStatus } from "@leo/shared";
 import { Clock, Check, CircleDashed, X, File, Calendar } from "lucide-react";
 import { memo } from "react";
 

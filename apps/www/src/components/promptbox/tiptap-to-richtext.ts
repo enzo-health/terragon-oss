@@ -1,5 +1,5 @@
 import { JSONContent } from "@tiptap/react";
-import type { DBRichTextPart, DBRichTextNode } from "@terragon/shared";
+import type { DBRichTextPart, DBRichTextNode } from "@leo/shared";
 
 export function tiptapToRichText(tiptapJSON: JSONContent): DBRichTextPart {
   const nodes: DBRichTextNode[] = [];

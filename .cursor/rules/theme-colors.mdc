@@ -1,12 +1,12 @@
 ---
-description: Terragon theme colors and design system guidelines
+description: Leo theme colors and design system guidelines
 globs: 
 alwaysApply: false
 ---
-# Terragon Theme Colors Usage Guidelines
+# Leo Theme Colors Usage Guidelines
 
 ## Overview
-Always use the semantic theme colors defined in [apps/www/src/app/globals.css](mdc:apps/www/src/app/globals.css) instead of hardcoded Tailwind color classes. This ensures consistent theming and proper dark mode support across the Terragon AI coding assistant platform.
+Always use the semantic theme colors defined in [apps/www/src/app/globals.css](mdc:apps/www/src/app/globals.css) instead of hardcoded Tailwind color classes. This ensures consistent theming and proper dark mode support across the Leo AI coding assistant platform.
 
 ## Theme Color System
 
@@ -146,7 +146,7 @@ className="text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-a
 className="bg-sidebar-primary text-sidebar-primary-foreground"
 ```
 
-## Terragon-Specific Patterns
+## Leo-Specific Patterns
 
 ### Chat Message Status
 ```tsx
@@ -194,7 +194,7 @@ className="bg-primary/10 text-primary"          // Commit successful
 3. **Easy theme updates** - Change colors in one place affects entire app
 4. **Better accessibility** - Theme colors are designed with proper contrast ratios
 5. **Future-proof** - New themes can be added without touching components
-6. **Platform cohesion** - Maintains Terragon's natural, coding-focused aesthetic
+6. **Platform cohesion** - Maintains Leo's natural, coding-focused aesthetic
 
 ## Migration Checklist
 When updating components:

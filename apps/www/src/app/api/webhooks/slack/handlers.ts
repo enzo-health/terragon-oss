@@ -4,12 +4,12 @@ import {
   getSlackAccountForSlackUserId,
   getSlackInstallationForTeam,
   getSlackSettingsForTeam,
-} from "@terragon/shared/model/slack";
-import { SlackAccount } from "@terragon/shared";
-import { decryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
-import { publicAppUrl } from "@terragon/env/next-public";
-import { getUserFlags } from "@terragon/shared/model/user-flags";
+} from "@leo/shared/model/slack";
+import { SlackAccount } from "@leo/shared";
+import { decryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
+import { publicAppUrl } from "@leo/env/next-public";
+import { getUserFlags } from "@leo/shared/model/user-flags";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import { getDefaultModel } from "@/lib/default-ai-model";

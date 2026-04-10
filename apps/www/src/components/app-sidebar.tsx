@@ -33,7 +33,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAtomValue } from "jotai";
 import { userAtom } from "@/atoms/user";
-import { publicDocsUrl } from "@terragon/env/next-public";
+import { publicDocsUrl } from "@leo/env/next-public";
 import {
   DropdownMenu,
   DropdownMenuItem,

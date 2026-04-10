@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { replayFromSeq } from "@/lib/message-stream";
-import { replayTokenStreamEventsFromSeq } from "@terragon/shared/model/token-stream-event";
+import { replayTokenStreamEventsFromSeq } from "@leo/shared/model/token-stream-event";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionOrNull();

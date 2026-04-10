@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestUser } from "./test-helpers";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { createDb } from "../db";
 import { User } from "../db/types";
 import { AutomationAction } from "../automations";
@@ -55,7 +55,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action,
         },
@@ -71,7 +71,7 @@ describe("automations", () => {
         cron: "0 9 * * *",
         timezone: "UTC",
       });
-      expect(automation.repoFullName).toBe("terragon/test-repo");
+      expect(automation.repoFullName).toBe("leo/test-repo");
       expect(automation.branchName).toBe("main");
       expect(automation.action).toEqual(action);
       expect(automation.enabled).toBe(true);
@@ -104,7 +104,7 @@ describe("automations", () => {
             cron: "0 0 * * 0", // Weekly on Sunday
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action,
           enabled: false,
@@ -137,7 +137,7 @@ describe("automations", () => {
             cron: "*/30 * * * *", // Every 30 minutes
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action,
         },
@@ -169,7 +169,7 @@ describe("automations", () => {
             cron: "0 10 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action,
         },
@@ -186,7 +186,7 @@ describe("automations", () => {
             cron: "0 10 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action,
         },
@@ -208,7 +208,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -251,7 +251,7 @@ describe("automations", () => {
             },
             autoArchiveOnComplete: false,
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -295,7 +295,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action,
         },
@@ -330,7 +330,7 @@ describe("automations", () => {
             cron: "0 10 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: newAction,
           enabled: false,
@@ -363,7 +363,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -414,7 +414,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -464,7 +464,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -526,7 +526,7 @@ describe("automations", () => {
             },
             autoArchiveOnComplete: false,
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -573,7 +573,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -635,7 +635,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -688,7 +688,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -737,7 +737,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -785,7 +785,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -826,7 +826,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -854,7 +854,7 @@ describe("automations", () => {
             cron: "0 10 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -891,7 +891,7 @@ describe("automations", () => {
               cron: "0 9 * * *",
               timezone: "UTC",
             },
-            repoFullName: "terragon/test-repo",
+            repoFullName: "leo/test-repo",
             branchName: "main",
             action: {
               type: "user_message",
@@ -960,7 +960,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -993,7 +993,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1046,7 +1046,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1096,7 +1096,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1154,7 +1154,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1211,7 +1211,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1250,7 +1250,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1303,7 +1303,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1363,7 +1363,7 @@ describe("automations", () => {
             },
             autoArchiveOnComplete: false,
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1407,7 +1407,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1434,7 +1434,7 @@ describe("automations", () => {
             cron: "0 10 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1463,7 +1463,7 @@ describe("automations", () => {
             cron: "0 11 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1505,7 +1505,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1544,7 +1544,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -1586,7 +1586,7 @@ describe("automations", () => {
                 cron: `0 ${index} * * *`,
                 timezone: "UTC",
               },
-              repoFullName: "terragon/test-repo",
+              repoFullName: "leo/test-repo",
               branchName: "main",
               action: {
                 type: "user_message",
@@ -1634,7 +1634,7 @@ describe("automations", () => {
                 cron: config.cron,
                 timezone: "UTC",
               },
-              repoFullName: "terragon/test-repo",
+              repoFullName: "leo/test-repo",
               branchName: "main",
               action: {
                 type: "user_message",
@@ -1675,8 +1675,8 @@ describe("automations", () => {
 
   describe("getPullRequestAutomationsForRepo", () => {
     it("should return only enabled pull request automations for a specific repo", async () => {
-      const repoFullName = `terragon/test-repo-${nanoid()}`;
-      const otherRepoFullName = `terragon/test-repo-${nanoid()}`;
+      const repoFullName = `leo/test-repo-${nanoid()}`;
+      const otherRepoFullName = `leo/test-repo-${nanoid()}`;
 
       // Create pull request automation for test repo (enabled)
       const prAutomation1 = await createAutomation({
@@ -1832,7 +1832,7 @@ describe("automations", () => {
       // Get automations for non-existent repo
       const noAutomations = await getPullRequestAutomationsForRepo({
         db,
-        repoFullName: "terragon/non-existent",
+        repoFullName: "leo/non-existent",
       });
 
       expect(noAutomations.length).toBe(0);
@@ -1855,7 +1855,7 @@ describe("automations", () => {
                 cron: "0 9 * * *",
                 timezone: "UTC",
               },
-              repoFullName: "terragon/test-repo",
+              repoFullName: "leo/test-repo",
               branchName: "main",
               action: {
                 type: "user_message",
@@ -1908,7 +1908,7 @@ describe("automations", () => {
             cron: "0 0,6,12,18 * * 1-5", // Every 6 hours on weekdays
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: complexAction,
         },
@@ -1949,7 +1949,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -2048,7 +2048,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -2081,7 +2081,7 @@ describe("automations", () => {
             cron: "0 17 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -2123,7 +2123,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -2170,7 +2170,7 @@ describe("automations", () => {
             },
             autoArchiveOnComplete: false,
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -2212,7 +2212,7 @@ describe("automations", () => {
                 cron: "0 9 * * *",
                 timezone: "UTC",
               },
-              repoFullName: "terragon/test-repo",
+              repoFullName: "leo/test-repo",
               branchName: "main",
               action: {
                 type: "user_message",
@@ -2267,7 +2267,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",
@@ -2293,7 +2293,7 @@ describe("automations", () => {
             cron: "0 9 * * *",
             timezone: "UTC",
           },
-          repoFullName: "terragon/test-repo",
+          repoFullName: "leo/test-repo",
           branchName: "main",
           action: {
             type: "user_message",

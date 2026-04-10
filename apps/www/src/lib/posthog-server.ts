@@ -1,5 +1,5 @@
 import { PostHog } from "posthog-node";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { after } from "next/server";
 
 let posthogInstance: PostHog | null = null;

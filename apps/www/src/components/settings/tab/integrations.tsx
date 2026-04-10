@@ -9,7 +9,7 @@ import {
   SlackAccountWithMetadata,
   LinearAccountWithSettingsAndInstallation,
   LinearInstallationPublic,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import { SettingsSection } from "../settings-row";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import Link from "next/link";
@@ -38,8 +38,7 @@ export function IntegrationsSettings({
         label="Slack"
         description={
           <>
-            Connect your Slack workspace to interact with Terragon through
-            Slack.{" "}
+            Connect your Slack workspace to interact with Leo through Slack.{" "}
             <Link
               href="https://docs.terragonlabs.com/docs/integrations/slack-integration"
               target="_blank"
@@ -62,7 +61,7 @@ export function IntegrationsSettings({
           description={
             <>
               Install the Linear Agent in your workspace, then link your account
-              so Terragon can respond to mentions on your behalf.{" "}
+              so Leo can respond to mentions on your behalf.{" "}
               <Link
                 href="https://docs.terragonlabs.com/docs/integrations/linear-integration"
                 target="_blank"

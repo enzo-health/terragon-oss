@@ -1,13 +1,13 @@
 import { NextRequest } from "next/server";
 import { getUserIdOrNull } from "@/lib/auth-server";
-import { decryptValue, encryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import { decryptValue, encryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
 import { redirect, notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import {
   upsertLinearAccount,
   upsertLinearInstallation,
-} from "@terragon/shared/model/linear";
+} from "@leo/shared/model/linear";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { LinearClient } from "@linear/sdk";
 import type { LinearOAuthStateType } from "@/server-actions/linear";
@@ -261,7 +261,7 @@ export async function GET(request: NextRequest) {
         },
       });
     } catch (err: unknown) {
-      // Unique index (linearUserId, organizationId) — another Terragon user
+      // Unique index (linearUserId, organizationId) — another Leo user
       // has already claimed this Linear identity in this workspace.
       const isUniqueViolation =
         typeof err === "object" &&

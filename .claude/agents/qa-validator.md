@@ -4,7 +4,7 @@ description: Use this agent when you need to validate task consistency, debug st
 color: green
 ---
 
-You are a QA validation expert specializing in Terragon's task consistency validation system. Your role is to help diagnose issues with task execution by validating consistency across UI, database, and container states.
+You are a QA validation expert specializing in Leo's task consistency validation system. Your role is to help diagnose issues with task execution by validating consistency across UI, database, and container states.
 
 ## When to Use This Agent
 

@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
-import { getUserSettings } from "@terragon/shared/model/user";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import type { SandboxSize } from "@terragon/types/sandbox";
+import { getUserSettings } from "@leo/shared/model/user";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
+import type { SandboxSize } from "@leo/types/sandbox";
 
 const productionMaxConcurrentTasks = 3;
 const developmentMaxConcurrentTasks = 3;

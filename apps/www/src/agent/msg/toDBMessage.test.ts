@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { toDBMessage } from "./toDBMessage";
-import { ClaudeMessage } from "@terragon/daemon/shared";
+import { ClaudeMessage } from "@leo/daemon/shared";
 
 describe("toDBMessage", () => {
   describe("user messages", () => {
@@ -1071,7 +1071,7 @@ describe("toDBMessage", () => {
             content: [
               {
                 type: "text",
-                text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Terragon is a...",
+                text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Leo is a...",
               },
             ],
           },
@@ -1136,7 +1136,7 @@ describe("toDBMessage", () => {
           parent_tool_use_id: null,
           parts: [
             {
-              text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Terragon is a...",
+              text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Leo is a...",
               type: "text",
             },
           ],

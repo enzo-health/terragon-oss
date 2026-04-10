@@ -46,7 +46,7 @@ export const claudeCodeImplementationAdapter: ImplementationRuntimeAdapter = {
         runId: input.runId,
         transportMode: "acp",
         protocolVersion: 2,
-        acpServerId: `terragon-${input.runId}`,
+        acpServerId: `leo-${input.runId}`,
         acpSessionId: input.sessionId ?? null,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),
       },

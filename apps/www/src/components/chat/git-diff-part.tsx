@@ -1,7 +1,7 @@
 import { memo, useState, useMemo } from "react";
-import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { ThreadInfoFull } from "@terragon/shared";
+import { UIGitDiffPart } from "@leo/shared/db/ui-messages";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
+import { ThreadInfoFull } from "@leo/shared";
 import {
   ChevronDown,
   ChevronRight,
@@ -10,7 +10,7 @@ import {
   ExternalLink,
   FileDiff,
 } from "lucide-react";
-import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
+import { parseGitDiffStats } from "@leo/shared/utils/git-diff";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";

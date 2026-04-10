@@ -3,15 +3,15 @@ import { getUserOrNull } from "@/lib/auth-server";
 import {
   getDecryptedEnvironmentVariables,
   getEnvironment,
-} from "@terragon/shared/model/environments";
+} from "@leo/shared/model/environments";
 import { db } from "@/lib/db";
-import { getUserSettings } from "@terragon/shared/model/user";
+import { getUserSettings } from "@leo/shared/model/user";
 import { getGitHubUserAccessToken } from "@/lib/github";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
-import { env } from "@terragon/env/apps-www";
+import { getFeatureFlagsForUser } from "@leo/shared/model/feature-flags";
+import { env } from "@leo/env/apps-www";
 import { getOrCreateSandbox, getSandboxProvider } from "@/agent/sandbox";
-import { CreateSandboxOptions } from "@terragon/sandbox/types";
-import { runSetupScript } from "@terragon/sandbox";
+import { CreateSandboxOptions } from "@leo/sandbox/types";
+import { runSetupScript } from "@leo/sandbox";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { getDefaultBranchForRepo } from "@/lib/github";
 import { SandboxOutput } from "@/hooks/use-setup-script";

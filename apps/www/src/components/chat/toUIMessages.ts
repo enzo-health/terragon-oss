@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
-import type { AIAgent } from "@terragon/agent/types";
-import type { DBMessage, UIMessage, UIUserMessage } from "@terragon/shared";
+import type { AIAgent } from "@leo/agent/types";
+import type { DBMessage, UIMessage, UIUserMessage } from "@leo/shared";
 import type {
   UIAgentMessage,
   UIToolPart,
@@ -8,7 +8,7 @@ import type {
   UIPart,
   UIGitDiffPart,
   ThreadStatus,
-} from "@terragon/shared";
+} from "@leo/shared";
 import type { DeltaAccumulator, DeltaChunk } from "@/hooks/useDeltaAccumulator";
 
 type UIMessageRange = {

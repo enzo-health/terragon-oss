@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
 import {
   adminOnly,
@@ -11,13 +11,13 @@ import {
   getUserInfoOrNull,
   validInternalRequestOrThrow,
 } from "@/lib/auth-server";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
+import { createTestUser } from "@leo/shared/model/test-helpers";
 import {
   mockLoggedInUser,
   mockLoggedOutUser,
   mockNextHeaders,
 } from "@/test-helpers/mock-next";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { UserFacingError } from "./server-actions";
 
 describe("auth-server", () => {
@@ -238,7 +238,7 @@ describe("auth-server", () => {
 
   describe("validInternalRequestOrThrow", () => {
     it("should throw an error when the secret is incorrect", async () => {
-      await mockNextHeaders({ "X-Terragon-Secret": "incorrect" });
+      await mockNextHeaders({ "X-Leo-Secret": "incorrect" });
       await expect(validInternalRequestOrThrow()).rejects.toThrow(
         "Unauthorized",
       );
@@ -246,7 +246,7 @@ describe("auth-server", () => {
 
     it("should not throw an error when the secret is correct", async () => {
       await mockNextHeaders({
-        "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+        "X-Leo-Secret": env.INTERNAL_SHARED_SECRET,
       });
       await validInternalRequestOrThrow();
     });

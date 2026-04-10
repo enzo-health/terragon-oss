@@ -1,9 +1,9 @@
-# Terragon Documentation Index
+# Leo Documentation Index
 
 ## Quick Reference
 
 ### Project Overview
-Terragon is an AI-powered coding assistant platform that integrates Claude AI with real development environments through multi-provider sandbox orchestration.
+Leo is an AI-powered coding assistant platform that integrates Claude AI with real development environments through multi-provider sandbox orchestration.
 
 ### Key Documentation Files
 - `CLAUDE.md` - Comprehensive repository information and architecture
@@ -77,7 +77,7 @@ cd apps/broadcast && pnpm deploy
 - Mobile-responsive design
 
 ### Important Patterns
-- Use workspace packages (`@terragon/*`) for shared code
+- Use workspace packages (`@leo/*`) for shared code
 - Follow established component patterns in `src/components/`
 - Implement proper error handling and loading states
 - Use TypeScript interfaces with strict typing

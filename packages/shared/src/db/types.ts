@@ -1,4 +1,4 @@
-import { SelectedAIModels } from "@terragon/agent/types";
+import { SelectedAIModels } from "@leo/agent/types";
 import { AutomationTrigger, AutomationTriggerType } from "../automations";
 import * as schema from "../db/schema";
 import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";

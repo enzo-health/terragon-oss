@@ -1,7 +1,7 @@
 import { addMilliseconds } from "date-fns";
 import { redis } from "@/lib/redis";
-import type { DB } from "@terragon/shared/db";
-import type { DeliveryOutboxV3Row } from "@terragon/shared/db/types";
+import type { DB } from "@leo/shared/db";
+import type { DeliveryOutboxV3Row } from "@leo/shared/db/types";
 import {
   claimNextOutboxRecord,
   markOutboxFailed,

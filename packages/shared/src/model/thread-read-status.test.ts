@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, createTestThread } from "./test-helpers";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { createDb, DB } from "../db";
 import { User } from "../db/types";
 import {

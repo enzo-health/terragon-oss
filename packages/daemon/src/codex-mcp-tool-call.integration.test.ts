@@ -1,10 +1,10 @@
 /**
- * Integration test: Codex agent calling the terragon MCP server's
+ * Integration test: Codex agent calling the leo MCP server's
  * MarkImplementingTasksComplete tool.
  *
  * This test:
  * 1. Starts a local HTTP stub to capture the mark-tasks API call
- * 2. Writes a temporary MCP config pointing at the terragon MCP server
+ * 2. Writes a temporary MCP config pointing at the leo MCP server
  * 3. Spawns real Codex app-server with that MCP config
  * 4. Instructs the agent to call MarkImplementingTasksComplete
  * 5. Verifies the HTTP stub received the correct request
@@ -123,7 +123,7 @@ function startStubServer(): Promise<{
 // Tests
 // ---------------------------------------------------------------------------
 
-describeWithCodex("codex + terragon MCP tool call", () => {
+describeWithCodex("codex + leo MCP tool call", () => {
   let activeManager: CodexAppServerManager | null = null;
   let stubServer: Server | null = null;
   let tmpDir: string | null = null;
@@ -159,10 +159,10 @@ command = "node"
 args = ["${MCP_SERVER_PATH}"]
 
 [mcp_servers.terry.env]
-TERRAGON_SERVER_URL = "http://localhost:${port}"
+LEO_SERVER_URL = "http://localhost:${port}"
 DAEMON_TOKEN = "integration-test-token"
-TERRAGON_THREAD_ID = "thread-integration-1"
-TERRAGON_THREAD_CHAT_ID = "chat-integration-1"
+LEO_THREAD_ID = "thread-integration-1"
+LEO_THREAD_CHAT_ID = "chat-integration-1"
 `,
     );
 

@@ -4,7 +4,7 @@ import { r2Cdn } from "@/lib/r2-cdn";
 import { adminOnly } from "@/lib/auth-server";
 import * as z from "zod/v4";
 import { nanoid } from "nanoid";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 
 const imageUploadSchema = z.object({
   fileName: z.string(),

@@ -2,8 +2,8 @@ import {
   createThread,
   updateThread,
   updateThreadChat,
-} from "@terragon/shared/model/threads";
-import { getOrCreateEnvironment } from "@terragon/shared/model/environments";
+} from "@leo/shared/model/threads";
+import { getOrCreateEnvironment } from "@leo/shared/model/environments";
 import { db } from "@/lib/db";
 import { generateThreadName } from "@/server-lib/generate-thread-name";
 import {
@@ -11,10 +11,10 @@ import {
   DBUserMessage,
   ThreadSource,
   ThreadSourceMetadata,
-} from "@terragon/shared";
-import { modelToAgent } from "@terragon/agent/utils";
+} from "@leo/shared";
+import { modelToAgent } from "@leo/agent/utils";
 import { UserFacingError } from "@/lib/server-actions";
-import { getUserSettings } from "@terragon/shared/model/user";
+import { getUserSettings } from "@leo/shared/model/user";
 import { waitUntil } from "@vercel/functions";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getSandboxProvider } from "@/agent/sandbox";

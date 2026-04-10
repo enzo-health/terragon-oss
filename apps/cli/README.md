@@ -1,29 +1,29 @@
 # Terry CLI
 
-![](https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square) [![npm]](https://www.npmjs.com/package/@terragon-labs/cli)
+![](https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square) [![npm]](https://www.npmjs.com/package/@leo-labs/cli)
 
-[npm]: https://img.shields.io/npm/v/@terragon-labs/cli.svg?style=flat-square
+[npm]: https://img.shields.io/npm/v/@leo-labs/cli.svg?style=flat-square
 
-The official CLI for Terragon Labs - your AI-powered coding assistant.
+The official CLI for Leo Labs - your AI-powered coding assistant.
 
 ## Installation
 
 ```bash
 # Using npm
-npm install -g @terragon-labs/cli
+npm install -g @leo-labs/cli
 
 # Using pnpm
-pnpm add -g @terragon-labs/cli
+pnpm add -g @leo-labs/cli
 
 # Using yarn
-yarn global add @terragon-labs/cli
+yarn global add @leo-labs/cli
 ```
 
 ## Commands
 
 ### `terry auth`
 
-Authenticate with your Terragon account. This will:
+Authenticate with your Leo account. This will:
 
 1. Open your browser for authentication
 2. Generate a secure token
@@ -46,7 +46,7 @@ terry auth
 
 ### `terry create`
 
-Create a new task in Terragon with a message:
+Create a new task in Leo with a message:
 
 ```bash
 # Create a task in the current repository and branch
@@ -80,7 +80,7 @@ terry create "Run large codegen" --model gpt-5-high
 
 ### `terry pull`
 
-Pull tasks from Terragon to your local machine:
+Pull tasks from Leo to your local machine:
 
 ```bash
 # Interactive mode - select from recent tasks
@@ -93,7 +93,7 @@ terry pull <taskId>
 terry pull <taskId> --resume
 ```
 
-**Getting the task ID**: You can find the task ID at the end of the URL when viewing a task in Terragon. For example, in `https://terragonlabs.com/tasks/abc123-def456`, the task ID is `abc123-def456`.
+**Getting the task ID**: You can find the task ID at the end of the URL when viewing a task in Leo. For example, in `https://terragonlabs.com/tasks/abc123-def456`, the task ID is `abc123-def456`.
 
 #### Options
 
@@ -113,13 +113,13 @@ terry list
 ```
 Task ID         abc123def456
 Name            Fix login bug
-Branch          terragon/fix-login
+Branch          leo/fix-login
 Repository      myorg/myrepo
 PR Number       #123
 
 Task ID         def789ghi012
 Name            Add dark mode
-Branch          terragon/dark-mode
+Branch          leo/dark-mode
 Repository      myorg/myrepo
 PR Number       N/A
 
@@ -137,7 +137,7 @@ terry mcp
 
 #### Claude Code Integration
 
-You can add the Terry MCP server to your local Claude Code instance to enable direct interaction with Terragon tasks from within Claude:
+You can add the Terry MCP server to your local Claude Code instance to enable direct interaction with Leo tasks from within Claude:
 
 ```bash
 claude mcp add terry -- terry mcp
@@ -145,11 +145,11 @@ claude mcp add terry -- terry mcp
 
 This integration provides Claude Code with the following capabilities:
 
-- **`terry_list`**: List all your Terragon tasks directly from Claude
+- **`terry_list`**: List all your Leo tasks directly from Claude
 - **`terry_create`**: Create new tasks without leaving Claude Code
 - **`terry_pull`**: Pull task session data to continue work
 
-The MCP server acts as a bridge between Claude Code and Terragon, allowing you to manage tasks using natural language commands within your AI coding sessions.
+The MCP server acts as a bridge between Claude Code and Leo, allowing you to manage tasks using natural language commands within your AI coding sessions.
 
 ## Support
 

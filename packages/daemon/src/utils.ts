@@ -1,4 +1,4 @@
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 import { ClaudeMessage } from "./shared";
 import type { IDaemonRuntime } from "./runtime";
 import type { Logger } from "./logger";

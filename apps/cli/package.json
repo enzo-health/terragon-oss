@@ -1,5 +1,5 @@
 {
-  "name": "@terragon-labs/cli",
+  "name": "@leo-labs/cli",
   "version": "0.1.21",
   "type": "module",
   "bin": {
@@ -34,8 +34,8 @@
     "update-notifier": "^7.3.1"
   },
   "devDependencies": {
-    "@terragon/agent": "workspace:*",
-    "@terragon/cli-api-contract": "workspace:*",
+    "@leo/agent": "workspace:*",
+    "@leo/cli-api-contract": "workspace:*",
     "@types/node": "^22.6.1",
     "@types/pg": "^8.11.0",
     "@types/react": "^19.1.8",
@@ -55,21 +55,21 @@
     "README.md"
   ],
   "keywords": [
-    "terragon",
+    "leo",
     "cli",
     "terry",
     "ai",
     "coding-assistant"
   ],
-  "author": "Terragon Labs",
+  "author": "Leo Labs",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/terragon-labs/terragon.git",
+    "url": "https://github.com/leo-labs/leo.git",
     "directory": "apps/cli"
   },
   "homepage": "https://www.terragonlabs.com",
   "bugs": {
-    "url": "https://github.com/terragon-labs/terragon/issues"
+    "url": "https://github.com/leo-labs/leo/issues"
   }
 }

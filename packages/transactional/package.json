@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/transactional",
+  "name": "@leo/transactional",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@react-email/components": "0.1.1",
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "react": "19.1.2",
     "react-dom": "19.1.2",
     "react-email": "4.0.8"

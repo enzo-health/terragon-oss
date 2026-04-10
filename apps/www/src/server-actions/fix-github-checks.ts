@@ -1,10 +1,10 @@
 "use server";
 
 import { userOnlyAction } from "@/lib/auth-server";
-import { getThreadMinimal } from "@terragon/shared/model/threads";
+import { getThreadMinimal } from "@leo/shared/model/threads";
 import { db } from "@/lib/db";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { DBSystemMessage } from "@terragon/shared";
+import { DBSystemMessage } from "@leo/shared";
 import { sendSystemMessage } from "@/server-lib/send-system-message";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
 import { UserFacingError } from "@/lib/server-actions";

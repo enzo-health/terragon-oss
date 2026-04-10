@@ -1,15 +1,12 @@
 import { db } from "@/lib/db";
-import {
-  getThreadMinimal,
-  getThreadChat,
-} from "@terragon/shared/model/threads";
+import { getThreadMinimal, getThreadChat } from "@leo/shared/model/threads";
 import {
   upsertClaudeSessionCheckpoint,
   getClaudeSessionCheckpoint,
-} from "@terragon/shared/model/claude-session";
+} from "@leo/shared/model/claude-session";
 import { uploadClaudeSessionToR2 } from "@/lib/r2-file-upload-server";
 import { getR2ClientForFileUploadType } from "./r2-file-upload";
-import { ISandboxSession } from "@terragon/sandbox/types";
+import { ISandboxSession } from "@leo/sandbox/types";
 import { withThreadSandboxSession } from "@/agent/thread-resource";
 import { getRawJSONLOrNullFromSandbox } from "./claude-session-internal";
 

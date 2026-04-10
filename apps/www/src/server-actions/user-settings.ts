@@ -1,11 +1,8 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { UserSettings } from "@terragon/shared";
-import {
-  getUserSettings,
-  updateUserSettings,
-} from "@terragon/shared/model/user";
+import { UserSettings } from "@leo/shared";
+import { getUserSettings, updateUserSettings } from "@leo/shared/model/user";
 import { userOnlyAction } from "@/lib/auth-server";
 import { getPostHogServer } from "@/lib/posthog-server";
 

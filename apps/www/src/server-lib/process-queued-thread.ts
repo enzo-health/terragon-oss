@@ -10,7 +10,7 @@ import {
   getEligibleQueuedThreadChats as getEligibleQueuedThreadChatsModel,
   getQueuedThreadCounts,
   getThreadMinimal,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import { ensureThreadChatHasUserMessage } from "@/server-lib/retry-thread";
 
 export async function getEligibleQueuedThreadChats({

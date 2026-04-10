@@ -1,6 +1,6 @@
 # Overview
 
-Build an L1 autonomous SDLC loop in Terragon for explicitly enrolled task threads/PRs. The loop drives one PR head SHA to `human_review_ready` and then `done` with replay-safe gate state and idempotent side effects.
+Build an L1 autonomous SDLC loop in Leo for explicitly enrolled task threads/PRs. The loop drives one PR head SHA to `human_review_ready` and then `done` with replay-safe gate state and idempotent side effects.
 
 **Determinism in this epic**
 

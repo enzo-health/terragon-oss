@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { memo, useState, useRef, useEffect } from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
-import { AIAgent } from "@terragon/agent/types";
-import { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
+import { AIAgent } from "@leo/agent/types";
+import { DBUserMessage, ThreadInfoFull } from "@leo/shared";
 import { PRStatusPill } from "../pr-status-pill";
 import { toast } from "sonner";
 import { Pill } from "@/components/shared/pill";

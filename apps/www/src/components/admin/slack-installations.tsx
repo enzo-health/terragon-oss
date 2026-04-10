@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import { format } from "date-fns";
 import { ColumnDef } from "@tanstack/react-table";
-import { SlackInstallation } from "@terragon/shared";
+import { SlackInstallation } from "@leo/shared";
 
 export function AdminSlackInstallations({
   installations,

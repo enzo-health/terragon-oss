@@ -14,13 +14,13 @@ cp .env.example .env.development.local
 
 ### 2. Dev Environment & Database Setup
 
-Make sure you have @terragon/dev-env and @terragon/shared setup.
+Make sure you have @leo/dev-env and @leo/shared setup.
 
 ### GitHub App Setup
 
 1. Go to https://github.com/settings/apps and click **"New GitHub App"**.
 2. Fill out the basic information:
-   - **GitHub App name**: `Terragon Dev`
+   - **GitHub App name**: `Leo Dev`
    - **Homepage URL**: `http://localhost:3000`
    - **Callback URL**: `http://localhost:3000/api/auth/callback/github`
    - **Webhook URL**: `https://your-domain.com/api/webhooks/github` (for production) or use ngrok for local development
@@ -73,13 +73,13 @@ Cloudflare R2 is used for file storage. If you need file upload/storage function
 
 ### Slack Integration Setup (Optional)
 
-The Slack integration allows users to interact with Terragon through Slack. Users can create tasks directly from Slack messages.
+The Slack integration allows users to interact with Leo through Slack. Users can create tasks directly from Slack messages.
 
 #### 1. Create a Slack App
 
 1. Go to https://api.slack.com/apps
 2. Click **"Create New App"** → **"From scratch"**
-3. Give your app a name (e.g., "Terragon-Dev-YourName")
+3. Give your app a name (e.g., "Leo-Dev-YourName")
 
 #### 2. Configure OAuth & Permissions
 

@@ -1,14 +1,14 @@
 import { db } from "@/lib/db";
-import { DB } from "@terragon/shared/db";
-import { AIAgent, AIModel, AIAgentCredentials } from "@terragon/agent/types";
+import { DB } from "@leo/shared/db";
+import { AIAgent, AIModel, AIAgentCredentials } from "@leo/agent/types";
 import {
   getThreadMinimal,
   updateThread,
   getThreadChat,
-} from "@terragon/shared/model/threads";
-import { getUser, getUserSettings } from "@terragon/shared/model/user";
+} from "@leo/shared/model/threads";
+import { getUser, getUserSettings } from "@leo/shared/model/user";
 import { getGitHubUserAccessToken } from "@/lib/github";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { getFeatureFlagsForUser } from "@leo/shared/model/feature-flags";
 import {
   getOrCreateEnvironment,
   getDecryptedEnvironmentVariables,
@@ -17,35 +17,32 @@ import {
   getReadySnapshot,
   hashEnvironmentVariables,
   hashSnapshotValue,
-} from "@terragon/shared/model/environments";
+} from "@leo/shared/model/environments";
 import {
   getSetupScriptHash,
   getSnapshotBaseTemplateId,
-} from "@terragon/sandbox/snapshot-builder";
-import { env } from "@terragon/env/apps-www";
-import type {
-  CreateSandboxOptions,
-  ISandboxSession,
-} from "@terragon/sandbox/types";
-import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
+} from "@leo/sandbox/snapshot-builder";
+import { env } from "@leo/env/apps-www";
+import type { CreateSandboxOptions, ISandboxSession } from "@leo/sandbox/types";
+import type { SandboxProvider, SandboxSize } from "@leo/types/sandbox";
 import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
-} from "@terragon/sandbox";
-import { bashQuote } from "@terragon/sandbox/utils";
+} from "@leo/sandbox";
+import { bashQuote } from "@leo/sandbox/utils";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
-import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
+import { sandboxTimeoutMs } from "@leo/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
 import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
-import { ensureAgent } from "@terragon/agent/utils";
+import { ensureAgent } from "@leo/agent/utils";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
-import type { UserSettings } from "@terragon/shared";
+import type { UserSettings } from "@leo/shared";
 import { redis } from "@/lib/redis";
 
 const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
@@ -664,7 +661,7 @@ async function getOrCreateSandboxForThread({
             environmentId: resolvedRepositoryEnvironment.id,
           }).catch((err) => {
             console.warn(
-              "[sandbox] Could not fetch terragon-setup.sh, skipping:",
+              "[sandbox] Could not fetch leo-setup.sh (or legacy terragon-setup.sh), skipping:",
               err instanceof Error ? err.message : String(err),
             );
             return null;
@@ -950,7 +947,7 @@ export async function createSandboxForThread({
     // Check if this is a setup script failure
     if (
       error instanceof Error &&
-      error.message.includes("terragon-setup.sh failed:")
+      error.message.includes("leo-setup.sh failed:")
     ) {
       throw wrapError("setup-script-failed", error);
     }

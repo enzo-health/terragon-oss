@@ -1,4 +1,4 @@
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
 import { betterAuth } from "better-auth";
 import {
@@ -11,10 +11,10 @@ import {
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { db } from "./db";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { getPostHogServer } from "./posthog-server";
 import { nonLocalhostPublicAppUrl } from "./server-utils";
-import { publicAppUrl } from "@terragon/env/next-public";
+import { publicAppUrl } from "@leo/env/next-public";
 import { maybeGrantSignupBonus } from "@/server-lib/credits";
 import { LoopsClient } from "loops";
 import { Resend } from "resend";
@@ -49,7 +49,7 @@ async function isRequiredGitHubOrgMember({
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${accessToken}`,
-        "User-Agent": "Terragon",
+        "User-Agent": "Leo",
       },
       cache: "no-store",
     },
@@ -257,13 +257,13 @@ export const auth = betterAuth({
         const result = await resend.emails.send({
           from: "Terry <onboarding@mail.terragonlabs.com>",
           to: email,
-          subject: "Sign in to Terragon",
+          subject: "Sign in to Leo",
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2>Sign in to Terragon</h2>
+              <h2>Sign in to Leo</h2>
               <p>Hello,</p>
-              <p>Click the link below to sign in to your Terragon account:</p>
-              <a href="${url}" style="display: inline-block; padding: 12px 24px; background-color: #000; color: #fff; text-decoration: none; border-radius: 6px; margin: 16px 0;">Sign in to Terragon</a>
+              <p>Click the link below to sign in to your Leo account:</p>
+              <a href="${url}" style="display: inline-block; padding: 12px 24px; background-color: #000; color: #fff; text-decoration: none; border-radius: 6px; margin: 16px 0;">Sign in to Leo</a>
               <p style="color: #666; font-size: 14px;">This link will expire in 15 minutes.</p>
               <p style="color: #666; font-size: 14px;">If you didn't request this email, you can safely ignore it.</p>
             </div>

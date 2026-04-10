@@ -3,7 +3,7 @@ import { installDaemon, sendMessage } from "./daemon";
 import type { ISandboxSession } from "./types";
 
 // Mock the bundled imports
-vi.mock("@terragon/bundled", () => ({
+vi.mock("@leo/bundled", () => ({
   daemonAsStr: "mock-daemon-content",
   mcpServerAsStr: "mock-mcp-server-content",
 }));
@@ -221,8 +221,9 @@ describe("daemon installation", () => {
         BASH_MAX_TIMEOUT_MS: "60000",
         API_KEY: "secret-key",
         DATABASE_URL: "postgres://localhost",
-        TERRAGON: "true",
+        LEO: "true",
         GH_TOKEN: "test-token",
+        LEO_FEATURE_FLAGS: "{}",
         TERRAGON_FEATURE_FLAGS: "{}",
       });
     });
@@ -274,7 +275,7 @@ describe("daemon installation", () => {
         featureFlags: {},
       });
 
-      expect(executedCommands).toContain("chmod +x /tmp/terragon-daemon.mjs");
+      expect(executedCommands).toContain("chmod +x /tmp/leo-daemon.mjs");
     });
 
     it("should write all required files", async () => {
@@ -287,9 +288,7 @@ describe("daemon installation", () => {
         featureFlags: {},
       });
 
-      expect(writtenFiles["/tmp/terragon-daemon.mjs"]).toBe(
-        "mock-daemon-content",
-      );
+      expect(writtenFiles["/tmp/leo-daemon.mjs"]).toBe("mock-daemon-content");
       expect(writtenFiles["/tmp/terry-mcp-server.mjs"]).toBe(
         "mock-mcp-server-content",
       );
@@ -310,12 +309,12 @@ describe("daemon installation", () => {
       const [messageFilePath, messageJson] = (mockSession.writeTextFile as any)
         .mock.calls[(mockSession.writeTextFile as any).mock.calls.length - 1];
       expect(messageFilePath).toMatch(
-        /^\/tmp\/terragon-daemon-message-[0-9]+-[a-f0-9]{12}\.json$/,
+        /^\/tmp\/leo-daemon-message-[0-9]+-[a-f0-9]{12}\.json$/,
       );
       expect(messageJson).toBe(JSON.stringify({ type: "ping" }));
 
       expect(executedCommands).toContain(
-        `node /tmp/terragon-daemon.mjs --write < ${messageFilePath}`,
+        `node /tmp/leo-daemon.mjs --write < ${messageFilePath}`,
       );
       expect(executedCommands).toContain(`rm -f ${messageFilePath}`);
     });

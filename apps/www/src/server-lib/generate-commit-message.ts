@@ -1,7 +1,7 @@
 import { generateObject } from "ai";
 import * as z from "zod/v4";
 import { openai } from "@ai-sdk/openai";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 // Zod schemas for structured data generation
 const commitMessageSchema = z.object({

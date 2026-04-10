@@ -4,7 +4,7 @@
  * Direct PostgreSQL queries for ground truth.
  * Uses the same connection logic as delivery-loop-local-framework.ts
  * NOTE: This uses pg directly (not Drizzle) to keep the CLI lightweight
- * and avoid circular dependencies with @terragon/shared
+ * and avoid circular dependencies with @leo/shared
  */
 
 import { Client } from "pg";

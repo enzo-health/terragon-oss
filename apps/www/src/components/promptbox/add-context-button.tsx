@@ -1,11 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import type {
-  AIAgent,
-  AIAgentSlashCommand,
-  AIModel,
-} from "@terragon/agent/types";
+import type { AIAgent, AIAgentSlashCommand, AIModel } from "@leo/agent/types";
 import type { Attachment } from "@/lib/attachment-types";
-import { getAgentSlashCommands, modelToAgent } from "@terragon/agent/utils";
+import { getAgentSlashCommands, modelToAgent } from "@leo/agent/utils";
 import { MentionListContent } from "./mention-list";
 import { SlashCommandListContent } from "./slash-command-list";
 import { Typeahead } from "./typeahead/typeahead";

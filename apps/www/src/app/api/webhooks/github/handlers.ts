@@ -6,7 +6,7 @@ import {
   getIsIssueAuthor,
   parseRepoFullName,
 } from "@/lib/github";
-import { getGithubPR } from "@terragon/shared/model/github";
+import { getGithubPR } from "@leo/shared/model/github";
 import { handleAppMention } from "./handle-app-mention";
 import {
   isAppMentioned,
@@ -17,19 +17,19 @@ import { EmitterWebhookEvent } from "@octokit/webhooks";
 import {
   getPullRequestAutomationsForRepo,
   getIssueAutomationsForRepo,
-} from "@terragon/shared/model/automations";
+} from "@leo/shared/model/automations";
 import {
   PullRequestTriggerConfig,
   IssueTriggerConfig,
-} from "@terragon/shared/automations";
-import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/automations";
+import { getActiveWorkflowForGithubPR } from "@leo/shared/delivery-loop/store/workflow-store";
 import { and, eq, isNotNull, notInArray } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   runPullRequestAutomation,
   runIssueAutomation,
 } from "@/server-lib/automations";
-import { Automation } from "@terragon/shared/db/types";
+import { Automation } from "@leo/shared/db/types";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import type { LoopEvent } from "@/server-lib/delivery-loop/v3/types";
 // publicAppUrl is used within utils via postBillingLinkComment

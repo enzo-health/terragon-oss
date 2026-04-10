@@ -21,7 +21,7 @@ export function ShutdownControls() {
             Shutdown Controls
           </CardTitle>
           <CardDescription>
-            Manage the Terragon shutdown workflow in single-tenant deployments.
+            Manage the Leo shutdown workflow in single-tenant deployments.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">

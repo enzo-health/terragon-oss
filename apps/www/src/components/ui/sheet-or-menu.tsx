@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Button } from "./button";
-import { assertNever } from "@terragon/shared/utils";
+import { assertNever } from "@leo/shared/utils";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useCallback } from "react";

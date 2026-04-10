@@ -2,7 +2,7 @@
 
 import { r2Cdn } from "@/lib/r2-cdn";
 import { adminOnly } from "@/lib/auth-server";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 
 export const listR2Objects = adminOnly(async function listR2Objects(
   adminUser: User,

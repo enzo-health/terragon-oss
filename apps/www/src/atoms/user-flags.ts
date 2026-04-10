@@ -6,8 +6,8 @@ import {
   updateSelectedBranch,
   getUserFlagsAction,
 } from "@/server-actions/user-flags";
-import type { UserFlags } from "@terragon/shared";
-import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
+import type { UserFlags } from "@leo/shared";
+import type { AIModel, SelectedAIModels } from "@leo/agent/types";
 import { atom, Getter, Setter } from "jotai";
 import { userCredentialsAtom } from "./user-credentials";
 import { getDefaultModel } from "@/lib/default-ai-model";

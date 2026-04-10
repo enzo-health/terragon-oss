@@ -1,6 +1,6 @@
 ---
 title: GitHub Integration
-description: Interact with Terragon directly from GitHub
+description: Interact with Leo directly from GitHub
 ---
 
 import { House } from "lucide-react";
@@ -8,49 +8,49 @@ import { Steps, Step } from "fumadocs-ui/components/steps";
 import { Tabs, Tab } from "fumadocs-ui/components/tabs";
 import { Callout } from "fumadocs-ui/components/callout";
 
-Interact with Terragon directly from GitHub through app mentions, while Terragon handles PR creation and branch management automatically.
+Interact with Leo directly from GitHub through app mentions, while Leo handles PR creation and branch management automatically.
 
 ### GitHub App Mentions
 
 <Callout type="info">
-  To mention @terragon-labs on GitHub, you must grant Terragon access to the
+  To mention @leo-labs on GitHub, you must grant Leo access to the
   repository you're tagging it in. You can do this in Settings, the repository
   selector in the prompt box, or in Environments.
 </Callout>
 
 #### How It Works
 
-Mention `@terragon-labs` in GitHub to create new Terragon tasks:
+Mention `@leo-labs` in GitHub to create new Leo tasks:
 
 <Tabs items={["PR Comments", "Issue Comments", "Code Review Comments"]}>
   <Tab value="PR Comments">
     ```text 
-    @terragon-labs can you fix the failing tests?
+    @leo-labs can you fix the failing tests?
     ```
   </Tab>
 
 <Tab value="Issue Comments">
-  ```text @terragon-labs implement the feature described above ```
+  ```text @leo-labs implement the feature described above ```
 </Tab>
 
   <Tab value="Code Review Comments">
     ```text 
-    @terragon-labs this method could be optimized using memoization 
+    @leo-labs this method could be optimized using memoization 
     ```
   </Tab>
 </Tabs>
 
 #### What Happens
 
-When you mention Terragon:
+When you mention Leo:
 
 <Steps>
   <Step>
-    Terragon immediately reacts with a 👀 emoji to acknowledge your request
+    Leo immediately reacts with a 👀 emoji to acknowledge your request
   </Step>
   <Step>A new task is created automatically</Step>
   <Step>
-    Terragon receives full context about the PR/issue and your comment
+    Leo receives full context about the PR/issue and your comment
   </Step>
   <Step>Work begins in an isolated sandbox</Step>
   <Step>
@@ -60,65 +60,65 @@ When you mention Terragon:
 
 #### Task Creation Behavior
 
-By default, Terragon keeps a single task per pull request or issue. Repeat mentions of `@terragon-labs` on the same thread are added as follow-up messages so the conversation history stays in one place.
+By default, Leo keeps a single task per pull request or issue. Repeat mentions of `@leo-labs` on the same thread are added as follow-up messages so the conversation history stays in one place.
 
-If you want each mention to kick off a fresh task, enable **Create new task when @terragon-labs is tagged on GitHub** in [GitHub & Pull Request Settings](https://www.terragonlabs.com/settings/github). With this toggle on, Terragon always creates a brand-new task—complete with its own sandbox and timeline—whenever you tag the app on GitHub, even if a task already exists for that PR or issue.
+If you want each mention to kick off a fresh task, enable **Create new task when @leo-labs is tagged on GitHub** in [GitHub & Pull Request Settings](https://www.terragonlabs.com/settings/github). With this toggle on, Leo always creates a brand-new task—complete with its own sandbox and timeline—whenever you tag the app on GitHub, even if a task already exists for that PR or issue.
 
 <Callout type="warning">
   Separate tasks mean separate sandboxes and timelines. Enabling this setting is useful for parallel work or reviewer-specific follow-ups, but you will lose the consolidated discussion history and may need to keep an eye out for duplicated effort.
 </Callout>
 
-This preference applies to your Terragon account across every repository you have access to; it is not configurable per repo. Changing the setting does not modify any existing tasks—those continue exactly as they were when they were created.
+This preference applies to your Leo account across every repository you have access to; it is not configurable per repo. Changing the setting does not modify any existing tasks—those continue exactly as they were when they were created.
 
 #### Model Selection
 
 The model selected for a github mention is selected based on the following priority:
 
-1. Model specified in the comment (e.g., `@terragon-labs [sonnet] ...`)
+1. Model specified in the comment (e.g., `@leo-labs [sonnet] ...`)
 2. Model configured in a "Github Mention" automation (if exists)
 3. Your default model specified in [GitHub & Pull Request Settings](https://www.terragonlabs.com/settings/github).
 4. The last model used in the task (If not creating a new task)
 5. Your last selected model in the dashboard.
 
-If an `@terragon-labs` mention will follow up on an existing task, the first selected model that is valid for the agent will be used. For example, if using Claude Code for a task, specifying `@terragon-labs [gpt-5.1] ...` will have no effect on the model selected.
+If an `@leo-labs` mention will follow up on an existing task, the first selected model that is valid for the agent will be used. For example, if using Claude Code for a task, specifying `@leo-labs [gpt-5.1] ...` will have no effect on the model selected.
 
 Here's a table of how to specify the model for each agent directly in the the github mention comment:
 
-| Agent       | Model                    | Example                                                                                            |
-| ----------- | ------------------------ | -------------------------------------------------------------------------------------------------- |
-| Claude Code | Sonnet                   | `@terragon-labs [sonnet] ...`                                                                      |
-| Claude Code | Haiku                    | `@terragon-labs [haiku] ...`                                                                       |
-| Claude Code | Opus                     | `@terragon-labs [opus] ...`                                                                        |
-| Codex       | GPT-5.2                  | `@terragon-labs [gpt-5.2] ...` OR <br /> `@terragon-labs [gpt-5.2-medium] ...`                     |
-| Codex       | GPT-5.2-Low              | `@terragon-labs [gpt-5.2-low] ...`                                                                 |
-| Codex       | GPT-5.2-High             | `@terragon-labs [gpt-5.2-high] ...`                                                                |
-| Codex       | GPT-5.1                  | `@terragon-labs [gpt-5.1] ...` OR <br /> `@terragon-labs [gpt-5.1-medium] ...`                     |
-| Codex       | GPT-5.1-Codex-Max-Low    | `@terragon-labs [gpt-5.1-codex-max-low] ...`                                                       |
-| Codex       | GPT-5.1-Codex-Max-Medium | `@terragon-labs [gpt-5.1-codex-max] ...` OR <br /> `@terragon-labs [gpt-5.1-codex-max-medium] ...` |
-| Codex       | GPT-5.1-Codex-Max-High   | `@terragon-labs [gpt-5.1-codex-max-high] ...`                                                      |
-| Codex       | GPT-5.1-Codex-Max-XHigh  | `@terragon-labs [gpt-5.1-codex-max-xhigh] ...`                                                     |
-| Codex       | GPT-5.1-Codex-Low        | `@terragon-labs [gpt-5.1-codex-low] ...`                                                           |
-| Codex       | GPT-5.1-Codex-Medium     | `@terragon-labs [gpt-5.1-codex-medium] ...`                                                        |
-| Codex       | GPT-5.1-Codex-High       | `@terragon-labs [gpt-5.1-codex-high] ...`                                                          |
-| Codex       | GPT-5                    | `@terragon-labs [gpt-5] ...`                                                                       |
-| Gemini      | Gemini 3 Pro             | `@terragon-labs [gemini-3-pro] ...`                                                                |
-| Gemini      | Gemini 2.5 Pro           | `@terragon-labs [gemini-2.5-pro] ...`                                                              |
-| OpenCode    | Grok Code Fast 1         | `@terragon-labs [grok-code] ...`                                                                   |
-| OpenCode    | Qwen3 Coder 480B         | `@terragon-labs [qwen3-coder] ...`                                                                 |
-| OpenCode    | Kimi K2                  | `@terragon-labs [kimi-k2] ...`                                                                     |
-| OpenCode    | GLM 4.6                  | `@terragon-labs [glm-4.6] ...`                                                                     |
-| OpenCode    | Gemini 2.5 Pro           | `@terragon-labs [opencode/gemini-2.5-pro] ...`                                                     |
-| Amp         | Amp                      | `@terragon-labs [amp] ...`                                                                         |
+| Agent       | Model                    | Example                                                                                  |
+| ----------- | ------------------------ | ---------------------------------------------------------------------------------------- |
+| Claude Code | Sonnet                   | `@leo-labs [sonnet] ...`                                                                 |
+| Claude Code | Haiku                    | `@leo-labs [haiku] ...`                                                                  |
+| Claude Code | Opus                     | `@leo-labs [opus] ...`                                                                   |
+| Codex       | GPT-5.2                  | `@leo-labs [gpt-5.2] ...` OR <br /> `@leo-labs [gpt-5.2-medium] ...`                     |
+| Codex       | GPT-5.2-Low              | `@leo-labs [gpt-5.2-low] ...`                                                            |
+| Codex       | GPT-5.2-High             | `@leo-labs [gpt-5.2-high] ...`                                                           |
+| Codex       | GPT-5.1                  | `@leo-labs [gpt-5.1] ...` OR <br /> `@leo-labs [gpt-5.1-medium] ...`                     |
+| Codex       | GPT-5.1-Codex-Max-Low    | `@leo-labs [gpt-5.1-codex-max-low] ...`                                                  |
+| Codex       | GPT-5.1-Codex-Max-Medium | `@leo-labs [gpt-5.1-codex-max] ...` OR <br /> `@leo-labs [gpt-5.1-codex-max-medium] ...` |
+| Codex       | GPT-5.1-Codex-Max-High   | `@leo-labs [gpt-5.1-codex-max-high] ...`                                                 |
+| Codex       | GPT-5.1-Codex-Max-XHigh  | `@leo-labs [gpt-5.1-codex-max-xhigh] ...`                                                |
+| Codex       | GPT-5.1-Codex-Low        | `@leo-labs [gpt-5.1-codex-low] ...`                                                      |
+| Codex       | GPT-5.1-Codex-Medium     | `@leo-labs [gpt-5.1-codex-medium] ...`                                                   |
+| Codex       | GPT-5.1-Codex-High       | `@leo-labs [gpt-5.1-codex-high] ...`                                                     |
+| Codex       | GPT-5                    | `@leo-labs [gpt-5] ...`                                                                  |
+| Gemini      | Gemini 3 Pro             | `@leo-labs [gemini-3-pro] ...`                                                           |
+| Gemini      | Gemini 2.5 Pro           | `@leo-labs [gemini-2.5-pro] ...`                                                         |
+| OpenCode    | Grok Code Fast 1         | `@leo-labs [grok-code] ...`                                                              |
+| OpenCode    | Qwen3 Coder 480B         | `@leo-labs [qwen3-coder] ...`                                                            |
+| OpenCode    | Kimi K2                  | `@leo-labs [kimi-k2] ...`                                                                |
+| OpenCode    | GLM 4.6                  | `@leo-labs [glm-4.6] ...`                                                                |
+| OpenCode    | Gemini 2.5 Pro           | `@leo-labs [opencode/gemini-2.5-pro] ...`                                                |
+| Amp         | Amp                      | `@leo-labs [amp] ...`                                                                    |
 
 #### Prompt & Trigger Customizations
 
-You can customize the prompt for a github mention using the "Github Mention" automation. Users on the pro tier can also customize and enable bots to mention @terragon-labs on GitHub to kick off tasks for them.
+You can customize the prompt for a github mention using the "Github Mention" automation. Users on the pro tier can also customize and enable bots to mention @leo-labs on GitHub to kick off tasks for them.
 
-### How Terragon Works with GitHub
+### How Leo Works with GitHub
 
 #### Automatic PR Creation
 
-When working on a task, Terragon:
+When working on a task, Leo:
 
 <Steps>
   <Step>Creates a new branch with your changes</Step>
@@ -129,14 +129,14 @@ When working on a task, Terragon:
       <li>Comprehensive description</li>
       <li>Test plan checklist</li>
       <li>Co-author attribution to Terry</li>
-      <li>Links to Terragon task</li>
+      <li>Links to Leo task</li>
     </ul>
   </Step>
 </Steps>
 
 #### GitHub CLI Access
 
-Every sandbox includes GitHub CLI, allowing Terragon to:
+Every sandbox includes GitHub CLI, allowing Leo to:
 
 ```bash title="GitHub CLI Examples"
 # View PR details and comments
@@ -150,7 +150,7 @@ gh repo view
 ```
 
 <Callout type="info">
-  **Custom GitHub Token**: Terragon automatically sets the `GH_TOKEN` environment variable to authenticate the `gh` CLI. If you need custom permissions you can override it by adding your own `GH_TOKEN` in [Environment Variables](/docs/configuration/environment-setup/environment-variables). Your custom token will take precedence.
+  **Custom GitHub Token**: Leo automatically sets the `GH_TOKEN` environment variable to authenticate the `gh` CLI. If you need custom permissions you can override it by adding your own `GH_TOKEN` in [Environment Variables](/docs/configuration/environment-setup/environment-variables). Your custom token will take precedence.
 </Callout>
 
 #### Working with Issues
@@ -161,11 +161,11 @@ Reference issues in your prompts:
 Fix the authentication bug described in issue #234
 ```
 
-Terragon will fetch issue details and link the PR appropriately.
+Leo will fetch issue details and link the PR appropriately.
 
 ### Quick GitHub Actions
 
-For tasks with associated pull requests, Terragon provides quick actions directly above the prompt box to help you manage CI workflows:
+For tasks with associated pull requests, Leo provides quick actions directly above the prompt box to help you manage CI workflows:
 
 #### Fix Failing CI Checks
 
@@ -187,7 +187,7 @@ When your draft PR has all checks passing, a **Ready for review** button appears
 
 ![Ready for review button](https://cdn.terragonlabs.com/gh-ready-for-review-fi8d.png)
 
-These actions help you move faster by reducing context switching between Terragon and GitHub.
+These actions help you move faster by reducing context switching between Leo and GitHub.
 
 Having issues with GitHub integration? See our [Troubleshooting guide](/docs/resources/troubleshooting#github-integration) for solutions to common problems.
 

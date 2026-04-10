@@ -3,19 +3,19 @@ import { unwrapResult } from "@/lib/server-actions";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import {
   getThread,
   getThreadChat,
   getThreads,
   updateThreadChat,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   getAgentRunContextByRunId,
   upsertAgentRunContext,
-} from "@terragon/shared/model/agent-run-context";
+} from "@leo/shared/model/agent-run-context";
 import {
   newThread as newThreadAction,
   NewThreadArgs,
@@ -48,7 +48,7 @@ import {
   runScheduledThread as runScheduledThreadAction,
   cancelScheduledThread as cancelScheduledThreadAction,
 } from "@/server-actions/scheduled-thread";
-import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
+import { gitCommitAndPushBranch } from "@leo/sandbox/commands";
 
 const newThread = async (args: NewThreadArgs) => {
   return unwrapResult(
@@ -159,7 +159,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
     await waitUntilResolved();
@@ -168,7 +168,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(thread).toBeDefined();
     expect(thread!.name).toBe("test-thread-name");
     expect(thread!.repoBaseBranchName).toBe("main");
-    expect(thread!.githubRepoFullName).toBe("terragon/test-repo");
+    expect(thread!.githubRepoFullName).toBe("leo/test-repo");
     expect(thread!.gitDiff).toBeNull();
 
     const threadChat = await getThreadChat({
@@ -367,7 +367,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     await mockLoggedInUser(session);
 
     const { threadId, threadChatId } = await newThread({
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
       message: {
         type: "user",
@@ -446,7 +446,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
     await waitUntilResolved();
@@ -455,7 +455,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(thread).toBeDefined();
     expect(thread!.name).toBe("test-thread-name");
     expect(thread!.repoBaseBranchName).toBe("main");
-    expect(thread!.githubRepoFullName).toBe("terragon/test-repo");
+    expect(thread!.githubRepoFullName).toBe("leo/test-repo");
     const threadChat = await getThreadChat({
       db,
       userId: user.id,
@@ -599,7 +599,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
 
@@ -737,7 +737,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
     await waitUntilResolved();
@@ -753,7 +753,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChat!.status).toBe("booting");
     expect(thread!.name).toBe("test-thread-name");
     expect(thread!.repoBaseBranchName).toBe("main");
-    expect(thread!.githubRepoFullName).toBe("terragon/test-repo");
+    expect(thread!.githubRepoFullName).toBe("leo/test-repo");
     const runId = "run-error-metadata";
     await db.insert(schema.agentRunContext).values({
       runId,
@@ -890,7 +890,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       kind: "delivery",
       stateJson: {},
       userId: user.id,
-      repoFullName: "terragon/test-repo",
+      repoFullName: "leo/test-repo",
     });
     await db.insert(schema.deliveryWorkflowHeadV3).values({
       workflowId,
@@ -980,7 +980,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       kind: "delivery",
       stateJson: {},
       userId: user.id,
-      repoFullName: "terragon/test-repo",
+      repoFullName: "leo/test-repo",
     });
 
     await expect(
@@ -1071,7 +1071,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
     await waitUntilResolved();
@@ -1080,7 +1080,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(thread).toBeDefined();
     expect(thread!.name).toBe("test-thread-name");
     expect(thread!.repoBaseBranchName).toBe("main");
-    expect(thread!.githubRepoFullName).toBe("terragon/test-repo");
+    expect(thread!.githubRepoFullName).toBe("leo/test-repo");
 
     const threadChat = await getThreadChat({
       db,
@@ -1234,7 +1234,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
     await waitUntilResolved();
@@ -1580,7 +1580,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
 
     // Create thread with plan mode
     const { threadId, threadChatId } = await newThread({
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
       message: {
         type: "user",
@@ -1781,7 +1781,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Scheduled task message" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
       scheduleAt: oneHourFromNow,
     });
@@ -1871,7 +1871,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Scheduled but will run now" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
       scheduleAt: futureTime,
     });
@@ -1939,7 +1939,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Scheduled but will cancel schedule" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
       scheduleAt: futureTime,
     });
@@ -2053,7 +2053,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Scheduled but will follow up" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
       scheduleAt: futureTime,
     });
@@ -2264,7 +2264,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         model: "sonnet",
         parts: [{ type: "text", text: "Hello, world!" }],
       },
-      githubRepoFullName: "terragon/test-repo",
+      githubRepoFullName: "leo/test-repo",
       branchName: "main",
     });
     await waitUntilResolved();

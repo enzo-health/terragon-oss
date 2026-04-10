@@ -6,7 +6,7 @@ import {
   createTestGitHubPR,
 } from "./test-helpers";
 import { createDb } from "../db";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { GitHubPR } from "../db/types";
 
 const db = createDb(env.DATABASE_URL!);

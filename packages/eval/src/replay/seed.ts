@@ -29,7 +29,7 @@ export async function seedFromFixture({
 
   // 1. Create user
   const userId = nanoid();
-  const email = `eval-${userId}@terragon.com`;
+  const email = `eval-${userId}@leo.com`;
   const [user] = await db
     .insert(schema.user)
     .values({

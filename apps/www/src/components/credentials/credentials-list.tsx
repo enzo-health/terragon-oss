@@ -11,11 +11,11 @@ import {
   useToggleActiveCredentialMutation,
 } from "@/queries/credentials-queries";
 import type { AgentProviderCredentialsMap } from "@/server-lib/credentials";
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 import {
   getAgentDisplayName,
   isConnectedCredentialsSupported,
-} from "@terragon/agent/utils";
+} from "@leo/agent/utils";
 import { AgentIcon } from "@/components/chat/agent-icon";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";

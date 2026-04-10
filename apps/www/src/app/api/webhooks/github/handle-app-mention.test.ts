@@ -1,15 +1,15 @@
 import { describe, expect, it, vi, beforeEach, beforeAll } from "vitest";
 import { handleAppMention } from "./handle-app-mention";
-import { User, GitHubPR } from "@terragon/shared";
+import { User, GitHubPR } from "@leo/shared";
 import {
   createTestGitHubPR,
   createTestThread,
   createTestUser,
   setFeatureFlagOverrideForTest,
-} from "@terragon/shared/model/test-helpers";
-import { updateUserSettings } from "@terragon/shared/model/user";
+} from "@leo/shared/model/test-helpers";
+import { updateUserSettings } from "@leo/shared/model/user";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import {
   getOctokitForUser,
@@ -21,11 +21,11 @@ import {
 } from "@/lib/github";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { getDiffContextStr } from "./utils";
-import { createAutomation } from "@terragon/shared/model/automations";
+import { createAutomation } from "@leo/shared/model/automations";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { redis } from "@/lib/redis";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import * as threadModel from "@terragon/shared/model/threads";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
+import * as threadModel from "@leo/shared/model/threads";
 
 vi.mock("@/server-lib/new-thread-internal", () => ({
   newThreadInternal: vi.fn().mockResolvedValue({ id: "new-thread-created-id" }),
@@ -1346,7 +1346,7 @@ Hey @app, I found several issues:
     });
 
     it("should create tasks for both mentioning user and automation user when both apply", async () => {
-      // Mentioning user is a Terragon user but not the automation owner
+      // Mentioning user is a Leo user but not the automation owner
       await createAutomation({
         db,
         userId: automationUser.id,

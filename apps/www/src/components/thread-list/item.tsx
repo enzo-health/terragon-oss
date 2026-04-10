@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 import { memo, useMemo, useState, useRef, useEffect } from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
 import { PRStatusPill } from "../pr-status-pill";

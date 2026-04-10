@@ -1,11 +1,11 @@
 import { atom, useAtom, useAtomValue } from "jotai";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { AIAgent, AIModel } from "@leo/agent/types";
 import {
   getAllAgentTypes,
   isAgentEnabledByDefault,
   modelToAgent,
-} from "@terragon/agent/utils";
-import { User, UserSettings } from "@terragon/shared";
+} from "@leo/agent/utils";
+import { User, UserSettings } from "@leo/shared";
 import {
   getUserSettingsAction,
   updateUserSettingsAction,

@@ -69,7 +69,7 @@ Auto-update functionality:
 - Silent installation of new versions
 - No manual intervention required
 
-Install: npm install -g @terragon-labs/cli"
+Install: npm install -g @leo-labs/cli"
 
 echo -e "${GREEN}Tag created successfully!${NC}"
 

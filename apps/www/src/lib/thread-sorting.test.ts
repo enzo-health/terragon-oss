@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ThreadStatus } from "@terragon/shared";
+import { ThreadStatus } from "@leo/shared";
 import {
   sortThreadsUpdatedAt,
   MinimalThreadInfoForSorting,

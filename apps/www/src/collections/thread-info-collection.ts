@@ -4,8 +4,8 @@ import {
   createCollection,
   localOnlyCollectionOptions,
 } from "@tanstack/react-db";
-import { ThreadInfo } from "@terragon/shared/db/types";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import { ThreadInfo } from "@leo/shared/db/types";
+import { BroadcastThreadPatch } from "@leo/types/broadcast";
 import {
   applyThreadPatchToListThread,
   threadPatchToListThread,

@@ -6,7 +6,7 @@ import {
   getUserSettings,
   getUserInfoServerSide,
   updateUserInfoServerSide,
-} from "@terragon/shared/model/user";
+} from "@leo/shared/model/user";
 import { CREDIT_AUTO_RELOAD_REASON } from "./stripe-credit-top-ups";
 import {
   stripeInvoiceItemsCreate,
@@ -17,7 +17,7 @@ import {
   getStripeCreditPackPriceId,
 } from "./stripe";
 
-const DESCRIPTION = "Terragon Credit Auto-Reload";
+const DESCRIPTION = "Leo Credit Auto-Reload";
 const AUTO_RELOAD_THRESHOLD_CENTS = 500;
 const AUTO_RELOAD_LOCK_TTL_SECONDS = 120;
 const AUTO_RELOAD_LOCK_PREFIX = "credits:auto-reload";
@@ -85,6 +85,7 @@ export async function maybeTriggerCreditAutoReload({
       auto_advance: false,
       description: DESCRIPTION,
       metadata: {
+        leo_user_id: userId,
         terragon_user_id: userId,
         reason: CREDIT_AUTO_RELOAD_REASON,
       },
@@ -103,6 +104,7 @@ export async function maybeTriggerCreditAutoReload({
       },
       description: DESCRIPTION,
       metadata: {
+        leo_user_id: userId,
         terragon_user_id: userId,
         reason: CREDIT_AUTO_RELOAD_REASON,
       },

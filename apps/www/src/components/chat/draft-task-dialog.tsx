@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { DBUserMessage, ThreadInfo } from "@terragon/shared";
+import type { DBUserMessage, ThreadInfo } from "@leo/shared";
 import { GenericPromptBox } from "../promptbox/generic-promptbox";
 import { RepoBranchSelector } from "../repo-branch-selector";
 import { HandleSubmit, HandleUpdate } from "../promptbox/use-promptbox";

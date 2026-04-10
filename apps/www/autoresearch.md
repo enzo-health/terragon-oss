@@ -1,8 +1,8 @@
-# Terragon Performance Optimization
+# Leo Performance Optimization
 
 ## Objective
 
-Make the Terragon frontend feel **super snappy and instantaneous**. Target metrics:
+Make the Leo frontend feel **super snappy and instantaneous**. Target metrics:
 
 - LCP < 1.5s
 - FID/INP < 100ms

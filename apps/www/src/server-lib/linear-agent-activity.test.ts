@@ -11,7 +11,7 @@ import {
   emitLinearActivitiesForDaemonEvent,
   type LinearClientFactory,
 } from "./linear-agent-activity";
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import type { ThreadSourceMetadata } from "@leo/shared/db/types";
 
 // ---------------------------------------------------------------------------
 // Mocks

@@ -4,9 +4,9 @@ import {
   stopStalledThreads,
   getStalledThreadChats,
   stopStalledThreadChats,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import { db } from "@/lib/db";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { maybeHibernateSandboxById } from "@/agent/sandbox";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
 import {

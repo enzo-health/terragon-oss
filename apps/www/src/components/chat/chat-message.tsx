@@ -1,8 +1,8 @@
 "use client";
 
 import React, { memo, useMemo } from "react";
-import { UIMessage, UIPart, ThreadInfoFull } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { UIMessage, UIPart, ThreadInfoFull } from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import { MessagePart } from "./message-part";
 import { cn } from "@/lib/utils";
 import { MessageToolbar } from "./chat-message-toolbar";

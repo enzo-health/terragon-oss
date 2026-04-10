@@ -4,18 +4,18 @@ import {
   persistWorkflowStatusCommentReference,
   clearWorkflowStatusCommentReference,
   persistWorkflowCheckRunReference,
-} from "@terragon/shared/delivery-loop/store/workflow-github-refs";
+} from "@leo/shared/delivery-loop/store/workflow-github-refs";
 
 vi.mock("@/lib/github", () => ({
   getOctokitForApp: vi.fn(),
   parseRepoFullName: (repoFullName: string) => repoFullName.split("/"),
 }));
 
-vi.mock("@terragon/env/next-public", () => ({
-  publicAppUrl: vi.fn(() => "https://terragon.example"),
+vi.mock("@leo/env/next-public", () => ({
+  publicAppUrl: vi.fn(() => "https://leo.example"),
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/workflow-github-refs", () => ({
+vi.mock("@leo/shared/delivery-loop/store/workflow-github-refs", () => ({
   persistWorkflowStatusCommentReference: vi.fn(),
   clearWorkflowStatusCommentReference: vi.fn(),
   persistWorkflowCheckRunReference: vi.fn(),
@@ -109,7 +109,7 @@ describe("sdlc publication", () => {
 
   it("reconciles canonical status comment before create to avoid duplicate side effects after DB persistence failure", async () => {
     const workflowId = "wf-status-reconcile";
-    const marker = `<!-- terragon-sdlc-loop-status-comment:${workflowId} -->`;
+    const marker = `<!-- leo-sdlc-loop-status-comment:${workflowId} -->`;
     const octokit = {
       rest: {
         issues: {
@@ -160,7 +160,7 @@ describe("sdlc publication", () => {
     });
   });
 
-  it("updates canonical check summary and includes Terragon task link instead of direct artifact URL", async () => {
+  it("updates canonical check summary and includes Leo task link instead of direct artifact URL", async () => {
     const octokit = {
       rest: {
         checks: {
@@ -195,9 +195,9 @@ describe("sdlc publication", () => {
     expect(octokit.rest.checks.update).toHaveBeenCalledWith(
       expect.objectContaining({
         check_run_id: 321,
-        external_id: "terragon-sdlc-loop-check-run:wf-3",
+        external_id: "leo-sdlc-loop-check-run:wf-3",
         output: expect.objectContaining({
-          summary: expect.stringContaining("https://terragon.example/task/"),
+          summary: expect.stringContaining("https://leo.example/task/"),
         }),
       }),
     );
@@ -225,7 +225,7 @@ describe("sdlc publication", () => {
                 check_runs: [
                   {
                     id: 601,
-                    external_id: `terragon-sdlc-loop-check-run:${workflowId}`,
+                    external_id: `leo-sdlc-loop-check-run:${workflowId}`,
                   },
                 ],
               },
@@ -256,7 +256,7 @@ describe("sdlc publication", () => {
         payload: {
           repoFullName: "owner/repo",
           prNumber: 9,
-          title: "Terragon Delivery Loop",
+          title: "Leo Delivery Loop",
           summary: "Gate summary",
           status: "completed",
           conclusion: "success",
@@ -275,7 +275,7 @@ describe("sdlc publication", () => {
         payload: {
           repoFullName: "owner/repo",
           prNumber: 9,
-          title: "Terragon Delivery Loop",
+          title: "Leo Delivery Loop",
           summary: "Gate summary",
           status: "completed",
           conclusion: "success",

@@ -1,13 +1,13 @@
 import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
 import { newThreadInternal } from "./new-thread-internal";
 import { db } from "@/lib/db";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
-import { User, DBUserMessage } from "@terragon/shared";
+import { createTestUser } from "@leo/shared/model/test-helpers";
+import { User, DBUserMessage } from "@leo/shared";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
-import { getThread } from "@terragon/shared/model/threads";
+import { getThread } from "@leo/shared/model/threads";
 import { execSync } from "node:child_process";
 
-const repoFullName = "terragon/test-repo";
+const repoFullName = "leo/test-repo";
 const mockMessage: DBUserMessage = {
   type: "user",
   parts: [{ type: "text", text: "Internal task message" }],
@@ -25,7 +25,7 @@ describe("newThreadInternal", { timeout: 30_000 }, () => {
   let user: User;
 
   beforeAll(() => {
-    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+    execSync("docker restart leo_redis_http_test", { stdio: "ignore" });
   });
 
   beforeEach(async () => {

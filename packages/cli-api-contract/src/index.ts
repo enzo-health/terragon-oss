@@ -1,5 +1,5 @@
 import { oc as ocBase } from "@orpc/contract";
-import { AIModelExternalSchema } from "@terragon/agent/types";
+import { AIModelExternalSchema } from "@leo/agent/types";
 import * as z from "zod/v4";
 
 const oc = ocBase.errors({

@@ -1,6 +1,6 @@
 import { updateLinearSettings } from "@/server-actions/linear";
 import { toast } from "sonner";
-import { LinearSettingsInsert } from "@terragon/shared/db/types";
+import { LinearSettingsInsert } from "@leo/shared/db/types";
 import { useRouter } from "next/navigation";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 

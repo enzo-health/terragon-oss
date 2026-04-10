@@ -3,13 +3,13 @@ import {
   getOrCreateGlobalEnvironment,
   getEnvironment,
   getDecryptedMcpConfig,
-} from "@terragon/shared/model/environments";
+} from "@leo/shared/model/environments";
 import { getUserIdOrNull, getUserIdOrRedirect } from "@/lib/auth-server";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { EnvironmentUI } from "@/components/environments/main";
 import type { Metadata } from "next";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 export async function generateMetadata({
   params,
@@ -18,7 +18,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const userId = await getUserIdOrNull();
   if (!userId) {
-    return { title: "Environment | Terragon" };
+    return { title: "Environment | Leo" };
   }
   const { id } = await params;
   const environment = await getEnvironment({
@@ -27,10 +27,10 @@ export async function generateMetadata({
     userId,
   });
   if (!environment) {
-    return { title: "Environment | Terragon" };
+    return { title: "Environment | Leo" };
   }
   return {
-    title: `${environment.repoFullName} Environment | Terragon`,
+    title: `${environment.repoFullName} Environment | Leo`,
   };
 }
 

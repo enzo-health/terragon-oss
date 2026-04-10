@@ -28,9 +28,9 @@ import { useRealtimeUser } from "@/hooks/useRealtime";
 import {
   LinearAccountWithSettingsAndInstallation,
   LinearInstallationPublic,
-} from "@terragon/shared/db/types";
-import { AIModel } from "@terragon/agent/types";
-import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
+import { AIModel } from "@leo/agent/types";
+import type { DeliveryPlanApprovalPolicy } from "@leo/shared/db/types";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { DeleteConfirmationDialog } from "@/components/delete-confirmation-dialog";
 import {
@@ -82,8 +82,8 @@ function LinearWorkspacePanel({
           <ConnectionStatusPill connected={false} />
         </div>
         <p className="text-sm text-muted-foreground">
-          Install the Linear Agent in your workspace to allow Terragon to
-          respond to mentions and create tasks automatically.
+          Install the Linear Agent in your workspace to allow Leo to respond to
+          mentions and create tasks automatically.
         </p>
         <div className="flex">
           <Button
@@ -339,8 +339,8 @@ function LinearAccountItem({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Choose whether Linear delivery loop runs can continue automatically
-              after planning or wait for manual approval.
+              Choose whether Linear delivery loop runs can continue
+              automatically after planning or wait for manual approval.
             </p>
           </div>
         </div>

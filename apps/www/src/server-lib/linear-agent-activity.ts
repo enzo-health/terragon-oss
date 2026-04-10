@@ -10,8 +10,8 @@
  */
 
 import { LinearClient } from "@linear/sdk";
-import type { ClaudeMessage } from "@terragon/daemon/shared";
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import type { ClaudeMessage } from "@leo/daemon/shared";
+import type { ThreadSourceMetadata } from "@leo/shared/db/types";
 import { db } from "@/lib/db";
 import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
 
@@ -76,7 +76,7 @@ export async function emitAgentActivity({
 }
 
 /**
- * Update the Linear agent session with external URLs (e.g. Terragon task URL).
+ * Update the Linear agent session with external URLs (e.g. Leo task URL).
  *
  * All errors are caught and logged — never throws.
  *

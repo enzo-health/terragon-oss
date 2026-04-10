@@ -1,10 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  ThreadInfo,
-  ThreadPageChat,
-  ThreadPageShell,
-} from "@terragon/shared";
+import type { ThreadInfo, ThreadPageChat, ThreadPageShell } from "@leo/shared";
 import {
   applyThreadPatchToListQueries,
   applyThreadPatchToQueryClient,
@@ -24,7 +20,7 @@ function createThreadShell(): ThreadPageShell {
     name: "Test task",
     branchName: "feature/test-task",
     repoBaseBranchName: "main",
-    githubRepoFullName: "terragon/example",
+    githubRepoFullName: "leo/example",
     automationId: null,
     codesandboxId: "sandbox-1",
     sandboxProvider: "e2b",
@@ -433,7 +429,7 @@ describe("applyThreadPatchToListQueries", () => {
         shell: {
           userId: "user-1",
           name: "Archived task",
-          githubRepoFullName: "terragon/example",
+          githubRepoFullName: "leo/example",
           repoBaseBranchName: "main",
           branchName: "feature/archived",
           sandboxProvider: "e2b",

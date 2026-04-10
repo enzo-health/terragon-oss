@@ -1,8 +1,8 @@
-import { DBMessage, type UIPlanPart } from "@terragon/shared";
+import { DBMessage, type UIPlanPart } from "@leo/shared";
 import {
   type ExitPlanModeToolPart,
   type PlanArtifactDescriptor,
-} from "@terragon/shared/db/artifact-descriptors";
+} from "@leo/shared/db/artifact-descriptors";
 import { Check } from "lucide-react";
 import React, { useMemo } from "react";
 import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";

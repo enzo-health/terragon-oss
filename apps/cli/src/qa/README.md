@@ -1,6 +1,6 @@
 # QA Validator Module
 
-Quality assurance system for validating Terragon task consistency across UI, database, and container states.
+Quality assurance system for validating Leo task consistency across UI, database, and container states.
 
 ## Purpose
 
@@ -168,7 +168,7 @@ Issues:     0 critical, 0 warning, 0 info
 DATABASE_URL=postgresql://user:password@host:port/database
 
 # Web URL for UI API (defaults to localhost)
-TERRAGON_WEB_URL=http://127.0.0.1:3000
+LEO_WEB_URL=http://127.0.0.1:3000
 
 # Terry API key location (defaults to ~/.terry/config.json)
 TERRY_SETTINGS_DIR=~/.terry
@@ -184,7 +184,7 @@ The CLI API contract does not currently include a `deliveryLoopStatus` endpoint.
 - Gate status validations are **disabled**
 - PR linkage validations are **disabled**
 
-To enable UI comparisons, extend `@terragon/cli-api-contract` with:
+To enable UI comparisons, extend `@leo/cli-api-contract` with:
 
 ```typescript
 deliveryLoopStatus: {

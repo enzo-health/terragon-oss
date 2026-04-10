@@ -2,8 +2,8 @@ import {
   getOctokitForUserOrThrow,
   getDefaultBranchForRepo,
 } from "@/lib/github";
-import { DB } from "@terragon/shared/db";
-import { getEnvironment } from "@terragon/shared/model/environments";
+import { DB } from "@leo/shared/db";
+import { getEnvironment } from "@leo/shared/model/environments";
 
 export async function getSetupScriptFromRepo({
   db,
@@ -32,17 +32,29 @@ export async function getSetupScriptFromRepo({
       userId,
       repoFullName: environment.repoFullName,
     });
-    const { data } = await octokit.rest.repos.getContent({
-      owner,
-      repo,
-      path: "terragon-setup.sh",
-      ref: branchName,
-    });
-    if ("content" in data && typeof data.content === "string") {
-      const content = Buffer.from(data.content, "base64").toString("utf-8");
-      return content;
+    const fetchSetupScript = async (
+      path: "leo-setup.sh" | "terragon-setup.sh",
+    ): Promise<string | null> => {
+      const { data } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path,
+        ref: branchName,
+      });
+      if (!("content" in data) || typeof data.content !== "string") {
+        return null;
+      }
+      return Buffer.from(data.content, "base64").toString("utf-8");
+    };
+
+    try {
+      return await fetchSetupScript("leo-setup.sh");
+    } catch (error: any) {
+      if (error?.status !== 404) {
+        throw error;
+      }
+      return await fetchSetupScript("terragon-setup.sh");
     }
-    return null;
   } catch (error: any) {
     // If file doesn't exist, return null (not an error case)
     if (error?.status === 404) {

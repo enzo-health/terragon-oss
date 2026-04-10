@@ -1,4 +1,4 @@
-## @terragon/broadcast
+## @leo/broadcast
 
 This is a [Partykit](https://partykit.io) project. We use this to broadcast messages to all connected clients to let them know when data changes.
 

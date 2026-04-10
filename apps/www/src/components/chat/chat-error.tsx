@@ -1,6 +1,6 @@
 import { Button } from "../ui/button";
 import { RotateCcw, GitBranch, Loader2 } from "lucide-react";
-import { Thread, ThreadErrorType } from "@terragon/shared";
+import { Thread, ThreadErrorType } from "@leo/shared";
 import Link from "next/link";
 import { isAgentWorking } from "@/agent/thread-status";
 import { useTheme } from "next-themes";
@@ -301,7 +301,7 @@ function ChatContent({
     case "setup-script-failed": {
       return (
         <ChatErrorContentsWithPre
-          header="terragon-setup.sh failed"
+          header="leo-setup.sh failed"
           errorStr={errorInfo}
           renderAnsi
         />

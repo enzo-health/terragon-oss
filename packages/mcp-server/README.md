@@ -1,6 +1,6 @@
-# @terragon/mcp-server
+# @leo/mcp-server
 
-Model Context Protocol (MCP) server providing AI assistant tools for Terragon.
+Model Context Protocol (MCP) server providing AI assistant tools for Leo.
 
 ## Overview
 
@@ -12,7 +12,7 @@ This MCP server provides tools for enhanced AI assistant capabilities:
 ## Installation
 
 ```bash
-pnpm install @terragon/mcp-server
+pnpm install @leo/mcp-server
 ```
 
 ## Usage

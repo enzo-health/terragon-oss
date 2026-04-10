@@ -1,8 +1,8 @@
-import { DBMessage, ThreadInfoFull } from "@terragon/shared";
+import { DBMessage, ThreadInfoFull } from "@leo/shared";
 import {
   type ArtifactDescriptor,
   type PlanArtifactDescriptor,
-} from "@terragon/shared/db/artifact-descriptors";
+} from "@leo/shared/db/artifact-descriptors";
 import { Maximize2, Minimize2, X } from "lucide-react";
 import React, { useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";

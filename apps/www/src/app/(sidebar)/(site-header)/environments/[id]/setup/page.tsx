@@ -1,7 +1,7 @@
 import { getUserIdOrNull, getUserIdOrRedirect } from "@/lib/auth-server";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { getEnvironment } from "@terragon/shared/model/environments";
+import { getEnvironment } from "@leo/shared/model/environments";
 import type { Metadata } from "next";
 import { SetupScriptEditor } from "@/components/environments/setup-script-editor";
 
@@ -12,7 +12,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const userId = await getUserIdOrNull();
   if (!userId) {
-    return { title: "Setup Script | Terragon" };
+    return { title: "Setup Script | Leo" };
   }
   const { id } = await params;
   const environment = await getEnvironment({
@@ -21,10 +21,10 @@ export async function generateMetadata({
     userId,
   });
   if (!environment) {
-    return { title: "Setup Script | Terragon" };
+    return { title: "Setup Script | Leo" };
   }
   return {
-    title: `${environment.repoFullName} Setup Script | Terragon`,
+    title: `${environment.repoFullName} Setup Script | Leo`,
   };
 }
 

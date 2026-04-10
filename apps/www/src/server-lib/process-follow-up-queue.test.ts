@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DBUserMessage } from "@terragon/shared";
+import type { DBUserMessage } from "@leo/shared";
 
 const TEST_USER_MESSAGE = {
   type: "user",
@@ -24,14 +24,14 @@ async function loadSubject(options: {
   const getThreadChat = vi.fn();
   const getThreadMinimal = vi.fn().mockResolvedValue({
     id: "thread-1",
-    branchName: "terragon/test-branch",
+    branchName: "leo/test-branch",
   });
-  const threadChatResponses =
-    options.threadChatResponses ??
-    [
-      options.initialThreadChat,
-      ...(options.latestThreadChat !== undefined ? [options.latestThreadChat] : []),
-    ];
+  const threadChatResponses = options.threadChatResponses ?? [
+    options.initialThreadChat,
+    ...(options.latestThreadChat !== undefined
+      ? [options.latestThreadChat]
+      : []),
+  ];
   for (const response of threadChatResponses) {
     getThreadChat.mockResolvedValueOnce(response);
   }
@@ -63,7 +63,9 @@ async function loadSubject(options: {
 
   const getLatestActiveDispatchIntentForThreadChat = vi.fn();
   const activeDispatchIntentResponses =
-    options.activeDispatchIntentSequence ?? [options.activeDispatchIntent ?? null];
+    options.activeDispatchIntentSequence ?? [
+      options.activeDispatchIntent ?? null,
+    ];
   for (const response of activeDispatchIntentResponses) {
     getLatestActiveDispatchIntentForThreadChat.mockResolvedValueOnce(response);
   }
@@ -76,7 +78,7 @@ async function loadSubject(options: {
   vi.doMock("@/lib/db", () => ({
     db: {},
   }));
-  vi.doMock("@terragon/shared/model/threads", () => ({
+  vi.doMock("@leo/shared/model/threads", () => ({
     getThreadChat,
     getThreadMinimal,
   }));
@@ -92,7 +94,7 @@ async function loadSubject(options: {
   vi.doMock("@/server-lib/delivery-loop/retry-jobs", () => ({
     scheduleFollowUpRetryJob,
   }));
-  vi.doMock("@terragon/shared/model/agent-run-context", () => ({
+  vi.doMock("@leo/shared/model/agent-run-context", () => ({
     getAgentRunContextByRunId: vi
       .fn()
       .mockResolvedValue(options.runContextByRunId ?? null),
@@ -100,16 +102,13 @@ async function loadSubject(options: {
       .fn()
       .mockResolvedValue(options.latestRunContextForThreadChat ?? null),
   }));
-  vi.doMock(
-    "@terragon/shared/delivery-loop/store/dispatch-intent-store",
-    () => ({
-      getLatestActiveDispatchIntentForThreadChat,
-    }),
-  );
+  vi.doMock("@leo/shared/delivery-loop/store/dispatch-intent-store", () => ({
+    getLatestActiveDispatchIntentForThreadChat,
+  }));
   vi.doMock("@/lib/db-message-helpers", () => ({
     getLastUserMessageModel: vi.fn(() => null),
   }));
-  vi.doMock("@terragon/agent/utils", () => ({
+  vi.doMock("@leo/agent/utils", () => ({
     getDefaultModelForAgent: vi.fn(() => "sonnet"),
   }));
 
@@ -306,7 +305,7 @@ describe("maybeProcessFollowUpQueue", () => {
         threadChatId: "chat-1",
         isNewThread: false,
         createNewBranch: false,
-        branchName: "terragon/test-branch",
+        branchName: "leo/test-branch",
       }),
     );
     expect(result).toEqual({

@@ -1,7 +1,7 @@
 import { getUserIdOrNull } from "@/lib/auth-server";
 import { CLIAuth } from "@/components/cli/main";
 import { redirect } from "next/navigation";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 export default async function CLIAuthPage() {
   const userId = await getUserIdOrNull();

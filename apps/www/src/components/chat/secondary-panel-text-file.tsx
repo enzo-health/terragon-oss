@@ -1,5 +1,5 @@
 import React from "react";
-import { type UITextFilePart } from "@terragon/shared";
+import { type UITextFilePart } from "@leo/shared";
 import { AlertTriangle, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";

@@ -2,7 +2,7 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { getThread, deleteThreadById } from "@terragon/shared/model/threads";
+import { getThread, deleteThreadById } from "@leo/shared/model/threads";
 import { stopThread } from "./stop-thread";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getPostHogServer } from "@/lib/posthog-server";

@@ -9,7 +9,7 @@ import {
 } from "@/server-actions/automations";
 import { threadQueryKeys } from "./thread-queries";
 import { automationQueryKeys } from "./automation-queries";
-import { Automation, AutomationInsert } from "@terragon/shared";
+import { Automation, AutomationInsert } from "@leo/shared";
 import { toast } from "sonner";
 import { ServerActionResult } from "@/lib/server-actions";
 import { useServerActionMutation } from "./server-action-helpers";

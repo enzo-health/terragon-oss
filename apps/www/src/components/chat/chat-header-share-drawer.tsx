@@ -2,7 +2,7 @@
 
 import React from "react";
 import { toast } from "sonner";
-import { ThreadInfo, ThreadVisibility } from "@terragon/shared";
+import { ThreadInfo, ThreadVisibility } from "@leo/shared";
 import { useState } from "react";
 import { Check, ChevronLeft, Link2 } from "lucide-react";
 import { Button } from "../ui/button";

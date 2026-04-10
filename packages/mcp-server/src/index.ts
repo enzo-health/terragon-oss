@@ -10,17 +10,23 @@ import { readFileSync } from "node:fs";
 
 function getMcpEnv(key: string): string | undefined {
   if (process.env[key] !== undefined) return process.env[key] || undefined;
-  try {
-    const env = JSON.parse(readFileSync("/tmp/terragon-mcp-env.json", "utf-8"));
-    return env[key] ?? undefined;
-  } catch {
-    return undefined;
+  const envPaths = ["/tmp/leo-mcp-env.json", "/tmp/terragon-mcp-env.json"];
+  for (const envPath of envPaths) {
+    try {
+      const env = JSON.parse(readFileSync(envPath, "utf-8"));
+      if (env[key] !== undefined) {
+        return env[key] || undefined;
+      }
+    } catch {
+      // no-op
+    }
   }
+  return undefined;
 }
 
 const server = new Server(
   {
-    name: "terragon-mcp-server",
+    name: "leo-mcp-server",
     version: "0.0.1",
   },
   {
@@ -171,10 +177,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }>;
       };
 
-      const serverUrl = getMcpEnv("TERRAGON_SERVER_URL");
+      const serverUrl =
+        getMcpEnv("LEO_SERVER_URL") ?? getMcpEnv("TERRAGON_SERVER_URL");
       const daemonToken = getMcpEnv("DAEMON_TOKEN");
-      const threadId = getMcpEnv("TERRAGON_THREAD_ID");
-      const threadChatId = getMcpEnv("TERRAGON_THREAD_CHAT_ID");
+      const threadId =
+        getMcpEnv("LEO_THREAD_ID") ?? getMcpEnv("TERRAGON_THREAD_ID");
+      const threadChatId =
+        getMcpEnv("LEO_THREAD_CHAT_ID") ?? getMcpEnv("TERRAGON_THREAD_CHAT_ID");
 
       if (!serverUrl || !daemonToken || !threadId || !threadChatId) {
         return {

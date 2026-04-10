@@ -20,7 +20,7 @@ import {
 } from "@/queries/credentials-queries";
 import type { AuthType } from "@/lib/claude-oauth";
 import { Textarea } from "@/components/ui/textarea";
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 
 type ApiKeyConfig = {
   agent: AIAgent;

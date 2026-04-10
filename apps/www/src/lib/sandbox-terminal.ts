@@ -1,4 +1,4 @@
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 
 export function isSandboxTerminalSupported(sandboxProvider: SandboxProvider) {
   switch (sandboxProvider) {

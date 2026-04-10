@@ -1,7 +1,7 @@
-import { DB } from "@terragon/shared/db";
-import * as schema from "@terragon/shared/db/schema";
+import { DB } from "@leo/shared/db";
+import * as schema from "@leo/shared/db/schema";
 import { and, eq, lte, ne } from "drizzle-orm";
-import { updateThreadChatStatusAtomic } from "@terragon/shared/model/threads";
+import { updateThreadChatStatusAtomic } from "@leo/shared/model/threads";
 
 const LEGACY_THREAD_CHAT_ID = "legacy";
 

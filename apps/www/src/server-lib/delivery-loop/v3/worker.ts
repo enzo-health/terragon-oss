@@ -3,16 +3,16 @@ import { parseLoopEvent } from "./contracts";
 import { appendEventAndAdvance } from "./kernel";
 import { type OutboxPayload } from "./contracts";
 import type { LoopEvent } from "./types";
-import { env } from "@terragon/env/apps-www";
-import type { DB } from "@terragon/shared/db";
-import * as schema from "@terragon/shared/db/schema";
+import { env } from "@leo/env/apps-www";
+import type { DB } from "@leo/shared/db";
+import * as schema from "@leo/shared/db/schema";
 import type {
   DeliveryEffectKindV3,
   DeliveryOutboxTopicV3,
   DeliveryOutboxV3Row,
   DeliverySignalSourceV3,
   DeliveryTimerKindV3,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import { redis } from "@/lib/redis";
 import { getOutboxRelayStreamKey } from "./relay";
 

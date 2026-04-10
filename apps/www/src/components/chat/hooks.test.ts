@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DBMessage } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
 import { computeShouldShowApprove } from "./hooks";
 
 function msg(

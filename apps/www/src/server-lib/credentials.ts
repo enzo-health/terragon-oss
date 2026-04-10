@@ -2,10 +2,10 @@ import { db } from "@/lib/db";
 import {
   getAllAgentProviderCredentialRecords,
   decryptCredentials,
-} from "@terragon/shared/model/agent-provider-credentials";
-import { AIAgent } from "@terragon/agent/types";
-import { AgentProviderCredentials } from "@terragon/shared";
-import { env } from "@terragon/env/apps-www";
+} from "@leo/shared/model/agent-provider-credentials";
+import { AIAgent } from "@leo/agent/types";
+import { AgentProviderCredentials } from "@leo/shared";
+import { env } from "@leo/env/apps-www";
 
 type AgentProviderCredentialsData = Pick<
   AgentProviderCredentials,

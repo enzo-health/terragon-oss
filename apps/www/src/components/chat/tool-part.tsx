@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { normalizeToolCall } from "@terragon/agent/tool-calls";
+import { normalizeToolCall } from "@leo/agent/tool-calls";
 import {
   AllToolParts,
   DBMessage,
@@ -7,8 +7,8 @@ import {
   type UIPdfPart,
   type UIRichTextPart,
   type UITextFilePart,
-} from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+} from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import { ReadTool } from "./tools/read-tool";
 import { WriteTool } from "./tools/write-tool";
 import { EditTool } from "./tools/edit-tool";
@@ -31,7 +31,7 @@ import { PdfPart } from "./pdf-part";
 import { ImagePart } from "./image-part";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import { PromptBoxRef } from "./thread-context";
-import { ChildThreadInfo } from "@terragon/shared/db/types";
+import { ChildThreadInfo } from "@leo/shared/db/types";
 
 export type ToolPartProps = {
   toolPart: AllToolParts;

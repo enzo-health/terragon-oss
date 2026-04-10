@@ -56,10 +56,10 @@ describe("sandbox-setup", () => {
         { cwd: "/root" },
       );
 
-      // Should create new branch with generated name (terragon/[6-char-id]-[6-char-id] in test env)
+      // Should create new branch with generated name (leo/[6-char-id]-[6-char-id] in test env)
       const runCommandCalls = runCommandSpy.mock.calls;
       const checkoutNewBranchCall = runCommandCalls.find((call) =>
-        call[0].match(/git checkout -b 'terragon\/[a-z0-9]{6}-[a-z0-9]{6}'/),
+        call[0].match(/git checkout -b 'leo\/[a-z0-9]{6}-[a-z0-9]{6}'/),
       );
       expect(checkoutNewBranchCall).toBeDefined();
 
@@ -68,7 +68,7 @@ describe("sandbox-setup", () => {
         call[0].includes("git clone"),
       );
       const checkoutNewBranchIndex = runCommandCalls.findIndex((call) =>
-        call[0].match(/git checkout -b 'terragon\/[a-z0-9]{6}-[a-z0-9]{6}'/),
+        call[0].match(/git checkout -b 'leo\/[a-z0-9]{6}-[a-z0-9]{6}'/),
       );
       expect(checkoutNewBranchIndex).toBeGreaterThan(cloneIndex);
     });
@@ -92,7 +92,7 @@ describe("sandbox-setup", () => {
       // But should still create new branch with hash
       expect(
         runCommandCalls.find((call) =>
-          call[0].match(/git checkout -b 'terragon\/[a-z0-9]{6}-[a-z0-9]{6}'/),
+          call[0].match(/git checkout -b 'leo\/[a-z0-9]{6}-[a-z0-9]{6}'/),
         ),
       ).toBeDefined();
     });
@@ -117,7 +117,7 @@ describe("sandbox-setup", () => {
       // Should not create new branch
       expect(
         runCommandCalls.find((call) =>
-          call[0].includes("git checkout -b 'terragon/"),
+          call[0].includes("git checkout -b 'leo/"),
         ),
       ).toBeUndefined();
     });
@@ -338,11 +338,11 @@ describe("sandbox-setup", () => {
       expect(parsedSettings?.hooks?.Stop).toEqual([]);
 
       expect(writeTextFileSpy).not.toHaveBeenCalledWith(
-        "/tmp/terragon-quality-check.sh",
+        "/tmp/leo-quality-check.sh",
         expect.any(String),
       );
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "rm -f /tmp/terragon-quality-check.sh",
+        "rm -f /tmp/leo-quality-check.sh",
         { cwd: "/" },
       );
     });
@@ -368,7 +368,7 @@ describe("sandbox-setup", () => {
 
       expect(
         runCommandSpy.mock.calls.some(([cmd]) =>
-          cmd.includes("/tmp/terragon-setup-custom.sh"),
+          cmd.includes("/tmp/leo-setup-custom.sh"),
         ),
       ).toBe(false);
       expect(installDaemon).not.toHaveBeenCalled();
@@ -399,18 +399,18 @@ npm run build`;
 
       // Should write the custom setup script to a temporary file
       expect(writeTextFileSpy).toHaveBeenCalledWith(
-        "/tmp/terragon-setup-custom.sh",
+        "/tmp/leo-setup-custom.sh",
         customSetupScript,
       );
 
       // Should make the script executable
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "chmod +x /tmp/terragon-setup-custom.sh",
+        "chmod +x /tmp/leo-setup-custom.sh",
       );
 
       // Should execute the custom setup script
       const executeScriptCall = runCommandSpy.mock.calls.find((call) =>
-        call[0].includes("bash -x /tmp/terragon-setup-custom.sh"),
+        call[0].includes("bash -x /tmp/leo-setup-custom.sh"),
       );
       expect(executeScriptCall).toBeDefined();
       expect(executeScriptCall?.[1]).toMatchObject({
@@ -432,13 +432,16 @@ npm run build`;
 
       await setupSandboxOneTime(session, options);
 
-      // Should check for and run terragon-setup.sh from the repository
+      // Should check for and run leo-setup.sh from the repository
       const repoSetupScriptCall = runCommandSpy.mock.calls.find((call) =>
-        call[0].includes("if [ -f terragon-setup.sh ]"),
+        call[0].includes("if [ -f leo-setup.sh ]"),
       );
       expect(repoSetupScriptCall).toBeDefined();
-      expect(repoSetupScriptCall?.[0]).toContain("chmod +x terragon-setup.sh");
-      expect(repoSetupScriptCall?.[0]).toContain("bash -x ./terragon-setup.sh");
+      expect(repoSetupScriptCall?.[0]).toContain("chmod +x leo-setup.sh");
+      expect(repoSetupScriptCall?.[0]).toContain("bash -x ./leo-setup.sh");
+      expect(repoSetupScriptCall?.[0]).toContain(
+        "elif [ -f terragon-setup.sh ]",
+      );
     });
 
     it("should skip setup script when skipSetupScript is true", async () => {
@@ -456,8 +459,7 @@ npm run build`;
 
       // Should not run any setup script
       const setupScriptCalls = runCommandSpy.mock.calls.filter(
-        (call) =>
-          call[0].includes("terragon-setup") || call[0].includes("setup.sh"),
+        (call) => call[0].includes("leo-setup") || call[0].includes("setup.sh"),
       );
       expect(setupScriptCalls).toHaveLength(0);
     });
@@ -484,13 +486,13 @@ npm run build`;
 
       // Find the setup script execution call
       const setupScriptCall = runCommandSpy.mock.calls.find((call) =>
-        call[0].includes("bash -x /tmp/terragon-setup-custom.sh"),
+        call[0].includes("bash -x /tmp/leo-setup-custom.sh"),
       );
 
       expect(setupScriptCall?.[1]?.env).toEqual({
         API_KEY: "secret123",
         DATABASE_URL: "postgres://localhost",
-        TERRAGON: "true",
+        LEO: "true",
         GH_TOKEN: "test-token",
         TERM: "xterm",
         CI: "true",
@@ -502,7 +504,7 @@ npm run build`;
 
       vi.spyOn(session, "runCommand").mockImplementation(
         async (cmd, options) => {
-          if (cmd.includes("bash -x /tmp/terragon-setup-custom.sh")) {
+          if (cmd.includes("bash -x /tmp/leo-setup-custom.sh")) {
             // Simulate output callbacks
             options?.onStdout?.("Installing dependencies...\n");
             options?.onStdout?.("Dependencies installed!\n");
@@ -538,7 +540,7 @@ npm run build`;
       const session = new MockSession("mock-sandbox");
 
       vi.spyOn(session, "runCommand").mockImplementation(async (cmd) => {
-        if (cmd.includes("bash -x /tmp/terragon-setup-custom.sh")) {
+        if (cmd.includes("bash -x /tmp/leo-setup-custom.sh")) {
           throw new Error("Command failed with exit code 1");
         }
         return "";
@@ -567,7 +569,7 @@ npm run build`;
 
       const session = new MockSession("mock-sandbox");
       vi.spyOn(session, "runCommand").mockImplementation(async (cmd) => {
-        if (cmd.includes("bash -x /tmp/terragon-setup-custom.sh")) {
+        if (cmd.includes("bash -x /tmp/leo-setup-custom.sh")) {
           order.push("setup-script-ran");
         }
         return "";

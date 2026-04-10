@@ -1,7 +1,7 @@
 "use server";
 
 import OpenAI from "openai";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { userOnlyAction } from "@/lib/auth-server";
 import { getR2ClientForFileUploadType } from "@/server-lib/r2-file-upload";
 import { getPostHogServer } from "@/lib/posthog-server";

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertCircle, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { McpConfig, validateMcpConfig } from "@terragon/sandbox/mcp-config";
+import { McpConfig, validateMcpConfig } from "@leo/sandbox/mcp-config";
 
 interface McpConfigEditorProps {
   value: McpConfig;

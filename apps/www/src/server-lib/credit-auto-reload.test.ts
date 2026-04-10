@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, MockInstance, vi } from "vitest";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
+import { createTestUser } from "@leo/shared/model/test-helpers";
 import {
   updateUser,
   updateUserInfoServerSide,
   updateUserSettings,
-} from "@terragon/shared/model/user";
+} from "@leo/shared/model/user";
 import { eq } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import * as stripeConfig from "@/server-lib/stripe";
 import { CREDIT_AUTO_RELOAD_REASON } from "./stripe-credit-top-ups";
 import { maybeTriggerCreditAutoReload } from "./credit-auto-reload";
@@ -136,8 +136,9 @@ describe("maybeTriggerCreditAutoReload", () => {
       customer: "cus_123",
       default_payment_method: "pm_123",
       auto_advance: false,
-      description: "Terragon Credit Auto-Reload",
+      description: "Leo Credit Auto-Reload",
       metadata: {
+        leo_user_id: userId,
         terragon_user_id: userId,
         reason: CREDIT_AUTO_RELOAD_REASON,
       },
@@ -148,8 +149,9 @@ describe("maybeTriggerCreditAutoReload", () => {
       pricing: {
         price: "STRIPE_PRICE_CREDIT_PACK_TEST",
       },
-      description: "Terragon Credit Auto-Reload",
+      description: "Leo Credit Auto-Reload",
       metadata: {
+        leo_user_id: userId,
         terragon_user_id: userId,
         reason: CREDIT_AUTO_RELOAD_REASON,
       },

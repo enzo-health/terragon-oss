@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/mcp-server",
+  "name": "@leo/mcp-server",
   "version": "0.0.1",
   "description": "MCP server for suggesting follow-up tasks",
   "type": "module",
@@ -30,7 +30,7 @@
     "@modelcontextprotocol/sdk": "^1.0.6"
   },
   "devDependencies": {
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "@types/node": "^22.10.5",
     "esbuild": "^0.24.2",
     "typescript": "^5.8.3",

@@ -1,4 +1,4 @@
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { adminOnly } from "@/lib/auth-server";
 import { UserFacingError } from "@/lib/server-actions";
 

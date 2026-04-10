@@ -1,11 +1,11 @@
-import type { DB } from "@terragon/shared/db";
+import type { DB } from "@leo/shared/db";
 import {
   markDispatchIntentAcknowledged,
   markDispatchIntentFailed,
   getDispatchIntentByRunId,
-} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
-import { updateThreadChatStatusAtomic } from "@terragon/shared/model/threads";
+} from "@leo/shared/delivery-loop/store/dispatch-intent-store";
+import { updateAgentRunContext } from "@leo/shared/model/agent-run-context";
+import { updateThreadChatStatusAtomic } from "@leo/shared/model/threads";
 import {
   updateDispatchIntent,
   buildDispatchIntentId,

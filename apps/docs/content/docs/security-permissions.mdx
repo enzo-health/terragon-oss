@@ -1,12 +1,12 @@
 ---
 title: Security & Permissions
-description: How Terragon handles data access and storage
+description: How Leo handles data access and storage
 ---
 
 import { Settings } from "lucide-react";
 import { Callout } from "fumadocs-ui/components/callout";
 
-Terragon only accesses data on your behalf when you authorize it to, and only in response to your direct actions.
+Leo only accesses data on your behalf when you authorize it to, and only in response to your direct actions.
 
 ## Data Privacy
 
@@ -25,14 +25,14 @@ Terragon only accesses data on your behalf when you authorize it to, and only in
 
 ## GitHub Access
 
-### What Terragon Can Do
+### What Leo Can Do
 
 - Clone repositories you've granted access to
 - Create branches and commits
 - Open pull requests
 - Read issues and PR comments
 
-### What Terragon **Cannot** Do
+### What Leo **Cannot** Do
 
 - Access repositories without your permission
 - Push to protected branches
@@ -59,7 +59,7 @@ When you connect your AI agent subscription or API key:
 
 ## Prompt Injection Protection
 
-Terragon employs multiple layers of security to protect against prompt injection attacks, where malicious actors attempt to manipulate AI agent behavior through crafted inputs.
+Leo employs multiple layers of security to protect against prompt injection attacks, where malicious actors attempt to manipulate AI agent behavior through crafted inputs.
 
 ### Core Security Measures
 
@@ -69,7 +69,7 @@ Terragon employs multiple layers of security to protect against prompt injection
 
 ### Built-in Protections
 
-Terragon's AI agents include several automatic safeguards:
+Leo's AI agents include several automatic safeguards:
 
 - **Git-based access control** - Agents can only access repositories you've explicitly granted permission to
 - **User-scoped operations** - All operations are strictly scoped to the authenticated user's permissions
@@ -77,7 +77,7 @@ Terragon's AI agents include several automatic safeguards:
 
 ## Best Practices for Users
 
-To maximize security when using Terragon:
+To maximize security when using Leo:
 
 1. **Review automations carefully** - Particularly for tasks that take external data as input, such as PRs or issues. Make sure to only allow trusted users to trigger your automations.
 2. **Review prompts carefully** - Ensure your prompts don't contain instructions that could be exploited by malicious external data, such as web searches, PRs issue content
@@ -85,4 +85,4 @@ To maximize security when using Terragon:
 4. **Use environment variables for secrets** - Always use [environment variables](/docs/configuration/environment-setup/environment-variables) for sensitive information, such as API keys, and avoid hardcoding them directly in your prompts or codebase.
 5. **Limit the scope of MCP servers** - Use MCP servers with read-only access where possible, and only grant MCP servers access to the specific resources they need.
 
-While Terragon's security measures significantly reduce the risk of prompt injection attacks, no system is completely immune. Always review agent actions and maintain good security hygiene when working with external data sources.
+While Leo's security measures significantly reduce the risk of prompt injection attacks, no system is completely immune. Always review agent actions and maintain good security hygiene when working with external data sources.

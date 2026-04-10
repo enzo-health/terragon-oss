@@ -1,5 +1,5 @@
 import React from "react";
-import { type UIRichTextPart } from "@terragon/shared";
+import { type UIRichTextPart } from "@leo/shared";
 import { RichTextPart } from "./rich-text-part";
 
 export function DocumentArtifactRenderer({

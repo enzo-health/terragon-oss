@@ -1,14 +1,14 @@
 /**
- * Dynamic imports for @terragon/shared modules.
+ * Dynamic imports for @leo/shared modules.
  *
  * Follows the same pattern as test-delivery-loop-e2e.ts to avoid
  * transitive Next.js / broadcast-server dependencies.
  */
 
-import type { DB } from "@terragon/shared/db";
+import type { DB } from "@leo/shared/db";
 
 export async function loadSharedModules() {
-  const { createDb } = await import("@terragon/shared/db");
+  const { createDb } = await import("@leo/shared/db");
   const {
     enrollSdlcLoopForThread,
     createPlanArtifactForLoop,
@@ -28,15 +28,15 @@ export async function loadSharedModules() {
     persistCarmackReviewGateResult,
     buildSdlcCanonicalCause,
     getLatestAcceptedArtifact,
-  } = await import("@terragon/shared/model/delivery-loop");
+  } = await import("@leo/shared/model/delivery-loop");
 
   const {
     claimNextUnprocessedSignal,
     completeSignalClaim,
     evaluateBabysitCompletionForHead,
-  } = await import("@terragon/shared/model/signal-inbox-core");
+  } = await import("@leo/shared/model/signal-inbox-core");
 
-  const schema = await import("@terragon/shared/db/schema");
+  const schema = await import("@leo/shared/db/schema");
   const { eq } = await import("drizzle-orm");
   const { nanoid } = await import("nanoid/non-secure");
 

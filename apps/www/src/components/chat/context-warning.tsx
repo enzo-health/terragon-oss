@@ -1,9 +1,6 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
-import {
-  MAX_CONTEXT_TOKENS,
-  CONTEXT_WARNING_PERCENTAGE,
-} from "@terragon/shared";
+import { MAX_CONTEXT_TOKENS, CONTEXT_WARNING_PERCENTAGE } from "@leo/shared";
 
 interface ContextWarningProps {
   contextLength: number | null;

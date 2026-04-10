@@ -4,10 +4,7 @@ import { Button } from "../ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { AutomationEditorDialogContent } from "./form";
 import { useRouter } from "next/navigation";
-import {
-  AutomationTrigger,
-  AutomationAction,
-} from "@terragon/shared/automations";
+import { AutomationTrigger, AutomationAction } from "@leo/shared/automations";
 import { useCreateAutomationMutation } from "@/queries/automation-mutations";
 
 export interface CreateAutomationInitialValues {

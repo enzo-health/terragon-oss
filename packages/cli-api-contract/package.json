@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/cli-api-contract",
+  "name": "@leo/cli-api-contract",
   "version": "0.0.0",
   "description": "CLI API contract definitions using ORPC",
   "main": "./src/index.ts",
@@ -9,11 +9,11 @@
   },
   "dependencies": {
     "@orpc/contract": "1.6.0",
-    "@terragon/agent": "workspace:*",
+    "@leo/agent": "workspace:*",
     "zod": "4.1.11"
   },
   "devDependencies": {
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "typescript": "^5.7.3"
   }
 }

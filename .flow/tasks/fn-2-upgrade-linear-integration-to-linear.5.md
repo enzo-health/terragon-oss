@@ -28,9 +28,9 @@ Rewrite the Linear settings UI to use OAuth install button, separate "disconnect
   };
   ```
 
-  The page server component (`page.tsx`) fetches `linearAccountsWithSettings` + the single `linearInstallation` for this Terragon org (workspace-level), then joins them: accounts whose `organizationId` matches the active installation get `installation` populated; others get `null`. Pass the combined type to client components.
+  The page server component (`page.tsx`) fetches `linearAccountsWithSettings` + the single `linearInstallation` for this Leo org (workspace-level), then joins them: accounts whose `organizationId` matches the active installation get `installation` populated; others get `null`. Pass the combined type to client components.
 
-- **Multi-org scenario**: A Terragon user can have `linearAccount` records for multiple Linear orgs. Only one of those orgs may have an active `linearInstallation` (one Terragon deployment installs to one Linear workspace). The UI shows each account row separately; the workspace install panel is shown once at the top.
+- **Multi-org scenario**: A Leo user can have `linearAccount` records for multiple Linear orgs. Only one of those orgs may have an active `linearInstallation` (one Leo deployment installs to one Linear workspace). The UI shows each account row separately; the workspace install panel is shown once at the top.
 
 - **Settings UI rewrite**:
 

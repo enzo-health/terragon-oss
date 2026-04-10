@@ -1,6 +1,6 @@
-import { ThreadChat, DBThreadContextMessage } from "@terragon/shared";
-import { DB } from "@terragon/shared/db/index";
-import { updateThreadChat } from "@terragon/shared/model/threads";
+import { ThreadChat, DBThreadContextMessage } from "@leo/shared";
+import { DB } from "@leo/shared/db/index";
+import { updateThreadChat } from "@leo/shared/model/threads";
 import { generateSessionSummary } from "./generate-session-summary";
 
 export function getThreadContextMessageToGenerate({

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { createTestUser } from "./test-helpers";
 import {
   getUserCreditBalance,

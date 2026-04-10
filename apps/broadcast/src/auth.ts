@@ -1,7 +1,7 @@
 import {
   getInternalSharedSecret,
   getPublicAppUrl,
-} from "@terragon/env/apps-broadcast";
+} from "@leo/env/apps-broadcast";
 import type * as Party from "partykit/server";
 
 export async function validateRequest(
@@ -10,7 +10,9 @@ export async function validateRequest(
   env: Record<string, unknown>,
 ) {
   if (!channel) {
-    const sharedSecret = request.headers.get("X-Terragon-Secret");
+    const sharedSecret =
+      request.headers.get("X-Leo-Secret") ??
+      request.headers.get("X-Terragon-Secret");
     if (sharedSecret && sharedSecret === getInternalSharedSecret(env)) {
       return;
     }

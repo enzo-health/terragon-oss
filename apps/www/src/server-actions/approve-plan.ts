@@ -1,9 +1,9 @@
 "use server";
 
 import { userOnlyAction } from "@/lib/auth-server";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { getThreadChat } from "@leo/shared/model/threads";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";

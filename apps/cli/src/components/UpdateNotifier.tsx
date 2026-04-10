@@ -45,7 +45,7 @@ export function UpdateNotifier() {
         Update available: {updateInfo.current} → {updateInfo.latest}
       </Text>
       <Text color="gray"> Run </Text>
-      <Text color="cyan">npm install -g @terragon-labs/cli</Text>
+      <Text color="cyan">npm install -g @leo-labs/cli</Text>
       <Text color="gray"> to update</Text>
     </Box>
   );

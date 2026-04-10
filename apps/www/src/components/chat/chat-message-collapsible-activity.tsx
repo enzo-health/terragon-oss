@@ -2,9 +2,9 @@
 
 import React from "react";
 import { useState } from "react";
-import { UIPart } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { AIAgent } from "@terragon/agent/types";
+import { UIPart } from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
+import { AIAgent } from "@leo/agent/types";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { MessagePart } from "./message-part";
 import { MessagePartRenderProps, PartGroup } from "./chat-message.types";

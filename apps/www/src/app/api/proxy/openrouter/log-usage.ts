@@ -1,9 +1,9 @@
 import { db } from "@/lib/db";
-import { trackUsageEventBatched } from "@terragon/shared/model/usage-events";
+import { trackUsageEventBatched } from "@leo/shared/model/usage-events";
 import {
   calculateUsageCostUsd,
   getOpenRouterSkuForModel,
-} from "@terragon/shared/model/usage-pricing";
+} from "@leo/shared/model/usage-pricing";
 
 type UsagePayload = {
   prompt_tokens?: number | null;

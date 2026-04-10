@@ -1,6 +1,6 @@
 import { getAdminUserOrThrow } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { desc, eq, sql, count, countDistinct } from "drizzle-orm";
 import { AdminUsersList } from "@/components/admin/users-list";
 import { getUserListForAdminPage } from "@/server-lib/admin";

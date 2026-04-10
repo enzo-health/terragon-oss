@@ -6,9 +6,9 @@ import { secondaryPaneClosedAtom } from "@/atoms/user-cookies";
 import { atom, useAtom } from "jotai";
 import { usePlatform } from "@/hooks/use-platform";
 import { threadQueryKeys } from "@/queries/thread-queries";
-import { ThreadPageChat } from "@terragon/shared/db/types";
+import { ThreadPageChat } from "@leo/shared/db/types";
 import { useQueryClient } from "@tanstack/react-query";
-import type { DBMessage } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
 import type { PromptBoxRef } from "./thread-context";
 import { approvePlan } from "@/server-actions/approve-plan";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
@@ -57,7 +57,7 @@ export function useThreadDocumentTitleAndFavicon({
   // Update document title and favicon based on unread messages
   const documentTitle = name
     ? getThreadDocumentTitle({ name, isUnread: isThreadUnread })
-    : "Terragon";
+    : "Leo";
   useEffect(() => {
     if (typeof document === "undefined") {
       return;

@@ -1,4 +1,4 @@
-import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
+import type { SandboxProvider, SandboxSize } from "@leo/types/sandbox";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";

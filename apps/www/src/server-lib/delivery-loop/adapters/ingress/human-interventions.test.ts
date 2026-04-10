@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DB } from "@terragon/shared/db";
-import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import type { DB } from "@leo/shared/db";
+import type { WorkflowId } from "@leo/shared/delivery-loop/domain/workflow";
 import { handleHumanAction, normalizeHumanAction } from "./human-interventions";
 
 vi.mock("../../v3/store", () => ({

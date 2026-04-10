@@ -14,8 +14,8 @@ export const baseOptions: BaseLayoutProps = {
   nav: {
     title: (
       <div className="flex items-center gap-2 py-2">
-        <Image src={icon} alt="Terragon" width={24} height={24} />
-        Terragon Docs
+        <Image src={icon} alt="Leo" width={24} height={24} />
+        Leo Docs
       </div>
     ),
   },

@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { changeUserRole } from "@/server-actions/admin/user";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { toast } from "sonner";
 
 export function UserRoleSelector({ user }: { user: User }) {

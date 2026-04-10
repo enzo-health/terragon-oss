@@ -1,11 +1,11 @@
-import type { DB } from "@terragon/shared/db";
-import * as schema from "@terragon/shared/db/schema";
+import type { DB } from "@leo/shared/db";
+import * as schema from "@leo/shared/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   approvePlanArtifact,
   createPlanArtifact,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/delivery-loop/store/artifact-store";
+} from "@leo/shared/delivery-loop/store/artifact-store";
 import { getActiveWorkflowForThreadV3 } from "./v3/store";
 import type { ParsedPlanSpec } from "./parse-plan-spec";
 

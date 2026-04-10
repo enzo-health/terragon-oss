@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { deleteUser } from "@/server-actions/admin/user";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { Trash2 } from "lucide-react";
 
 interface DeleteUserActionProps {

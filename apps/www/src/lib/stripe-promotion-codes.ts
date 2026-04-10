@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 
 import { db } from "./db";
 

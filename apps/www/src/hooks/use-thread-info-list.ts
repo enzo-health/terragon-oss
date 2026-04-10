@@ -5,7 +5,7 @@ import {
   getThreadInfoCollection,
   seedThreadList,
 } from "@/collections/thread-info-collection";
-import { ThreadInfo } from "@terragon/shared/db/types";
+import { ThreadInfo } from "@leo/shared/db/types";
 import { useRef, useEffect, useMemo } from "react";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
 

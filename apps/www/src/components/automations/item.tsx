@@ -1,9 +1,9 @@
 import React from "react";
-import { Automation } from "@terragon/shared";
+import { Automation } from "@leo/shared";
 import {
   getCronDescription,
   validateCronExpression,
-} from "@terragon/shared/automations/cron";
+} from "@leo/shared/automations/cron";
 import { cn } from "@/lib/utils";
 import { usePathname, useRouter } from "next/navigation";
 import { convertToPlainText } from "@/lib/db-message-helpers";
@@ -15,7 +15,7 @@ import {
   GitHubMentionTriggerConfig,
   AutomationTriggerType,
   isRepoBranchRelevant,
-} from "@terragon/shared/automations";
+} from "@leo/shared/automations";
 import { Button } from "@/components/ui/button";
 import {
   useDeleteAutomationMutation,

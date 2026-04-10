@@ -1,5 +1,5 @@
-import type { DBMessage } from "@terragon/shared";
-import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
+import { ThreadInfoFull, type UIGitDiffPart } from "@leo/shared";
 import type { FileChangeType, ParsedDiffFile } from "@/lib/git-diff";
 
 export interface GitDiffViewProps {

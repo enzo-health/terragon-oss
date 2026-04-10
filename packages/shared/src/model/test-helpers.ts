@@ -30,7 +30,7 @@ export async function createTestUser({
   accessTier?: AccessTier;
 }) {
   const userId = nanoid();
-  email = email ?? `test-${userId}@terragon.com`;
+  email = email ?? `test-${userId}@leo.com`;
   const insertUserResult = await db
     .insert(schema.user)
     .values({
@@ -116,8 +116,7 @@ export async function createTestThread({
   enableThreadChatCreation?: boolean;
 }): Promise<{ threadId: string; threadChatId: string }> {
   const threadName = overrides?.name ?? `Test Thread`;
-  const githubRepoFullName =
-    overrides?.githubRepoFullName ?? `terragon/test-repo`;
+  const githubRepoFullName = overrides?.githubRepoFullName ?? `leo/test-repo`;
   const repoBaseBranchName = overrides?.repoBaseBranchName ?? "main";
   const sandboxProvider = overrides?.sandboxProvider ?? "e2b";
   const parentThreadId = overrides?.parentThreadId ?? undefined;
@@ -166,7 +165,7 @@ export async function createTestGitHubPR({
   overrides?: Partial<GitHubPR>;
 }) {
   const prNumber = overrides?.number ?? Math.floor(Math.random() * 10000000);
-  const repoFullName = overrides?.repoFullName ?? "terragon/test-repo";
+  const repoFullName = overrides?.repoFullName ?? "leo/test-repo";
   await upsertGithubPR({
     db,
     repoFullName,
@@ -221,7 +220,7 @@ export async function createTestAutomation({
     automation: {
       name: "Test Automation",
       triggerType: "schedule",
-      repoFullName: "terragon/test-repo",
+      repoFullName: "leo/test-repo",
       branchName: "main",
       ...values,
       triggerConfig: {

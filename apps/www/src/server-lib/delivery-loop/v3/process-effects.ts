@@ -1,18 +1,18 @@
 import { and, eq, ne, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import type { DB } from "@terragon/shared/db";
-import type { AgentRunStatus } from "@terragon/shared/db/types";
-import * as schema from "@terragon/shared/db/schema";
-import type { DeliveryEffectLedgerV3Row } from "@terragon/shared/db/types";
+import type { DB } from "@leo/shared/db";
+import type { AgentRunStatus } from "@leo/shared/db/types";
+import * as schema from "@leo/shared/db/schema";
+import type { DeliveryEffectLedgerV3Row } from "@leo/shared/db/types";
 import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/delivery-loop/store/artifact-store";
-import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/delivery-loop/store/artifact-store";
+import { getWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
-} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+} from "@leo/shared/delivery-loop/store/dispatch-intent-store";
 import { addMilliseconds } from "date-fns";
 import { parseEffectPayload } from "./contracts";
 import { appendEventAndAdvance } from "./kernel";
@@ -36,7 +36,7 @@ import {
   type CreateDispatchIntentParams,
 } from "@/server-lib/delivery-loop/dispatch-intent";
 import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
-import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
+import { toSelectedAgent } from "@leo/shared/delivery-loop/domain/dispatch-types";
 import {
   type EffectPayload,
   isTerminalState,
@@ -502,7 +502,7 @@ const STATE_LABELS: Record<string, string> = {
 
 function formatStatusBodyV3(state: string): string {
   const label = STATE_LABELS[state] ?? `State: ${state}`;
-  return `Terragon Delivery Loop status update.\n\n- Current state: \`${state}\`\n- ${label}`;
+  return `Leo Delivery Loop status update.\n\n- Current state: \`${state}\`\n- ${label}`;
 }
 
 async function processPublishStatusEffect(params: {
@@ -547,7 +547,7 @@ async function processPublishStatusEffect(params: {
       payload: {
         repoFullName: workflow.repoFullName,
         prNumber: workflow.prNumber,
-        title: "Terragon Delivery Loop",
+        title: "Leo Delivery Loop",
         summary: body,
         status: isTerminal ? "completed" : "in_progress",
         conclusion:
@@ -624,7 +624,7 @@ async function processEnsurePrEffect(params: {
     ]);
   let prType: "draft" | "ready" = "draft";
   if (workflow.userId) {
-    const { getUserSettings } = await import("@terragon/shared/model/user");
+    const { getUserSettings } = await import("@leo/shared/model/user");
     const userSettings = await getUserSettings({
       db: params.db,
       userId: workflow.userId,
@@ -819,7 +819,7 @@ async function handleRunLeaseExpiryCheck(params: {
 
   if (workflow) {
     const { getAgentRunContextByRunId } = await import(
-      "@terragon/shared/model/agent-run-context"
+      "@leo/shared/model/agent-run-context"
     );
     const runContext = await getAgentRunContextByRunId({
       db: params.db,

@@ -1,7 +1,7 @@
 import {
   setup as setupShared,
   teardown as teardownShared,
-} from "@terragon/shared/test-global-setup";
+} from "@leo/shared/test-global-setup";
 
 export async function setup() {
   await setupShared();

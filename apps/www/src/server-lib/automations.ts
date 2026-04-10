@@ -4,10 +4,10 @@ import { getPostHogServer } from "@/lib/posthog-server";
 import {
   getAutomation,
   incrementAutomationRunCount,
-} from "@terragon/shared/model/automations";
-import { assertNever } from "@terragon/shared/utils";
-import { Automation, AutomationInsert } from "@terragon/shared/db/types";
-import { validateCronExpression } from "@terragon/shared/automations/cron";
+} from "@leo/shared/model/automations";
+import { assertNever } from "@leo/shared/utils";
+import { Automation, AutomationInsert } from "@leo/shared/db/types";
+import { validateCronExpression } from "@leo/shared/automations/cron";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import {
   PullRequestTriggerConfig,
@@ -15,8 +15,8 @@ import {
   IssueTriggerConfig,
   GitHubMentionTriggerConfig,
   AutomationTriggerType,
-} from "@terragon/shared/automations";
-import { DBUserMessage } from "@terragon/shared";
+} from "@leo/shared/automations";
+import { DBUserMessage } from "@leo/shared";
 import {
   PullRequestEvent,
   IssueEvent,
@@ -27,13 +27,13 @@ import {
   parseRepoFullName,
   getIsPRAuthor,
 } from "@/lib/github";
-import { getThreads } from "@terragon/shared/model/threads";
+import { getThreads } from "@leo/shared/model/threads";
 import { archiveAndStopThread } from "./archive-thread";
 import {
   createGitHubCheckRunForAutomation,
   updateGitHubCheckRunForAutomation,
 } from "./github";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
 import { UserFacingError } from "@/lib/server-actions";
 
 export async function runAutomation({

@@ -1,5 +1,5 @@
 import * as ngrok from "@ngrok/ngrok";
-import { env } from "@terragon/env/pkg-dev-env";
+import { env } from "@leo/env/pkg-dev-env";
 import { spawn } from "child_process";
 
 let isShuttingDown = false;

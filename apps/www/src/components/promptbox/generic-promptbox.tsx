@@ -3,12 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePromptBox, HandleSubmit, HandleUpdate } from "./use-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
-import { AIAgent } from "@terragon/agent/types";
-import {
-  DBRichTextNode,
-  DBRichTextPart,
-  DBUserMessage,
-} from "@terragon/shared";
+import { AIAgent } from "@leo/agent/types";
+import { DBRichTextNode, DBRichTextPart, DBUserMessage } from "@leo/shared";
 import { SimplePromptBox } from "./simple-promptbox";
 import { richTextToTiptap } from "./tiptap-to-richtext";
 import { cn } from "@/lib/utils";

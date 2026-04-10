@@ -1,4 +1,4 @@
-import { Thread } from "@terragon/shared";
+import { Thread } from "@leo/shared";
 
 export function GitDiffStats({
   diffStats,

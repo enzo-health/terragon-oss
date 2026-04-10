@@ -1,18 +1,18 @@
 # Delivery Loop Architecture Review Handoff
 
-| Field       | Value                                                |
-| ----------- | ---------------------------------------------------- |
-| Title       | Delivery Loop Architecture Review Handoff            |
-| Audience    | Staff engineer unfamiliar with the Terragon codebase |
-| Status      | Review packet                                        |
-| Date        | 2026-03-14                                           |
-| Primary doc | `docs/delivery-loop-architecture-redesign.md`        |
+| Field       | Value                                           |
+| ----------- | ----------------------------------------------- |
+| Title       | Delivery Loop Architecture Review Handoff       |
+| Audience    | Staff engineer unfamiliar with the Leo codebase |
+| Status      | Review packet                                   |
+| Date        | 2026-03-14                                      |
+| Primary doc | `docs/delivery-loop-architecture-redesign.md`   |
 
 ---
 
 ## 1. Purpose of this document
 
-This document is a handoff packet for a staff engineer who has not worked in the Terragon codebase before. It provides:
+This document is a handoff packet for a staff engineer who has not worked in the Leo codebase before. It provides:
 
 1. enough codebase context to understand the current delivery-loop system
 2. the architectural problems motivating the redesign
@@ -28,9 +28,9 @@ This handoff exists so a reviewer can form an opinion without first reverse-engi
 
 ---
 
-## 2. What Terragon is
+## 2. What Leo is
 
-Terragon is an AI-powered coding assistant platform. Users create tasks/threads connected to repositories and remote sandboxes. Agent runs operate inside those sandboxes, edit code, run checks, and can create or update PRs.
+Leo is an AI-powered coding assistant platform. Users create tasks/threads connected to repositories and remote sandboxes. Agent runs operate inside those sandboxes, edit code, run checks, and can create or update PRs.
 
 This repository is a monorepo with several apps and packages. The delivery loop primarily lives in the web app and shared model packages.
 
@@ -50,7 +50,7 @@ This repository is a monorepo with several apps and packages. The delivery loop 
 
 ## 3. What the delivery loop is
 
-The delivery loop is Terragon’s autonomous software delivery workflow. Conceptually, it takes a thread through these phases:
+The delivery loop is Leo’s autonomous software delivery workflow. Conceptually, it takes a thread through these phases:
 
 1. planning
 2. implementing

@@ -4,8 +4,8 @@ import { cache } from "react";
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
 import { UserFacingError } from "@/lib/server-actions";
-import { ThreadPageChat } from "@terragon/shared/db/types";
-import { getThreadPageChatWithPermissions } from "@terragon/shared/model/thread-page";
+import { ThreadPageChat } from "@leo/shared/db/types";
+import { getThreadPageChatWithPermissions } from "@leo/shared/model/thread-page";
 import { getHasRepoPermissionsForUser } from "./get-thread";
 
 export const getThreadPageChatAction = cache(

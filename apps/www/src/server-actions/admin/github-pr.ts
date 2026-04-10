@@ -2,8 +2,8 @@
 
 import { adminOnly } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { User } from "@terragon/shared";
-import { getGithubPRForAdmin as getGithubPRForAdminInternal } from "@terragon/shared/model/github";
+import { User } from "@leo/shared";
+import { getGithubPRForAdmin as getGithubPRForAdminInternal } from "@leo/shared/model/github";
 
 export const getGithubPRForAdmin = adminOnly(async function getGithubPRForAdmin(
   adminUser: User,

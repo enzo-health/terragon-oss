@@ -1,17 +1,17 @@
 import {
   getDecryptedEnvironmentVariables,
   getOrCreateGlobalEnvironment,
-} from "@terragon/shared/model/environments";
+} from "@leo/shared/model/environments";
 import { getUserIdOrRedirect } from "@/lib/auth-server";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { GlobalEnvironmentUI } from "@/components/environments/main";
 import type { Metadata } from "next";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: `Global Environment | Terragon`,
+    title: `Global Environment | Leo`,
   };
 }
 

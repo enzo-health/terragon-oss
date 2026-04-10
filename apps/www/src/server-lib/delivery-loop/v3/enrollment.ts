@@ -5,13 +5,13 @@
  * Idempotent: if a workflow already exists for the thread, returns it.
  */
 import { desc, eq } from "drizzle-orm";
-import type { DB } from "@terragon/shared/db";
-import * as schema from "@terragon/shared/db/schema";
-import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
+import type { DB } from "@leo/shared/db";
+import * as schema from "@leo/shared/db/schema";
+import type { DeliveryPlanApprovalPolicy } from "@leo/shared/db/types";
 import {
   createWorkflow,
   getActiveWorkflowForThread,
-} from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/delivery-loop/store/workflow-store";
 import { appendEventAndAdvance } from "./kernel";
 import { getActiveWorkflowForThreadV3 } from "./store";
 

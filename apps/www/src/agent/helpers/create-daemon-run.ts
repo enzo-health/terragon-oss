@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
-import { AIAgent } from "@terragon/agent/types";
-import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { AIAgent } from "@leo/agent/types";
+import { updateAgentRunContext } from "@leo/shared/model/agent-run-context";
 import { db } from "@/lib/db";
 
 type DaemonTokenProvider = "openai" | "anthropic" | "google" | "openrouter";

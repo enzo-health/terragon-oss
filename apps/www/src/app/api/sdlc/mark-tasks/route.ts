@@ -4,8 +4,8 @@ import { z } from "zod";
 import {
   getLatestAcceptedArtifact,
   markPlanTasksCompletedByAgent,
-} from "@terragon/shared/delivery-loop/store/artifact-store";
-import type { DeliveryPlanTaskCompletionEvidence } from "@terragon/shared/db/types";
+} from "@leo/shared/delivery-loop/store/artifact-store";
+import type { DeliveryPlanTaskCompletionEvidence } from "@leo/shared/db/types";
 import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
 
 const completedTaskSchema = z.object({

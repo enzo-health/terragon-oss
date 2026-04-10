@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ThreadStatus } from "@terragon/shared";
+import type { ThreadStatus } from "@leo/shared";
 import {
   allThreadStatuses,
   allDeprecatedThreadStatuses,

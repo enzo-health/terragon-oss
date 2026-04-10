@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { NextRequest, NextResponse } from "next/server";
 import { handleAppMentionEvent } from "./handlers";
 import { waitUntil } from "@vercel/functions";

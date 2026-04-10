@@ -1,25 +1,25 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import { publishDeltaBroadcast } from "@leo/shared/broadcast-server";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
   type SdlcSelfDispatchPayload,
-} from "@terragon/daemon/shared";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+} from "@leo/daemon/shared";
+import { LEGACY_THREAD_CHAT_ID } from "@leo/shared/utils/thread-utils";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   markDispatchIntentCompleted,
   markDispatchIntentFailed,
-} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+} from "@leo/shared/delivery-loop/store/dispatch-intent-store";
 import {
   type DaemonTerminalErrorCategory,
   classifyDaemonTerminalErrorCategory,
   mapDaemonTerminalCategoryToFailureCategory,
-} from "@terragon/shared/delivery-loop/domain/failure";
+} from "@leo/shared/delivery-loop/domain/failure";
 import {
   buildDispatchIntentId,
   getReplayableSelfDispatch,
@@ -29,8 +29,8 @@ import { handleAckReceived } from "@/server-lib/delivery-loop/ack-lifecycle";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
-} from "@terragon/shared/model/agent-run-context";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+} from "@leo/shared/model/agent-run-context";
+import { appendTokenStreamEvents } from "@leo/shared/model/token-stream-event";
 import { and, eq } from "drizzle-orm";
 import {
   isLocalRedisHttpMode,

@@ -1,8 +1,8 @@
 "use server";
 
 import { userOnlyAction } from "@/lib/auth-server";
-import { SelectedAIModels } from "@terragon/agent/types";
-import { DBUserMessage, ThreadSource } from "@terragon/shared";
+import { SelectedAIModels } from "@leo/agent/types";
+import { DBUserMessage, ThreadSource } from "@leo/shared";
 import { createNewThread } from "../server-lib/new-thread-shared";
 import { newThreadsMultiModel } from "@/server-lib/new-threads-multi-model";
 

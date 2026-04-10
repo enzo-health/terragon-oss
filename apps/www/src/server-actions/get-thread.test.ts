@@ -4,12 +4,12 @@ import { db } from "@/lib/db";
 import {
   createTestUser,
   createTestThread,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { User, Session } from "@terragon/shared";
+import { User, Session } from "@leo/shared";
 import { getOctokitForUser } from "@/lib/github";
 import { unwrapResult } from "@/lib/server-actions";
-import { updateThreadVisibility } from "@terragon/shared/model/thread-visibility";
+import { updateThreadVisibility } from "@leo/shared/model/thread-visibility";
 
 const getThreadAction = async (threadId: string) => {
   return unwrapResult(await getThreadActionServerAction(threadId));
@@ -111,7 +111,7 @@ describe("getThreadAction", () => {
         expect(result).toBeDefined();
         expect(result!.id).toBe(threadId);
         expect(mockOctokit.rest.repos.get).toHaveBeenCalledWith({
-          owner: "terragon",
+          owner: "leo",
           repo: "test-repo",
         });
       });

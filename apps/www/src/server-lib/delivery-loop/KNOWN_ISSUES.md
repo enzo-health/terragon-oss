@@ -124,7 +124,7 @@ Add `ON CONFLICT DO NOTHING` to `createDispatchIntent` in `packages/shared/src/d
 
 ### Problem
 
-The CLI binary (`apps/cli`) uses `tsup` which bakes `TERRAGON_WEB_URL` at build time. When `pnpm dev` starts, turbo runs the CLI's `dev` script with `tsup --watch`, which rebuilds the CLI WITHOUT the env var — overwriting our manual `TERRAGON_WEB_URL=https://terragon.ngrok.dev pnpm build`.
+The CLI binary (`apps/cli`) uses `tsup` which bakes `LEO_WEB_URL` at build time. When `pnpm dev` starts, turbo runs the CLI's `dev` script with `tsup --watch`, which rebuilds the CLI WITHOUT the env var — overwriting our manual `LEO_WEB_URL=https://leo.ngrok.dev pnpm build`.
 
 ### Impact
 
@@ -135,12 +135,12 @@ After restarting `pnpm dev`, the CLI reverts to pointing at `https://www.terrago
 After every `pnpm dev` restart, rebuild the CLI manually:
 
 ```bash
-cd apps/cli && TERRAGON_WEB_URL=https://terragon.ngrok.dev pnpm build && npm link
+cd apps/cli && LEO_WEB_URL=https://leo.ngrok.dev pnpm build && npm link
 ```
 
 ### Potential fix
 
-- Add `TERRAGON_WEB_URL` to `.env.development.local` so turbo's watch build picks it up
+- Add `LEO_WEB_URL` to `.env.development.local` so turbo's watch build picks it up
 - Or modify `apps/cli/tsup.config.ts` to read from a dev env file
 
 ---

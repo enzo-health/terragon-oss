@@ -1,13 +1,13 @@
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { Octokit } from "octokit";
 import type { EmitterWebhookEvent } from "@octokit/webhooks";
 import { getOctokitForApp } from "@/lib/github";
 import { formatThreadContext } from "@/server-lib/ext-thread-context";
-import { publicAppUrl } from "@terragon/env/next-public";
+import { publicAppUrl } from "@leo/env/next-public";
 import { db } from "@/lib/db";
-import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
-import { AIModel } from "@terragon/agent/types";
-import { parseModelOrNull } from "@terragon/agent/utils";
+import { getUserIdByGitHubAccountId } from "@leo/shared/model/user";
+import { AIModel } from "@leo/agent/types";
+import { parseModelOrNull } from "@leo/agent/utils";
 
 // Check if comment mentions the GitHub app
 export function isAppMentioned(commentBody: string): boolean {
@@ -22,14 +22,14 @@ export function isAppMentioned(commentBody: string): boolean {
 
 /**
  * Extract model name from GitHub comment body.
- * Looks for patterns like "@terragon-labs [sonnet]" or "@terragon-labs [opus]"
+ * Looks for patterns like "@leo-labs [sonnet]" or "@leo-labs [opus]"
  * Returns the model name if valid, null otherwise.
  *
  * Examples:
- * - "@terragon-labs [sonnet] fix this bug" -> "sonnet"
- * - "@terragon-labs [gpt-5] improve code" -> "gpt-5"
- * - "@terragon-labs fix this" -> null
- * - "@terragon-labs [invalid-model]" -> null
+ * - "@leo-labs [sonnet] fix this bug" -> "sonnet"
+ * - "@leo-labs [gpt-5] improve code" -> "gpt-5"
+ * - "@leo-labs fix this" -> null
+ * - "@leo-labs [invalid-model]" -> null
  */
 export function extractModelFromComment({
   commentBody,
@@ -70,7 +70,7 @@ export async function isKnownGitHubAccount({
   }
 }
 
-// Post a standardized Terragon configuration comment. If a review comment id is provided,
+// Post a standardized Leo configuration comment. If a review comment id is provided,
 // reply in-thread; otherwise post a top-level issue/PR comment.
 export async function postIntegrationSetupComment({
   octokit,
@@ -86,7 +86,7 @@ export async function postIntegrationSetupComment({
   reviewCommentId?: number;
 }): Promise<void> {
   const settingsUrl = `${publicAppUrl()}/settings`;
-  const body = `To use Terragon from GitHub, please visit the settings page and ensure your account is connected: ${settingsUrl}`;
+  const body = `To use Leo from GitHub, please visit the settings page and ensure your account is connected: ${settingsUrl}`;
 
   if (reviewCommentId) {
     try {

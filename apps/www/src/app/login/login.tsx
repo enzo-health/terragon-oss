@@ -29,7 +29,7 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
                 Sign in
               </h1>
               <p className="text-lead font-sans text-muted-foreground/70 tracking-[0.15px]">
-                Welcome back. Sign in to continue to Terragon.
+                Welcome back. Sign in to continue to Leo.
               </p>
             </div>
           </div>

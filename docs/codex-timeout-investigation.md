@@ -28,7 +28,7 @@
 
 ## Executive Summary
 
-Codex tasks in Terragon fail due to a cascade of timeout mismatches across 5 layers. The primary root causes are:
+Codex tasks in Leo fail due to a cascade of timeout mismatches across 5 layers. The primary root causes are:
 
 1. **OpenAI API stream disconnects** — gpt-5.2-codex and gpt-5.3-codex models have a 30-50% failure rate on iteration 2+ of the agent loop (multi-turn tool use). Streams terminate without a `response.completed` event.
 
@@ -46,7 +46,7 @@ Codex tasks in Terragon fail due to a cascade of timeout mismatches across 5 lay
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Terragon Daemon                               │
+│                        Leo Daemon                               │
 │  (Node.js, runs inside sandbox)                                      │
 │                                                                      │
 │  ┌──────────────┐     ┌──────────────┐     ┌────────────────────┐   │
@@ -555,7 +555,7 @@ T+600s       sandbox-agent's tokio::time::timeout fires for session/prompt
 - [Agent Client Protocol spec](https://github.com/agentclientprotocol/agent-client-protocol)
 - [openclaw/acpx](https://github.com/openclaw/acpx) — Headless ACP session client
 
-### Terragon Commits
+### Leo Commits
 
 - `300a622` — Bump @openai/codex from 0.104.0 to 0.107.0
 - `50d5604` — Improve daemon ACP error handling and retry resilience

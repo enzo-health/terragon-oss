@@ -1,6 +1,6 @@
 import type { Story, StoryDefault } from "@ladle/react";
 import { RichTextPart } from "./rich-text-part";
-import { UIRichTextPart } from "@terragon/shared";
+import { UIRichTextPart } from "@leo/shared";
 
 export default {
   title: "Chat/RichTextPart",

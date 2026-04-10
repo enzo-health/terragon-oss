@@ -12,7 +12,7 @@ import {
 } from "@/queries/automation-queries";
 
 export const metadata: Metadata = {
-  title: "Automations | Terragon",
+  title: "Automations | Leo",
 };
 
 export default async function AutomationsPage() {

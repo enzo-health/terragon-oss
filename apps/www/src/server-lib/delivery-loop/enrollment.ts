@@ -1,8 +1,8 @@
 import { db } from "@/lib/db";
-import { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
-import { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
+import { ThreadSource, ThreadSourceMetadata } from "@leo/shared";
+import { DeliveryPlanApprovalPolicy } from "@leo/shared/db/types";
 import { enrollWorkflow } from "./v3/enrollment";
-import { updateWorkflowPR } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { updateWorkflowPR } from "@leo/shared/delivery-loop/store/workflow-store";
 
 export function isDeliveryLoopEnrollmentAllowedForThread({
   sourceType,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import type { BroadcastThreadPatch } from "@leo/types/broadcast";
 import {
   getDeliveryLoopAwareThreadStatus,
   isDeliveryLoopStateActivelyWorking,

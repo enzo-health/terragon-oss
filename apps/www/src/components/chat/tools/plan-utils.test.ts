@@ -4,7 +4,7 @@ import {
   findPlanFromWriteToolCall,
   resolvePlanText,
 } from "./plan-utils";
-import type { DBMessage } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
 
 describe("formatPlanForDisplay", () => {
   it("returns raw text for non-JSON plans", () => {

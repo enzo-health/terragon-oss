@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 import { waitUntil } from "@vercel/functions";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -13,13 +13,13 @@ import {
   getThreadChat,
   getThreadMinimal,
   updateThreadChat,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
 } from "./process-follow-up-queue";
 import { isAgentWorking } from "@/agent/thread-status";
-import { getDefaultModelForAgent, modelToAgent } from "@terragon/agent/utils";
+import { getDefaultModelForAgent, modelToAgent } from "@leo/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 
 export async function followUpInternal({

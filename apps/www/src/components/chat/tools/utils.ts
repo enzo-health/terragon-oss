@@ -1,4 +1,4 @@
-import { AllToolParts } from "@terragon/shared";
+import { AllToolParts } from "@leo/shared";
 import Convert from "ansi-to-html";
 import { getAnsiColors } from "@/lib/ansi-colors";
 

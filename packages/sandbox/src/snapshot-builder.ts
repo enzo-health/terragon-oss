@@ -1,7 +1,7 @@
 import { Daytona, Image } from "@daytonaio/sdk";
 import type { Resources } from "@daytonaio/sdk";
-import { getTemplateIdForSize } from "@terragon/sandbox-image";
-import type { SandboxSize } from "@terragon/types/sandbox";
+import { getTemplateIdForSize } from "@leo/sandbox-image";
+import type { SandboxSize } from "@leo/types/sandbox";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -79,13 +79,10 @@ export async function buildRepoSnapshot({
 
   // Run setup script if provided
   if (setupScript) {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "terragon-snapshot-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "leo-snapshot-"));
     try {
-      const setupScriptPath = path.join(tmpDir, "terragon-setup.sh");
-      const setupRunnerPath = path.join(
-        tmpDir,
-        "terragon-snapshot-run-setup.sh",
-      );
+      const setupScriptPath = path.join(tmpDir, "leo-setup.sh");
+      const setupRunnerPath = path.join(tmpDir, "leo-snapshot-run-setup.sh");
       fs.writeFileSync(setupScriptPath, setupScript);
       const setupCommand = [
         "#!/usr/bin/env bash",
@@ -116,21 +113,21 @@ export async function buildRepoSnapshot({
         '  pg_ctlcluster "$PG_CLUSTER_VERSION" "$PG_CLUSTER_NAME" stop || true',
         "  exit 1",
         "fi",
-        "cd /root/repo && bash -x /tmp/terragon-setup.sh",
+        "cd /root/repo && bash -x /tmp/leo-setup.sh",
         "EXIT_CODE=$?",
         'pg_ctlcluster "$PG_CLUSTER_VERSION" "$PG_CLUSTER_NAME" stop || true',
         "redis-cli shutdown || true",
-        "rm -f /tmp/terragon-setup.sh /tmp/terragon-snapshot-run-setup.sh",
+        "rm -f /tmp/leo-setup.sh /tmp/leo-snapshot-run-setup.sh",
         'exit "$EXIT_CODE"',
       ].join("\n");
       fs.writeFileSync(setupRunnerPath, setupCommand);
       image = image
-        .addLocalFile(setupScriptPath, "/tmp/terragon-setup.sh")
-        .addLocalFile(setupRunnerPath, "/tmp/terragon-snapshot-run-setup.sh")
+        .addLocalFile(setupScriptPath, "/tmp/leo-setup.sh")
+        .addLocalFile(setupRunnerPath, "/tmp/leo-snapshot-run-setup.sh")
         .runCommands(
-          "chmod +x /tmp/terragon-setup.sh /tmp/terragon-snapshot-run-setup.sh",
+          "chmod +x /tmp/leo-setup.sh /tmp/leo-snapshot-run-setup.sh",
           // Start services, run setup, stop services — all in one RUN layer
-          "bash /tmp/terragon-snapshot-run-setup.sh",
+          "bash /tmp/leo-snapshot-run-setup.sh",
         );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -1,5 +1,5 @@
-import { env } from "@terragon/env/apps-www";
-import { publicAppUrl } from "@terragon/env/next-public";
+import { env } from "@leo/env/apps-www";
+import { publicAppUrl } from "@leo/env/next-public";
 
 export async function internalPOST(path: string) {
   console.log(`internalPOST ${path}`);
@@ -10,6 +10,7 @@ export async function internalPOST(path: string) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-Leo-Secret": env.INTERNAL_SHARED_SECRET,
       "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
     },
   });

@@ -4,15 +4,15 @@ import { db } from "@/lib/db";
 import {
   createTestUser,
   createTestThread,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import {
   mockLoggedInUser,
   mockLoggedOutUser,
   mockWaitUntil,
   waitUntilResolved,
 } from "@/test-helpers/mock-next";
-import { User, Session } from "@terragon/shared";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { User, Session } from "@leo/shared";
+import { getThreadChat } from "@leo/shared/model/threads";
 import { unwrapResult } from "@/lib/server-actions";
 
 const stopThread = async ({

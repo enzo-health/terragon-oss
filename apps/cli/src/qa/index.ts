@@ -1,5 +1,5 @@
 /**
- * QA Module - Quality Assurance for Terragon
+ * QA Module - Quality Assurance for Leo
  *
  * Exports the validator and types for programmatic use.
  */

@@ -23,13 +23,13 @@ export async function setupTestContainers(): Promise<SetupResult> {
   try {
     // Clear PostgreSQL database
     execSync(
-      'docker exec terragon_postgres_test psql -U postgres -d postgres -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"',
+      'docker exec leo_postgres_test psql -U postgres -d postgres -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"',
       {
         stdio: "inherit",
       },
     );
     // Clear Redis data
-    execSync("docker exec terragon_redis_test redis-cli FLUSHALL", {
+    execSync("docker exec leo_redis_test redis-cli FLUSHALL", {
       stdio: "inherit",
     });
   } catch (error) {

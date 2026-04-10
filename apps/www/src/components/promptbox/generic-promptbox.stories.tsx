@@ -1,6 +1,6 @@
 import type { StoryDefault, Story } from "@ladle/react";
 import { GenericPromptBox } from "./generic-promptbox";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 import { useState } from "react";
 import { action } from "@ladle/react";
 
@@ -70,7 +70,7 @@ export const Basic: Story = () => {
     <div className="p-4 space-y-4">
       <GenericPromptBox
         message={message}
-        repoFullName="terragon-labs/terragon"
+        repoFullName="leo-labs/leo"
         branchName="main"
         onSubmit={handleSubmit}
         hideSubmitButton={false}
@@ -108,7 +108,7 @@ export const WithImage: Story = () => {
       </div>
       <GenericPromptBox
         message={message}
-        repoFullName="terragon-labs/terragon"
+        repoFullName="leo-labs/leo"
         branchName="main"
         onSubmit={handleSubmit}
         hideSubmitButton={false}

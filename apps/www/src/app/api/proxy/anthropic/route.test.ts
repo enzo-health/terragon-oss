@@ -7,19 +7,19 @@ import {
   hasDaemonProviderScope,
   type DaemonRunTokenClaims,
 } from "@/lib/auth-server";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { getUserCreditBalance } from "@leo/shared/model/credits";
+import { getAgentRunContextByRunId } from "@leo/shared/model/agent-run-context";
 
 vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
   hasDaemonProviderScope: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/credits", () => ({
+vi.mock("@leo/shared/model/credits", () => ({
   getUserCreditBalance: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/agent-run-context", () => ({
+vi.mock("@leo/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
 }));
 
@@ -27,7 +27,7 @@ vi.mock("@/server-lib/credit-auto-reload", () => ({
   maybeTriggerCreditAutoReload: vi.fn(),
 }));
 
-vi.mock("@terragon/env/apps-www", () => ({
+vi.mock("@leo/env/apps-www", () => ({
   env: {
     ANTHROPIC_API_KEY: "test-anthropic-key",
   },

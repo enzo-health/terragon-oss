@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { DBUserMessage, DBSystemMessage } from "@terragon/shared";
-import { updateThreadChat } from "@terragon/shared/model/threads";
+import { DBUserMessage, DBSystemMessage } from "@leo/shared";
+import { updateThreadChat } from "@leo/shared/model/threads";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { compactThreadChat } from "@/server-lib/compact";

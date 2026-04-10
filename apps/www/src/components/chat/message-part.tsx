@@ -6,11 +6,11 @@ import {
   UIPdfPart,
   UITextFilePart,
   UIRichTextPart,
-} from "@terragon/shared";
+} from "@leo/shared";
 import {
   type ArtifactDescriptor,
   extractProposedPlanText,
-} from "@terragon/shared/db/artifact-descriptors";
+} from "@leo/shared/db/artifact-descriptors";
 import { TextPart } from "./text-part";
 import { ImagePart } from "./image-part";
 import { PdfPart } from "./pdf-part";
@@ -18,7 +18,7 @@ import { TextFilePart } from "./text-file-part";
 import { ToolPart, ToolPartProps } from "./tool-part";
 import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
-import { assertNever } from "@terragon/shared/utils";
+import { assertNever } from "@leo/shared/utils";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import { MessagePart as AIMessagePart } from "@/components/ai-elements/message";
 

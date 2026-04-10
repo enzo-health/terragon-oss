@@ -11,8 +11,8 @@ import {
   bashQuote,
 } from "./utils";
 import { McpConfig } from "./mcp-config";
-import { AIAgent, AIAgentCredentials } from "@terragon/agent/types";
-import { terragonSetupScriptTimeoutMs } from "./constants";
+import { AIAgent, AIAgentCredentials } from "@leo/agent/types";
+import { leoSetupScriptTimeoutMs } from "./constants";
 import { buildAmpSettings } from "./agents/amp-settings";
 import { buildCodexToml } from "./agents/codex-config";
 import { buildGeminiSettings } from "./agents/gemini-settings";
@@ -273,7 +273,7 @@ export async function setupSandboxOneTime(
     featureFlags: options.featureFlags,
   }).then(() => probeSandboxAgentEndpoint({ session, options }));
 
-  // Only run terragon-setup.sh if not explicitly skipped and no snapshot
+  // Only run leo-setup.sh if not explicitly skipped and no snapshot
   if (options.skipSetupScript || options.snapshotTemplateId) {
     console.log("Skipping setup script (snapshot or explicit skip)");
     await daemonInstallAndProbe;
@@ -506,7 +506,7 @@ async function updateAgentFiles({
         ],
       });
       // Write quality check script to /tmp (outside config dir)
-      const qualityCheckPath = "/tmp/terragon-quality-check.sh";
+      const qualityCheckPath = "/tmp/leo-quality-check.sh";
       if (skipLocalQualityChecks) {
         await session.runCommand(`rm -f ${qualityCheckPath}`, { cwd: "/" });
       } else {
@@ -660,7 +660,7 @@ async function executeSetupScriptCommand({
   const result = await Promise.race([
     (async () => {
       await session.runCommand(command, {
-        timeoutMs: terragonSetupScriptTimeoutMs,
+        timeoutMs: leoSetupScriptTimeoutMs,
         onStdout: (data) => onUpdate?.("stdout", data),
         onStderr: (data) => onUpdate?.("stderr", data),
         env: getEnv({
@@ -675,13 +675,11 @@ async function executeSetupScriptCommand({
       });
     })(),
     new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), terragonSetupScriptTimeoutMs),
+      setTimeout(() => resolve("timeout"), leoSetupScriptTimeoutMs),
     ),
   ]);
   if (result === "timeout") {
-    throw new Error(
-      `Command timed out after ${terragonSetupScriptTimeoutMs}ms`,
-    );
+    throw new Error(`Command timed out after ${leoSetupScriptTimeoutMs}ms`);
   }
   // Log the git status after the setup script runs
   await session.runCommand("git status");
@@ -706,7 +704,7 @@ export async function runSetupScript({
   };
 }) {
   const customScriptPath =
-    options.setupScriptPath || "/tmp/terragon-setup-custom.sh";
+    options.setupScriptPath || "/tmp/leo-setup-custom.sh";
   const outputs: string[] = [];
   const onUpdateWrapped: OnUpdateCallback = (type, output) => {
     if (type === "stdout" || type === "stderr") {
@@ -716,7 +714,7 @@ export async function runSetupScript({
   };
 
   try {
-    // If a custom setup script is provided, use it instead of checking for terragon-setup.sh
+    // If a custom setup script is provided, use it instead of checking for repo setup scripts
     if (options.setupScript) {
       await options.onUpdate?.(
         "system",
@@ -735,11 +733,11 @@ export async function runSetupScript({
         onUpdate: onUpdateWrapped,
       });
     } else {
-      // Use the repository's terragon-setup.sh if it exists
+      // Prefer leo-setup.sh, but fall back to legacy terragon-setup.sh during migration.
       await executeSetupScriptCommand({
         session,
         command:
-          "bash -c 'if [ -f terragon-setup.sh ]; then chmod +x terragon-setup.sh && bash -x ./terragon-setup.sh; fi'",
+          "bash -c 'if [ -f leo-setup.sh ]; then chmod +x leo-setup.sh && bash -x ./leo-setup.sh; elif [ -f terragon-setup.sh ]; then chmod +x terragon-setup.sh && bash -x ./terragon-setup.sh; fi'",
         environmentVariables: options.environmentVariables,
         agentCredentials: options.agentCredentials,
         githubAccessToken: options.githubAccessToken,

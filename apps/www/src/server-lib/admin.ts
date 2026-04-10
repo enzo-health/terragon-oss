@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
-import { User } from "@terragon/shared";
+import * as schema from "@leo/shared/db/schema";
+import { User } from "@leo/shared";
 import { inArray, eq, count, sql } from "drizzle-orm";
 
 export type UserForAdminPage<T extends User = User> = T & {

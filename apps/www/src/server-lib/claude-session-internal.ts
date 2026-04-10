@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { ISandboxSession } from "@terragon/sandbox/types";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { ISandboxSession } from "@leo/sandbox/types";
+import { getThreadChat } from "@leo/shared/model/threads";
 import path from "path";
 import { JSONLResult } from "./claude-session";
 

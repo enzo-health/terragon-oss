@@ -1,6 +1,6 @@
-import { AIModel } from "@terragon/agent/types";
+import { AIModel } from "@leo/agent/types";
 import { McpConfig } from "../mcp-config";
-import { agentToModels, getModelDisplayName } from "@terragon/agent/utils";
+import { agentToModels, getModelDisplayName } from "@leo/agent/utils";
 
 export function getModelId(modelName: AIModel): string {
   switch (modelName) {
@@ -84,7 +84,7 @@ export function buildOpencodeConfig({
     provider: {
       terry: {
         npm: "@ai-sdk/openai-compatible",
-        name: "Terragon",
+        name: "Leo",
         options: {
           baseURL: `${publicUrl}/api/proxy/openrouter/v1`,
           headers: { "X-Daemon-Token": "{env:DAEMON_TOKEN}" },
@@ -93,7 +93,7 @@ export function buildOpencodeConfig({
       },
       "terry-google": {
         npm: "@ai-sdk/google",
-        name: "Terragon Google",
+        name: "Leo Google",
         options: {
           baseURL: `${publicUrl}/api/proxy/google/v1`,
           apiKey: "unused",
@@ -114,7 +114,7 @@ export function buildOpencodeConfig({
       },
       "terry-ant": {
         npm: "@ai-sdk/anthropic",
-        name: "Terragon Anthropic",
+        name: "Leo Anthropic",
         options: {
           baseURL: `${publicUrl}/api/proxy/anthropic/v1`,
           apiKey: "unused",
@@ -129,7 +129,7 @@ export function buildOpencodeConfig({
       },
       "terry-oai": {
         npm: "@ai-sdk/openai",
-        name: "Terragon OpenAI",
+        name: "Leo OpenAI",
         options: {
           baseURL: `${publicUrl}/api/proxy/openai/v1`,
           apiKey: "unused",

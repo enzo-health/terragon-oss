@@ -78,7 +78,7 @@ describe("daemon", () => {
         resolvedOptions: () => ({ timeZone: "America/New_York" }),
       })),
     });
-    const unixSocketPath = `/tmp/terragon-daemon-${nanoid()}.sock`;
+    const unixSocketPath = `/tmp/leo-daemon-${nanoid()}.sock`;
     runtime = new DaemonRuntime({
       url: "http://localhost:3000",
       unixSocketPath,
@@ -1072,7 +1072,7 @@ describe("daemon", () => {
 
     const localRuntime = new DaemonRuntime({
       url: "http://localhost:3000",
-      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      unixSocketPath: `/tmp/leo-daemon-${nanoid()}.sock`,
       outputFormat: "text",
     });
     vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
@@ -1113,7 +1113,7 @@ describe("daemon", () => {
 
     const localRuntime = new DaemonRuntime({
       url: "http://localhost:3000",
-      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      unixSocketPath: `/tmp/leo-daemon-${nanoid()}.sock`,
       outputFormat: "text",
     });
     vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
@@ -1157,7 +1157,7 @@ describe("daemon", () => {
 
     const localRuntime = new DaemonRuntime({
       url: "http://localhost:3000",
-      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      unixSocketPath: `/tmp/leo-daemon-${nanoid()}.sock`,
       outputFormat: "text",
     });
     vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
@@ -1198,7 +1198,7 @@ describe("daemon", () => {
 
     const localRuntime = new DaemonRuntime({
       url: "http://localhost:3000",
-      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      unixSocketPath: `/tmp/leo-daemon-${nanoid()}.sock`,
       outputFormat: "text",
     });
     vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});

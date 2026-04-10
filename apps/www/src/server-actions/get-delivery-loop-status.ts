@@ -14,13 +14,13 @@ import {
 } from "@/lib/delivery-loop-status";
 import { UserFacingError } from "@/lib/server-actions";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
-import * as schema from "@terragon/shared/db/schema";
-import type { DeliveryLoopState } from "@terragon/shared/db/types";
+import * as schema from "@leo/shared/db/schema";
+import type { DeliveryLoopState } from "@leo/shared/db/types";
 import {
   getUnresolvedBlockingCarmackReviewFindings,
   getUnresolvedBlockingDeepReviewFindings,
-} from "@terragon/shared/delivery-loop/store/gate-persistence";
-import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
+} from "@leo/shared/delivery-loop/store/gate-persistence";
+import type { DeliveryLoopSnapshot } from "@leo/shared/delivery-loop/domain/snapshot-types";
 import {
   getActiveWorkflowForThreadV3,
   type ActiveWorkflowForThreadV3,

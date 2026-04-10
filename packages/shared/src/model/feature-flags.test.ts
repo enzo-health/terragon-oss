@@ -1,7 +1,7 @@
 import { vi, beforeEach, describe, expect, it } from "vitest";
 import * as schema from "../db/schema";
 import { createDb } from "../db";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { eq } from "drizzle-orm";
 import {
   getFeatureFlag,

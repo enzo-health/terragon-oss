@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ThreadVisibility } from "@terragon/shared";
+import { ThreadVisibility } from "@leo/shared";
 import { Check, Lock, Users, Globe } from "lucide-react";
 
 export function ShareOption({

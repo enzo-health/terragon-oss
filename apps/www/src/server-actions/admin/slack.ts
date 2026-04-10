@@ -1,12 +1,12 @@
 "use server";
 
 import { adminOnly } from "@/lib/auth-server";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { WebClient } from "@slack/web-api";
 import { db } from "@/lib/db";
-import { getSlackAccountAndInstallationForWorkspace } from "@terragon/shared/model/slack";
-import { decryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import { getSlackAccountAndInstallationForWorkspace } from "@leo/shared/model/slack";
+import { decryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
 import {
   buildSlackMentionMessage,
   SlackAppMentionEvent,
@@ -84,13 +84,13 @@ export const parseSlackUrl = adminOnly(async function parseSlackUrl(
   if (!slackInstallation) {
     return {
       success: false,
-      error: `No Slack installation found for workspace: ${workspaceDomain}. Make sure the workspace is connected to Terragon.`,
+      error: `No Slack installation found for workspace: ${workspaceDomain}. Make sure the workspace is connected to Leo.`,
     };
   }
   if (!slackAccount) {
     return {
       success: false,
-      error: `No Slack account found for workspace: ${workspaceDomain}. Make sure the workspace is connected to Terragon.`,
+      error: `No Slack account found for workspace: ${workspaceDomain}. Make sure the workspace is connected to Leo.`,
     };
   }
   // Initialize Slack client

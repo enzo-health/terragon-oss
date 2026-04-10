@@ -9,7 +9,7 @@ import { newThread } from "@/server-actions/new-thread";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 import { getThreadInfoCollection } from "@/collections/thread-info-collection";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
 import { convertToPlainText } from "@/lib/db-message-helpers";

@@ -7,11 +7,11 @@ import {
   ThreadStatus,
   UIMessage,
   UIPart,
-} from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
-import { AIAgent, AIModel } from "@terragon/agent/types";
-import { BootingSubstatus } from "@terragon/sandbox/types";
+} from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
+import { extractProposedPlanText } from "@leo/shared/db/artifact-descriptors";
+import { AIAgent, AIModel } from "@leo/agent/types";
+import { BootingSubstatus } from "@leo/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
 import { LeafLoading } from "./leaf-loading";
 import { PromptBoxRef } from "./thread-context";
@@ -186,7 +186,7 @@ function getBootingSubstatusMessage(substatus: BootingSubstatus): string {
     case "installing-agent":
       return "Installing agent";
     case "running-setup-script":
-      return "Running terragon-setup.sh";
+      return "Running leo-setup.sh";
     case "booting-done":
       return "Waiting for assistant to start";
     default:

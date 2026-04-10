@@ -28,7 +28,7 @@ describe("runtime", () => {
   let runtime: DaemonRuntime;
 
   beforeEach(() => {
-    const unixSocketPath = `/tmp/terragon-daemon-${nanoid()}.sock`;
+    const unixSocketPath = `/tmp/leo-daemon-${nanoid()}.sock`;
     runtime = new DaemonRuntime({
       url: "http://localhost:3000",
       unixSocketPath,

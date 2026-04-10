@@ -14,18 +14,17 @@ const DEFAULT_DIR = `/${HOME_DIR}`;
 const REPO_DIR = "repo";
 const BASE_IMAGE = (() => {
   try {
-    execSync(
-      "docker image inspect ghcr.io/terragon-labs/containers-test:local",
-      { stdio: "ignore" },
-    );
-    return "ghcr.io/terragon-labs/containers-test:local";
+    execSync("docker image inspect ghcr.io/leo-labs/containers-test:local", {
+      stdio: "ignore",
+    });
+    return "ghcr.io/leo-labs/containers-test:local";
   } catch {
-    return "ghcr.io/terragon-labs/containers-test";
+    return "ghcr.io/leo-labs/containers-test";
   }
 })();
 const SLEEP_MS = 60 * 60 * 1000; // 1 hour
 
-const CONTAINER_PREFIX = "terragon-sandbox";
+const CONTAINER_PREFIX = "leo-sandbox";
 const TEST_CONTAINER_PREFIX = `${CONTAINER_PREFIX}-test`;
 
 class DockerSession implements ISandboxSession {
@@ -342,12 +341,12 @@ export class DockerProvider implements ISandboxProvider {
   }
 
   /**
-   * Cleanup utility function to remove all Terragon containers
+   * Cleanup utility function to remove all Leo containers
    * Useful for complete system cleanup
    */
   static async cleanupAllContainers(): Promise<void> {
     try {
-      // Get all containers with any terragon prefix
+      // Get all containers with any leo prefix
       const listCommand = `docker ps -a --filter "name=${CONTAINER_PREFIX}" --format "{{.Names}}"`;
       const containerList = execSync(listCommand, { encoding: "utf8" }).trim();
       if (!containerList) {
@@ -360,7 +359,7 @@ export class DockerProvider implements ISandboxProvider {
       const removeCommand = `docker rm -f ${containers.join(" ")}`;
       execSync(removeCommand, { stdio: "ignore" });
     } catch (error) {
-      console.warn("Failed to cleanup Terragon containers:", error);
+      console.warn("Failed to cleanup Leo containers:", error);
     }
   }
 }

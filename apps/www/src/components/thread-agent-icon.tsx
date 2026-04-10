@@ -1,6 +1,6 @@
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 import { AgentIcon } from "./chat/agent-icon";
-import { ensureAgent } from "@terragon/agent/utils";
+import { ensureAgent } from "@leo/agent/utils";
 import { memo } from "react";
 
 export const ThreadAgentIcon = memo(function ThreadAgentIcon({

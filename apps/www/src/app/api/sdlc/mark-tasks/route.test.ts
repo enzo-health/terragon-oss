@@ -3,16 +3,16 @@ import { and, eq } from "drizzle-orm";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { POST } from "./route";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/delivery-loop/store/artifact-store";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/delivery-loop/store/artifact-store";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 
 vi.mock("@/lib/auth-server", () => ({

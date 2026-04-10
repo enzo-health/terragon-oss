@@ -1,10 +1,10 @@
-import type { DB } from "@terragon/shared/db";
-import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
+import type { DB } from "@leo/shared/db";
+import type { DeliverySignalSourceV3 } from "@leo/shared/db/types";
 import type {
   WorkflowId,
   GateKind,
-} from "@terragon/shared/delivery-loop/domain/workflow";
-import type { DeliverySignal } from "@terragon/shared/delivery-loop/domain/signals";
+} from "@leo/shared/delivery-loop/domain/workflow";
+import type { DeliverySignal } from "@leo/shared/delivery-loop/domain/signals";
 
 export type HumanAction = "resume" | "bypass" | "stop" | "mark_done";
 

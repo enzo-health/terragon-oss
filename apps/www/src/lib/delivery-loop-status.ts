@@ -5,13 +5,13 @@ import type {
   DeliveryLoopState,
   DeliveryReviewThreadGateStatus,
   DeliveryVideoCaptureStatus,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import type {
   DeliveryLoopBlockedState,
   DeliveryLoopSnapshot,
-} from "@terragon/shared/delivery-loop/domain/snapshot-types";
-import type { ThreadStatus } from "@terragon/shared";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
+} from "@leo/shared/delivery-loop/domain/snapshot-types";
+import type { ThreadStatus } from "@leo/shared";
+import type { BroadcastThreadPatch } from "@leo/types/broadcast";
 import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
 export type DeliveryLoopStatusCheckKey =
   | "ci"

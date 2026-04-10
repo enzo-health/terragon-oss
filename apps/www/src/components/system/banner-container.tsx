@@ -3,8 +3,8 @@ import { TopBanner } from "@/components/system/top-banner";
 import { BannerBar } from "@/components/system/banner-bar";
 import { BannerPriorityGate } from "@/components/system/banner-container.client";
 import { db } from "@/lib/db";
-import { getFeatureFlagsGlobal } from "@terragon/shared/model/feature-flags";
-import { publicDocsUrl } from "@terragon/env/next-public";
+import { getFeatureFlagsGlobal } from "@leo/shared/model/feature-flags";
+import { publicDocsUrl } from "@leo/env/next-public";
 import Link from "next/link";
 
 // Deduplicate across layout segments that both render BannerContainer
@@ -23,7 +23,7 @@ export async function BannerContainer() {
   if (flags.shutdownMode) {
     return (
       <BannerBar id="shutdown-banner">
-        Terragon is shutting down on February 9th, 2026.{" "}
+        Leo is shutting down on February 9th, 2026.{" "}
         <Link
           href={`${publicDocsUrl()}/docs/resources/shutdown`}
           className="underline"

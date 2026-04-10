@@ -7,7 +7,7 @@ import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import { AdminThreadIdInput } from "@/components/admin/thread-content";
 import { format } from "date-fns";
 import { PRStatusPill } from "@/components/pr-status-pill";
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 import { ColumnDef } from "@tanstack/react-table";
 import {
   Table,

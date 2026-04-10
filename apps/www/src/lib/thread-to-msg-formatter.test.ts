@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { formatThreadToMsg } from "./thread-to-msg-formatter";
-import { DBMessage } from "@terragon/shared";
+import { DBMessage } from "@leo/shared";
 
 describe("formatThreadToMsg", () => {
   it("should format user and agent messages correctly", async () => {

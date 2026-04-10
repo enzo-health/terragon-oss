@@ -1,7 +1,7 @@
 "use server";
 
 import { userOnlyAction } from "@/lib/auth-server";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 import {
   followUpInternal,
   queueFollowUpInternal,

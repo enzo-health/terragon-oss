@@ -1,5 +1,5 @@
-import { env } from "@terragon/env/apps-www";
-import type { FeedbackType } from "@terragon/shared";
+import { env } from "@leo/env/apps-www";
+import type { FeedbackType } from "@leo/shared";
 
 interface SlackFeedbackMessage {
   userId: string;

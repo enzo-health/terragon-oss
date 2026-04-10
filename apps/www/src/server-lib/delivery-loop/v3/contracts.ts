@@ -3,7 +3,7 @@ import type {
   DeliveryOutboxTopicV3,
   DeliverySignalSourceV3,
   DeliveryTimerKindV3,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import type { EffectPayload, EffectSpec, LoopEvent } from "./types";
 
 export type SignalJournalWriteContract = {

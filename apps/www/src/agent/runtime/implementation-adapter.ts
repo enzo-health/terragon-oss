@@ -1,4 +1,4 @@
-import type { AIAgent } from "@terragon/agent/types";
+import type { AIAgent } from "@leo/agent/types";
 import { claudeCodeImplementationAdapter } from "./claude-code-implementation-adapter";
 import { codexImplementationAdapter } from "./codex-implementation-adapter";
 
@@ -70,7 +70,7 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
           runId: input.runId,
           transportMode: "acp" as const,
           protocolVersion: 2 as const,
-          acpServerId: `terragon-${input.runId}`,
+          acpServerId: `leo-${input.runId}`,
           acpSessionId: input.sessionId ?? null,
           ...(input.shouldUseCredits ? { useCredits: true } : {}),
         },

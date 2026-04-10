@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai";
-import type { UserSettings } from "@terragon/shared";
+import type { UserSettings } from "@leo/shared";
 import { userSettingsAtom, useUpdateUserSettingsMutation } from "@/atoms/user";
 import {
   Select,

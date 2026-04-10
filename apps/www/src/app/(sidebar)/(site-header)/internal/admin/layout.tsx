@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Admin | Terragon",
+  title: "Admin | Leo",
 };
 
 export default async function AdminLayout({

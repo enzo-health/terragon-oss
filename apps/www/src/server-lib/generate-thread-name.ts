@@ -1,9 +1,9 @@
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import * as z from "zod/v4";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 import { richTextToPlainText } from "@/components/promptbox/tiptap-to-richtext";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 const threadNameSchema = z.object({
   name: z

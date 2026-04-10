@@ -1,5 +1,5 @@
 import React from "react";
-import { AllToolParts } from "@terragon/shared";
+import { AllToolParts } from "@leo/shared";
 import { cn } from "@/lib/utils";
 import {
   GenericToolPartContent,

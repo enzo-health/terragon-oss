@@ -6,7 +6,7 @@ import {
 import { createTestUser, createTestThread } from "./test-helpers";
 import { createDb, type DB } from "../db";
 import { nanoid } from "nanoid/non-secure";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 
 describe("claude-session", () => {
   const db: DB = createDb(env.DATABASE_URL);

@@ -3,9 +3,9 @@ import {
   BroadcastUserMessage,
   BroadcastThreadPatch,
   getBroadcastChannelStr,
-} from "@terragon/types/broadcast";
-import { env } from "@terragon/env/pkg-shared";
-import { publicBroadcastUrl } from "@terragon/env/next-public";
+} from "@leo/types/broadcast";
+import { env } from "@leo/env/pkg-shared";
+import { publicBroadcastUrl } from "@leo/env/next-public";
 
 export type MessageStreamAppendFn = (
   threadId: string,
@@ -149,6 +149,7 @@ export async function publishBroadcastUserMessage(
           method: "POST",
           body: JSON.stringify(message),
           headers: {
+            "X-Leo-Secret": env.INTERNAL_SHARED_SECRET!,
             "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET!,
           },
         },

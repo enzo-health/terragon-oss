@@ -1,4 +1,4 @@
-import { ClaudeMessage } from "@terragon/daemon/shared";
+import { ClaudeMessage } from "@leo/daemon/shared";
 import { TZDate } from "@date-fns/tz";
 
 // Helper function to parse time in format "3pm" to reset timestamp

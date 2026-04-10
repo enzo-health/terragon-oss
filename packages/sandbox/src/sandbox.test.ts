@@ -6,7 +6,7 @@ import {
   getDaemonLogs,
   sendMessage,
 } from "./daemon";
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 import type { ISandboxSession, CreateSandboxOptions } from "./types";
 import { getDaemonFile } from "./constants";
 import { setupSandboxEveryTime } from "./setup";
@@ -20,7 +20,7 @@ import { getGitDefaultBranch } from "./commands/git-default-branch";
 import { gitCommitAndPushBranch } from "./commands/git-commit-and-push";
 import { getOrCreateSandbox } from "./sandbox";
 import { bashQuote } from "./utils";
-import { defaultUnixSocketPath } from "@terragon/daemon/shared";
+import { defaultUnixSocketPath } from "@leo/daemon/shared";
 
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -138,16 +138,16 @@ describe(`sandbox ${providerName}`, () => {
     expect(readResult.trim()).toBe("Hello");
   });
 
-  it("should have the terragon-daemon file and log", async () => {
-    // Should have the terragon-daemon file
+  it("should have the leo-daemon file and log", async () => {
+    // Should have the leo-daemon file
     const daemonBin = await sandbox.readTextFile(DAEMON_FILE_PATH);
     expect(daemonBin).toContain("#!/usr/bin/env node");
 
-    // Should have the terragon-daemon log (and have started successfully)
+    // Should have the leo-daemon log (and have started successfully)
     const daemonLogs = await sandbox.readTextFile(DAEMON_LOG_FILE_PATH);
     expect(daemonLogs).toContain("Daemon started successfully");
 
-    // Should have the terragon-daemon unix socket file
+    // Should have the leo-daemon unix socket file
     const unixSocketFileExists = await sandbox.runCommand(
       `ls -l ${defaultUnixSocketPath} && echo 'OK'`,
     );
@@ -161,7 +161,7 @@ describe(`sandbox ${providerName}`, () => {
     );
 
     const result2 = await sandbox.runCommand("git branch -a");
-    expect(result2).toContain("* terragon/");
+    expect(result2).toContain("* leo/");
   });
 
   it("should respond to a daemon message", async () => {
@@ -261,10 +261,10 @@ describe(`sandbox ${providerName}`, () => {
 
     // Verify the daemon is running
     const psOutput = await sandbox.runCommand(
-      "ps aux | grep terragon-daemon.mjs | grep -v grep",
+      "ps aux | grep leo-daemon.mjs | grep -v grep",
     );
     expect(psOutput).toContain("node");
-    expect(psOutput).toContain("terragon-daemon.mjs");
+    expect(psOutput).toContain("leo-daemon.mjs");
 
     // Mock getDaemonFile to return different content
     const newDaemonContent =
@@ -295,10 +295,10 @@ describe(`sandbox ${providerName}`, () => {
 
     // Verify the daemon is running again
     const psOutputAfter = await sandbox.runCommand(
-      "ps aux | grep terragon-daemon.mjs | grep -v grep",
+      "ps aux | grep leo-daemon.mjs | grep -v grep",
     );
     expect(psOutputAfter).toContain("node");
-    expect(psOutputAfter).toContain("terragon-daemon.mjs");
+    expect(psOutputAfter).toContain("leo-daemon.mjs");
 
     // Check that daemon started successfully after update
     const daemonLogs = await getDaemonLogs({ session: sandbox });
@@ -349,7 +349,7 @@ describe(`sandbox ${providerName}`, () => {
       const currentBranch = await sandbox.runCommand(
         "git branch --show-current",
       );
-      expect(currentBranch.trim()).toMatch(/^terragon\//);
+      expect(currentBranch.trim()).toMatch(/^leo\//);
 
       // Check that we're on a new branch created from main
       const branchPoint = await sandbox.runCommand("git merge-base HEAD main");

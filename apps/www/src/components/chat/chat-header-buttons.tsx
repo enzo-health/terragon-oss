@@ -1,7 +1,7 @@
 "use client";
 
-import { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
-import { AIAgent } from "@terragon/agent/types";
+import { DBUserMessage, ThreadInfoFull } from "@leo/shared";
+import { AIAgent } from "@leo/agent/types";
 import { useState, memo } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { PanelRight, PanelBottom } from "@/components/icons/panels";

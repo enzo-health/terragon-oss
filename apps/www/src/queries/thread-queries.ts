@@ -9,7 +9,7 @@ import {
   ThreadPageChat,
   ThreadPageDiff,
   ThreadPageShell,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import {
   QueryKey,
   UseInfiniteQueryOptions,

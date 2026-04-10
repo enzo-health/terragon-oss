@@ -54,12 +54,12 @@ export async function generateMetadata(props: {
     title: page.data.title,
     description:
       page.data.description ||
-      `Learn about ${page.data.title} in Terragon documentation`,
+      `Learn about ${page.data.title} in Leo documentation`,
     openGraph: {
       title: page.data.title,
       description:
         page.data.description ||
-        `Learn about ${page.data.title} in Terragon documentation`,
+        `Learn about ${page.data.title} in Leo documentation`,
       url,
       type: "article",
     },
@@ -68,7 +68,7 @@ export async function generateMetadata(props: {
       title: page.data.title,
       description:
         page.data.description ||
-        `Learn about ${page.data.title} in Terragon documentation`,
+        `Learn about ${page.data.title} in Leo documentation`,
     },
     alternates: {
       canonical: url,

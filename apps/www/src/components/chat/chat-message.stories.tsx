@@ -1,7 +1,7 @@
 import type { Story, StoryDefault } from "@ladle/react";
 import { ChatMessage } from "./chat-message";
 import { WorkingMessage } from "./chat-messages";
-import { UIMessage } from "@terragon/shared";
+import { UIMessage } from "@leo/shared";
 
 export default {
   title: "Chat/Chat Message",

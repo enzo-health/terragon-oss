@@ -4,13 +4,13 @@ import {
   BroadcastClientMessageSchema,
   parseBroadcastChannel,
   type BroadcastSandboxTerminalState,
-} from "@terragon/types/broadcast";
-import type { SandboxProvider } from "@terragon/types/sandbox";
+} from "@leo/types/broadcast";
+import type { SandboxProvider } from "@leo/types/sandbox";
 import { Sandbox as E2bSandbox } from "@e2b/code-interpreter";
 import * as Party from "partykit/server";
 import debounce from "lodash.debounce";
 import { validateRequest } from "./auth";
-import { getPublicAppUrl } from "@terragon/env/apps-broadcast";
+import { getPublicAppUrl } from "@leo/env/apps-broadcast";
 
 const SLEEP_MS = 1000 * 60 * 5; // 5 minutes
 

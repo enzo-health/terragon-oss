@@ -10,11 +10,11 @@ import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import {
   createTestUser,
   createTestGitHubPR,
-} from "@terragon/shared/model/test-helpers";
-import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
-import * as schema from "@terragon/shared/db/schema";
+} from "@leo/shared/model/test-helpers";
+import { getActiveWorkflowForGithubPR } from "@leo/shared/delivery-loop/store/workflow-store";
+import * as schema from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 vi.mock("./handle-app-mention", () => ({
   handleAppMention: vi.fn(),
@@ -28,10 +28,10 @@ vi.mock("./route-feedback", () => ({
   }),
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", async () => {
+vi.mock("@leo/shared/delivery-loop/store/workflow-store", async () => {
   const actual = await vi.importActual<
-    typeof import("@terragon/shared/delivery-loop/store/workflow-store")
-  >("@terragon/shared/delivery-loop/store/workflow-store");
+    typeof import("@leo/shared/delivery-loop/store/workflow-store")
+  >("@leo/shared/delivery-loop/store/workflow-store");
   return {
     ...actual,
     getActiveWorkflowForGithubPR: vi.fn(),

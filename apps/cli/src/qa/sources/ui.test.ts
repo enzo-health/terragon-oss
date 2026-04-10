@@ -19,6 +19,7 @@ describe("createUIFetcher", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    delete process.env.LEO_WEB_URL;
     delete process.env.TERRAGON_WEB_URL;
   });
 
@@ -34,8 +35,17 @@ describe("createUIFetcher", () => {
     expect(fetcher).toBeInstanceOf(UISourceFetcher);
   });
 
-  it("should use TERRAGON_WEB_URL env var", async () => {
-    process.env.TERRAGON_WEB_URL = "https://env.example.com";
+  it("should use LEO_WEB_URL env var", async () => {
+    process.env.LEO_WEB_URL = "https://env.example.com";
+    const { readFile } = await import("node:fs/promises");
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ apiKey: "test" }));
+
+    const fetcher = await createUIFetcher();
+    expect(fetcher).toBeInstanceOf(UISourceFetcher);
+  });
+
+  it("should fall back to TERRAGON_WEB_URL env var", async () => {
+    process.env.TERRAGON_WEB_URL = "https://legacy.example.com";
     const { readFile } = await import("node:fs/promises");
     vi.mocked(readFile).mockResolvedValue(JSON.stringify({ apiKey: "test" }));
 

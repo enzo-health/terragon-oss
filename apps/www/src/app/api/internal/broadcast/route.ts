@@ -4,9 +4,9 @@ import {
 } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
-import { parseBroadcastChannel } from "@terragon/types/broadcast";
-import { assertNever } from "@terragon/shared/utils";
-import { getThreadMinimal } from "@terragon/shared/model/threads";
+import { parseBroadcastChannel } from "@leo/types/broadcast";
+import { assertNever } from "@leo/shared/utils";
+import { getThreadMinimal } from "@leo/shared/model/threads";
 
 // Validate that the current user is allowed to listen to the given broadcast channel.
 export async function GET(request: Request) {

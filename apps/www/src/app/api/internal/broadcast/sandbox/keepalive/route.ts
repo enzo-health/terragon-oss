@@ -3,7 +3,7 @@ import {
   getUserIdOrNull,
   getUserIdOrNullFromDaemonToken,
 } from "@/lib/auth-server";
-import { getThreadMinimal } from "@terragon/shared/model/threads";
+import { getThreadMinimal } from "@leo/shared/model/threads";
 import { setTerminalActive } from "@/agent/sandbox-resource";
 import { db } from "@/lib/db";
 import { isSandboxTerminalSupported } from "@/lib/sandbox-terminal";

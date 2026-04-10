@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { UsageEventType } from "@terragon/shared/db/types";
-import { trackUsageEventBatched } from "@terragon/shared/model/usage-events";
+import { UsageEventType } from "@leo/shared/db/types";
+import { trackUsageEventBatched } from "@leo/shared/model/usage-events";
 
 // Cap this at something reasonable to avoid bad data
 // Sometimes claude returns really large duration numbers.

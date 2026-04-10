@@ -14,9 +14,9 @@ import {
   AutomationTriggerConfig,
   isRepoBranchRelevant,
   isSkipSetupRelevant,
-} from "@terragon/shared/automations";
-import { AIModel } from "@terragon/agent/types";
-import { Automation } from "@terragon/shared";
+} from "@leo/shared/automations";
+import { AIModel } from "@leo/agent/types";
+import { Automation } from "@leo/shared";
 import { useAtomValue } from "jotai";
 import {
   selectedRepoAtom,
@@ -48,7 +48,7 @@ import { ScheduleTriggerForm } from "./schedule-frequency";
 import { PullRequestTriggerForm } from "./pull-request-trigger-form";
 import { IssueTriggerForm } from "./issue-trigger-form";
 import { GitHubMentionTriggerForm } from "./github-mention-trigger-form";
-import { validateCronExpression } from "@terragon/shared/automations/cron";
+import { validateCronExpression } from "@leo/shared/automations/cron";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
 import { PromptBoxToolBelt } from "@/components/promptbox/prompt-box-tool-belt";

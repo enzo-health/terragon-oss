@@ -16,7 +16,7 @@ const renderToolPart = (
     messages={[]}
     isReadOnly={false}
     childThreads={[]}
-    githubRepoFullName="terragonlabs/terragon"
+    githubRepoFullName="terragonlabs/leo"
     repoBaseBranchName="main"
     branchName="feature/task-tool"
   />

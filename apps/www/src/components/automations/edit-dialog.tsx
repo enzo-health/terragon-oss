@@ -1,6 +1,6 @@
 "use client";
 
-import { Automation } from "@terragon/shared";
+import { Automation } from "@leo/shared";
 import { useEditAutomationMutation } from "@/queries/automation-mutations";
 import { Dialog } from "@/components/ui/dialog";
 import { AutomationEditorDialogContent } from "./form";

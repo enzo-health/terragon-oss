@@ -8,10 +8,7 @@ import { getPostHogServer } from "@/lib/posthog-server";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { ensureThreadChatHasUserMessage } from "@/server-lib/retry-thread";
 import { UserFacingError } from "@/lib/server-actions";
-import {
-  getThreadChat,
-  getThreadMinimal,
-} from "@terragon/shared/model/threads";
+import { getThreadChat, getThreadMinimal } from "@leo/shared/model/threads";
 
 export const retryThread = userOnlyAction(
   async function retryThread(

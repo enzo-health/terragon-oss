@@ -6,9 +6,9 @@ This directory hosts the catch-all Next.js route that forwards requests to the O
 
 - `GET/POST/... /api/proxy/openai` → `https://api.openai.com/v1/chat/completions` (default)
 - `GET/POST/... /api/proxy/openai/<path>` → `https://api.openai.com/<path>`
-- The server injects `Authorization: Bearer <OPENAI_API_KEY>` from `@terragon/env/apps-www`.
-- Clients must include `X-Daemon-Token: <Terragon API key>` in each request; the proxy verifies the key using `auth.api.verifyApiKey` (same mechanism as the daemon event handler).
-- Access additionally requires that the requesting user have a positive Terragon credit balance; requests from users without remaining credits receive a `402 Payment Required` response.
+- The server injects `Authorization: Bearer <OPENAI_API_KEY>` from `@leo/env/apps-www`.
+- Clients must include `X-Daemon-Token: <Leo API key>` in each request; the proxy verifies the key using `auth.api.verifyApiKey` (same mechanism as the daemon event handler).
+- Access additionally requires that the requesting user have a positive Leo credit balance; requests from users without remaining credits receive a `402 Payment Required` response.
 - Query strings and request bodies are forwarded unchanged; streaming responses are passed through.
 
 ## Supported Endpoints
@@ -34,7 +34,7 @@ The route mirrors the incoming `Origin` header when present (otherwise `*`) and 
 
 To get a daemon token for testing, visit http://localhost:3000/api/internal/daemon-token and copy the token.
 
-Point Codex at the proxy by defining a Terragon model provider in your `config.toml` and setting the daemon token when invoking Codex:
+Point Codex at the proxy by defining a Leo model provider in your `config.toml` and setting the daemon token when invoking Codex:
 
 ```bash
 [model_providers.terry]

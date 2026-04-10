@@ -1,15 +1,15 @@
 "use server";
 
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
   deleteSlackAccount,
   upsertSlackSettings,
-} from "@terragon/shared/model/slack";
-import { encryptValue } from "@terragon/utils/encryption";
-import { SlackSettingsInsert } from "@terragon/shared/db/types";
+} from "@leo/shared/model/slack";
+import { encryptValue } from "@leo/utils/encryption";
+import { SlackSettingsInsert } from "@leo/shared/db/types";
 
 const SLACK_BOT_SCOPES = [
   "app_mentions:read",

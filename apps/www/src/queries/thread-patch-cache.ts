@@ -8,12 +8,12 @@ import {
   ThreadPageChat,
   ThreadPageShell,
   ThreadSourceMetadata,
-} from "@terragon/shared";
+} from "@leo/shared";
 import {
   BroadcastThreadPatch,
   BroadcastThreadShellRealtimeFields,
   BroadcastActiveChatRealtimeFields,
-} from "@terragon/types/broadcast";
+} from "@leo/types/broadcast";
 import {
   isMatchingThreadForFilter,
   isValidThreadListFilter,

@@ -1,5 +1,5 @@
 import { MetadataRoute } from "next";
-import { publicAppUrl } from "@terragon/env/next-public";
+import { publicAppUrl } from "@leo/env/next-public";
 
 export default function robots(): MetadataRoute.Robots {
   const baseUrl = publicAppUrl();

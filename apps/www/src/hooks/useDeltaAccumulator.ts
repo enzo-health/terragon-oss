@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import type { BroadcastThreadPatch } from "@leo/types/broadcast";
 
 /** Key format: `${messageId}:${partIndex}:${kind}` */
 export type DeltaKey = string;

@@ -1,5 +1,5 @@
 import React from "react";
-import { AllToolParts } from "@terragon/shared";
+import { AllToolParts } from "@leo/shared";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import { selectedModelAtom } from "@/atoms/user-flags";
 import { useAtomValue } from "jotai";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { newThread } from "@/server-actions/new-thread";
-import { ChildThreadInfo } from "@terragon/shared/db/types";
+import { ChildThreadInfo } from "@leo/shared/db/types";
 
 export function SuggestFollowupTaskTool({
   toolPart,

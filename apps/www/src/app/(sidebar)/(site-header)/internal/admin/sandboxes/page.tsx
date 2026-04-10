@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getAdminUserOrThrow } from "@/lib/auth-server";
 import { getActiveSandboxCount } from "@/server-actions/admin/sandbox";
-import { getThreadsForAdmin } from "@terragon/shared/model/threads";
+import { getThreadsForAdmin } from "@leo/shared/model/threads";
 import { SandboxesContent } from "@/components/admin/sandboxes-content";
 import { Card, CardContent } from "@/components/ui/card";
 

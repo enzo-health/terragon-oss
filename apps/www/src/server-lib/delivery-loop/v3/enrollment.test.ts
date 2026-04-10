@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   createTestUser,
   createTestThread,
-} from "@terragon/shared/model/test-helpers";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/model/test-helpers";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import { enrollWorkflow } from "./enrollment";
 import { getActiveWorkflowForThreadV3, getWorkflowHead } from "./store";
 

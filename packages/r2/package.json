@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/r2",
+  "name": "@leo/r2",
   "type": "module",
   "main": "index.ts",
   "scripts": {

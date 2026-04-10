@@ -7,13 +7,13 @@ import {
   ThreadPageShell,
   ThreadPageChat,
   ThreadSourceMetadata,
-} from "@terragon/shared/db/types";
-import { DBMessage, DBUserMessage } from "@terragon/shared";
+} from "@leo/shared/db/types";
+import { DBMessage, DBUserMessage } from "@leo/shared";
 import {
   BroadcastThreadPatch,
   BroadcastThreadShellRealtimeFields,
   BroadcastActiveChatRealtimeFields,
-} from "@terragon/types/broadcast";
+} from "@leo/types/broadcast";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

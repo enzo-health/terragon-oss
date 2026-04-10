@@ -7,7 +7,7 @@ import {
   getCronDescription,
   getNextRunTime,
   validateCronExpression,
-} from "@terragon/shared/automations/cron";
+} from "@leo/shared/automations/cron";
 import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { FormLabel } from "@/components/ui/form";
@@ -21,8 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { ScheduleTriggerConfig } from "@terragon/shared/automations";
-import { MAX_HOURS_SCHEDULE_AUTOMATIONS } from "@terragon/shared/automations/cron";
+import { ScheduleTriggerConfig } from "@leo/shared/automations";
+import { MAX_HOURS_SCHEDULE_AUTOMATIONS } from "@leo/shared/automations/cron";
 
 export function ScheduleTriggerForm({
   value,

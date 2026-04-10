@@ -1,7 +1,7 @@
 import { openai } from "@ai-sdk/openai";
 import { generateObject } from "ai";
 import * as z from "zod/v4";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 const compactSchema = z.object({
   summary: z.string().describe("Abridged summary of the session log"),

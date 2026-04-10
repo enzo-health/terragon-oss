@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/debug-scripts",
+  "name": "@leo/debug-scripts",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -13,7 +13,7 @@
     "@e2b/cli": "^1.5.1",
     "@e2b/code-interpreter": "1.2.0-beta.4",
     "@daytonaio/sdk": "0.115.2",
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "@types/node": "^22.13.10",
     "dotenv": "^16.5.0",
     "tsx": "^4.20.3",

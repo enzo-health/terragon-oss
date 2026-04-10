@@ -1,4 +1,4 @@
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { Redis } from "@upstash/redis";
 
 const LOCAL_REDIS_HTTP_MODE_PORTS = new Set(["8079"]);

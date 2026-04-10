@@ -13,7 +13,7 @@ import { QueryProvider } from "./providers/QueryProvider.js";
 import { RootLayout } from "./components/RootLayout.js";
 import { startMCPServer } from "./mcp-server/index.js";
 import { QACommand } from "./commands/qa.js";
-import type { AIModelExternal } from "@terragon/agent/types";
+import type { AIModelExternal } from "@leo/agent/types";
 
 // Set up global error handlers
 process.on("uncaughtException", (error) => {
@@ -37,12 +37,12 @@ const packageJson = JSON.parse(
 
 program
   .name("terry")
-  .description("Terry CLI - Terragon Labs coding assistant")
+  .description("Terry CLI - Leo Labs coding assistant")
   .version(packageJson.version);
 
 program
   .command("auth [apiKey]")
-  .description("Authenticate with your Terragon API key")
+  .description("Authenticate with your Leo API key")
   .action((apiKey: string | undefined) => {
     render(
       <QueryProvider>

@@ -22,14 +22,14 @@ describe("getEnv", () => {
     expect(env.GH_TOKEN).toBe("custom-token");
   });
 
-  it("should set TERRAGON to true", () => {
+  it("should set LEO to true", () => {
     const env = getEnv({
       githubAccessToken: "token",
       userEnv: [],
       agentCredentials: null,
     });
 
-    expect(env.TERRAGON).toBe("true");
+    expect(env.LEO).toBe("true");
   });
 
   it("should include user environment variables", () => {

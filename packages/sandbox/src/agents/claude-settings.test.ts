@@ -26,7 +26,7 @@ describe("buildClaudeCodeSettings", () => {
     const parsed = JSON.parse(buildClaudeCodeSettings());
     const hookConfig = parsed.hooks.Stop[0].hooks[0];
     expect(hookConfig.type).toBe("command");
-    expect(hookConfig.command).toBe("/tmp/terragon-quality-check.sh");
+    expect(hookConfig.command).toBe("/tmp/leo-quality-check.sh");
     expect(hookConfig.timeout).toBe(300);
   });
 

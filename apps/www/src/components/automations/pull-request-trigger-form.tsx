@@ -1,6 +1,6 @@
 "use client";
 
-import { PullRequestTriggerConfig } from "@terragon/shared/automations";
+import { PullRequestTriggerConfig } from "@leo/shared/automations";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";

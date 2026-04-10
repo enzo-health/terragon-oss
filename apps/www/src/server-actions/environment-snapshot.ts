@@ -9,7 +9,7 @@ import {
 import { UserFacingError } from "@/lib/server-actions";
 import { waitUntil } from "@vercel/functions";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import {
   getEnvironment,
   getDecryptedEnvironmentVariables,
@@ -19,15 +19,15 @@ import {
   updateEnvironment,
   updateEnvironmentSnapshot,
   getReadySnapshot,
-} from "@terragon/shared/model/environments";
-import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
-import type { SandboxSize } from "@terragon/types/sandbox";
+} from "@leo/shared/model/environments";
+import type { EnvironmentSnapshot } from "@leo/shared/db/schema";
+import type { SandboxSize } from "@leo/types/sandbox";
 import {
   buildRepoSnapshot,
   deleteRepoSnapshot,
   getSetupScriptHash,
   getSnapshotBaseTemplateId,
-} from "@terragon/sandbox/snapshot-builder";
+} from "@leo/sandbox/snapshot-builder";
 
 export const buildEnvironmentSnapshot = userOnlyAction(
   async function buildEnvironmentSnapshot(

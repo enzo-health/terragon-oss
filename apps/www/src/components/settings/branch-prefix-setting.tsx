@@ -39,7 +39,7 @@ export function BranchPrefixSetting({
           value={prefix}
           onChange={(e) => setPrefix(e.target.value)}
           className="h-8 w-32"
-          placeholder="e.g. terragon/"
+          placeholder="e.g. leo/"
         />
         {isDirty && (
           <Button size="sm" onClick={handleSave} disabled={isSaving}>

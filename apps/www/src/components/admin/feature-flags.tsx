@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import { Trash2 } from "lucide-react";
-import { FeatureFlag, UserFeatureFlag } from "@terragon/shared/db/types";
+import { FeatureFlag, UserFeatureFlag } from "@leo/shared/db/types";
 import Link from "next/link";
 import {
   GlobalFeatureFlagToggle,

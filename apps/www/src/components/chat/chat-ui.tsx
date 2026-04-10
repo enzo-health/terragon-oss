@@ -16,8 +16,8 @@ import {
   GithubPRStatus,
   GithubCheckStatus,
   ThreadChatInfoFull,
-} from "@terragon/shared";
-import { AIAgent } from "@terragon/agent/types";
+} from "@leo/shared";
+import { AIAgent } from "@leo/agent/types";
 import { useRealtimeThread } from "@/hooks/useRealtime";
 import { useIncrementalUIMessages } from "./toUIMessages";
 import {
@@ -60,13 +60,13 @@ import { LeafLoading } from "./leaf-loading";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
-import { ensureAgent } from "@terragon/agent/utils";
-import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
+import { ensureAgent } from "@leo/agent/utils";
+import { getArtifactDescriptors } from "@leo/shared/db/artifact-descriptors";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapError } from "@/lib/server-actions";
 import { usePlatform } from "@/hooks/use-platform";
 import dynamic from "next/dynamic";
-import { ThreadInfoFull } from "@terragon/shared";
+import { ThreadInfoFull } from "@leo/shared";
 import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
 import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
 import {

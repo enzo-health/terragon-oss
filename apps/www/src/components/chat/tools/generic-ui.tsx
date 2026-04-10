@@ -1,4 +1,4 @@
-import { AllToolParts } from "@terragon/shared";
+import { AllToolParts } from "@leo/shared";
 import { useTheme } from "next-themes";
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";

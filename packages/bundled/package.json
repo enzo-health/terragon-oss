@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/bundled",
+  "name": "@leo/bundled",
   "description": "Bundles various scripts and exports them as a string.",
   "version": "1.0.0",
   "type": "module",
@@ -20,11 +20,11 @@
   },
   "packageManager": "pnpm@10.14.0",
   "dependencies": {
-    "@terragon/daemon": "workspace:*",
-    "@terragon/mcp-server": "workspace:*"
+    "@leo/daemon": "workspace:*",
+    "@leo/mcp-server": "workspace:*"
   },
   "devDependencies": {
-    "@terragon/tsconfig": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
     "esbuild": "^0.24.0",
     "typescript": "^5.8.3"
   }

@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Check, Copy, Link, RefreshCw, Split } from "lucide-react";
-import { AIAgent, AIModel } from "@terragon/agent/types";
-import { DBUserMessage, GitDiffStats, UIMessage } from "@terragon/shared";
+import { AIAgent, AIModel } from "@leo/agent/types";
+import { DBUserMessage, GitDiffStats, UIMessage } from "@leo/shared";
 import { cn } from "@/lib/utils";
 import { useParams } from "next/navigation";
-import { getModelDisplayName } from "@terragon/agent/utils";
+import { getModelDisplayName } from "@leo/agent/utils";
 import { RedoTaskDialog } from "./redo-task-dialog";
 import { ForkTaskDialog } from "./fork-task-dialog";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";

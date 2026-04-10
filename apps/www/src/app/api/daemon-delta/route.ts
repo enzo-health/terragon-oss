@@ -1,7 +1,7 @@
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
-import type { DaemonDelta } from "@terragon/daemon/shared";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import { publishDeltaBroadcast } from "@leo/shared/broadcast-server";
+import type { DaemonDelta } from "@leo/daemon/shared";
+import { appendTokenStreamEvents } from "@leo/shared/model/token-stream-event";
 import { db } from "@/lib/db";
 import {
   isLocalRedisHttpMode,

@@ -7,21 +7,21 @@ import {
   markDispatchIntentCompleted,
   markDispatchIntentDispatched,
   markDispatchIntentFailed,
-} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+} from "@leo/shared/delivery-loop/store/dispatch-intent-store";
 import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
-} from "@terragon/shared/model/agent-run-context";
+} from "@leo/shared/model/agent-run-context";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
-} from "@terragon/daemon/shared";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+} from "@leo/daemon/shared";
+import { LEGACY_THREAD_CHAT_ID } from "@leo/shared/utils/thread-utils";
+import { getActiveWorkflowForThread } from "@leo/shared/delivery-loop/store/workflow-store";
+import { appendTokenStreamEvents } from "@leo/shared/model/token-stream-event";
+import { publishDeltaBroadcast } from "@leo/shared/broadcast-server";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -141,7 +141,7 @@ vi.mock("@/lib/db", () => ({
   db: dbMocks.db,
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
+vi.mock("@leo/shared/delivery-loop/store/dispatch-intent-store", () => ({
   createDispatchIntent: deliveryLoopModelMocks.createDispatchIntent,
   markDispatchIntentDispatched:
     deliveryLoopModelMocks.markDispatchIntentDispatched,
@@ -167,7 +167,7 @@ vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
   getActiveDispatchIntent: dispatchIntentMocks.getActiveDispatchIntent,
 }));
 
-vi.mock("@terragon/shared/model/agent-run-context", () => ({
+vi.mock("@leo/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
   updateAgentRunContext: vi.fn(),
 }));
@@ -175,7 +175,7 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
 // Explicit mock for threads module — only mock the functions the route directly imports.
 // Using a factory (not auto-mock) prevents transitive consumers like @/agent/update-status
 // from receiving mocked versions of functions they rely on internally.
-vi.mock("@terragon/shared/model/threads", () => ({
+vi.mock("@leo/shared/model/threads", () => ({
   getThreadChat: vi.fn(),
   getThreadMinimal: vi.fn(),
   updateThreadChat: vi.fn(),
@@ -186,15 +186,15 @@ vi.mock("@/agent/update-status", () => ({
   updateThreadChatWithTransition: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+vi.mock("@leo/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@terragon/shared/model/token-stream-event", () => ({
+vi.mock("@leo/shared/model/token-stream-event", () => ({
   appendTokenStreamEvents: tokenStreamMocks.appendTokenStreamEvents,
 }));
 
-vi.mock("@terragon/shared/broadcast-server", () => ({
+vi.mock("@leo/shared/broadcast-server", () => ({
   publishDeltaBroadcast: deltaBroadcastMocks.publishDeltaBroadcast,
 }));
 

@@ -106,7 +106,7 @@ export async function startMCPServer(): Promise<void> {
       tools: [
         {
           name: "terry_list",
-          description: "List all tasks in Terragon (calls 'terry list')",
+          description: "List all tasks in Leo (calls 'terry list')",
           inputSchema: {
             type: "object",
             properties: {},
@@ -114,7 +114,7 @@ export async function startMCPServer(): Promise<void> {
         },
         {
           name: "terry_create",
-          description: "Create a new task in Terragon (calls 'terry create')",
+          description: "Create a new task in Leo (calls 'terry create')",
           inputSchema: {
             type: "object",
             properties: {

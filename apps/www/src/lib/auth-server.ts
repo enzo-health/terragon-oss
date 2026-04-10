@@ -7,12 +7,12 @@ import {
   UserSettings,
   UserFlags,
   UserCredentials,
-} from "@terragon/shared";
-import { getUserSettings } from "@terragon/shared/model/user";
-import { getUserFlags } from "@terragon/shared/model/user-flags";
+} from "@leo/shared";
+import { getUserSettings } from "@leo/shared/model/user";
+import { getUserFlags } from "@leo/shared/model/user-flags";
 import { cache } from "react";
-import { env } from "@terragon/env/apps-www";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { env } from "@leo/env/apps-www";
+import { getFeatureFlagsForUser } from "@leo/shared/model/feature-flags";
 import { UserCookies } from "@/lib/cookies";
 import { getUserCookies } from "./cookies-server";
 import { redirect } from "next/navigation";
@@ -24,7 +24,7 @@ import {
   ServerActionResult,
 } from "./server-actions";
 import { getUserCredentials } from "@/server-lib/user-credentials";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { isGitHubOrgMember } from "./github";
 
 const initialAdminEmails = new Set(
@@ -483,7 +483,9 @@ function getUserFlagsNormalized(userFlags: UserFlags) {
 
 export async function validInternalRequestOrThrow() {
   const requestHeaders = await headers();
-  const secret = requestHeaders.get("X-Terragon-Secret");
+  const secret =
+    requestHeaders.get("X-Leo-Secret") ??
+    requestHeaders.get("X-Terragon-Secret");
   if (secret !== env.INTERNAL_SHARED_SECRET) {
     console.error("Unauthorized internal request");
     throw new Error("Unauthorized");

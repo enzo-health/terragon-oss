@@ -1,15 +1,15 @@
 ---
-description: Terragon AI coding assistant platform development conventions and guidelines
+description: Leo AI coding assistant platform development conventions and guidelines
 globs: 
 alwaysApply: true
 ---
-# Terragon Project Conventions
+# Leo Project Conventions
 
-This document outlines key conventions and commands for working with the Terragon AI coding assistant platform monorepo.
+This document outlines key conventions and commands for working with the Leo AI coding assistant platform monorepo.
 
 ## Project Overview
 
-Terragon is an AI-powered coding assistant platform that integrates Claude AI with real development environments through multi-provider sandbox orchestration, GitHub workflows, and real-time collaboration.
+Leo is an AI-powered coding assistant platform that integrates Claude AI with real development environments through multi-provider sandbox orchestration, GitHub workflows, and real-time collaboration.
 
 ## Package Management
 
@@ -28,13 +28,13 @@ This is a sophisticated monorepo with multiple apps and packages:
 - `apps/broadcast` - PartyKit WebSocket service for real-time features
 
 ### Shared Packages
-- `@terragon/shared` - Database models, schemas, core utilities
-- `@terragon/daemon` - Sandbox agent runtime and communication
-- `@terragon/bundled` - Bundled scripts for deployment (includes the daemon cli and mcp server)
-- `@terragon/env` - Environment configuration management
-- `@terragon/r2` - Cloudflare R2 storage integration
-- `@terragon/dev-env` - Docker development environment
-- `@terragon/tsconfig` - Shared TypeScript configuration
+- `@leo/shared` - Database models, schemas, core utilities
+- `@leo/daemon` - Sandbox agent runtime and communication
+- `@leo/bundled` - Bundled scripts for deployment (includes the daemon cli and mcp server)
+- `@leo/env` - Environment configuration management
+- `@leo/r2` - Cloudflare R2 storage integration
+- `@leo/dev-env` - Docker development environment
+- `@leo/tsconfig` - Shared TypeScript configuration
 
 ## Development Commands
 
@@ -109,7 +109,7 @@ cd apps/broadcast && pnpm deploy
 - Use Jotai for client-side state management
 - Follow established patterns in `src/components/`
 - Implement proper error handling and loading states
-- Use workspace packages (`@terragon/*`) for shared code
+- Use workspace packages (`@leo/*`) for shared code
 
 ## Architecture Components
 
@@ -187,7 +187,7 @@ cd apps/broadcast && pnpm deploy
 ### Configuration Files
 - `.env.example` files in apps/www, apps/broadcast, packages
 - Docker Compose with PostgreSQL 16, Redis 7
-- TypeScript shared config via `@terragon/tsconfig`
+- TypeScript shared config via `@leo/tsconfig`
 
 ## Reference Files
 

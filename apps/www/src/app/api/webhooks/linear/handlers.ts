@@ -1,20 +1,20 @@
 import { db } from "@/lib/db";
-import { publicAppUrl } from "@terragon/env/next-public";
-import type { LinearMentionSourceMetadataInsert } from "@terragon/shared/db/types";
+import { publicAppUrl } from "@leo/env/next-public";
+import type { LinearMentionSourceMetadataInsert } from "@leo/shared/db/types";
 import {
   getLinearAccountForLinearUserId,
   getLinearSettingsForUserAndOrg,
   getLinearInstallationForOrg,
   claimLinearWebhookDelivery,
   completeLinearWebhookDelivery,
-} from "@terragon/shared/model/linear";
+} from "@leo/shared/model/linear";
 import {
   getThreadByLinearAgentSessionId,
   getThreadByLinearDeliveryId,
   getThread,
-} from "@terragon/shared/model/threads";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+} from "@leo/shared/model/threads";
+import { getPrimaryThreadChat } from "@leo/shared/utils/thread-utils";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { getDefaultModel } from "@/server-lib/default-ai-model";
@@ -25,10 +25,10 @@ import {
   type LinearClientFactory,
   type AgentSessionExternalUrlInput,
 } from "@/server-lib/linear-agent-activity";
-import { getEnvironments } from "@terragon/shared/model/environments";
+import { getEnvironments } from "@leo/shared/model/environments";
 import { LinearClient, type RepositorySuggestionsPayload } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
-import { decryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import { decryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
 
 // ---------------------------------------------------------------------------
 // Webhook payload types (mirrors @linear/sdk AgentSessionEventWebhookPayload)
@@ -452,7 +452,7 @@ async function createThreadRecord({
     return;
   }
 
-  // Resolve user from agentSession.creatorId → linearAccount.linearUserId → Terragon userId
+  // Resolve user from agentSession.creatorId → linearAccount.linearUserId → Leo userId
   const actorId = payload.agentSession.creatorId;
 
   if (!actorId) {
@@ -628,7 +628,7 @@ async function createThreadRecord({
 
   // Update agent session with external URL (typed as { label, url } per Linear SDK)
   const externalUrls: AgentSessionExternalUrlInput[] = [
-    { label: "Terragon Task", url: taskUrl },
+    { label: "Leo Task", url: taskUrl },
   ];
   await updateAgentSession({
     sessionId: agentSessionId,

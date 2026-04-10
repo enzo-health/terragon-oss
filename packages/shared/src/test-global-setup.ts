@@ -2,14 +2,14 @@ import {
   SetupResult,
   setupTestContainers,
   teardownTestContainers,
-} from "@terragon/dev-env/test-global-setup";
+} from "@leo/dev-env/test-global-setup";
 import path from "path";
 import { execSync } from "child_process";
 import fs from "fs/promises";
 import { unlinkSync } from "fs";
 import os from "os";
 
-const LOCK_PATH = path.join(os.tmpdir(), "terragon-shared-test-setup.lock");
+const LOCK_PATH = path.join(os.tmpdir(), "leo-shared-test-setup.lock");
 const LOCK_TIMEOUT_MS = 60_000;
 
 let setupResult: SetupResult;

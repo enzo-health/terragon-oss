@@ -1,7 +1,7 @@
 "use client";
 
-import { DBMessage, ThreadInfoFull } from "@terragon/shared";
-import { type ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { DBMessage, ThreadInfoFull } from "@leo/shared";
+import { type ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import React, {
   useCallback,
   useEffect,

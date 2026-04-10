@@ -1,16 +1,16 @@
 import { auth } from "@/lib/auth";
-import { DaemonMessage } from "@terragon/daemon/shared";
-import { ThreadErrorType } from "@terragon/shared";
-import { ISandboxSession } from "@terragon/sandbox/types";
-import { sendMessage } from "@terragon/sandbox/daemon";
+import { DaemonMessage } from "@leo/daemon/shared";
+import { ThreadErrorType } from "@leo/shared";
+import { ISandboxSession } from "@leo/sandbox/types";
+import { sendMessage } from "@leo/sandbox/daemon";
 import { setActiveThreadChat } from "./sandbox-resource";
 import { wrapError } from "./error";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { getFeatureFlagsForUser } from "@leo/shared/model/feature-flags";
 import { db } from "@/lib/db";
-import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
-import { AIAgent } from "@terragon/agent/types";
+import { updateAgentRunContext } from "@leo/shared/model/agent-run-context";
+import { AIAgent } from "@leo/agent/types";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
-import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
+import { DeliveryLoopFailureCategory } from "@leo/shared/delivery-loop/domain/failure";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends any
   ? Omit<T, K>

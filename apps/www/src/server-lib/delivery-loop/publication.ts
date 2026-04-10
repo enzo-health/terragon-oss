@@ -1,20 +1,20 @@
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
-import { publicAppUrl } from "@terragon/env/next-public";
-import { type DeliveryOutboxErrorClass } from "@terragon/shared/delivery-loop/store/outbox-types";
+import { publicAppUrl } from "@leo/env/next-public";
+import { type DeliveryOutboxErrorClass } from "@leo/shared/delivery-loop/store/outbox-types";
 import {
   persistWorkflowStatusCommentReference,
   clearWorkflowStatusCommentReference,
   persistWorkflowCheckRunReference,
-} from "@terragon/shared/delivery-loop/store/workflow-github-refs";
-import type { DB } from "@terragon/shared/db";
+} from "@leo/shared/delivery-loop/store/workflow-github-refs";
+import type { DB } from "@leo/shared/db";
 import { eq } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { z } from "zod/v4";
 
 const CHECK_SUMMARY_PAYLOAD_SCHEMA = z.object({
   repoFullName: z.string().min(1),
   prNumber: z.number().int().positive(),
-  title: z.string().min(1).default("Terragon Delivery Loop"),
+  title: z.string().min(1).default("Leo Delivery Loop"),
   summary: z.string().min(1),
   status: z.enum(["queued", "in_progress", "completed"]).default("completed"),
   conclusion: z
@@ -33,8 +33,8 @@ const CHECK_SUMMARY_PAYLOAD_SCHEMA = z.object({
   artifactR2Key: z.string().min(1).optional(),
 });
 
-const SDLC_STATUS_COMMENT_MARKER_PREFIX = "terragon-sdlc-loop-status-comment:";
-const SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX = "terragon-sdlc-loop-check-run:";
+const SDLC_STATUS_COMMENT_MARKER_PREFIX = "leo-sdlc-loop-status-comment:";
+const SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX = "leo-sdlc-loop-check-run:";
 
 function getErrorStatus(error: unknown): number | null {
   if (!error || typeof error !== "object" || !("status" in error)) {
@@ -66,7 +66,7 @@ async function buildReviewerSafeVideoArtifactLink(
     return null;
   }
 
-  return `🎥 [Session video artifact (view in Terragon)](${publicAppUrl()}/task/${threadId})`;
+  return `🎥 [Session video artifact (view in Leo)](${publicAppUrl()}/task/${threadId})`;
 }
 
 function getDeliveryStatusCommentMarker(loopId: string): string {

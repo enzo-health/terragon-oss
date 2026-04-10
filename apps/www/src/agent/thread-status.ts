@@ -1,4 +1,4 @@
-import { ThreadStatusDeprecated, ThreadStatus } from "@terragon/shared";
+import { ThreadStatusDeprecated, ThreadStatus } from "@leo/shared";
 
 export function isAgentWorking(status: ThreadStatus) {
   switch (status) {

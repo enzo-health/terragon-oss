@@ -1,5 +1,5 @@
 import { adminOnly } from "@/lib/auth-server";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { redirect } from "next/navigation";
 
 /**

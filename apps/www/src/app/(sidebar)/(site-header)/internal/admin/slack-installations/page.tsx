@@ -1,6 +1,6 @@
 import { AdminSlackInstallations } from "@/components/admin/slack-installations";
 import { getAdminUserOrThrow } from "@/lib/auth-server";
-import { getSlackInstallationsForAdmin } from "@terragon/shared/model/slack";
+import { getSlackInstallationsForAdmin } from "@leo/shared/model/slack";
 import { db } from "@/lib/db";
 
 export default async function SlackInstallationsPage() {

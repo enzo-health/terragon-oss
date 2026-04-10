@@ -5,11 +5,11 @@ import { DataTable } from "@/components/ui/data-table";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import { Pill } from "@/components/shared/pill";
 import { format } from "date-fns";
-import { Automation } from "@terragon/shared/db/types";
+import { Automation } from "@leo/shared/db/types";
 import {
   triggerTypeLabels,
   AutomationTriggerType,
-} from "@terragon/shared/automations";
+} from "@leo/shared/automations";
 import { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";

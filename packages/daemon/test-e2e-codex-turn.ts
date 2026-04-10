@@ -22,7 +22,7 @@ const MODEL = "gpt-5.3-codex-medium";
 const PROMPT =
   'Create a file called hello.txt with the content "Hello from Codex!" and then cat it to verify.';
 const TIMEOUT_MS = 120_000;
-const IMAGE = "ghcr.io/terragon-labs/containers-test:latest";
+const IMAGE = "ghcr.io/leo-labs/containers-test:latest";
 const REPO = "SawyerHood/test-project"; // small public repo used in sandbox tests
 
 // ─── helpers ─────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ console.log(`   cloned ${REPO} → /root/repo`);
 
 console.log("⚙️   Configuring git & codex...");
 dockerExec(containerId, 'git config --global user.name "E2E Test"');
-dockerExec(containerId, 'git config --global user.email "test@terragon.dev"');
+dockerExec(containerId, 'git config --global user.email "test@leo.dev"');
 
 // Write codex config.toml with our model provider settings
 dockerExec(
@@ -310,7 +310,7 @@ async function run() {
   // Step 1: initialize
   console.log("─── Step 1: initialize ───");
   await send("initialize", {
-    clientInfo: { name: "terragon-daemon-e2e-test", version: "1.0" },
+    clientInfo: { name: "leo-daemon-e2e-test", version: "1.0" },
     capabilities: {},
   });
   sendNotification("initialized", {});

@@ -948,7 +948,7 @@ export class CodexAppServerManager {
         method: "initialize",
         params: {
           clientInfo: {
-            name: "terragon-daemon",
+            name: "leo-daemon",
             version: "1.0",
           },
           capabilities: {},

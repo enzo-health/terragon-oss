@@ -1,20 +1,20 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import {
   createTestUser,
   createTestThread,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import { saveClaudeTokensForTest } from "@/test-helpers/agent";
 import {
   getThreadChat,
   updateThread,
   getThreadMinimal,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import { db } from "@/lib/db";
 import { withThreadChat, withThreadSandboxSession } from "./thread-resource";
 import { ThreadError } from "./error";
 import { waitUntilResolved, mockWaitUntil } from "@/test-helpers/mock-next";
-import { hibernateSandbox } from "@terragon/sandbox";
+import { hibernateSandbox } from "@leo/sandbox";
 import { nanoid } from "nanoid/non-secure";
 
 describe("thread-resource", () => {

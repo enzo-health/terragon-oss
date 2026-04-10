@@ -35,7 +35,7 @@ export const OnboardingCompletionReminderEmail = ({
 
               <Text className="text-base text-gray-700 mb-3">
                 You've connected GitHub and Claude Code, but haven't created a
-                task, so you aren't seeing Terragon shine!
+                task, so you aren't seeing Leo shine!
               </Text>
 
               <Text className="text-base text-gray-700 mb-4">
@@ -91,7 +91,7 @@ export const OnboardingCompletionReminderEmail = ({
               <Text className="text-base text-gray-700 mt-6 mb-0">
                 Best,
                 <br />
-                Terragon team
+                Leo team
               </Text>
             </Section>
           </Container>

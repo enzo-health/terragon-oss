@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildOpencodeConfig, getModelId } from "./opencode-config";
-import { agentToModels } from "@terragon/agent/utils";
-import { validateProviderModel } from "@terragon/agent/proxy";
+import { agentToModels } from "@leo/agent/utils";
+import { validateProviderModel } from "@leo/agent/proxy";
 
 describe("buildOpencodeConfig", () => {
   it("should build a valid opencode config", () => {
@@ -41,7 +41,7 @@ describe("buildOpencodeConfig", () => {
         "provider": {
           "terry": {
             "npm": "@ai-sdk/openai-compatible",
-            "name": "Terragon",
+            "name": "Leo",
             "options": {
               "baseURL": "https://www.terragonlabs.com/api/proxy/openrouter/v1",
               "headers": {
@@ -77,7 +77,7 @@ describe("buildOpencodeConfig", () => {
           },
           "terry-google": {
             "npm": "@ai-sdk/google",
-            "name": "Terragon Google",
+            "name": "Leo Google",
             "options": {
               "baseURL": "https://www.terragonlabs.com/api/proxy/google/v1",
               "apiKey": "unused",
@@ -98,7 +98,7 @@ describe("buildOpencodeConfig", () => {
           },
           "terry-ant": {
             "npm": "@ai-sdk/anthropic",
-            "name": "Terragon Anthropic",
+            "name": "Leo Anthropic",
             "options": {
               "baseURL": "https://www.terragonlabs.com/api/proxy/anthropic/v1",
               "apiKey": "unused",
@@ -115,7 +115,7 @@ describe("buildOpencodeConfig", () => {
           },
           "terry-oai": {
             "npm": "@ai-sdk/openai",
-            "name": "Terragon OpenAI",
+            "name": "Leo OpenAI",
             "options": {
               "baseURL": "https://www.terragonlabs.com/api/proxy/openai/v1",
               "apiKey": "unused",

@@ -8,23 +8,23 @@ import {
   afterAll,
 } from "vitest";
 import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import {
   createTestUser,
   setFeatureFlagOverrideForTest,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import {
   upsertLinearAccount,
   upsertLinearInstallation,
   upsertLinearSettings,
-} from "@terragon/shared/model/linear";
+} from "@leo/shared/model/linear";
 import { db } from "@/lib/db";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import type { LinearClientFactory } from "@/server-lib/linear-agent-activity";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
-import { encryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import { encryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
 
 // Mock newThreadInternal
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -317,7 +317,7 @@ describe("handlers", () => {
       );
     });
 
-    it("updates the agent session with the Terragon task URL", async () => {
+    it("updates the agent session with the Leo task URL", async () => {
       const payload = makeCreatedPayload();
 
       await handleAgentSessionEvent(payload, "delivery-3", {
@@ -330,7 +330,7 @@ describe("handlers", () => {
         expect.objectContaining({
           externalUrls: expect.arrayContaining([
             expect.objectContaining({
-              label: "Terragon Task",
+              label: "Leo Task",
               url: expect.stringContaining("test-thread-id"),
             }),
           ]),
@@ -370,7 +370,7 @@ describe("handlers", () => {
       // Mock claimLinearWebhookDelivery to simulate the DB-level idempotency gate:
       // first call claims the delivery (claimed: true), second call finds it already
       // claimed (claimed: false) and skips thread creation.
-      const linearModule = await import("@terragon/shared/model/linear");
+      const linearModule = await import("@leo/shared/model/linear");
       const spy = vi
         .spyOn(linearModule, "claimLinearWebhookDelivery")
         .mockResolvedValueOnce({ claimed: true }) // First call: claim succeeds → create
@@ -398,7 +398,7 @@ describe("handlers", () => {
     });
 
     it("throws when delivery completion persistence fails so webhook delivery can retry", async () => {
-      const linearModule = await import("@terragon/shared/model/linear");
+      const linearModule = await import("@leo/shared/model/linear");
       const completeSpy = vi
         .spyOn(linearModule, "completeLinearWebhookDelivery")
         .mockRejectedValueOnce(new Error("completion write failed"));
@@ -415,8 +415,8 @@ describe("handlers", () => {
     });
 
     it("reconciles retries to an existing delivery-mapped thread without creating a duplicate", async () => {
-      const linearModule = await import("@terragon/shared/model/linear");
-      const threadsModule = await import("@terragon/shared/model/threads");
+      const linearModule = await import("@leo/shared/model/linear");
+      const threadsModule = await import("@leo/shared/model/threads");
       const byDeliverySpy = vi
         .spyOn(threadsModule, "getThreadByLinearDeliveryId")
         .mockResolvedValueOnce(null)
@@ -470,10 +470,8 @@ describe("handlers", () => {
     });
 
     it("queues follow-up when thread found for agentSessionId (happy path)", async () => {
-      const threadsModule = await import("@terragon/shared/model/threads");
-      const threadUtilsModule = await import(
-        "@terragon/shared/utils/thread-utils"
-      );
+      const threadsModule = await import("@leo/shared/model/threads");
+      const threadUtilsModule = await import("@leo/shared/utils/thread-utils");
 
       // Stub thread lookup to return a fake thread with agentSessionId in metadata
       const fakeThread = {
@@ -540,7 +538,7 @@ describe("handlers", () => {
     });
 
     it("skips follow-up when prompted body is empty or whitespace", async () => {
-      const threadsModule = await import("@terragon/shared/model/threads");
+      const threadsModule = await import("@leo/shared/model/threads");
 
       const fakeThread = {
         id: "prompted-thread-id",

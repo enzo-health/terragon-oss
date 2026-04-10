@@ -18,7 +18,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsSection, SettingsWithCTA } from "../settings-row";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { AIAgent, AIModel } from "@leo/agent/types";
 import { Plus } from "lucide-react";
 import {
   Dialog,
@@ -36,7 +36,7 @@ import {
   getModelDisplayName,
   isModelEnabledByDefault,
   isConnectedCredentialsSupported,
-} from "@terragon/agent/utils";
+} from "@leo/agent/utils";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentIcon } from "@/components/chat/agent-icon";

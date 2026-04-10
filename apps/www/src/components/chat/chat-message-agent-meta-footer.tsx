@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { UIAgentMessage } from "@terragon/shared";
+import { UIAgentMessage } from "@leo/shared";
 import { formatDuration } from "./chat-message.utils";
 
 export function AgentMetaFooter({

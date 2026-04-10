@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DBUserMessage } from "@terragon/shared";
+import type { DBUserMessage } from "@leo/shared";
 
 const threadMocks = vi.hoisted(() => ({
   getThreadChat: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("@/lib/posthog-server", () => ({
   }),
 }));
 
-vi.mock("@terragon/shared/model/threads", () => ({
+vi.mock("@leo/shared/model/threads", () => ({
   getThreadChat: threadMocks.getThreadChat,
   updateThreadChat: threadMocks.updateThreadChat,
   getThreadMinimal: vi.fn(),

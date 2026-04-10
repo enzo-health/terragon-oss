@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DaemonDelta } from "@terragon/daemon/shared";
+import type { DaemonDelta } from "@leo/daemon/shared";
 import {
   buildDeltaSequenceKey,
   computeMaxSeqByKey,

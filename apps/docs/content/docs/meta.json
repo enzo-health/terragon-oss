@@ -6,7 +6,7 @@
     "quick-start",
     "common-workflows",
 
-    "---Using Terragon---",
+    "---Using Leo---",
     "tasks",
     "automations",
     "integrations/github-integration",
@@ -24,6 +24,6 @@
     "---Help & Resources---",
     "...resources",
     "security-permissions",
-    "[Terragon App](https://www.terragonlabs.com)"
+    "[Leo App](https://www.terragonlabs.com)"
   ]
 }

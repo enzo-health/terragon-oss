@@ -47,14 +47,14 @@ import {
   handleIssueEvent,
 } from "./handlers";
 import { Webhooks } from "@octokit/webhooks";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { randomUUID } from "crypto";
 import {
   claimGithubWebhookDelivery,
   completeGithubWebhookDelivery,
   getGithubWebhookClaimHttpStatus,
   releaseGithubWebhookDeliveryClaim,
-} from "@terragon/shared/delivery-loop/store/webhook-delivery-store";
+} from "@leo/shared/delivery-loop/store/webhook-delivery-store";
 import { db } from "@/lib/db";
 
 export async function POST(request: NextRequest) {

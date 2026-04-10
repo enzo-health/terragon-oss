@@ -2,10 +2,10 @@
 
 import { db } from "@/lib/db";
 import { adminOnly } from "@/lib/auth-server";
-import { ThreadInfoFull, User } from "@terragon/shared";
-import { getUser } from "@terragon/shared/model/user";
-import { getThreadWithPermissions } from "@terragon/shared/model/threads";
-import { getClaudeSessionCheckpoint } from "@terragon/shared/model/claude-session";
+import { ThreadInfoFull, User } from "@leo/shared";
+import { getUser } from "@leo/shared/model/user";
+import { getThreadWithPermissions } from "@leo/shared/model/threads";
+import { getClaudeSessionCheckpoint } from "@leo/shared/model/claude-session";
 import { getR2ClientForFileUploadType } from "@/server-lib/r2-file-upload";
 
 export type ThreadForAdmin = ThreadInfoFull & {

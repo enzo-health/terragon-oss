@@ -467,7 +467,7 @@ describe("isInfrastructureFailure", () => {
     expect(
       isInfrastructureFailure({
         category: "runtime_crash",
-        message: "Error: Cannot find module MODULE_NOT_FOUND terragon-daemon",
+        message: "Error: Cannot find module MODULE_NOT_FOUND leo-daemon",
       }),
     ).toBe(true);
   });

@@ -1,26 +1,26 @@
 import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { getPendingToolCallErrorMessages } from "@/lib/db-message-helpers";
 import { db } from "@/lib/db";
-import { ClaudeMessage } from "@terragon/daemon/shared";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import { ClaudeMessage } from "@leo/daemon/shared";
+import { publishBroadcastUserMessage } from "@leo/shared/broadcast-server";
 import {
   DBMessage,
   DBSystemMessage,
   DBUserMessage,
   ThreadChatInsert,
   ThreadStatus,
-} from "@terragon/shared";
+} from "@leo/shared";
 import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
 import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
-import { extendSandboxLife } from "@terragon/sandbox";
+import { extendSandboxLife } from "@leo/sandbox";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import {
   internalPOST,
@@ -41,26 +41,26 @@ import {
 } from "@/agent/msg/helpers";
 import { getEligibleQueuedThreadChats } from "./process-queued-thread";
 import { trackUsageEvents } from "./usage-events";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
 import { compactThreadChat } from "./compact";
 import {
   emitLinearActivitiesForDaemonEvent,
   updateAgentSession,
 } from "./linear-agent-activity";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { getAgentRunContextByRunId } from "@leo/shared/model/agent-run-context";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
-import { publicAppUrl } from "@terragon/env/next-public";
+import type { ThreadSourceMetadata } from "@leo/shared/db/types";
+import type { DeliveryLoopFailureCategory } from "@leo/shared/delivery-loop/domain/failure";
+import { publicAppUrl } from "@leo/env/next-public";
 import { redis } from "@/lib/redis";
 import {
   evaluateRetryDecision,
   resetRetryCounter,
 } from "@/server-lib/delivery-loop/retry-policy";
 import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
-import { hashFailureMessage } from "@terragon/shared/delivery-loop/domain/failure-signature";
-import { DELIVERY_LOOP_FAILURE_ACTION_TABLE } from "@terragon/shared/delivery-loop/domain/failure";
-import * as schema from "@terragon/shared/db/schema";
+import { hashFailureMessage } from "@leo/shared/delivery-loop/domain/failure-signature";
+import { DELIVERY_LOOP_FAILURE_ACTION_TABLE } from "@leo/shared/delivery-loop/domain/failure";
+import * as schema from "@leo/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
 /** Workflow states eligible for auto-retry on generic agent error (v2 + v3). */
@@ -1137,7 +1137,7 @@ async function handleThreadFinish({
               await updateAgentSession({
                 sessionId: linearMeta.agentSessionId!,
                 accessToken: tokenResult.accessToken,
-                externalUrls: [{ label: "Terragon Task", url: taskUrl }],
+                externalUrls: [{ label: "Leo Task", url: taskUrl }],
               });
             }
           } catch (error) {

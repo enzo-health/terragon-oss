@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { DBUserMessage } from "@terragon/shared";
-import { AIAgent } from "@terragon/agent/types";
+import { DBUserMessage } from "@leo/shared";
+import { AIAgent } from "@leo/agent/types";
 import { cn } from "@/lib/utils";
 import { ChatMessage } from "../chat/chat-message";
 import { toUIMessages } from "../chat/toUIMessages";

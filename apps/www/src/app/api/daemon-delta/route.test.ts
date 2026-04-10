@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import { appendTokenStreamEvents } from "@leo/shared/model/token-stream-event";
+import { publishDeltaBroadcast } from "@leo/shared/broadcast-server";
 
 vi.mock("@/lib/auth-server", () => ({
   getDaemonTokenAuthContextOrNull: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/token-stream-event", () => ({
+vi.mock("@leo/shared/model/token-stream-event", () => ({
   appendTokenStreamEvents: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/broadcast-server", () => ({
+vi.mock("@leo/shared/broadcast-server", () => ({
   publishDeltaBroadcast: vi.fn(),
 }));
 

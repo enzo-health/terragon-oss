@@ -1,7 +1,7 @@
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import * as z from "zod/v4";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 
 const prContentSchema = z.object({
   title: z.string().describe("Concise pull request title"),

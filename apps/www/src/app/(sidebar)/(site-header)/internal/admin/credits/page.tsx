@@ -1,8 +1,8 @@
 import { getAdminUserOrThrow } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
-import { BILLABLE_EVENT_TYPES } from "@terragon/shared/model/credits";
+import { BILLABLE_EVENT_TYPES } from "@leo/shared/model/credits";
 import { getUserListForAdminPage } from "@/server-lib/admin";
 import { TopUsersTable } from "./top-users-table";
 import { formatUsdFromCents } from "@/lib/currency";
@@ -129,7 +129,7 @@ export default async function AdminCreditsUsagePage() {
       <div>
         <h1 className="text-2xl font-semibold">Internal Credits Usage</h1>
         <p className="text-muted-foreground text-sm">
-          Aggregate cost of billable usage covered by Terragon&apos;s internal
+          Aggregate cost of billable usage covered by Leo&apos;s internal
           credits across all accounts.
         </p>
       </div>

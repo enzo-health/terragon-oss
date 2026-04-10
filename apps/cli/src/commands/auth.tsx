@@ -7,8 +7,10 @@ import { exec } from "child_process";
 import { useSaveApiKey } from "../hooks/useApi.js";
 
 const AUTH_PORT = 8742; // Uncommon port
-const TERRAGON_WEB_URL =
-  process.env.TERRAGON_WEB_URL || "http://localhost:3000";
+const LEO_WEB_URL =
+  process.env.LEO_WEB_URL ||
+  process.env.TERRAGON_WEB_URL ||
+  "http://localhost:3000";
 
 function openBrowser(url: string) {
   const start =
@@ -126,7 +128,7 @@ export function AuthCommand({ apiKey: providedApiKey }: AuthCommandProps) {
     });
     server.listen(AUTH_PORT, () => {
       setBrowserOpened(true);
-      openBrowser(`${TERRAGON_WEB_URL}/cli/auth`);
+      openBrowser(`${LEO_WEB_URL}/cli/auth`);
     });
     server.on("error", (error: NodeJS.ErrnoException) => {
       // Silent fail - user can still paste manually
@@ -159,7 +161,7 @@ export function AuthCommand({ apiKey: providedApiKey }: AuthCommandProps) {
 
           <Box marginTop={1}>
             <Text>
-              Visit: <Text color="blue">{TERRAGON_WEB_URL}/cli/auth</Text>
+              Visit: <Text color="blue">{LEO_WEB_URL}/cli/auth</Text>
             </Text>
           </Box>
 

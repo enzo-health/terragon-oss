@@ -1,5 +1,5 @@
 import { generateFileUploadUrlForUser } from "@/server-lib/r2-file-upload";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 
 async function base64ToFile(base64: string): Promise<File> {
   const blob = await fetch(base64).then((res) => res.blob());

@@ -2,8 +2,8 @@
 
 import React from "react";
 import { toast } from "sonner";
-import { ThreadInfo, ThreadInfoFull } from "@terragon/shared";
-import { AIAgent } from "@terragon/agent/types";
+import { ThreadInfo, ThreadInfoFull } from "@leo/shared";
+import { AIAgent } from "@leo/agent/types";
 import { useCallback, useState, useEffect } from "react";
 import {
   Terminal,
@@ -18,7 +18,7 @@ import { getThreadPageDiffAction } from "@/server-actions/get-thread-page-diff";
 import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Checkbox } from "../ui/checkbox";
-import { publicDocsUrl } from "@terragon/env/next-public";
+import { publicDocsUrl } from "@leo/env/next-public";
 import { useAtomValue } from "jotai";
 import { userSettingsAtom } from "@/atoms/user";
 import { useServerActionMutation } from "@/queries/server-action-helpers";

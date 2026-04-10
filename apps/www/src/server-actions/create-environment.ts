@@ -2,7 +2,7 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { getOrCreateEnvironment } from "@terragon/shared/model/environments";
+import { getOrCreateEnvironment } from "@leo/shared/model/environments";
 
 export const createEnvironment = userOnlyAction(
   async function createEnvironment(

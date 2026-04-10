@@ -11,15 +11,15 @@ import {
 import {
   getUserIdByGitHubAccountId,
   getUserSettings,
-} from "@terragon/shared/model/user";
+} from "@leo/shared/model/user";
 import { db } from "@/lib/db";
-import { getThreadForGithubPRAndUser } from "@terragon/shared/model/github";
+import { getThreadForGithubPRAndUser } from "@leo/shared/model/github";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { getGitHubMentionAutomationsForRepo } from "@terragon/shared/model/automations";
-import { GitHubMentionTriggerConfig } from "@terragon/shared/automations";
-import { Automation } from "@terragon/shared/db/types";
-import { DBUserMessage } from "@terragon/shared/db/db-message";
-import type { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
+import { getGitHubMentionAutomationsForRepo } from "@leo/shared/model/automations";
+import { GitHubMentionTriggerConfig } from "@leo/shared/automations";
+import { Automation } from "@leo/shared/db/types";
+import { DBUserMessage } from "@leo/shared/db/db-message";
+import type { ThreadSource, ThreadSourceMetadata } from "@leo/shared";
 import {
   addEyesReactionToComment,
   isKnownGitHubAccount,
@@ -27,16 +27,16 @@ import {
   extractModelFromComment,
 } from "./utils";
 import { maybeBatchThreads } from "@/lib/batch-threads";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import { AIAgent, AIModel } from "@terragon/agent/types";
-import { getThread, getThreadChat } from "@terragon/shared/model/threads";
-import { modelToAgent } from "@terragon/agent/utils";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
+import { getPrimaryThreadChat } from "@leo/shared/utils/thread-utils";
+import { AIAgent, AIModel } from "@leo/agent/types";
+import { getThread, getThreadChat } from "@leo/shared/model/threads";
+import { modelToAgent } from "@leo/agent/utils";
 import {
   ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
   isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
-import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { getActiveWorkflowForGithubPR } from "@leo/shared/delivery-loop/store/workflow-store";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({
@@ -94,7 +94,7 @@ export async function handleAppMention({
     );
     return;
   }
-  // Find all Terragon users who should get tasks created
+  // Find all Leo users who should get tasks created
   const [knownAccount, usersToTriggerTasks] = await Promise.all([
     isKnownGitHubAccount({
       gitHubAccountId: commentGitHubAccountId,
@@ -121,7 +121,7 @@ export async function handleAppMention({
     return;
   }
 
-  // Find all Terragon users who should get tasks created
+  // Find all Leo users who should get tasks created
   if (!knownAccount && usersToTriggerTasks.length > 0) {
     console.log(
       `GitHub user ${commentGitHubUsername} has no direct access, but matched automation recipients were found`,

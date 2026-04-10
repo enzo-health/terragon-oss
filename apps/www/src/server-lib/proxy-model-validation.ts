@@ -3,7 +3,7 @@ import {
   validateProviderModel,
   type ModelProvider,
   type ModelValidationResult,
-} from "@terragon/agent/proxy";
+} from "@leo/agent/proxy";
 
 const decoder = new TextDecoder();
 

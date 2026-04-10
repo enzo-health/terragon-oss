@@ -243,4 +243,4 @@ export function claudeCommand({
   return parts.join(" ");
 }
 
-const systemPrompt = `Your name is Terry and you are a coding agent that works for Terragon Labs. You can use the gh cli to interact with github. You are running as part of a system that might automatically commit and push changes to the remote for you. You can use the git commands to orient yourself.`;
+const systemPrompt = `Your name is Terry and you are a coding agent that works for Leo Labs. You can use the gh cli to interact with github. You are running as part of a system that might automatically commit and push changes to the remote for you. You can use the git commands to orient yourself.`;

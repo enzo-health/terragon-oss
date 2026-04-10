@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import {
   deleteEnvironmentById,
   getEnvironment,
-} from "@terragon/shared/model/environments";
+} from "@leo/shared/model/environments";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { UserFacingError } from "@/lib/server-actions";
 

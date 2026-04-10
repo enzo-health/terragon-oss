@@ -1,4 +1,4 @@
-import { getUser } from "@terragon/shared/model/user";
+import { getUser } from "@leo/shared/model/user";
 import { Ratelimit } from "@upstash/ratelimit";
 import { db } from "@/lib/db";
 import {

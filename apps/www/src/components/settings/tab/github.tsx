@@ -16,7 +16,7 @@ import {
 import { getGHAppInstallUrl } from "@/lib/gh-app-url";
 import { PullRequestStageSetting } from "@/components/settings/pull-request-stage-setting";
 import { ModelSelector } from "@/components/model-selector";
-import { AIModel } from "@terragon/agent/types";
+import { AIModel } from "@leo/agent/types";
 import { userFlagsAtom } from "@/atoms/user-flags";
 
 export function GitHubSettings() {
@@ -36,7 +36,7 @@ export function GitHubSettings() {
         <div className="flex flex-col gap-4">
           <SettingsWithExternalLink
             label="Repository access"
-            description="Manage which GitHub repositories Terragon can access"
+            description="Manage which GitHub repositories Leo can access"
             href={getGHAppInstallUrl()}
           />
           <SettingsWithExternalLink
@@ -49,12 +49,12 @@ export function GitHubSettings() {
 
       <SettingsSection
         label="Pull Request Defaults"
-        description="Configure how Terragon creates and manages pull requests"
+        description="Configure how Leo creates and manages pull requests"
       >
         <div className="flex flex-col gap-4">
           <SettingsWithCTA
             label="Default pull request stage"
-            description="Set the default stage of pull requests Terragon creates"
+            description="Set the default stage of pull requests Leo creates"
           >
             <PullRequestStageSetting />
           </SettingsWithCTA>
@@ -101,12 +101,12 @@ export function GitHubSettings() {
 
       {/* @-mention settings */}
       <SettingsSection
-        label="@terragon-labs Defaults"
-        description="Configure what happens when @terragon-labs is tagged on GitHub"
+        label="@leo-labs Defaults"
+        description="Configure what happens when @leo-labs is tagged on GitHub"
       >
         <div className="flex flex-col gap-4">
           <SettingsCheckbox
-            label="Create new task when @terragon-labs is tagged on GitHub"
+            label="Create new task when @leo-labs is tagged on GitHub"
             description="Instead of adding follow-up messages to a pull request's existing task."
             value={!userSettings.singleThreadForGitHubMentions}
             onCheckedChange={async (checked) => {

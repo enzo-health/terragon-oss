@@ -4,17 +4,17 @@ import {
   getGithubPR,
   getThreadForGithubPRAndUser,
   getThreadsForGithubPR,
-} from "@terragon/shared/model/github";
+} from "@leo/shared/model/github";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { maybeBatchThreads } from "@/lib/batch-threads";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
+import { getUserIdByGitHubAccountId } from "@leo/shared/model/user";
 import { getOctokitForApp } from "@/lib/github";
 import {
   ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
   isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
-import { getThread } from "@terragon/shared/model/threads";
+import { getThread } from "@leo/shared/model/threads";
 
 const { postHogCapture, signalInboxInsertReturning, dbInsert } = vi.hoisted(
   () => {
@@ -43,7 +43,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-vi.mock("@terragon/shared/model/github", () => ({
+vi.mock("@leo/shared/model/github", () => ({
   getGithubPR: vi.fn(),
   getThreadForGithubPRAndUser: vi.fn(),
   getThreadsForGithubPR: vi.fn(),
@@ -61,11 +61,11 @@ vi.mock("@/server-lib/new-thread-internal", () => ({
   newThreadInternal: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/user", () => ({
+vi.mock("@leo/shared/model/user", () => ({
   getUserIdByGitHubAccountId: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/threads", () => ({
+vi.mock("@leo/shared/model/threads", () => ({
   getThread: vi.fn(),
 }));
 
@@ -89,7 +89,7 @@ vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
   isDeliveryLoopEnrollmentAllowedForThread: vi.fn(() => true),
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
+vi.mock("@leo/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
 }));
 
@@ -214,7 +214,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([
       { id: "thread-1", userId: "user-1", archived: false },
     ]);
-    const marker = `<!-- terragon-github-feedback-delivery:delivery-dedup-1:777 -->`;
+    const marker = `<!-- leo-github-feedback-delivery:delivery-dedup-1:777 -->`;
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
       threadChats: [

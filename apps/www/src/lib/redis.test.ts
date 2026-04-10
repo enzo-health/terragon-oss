@@ -5,7 +5,7 @@ import { execSync } from "node:child_process";
 
 describe("redis", { timeout: 60_000 }, () => {
   beforeAll(() => {
-    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+    execSync("docker restart leo_redis_http_test", { stdio: "ignore" });
   });
 
   // This test is just to make sure that the redis and redis-http containers are

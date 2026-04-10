@@ -9,7 +9,7 @@ const mockReplacePlanTasksForArtifact = vi.hoisted(() => vi.fn());
 const mockTransitionSdlcLoopStateWithArtifact = vi.hoisted(() => vi.fn());
 const mockGetActiveWorkflowForThreadV3 = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/delivery-loop/store/artifact-store", () => ({
+vi.mock("@leo/shared/delivery-loop/store/artifact-store", () => ({
   createPlanArtifact: mockCreatePlanArtifactForLoop,
   approvePlanArtifact: mockApprovePlanArtifactForLoop,
   replacePlanTasksForArtifact: mockReplacePlanTasksForArtifact,

@@ -1,4 +1,4 @@
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
+import type { DeliveryLoopFailureCategory } from "@leo/shared/delivery-loop/domain/failure";
 
 /**
  * Classify daemon-level errors shared across all agent runtimes.

@@ -4,7 +4,7 @@ import {
   richTextToPlainText,
   richTextToTiptap,
 } from "./tiptap-to-richtext";
-import type { DBRichTextPart } from "@terragon/shared";
+import type { DBRichTextPart } from "@leo/shared";
 
 describe("tiptapToRichText", () => {
   it("should convert TipTap JSON with mentions, links, and text to rich text", () => {

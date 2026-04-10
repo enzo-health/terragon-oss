@@ -2,7 +2,7 @@
 
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
-import { updateThread } from "@terragon/shared/model/threads";
+import { updateThread } from "@leo/shared/model/threads";
 import { UserFacingError } from "@/lib/server-actions";
 
 export const updateThreadName = userOnlyAction(

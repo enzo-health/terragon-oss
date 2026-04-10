@@ -225,7 +225,7 @@ describe("ContainerSourceFetcher", () => {
           } else if (args && args[0] === "ps" && args[1] === "-a") {
             cb(null, {
               stdout:
-                "abc123 sandbox-qa com.docker.compose.project=terragon,threadId=7d4ea142-0a2e-4837-bee3-a5603163e106\n",
+                "abc123 sandbox-qa com.docker.compose.project=leo,threadId=7d4ea142-0a2e-4837-bee3-a5603163e106\n",
               stderr: "",
             });
           } else {

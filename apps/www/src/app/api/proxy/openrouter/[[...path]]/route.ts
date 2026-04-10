@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { db } from "@/lib/db";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
+import { getUserCreditBalance } from "@leo/shared/model/credits";
 import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
 import { logOpenRouterUsage } from "../log-usage";
 import { waitUntil } from "@vercel/functions";
@@ -10,7 +10,7 @@ import {
   getDaemonTokenAuthContextOrNull,
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { getAgentRunContextByRunId } from "@leo/shared/model/agent-run-context";
 
 const OPENROUTER_API_BASE = "https://openrouter.ai/api/";
 const DEFAULT_PATH = "v1/chat/completions";

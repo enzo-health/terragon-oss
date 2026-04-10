@@ -1,8 +1,8 @@
 "use client";
 
 import React from "react";
-import type { DBMessage, DBUserMessage } from "@terragon/shared";
-import { ThreadInfoFull } from "@terragon/shared";
+import type { DBMessage, DBUserMessage } from "@leo/shared";
+import { ThreadInfoFull } from "@leo/shared";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { GenericPromptBox } from "@/components/promptbox/generic-promptbox";

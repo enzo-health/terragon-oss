@@ -7,7 +7,7 @@ import { checkpointThread } from "../server-lib/checkpoint-thread";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { UserFacingError } from "@/lib/server-actions";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { getThreadChat } from "@leo/shared/model/threads";
 
 export const retryGitCheckpoint = userOnlyAction(
   async function retryGitCheckpoint(

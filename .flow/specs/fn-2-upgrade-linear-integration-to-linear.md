@@ -2,7 +2,7 @@
 
 ## Overview
 
-Upgrade Terragon's Linear integration from a simple webhook bot (single API key, regex mention detection, ack comments) to a first-class **Linear Agent** with OAuth 2.0, native mentions, agent sessions, and activity tracking.
+Upgrade Leo's Linear integration from a simple webhook bot (single API key, regex mention detection, ack comments) to a first-class **Linear Agent** with OAuth 2.0, native mentions, agent sessions, and activity tracking.
 
 ### Current State (fn-1, implemented)
 
@@ -23,7 +23,7 @@ Upgrade Terragon's Linear integration from a simple webhook bot (single API key,
 - **Agent activities** emitted via `LinearClient.createAgentActivity()`:
   - Content is a typed JSONObject per activity type — see "Critical: Activity API shapes" below
   - NOT a flat `{ type, content }` shape, and NOT `{ type, body }` for all types
-- **Agent sessions**: `externalUrls` (link to Terragon task) via `agentSessionUpdate`
+- **Agent sessions**: `externalUrls` (link to Leo task) via `agentSessionUpdate`
 - **10-second SLA**: Must emit first activity or set `externalUrls` **synchronously** within webhook handler (before returning 200)
 - **Token refresh**: 24-hour access tokens with automatic refresh; DB-level concurrency guard (not in-memory mutex)
 - **Repo detection**: Use `issueRepositorySuggestions(agentSessionId, candidateRepositories)` with candidates from `defaultRepoFullName` + user's recent repos. Fallback to `defaultRepoFullName` if no suggestions.
@@ -128,7 +128,7 @@ sequenceDiagram
     participant L as Linear
     participant W as Webhook Route
     participant H as Handler
-    participant T as Terragon Thread
+    participant T as Leo Thread
     participant D as Daemon
 
     L->>W: AgentSessionEvent (created)

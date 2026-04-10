@@ -1,4 +1,4 @@
-import { ThreadInfo, ThreadPageChat, ThreadPageShell } from "@terragon/shared";
+import { ThreadInfo, ThreadPageChat, ThreadPageShell } from "@leo/shared";
 import {
   archiveThread,
   unarchiveThread,

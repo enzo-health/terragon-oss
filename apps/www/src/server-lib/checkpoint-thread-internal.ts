@@ -3,13 +3,13 @@ import { wrapError, ThreadError } from "@/agent/error";
 import { openPullRequestForThread } from "@/agent/pull-request";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import {
   getGitDiffMaybeCutoff,
   gitDiffStats,
   gitCommitAndPushBranch,
-} from "@terragon/sandbox/commands";
-import { ISandboxSession } from "@terragon/sandbox/types";
+} from "@leo/sandbox/commands";
+import { ISandboxSession } from "@leo/sandbox/types";
 import {
   DBUserMessage,
   DBMessage,
@@ -17,17 +17,17 @@ import {
   GitDiffStats,
   ThreadInsert,
   ThreadChatInsert,
-} from "@terragon/shared";
+} from "@leo/shared";
 import {
   getThread,
   getThreadChat,
   getThreadMinimal,
   updateThread,
   updateThreadChat,
-} from "@terragon/shared/model/threads";
-import { createGitDiffCheckpoint } from "@terragon/shared/utils/git-diff";
-import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
-import * as schema from "@terragon/shared/db/schema";
+} from "@leo/shared/model/threads";
+import { createGitDiffCheckpoint } from "@leo/shared/utils/git-diff";
+import { sanitizeForJson } from "@leo/shared/utils/sanitize-json";
+import * as schema from "@leo/shared/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";

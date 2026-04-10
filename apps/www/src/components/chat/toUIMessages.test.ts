@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { toUIMessages } from "./toUIMessages";
-import type { DBMessage } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
 
 describe("toUIMessages", () => {
   test("groups agent text and tool interactions", () => {
@@ -849,7 +849,7 @@ describe("toUIMessages", () => {
         parent_tool_use_id: null,
         parts: [
           {
-            text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Terragon is a...",
+            text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Leo is a...",
             type: "text",
           },
         ],
@@ -904,7 +904,7 @@ describe("toUIMessages", () => {
             status: "completed",
           },
           {
-            text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Terragon is a...",
+            text: "**Directory listing:** Contains CLAUDE.md, ...**README Summary:** Leo is a...",
             type: "text",
           },
         ],

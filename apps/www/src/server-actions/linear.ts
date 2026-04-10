@@ -1,6 +1,6 @@
 "use server";
 
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
@@ -10,11 +10,11 @@ import {
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
   deactivateLinearInstallation,
-} from "@terragon/shared/model/linear";
+} from "@leo/shared/model/linear";
 import { getUserOrNull } from "@/lib/auth-server";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { LinearSettingsInsert } from "@terragon/shared/db/types";
-import { encryptValue } from "@terragon/utils/encryption";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
+import { LinearSettingsInsert } from "@leo/shared/db/types";
+import { encryptValue } from "@leo/utils/encryption";
 
 async function assertLinearEnabled(userId: string) {
   const enabled = await getFeatureFlagForUser({
@@ -30,7 +30,7 @@ async function assertLinearEnabled(userId: string) {
 // State payload types for the shared /api/auth/linear/callback route.
 // "agent_install" is the workspace-level app-actor OAuth (installs the Linear
 // Agent). "account_link" is the per-user OAuth flow that identifies which
-// Linear user a Terragon user owns — we discard the returned token immediately
+// Linear user a Leo user owns — we discard the returned token immediately
 // after calling `viewer`; all ongoing API calls use the workspace install's
 // app token via refreshLinearTokenIfNeeded.
 export type LinearOAuthStateType = "agent_install" | "account_link";
@@ -89,7 +89,7 @@ export const getLinearAgentInstallUrl = userOnlyAction(
 );
 
 // Generates the OAuth 2.0 authorization URL for linking a personal Linear
-// account to a Terragon user. Uses the default actor=user mode so the returned
+// account to a Leo user. Uses the default actor=user mode so the returned
 // token represents the authenticating human, enabling a `viewer` query that
 // returns the user's Linear id/name/email/organization. Linear's docs
 // explicitly recommend this pattern for "per-user personal account linking"

@@ -1,4 +1,4 @@
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 import type { CreateSandboxOptions } from "./types";
 import { getSandboxProvider } from "./provider";
 import { setupSandboxEveryTime, setupSandboxOneTime } from "./setup";

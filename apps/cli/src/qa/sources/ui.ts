@@ -8,7 +8,7 @@
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import { ContractRouterClient } from "@orpc/contract";
-import { cliAPIContract } from "@terragon/cli-api-contract";
+import { cliAPIContract } from "@leo/cli-api-contract";
 import type { SourceSnapshot, UIWorkflowState } from "../types.js";
 
 export interface UISourceConfig {
@@ -118,7 +118,11 @@ export async function createUIFetcher(
   webUrl?: string,
   apiKey?: string,
 ): Promise<UISourceFetcher> {
-  const url = webUrl || process.env.TERRAGON_WEB_URL || "http://127.0.0.1:3000";
+  const url =
+    webUrl ||
+    process.env.LEO_WEB_URL ||
+    process.env.TERRAGON_WEB_URL ||
+    "http://127.0.0.1:3000";
 
   // Read API key from Terry config if not provided
   const key = apiKey || (await readTerryApiKey());

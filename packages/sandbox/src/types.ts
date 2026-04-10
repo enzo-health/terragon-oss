@@ -1,6 +1,6 @@
-import { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
-import { AIAgent, AIAgentCredentials } from "@terragon/agent/types";
-import { FeatureFlags } from "@terragon/daemon/shared";
+import { SandboxProvider, SandboxSize } from "@leo/types/sandbox";
+import { AIAgent, AIAgentCredentials } from "@leo/agent/types";
+import { FeatureFlags } from "@leo/daemon/shared";
 import { McpConfig } from "./mcp-config";
 // NOTE: This is stored in the database, so don't remove any values from this list.
 export type SandboxStatus =
@@ -39,9 +39,9 @@ export type CreateSandboxOptions = {
   autoUpdateDaemon: boolean;
   customSystemPrompt?: string | null; // Custom system prompt to append to Claude
   skipLocalQualityChecks?: boolean; // Skip local lint/typecheck/test enforcement hooks and gates
-  skipSetupScript?: boolean; // Skip running terragon-setup.sh during sandbox setup
+  skipSetupScript?: boolean; // Skip running leo-setup.sh during sandbox setup
   snapshotTemplateId?: string; // Per-repo Daytona snapshot name to use instead of generic template
-  setupScript?: string | null; // Custom setup script to override repository's terragon-setup.sh
+  setupScript?: string | null; // Custom setup script to override repository's leo-setup.sh
   fastResume?: boolean; // Fast resume mode - skips unnecessary setup steps that run everytime (claude credentials, daemon update, etc)
   publicUrl: string;
   featureFlags: FeatureFlags;

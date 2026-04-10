@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { getThreadChat } from "@terragon/shared/model/threads";
+import { getThreadChat } from "@leo/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 

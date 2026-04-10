@@ -1,11 +1,11 @@
 import type {
   DeliveryEffectKindV3,
   DeliveryLoopState,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import {
   type FailureLane,
   classifyFailureLane as classifyFailureLaneShared,
-} from "@terragon/shared/delivery-loop/domain/failure-signature";
+} from "@leo/shared/delivery-loop/domain/failure-signature";
 
 export type WorkflowState =
   | "planning"

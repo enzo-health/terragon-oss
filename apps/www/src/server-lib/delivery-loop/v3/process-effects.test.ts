@@ -4,13 +4,13 @@ import { nanoid } from "nanoid/non-secure";
 import { db } from "@/lib/db";
 import * as dispatchIntentModule from "@/server-lib/delivery-loop/dispatch-intent";
 import * as followUpQueueModule from "@/server-lib/process-follow-up-queue";
-import * as schema from "@terragon/shared/db/schema";
-import * as dispatchIntentStoreModule from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import * as schema from "@leo/shared/db/schema";
+import * as dispatchIntentStoreModule from "@leo/shared/delivery-loop/store/dispatch-intent-store";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/model/test-helpers";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import {
   ensureWorkflowHead,
   getWorkflowHead,

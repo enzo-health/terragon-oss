@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getUserMessageToSend } from "@/lib/db-message-helpers";
-import { ThreadChat } from "@terragon/shared";
-import { updateThreadChat } from "@terragon/shared/model/threads";
+import { ThreadChat } from "@leo/shared";
+import { updateThreadChat } from "@leo/shared/model/threads";
 
 export async function ensureThreadChatHasUserMessage({
   threadChat,

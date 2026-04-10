@@ -1,5 +1,5 @@
 import { getUserIdOrRedirect } from "@/lib/auth-server";
-import { getAutomation } from "@terragon/shared/model/automations";
+import { getAutomation } from "@leo/shared/model/automations";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { AutomationContent } from "@/components/automations/content";

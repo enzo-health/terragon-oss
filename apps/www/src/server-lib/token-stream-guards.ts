@@ -1,4 +1,4 @@
-import type { DaemonDelta } from "@terragon/daemon/shared";
+import type { DaemonDelta } from "@leo/daemon/shared";
 
 export type DeltaSequenceKey =
   `${string}:${string}:${number}:${"text" | "thinking"}`;

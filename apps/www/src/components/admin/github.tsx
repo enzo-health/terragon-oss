@@ -1,7 +1,7 @@
 "use client";
 
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
-import { GitHubPR } from "@terragon/shared";
+import { GitHubPR } from "@leo/shared";
 import { DataTable } from "@/components/ui/data-table";
 import { PRStatusPill } from "@/components/pr-status-pill";
 import { Button } from "@/components/ui/button";
@@ -234,7 +234,7 @@ export function AdminGithubAppTester() {
           </label>
           <Input
             id="issue-or-pr-url"
-            placeholder="https://github.com/terragon-labs/terragon/issues/1"
+            placeholder="https://github.com/leo-labs/leo/issues/1"
             value={issueOrPRUrl}
             onChange={(e) => setIssueOrPRUrl(e.target.value)}
             className="font-mono text-sm"

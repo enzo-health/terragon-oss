@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import { Session } from "@terragon/shared";
+import { Session } from "@leo/shared";
 import { NextRequest } from "next/server";
 
 interface MockHeadersOptions {

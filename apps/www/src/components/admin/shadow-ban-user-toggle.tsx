@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { setShadowBanUser } from "@/server-actions/admin/user";
 
 export function ShadowBanUserToggle({ user }: { user: User }) {

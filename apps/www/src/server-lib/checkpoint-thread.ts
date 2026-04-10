@@ -4,20 +4,20 @@ import {
   getThreadChat,
   getThreadMinimal,
   updateThread,
-} from "@terragon/shared/model/threads";
-import { getUserSettings, getUser } from "@terragon/shared/model/user";
+} from "@leo/shared/model/threads";
+import { getUserSettings, getUser } from "@leo/shared/model/user";
 import { withThreadSandboxSession } from "@/agent/thread-resource";
 import { ThreadError, wrapError } from "@/agent/error";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
-import { getAutomation } from "@terragon/shared/model/automations";
-import { PullRequestTriggerConfig } from "@terragon/shared/automations";
+import { getAutomation } from "@leo/shared/model/automations";
+import { PullRequestTriggerConfig } from "@leo/shared/automations";
 import { checkpointThreadAndPush } from "./checkpoint-thread-internal";
 import { maybeSaveClaudeSessionToR2 } from "./claude-session";
 import { maybeUpdateGitHubCheckRunForThreadChat } from "./github";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
-import { publicAppUrl } from "@terragon/env/next-public";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { publicAppUrl } from "@leo/env/next-public";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
 import { isDeliveryLoopEnrollmentAllowedForThread } from "./delivery-loop/enrollment";
 
 export async function checkpointThread({

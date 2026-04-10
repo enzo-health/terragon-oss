@@ -3,7 +3,7 @@ import { getAdminUserOrThrow } from "@/lib/auth-server";
 import { getThreadForAdmin } from "@/server-actions/admin/thread";
 import { getEnvironmentForAdmin } from "@/server-actions/admin/environment";
 import { AdminEnvironmentIdOrThreadIdInput } from "@/components/admin/environment-content";
-import { getEnvironmentForUserRepo } from "@terragon/shared/model/environments";
+import { getEnvironmentForUserRepo } from "@leo/shared/model/environments";
 import { redirect } from "next/navigation";
 
 export default async function AdminEnvironmentListPage({

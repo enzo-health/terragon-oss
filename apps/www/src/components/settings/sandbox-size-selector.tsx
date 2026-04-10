@@ -1,6 +1,6 @@
 import { useAtomValue } from "jotai";
 import { userSettingsAtom, useUpdateUserSettingsMutation } from "@/atoms/user";
-import type { SandboxSize } from "@terragon/types/sandbox";
+import type { SandboxSize } from "@leo/types/sandbox";
 import {
   Select,
   SelectContent,

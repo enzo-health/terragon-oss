@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/daemon",
+  "name": "@leo/daemon",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -29,7 +29,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@terragon/agent": "workspace:*",
+    "@leo/agent": "workspace:*",
     "nanoid": "^5.1.5",
     "strip-ansi": "^7.1.0",
     "ws": "^8.18.0",

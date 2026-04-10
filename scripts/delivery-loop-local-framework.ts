@@ -7,8 +7,8 @@ import { Client } from "pg";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import type { DBUserMessage } from "@terragon/shared/db/db-message";
-import { cliAPIContract } from "@terragon/cli-api-contract";
+import type { DBUserMessage } from "@leo/shared/db/db-message";
+import { cliAPIContract } from "@leo/cli-api-contract";
 
 type CommandName = "help" | "preflight" | "snapshot" | "run" | "e2e";
 type RunProfile = "fast" | "full";
@@ -234,7 +234,9 @@ async function createCliApiClient(): Promise<{
   client: ContractRouterClient<typeof cliAPIContract>;
 }> {
   const webUrl =
+    process.env.LEO_WEB_URL ??
     process.env.TERRAGON_WEB_URL ??
+    process.env.NEXT_PUBLIC_LEO_WEB_URL ??
     process.env.NEXT_PUBLIC_TERRAGON_WEB_URL ??
     "http://127.0.0.1:3000";
   const apiKey = await readTerryApiKey();
@@ -709,7 +711,11 @@ async function createMinimalTask(params: {
 
 async function commandE2E(args: ParsedArgs): Promise<void> {
   await withDb(async (client) => {
-    const webUrl = args.webUrl ?? process.env.TERRAGON_WEB_URL ?? null;
+    const webUrl =
+      args.webUrl ??
+      process.env.LEO_WEB_URL ??
+      process.env.TERRAGON_WEB_URL ??
+      null;
     if (args.mode !== "dry-run" && !args.repo) {
       throw new Error("e2e real mode requires --repo");
     }
@@ -789,13 +795,16 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
     let lastCronStatus: number | null = null;
     let lastCronText: string | null = null;
     const cronBaseUrl =
-      webUrl ?? process.env.TERRAGON_WEB_URL ?? "http://127.0.0.1:3000";
+      webUrl ??
+      process.env.LEO_WEB_URL ??
+      process.env.TERRAGON_WEB_URL ??
+      "http://127.0.0.1:3000";
 
     while (Date.now() <= deadline) {
       pollCount += 1;
       if (!webUrl && process.env.NODE_ENV !== "development") {
         throw new Error(
-          "e2e real mode requires --web-url or TERRAGON_WEB_URL in non-development environments",
+          "e2e real mode requires --web-url or LEO_WEB_URL/TERRAGON_WEB_URL in non-development environments",
         );
       }
 

@@ -11,7 +11,7 @@
  *   introduced here.
  */
 
-import type { AIAgent } from "@terragon/agent/types";
+import type { AIAgent } from "@leo/agent/types";
 import type { DeliveryLoopFailureCategory } from "./failure";
 import type { ExecutionClass, DispatchMechanism } from "./workflow";
 

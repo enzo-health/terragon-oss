@@ -1,8 +1,8 @@
 import React from "react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { AllToolParts } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { AllToolParts } from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import {
   findArtifactDescriptorForPart,
   getArtifactWorkspaceItems,

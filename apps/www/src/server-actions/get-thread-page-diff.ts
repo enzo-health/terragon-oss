@@ -4,14 +4,14 @@ import { cache } from "react";
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
 import { UserFacingError } from "@/lib/server-actions";
-import { ThreadPageDiff } from "@terragon/shared/db/types";
+import { ThreadPageDiff } from "@leo/shared/db/types";
 import {
   getThreadPageDiffWithPermissions,
   getThreadPageShellWithPermissions,
-} from "@terragon/shared/model/thread-page";
+} from "@leo/shared/model/thread-page";
 import { getHasRepoPermissionsForUser } from "./get-thread";
 import { getOctokitForUserOrThrow, parseRepoFullName } from "@/lib/github";
-import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
+import { parseGitDiffStats } from "@leo/shared/utils/git-diff";
 
 const MAX_GITHUB_PR_DIFF_CHARS = 250_000;
 

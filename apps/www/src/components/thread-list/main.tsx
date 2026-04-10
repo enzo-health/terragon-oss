@@ -1,6 +1,6 @@
 "use client";
 
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 import { useCallback, useMemo, memo } from "react";
 import {
   LoaderCircle,
@@ -14,7 +14,7 @@ import {
   List,
 } from "lucide-react";
 import { useRealtimeThreadMatch } from "@/hooks/useRealtime";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import { BroadcastThreadPatch } from "@leo/types/broadcast";
 import { ThreadListItem } from "./item";
 import { isToday, isYesterday, isThisWeek } from "date-fns";
 import { tz } from "@date-fns/tz";

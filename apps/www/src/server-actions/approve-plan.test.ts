@@ -5,30 +5,30 @@ import { approvePlan as approvePlanAction } from "./approve-plan";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import { mockLoggedInUser } from "@/test-helpers/mock-next";
-import { updateThreadChat } from "@terragon/shared/model/threads";
+import { updateThreadChat } from "@leo/shared/model/threads";
 import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
-} from "@terragon/shared/delivery-loop/store/artifact-store";
+} from "@leo/shared/delivery-loop/store/artifact-store";
 import {
   createWorkflow,
   getActiveWorkflowForThread,
-} from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { and, eq } from "drizzle-orm";
 
 const approvePlanArtifactMock = vi.hoisted(() => vi.fn());
 
 vi.mock(
-  "@terragon/shared/delivery-loop/store/artifact-store",
+  "@leo/shared/delivery-loop/store/artifact-store",
   async (importOriginal) => {
     const actual =
       await importOriginal<
-        typeof import("@terragon/shared/delivery-loop/store/artifact-store")
+        typeof import("@leo/shared/delivery-loop/store/artifact-store")
       >();
     approvePlanArtifactMock.mockImplementation(actual.approvePlanArtifact);
     return {

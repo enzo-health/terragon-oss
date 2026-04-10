@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
-import type { AccessInfo, BillingInfo } from "@terragon/shared/db/types";
+import type { AccessInfo, BillingInfo } from "@leo/shared/db/types";
 import { getUserIdOrNull } from "./auth-server";
-import { getFeatureFlagsGlobal } from "@terragon/shared/model/feature-flags";
+import { getFeatureFlagsGlobal } from "@leo/shared/model/feature-flags";
 
 /**
  * Returns the access tier for the current user.

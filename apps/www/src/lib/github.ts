@@ -1,29 +1,29 @@
 import { db } from "./db";
 import { auth } from "./auth";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import {
   getGithubPR,
   getThreadsForGithubPR,
   upsertGithubPR,
-} from "@terragon/shared/model/github";
-import * as schema from "@terragon/shared/db/schema";
+} from "@leo/shared/model/github";
+import * as schema from "@leo/shared/db/schema";
 import { Octokit } from "octokit";
 import {
   getGithubPRMergeableState,
   getGithubPRStatus,
   getGithubPRChecksStatus,
-} from "@terragon/shared/github-api/helpers";
-import { getInstallationToken } from "@terragon/shared/github-app";
+} from "@leo/shared/github-api/helpers";
+import { getInstallationToken } from "@leo/shared/github-app";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
-import { decryptTokenWithBackwardsCompatibility } from "@terragon/utils/encryption";
+import { decryptTokenWithBackwardsCompatibility } from "@leo/utils/encryption";
 import { getPostHogServer } from "./posthog-server";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
-import { updateThread } from "@terragon/shared/model/threads";
+import { publishBroadcastUserMessage } from "@leo/shared/broadcast-server";
+import { updateThread } from "@leo/shared/model/threads";
 import {
   getGitHubAccountIdForUser,
   getUserSettings,
-} from "@terragon/shared/model/user";
+} from "@leo/shared/model/user";
 import { UserFacingError } from "./server-actions";
 
 export function parseRepoFullName(repoFullName: string): [string, string] {
@@ -72,7 +72,7 @@ export async function ensureBranchExists({
           );
 
           // Create a README file to initialize the branch
-          const readmeContent = `# ${repoName}\n\nThis repository was initialized by Terragon.`;
+          const readmeContent = `# ${repoName}\n\nThis repository was initialized by Leo.`;
 
           await octokit.rest.repos.createOrUpdateFileContents({
             owner,
@@ -468,7 +468,7 @@ export async function isGitHubOrgMember({
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`,
-        "User-Agent": "Terragon",
+        "User-Agent": "Leo",
       },
       cache: "no-store",
     },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Environment } from "@terragon/shared";
+import { Environment } from "@leo/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -40,7 +40,7 @@ function SetupScriptBreadcrumb({ environment }: { environment: Environment }) {
 }
 
 const defaultScript = `#!/bin/bash
-# terragon-setup.sh - Custom setup script for your Terragon environment
+# leo-setup.sh - Custom setup script for your Leo environment
 # This script runs when your sandbox environment starts
 
 # Example: Install dependencies
@@ -187,7 +187,7 @@ export function SetupScriptEditor({
               {scriptSource === "environment"
                 ? "Using environment-specific setup script (overrides repository script)"
                 : scriptSource === "repo"
-                  ? "Using setup script from repository (terragon-setup.sh)"
+                  ? "Using setup script from repository (leo-setup.sh)"
                   : "Create a custom setup script for this environment"}
             </p>
           </div>
@@ -262,7 +262,7 @@ export function SetupScriptEditor({
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <code className="text-xs text-muted-foreground">
-                terragon-setup.sh
+                leo-setup.sh
               </code>
               <div className="flex items-center gap-2">
                 {scriptSource === "environment" && (
@@ -333,9 +333,8 @@ export function SetupScriptEditor({
               environment, it will override any repository script
             </li>
             <li>
-              <strong>Repository Script:</strong> The terragon-setup.sh file in
-              your repository's main branch (used when no environment script
-              exists)
+              <strong>Repository Script:</strong> The leo-setup.sh file in your
+              repository's main branch (used when no environment script exists)
             </li>
             <li>
               You can test your script by clicking "Test" - this creates a new

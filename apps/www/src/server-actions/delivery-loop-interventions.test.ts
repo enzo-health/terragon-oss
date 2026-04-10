@@ -4,11 +4,11 @@ import { unwrapResult } from "@/lib/server-actions";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
+} from "@leo/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
 import {
   requestDeliveryLoopBypassCurrentGateOnce,

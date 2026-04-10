@@ -1,5 +1,5 @@
-import { env } from "@terragon/env/apps-www";
-import { publicAppUrl } from "@terragon/env/next-public";
+import { env } from "@leo/env/apps-www";
+import { publicAppUrl } from "@leo/env/next-public";
 
 /**
  * There are some cases where we need a URL that isn't the localhost one,

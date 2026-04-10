@@ -8,7 +8,7 @@ import {
   automationQueryOptions,
   hasReachedLimitOfAutomationsQueryOptions,
 } from "@/queries/automation-queries";
-import { Automation } from "@terragon/shared";
+import { Automation } from "@leo/shared";
 import { useState } from "react";
 import {
   CreateAutomationButton,
@@ -22,14 +22,14 @@ import { usePageHeader } from "@/contexts/page-header";
 import { Portal } from "@radix-ui/react-portal";
 import { RecommendedAutomations } from "./recommended-automations";
 import { type RecommendedAutomation } from "./recommended-automation-templates";
-import { AutomationTrigger } from "@terragon/shared/automations";
+import { AutomationTrigger } from "@leo/shared/automations";
 import { useAtomValue } from "jotai";
 import {
   selectedModelAtom,
   selectedRepoAtom,
   selectedBranchAtom,
 } from "@/atoms/user-flags";
-import { publicDocsUrl } from "@terragon/env/next-public";
+import { publicDocsUrl } from "@leo/env/next-public";
 
 export function Automations() {
   const { headerActionContainer } = usePageHeader();

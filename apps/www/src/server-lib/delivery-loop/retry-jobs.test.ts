@@ -9,7 +9,7 @@ import { execSync } from "node:child_process";
 
 describe("delivery loop retry jobs", () => {
   beforeAll(() => {
-    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+    execSync("docker restart leo_redis_http_test", { stdio: "ignore" });
   });
 
   beforeEach(async () => {

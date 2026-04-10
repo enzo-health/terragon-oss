@@ -10,7 +10,7 @@
 import type { EvalSignal, EvalGateEvent } from "../types";
 import type { SharedModules, DB } from "./shared-loader";
 import type { SeededState } from "./seed";
-import type { SdlcLoopCauseType } from "@terragon/shared/db/types";
+import type { SdlcLoopCauseType } from "@leo/shared/db/types";
 
 // ---------------------------------------------------------------------------
 // Helpers

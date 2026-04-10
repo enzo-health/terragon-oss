@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AllToolParts } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { AllToolParts } from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import { GenericToolPart } from "./generic-ui";
 import { resolvePlanText } from "./plan-utils";
 import { Button } from "../../ui/button";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import type { DBMessage } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
 import { PromptBoxRef } from "../thread-context";
 import { toast } from "sonner";
 import { usePlanApproval, useSecondaryPanel } from "../hooks";

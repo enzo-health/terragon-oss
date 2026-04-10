@@ -11,15 +11,15 @@ import { eq, like } from "drizzle-orm";
 import { nanoid } from "nanoid/non-secure";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/model/test-helpers";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import * as store from "./store";
 import * as relay from "./relay";
-import type { DeliveryOutboxV3Row } from "@terragon/shared/db/types";
+import type { DeliveryOutboxV3Row } from "@leo/shared/db/types";
 import { addMilliseconds } from "date-fns";
 import { execSync } from "node:child_process";
 
@@ -135,7 +135,7 @@ function isTransientLocalRelayTimeout(result: {
 beforeEach(cleanupRelayTestState);
 afterEach(cleanupRelayTestState);
 beforeAll(() => {
-  execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+  execSync("docker restart leo_redis_http_test", { stdio: "ignore" });
 });
 
 describeRelay("v3 outbox relay", () => {

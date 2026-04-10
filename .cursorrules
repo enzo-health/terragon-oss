@@ -1,10 +1,10 @@
-# Terragon Project Cursor Rules
+# Leo Project Cursor Rules
 
-You are an AI assistant helping with the Terragon codebase, an AI-powered coding assistant platform that allows users to run coding agents in parallel inside remote sandboxes.
+You are an AI assistant helping with the Leo codebase, an AI-powered coding assistant platform that allows users to run coding agents in parallel inside remote sandboxes.
 
 ## Project Overview
 
-Terragon is a sophisticated monorepo that enables concurrent AI coding tasks in full development environments with capabilities for editing, testing, and creating PRs.
+Leo is a sophisticated monorepo that enables concurrent AI coding tasks in full development environments with capabilities for editing, testing, and creating PRs.
 
 ## Repository Structure & Conventions
 
@@ -21,11 +21,11 @@ Terragon is a sophisticated monorepo that enables concurrent AI coding tasks in 
 - `apps/cli` - Terry CLI tool (uses Ink for terminal UI)
 
 ### Shared Packages
-- `@terragon/shared` - Database models, schemas, core utilities
-- `@terragon/daemon` - Sandbox agent runtime and communication
-- `@terragon/bundled` - Bundled deployment scripts
-- `@terragon/env` - Environment configuration management
-- `@terragon/r2` - Cloudflare R2 storage integration
+- `@leo/shared` - Database models, schemas, core utilities
+- `@leo/daemon` - Sandbox agent runtime and communication
+- `@leo/bundled` - Bundled deployment scripts
+- `@leo/env` - Environment configuration management
+- `@leo/r2` - Cloudflare R2 storage integration
 - And 8+ other specialized packages
 
 ## Technology Stack
@@ -79,7 +79,7 @@ pnpm install-cli:dev
 - Use Jotai for client-side state management
 - Follow established patterns in `src/components/`
 - Implement proper error handling and loading states
-- Use workspace packages (`@terragon/*`) for shared code
+- Use workspace packages (`@leo/*`) for shared code
 
 ### Database
 - Use Drizzle ORM patterns

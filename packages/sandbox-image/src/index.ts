@@ -1,5 +1,5 @@
 import templates from "../templates.json";
-import type { SandboxSize, SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxSize, SandboxProvider } from "@leo/types/sandbox";
 
 export { renderDockerfile } from "./render-dockerfile";
 

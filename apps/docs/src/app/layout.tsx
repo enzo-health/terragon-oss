@@ -10,45 +10,43 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Terragon Documentation",
-    template: "%s | Terragon Docs",
+    default: "Leo Documentation",
+    template: "%s | Leo Docs",
   },
   description:
-    "Comprehensive documentation for Terragon - AI-powered coding assistant platform. Learn how to use Terragon to run coding agents in parallel inside remote sandboxes.",
+    "Comprehensive documentation for Leo - AI-powered coding assistant platform. Learn how to use Leo to run coding agents in parallel inside remote sandboxes.",
   keywords: [
-    "Terragon",
+    "Leo",
     "AI coding assistant",
     "documentation",
     "coding agents",
     "developer tools",
     "AI development",
   ],
-  authors: [{ name: "Terragon Labs" }],
-  creator: "Terragon Labs",
-  publisher: "Terragon Labs",
+  authors: [{ name: "Leo Labs" }],
+  creator: "Leo Labs",
+  publisher: "Leo Labs",
   metadataBase: new URL("https://docs.terragonlabs.com"),
   openGraph: {
     type: "website",
     locale: "en_US",
     url: "https://docs.terragonlabs.com",
-    siteName: "Terragon Documentation",
-    title: "Terragon Documentation",
-    description:
-      "Documentation for Terragon - AI-powered coding assistant platform",
+    siteName: "Leo Documentation",
+    title: "Leo Documentation",
+    description: "Documentation for Leo - AI-powered coding assistant platform",
     images: [
       {
         url: "https://cdn.terragonlabs.com/og-img-2-_W6t.png",
         width: 1200,
         height: 630,
-        alt: "Terragon Documentation",
+        alt: "Leo Documentation",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Terragon Documentation",
-    description:
-      "Documentation for Terragon - AI-powered coding assistant platform",
+    title: "Leo Documentation",
+    description: "Documentation for Leo - AI-powered coding assistant platform",
     images: ["https://cdn.terragonlabs.com/og-img-2-_W6t.png"],
     creator: "@terragonlabs",
     site: "@terragonlabs",
@@ -85,7 +83,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     "@type": "TechArticle",
     publisher: {
       "@type": "Organization",
-      name: "Terragon Labs",
+      name: "Leo Labs",
       url: "https://www.terragonlabs.com",
     },
     inLanguage: "en-US",

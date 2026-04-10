@@ -1,5 +1,5 @@
 /**
- * Integration tests for the terragon MCP server.
+ * Integration tests for the leo MCP server.
  *
  * Spawns the real MCP server binary and communicates via JSON-RPC over stdio.
  * Tests tool listing, SuggestFollowupTask, PermissionPrompt, and
@@ -187,7 +187,7 @@ function startStubServer(): Promise<{
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("terragon MCP server", () => {
+describe("leo MCP server", () => {
   let client: McpTestClient | null = null;
   let stubServer: Server | null = null;
 
@@ -264,12 +264,12 @@ describe("terragon MCP server", () => {
   });
 
   test("MarkImplementingTasksComplete returns isError when env vars are missing", async () => {
-    // Spawn without TERRAGON_SERVER_URL etc.
+    // Spawn without LEO_SERVER_URL etc.
     client = new McpTestClient({
-      TERRAGON_SERVER_URL: "",
+      LEO_SERVER_URL: "",
       DAEMON_TOKEN: "",
-      TERRAGON_THREAD_ID: "",
-      TERRAGON_THREAD_CHAT_ID: "",
+      LEO_THREAD_ID: "",
+      LEO_THREAD_CHAT_ID: "",
     });
     await client.initialize();
 
@@ -286,10 +286,10 @@ describe("terragon MCP server", () => {
     stubServer = server;
 
     client = new McpTestClient({
-      TERRAGON_SERVER_URL: `http://localhost:${port}`,
+      LEO_SERVER_URL: `http://localhost:${port}`,
       DAEMON_TOKEN: "test-daemon-token",
-      TERRAGON_THREAD_ID: "thread-123",
-      TERRAGON_THREAD_CHAT_ID: "chat-456",
+      LEO_THREAD_ID: "thread-123",
+      LEO_THREAD_CHAT_ID: "chat-456",
     });
     await client.initialize();
 
@@ -333,10 +333,10 @@ describe("terragon MCP server", () => {
     stubServer = errorServer;
 
     client = new McpTestClient({
-      TERRAGON_SERVER_URL: `http://localhost:${port}`,
+      LEO_SERVER_URL: `http://localhost:${port}`,
       DAEMON_TOKEN: "test-token",
-      TERRAGON_THREAD_ID: "thread-1",
-      TERRAGON_THREAD_CHAT_ID: "chat-1",
+      LEO_THREAD_ID: "thread-1",
+      LEO_THREAD_CHAT_ID: "chat-1",
     });
     await client.initialize();
 
@@ -350,10 +350,10 @@ describe("terragon MCP server", () => {
 
   test("MarkImplementingTasksComplete returns isError on network failure", async () => {
     client = new McpTestClient({
-      TERRAGON_SERVER_URL: "http://localhost:1", // nothing listening
+      LEO_SERVER_URL: "http://localhost:1", // nothing listening
       DAEMON_TOKEN: "test-token",
-      TERRAGON_THREAD_ID: "thread-1",
-      TERRAGON_THREAD_CHAT_ID: "chat-1",
+      LEO_THREAD_ID: "thread-1",
+      LEO_THREAD_CHAT_ID: "chat-1",
     });
     await client.initialize();
 

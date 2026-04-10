@@ -5,18 +5,18 @@ import {
   uninstallLinearWorkspace as uninstallLinearWorkspaceAction,
 } from "./linear";
 import { db } from "@/lib/db";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
+import { createTestUser } from "@leo/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { upsertLinearInstallation } from "@terragon/shared/model/linear";
+import { upsertLinearInstallation } from "@leo/shared/model/linear";
 import {
   setUserFeatureFlagOverride,
   upsertFeatureFlag,
-} from "@terragon/shared/model/feature-flags";
-import { User, Session } from "@terragon/shared";
+} from "@leo/shared/model/feature-flags";
+import { User, Session } from "@leo/shared";
 import { unwrapResult } from "@/lib/server-actions";
-import * as schema from "@terragon/shared/db/schema";
-import { decryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import * as schema from "@leo/shared/db/schema";
+import { decryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
 
 // Helper to call the action and unwrap
 const uninstallLinearWorkspace = async (args: { organizationId: string }) => {

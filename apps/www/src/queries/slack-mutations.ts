@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { updateSlackSettings } from "@/server-actions/slack";
 import { toast } from "sonner";
-import { SlackSettingsInsert } from "@terragon/shared";
+import { SlackSettingsInsert } from "@leo/shared";
 import { useRouter } from "next/navigation";
 
 export function useUpdateSlackSettings() {

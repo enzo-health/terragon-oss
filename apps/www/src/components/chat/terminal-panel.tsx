@@ -6,7 +6,7 @@ import { X, Terminal, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isSandboxTerminalSupported } from "@/lib/sandbox-terminal";
 import { SandboxTerminalEmbedded } from "@/components/terminal/sandbox-terminal-embedded";
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 
 export function TerminalPanel({
   threadId,

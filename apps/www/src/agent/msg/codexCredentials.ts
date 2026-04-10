@@ -1,12 +1,12 @@
 import { db } from "@/lib/db";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import {
   getAgentProviderCredentialsDecrypted,
   getAgentProviderCredentialsDecryptedById,
   getValidAccessTokenForCredential,
-} from "@terragon/shared/model/agent-provider-credentials";
+} from "@leo/shared/model/agent-provider-credentials";
 import { refreshAccessToken } from "@/lib/openai-oauth";
-import { retryAsync } from "@terragon/utils/retry";
+import { retryAsync } from "@leo/utils/retry";
 
 async function getValidAccessTokenInternal({
   userId,

@@ -4,13 +4,13 @@ import { nanoid } from "nanoid/non-secure";
 import { addMilliseconds } from "date-fns";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
-import * as schema from "@terragon/shared/db/schema";
-import type { DeliveryOutboxV3Row } from "@terragon/shared/db/types";
+import * as schema from "@leo/shared/db/schema";
+import type { DeliveryOutboxV3Row } from "@leo/shared/db/types";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/model/test-helpers";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import {
   appendJournalEvent,
   ensureWorkflowHead,
@@ -20,7 +20,7 @@ import {
   updateWorkflowHead,
 } from "./store";
 import { buildSignalJournalContract } from "./contracts";
-import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
+import type { DeliverySignalSourceV3 } from "@leo/shared/db/types";
 import type { LoopEvent } from "./types";
 import * as relay from "./relay";
 import * as store from "./store";

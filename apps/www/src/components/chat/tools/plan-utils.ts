@@ -1,4 +1,4 @@
-import type { DBMessage } from "@terragon/shared";
+import type { DBMessage } from "@leo/shared";
 
 // Aliases matching parse-plan-spec.ts
 const PLAN_TEXT_ALIASES = ["planText", "plan_text", "summary", "overview"];

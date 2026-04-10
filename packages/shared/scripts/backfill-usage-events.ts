@@ -1,7 +1,7 @@
 import { createDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { DBMessage } from "../src/db/db-message";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { count } from "drizzle-orm";
 import type { UsageEventInsert } from "../src/db/types";
 

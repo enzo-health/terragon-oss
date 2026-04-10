@@ -122,12 +122,12 @@ export const featureFlagsDefinitions = {
   linearIntegration: {
     defaultValue: false,
     description:
-      "Enables the Linear bot integration, allowing users to @mention Terragon in Linear issue comments to spin up a sandbox.",
+      "Enables the Linear bot integration, allowing users to @mention Leo in Linear issue comments to spin up a sandbox.",
   },
   shutdownMode: {
     defaultValue: false,
     description:
-      "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
+      "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Leo shutdown on February 14th, 2026.",
   },
   deliveryPlanReviewCard: {
     defaultValue: false,

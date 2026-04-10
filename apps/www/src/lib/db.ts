@@ -1,4 +1,4 @@
-import { createDb } from "@terragon/shared/db";
-import { env } from "@terragon/env/apps-www";
+import { createDb } from "@leo/shared/db";
+import { env } from "@leo/env/apps-www";
 
 export const db = createDb(env.DATABASE_URL);

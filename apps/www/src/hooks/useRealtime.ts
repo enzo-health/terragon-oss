@@ -8,7 +8,7 @@ import {
   type BroadcastThreadPatch,
   type BroadcastUserMessage,
   getBroadcastChannelStr,
-} from "@terragon/types/broadcast";
+} from "@leo/types/broadcast";
 import PartySocket from "partysocket";
 import {
   useCallback,
@@ -17,8 +17,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { publicBroadcastHost } from "@terragon/env/next-public";
-import { SandboxProvider } from "@terragon/types/sandbox";
+import { publicBroadcastHost } from "@leo/env/next-public";
+import { SandboxProvider } from "@leo/types/sandbox";
 
 function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;

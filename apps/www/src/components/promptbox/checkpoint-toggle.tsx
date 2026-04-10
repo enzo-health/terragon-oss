@@ -89,7 +89,7 @@ export function CheckpointToggle({
                 rel="noopener noreferrer"
                 className="underline hover:text-foreground"
               >
-                Terragon's automatic git checkpointing
+                Leo's automatic git checkpointing
               </a>
               ?<br />
               <br />

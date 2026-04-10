@@ -379,7 +379,7 @@ Every non-infrastructure error from `sendDaemonMessage` is classified as `"agent
 1. **Never skip daemon health checks** — `restartDaemonIfNotRunning` is a cheap ping. It runs on every resume.
 2. **Self-dispatch should work for all phase transitions** — The daemon is already alive, so self-dispatch avoids the queue-based path entirely.
 3. **Errors must be classified, not generic** — Different failure modes need different remediation strategies.
-4. **Gate evaluations should not depend on daemon liveness** — Review gates run Codex CLI directly on the sandbox, independent of the Terragon daemon.
+4. **Gate evaluations should not depend on daemon liveness** — Review gates run Codex CLI directly on the sandbox, independent of the Leo daemon.
 5. **Silent failures are unacceptable** — Every failure must produce a user-visible error or trigger automated recovery.
 
 ### 4.2 Two Execution Classes
@@ -532,7 +532,7 @@ Classification logic in sendDaemonMessage (apps/www/src/agent/daemon.ts):
 │                                                                      │
 │  ┌─────────────────┐    ┌────────────────────┐                       │
 │  │  DAEMON          │    │  AGENT CLI          │                      │
-│  │  (terragon-      │───►│  (claude/codex/amp) │                      │
+│  │  (leo-      │───►│  (claude/codex/amp) │                      │
 │  │   daemon.mjs)    │    └────────────────────┘                       │
 │  │                  │                                                │
 │  │  Capabilities:   │    ┌────────────────────┐                       │

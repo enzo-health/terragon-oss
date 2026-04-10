@@ -4,10 +4,10 @@ import type {
   AgentProviderCredentialsInsert,
 } from "../db/types";
 import { eq, and, desc, ne } from "drizzle-orm";
-import { encryptValue, decryptValue } from "@terragon/utils/encryption";
+import { encryptValue, decryptValue } from "@leo/utils/encryption";
 import type { DB } from "../db";
 import { publishBroadcastUserMessage } from "../broadcast-server";
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 import { updateUserFlags } from "./user-flags";
 
 export type AgentProviderCredentialsDecrypted = Omit<

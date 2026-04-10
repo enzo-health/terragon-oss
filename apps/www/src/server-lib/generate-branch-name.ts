@@ -1,8 +1,8 @@
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import * as z from "zod/v4";
-import { generateRandomBranchName } from "@terragon/sandbox/utils";
-import { env } from "@terragon/env/apps-www";
+import { generateRandomBranchName } from "@leo/sandbox/utils";
+import { env } from "@leo/env/apps-www";
 
 const branchNameSchema = z.object({
   name: z

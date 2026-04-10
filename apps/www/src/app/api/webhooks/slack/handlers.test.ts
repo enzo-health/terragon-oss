@@ -1,16 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { handleAppMentionEvent, SlackAppMentionEvent } from "./handlers";
-import { User } from "@terragon/shared";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
+import { User } from "@leo/shared";
+import { createTestUser } from "@leo/shared/model/test-helpers";
 import { db } from "@/lib/db";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { env } from "@terragon/env/apps-www";
-import { encryptValue } from "@terragon/utils/encryption";
+import { env } from "@leo/env/apps-www";
+import { encryptValue } from "@leo/utils/encryption";
 import {
   upsertSlackAccount,
   upsertSlackInstallation,
   upsertSlackSettings,
-} from "@terragon/shared/model/slack";
+} from "@leo/shared/model/slack";
 import * as slackWebApi from "@slack/web-api";
 
 const getDefaultWebClientMock = (overrides?: {

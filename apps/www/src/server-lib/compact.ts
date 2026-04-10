@@ -1,9 +1,6 @@
 import { db } from "@/lib/db";
-import {
-  getThreadChat,
-  updateThreadChat,
-} from "@terragon/shared/model/threads";
-import { MAX_CONTEXT_TOKENS, DBMessage } from "@terragon/shared";
+import { getThreadChat, updateThreadChat } from "@leo/shared/model/threads";
+import { MAX_CONTEXT_TOKENS, DBMessage } from "@leo/shared";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { generateSessionSummary } from "./generate-session-summary";
 import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";

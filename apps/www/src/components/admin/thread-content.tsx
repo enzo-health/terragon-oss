@@ -17,10 +17,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { toUIMessages } from "@/components/chat/toUIMessages";
-import { ThreadChatInfoFull } from "@terragon/shared";
-import { ensureAgent } from "@terragon/agent/utils";
+import { ThreadChatInfoFull } from "@leo/shared";
+import { ensureAgent } from "@leo/agent/utils";
 import { type ThreadForAdmin } from "@/server-actions/admin/thread";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
+import { getPrimaryThreadChat } from "@leo/shared/utils/thread-utils";
 import { ThreadStatusIndicator } from "../thread-status";
 import { ThreadAgentIcon } from "../thread-agent-icon";
 

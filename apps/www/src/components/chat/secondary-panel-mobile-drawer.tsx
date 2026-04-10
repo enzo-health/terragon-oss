@@ -1,4 +1,4 @@
-import { DBMessage, ThreadInfoFull } from "@terragon/shared";
+import { DBMessage, ThreadInfoFull } from "@leo/shared";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Drawer,

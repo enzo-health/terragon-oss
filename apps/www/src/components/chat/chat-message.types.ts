@@ -3,8 +3,8 @@ import {
   GitDiffStats,
   UIAgentMessage,
   UIUserMessage,
-} from "@terragon/shared";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+} from "@leo/shared";
+import { AIAgent, AIModel } from "@leo/agent/types";
 import { MessagePartProps } from "./message-part";
 
 export type UIUserOrAgentPart =

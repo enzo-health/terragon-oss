@@ -1,4 +1,4 @@
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 import {
   DaemonServerPostError,
   IDaemonRuntime,
@@ -387,7 +387,8 @@ export class TerragonDaemon {
     this.agentFrontmatterReader = new AgentFrontmatterReader(runtime);
 
     // Load feature flags from environment variable if available
-    const envFeatureFlags = process.env.TERRAGON_FEATURE_FLAGS;
+    const envFeatureFlags =
+      process.env.LEO_FEATURE_FLAGS ?? process.env.TERRAGON_FEATURE_FLAGS;
     if (envFeatureFlags) {
       try {
         this.featureFlags = JSON.parse(envFeatureFlags);
@@ -419,7 +420,7 @@ export class TerragonDaemon {
    * Initialize and start the daemon
    */
   async start(): Promise<void> {
-    this.runtime.logger.info("🚀 Starting Terragon Daemon...");
+    this.runtime.logger.info("🚀 Starting Leo Daemon...");
     this.runtime.logger.info("Daemon version", {
       version: DAEMON_VERSION,
     });
@@ -1296,7 +1297,7 @@ export class TerragonDaemon {
 
     try {
       // Update MCP config with current env vars so the MCP server subprocess
-      // can reach the Terragon API (env vars change per dispatch).
+      // can reach the Leo API (env vars change per dispatch).
       if (this.mcpConfigPath) {
         try {
           const raw = this.runtime.readFileSync(this.mcpConfigPath);
@@ -1304,9 +1305,12 @@ export class TerragonDaemon {
           if (mcpConfig?.mcpServers?.terry) {
             mcpConfig.mcpServers.terry.env = {
               ...mcpConfig.mcpServers.terry.env,
+              LEO_SERVER_URL: this.runtime.normalizedUrl,
               TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
               DAEMON_TOKEN: input.token,
+              LEO_THREAD_ID: input.threadId,
               TERRAGON_THREAD_ID: input.threadId,
+              LEO_THREAD_CHAT_ID: input.threadChatId,
               TERRAGON_THREAD_CHAT_ID: input.threadChatId,
             };
             this.runtime.writeFileSync(
@@ -1326,11 +1330,14 @@ export class TerragonDaemon {
       // and doesn't pass env vars from the JSON MCP config).
       try {
         this.runtime.writeFileSync(
-          "/tmp/terragon-mcp-env.json",
+          "/tmp/leo-mcp-env.json",
           JSON.stringify({
+            LEO_SERVER_URL: this.runtime.normalizedUrl,
             TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
             DAEMON_TOKEN: input.token,
+            LEO_THREAD_ID: input.threadId,
             TERRAGON_THREAD_ID: input.threadId,
+            LEO_THREAD_CHAT_ID: input.threadChatId,
             TERRAGON_THREAD_CHAT_ID: input.threadChatId,
           }),
         );
@@ -1827,7 +1834,7 @@ export class TerragonDaemon {
 
     const runState = this.getOrCreateDaemonEventRunState(input.threadChatId);
     const serverId =
-      input.acpServerId ?? runState.acpServerId ?? `terragon-${runState.runId}`;
+      input.acpServerId ?? runState.acpServerId ?? `leo-${runState.runId}`;
     runState.acpServerId = serverId;
     if (input.acpSessionId) {
       runState.acpSessionId = input.acpSessionId;
@@ -2497,7 +2504,7 @@ export class TerragonDaemon {
             params: {
               protocolVersion: 1,
               clientInfo: {
-                name: "terragon-daemon",
+                name: "leo-daemon",
                 version: DAEMON_VERSION,
               },
             },
@@ -3235,7 +3242,7 @@ export class TerragonDaemon {
       });
 
       // Update MCP config with current env vars so the MCP server subprocess
-      // can reach the Terragon API (env vars change per dispatch).
+      // can reach the Leo API (env vars change per dispatch).
       if (this.mcpConfigPath) {
         try {
           const raw = this.runtime.readFileSync(this.mcpConfigPath);
@@ -3243,9 +3250,12 @@ export class TerragonDaemon {
           if (mcpConfig?.mcpServers?.terry) {
             mcpConfig.mcpServers.terry.env = {
               ...mcpConfig.mcpServers.terry.env,
+              LEO_SERVER_URL: this.runtime.normalizedUrl,
               TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
               DAEMON_TOKEN: input.token,
+              LEO_THREAD_ID: input.threadId,
               TERRAGON_THREAD_ID: input.threadId,
+              LEO_THREAD_CHAT_ID: input.threadChatId,
               TERRAGON_THREAD_CHAT_ID: input.threadChatId,
             };
             this.runtime.writeFileSync(
@@ -3263,11 +3273,14 @@ export class TerragonDaemon {
       // and doesn't pass env vars from the JSON MCP config).
       try {
         this.runtime.writeFileSync(
-          "/tmp/terragon-mcp-env.json",
+          "/tmp/leo-mcp-env.json",
           JSON.stringify({
+            LEO_SERVER_URL: this.runtime.normalizedUrl,
             TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
             DAEMON_TOKEN: input.token,
+            LEO_THREAD_ID: input.threadId,
             TERRAGON_THREAD_ID: input.threadId,
+            LEO_THREAD_CHAT_ID: input.threadChatId,
             TERRAGON_THREAD_CHAT_ID: input.threadChatId,
           }),
         );
@@ -3282,8 +3295,11 @@ export class TerragonDaemon {
             ...process.env,
             ...env,
             DAEMON_TOKEN: input.token,
+            LEO_SERVER_URL: this.runtime.normalizedUrl,
             TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
+            LEO_THREAD_ID: input.threadId,
             TERRAGON_THREAD_ID: input.threadId,
+            LEO_THREAD_CHAT_ID: input.threadChatId,
             TERRAGON_THREAD_CHAT_ID: input.threadChatId,
           },
           onStdoutLine: (line) => {

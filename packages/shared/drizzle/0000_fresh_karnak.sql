@@ -501,7 +501,7 @@ CREATE TABLE "user_settings" (
 	"auto_create_draft_prs" boolean DEFAULT true NOT NULL,
 	"auto_archive_merged_prs" boolean DEFAULT true NOT NULL,
 	"auto_close_draft_prs_on_archive" boolean DEFAULT false NOT NULL,
-	"branch_name_prefix" text DEFAULT 'terragon/' NOT NULL,
+	"branch_name_prefix" text DEFAULT 'leo/' NOT NULL,
 	"pr_type" text DEFAULT 'draft' NOT NULL,
 	"sandbox_provider" text DEFAULT 'default' NOT NULL,
 	"sandbox_size" text,

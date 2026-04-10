@@ -1,6 +1,6 @@
 import type { Story, StoryDefault } from "@ladle/react";
 import { GitDiffPart } from "../git-diff-part";
-import type { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
+import type { UIGitDiffPart } from "@leo/shared/db/ui-messages";
 
 // Sample git diff data
 

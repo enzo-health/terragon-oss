@@ -1,18 +1,18 @@
 import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
 import { newThread } from "./new-thread";
 import { db } from "@/lib/db";
-import { createTestUser } from "@terragon/shared/model/test-helpers";
-import { User, Session, DBUserMessage } from "@terragon/shared";
+import { createTestUser } from "@leo/shared/model/test-helpers";
+import { User, Session, DBUserMessage } from "@leo/shared";
 import {
   mockLoggedInUser,
   mockWaitUntil,
   waitUntilResolved,
 } from "@/test-helpers/mock-next";
-import { getThread } from "@terragon/shared/model/threads";
+import { getThread } from "@leo/shared/model/threads";
 import { unwrapResult } from "@/lib/server-actions";
 import { execSync } from "node:child_process";
 
-const repoFullName = "terragon/test-repo";
+const repoFullName = "leo/test-repo";
 const mockMessage: DBUserMessage = {
   type: "user",
   parts: [{ type: "text", text: "Test task message" }],
@@ -31,7 +31,7 @@ describe("newThread", { timeout: 30_000 }, () => {
   let session: Session;
 
   beforeAll(() => {
-    execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
+    execSync("docker restart leo_redis_http_test", { stdio: "ignore" });
   });
 
   beforeEach(async () => {

@@ -1,7 +1,7 @@
 "use server";
 
 import { userOnlyAction } from "../lib/auth-server";
-import { updateUserFlags } from "@terragon/shared/model/user-flags";
+import { updateUserFlags } from "@leo/shared/model/user-flags";
 import { db } from "@/lib/db";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { getUserRepos } from "@/server-actions/user-repos";

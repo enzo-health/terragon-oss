@@ -10,7 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 
 async function fetchLogs({
   sandboxProvider,
@@ -63,7 +63,7 @@ export function AdminSandboxContent(props: {
     const blob = new Blob([logContent], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = `terragon-daemon-${props.sandboxId}-${timestamp}.log`;
+    const filename = `leo-daemon-${props.sandboxId}-${timestamp}.log`;
 
     const link = document.createElement("a");
     link.href = url;
@@ -116,9 +116,7 @@ export function AdminSandboxContent(props: {
         {props.sandboxId && (
           <div className="flex flex-col flex-1 min-h-0 border rounded-lg overflow-hidden">
             <div className="flex w-full items-center justify-between px-4 py-2 border-b bg-muted/50">
-              <h3 className="text-sm font-semibold">
-                /tmp/terragon-daemon.log
-              </h3>
+              <h3 className="text-sm font-semibold">/tmp/leo-daemon.log</h3>
               <div className="flex items-center gap-4">
                 <Button
                   variant="outline"

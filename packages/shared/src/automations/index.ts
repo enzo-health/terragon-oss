@@ -110,7 +110,7 @@ export const triggerTypeDescriptions: Record<AutomationTriggerType, string> = {
   pull_request: "Run the automation in response to a GitHub Pull Request.",
   issue: "Run the automation in response to a GitHub Issue.",
   github_mention:
-    "Customize the behavior when @terragon-labs is mentioned on GitHub.",
+    "Customize the behavior when @leo-labs is mentioned on GitHub.",
   manual: "Run the automation manually.",
 };
 

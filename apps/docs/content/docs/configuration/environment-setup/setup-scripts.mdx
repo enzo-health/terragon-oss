@@ -1,6 +1,6 @@
 ---
 title: Setup Scripts
-description: Configure custom setup scripts that run when your Terragon sandbox starts.
+description: Configure custom setup scripts that run when your Leo sandbox starts.
 ---
 
 import { Steps, Step } from "fumadocs-ui/components/steps";
@@ -15,7 +15,7 @@ The agent runs inside a Bash shell environment where the `~/.bashrc` file is aut
 
 If you install binaries, tools, SDKs, or other dependencies make sure they are added to the PATH when the `~/.bashrc` file is sourced.
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 echo "export PATH='$PATH:/path/to/bin'" >> ~/.bashrc
 ```
 
@@ -26,7 +26,7 @@ There are two ways to configure setup scripts:
 ### 1. Environment-Specific Script
 
 <Callout type="info">
-  Configured in your Terragon environment settings, this script is private to you and takes precedence over repository scripts.
+  Configured in your Leo environment settings, this script is private to you and takes precedence over repository scripts.
 
 This is useful for user-specific customizations.
 
@@ -45,7 +45,7 @@ This is useful for user-specific customizations.
 
 ### 2. Repository Script
 
-Add a `terragon-setup.sh` file to the root of your repository
+Add a `leo-setup.sh` file to the root of your repository
 
 <Callout type="info">
   This is version controlled with your code and shared across all users working with this repository.
@@ -54,7 +54,7 @@ This is useful for standard project setup.
 
 </Callout>
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 
 # This script runs for all users working with this repository
@@ -64,7 +64,7 @@ pnpm install
 
 ## Skipping Setup Scripts
 
-You can skip running the `terragon-setup.sh` script when creating tasks and automations by toggling the **Skip Repository Setup** setting in the task or automation creation UI.
+You can skip running the `leo-setup.sh` script when creating tasks and automations by toggling the **Skip Repository Setup** setting in the task or automation creation UI.
 
 This is useful for quick operations that don't require the full environment setup, such as simple bug fixes or documentation updates.
 
@@ -72,7 +72,7 @@ This is useful for quick operations that don't require the full environment setu
 
 ### Go
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 
 INSTALL_DIR="/usr/local"
@@ -84,7 +84,7 @@ echo "export PATH=\$PATH:${INSTALL_DIR}/go/bin" >> ~/.bashrc
 
 ### Custom Node.js Version
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 
 node -v
@@ -104,7 +104,7 @@ echo 'source ~/.nvm/nvm.sh >/dev/null 2>&1' >> ~/.bashrc
 
 ### Ruby
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 
 # Install RVM
@@ -125,7 +125,7 @@ echo '[[ -s /etc/profile.d/rvm.sh ]] && source /etc/profile.d/rvm.sh >/dev/null 
 
 ### Java
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 
 JAVA_VERSION="21"
@@ -146,7 +146,7 @@ echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.bashrc
 
 ### Swift
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 set -euo pipefail
 

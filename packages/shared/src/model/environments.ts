@@ -4,8 +4,8 @@ import * as schema from "../db/schema";
 import type { EnvironmentSnapshot } from "../db/schema";
 import { and, eq, getTableColumns } from "drizzle-orm";
 import { publishBroadcastUserMessage } from "../broadcast-server";
-import { decryptValue } from "@terragon/utils/encryption";
-import type { SandboxSize } from "@terragon/types/sandbox";
+import { decryptValue } from "@leo/utils/encryption";
+import type { SandboxSize } from "@leo/types/sandbox";
 
 export function getEnvironments({
   db,

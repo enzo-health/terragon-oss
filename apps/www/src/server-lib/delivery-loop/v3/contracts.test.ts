@@ -3,7 +3,7 @@ import type {
   DeliveryLoopJournalV3Insert,
   DeliveryOutboxV3Insert,
   DeliveryTimerLedgerV3Insert,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import { describe, expect, it } from "vitest";
 import {
   buildEffectLedgerContract,

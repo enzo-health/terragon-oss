@@ -1,5 +1,5 @@
 {
-  "extends": "@terragon/tsconfig/base",
+  "extends": "@leo/tsconfig/base",
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist"

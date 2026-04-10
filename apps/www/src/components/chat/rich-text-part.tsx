@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { UIRichTextPart } from "@terragon/shared";
+import { UIRichTextPart } from "@leo/shared";
 import { Button } from "@/components/ui/button";
 import {
   mentionPillStyle,

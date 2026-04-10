@@ -7,8 +7,8 @@ import {
   useLiveQuery,
   eq,
 } from "@tanstack/react-db";
-import { ThreadPageShell } from "@terragon/shared/db/types";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import { ThreadPageShell } from "@leo/shared/db/types";
+import { BroadcastThreadPatch } from "@leo/types/broadcast";
 import { applyShellPatchFields } from "./patch-helpers";
 
 function buildCollection() {

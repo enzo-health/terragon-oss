@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid/non-secure";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 import { createDb, type DB } from "../../db";
 import * as schema from "../../db/schema";
 import { createTestThread, createTestUser } from "../../model/test-helpers";
@@ -22,7 +22,7 @@ describe("createDispatchIntent", () => {
     const createdThread = await createTestThread({
       db,
       userId: user.id,
-      overrides: { githubRepoFullName: "terragon/test-repo" },
+      overrides: { githubRepoFullName: "leo/test-repo" },
     });
     threadId = createdThread.threadId;
     threadChatId = createdThread.threadChatId;

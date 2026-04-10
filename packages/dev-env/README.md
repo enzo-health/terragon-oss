@@ -1,6 +1,6 @@
-# @terragon/dev-env
+# @leo/dev-env
 
-Contains code to setup the development environment for terragon.
+Contains code to setup the development environment for leo.
 
 1. The docker compose file for the dev environment.
 2. A script to setup a tunnel to the dev environment.

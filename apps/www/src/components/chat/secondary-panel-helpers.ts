@@ -6,12 +6,12 @@ import {
   type UIPlanPart,
   type UIRichTextPart,
   type UITextFilePart,
-} from "@terragon/shared";
+} from "@leo/shared";
 import {
   type ArtifactDescriptor,
   type ArtifactDescriptorOrigin,
   getArtifactDescriptors,
-} from "@terragon/shared/db/artifact-descriptors";
+} from "@leo/shared/db/artifact-descriptors";
 
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 

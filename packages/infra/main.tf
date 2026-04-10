@@ -3,7 +3,7 @@
 # ─────────────────────────────────────────────────
 
 resource "upstash_redis_database" "main" {
-  database_name  = "terragon"
+  database_name  = "leo"
   region         = "global"
   primary_region = "us-west-2"
   tls            = true
@@ -15,13 +15,13 @@ resource "upstash_redis_database" "main" {
 
 resource "cloudflare_r2_bucket" "public" {
   account_id = var.cloudflare_account_id
-  name       = "terragon-public"
+  name       = "leo-public"
   location   = "enam"
 }
 
 resource "cloudflare_r2_bucket" "private" {
   account_id = var.cloudflare_account_id
-  name       = "terragon-private"
+  name       = "leo-private"
   location   = "enam"
 }
 
@@ -32,10 +32,10 @@ resource "cloudflare_r2_bucket" "private" {
 # ─────────────────────────────────────────────────
 
 resource "vercel_project" "www" {
-  name            = "terragon"
+  name            = "leo"
   framework       = "nextjs"
   root_directory  = "apps/www"
-  build_command   = "turbo run build --filter=@terragon/bundled --filter=@terragon/sandbox-image && pnpm --filter @terragon/shared drizzle-kit-migrate && next build"
+  build_command   = "turbo run build --filter=@leo/bundled --filter=@leo/sandbox-image && pnpm --filter @leo/shared drizzle-kit-migrate && next build"
   install_command = "pnpm install --frozen-lockfile"
 
   resource_config = {
@@ -139,7 +139,7 @@ resource "vercel_project_environment_variable" "www" {
 # ─────────────────────────────────────────────────
 
 resource "vercel_project" "docs" {
-  name            = "terragon-docs"
+  name            = "leo-docs"
   framework       = "nextjs"
   root_directory  = "apps/docs"
   install_command = "pnpm install --frozen-lockfile"

@@ -24,7 +24,7 @@ import {
 import { banUser, unbanUser } from "@/server-actions/admin/user";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { Ban, Unlock } from "lucide-react";
 
 interface BanUserActionProps {

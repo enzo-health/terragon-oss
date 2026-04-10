@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, ReactNode, useCallback } from "react";
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo } from "@leo/shared";
 import { SheetOrMenu, SheetOrMenuItem } from "./ui/sheet-or-menu";
 import {
   useArchiveMutation,
@@ -33,7 +33,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
-import type { DBUserMessage } from "@terragon/shared";
+import type { DBUserMessage } from "@leo/shared";
 
 export function ThreadMenuDropdown({
   thread,

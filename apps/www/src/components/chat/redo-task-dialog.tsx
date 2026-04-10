@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useRouter } from "next/navigation";
-import type { DBUserMessage } from "@terragon/shared";
+import type { DBUserMessage } from "@leo/shared";
 import { GenericPromptBox } from "../promptbox/generic-promptbox";
 import { redoThread } from "@/server-actions/redo-thread";
 import { RepoBranchSelector } from "../repo-branch-selector";

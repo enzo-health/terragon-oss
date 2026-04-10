@@ -5,11 +5,7 @@ import { markPRReadyForReview } from "@/server-actions/mark-pr-ready";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAgentWorking } from "@/agent/thread-status";
-import {
-  GithubCheckStatus,
-  GithubPRStatus,
-  ThreadStatus,
-} from "@terragon/shared";
+import { GithubCheckStatus, GithubPRStatus, ThreadStatus } from "@leo/shared";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 export function GitHubQuickActions({

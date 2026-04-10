@@ -2,8 +2,8 @@
 
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
-import { DBUserMessage } from "@terragon/shared";
-import { getThreadMinimal } from "@terragon/shared/model/threads";
+import { DBUserMessage } from "@leo/shared";
+import { getThreadMinimal } from "@leo/shared/model/threads";
 import { newThread } from "./new-thread";
 import { archiveThread } from "./archive-thread";
 import { getPostHogServer } from "@/lib/posthog-server";

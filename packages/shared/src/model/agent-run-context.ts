@@ -8,7 +8,7 @@ import {
   AgentRunStatus,
   AgentTransportMode,
 } from "../db/types";
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 
 function warnOnPartialWorkflowRunLinkage({
   runId,

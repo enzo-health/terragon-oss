@@ -33,7 +33,7 @@ export function Wordmark({
                 : "text-[28px]",
           )}
         >
-          Terragon
+          Leo
         </span>
       )}
     </Link>

@@ -3,22 +3,15 @@ import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
 import { startAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
-import { getDefaultModelForAgent } from "@terragon/agent/utils";
-import {
-  getThreadChat,
-  getThreadMinimal,
-} from "@terragon/shared/model/threads";
+import { getDefaultModelForAgent } from "@leo/agent/utils";
+import { getThreadChat, getThreadMinimal } from "@leo/shared/model/threads";
 import {
   getAgentRunContextByRunId,
   getLatestAgentRunContextForThreadChat,
-} from "@terragon/shared/model/agent-run-context";
-import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+} from "@leo/shared/model/agent-run-context";
+import { getLatestActiveDispatchIntentForThreadChat } from "@leo/shared/delivery-loop/store/dispatch-intent-store";
 import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
-import type {
-  DBMessage,
-  DBSystemMessage,
-  DBUserMessage,
-} from "@terragon/shared";
+import type { DBMessage, DBSystemMessage, DBUserMessage } from "@leo/shared";
 
 const ACTIVE_AGENT_RUN_STATUSES = new Set([
   "pending",
@@ -612,12 +605,10 @@ export async function maybeProcessFollowUpQueue({
       fallbackMessages: threadChat.messages ?? null,
       fallbackQueuedMessages: [],
     });
-    const latestDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-      db,
-      {
+    const latestDispatchIntent =
+      await getLatestActiveDispatchIntentForThreadChat(db, {
         threadChatId,
-      },
-    );
+      });
     const stillAllowIntentOnlyDispatch =
       isIntentOnlyDeliveryLoopDispatchActive(latestDispatchIntent);
     if (

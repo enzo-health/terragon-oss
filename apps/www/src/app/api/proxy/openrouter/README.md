@@ -18,8 +18,8 @@ This directory hosts the catch-all Next.js route that forwards requests to OpenR
 - `GET/POST/... /api/proxy/openrouter` → `https://openrouter.ai/api/v1/chat/completions`
 - `GET/POST/... /api/proxy/openrouter/<path>` → `https://openrouter.ai/api/<path>`
 - The server injects `Authorization: Bearer <OPENROUTER_API_KEY>` for all requests
-- Clients must include `X-Daemon-Token: <Terragon API key>` in each request; the proxy verifies the key using `auth.api.verifyApiKey`
-- Access additionally requires that the requesting user have a positive Terragon credit balance; requests from users without remaining credits receive a `402 Payment Required` response
+- Clients must include `X-Daemon-Token: <Leo API key>` in each request; the proxy verifies the key using `auth.api.verifyApiKey`
+- Access additionally requires that the requesting user have a positive Leo credit balance; requests from users without remaining credits receive a `402 Payment Required` response
 - Query strings and request bodies are forwarded unchanged; streaming responses are passed through
 
 ## Usage Logging
@@ -47,11 +47,11 @@ Put this in your `~/.config/opencode/opencode.json`:
   "provider": {
     "terry": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Terragon",
+      "name": "Leo",
       "options": {
         "baseURL": "http://localhost:3000/api/proxy/openrouter/v1",
         "headers": {
-          "X-Daemon-Token": "{env:TERRAGON_TOKEN}"
+          "X-Daemon-Token": "{env:LEO_TOKEN}"
         }
       },
       "models": {
@@ -80,5 +80,5 @@ Put this in your `~/.config/opencode/opencode.json`:
 Then run:
 
 ```sh
-TERRAGON_TOKEN=<token> opencode run --model terry/grok-code --format json "Hi, how are you?"
+LEO_TOKEN=<token> opencode run --model terry/grok-code --format json "Hi, how are you?"
 ```

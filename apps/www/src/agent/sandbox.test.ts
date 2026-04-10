@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ISandboxSession } from "@terragon/sandbox/types";
-import { bashQuote } from "@terragon/sandbox/utils";
+import type { ISandboxSession } from "@leo/sandbox/types";
+import { bashQuote } from "@leo/sandbox/utils";
 import {
   reconcileSandboxBranchForThread,
   resolveExpectedBranchForReconciliation,
@@ -42,13 +42,13 @@ async function expectBranchResult(
 
 describe("reconcileSandboxBranchForThread", () => {
   it("keeps the current sandbox when the branch already matches", async () => {
-    const runCommand = vi.fn().mockResolvedValueOnce("terragon/test-branch\n");
+    const runCommand = vi.fn().mockResolvedValueOnce("leo/test-branch\n");
     const session = createSession({ runCommand });
     const restartSandbox = vi.fn();
 
     const result = await reconcileSandboxBranchForThread({
       session,
-      expectedBranchName: "terragon/test-branch",
+      expectedBranchName: "leo/test-branch",
       restartSandbox,
     });
 
@@ -56,7 +56,7 @@ describe("reconcileSandboxBranchForThread", () => {
       session,
       reconciled: false,
       restarted: false,
-      currentBranchName: "terragon/test-branch",
+      currentBranchName: "leo/test-branch",
     });
     expect(runCommand).toHaveBeenCalledWith("git rev-parse --abbrev-ref HEAD", {
       cwd: "/repo",
@@ -67,25 +67,25 @@ describe("reconcileSandboxBranchForThread", () => {
   it("checks out the expected branch before dispatch when the sandbox drifted", async () => {
     const runCommand = vi
       .fn()
-      .mockResolvedValueOnce("terragon/old-branch\n")
+      .mockResolvedValueOnce("leo/old-branch\n")
       .mockResolvedValueOnce("")
-      .mockResolvedValueOnce("terragon/test-branch\n");
+      .mockResolvedValueOnce("leo/test-branch\n");
     const session = createSession({ runCommand });
     const restartSandbox = vi.fn();
 
     await expectBranchResult(
       reconcileSandboxBranchForThread({
         session,
-        expectedBranchName: "terragon/test-branch",
+        expectedBranchName: "leo/test-branch",
         restartSandbox,
       }),
-      "terragon/test-branch",
+      "leo/test-branch",
       false,
     );
 
     expect(runCommand).toHaveBeenNthCalledWith(
       2,
-      `git checkout ${bashQuote("terragon/test-branch")}`,
+      `git checkout ${bashQuote("leo/test-branch")}`,
       { cwd: "/repo" },
     );
     expect(restartSandbox).not.toHaveBeenCalled();
@@ -94,14 +94,14 @@ describe("reconcileSandboxBranchForThread", () => {
   it("restarts the sandbox when branch checkout fails", async () => {
     const runCommand = vi.fn(async (command: string) => {
       if (command === "git rev-parse --abbrev-ref HEAD") {
-        return "terragon/old-branch\n";
+        return "leo/old-branch\n";
       }
       throw new Error("checkout failed");
     });
     const session = createSession({ runCommand });
     const restartedRunCommand = vi
       .fn()
-      .mockResolvedValueOnce("terragon/test-branch\n");
+      .mockResolvedValueOnce("leo/test-branch\n");
     const restartedSession = createSession({
       sandboxId: "sandbox-2",
       runCommand: restartedRunCommand,
@@ -111,10 +111,10 @@ describe("reconcileSandboxBranchForThread", () => {
     await expectBranchResult(
       reconcileSandboxBranchForThread({
         session,
-        expectedBranchName: "terragon/test-branch",
+        expectedBranchName: "leo/test-branch",
         restartSandbox,
       }),
-      "terragon/test-branch",
+      "leo/test-branch",
       true,
     );
 
@@ -124,28 +124,28 @@ describe("reconcileSandboxBranchForThread", () => {
   it("recreates the expected branch from base before restarting", async () => {
     const runCommand = vi
       .fn()
-      .mockResolvedValueOnce("terragon/old-branch\n")
+      .mockResolvedValueOnce("leo/old-branch\n")
       .mockRejectedValueOnce(new Error("checkout failed"))
       .mockRejectedValueOnce(new Error("fetch expected failed"))
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("")
-      .mockResolvedValueOnce("terragon/test-branch\n");
+      .mockResolvedValueOnce("leo/test-branch\n");
     const session = createSession({ runCommand });
     const restartSandbox = vi.fn();
 
     await expectBranchResult(
       reconcileSandboxBranchForThread({
         session,
-        expectedBranchName: "terragon/test-branch",
+        expectedBranchName: "leo/test-branch",
         baseBranchName: "main",
         restartSandbox,
       }),
-      "terragon/test-branch",
+      "leo/test-branch",
       false,
     );
 
     expect(runCommand).toHaveBeenCalledWith(
-      `git checkout -B ${bashQuote("terragon/test-branch")} ${bashQuote("origin/main")}`,
+      `git checkout -B ${bashQuote("leo/test-branch")} ${bashQuote("origin/main")}`,
       { cwd: "/repo" },
     );
     expect(restartSandbox).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ describe("reconcileSandboxBranchForThread", () => {
   it("classifies restart failures as daemon_spawn_failed", async () => {
     const runCommand = vi.fn(async (command: string) => {
       if (command === "git rev-parse --abbrev-ref HEAD") {
-        return "terragon/old-branch\n";
+        return "leo/old-branch\n";
       }
       throw new Error("checkout failed");
     });
@@ -166,7 +166,7 @@ describe("reconcileSandboxBranchForThread", () => {
     await expect(
       reconcileSandboxBranchForThread({
         session,
-        expectedBranchName: "terragon/test-branch",
+        expectedBranchName: "leo/test-branch",
         restartSandbox,
       }),
     ).rejects.toMatchObject({
@@ -179,14 +179,14 @@ describe("reconcileSandboxBranchForThread", () => {
   it("fails with a structured retryable error when drift cannot be reconciled", async () => {
     const runCommand = vi.fn(async (command: string) => {
       if (command === "git rev-parse --abbrev-ref HEAD") {
-        return "terragon/old-branch\n";
+        return "leo/old-branch\n";
       }
       throw new Error("checkout failed");
     });
     const session = createSession({ runCommand });
     const restartedRunCommand = vi.fn(async (command: string) => {
       if (command === "git rev-parse --abbrev-ref HEAD") {
-        return "terragon/wrong-branch\n";
+        return "leo/wrong-branch\n";
       }
       throw new Error("checkout failed again");
     });
@@ -199,7 +199,7 @@ describe("reconcileSandboxBranchForThread", () => {
     await expect(
       reconcileSandboxBranchForThread({
         session,
-        expectedBranchName: "terragon/test-branch",
+        expectedBranchName: "leo/test-branch",
         restartSandbox,
       }),
     ).rejects.toMatchObject({
@@ -227,10 +227,10 @@ describe("resolveExpectedBranchForReconciliation", () => {
       resolveExpectedBranchForReconciliation({
         createNewBranch: false,
         requestedBranchName: "main",
-        threadBranchName: "terragon/feature-123",
+        threadBranchName: "leo/feature-123",
         repoBaseBranchName: "main",
       }),
-    ).toBe("terragon/feature-123");
+    ).toBe("leo/feature-123");
   });
 
   it("uses requested branch when createNewBranch=false and no persisted branch exists", () => {

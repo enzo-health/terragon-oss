@@ -1,6 +1,6 @@
 ---
 title: Environment Variables
-description: Configure secrets and environment variables for your Terragon sandboxes.
+description: Configure secrets and environment variables for your Leo sandboxes.
 ---
 
 import { Steps, Step } from "fumadocs-ui/components/steps";
@@ -70,24 +70,24 @@ SLACK_TOKEN=xoxb-...
 
 ## Default Environment Variables
 
-Terragon automatically sets the following environment variables in your sandbox:
+Leo automatically sets the following environment variables in your sandbox:
 
-| Name       | Description                                                                                                                                                              |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `TERRAGON` | Always set to `true` when running in a Terragon sandbox. You can use this variable to differentiate when the agent/code is running in a Terragon sandbox versus locally. |
-| `GH_TOKEN` | GitHub access token for the `gh` CLI. You can override this by setting your own `GH_TOKEN` environment variable.                                                         |
+| Name       | Description                                                                                                                                                    |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LEO`      | Always set to `true` when running in a Leo sandbox. You can use this variable to differentiate when the agent/code is running in a Leo sandbox versus locally. |
+| `GH_TOKEN` | GitHub access token for the `gh` CLI. You can override this by setting your own `GH_TOKEN` environment variable.                                               |
 
 <Callout type="info">
-  **Custom GitHub Token**: If you need to use a different GitHub token (e.g., for accessing private packages or repositories), you can add your own `GH_TOKEN` environment variable. Your custom token will take precedence over the default token provided by Terragon.
+  **Custom GitHub Token**: If you need to use a different GitHub token (e.g., for accessing private packages or repositories), you can add your own `GH_TOKEN` environment variable. Your custom token will take precedence over the default token provided by Leo.
 </Callout>
 
 ## Using Environment Variables
 
 ### In Setup Scripts
 
-Environment variables are automatically available in your `terragon-setup.sh` script:
+Environment variables are automatically available in your `leo-setup.sh` script:
 
-```bash title="terragon-setup.sh"
+```bash title="leo-setup.sh"
 #!/bin/bash
 echo "API Key: $MY_API_KEY"
 echo "Database URL: $DATABASE_URL"

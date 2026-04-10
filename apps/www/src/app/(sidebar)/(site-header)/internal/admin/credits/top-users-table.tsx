@@ -4,8 +4,8 @@ import { format } from "date-fns";
 import Link from "next/link";
 import { DataTable } from "@/components/ui/data-table";
 import { ColumnDef } from "@tanstack/react-table";
-import { User } from "@terragon/shared";
-import { BILLABLE_EVENT_TYPES } from "@terragon/shared/model/credits";
+import { User } from "@leo/shared";
+import { BILLABLE_EVENT_TYPES } from "@leo/shared/model/credits";
 import { UserForAdminPage } from "@/server-lib/admin";
 
 type TopCreditsUser = UserForAdminPage<

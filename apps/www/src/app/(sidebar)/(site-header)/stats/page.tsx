@@ -9,7 +9,7 @@ import {
 import { statsQueryOptions } from "@/queries/stats-queries";
 
 export const metadata: Metadata = {
-  title: "Stats | Terragon",
+  title: "Stats | Leo",
 };
 
 export default async function StatsPage() {

@@ -1,5 +1,5 @@
 {
-  "name": "@terragon/sandbox-image",
+  "name": "@leo/sandbox-image",
   "version": "0.0.1",
   "description": "Sandbox Dockerfile and code to create template images for sandbox providers",
   "exports": {
@@ -24,12 +24,12 @@
     "create-template:daytona:large": "NODE_ENV=production tsx scripts/create-template.ts --size=large --provider=daytona",
     "create-template:all": "pnpm create-template:e2b:small && pnpm create-template:e2b:large && pnpm create-template:daytona:small && pnpm create-template:daytona:large",
     "update-dockerfile-versions": "bun scripts/update-dockerfile-versions.ts",
-    "build:local": "docker build -t ghcr.io/terragon-labs/containers-test:local -f Dockerfile.daytona ."
+    "build:local": "docker build -t ghcr.io/leo-labs/containers-test:local -f Dockerfile.daytona ."
   },
   "devDependencies": {
     "@e2b/cli": "^1.5.1",
-    "@terragon/tsconfig": "workspace:*",
-    "@terragon/types": "workspace:*",
+    "@leo/tsconfig": "workspace:*",
+    "@leo/types": "workspace:*",
     "@types/node": "^22.10.6",
     "esbuild": "^0.25.5",
     "tsx": "^4.20.3",

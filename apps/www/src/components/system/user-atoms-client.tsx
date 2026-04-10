@@ -14,12 +14,7 @@ import {
 import { userCookiesInitAtom, timeZoneAtom } from "@/atoms/user-cookies";
 import { userFlagsAtom, userFlagsRefetchAtom } from "@/atoms/user-flags";
 import { useHydrateAtoms } from "jotai/utils";
-import {
-  User,
-  UserSettings,
-  UserFlags,
-  UserCredentials,
-} from "@terragon/shared";
+import { User, UserSettings, UserFlags, UserCredentials } from "@leo/shared";
 import { useRealtimeUser } from "@/hooks/useRealtime";
 import { useAtom, useSetAtom } from "jotai";
 import {

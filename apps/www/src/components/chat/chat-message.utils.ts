@@ -1,5 +1,5 @@
-import { AllToolParts, UIMessage, UIPart } from "@terragon/shared";
-import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
+import { AllToolParts, UIMessage, UIPart } from "@leo/shared";
+import { extractProposedPlanText } from "@leo/shared/db/artifact-descriptors";
 import { PartGroup, UIUserOrAgentPart } from "./chat-message.types";
 
 function toolPartContainsName(part: AllToolParts, toolName: string): boolean {

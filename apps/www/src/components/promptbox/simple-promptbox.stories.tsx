@@ -2,7 +2,7 @@ import type { StoryDefault, Story } from "@ladle/react";
 import { SimplePromptBox } from "./simple-promptbox";
 import { usePromptBox } from "./use-promptbox";
 import { useState } from "react";
-import { AIModel } from "@terragon/agent/types";
+import { AIModel } from "@leo/agent/types";
 
 export default {
   title: "PromptBox/Simple",

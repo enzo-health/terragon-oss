@@ -2,12 +2,8 @@
 
 import React from "react";
 import { useState } from "react";
-import {
-  ThreadInfoFull,
-  UIGitDiffPart,
-  UISystemMessage,
-} from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { ThreadInfoFull, UIGitDiffPart, UISystemMessage } from "@leo/shared";
+import type { ArtifactDescriptor } from "@leo/shared/db/artifact-descriptors";
 import { cn } from "@/lib/utils";
 import { GitDiffPart } from "./git-diff-part";
 

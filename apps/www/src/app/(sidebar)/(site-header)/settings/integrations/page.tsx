@@ -1,16 +1,16 @@
 import { IntegrationsSettings } from "@/components/settings/tab/integrations";
 import { getUserIdOrRedirect } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { getSlackAccounts } from "@terragon/shared/model/slack";
+import { getSlackAccounts } from "@leo/shared/model/slack";
 import {
   getLinearAccountsWithSettings,
   getLinearInstallation,
-} from "@terragon/shared/model/linear";
-import { LinearAccountWithSettingsAndInstallation } from "@terragon/shared/db/types";
+} from "@leo/shared/model/linear";
+import { LinearAccountWithSettingsAndInstallation } from "@leo/shared/db/types";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Integrations Settings | Terragon",
+  title: "Integrations Settings | Leo",
 };
 
 export default async function IntegrationsSettingsPage() {
@@ -25,7 +25,7 @@ export default async function IntegrationsSettingsPage() {
   // Join: accounts whose organizationId matches the installation (active or
   // inactive) get it populated; others get null. Inactive installations are
   // surfaced deliberately to drive the "Reinstall required" UI state.
-  // Supports multi-org scenario (one Terragon deployment, multiple accounts).
+  // Supports multi-org scenario (one Leo deployment, multiple accounts).
   const linearAccounts: LinearAccountWithSettingsAndInstallation[] =
     linearAccountsWithSettings.map((account) => ({
       ...account,

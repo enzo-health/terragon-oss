@@ -1,7 +1,7 @@
 import {
   BroadcastActiveChatRealtimeFields,
   BroadcastThreadShellRealtimeFields,
-} from "@terragon/types/broadcast";
+} from "@leo/types/broadcast";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DB } from "../db";

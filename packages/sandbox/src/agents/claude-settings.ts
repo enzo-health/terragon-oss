@@ -13,7 +13,7 @@ export function buildClaudeCodeSettings(
           hooks: [
             {
               type: "command",
-              command: "/tmp/terragon-quality-check.sh",
+              command: "/tmp/leo-quality-check.sh",
               timeout: 300,
             },
           ],

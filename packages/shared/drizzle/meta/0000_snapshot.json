@@ -4526,7 +4526,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'terragon/'"
+          "default": "'leo/'"
         },
         "pr_type": {
           "name": "pr_type",

@@ -3,13 +3,13 @@ import {
   updateThread,
   getThread,
   hasOtherUnarchivedThreadsWithSamePR,
-} from "@terragon/shared/model/threads";
-import { markThreadAsRead } from "@terragon/shared/model/thread-read-status";
+} from "@leo/shared/model/threads";
+import { markThreadAsRead } from "@leo/shared/model/thread-read-status";
 import { stopThread } from "./stop-thread";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { upsertGithubPR } from "@terragon/shared/model/github";
-import { getUserSettings } from "@terragon/shared/model/user";
+import { upsertGithubPR } from "@leo/shared/model/github";
+import { getUserSettings } from "@leo/shared/model/user";
 import {
   getOctokitForApp,
   getIsPRAuthor,

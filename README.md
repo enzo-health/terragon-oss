@@ -1,12 +1,13 @@
-# Terragon
+# Leo
 
-> **Snapshot notice (January 16, 2026):** This repository is an open-source snapshot of Terragon at the time of shutdown. It is provided **as-is**, with no guarantees of maintenance, support, or completeness.
+> **Snapshot notice (January 16, 2026):** This repository is an open-source snapshot of Leo at the time of shutdown. It is provided **as-is**, with no guarantees of maintenance, support, or completeness.
 
-![Terragon](https://cdn.terragonlabs.com/dashboard-beRp.png)
+![Leo](https://cdn.terragonlabs.com/dashboard-beRp.png)
 
 Delegate work to coding agents in the cloud.
 
 For trademark use, see `TRADEMARKS.md`.
+For rename/cutover details and legacy alias timelines, see [docs/leo-rename-migration.md](docs/leo-rename-migration.md).
 
 ## Features
 
@@ -14,9 +15,9 @@ For trademark use, see `TRADEMARKS.md`.
 - **Sandbox Isolation**: Each agent runs in an isolated sandbox container with its own copy of the repository. Agents can read files, make changes, and run tests without affecting other concurrent tasks or your local environment.
 - **Seamless Git Workflow**: Tasks are automatically assigned unique branches, and agent work is checkpointed and pushed to GitHub with AI-generated commits and Pull Requests. The git workflow can be disabled as needed for maximum flexibility.
 - **Local Handoff & MCP**: The `terry` CLI tool enables easy local task takeover and continuation. It also includes an MCP server for managing and creating tasks from MCP-compatible clients (e.g., Cursor, Claude Code).
-- **BYO Subscription & API Keys**: Use your existing Claude or ChatGPT subscriptions to power coding agents, or configure Terragon with your own API keys.
+- **BYO Subscription & API Keys**: Use your existing Claude or ChatGPT subscriptions to power coding agents, or configure Leo with your own API keys.
 - **Automations**: Create recurring tasks or event-triggered workflows (e.g., on new issues or pull requests) to automate repetitive development tasks.
-- **Integrates with Existing Workflows**: @-mention Terragon tools like Slack or GitHub to kick off tasks directly where context already exists.
+- **Integrates with Existing Workflows**: @-mention Leo tools like Slack or GitHub to kick off tasks directly where context already exists.
 - **Real-time Management**: Task status and agent progress stream to your browser in real-time. Browser notifications keep you informed when tasks complete.
 
 ## Prerequisites

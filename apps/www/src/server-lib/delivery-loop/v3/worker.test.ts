@@ -3,12 +3,12 @@ import { nanoid } from "nanoid/non-secure";
 import { eq, like } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import {
   createTestThread,
   createTestUser,
-} from "@terragon/shared/model/test-helpers";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+} from "@leo/shared/model/test-helpers";
+import { createWorkflow } from "@leo/shared/delivery-loop/store/workflow-store";
 import {
   drainOutboxWorker,
   parseLegacySignalEnvelopeToLoopEvent,

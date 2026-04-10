@@ -4,7 +4,7 @@ const mockMarkDispatchIntentAcknowledged = vi.hoisted(() => vi.fn());
 const mockMarkDispatchIntentFailed = vi.hoisted(() => vi.fn());
 const mockGetDispatchIntentByRunId = vi.hoisted(() => vi.fn());
 
-vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
+vi.mock("@leo/shared/delivery-loop/store/dispatch-intent-store", () => ({
   markDispatchIntentAcknowledged: mockMarkDispatchIntentAcknowledged,
   markDispatchIntentFailed: mockMarkDispatchIntentFailed,
   getDispatchIntentByRunId: mockGetDispatchIntentByRunId,
@@ -32,11 +32,11 @@ vi.mock("./retry-policy", () => ({
   evaluateRetryDecision: mockEvaluateRetryDecision,
 }));
 
-vi.mock("@terragon/shared/model/agent-run-context", () => ({
+vi.mock("@leo/shared/model/agent-run-context", () => ({
   updateAgentRunContext: mockUpdateAgentRunContext,
 }));
 
-vi.mock("@terragon/shared/model/threads", () => ({
+vi.mock("@leo/shared/model/threads", () => ({
   updateThreadChatStatusAtomic: mockUpdateThreadChatStatusAtomic,
 }));
 

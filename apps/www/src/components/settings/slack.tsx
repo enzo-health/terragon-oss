@@ -16,8 +16,8 @@ import { useRouter } from "next/navigation";
 import { ModelSelector } from "../model-selector";
 import { RepoSelector } from "../repo-branch-selector";
 import { useRealtimeUser } from "@/hooks/useRealtime";
-import { SlackAccountWithMetadata } from "@terragon/shared/db/types";
-import { AIModel } from "@terragon/agent/types";
+import { SlackAccountWithMetadata } from "@leo/shared/db/types";
+import { AIModel } from "@leo/agent/types";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
@@ -165,7 +165,7 @@ export function SlackAccountSettings({
     return (
       <div className="flex flex-col gap-2 rounded-lg w-full">
         <p className="text-sm">
-          Connect your Slack workspace to interact with Terragon through Slack
+          Connect your Slack workspace to interact with Leo through Slack
         </p>
         <div className="flex">
           <Button

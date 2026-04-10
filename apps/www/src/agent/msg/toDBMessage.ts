@@ -1,6 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk";
-import { ClaudeMessage } from "@terragon/daemon/shared";
-import { DBMessage, DBTextPart, DBThinkingPart } from "@terragon/shared";
+import { ClaudeMessage } from "@leo/daemon/shared";
+import { DBMessage, DBTextPart, DBThinkingPart } from "@leo/shared";
 
 /**
  * Converts a ClaudeMessage to one or more DBMessages

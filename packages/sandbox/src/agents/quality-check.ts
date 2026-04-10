@@ -14,7 +14,7 @@ export function buildQualityCheckScript(): string {
   return `#!/bin/bash
 set -o pipefail
 
-# --- Quality check Stop hook for Terragon SDLC ---
+# --- Quality check Stop hook for Leo SDLC ---
 
 # Skip if no package.json (not a JS/TS project)
 if [ ! -f package.json ]; then
@@ -22,7 +22,7 @@ if [ ! -f package.json ]; then
 fi
 
 # Attempt counter to prevent infinite retry loops
-ATTEMPT_FILE="/tmp/terragon-qc-attempts"
+ATTEMPT_FILE="/tmp/leo-qc-attempts"
 MAX_ATTEMPTS=3
 
 if [ -f "$ATTEMPT_FILE" ]; then

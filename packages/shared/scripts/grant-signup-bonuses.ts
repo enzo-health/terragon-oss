@@ -11,7 +11,7 @@
 import { createDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { sql, isNull, and, eq } from "drizzle-orm";
-import { env } from "@terragon/env/pkg-shared";
+import { env } from "@leo/env/pkg-shared";
 
 const SIGNUP_BONUS_AMOUNT_CENTS = 1000; // $10.00
 const BATCH_SIZE = 10;

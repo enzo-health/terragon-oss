@@ -1,6 +1,6 @@
 # Local Testing Guide: Delivery Loop
 
-End-to-end guide for testing the delivery loop locally in the Terragon monorepo.
+End-to-end guide for testing the delivery loop locally in the Leo monorepo.
 
 ---
 
@@ -11,17 +11,17 @@ End-to-end guide for testing the delivery loop locally in the Terragon monorepo.
 - **`pnpm dev`** must be running (starts Next.js, broadcast, ngrok tunnel, crons, Docker containers)
 - **Docker Desktop** must be running and NOT paused
 - Dev DB on port 5432: `postgresql://postgres:postgres@localhost:5432/postgres`
-- Ngrok tunnel must be established at `https://terragon.ngrok.dev`
+- Ngrok tunnel must be established at `https://leo.ngrok.dev`
 
 ### CLI Setup
 
-The CLI binary (`terry`) bakes `TERRAGON_WEB_URL` at build time. The `install:dev` script builds without the env var, so always rebuild manually:
+The CLI binary (`terry`) bakes `LEO_WEB_URL` at build time. The `install:dev` script builds without the env var, so always rebuild manually:
 
 ```bash
-cd apps/cli && TERRAGON_WEB_URL=https://terragon.ngrok.dev pnpm build && npm link
+cd apps/cli && LEO_WEB_URL=https://leo.ngrok.dev pnpm build && npm link
 ```
 
-> **Why manual rebuild?** `pnpm install:dev` runs its own `pnpm build` WITHOUT setting `TERRAGON_WEB_URL`, so the CLI would point at the wrong (or undefined) URL. Always set the env var before building.
+> **Why manual rebuild?** `pnpm install:dev` runs its own `pnpm build` WITHOUT setting `LEO_WEB_URL`, so the CLI would point at the wrong (or undefined) URL. Always set the env var before building.
 
 ### API Key Setup
 
@@ -44,7 +44,7 @@ COOKIE_VAL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${TOKEN}
 **3. Create the key via Better Auth API:**
 
 ```bash
-curl -s -X POST "https://terragon.ngrok.dev/api/auth/api-key/create" \
+curl -s -X POST "https://leo.ngrok.dev/api/auth/api-key/create" \
   -H "Content-Type: application/json" \
   -H "Cookie: __Secure-better-auth.session_token=${COOKIE_VAL}" \
   -d '{"name":"dev-cli-key"}'
@@ -136,7 +136,7 @@ That snapshot is the first place to look when the run stalls on infra or ACP iss
 ### Create a Task
 
 ```bash
-terry create -r enzo-health/terragon-oss -M execute "Add a comment to the top of README.md saying '# Managed by Terragon'"
+terry create -r enzo-health/leo-oss -M execute "Add a comment to the top of README.md saying '# Managed by Leo'"
 ```
 
 ### Monitor Lifecycle
@@ -218,7 +218,7 @@ The `sandbox-agent` binary takes ~15s to register ACP endpoints after container 
 ### CLI returns "fetch failed" / "Not Found"
 
 - Dev server may need restart after code changes: re-run `pnpm dev`.
-- Check ngrok tunnel is up: `curl -s https://terragon.ngrok.dev`
+- Check ngrok tunnel is up: `curl -s https://leo.ngrok.dev`
 
 ### Workflow stuck in "gating"
 
@@ -248,6 +248,6 @@ The `sandbox-agent` binary takes ~15s to register ACP endpoints after container 
 
 - Clean up stale containers:
   ```bash
-  docker rm -f $(docker ps -q --filter "name=terragon-sandbox")
+  docker rm -f $(docker ps -q --filter "name=leo-sandbox")
   ```
 - Container limits: 4GB (large) / 3GB (small). These must fit within Docker Desktop's total memory allocation (typically 5-8 GiB on macOS).

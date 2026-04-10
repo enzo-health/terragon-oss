@@ -449,7 +449,7 @@ defined in 【F:src/api/retry.ts†L15-L25】. These components ensure robust AP
         <div className="border rounded-lg p-4">
           <TextPart
             text={text}
-            githubRepoFullName="terragon/terragon"
+            githubRepoFullName="leo/leo"
             baseBranchName="main"
           />
         </div>
@@ -462,7 +462,7 @@ defined in 【F:src/api/retry.ts†L15-L25】. These components ensure robust AP
         <div className="border rounded-lg p-4">
           <TextPart
             text={text}
-            githubRepoFullName="terragon/terragon"
+            githubRepoFullName="leo/leo"
             branchName="feature/new-feature"
             baseBranchName="main"
             hasCheckpoint={true}
@@ -477,7 +477,7 @@ defined in 【F:src/api/retry.ts†L15-L25】. These components ensure robust AP
         <div className="border rounded-lg p-4">
           <TextPart
             text={text}
-            githubRepoFullName="terragon/terragon"
+            githubRepoFullName="leo/leo"
             branchName="feature/new-feature"
             baseBranchName="main"
             hasCheckpoint={false}
@@ -492,7 +492,7 @@ defined in 【F:src/api/retry.ts†L15-L25】. These components ensure robust AP
         <div className="border rounded-lg p-4">
           <TextPart
             text={text}
-            githubRepoFullName="terragon/terragon"
+            githubRepoFullName="leo/leo"
             baseBranchName="develop"
           />
         </div>

@@ -1,9 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type {
-  DBMessage,
-  DBUserMessage,
-  DBSystemMessage,
-} from "@terragon/shared";
+import type { DBMessage, DBUserMessage, DBSystemMessage } from "@leo/shared";
 import {
   getPendingToolCallErrorMessages,
   getUserMessageToSend,

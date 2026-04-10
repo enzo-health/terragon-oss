@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { env } from "@terragon/env/apps-www";
+import { env } from "@leo/env/apps-www";
 import { drainDueEffects } from "@/server-lib/delivery-loop/v3/process-effects";
 
 export async function GET(request: NextRequest) {

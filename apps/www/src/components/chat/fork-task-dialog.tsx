@@ -8,16 +8,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { DBUserMessage, GitDiffStats } from "@terragon/shared";
+import type { DBUserMessage, GitDiffStats } from "@leo/shared";
 import { GenericPromptBox } from "../promptbox/generic-promptbox";
 import { forkThread } from "@/server-actions/fork-thread";
 import { RepoBranchSelector } from "../repo-branch-selector";
 import { PromptBoxToolBelt } from "../promptbox/prompt-box-tool-belt";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { toast } from "sonner";
-import { getDefaultModelForAgent } from "@terragon/agent/utils";
+import { getDefaultModelForAgent } from "@leo/agent/utils";
 import { usePromptBoxToolBeltOptions } from "../promptbox/prompt-box-tool-belt";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { AIAgent, AIModel } from "@leo/agent/types";
 
 export function ForkTaskDialog({
   threadId,

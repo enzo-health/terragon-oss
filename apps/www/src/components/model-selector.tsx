@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { memo, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
+import type { AIAgent, AIModel, SelectedAIModels } from "@leo/agent/types";
 import type { SetSelectedModel } from "@/hooks/use-selected-model";
 import {
   getModelDisplayName,
@@ -20,7 +20,7 @@ import {
   modelToAgent,
   sortByAgents,
   type AgentModelGroup,
-} from "@terragon/agent/utils";
+} from "@leo/agent/utils";
 import { useAtomValue } from "jotai";
 import { useAgentsToDisplay, userSettingsAtom } from "@/atoms/user";
 import React from "react";
@@ -38,7 +38,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { AgentIcon } from "@/components/chat/agent-icon";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { AGENT_VERSION } from "@terragon/agent/versions";
+import { AGENT_VERSION } from "@leo/agent/versions";
 
 function MultiAgentModeToggle({
   isMultiAgentMode,

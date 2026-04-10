@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getMessagesToProcess } from "./compact";
-import { DBMessage } from "@terragon/shared";
+import { DBMessage } from "@leo/shared";
 
 describe("getMessagesToProcess", () => {
   it("returns all messages when no compact-result or clear-context exists", () => {

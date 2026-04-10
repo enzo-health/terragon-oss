@@ -9,8 +9,8 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import type { DB } from "@terragon/shared/db";
-import * as schema from "@terragon/shared/db/schema";
+import type { DB } from "@leo/shared/db";
+import * as schema from "@leo/shared/db/schema";
 import type {
   DeliveryEffectLedgerV3Row,
   DeliveryOutboxV3Row,
@@ -18,7 +18,7 @@ import type {
   DeliveryWorkflowRow,
   DeliveryWorkflowHeadV3Row,
   DeliveryTimerLedgerV3Row,
-} from "@terragon/shared/db/types";
+} from "@leo/shared/db/types";
 import {
   AWAITING_PR_CREATION_REASON,
   type EffectSpec,

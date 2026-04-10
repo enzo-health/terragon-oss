@@ -4,12 +4,12 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { DBUserMessage } from "@terragon/shared";
+import { DBUserMessage } from "@leo/shared";
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
 import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
-import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
+import type { WorkflowId } from "@leo/shared/delivery-loop/domain/workflow";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
-import * as schema from "@terragon/shared/db/schema";
+import * as schema from "@leo/shared/db/schema";
 import { eq } from "drizzle-orm";
 
 function buildResumeFollowUpMessage(): DBUserMessage {

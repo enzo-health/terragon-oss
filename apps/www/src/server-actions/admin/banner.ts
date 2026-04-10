@@ -2,7 +2,7 @@
 
 import { redis } from "@/lib/redis";
 import { adminOnly } from "@/lib/auth-server";
-import { User } from "@terragon/shared";
+import { User } from "@leo/shared";
 import { BannerConfig, BANNER_KEY } from "@/lib/banner";
 
 export const getRawBannerConfigAction = adminOnly(

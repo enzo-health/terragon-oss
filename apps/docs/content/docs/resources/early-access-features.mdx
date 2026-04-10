@@ -6,7 +6,7 @@ description: Try experimental new features as they're being developed
 import { Steps, Step } from "fumadocs-ui/components/steps";
 import { Settings, House } from "lucide-react";
 
-If you want to preview some of the features the Terragon team is actively working on, you can opt in to early access features:
+If you want to preview some of the features the Leo team is actively working on, you can opt in to early access features:
 
 ### How to enable early access
 
@@ -24,9 +24,9 @@ If you want to preview some of the features the Terragon team is actively workin
 
 ## Features currently in early access
 
-- **Branch Creation Toggle**: Control whether tasks create a new branch (the existing behavior) or work on the selected branch directly. Access this from below all prompt boxes. This is useful if you have an existing feature branch and you want Terragon's git checkpointing system to commit changes to that branch instead of creating a new one.
+- **Branch Creation Toggle**: Control whether tasks create a new branch (the existing behavior) or work on the selected branch directly. Access this from below all prompt boxes. This is useful if you have an existing feature branch and you want Leo's git checkpointing system to commit changes to that branch instead of creating a new one.
 - **Fork Task**: You can now fork a task by hovering over the last agent message and selecting the fork icon. When a task is forked, the original task's context is summarized and included as context for the new task.
   - Forking a task is helpful if you want to explore multiple directions for a task in parallel, collaborate with multiple agents on different parts of a task (e.g., use GPT-5 to plan and Sonnet to implement, or Haiku to implement and GPT-5 to review, etc.), or if you just want to keep working after a task runs into an error.
   - Tasks that were created from a fork will display a "Forked from …" banner with a deep link back to the original task.
 - **Image Diff View**: View image diffs in the git diff viewer. This is useful if you want to see the changes to an image file.
-- **Linear Integration**: Create Terragon tasks directly from Linear issue comments by mentioning `@Terragon`. Terragon fetches the issue context, detects linked GitHub repositories, and starts working in an isolated sandbox. Link your Linear account in [Settings > Integrations](https://www.terragonlabs.com/settings/integrations) and check the [Linear integration guide](/docs/integrations/linear-integration) for setup instructions.
+- **Linear Integration**: Create Leo tasks directly from Linear issue comments by mentioning `@Leo`. Leo fetches the issue context, detects linked GitHub repositories, and starts working in an isolated sandbox. Link your Linear account in [Settings > Integrations](https://www.terragonlabs.com/settings/integrations) and check the [Linear integration guide](/docs/integrations/linear-integration) for setup instructions.

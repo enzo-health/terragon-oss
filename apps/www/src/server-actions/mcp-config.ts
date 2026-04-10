@@ -6,10 +6,10 @@ import {
   getEnvironment,
   updateEnvironment,
   markSnapshotsStale,
-} from "@terragon/shared/model/environments";
-import { encryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
-import { McpConfig, validateMcpConfig } from "@terragon/sandbox/mcp-config";
+} from "@leo/shared/model/environments";
+import { encryptValue } from "@leo/utils/encryption";
+import { env } from "@leo/env/apps-www";
+import { McpConfig, validateMcpConfig } from "@leo/sandbox/mcp-config";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { UserFacingError } from "@/lib/server-actions";
 

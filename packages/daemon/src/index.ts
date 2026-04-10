@@ -6,7 +6,7 @@ import { DaemonRuntime, writeToUnixSocket } from "./runtime.js";
 import { defaultUnixSocketPath, DAEMON_VERSION } from "./shared.js";
 
 /**
- * Terragon Daemon Service
+ * Leo Daemon Service
  *
  * A daemon service that listens to a unix socket for configuration and sends messages.
  */
@@ -63,7 +63,7 @@ function parseCliArgs(): {
 
   if (values.help) {
     console.log(`
-Usage: terragon-daemon [options]
+Usage: leo-daemon [options]
 Version: v${DAEMON_VERSION}
 
 Options:
@@ -76,7 +76,7 @@ Options:
   --mcp-config-path <path>         MCP config path
   -h, --help                       Show this help message
 
-The daemon will create a unix socket at /tmp/terragon-daemon.sock and listen for JSON messages with:
+The daemon will create a unix socket at /tmp/leo-daemon.sock and listen for JSON messages with:
 {
   "token": "string",
   "prompt": "string", 
@@ -85,16 +85,16 @@ The daemon will create a unix socket at /tmp/terragon-daemon.sock and listen for
 }
 
 Examples:
-  terragon-daemon
-  terragon-daemon -u https://api.example.com
-  terragon-daemon --output-format json
-  terragon-daemon --skip-reporting-daemon-events
-  terragon-daemon --output-format json --mcp-config-path /tmp/mcp-server.json
+  leo-daemon
+  leo-daemon -u https://api.example.com
+  leo-daemon --output-format json
+  leo-daemon --skip-reporting-daemon-events
+  leo-daemon --output-format json --mcp-config-path /tmp/mcp-server.json
   
   # Send a message to the daemon:
 
-  cat msg.json | terragon-daemon --write
-  echo '{"type":"ping"}' | terragon-daemon --write
+  cat msg.json | leo-daemon --write
+  echo '{"type":"ping"}' | leo-daemon --write
 `);
     process.exit(0);
   }
@@ -167,7 +167,7 @@ try {
 
   const cliArgs = parseCliArgs();
   if (cliArgs.version) {
-    console.log(`Terragon Daemon v${DAEMON_VERSION}`);
+    console.log(`Leo Daemon v${DAEMON_VERSION}`);
     process.exit(0);
   }
   if (cliArgs.write) {

@@ -1,28 +1,28 @@
 import { randomUUID } from "node:crypto";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { AIAgent, AIModel } from "@leo/agent/types";
 import {
   getDefaultModelForAgent,
   modelRequiresChatGptOAuth,
   modelToAgent,
   normalizedModelForDaemon,
   shouldUseCredits as shouldUseCreditsUtil,
-} from "@terragon/agent/utils";
-import { env } from "@terragon/env/apps-www";
-import { gitPullUpstream } from "@terragon/sandbox/commands";
-import { CreateSandboxOptions, ISandboxSession } from "@terragon/sandbox/types";
+} from "@leo/agent/utils";
+import { env } from "@leo/env/apps-www";
+import { gitPullUpstream } from "@leo/sandbox/commands";
+import { CreateSandboxOptions, ISandboxSession } from "@leo/sandbox/types";
 import {
   DBMessage,
   DBUserMessage,
   DBUserMessageWithModel,
   Thread,
-} from "@terragon/shared";
-import { DB } from "@terragon/shared/db";
-import type { DeliveryLoopState } from "@terragon/shared/db/types";
+} from "@leo/shared";
+import { DB } from "@leo/shared/db";
+import type { DeliveryLoopState } from "@leo/shared/db/types";
 import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
 import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
-import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { getLatestActiveDispatchIntentForThreadChat } from "@leo/shared/delivery-loop/store/dispatch-intent-store";
+import { getFeatureFlagForUser } from "@leo/shared/model/feature-flags";
+import { upsertAgentRunContext } from "@leo/shared/model/agent-run-context";
 import {
   activeThreadStatuses,
   getActiveThreadCount,
@@ -31,7 +31,7 @@ import {
   getThreadChat,
   updateThread,
   updateThreadChat,
-} from "@terragon/shared/model/threads";
+} from "@leo/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { sendDaemonMessage } from "@/agent/daemon";
@@ -370,7 +370,7 @@ export async function startAgentMessage({
       // Get or create sandbox for the thread
       const startTime = Date.now();
       // We need to provide onStatusUpdate for both new and resumed threads
-      // so the UI can show sandbox setup progress (e.g., "Running terragon-setup.sh")
+      // so the UI can show sandbox setup progress (e.g., "Running leo-setup.sh")
       const onStatusUpdate: CreateSandboxOptions["onStatusUpdate"] = async ({
         sandboxId,
         sandboxStatus,
@@ -634,7 +634,7 @@ export async function startAgentMessage({
           if (effectiveState === "implementing" && effectiveLoopId) {
             try {
               const { getLatestAcceptedArtifact } = await import(
-                "@terragon/shared/delivery-loop/store/artifact-store"
+                "@leo/shared/delivery-loop/store/artifact-store"
               );
               const artifact = await getLatestAcceptedArtifact({
                 db,

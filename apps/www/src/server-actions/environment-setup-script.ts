@@ -10,7 +10,7 @@ import {
   getEnvironment,
   updateEnvironment,
   markSnapshotsStale,
-} from "@terragon/shared/model/environments";
+} from "@leo/shared/model/environments";
 import { UserFacingError } from "@/lib/server-actions";
 
 export const updateEnvironmentSetupScript = userOnlyAction(

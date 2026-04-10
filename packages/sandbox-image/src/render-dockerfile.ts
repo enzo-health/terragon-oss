@@ -1,5 +1,5 @@
 import Handlebars from "handlebars";
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 import { DOCKERFILE_TEMPLATE } from "./dockerfile-template";
 
 // Register the 'eq' helper

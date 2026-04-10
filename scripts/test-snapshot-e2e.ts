@@ -3,7 +3,7 @@
  *
  * Tests:
  *  1. getDefaultBranchForRepo returns correct branch (Fix 1)
- *  2. getSetupScriptFromRepo fetches terragon-setup.sh (Fix 3)
+ *  2. getSetupScriptFromRepo fetches leo-setup.sh (Fix 3)
  *  3. Daytona SDK auth via JWT token works
  *  4. Full buildRepoSnapshot call (Fix 1 + 2 + 3 wired together)
  *
@@ -15,7 +15,7 @@
  *
  * Notes on Test 4:
  *   - If DAYTONA_API_KEY is set, uses the relay approach: creates (or reuses) a relay
- *     snapshot from the Terragon template via the imageName string API, then uses the
+ *     snapshot from the Leo template via the imageName string API, then uses the
  *     relay's `ref` as the Docker FROM base. This avoids cross-namespace registry auth.
  *   - If only DAYTONA_JWT is set, falls back to ubuntu:22.04 as base image to verify
  *     the API call flow without requiring private registry access.
@@ -46,7 +46,7 @@ async function ghFetch(path: string) {
   const res = await fetch(`https://api.github.com${path}`, {
     headers: {
       Authorization: `Bearer ${GITHUB_TOKEN}`,
-      "User-Agent": "terragon-e2e-test",
+      "User-Agent": "leo-e2e-test",
     },
   });
   if (!res.ok)
@@ -69,25 +69,23 @@ async function testDefaultBranch() {
   assert(branch === "main", `default_branch is "main" (got "${branch}")`);
 }
 
-// ── 2. GitHub: terragon-setup.sh ─────────────────────────────────────────────
+// ── 2. GitHub: leo-setup.sh ─────────────────────────────────────────────
 async function testSetupScript() {
   console.log("\n── Test 2: getSetupScriptFromRepo ──");
   try {
-    const data = await ghFetch(
-      `/repos/${REPO}/contents/terragon-setup.sh?ref=main`,
-    );
+    const data = await ghFetch(`/repos/${REPO}/contents/leo-setup.sh?ref=main`);
     if (data.content && typeof data.content === "string") {
       const content = Buffer.from(data.content, "base64").toString("utf-8");
-      console.log(`  terragon-setup.sh content:\n${content}`);
-      assert(content.length > 0, "terragon-setup.sh has content");
+      console.log(`  leo-setup.sh content:\n${content}`);
+      assert(content.length > 0, "leo-setup.sh has content");
     }
   } catch (err: any) {
     if (err?.status === 404) {
       console.log(
-        "  terragon-setup.sh not found (404) — Fix 5 not yet applied to Bonaparte",
+        "  leo-setup.sh not found (404) — Fix 5 not yet applied to Bonaparte",
       );
       console.log(
-        "  ⚠️  EXPECTED: Add terragon-setup.sh to Bonaparte for Prisma generate to run in snapshots",
+        "  ⚠️  EXPECTED: Add leo-setup.sh to Bonaparte for Prisma generate to run in snapshots",
       );
     } else {
       throw err;
@@ -121,17 +119,17 @@ async function testFullSnapshotBuild(daytona: Daytona) {
 
   // Minimal setup script to prove it runs
   const setupScript =
-    "#!/bin/bash\nset -e\necho 'terragon-setup.sh executed successfully'\n";
+    "#!/bin/bash\nset -e\necho 'leo-setup.sh executed successfully'\n";
 
   // Determine base image ref.
   // All Daytona snapshots (including templates) live in cr.app.daytona.io/sbox/ which
   // Docker build workers cannot pull from with personal API keys. A service-account key
-  // is required for production builds using the Terragon template. The JWT-only /
+  // is required for production builds using the Leo template. The JWT-only /
   // ubuntu:22.04 path confirms the full code flow (git clone, setup script, snapshot
   // lifecycle) without registry auth.
   let baseImageRef: string;
   if (DAYTONA_API_KEY) {
-    console.log(`  Mode: production (API key) — using Terragon template`);
+    console.log(`  Mode: production (API key) — using Leo template`);
     const apiKeyDaytona = new Daytona({ apiKey: DAYTONA_API_KEY });
     const templateSnapshot = await (apiKeyDaytona as any).snapshot.get(
       TEMPLATE_SNAPSHOT_NAME,
@@ -152,7 +150,7 @@ async function testFullSnapshotBuild(daytona: Daytona) {
       `  Mode: JWT-only — falling back to ubuntu:22.04 (skips private registry auth)`,
     );
     console.log(
-      `  ⚠️  Set DAYTONA_API_KEY to test with the actual Terragon template`,
+      `  ⚠️  Set DAYTONA_API_KEY to test with the actual Leo template`,
     );
     baseImageRef = "ubuntu:22.04";
   }
@@ -162,7 +160,7 @@ async function testFullSnapshotBuild(daytona: Daytona) {
 
   let image = Image.base(baseImageRef);
 
-  // ubuntu:22.04 fallback needs git installed; Terragon template already has it
+  // ubuntu:22.04 fallback needs git installed; Leo template already has it
   if (!DAYTONA_API_KEY) {
     image = image.runCommands(
       "apt-get update -qq && apt-get install -y -qq git",
@@ -190,15 +188,12 @@ async function testFullSnapshotBuild(daytona: Daytona) {
   const fs = await import("fs");
   const path = await import("path");
   const os = await import("os");
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "terragon-e2e-"));
-  const setupScriptPath = path.join(tmpDir, "terragon-setup.sh");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "leo-e2e-"));
+  const setupScriptPath = path.join(tmpDir, "leo-setup.sh");
   fs.writeFileSync(setupScriptPath, setupScript);
   image = image
-    .addLocalFile(setupScriptPath, "/tmp/terragon-setup.sh")
-    .runCommands(
-      "chmod +x /tmp/terragon-setup.sh",
-      "bash /tmp/terragon-setup.sh",
-    );
+    .addLocalFile(setupScriptPath, "/tmp/leo-setup.sh")
+    .runCommands("chmod +x /tmp/leo-setup.sh", "bash /tmp/leo-setup.sh");
 
   image = image.runCommands(
     "rm -f /root/.git-credentials",

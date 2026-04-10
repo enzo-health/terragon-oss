@@ -1,9 +1,9 @@
 import { AdminFeatureFlagContent } from "@/components/admin/feature-flags";
-import { FeatureFlagName } from "@terragon/shared";
+import { FeatureFlagName } from "@leo/shared";
 import {
   getFeatureFlag,
   getUserOverridesForFeatureFlag,
-} from "@terragon/shared/model/feature-flags";
+} from "@leo/shared/model/feature-flags";
 import { getAdminUserOrThrow } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";

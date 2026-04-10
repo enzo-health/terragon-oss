@@ -4,9 +4,9 @@ import {
   ISandboxProvider,
   ISandboxSession,
 } from "../types";
-import { getTemplateIdForSize } from "@terragon/sandbox-image";
+import { getTemplateIdForSize } from "@leo/sandbox-image";
 import { Sandbox } from "@e2b/code-interpreter";
-import { retryAsync } from "@terragon/utils/retry";
+import { retryAsync } from "@leo/utils/retry";
 
 const HOME_DIR = "root";
 const REPO_DIR = "repo";

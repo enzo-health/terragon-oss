@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { DB } from "@terragon/shared/db";
+import type { DB } from "@leo/shared/db";
 
 const REQUIRED_AGENT_RUN_CONTEXT_COLUMNS = [
   "failure_category",

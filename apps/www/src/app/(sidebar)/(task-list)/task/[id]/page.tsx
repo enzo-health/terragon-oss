@@ -12,7 +12,7 @@ import {
   threadChatQueryOptions,
   threadShellQueryOptions,
 } from "@/queries/thread-queries";
-import { ThreadPageShell } from "@terragon/shared";
+import { ThreadPageShell } from "@leo/shared";
 import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
 import { unwrapResult } from "@/lib/server-actions";
 
@@ -23,14 +23,14 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const userId = await getUserIdOrNull();
   if (!userId) {
-    return { title: "Task | Terragon" };
+    return { title: "Task | Leo" };
   }
   const { id } = await params;
   try {
     const thread = unwrapResult(await getThreadPageShellAction(id));
     return { title: getThreadDocumentTitle(thread) };
   } catch {
-    return { title: "Task | Terragon" };
+    return { title: "Task | Leo" };
   }
 }
 

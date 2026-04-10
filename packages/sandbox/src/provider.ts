@@ -1,4 +1,4 @@
-import type { SandboxProvider } from "@terragon/types/sandbox";
+import type { SandboxProvider } from "@leo/types/sandbox";
 import type { ISandboxProvider } from "./types";
 import { DockerProvider } from "./providers/docker-provider";
 import { E2BProvider } from "./providers/e2b-provider";

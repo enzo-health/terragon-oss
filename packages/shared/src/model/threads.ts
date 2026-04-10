@@ -21,8 +21,8 @@ import {
   publishBroadcastUserMessage,
   getNextPatchVersion,
 } from "../broadcast-server";
-import { AGENT_VERSION } from "@terragon/agent/versions";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
+import { AGENT_VERSION } from "@leo/agent/versions";
+import { LEGACY_THREAD_CHAT_ID } from "@leo/shared/utils/thread-utils";
 import {
   Thread,
   ThreadInsert,
@@ -38,11 +38,11 @@ import {
   ThreadChatInsertRaw,
   LinearMentionThreadInsert,
 } from "../db/types";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import { BroadcastThreadPatch } from "@leo/types/broadcast";
 import { sanitizeForJson } from "../utils/sanitize-json";
 import { toUTC, validateTimezone } from "../utils/timezone";
 import { getUser } from "./user";
-import { AIAgent } from "@terragon/agent/types";
+import { AIAgent } from "@leo/agent/types";
 import {
   getThreadPageChatWithPermissions,
   getThreadPageShellWithPermissions,

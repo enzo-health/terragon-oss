@@ -7,8 +7,8 @@ import {
   useLiveQuery,
   eq,
 } from "@tanstack/react-db";
-import { ThreadPageChat } from "@terragon/shared/db/types";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import { ThreadPageChat } from "@leo/shared/db/types";
+import { BroadcastThreadPatch } from "@leo/types/broadcast";
 import { validateChatPatch } from "./patch-helpers";
 
 function chatKey(threadId: string, threadChatId: string): string {

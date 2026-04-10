@@ -2,7 +2,7 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { updateThread } from "@terragon/shared/model/threads";
+import { updateThread } from "@leo/shared/model/threads";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { archiveAndStopThread } from "@/server-lib/archive-thread";
 

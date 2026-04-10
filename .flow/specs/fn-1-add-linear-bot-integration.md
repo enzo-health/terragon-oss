@@ -2,7 +2,7 @@
 
 ## Overview
 
-Add a Linear bot integration that allows users to @mention the Terragon bot in Linear issue comments to automatically spin up a sandbox. When mentioned, the bot fetches the issue context including attachments, creates a Terragon thread, starts the agent in a sandbox, and posts an acknowledgment comment back to Linear with a link to the task.
+Add a Linear bot integration that allows users to @mention the Leo bot in Linear issue comments to automatically spin up a sandbox. When mentioned, the bot fetches the issue context including attachments, creates a Leo thread, starts the agent in a sandbox, and posts an acknowledgment comment back to Linear with a link to the task.
 
 This mirrors the existing Slack @mention integration flow but adapted for Linear's webhook and API model.
 
@@ -11,7 +11,7 @@ This mirrors the existing Slack @mention integration flow but adapted for Linear
 **In scope (v1):**
 
 - Webhook endpoint receiving Linear Comment.create events with HMAC-SHA256 signature verification
-- User account linking (Linear user → Terragon user) via settings UI
+- User account linking (Linear user → Leo user) via settings UI
 - Issue + attachment fetching via @linear/sdk
 - Smart GitHub repo detection from Linear issue attachments
 - Thread creation with `"linear-mention"` source type
@@ -43,7 +43,7 @@ sequenceDiagram
     W-->>L: 200 OK (immediate)
     W->>H: waitUntil(handleCommentCreated)
     H->>H: Check mention trigger in comment body
-    H->>DB: Resolve linearUserId → Terragon user
+    H->>DB: Resolve linearUserId → Leo user
     H->>H: Check linearIntegration feature flag for user
     H->>DB: Get linearSettings (default repo, model)
     H->>API: Fetch issue details + attachments
@@ -140,7 +140,7 @@ pnpm -C packages/shared test
 - [ ] Bot @mention detected in comment body via LINEAR_MENTION_HANDLE (case-insensitive, regex-escaped)
 - [ ] Self-triggering loop prevented (ack comments never contain mention handle)
 - [ ] Webhook handler checks `linearIntegration` feature flag for resolved user
-- [ ] Linear user resolved to Terragon user via linked account
+- [ ] Linear user resolved to Leo user via linked account
 - [ ] User access tier checked before thread creation
 - [ ] Issue details + attachments fetched and included in thread message
 - [ ] GitHub repo auto-detected from Linear attachments when available

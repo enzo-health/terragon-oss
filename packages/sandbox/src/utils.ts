@@ -6,7 +6,7 @@ export function generateRandomBranchSuffix(): string {
   return nanoid(6).toLowerCase();
 }
 
-export function generateRandomBranchName(prefix = "terragon/"): string {
+export function generateRandomBranchName(prefix = "leo/"): string {
   // Do not mutate the provided prefix; use it as-is
   const uniqueSuffix = generateRandomBranchSuffix();
   return `${prefix}${uniqueSuffix}`;

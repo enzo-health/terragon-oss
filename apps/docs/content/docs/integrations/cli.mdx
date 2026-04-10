@@ -1,6 +1,6 @@
 ---
 title: Terry CLI & MCP
-description: Command-line interface for interacting with Terragon that can also be used as an MCP server
+description: Command-line interface for interacting with Leo that can also be used as an MCP server
 ---
 
 import { Steps, Step } from "fumadocs-ui/components/steps";
@@ -8,11 +8,11 @@ import { Tabs, Tab } from "fumadocs-ui/components/tabs";
 import { Callout } from "fumadocs-ui/components/callout";
 
 <img
-  src="https://img.shields.io/npm/v/@terragon-labs/cli.svg?style=flat-square"
+  src="https://img.shields.io/npm/v/@leo-labs/cli.svg?style=flat-square"
   alt="npm"
 />
 
-The Terry CLI let's you interact with Terragon directly from the command line. Create tasks, review changes, pull tasks to pick up where you left off, all from your terminal.
+The Terry CLI let's you interact with Leo directly from the command line. Create tasks, review changes, pull tasks to pick up where you left off, all from your terminal.
 
 ### Requirements
 
@@ -27,7 +27,7 @@ The Terry CLI let's you interact with Terragon directly from the command line. C
 </Callout>
 
 ```bash title="Terminal"
-npm install -g @terragon-labs/cli
+npm install -g @leo-labs/cli
 ```
 
 ### Authentication
@@ -56,7 +56,7 @@ terry auth
 
 ### `terry create`
 
-Create a new task in Terragon with a message.
+Create a new task in Leo with a message.
 
 <Callout type="info">
   The CLI has a daily limit of 50 tasks per user. This limit resets every 24 hours.
@@ -125,7 +125,7 @@ Available models:
 
 ### `terry pull`
 
-Pull tasks from Terragon to your local machine:
+Pull tasks from Leo to your local machine:
 
 ```bash title="Terminal"
 # Interactive mode - select from recent tasks
@@ -142,7 +142,7 @@ terry pull <taskId> --resume
   **Getting the task ID**:
   <br />
   You can find the task ID at the end of the URL when viewing a task in
-  Terragon. For example, in `https://terragonlabs.com/tasks/abc123-def456`, the
+  Leo. For example, in `https://terragonlabs.com/tasks/abc123-def456`, the
   task ID is `abc123-def456`.
 </Callout>
 
@@ -185,13 +185,13 @@ A count of your active tasks is returned after all of your tasks are listed.
 ```
 Task ID         abc123def456
 Name            Fix login bug
-Branch          terragon/fix-login
+Branch          leo/fix-login
 Repository      myorg/myrepo
 PR Number       #123
 
 Task ID         def789ghi012
 Name            Add dark mode
-Branch          terragon/dark-mode
+Branch          leo/dark-mode
 Repository      myorg/myrepo
 PR Number       N/A
 
@@ -209,7 +209,7 @@ terry mcp
 
 #### Claude Code Integration
 
-You can add the Terry MCP server to your local Claude Code instance to enable direct interaction with Terragon tasks from within Claude:
+You can add the Terry MCP server to your local Claude Code instance to enable direct interaction with Leo tasks from within Claude:
 
 ```bash title="Terminal"
 claude mcp add terry -- terry mcp
@@ -217,8 +217,8 @@ claude mcp add terry -- terry mcp
 
 This integration provides Claude Code with the following capabilities:
 
-- **`terry_list`**: List all your Terragon tasks directly from Claude
+- **`terry_list`**: List all your Leo tasks directly from Claude
 - **`terry_create`**: Create new tasks without leaving Claude Code
 - **`terry_pull`**: Pull task session data to continue work
 
-The MCP server acts as a bridge between Claude Code and Terragon, allowing you to manage tasks using natural language commands within your AI coding sessions.
+The MCP server acts as a bridge between Claude Code and Leo, allowing you to manage tasks using natural language commands within your AI coding sessions.

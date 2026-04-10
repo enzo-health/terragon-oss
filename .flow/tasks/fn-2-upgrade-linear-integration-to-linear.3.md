@@ -33,7 +33,7 @@ Rewrite the Linear webhook route and handlers to process `AgentSessionEvent` as 
     4. **10s SLA failure handling**: If `thought` emission throws/rejects → log error with `agentSessionId`, return 200 anyway. Linear does not retry on 200. Thread creation still proceeds via `waitUntil()`.
     5. **Idempotency check** (in `waitUntil()`): call `getThreadByLinearDeliveryId({ db, deliveryId })` (defined in task 1, `model/threads.ts`). If thread exists → skip creation, return.
     6. Return 200 to Linear
-    7. **ASYNC via `waitUntil()`**: Extract `promptContext` from `agentSession` → issue context; resolve user from `agentSession.actorId` → `linearAccount.linearUserId` → Terragon `userId`; call `issueRepositorySuggestions(agentSessionId, { candidateRepositories })` (candidates: `[{ fullName: settings.defaultRepoFullName, hostname: "github.com" }]` + user environments from DB, capped at 10, skip nulls); create thread via `newThreadInternal()` with `sourceMetadata` including `agentSessionId`, `linearDeliveryId`; call `LinearClient.agentSessionUpdate({ id: agentSessionId, externalUrls: [taskUrl] })`
+    7. **ASYNC via `waitUntil()`**: Extract `promptContext` from `agentSession` → issue context; resolve user from `agentSession.actorId` → `linearAccount.linearUserId` → Leo `userId`; call `issueRepositorySuggestions(agentSessionId, { candidateRepositories })` (candidates: `[{ fullName: settings.defaultRepoFullName, hostname: "github.com" }]` + user environments from DB, capped at 10, skip nulls); create thread via `newThreadInternal()` with `sourceMetadata` including `agentSessionId`, `linearDeliveryId`; call `LinearClient.agentSessionUpdate({ id: agentSessionId, externalUrls: [taskUrl] })`
   - `prompted` event: Look up thread via `getThreadByLinearAgentSessionId({ db, agentSessionId })` (defined in task 1). If found → queue follow-up via `appendQueuedMessages`. If not found → log warning, return 200. Do NOT create a new thread.
   - Unknown action → log and 200
 
@@ -52,7 +52,7 @@ Rewrite the Linear webhook route and handlers to process `AgentSessionEvent` as 
     - `action`: `{ type: "action", action: string, result?: string }`
     - `response`: `{ type: "response", body: string }`
     - `error`: `{ type: "error", body: string }`
-  - `updateAgentSession({ client, sessionId, externalUrls })` — set Terragon task URL
+  - `updateAgentSession({ client, sessionId, externalUrls })` — set Leo task URL
   - **Injectable `LinearClient` factory** for testability: exported helper accepts `opts?: { createClient?: (token: string) => LinearClient }`. Default creates `new LinearClient({ accessToken: token })`. Tests pass a jest/vitest mock factory that returns a stubbed client.
   - Error handling: all emissions wrapped in try/catch; log failures but never throw
 
@@ -92,7 +92,7 @@ Rewrite the Linear webhook route and handlers to process `AgentSessionEvent` as 
 - [ ] Uses `LinearClient.createAgentActivity()` (typed SDK, no raw GraphQL)
 - [ ] Per-workspace OAuth token lookup from `linearInstallation` (no global API key)
 - [ ] `issueRepositorySuggestions` called with `agentSessionId` + `candidateRepositories`; fallback to `defaultRepoFullName`
-- [ ] `externalUrls` set on agent session with Terragon task link
+- [ ] `externalUrls` set on agent session with Leo task link
 - [ ] Old regex mention detection removed (`containsMention`, `escapeRegex`)
 - [ ] `linearDeliveryId` from `Linear-Delivery-Id` header stored in `sourceMetadata`
 - [ ] Idempotency: existing thread with matching `linearDeliveryId` → skip creation (no duplicate threads on retry)

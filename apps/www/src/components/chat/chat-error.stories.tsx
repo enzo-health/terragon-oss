@@ -123,9 +123,9 @@ export const GitCheckpointPushFailed: Story = () => {
       <ChatError
         status="complete"
         errorType="git-checkpoint-push-failed"
-        errorInfo={`To github.com:terragon-labs/terragon.git
-! [rejected]        terragon/fca1cf -> terragon/fca1cf (non-fast-forward)
-error: failed to push some refs to 'github.com:terragon-labs/terragon.git'
+        errorInfo={`To github.com:leo-labs/leo.git
+! [rejected]        leo/fca1cf -> leo/fca1cf (non-fast-forward)
+error: failed to push some refs to 'github.com:leo-labs/leo.git'
 hint: Updates were rejected because the tip of your current branch is behind
 hint: its remote counterpart. Integrate the remote changes (e.g.
 hint: 'git pull ...') before pushing again.
@@ -216,9 +216,9 @@ Additional context: The operation failed due to insufficient permissions. Please
 };
 
 export const GitPushFailedMobileOverflow: Story = () => {
-  const veryLongErrorMessage = `To github.com:terragon-labs/terragon.git
-! [rejected]        terragon/very-long-branch-name-that-could-cause-overflow-issues-on-mobile-devices -> terragon/very-long-branch-name-that-could-cause-overflow-issues-on-mobile-devices (non-fast-forward)
-error: failed to push some refs to 'github.com:terragon-labs/terragon.git'
+  const veryLongErrorMessage = `To github.com:leo-labs/leo.git
+! [rejected]        leo/very-long-branch-name-that-could-cause-overflow-issues-on-mobile-devices -> leo/very-long-branch-name-that-could-cause-overflow-issues-on-mobile-devices (non-fast-forward)
+error: failed to push some refs to 'github.com:leo-labs/leo.git'
 hint: Updates were rejected because the tip of your current branch is behind its remote counterpart. This is a very long error message that contains detailed information about what went wrong and how to fix it. The message continues with more details that could potentially cause overflow issues on mobile devices when the refresh icon is displayed.
 hint: Integrate the remote changes (e.g. 'git pull ...') before pushing again.
 hint: See the 'Note about fast-forwards' in 'git push --help' for details.

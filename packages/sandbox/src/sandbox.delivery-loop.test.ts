@@ -8,7 +8,7 @@ import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import net from "net";
-import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
+import type { DaemonEventAPIBody } from "@leo/daemon/shared";
 
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 

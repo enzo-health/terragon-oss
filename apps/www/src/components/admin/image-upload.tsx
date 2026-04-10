@@ -152,7 +152,7 @@ export function AdminImageUpload() {
             <CardTitle>Image/Video Upload</CardTitle>
             <CardDescription>
               Upload images or videos (MP4, WebM, MOV) to the CDN bucket
-              (cdn-terragon) at cdn.terragonlabs.com
+              (cdn-leo) at cdn.terragonlabs.com
             </CardDescription>
           </CardHeader>
           <CardContent>
