@@ -55,9 +55,6 @@ output.txt
 # flow-next planning artifacts
 .flow/
 
-# desloppify local state
-.desloppify/
-
 # vscode-extension local workspace settings
 apps/vscode-extension/.vscode/
 .env*.local

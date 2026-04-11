@@ -10,17 +10,9 @@ import type { ContractRouterClient } from "@orpc/contract";
 import type { DBUserMessage } from "@terragon/shared/db/db-message";
 import { cliAPIContract } from "@terragon/cli-api-contract";
 
-type CommandName =
-  | "help"
-  | "preflight"
-  | "snapshot"
-  | "run"
-  | "e2e"
-  | "fixtures"
-  | "test-streams";
+type CommandName = "help" | "preflight" | "snapshot" | "run" | "e2e";
 type RunProfile = "fast" | "full";
 type E2EMode = "real" | "dry-run";
-type FixtureCommand = "check" | "seed" | "cleanup";
 
 type ParsedArgs = {
   command: CommandName;
@@ -36,7 +28,6 @@ type ParsedArgs = {
   mode: E2EMode;
   timeoutMs: number;
   pollIntervalMs: number;
-  fixtureCommand: FixtureCommand;
 };
 
 const DEFAULT_DATABASE_URL =
@@ -68,9 +59,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       candidate === "preflight" ||
       candidate === "snapshot" ||
       candidate === "run" ||
-      candidate === "e2e" ||
-      candidate === "fixtures" ||
-      candidate === "test-streams"
+      candidate === "e2e"
     ) {
       command = candidate;
     }
@@ -150,19 +139,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  // Parse fixture command from positional args if command is fixtures
-  let fixtureCommand: FixtureCommand = "check";
-  if (command === "fixtures" && argv.length > 1) {
-    const fixtureArg = argv[1];
-    if (
-      fixtureArg === "check" ||
-      fixtureArg === "seed" ||
-      fixtureArg === "cleanup"
-    ) {
-      fixtureCommand = fixtureArg;
-    }
-  }
-
   return {
     command,
     profile,
@@ -177,7 +153,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     mode,
     timeoutMs,
     pollIntervalMs,
-    fixtureCommand,
   };
 }
 
@@ -192,16 +167,6 @@ Usage:
   pnpm delivery-loop:local run --profile full
   pnpm delivery-loop:local e2e --repo <owner/repo> --user-id <id>
   pnpm delivery-loop:local e2e --dry-run --thread-id <id>
-  pnpm delivery-loop:local fixtures [check|seed|cleanup]
-  pnpm delivery-loop:local test-streams
-
-Commands:
-  preflight         Print readiness checks for delivery-loop tables
-  snapshot          Print workflow diagnostics JSON
-  run               Run validation test suites
-  e2e               Execute end-to-end task-to-PR lifecycle
-  fixtures          Manage E2E test fixtures
-  test-streams      Run durable-delivery stream tests against real Redis
 
 Options:
   --profile fast|full     Test suite profile (default: fast)
@@ -256,35 +221,13 @@ async function readTerryApiKey(): Promise<string> {
   const settingsDir =
     process.env.TERRY_SETTINGS_DIR?.trim() || `${homedir()}/.terry`;
   const configPath = resolve(settingsDir, "config.json");
-
-  // Try to read from config file first
-  try {
-    const configText = await readFile(configPath, "utf-8");
-    const parsed = JSON.parse(configText) as { apiKey?: unknown };
-    const apiKey = parsed.apiKey;
-    if (typeof apiKey === "string" && apiKey.trim().length > 0) {
-      return apiKey.trim();
-    }
-  } catch {
-    // Config file doesn't exist or is invalid - fall through to e2e fixture key
+  const configText = await readFile(configPath, "utf-8");
+  const parsed = JSON.parse(configText) as { apiKey?: unknown };
+  const apiKey = parsed.apiKey;
+  if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
+    throw new Error(`No API key found in ${configPath}`);
   }
-
-  // In development/test mode, fallback to e2e fixture API key
-  if (
-    process.env.NODE_ENV === "development" ||
-    process.env.NODE_ENV === "test"
-  ) {
-    const { getE2EFixtureApiKey } = await importLocalModule<{
-      getE2EFixtureApiKey: () => string;
-    }>(".factory/library/e2e-test-fixtures.ts");
-    const e2eKey = getE2EFixtureApiKey();
-    console.log(`Using E2E fixture API key for local testing`);
-    return e2eKey;
-  }
-
-  throw new Error(
-    `No API key found in ${configPath} and not in dev/test mode for fallback`,
-  );
+  return apiKey.trim();
 }
 
 async function createCliApiClient(): Promise<{
@@ -816,13 +759,6 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // Real mode: enforce web URL guard in non-development environments
-    if (!webUrl && process.env.NODE_ENV !== "development") {
-      throw new Error(
-        "e2e real mode requires --web-url or TERRAGON_WEB_URL in non-development environments",
-      );
-    }
-
     const resolvedUserId = args.userId ?? "";
     const repoFullName = args.repo ?? "";
     const minimalTaskMessage =
@@ -857,6 +793,12 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
 
     while (Date.now() <= deadline) {
       pollCount += 1;
+      if (!webUrl && process.env.NODE_ENV !== "development") {
+        throw new Error(
+          "e2e real mode requires --web-url or TERRAGON_WEB_URL in non-development environments",
+        );
+      }
+
       const cronResult = await triggerScheduledTasksCron(cronBaseUrl);
       lastCronStatus = cronResult.status;
       lastCronText = cronResult.text;
@@ -958,86 +900,6 @@ async function commandE2E(args: ParsedArgs): Promise<void> {
   });
 }
 
-function commandTestStreams(): void {
-  // Run durable-delivery stream tests against real Redis via HTTP proxy (port 8079)
-  // This bypasses the test HTTP Redis (port 18079) that causes stream tests to skip.
-  //
-  // The key insight: durable-delivery tests check REDIS_URL for "localhost:18079"
-  // to detect test HTTP Redis mode. Port 8079 (dev HTTP proxy to real Redis) is NOT
-  // 18079, so the test skip condition returns false and tests execute normally.
-  // The Upstash Redis client requires HTTP URLs (not redis://), so we use the proxy.
-  const realRedisHttpUrl = "http://localhost:8079";
-
-  console.log(
-    `\nRunning durable-delivery stream tests against real Redis via HTTP proxy at ${realRedisHttpUrl}`,
-  );
-  console.log(
-    "(This executes stream coverage assertions that are normally skipped with test HTTP Redis on port 18079)\n",
-  );
-
-  // First verify Redis HTTP proxy is accessible
-  // The proxy returns 401 without token, but any HTTP response means it's running
-  const pingResult = spawnSync(
-    "curl",
-    ["-s", "-o", "/dev/null", "-w", "%{http_code}", "http://localhost:8079"],
-    {
-      encoding: "utf-8",
-      stdio: "pipe",
-    },
-  );
-  const httpCode = pingResult.stdout?.trim() ?? "";
-  // 401 is expected (no auth token), connection refused would give empty/exit code
-  if (httpCode === "000" || httpCode === "" || httpCode === "7") {
-    console.error(
-      "Error: Redis HTTP proxy on port 8079 is not accessible. Please ensure dev containers are running.",
-    );
-    console.error(
-      "You can start them with: pnpm delivery-loop:local preflight",
-    );
-    throw new Error(
-      "Redis HTTP proxy connection failed - cannot run stream tests",
-    );
-  }
-  console.log("✓ Redis HTTP proxy is accessible on port 8079\n");
-
-  const result = spawnSync(
-    "pnpm",
-    [
-      "-C",
-      "apps/www",
-      "exec",
-      "vitest",
-      "run",
-      "src/server-lib/delivery-loop/v3/durable-delivery.test.ts",
-    ],
-    {
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        // Use dev HTTP Redis proxy (port 8079) which proxies to real Redis
-        // Port 8079 != 18079, so the test skip condition returns false
-        REDIS_URL: realRedisHttpUrl,
-        REDIS_TOKEN: "redis_dev_token",
-        // Skip the test-global-setup that would override our REDIS_URL
-        SKIP_TEST_GLOBAL_SETUP: "true",
-        // Point to dev database instead of test database
-        DATABASE_URL:
-          process.env.DATABASE_URL ??
-          "postgresql://postgres:postgres@localhost:5432/postgres",
-      },
-      cwd: REPO_ROOT,
-    },
-  );
-
-  if (result.status !== 0) {
-    throw new Error(
-      "test-streams command failed: durable-delivery stream tests did not pass",
-    );
-  }
-
-  console.log("\n✓ Stream tests completed successfully against real Redis");
-}
-
 function commandRun(profile: RunProfile): void {
   const fastCommands: Array<{ cmd: string; args: string[] }> = [
     { cmd: "pnpm", args: ["tsc-check"] },
@@ -1050,8 +912,7 @@ function commandRun(profile: RunProfile): void {
         "exec",
         "vitest",
         "run",
-        "src/delivery-loop/domain/failure-signature.test.ts",
-        "src/delivery-loop/store/dispatch-intent-store.test.ts",
+        "src/delivery-loop/domain/transitions.test.ts",
       ],
     },
     {
@@ -1062,9 +923,9 @@ function commandRun(profile: RunProfile): void {
         "exec",
         "vitest",
         "run",
+        "src/server-lib/delivery-loop/coordinator/reduce-signals.test.ts",
+        "src/server-lib/delivery-loop/workers/run-dispatch-work.test.ts",
         "src/server-lib/delivery-loop/v3/reducer.test.ts",
-        "src/server-lib/delivery-loop/v3/process-effects.test.ts",
-        "src/app/api/daemon-event/route.test.ts",
       ],
     },
   ];
@@ -1079,10 +940,8 @@ function commandRun(profile: RunProfile): void {
         "exec",
         "vitest",
         "run",
-        "src/server-lib/delivery-loop/v3/contracts.test.ts",
-        "src/server-lib/delivery-loop/v3/invariants.test.ts",
-        "src/server-lib/delivery-loop/v3/reachability.test.ts",
-        "src/server-lib/delivery-loop/v3/durable-delivery.test.ts",
+        "src/server-lib/delivery-loop/coordinator/pipeline.test.ts",
+        "src/server-lib/delivery-loop/coordinator/tick.test.ts",
         "src/app/api/webhooks/github/route.test.ts",
       ],
     },
@@ -1115,58 +974,6 @@ async function main(): Promise<void> {
     }
     case "e2e": {
       await commandE2E(args);
-      return;
-    }
-    case "fixtures": {
-      await commandFixtures(args.fixtureCommand);
-      return;
-    }
-    case "test-streams": {
-      commandTestStreams();
-      return;
-    }
-  }
-}
-
-async function commandFixtures(fixtureCommand: FixtureCommand): Promise<void> {
-  const { checkE2EFixturesExist, seedE2EFixtures, cleanupE2EFixtures } =
-    await importLocalModule<{
-      checkE2EFixturesExist: () => Promise<{
-        userId: string;
-        repoFullName: string;
-        threadId: string | null;
-        workflowId: string | null;
-        baseBranch: string;
-        headBranch: string | null;
-        createdAt: Date | null;
-      }>;
-      seedE2EFixtures: () => Promise<{
-        userId: string;
-        repoFullName: string;
-        threadId: string | null;
-        workflowId: string | null;
-        baseBranch: string;
-        headBranch: string | null;
-        createdAt: Date | null;
-      }>;
-      cleanupE2EFixtures: () => Promise<void>;
-    }>(".factory/library/e2e-test-fixtures.ts");
-
-  switch (fixtureCommand) {
-    case "check": {
-      const fixtures = await checkE2EFixturesExist();
-      console.log(JSON.stringify(fixtures, null, 2));
-      return;
-    }
-    case "seed": {
-      const fixtures = await seedE2EFixtures();
-      console.log("E2E fixtures seeded:");
-      console.log(JSON.stringify(fixtures, null, 2));
-      return;
-    }
-    case "cleanup": {
-      await cleanupE2EFixtures();
-      console.log("E2E fixtures cleaned up");
       return;
     }
   }

@@ -19,8 +19,11 @@ export interface UISourceConfig {
 
 export class UISourceFetcher {
   private client: ContractRouterClient<typeof cliAPIContract>;
+  private config: UISourceConfig;
 
   constructor(config: UISourceConfig) {
+    this.config = config;
+
     const link = new RPCLink({
       url: `${config.webUrl}/api/cli`,
       headers: async () => ({
@@ -61,26 +64,29 @@ export class UISourceFetcher {
   ): Promise<SourceSnapshot<UIWorkflowState | null>> {
     const startTime = Date.now();
 
-    try {
-      const result = await this.client.threads.deliveryLoopStatus({
-        threadId,
-      });
+    // FIXME: This endpoint does not exist yet. The CLI API contract needs to be
+    // extended to include delivery loop status. For now, this method will always
+    // return an error, which gracefully disables UI state comparisons.
+    //
+    // To enable UI comparisons, add to packages/cli-api-contract:
+    //   deliveryLoopStatus: { input: { threadId: string }, output: UIWorkflowState }
+    // And implement the handler in apps/www/src/api/cli/
+    //
+    // Until then, the validator relies only on database and container sources.
 
-      return {
-        name: "ui",
-        fetchedAt: new Date(),
-        durationMs: Date.now() - startTime,
-        data: result,
-      };
-    } catch (error) {
-      return {
-        name: "ui",
-        fetchedAt: new Date(),
-        durationMs: Date.now() - startTime,
-        data: null,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    // Suppress unused variable warnings - will be used when endpoint is implemented
+    void this.config.webUrl;
+    void threadId;
+
+    return {
+      name: "ui",
+      fetchedAt: new Date(),
+      durationMs: Date.now() - startTime,
+      data: null,
+      error:
+        "CLI API contract does not include delivery loop status endpoint. " +
+        "UI state comparisons are disabled. Extend the contract to enable.",
+    };
   }
 
   async fetchAll(threadId: string): Promise<{
