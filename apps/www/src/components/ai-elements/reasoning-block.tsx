@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import {
   default as React,
   memo,
@@ -10,7 +11,13 @@ import {
 } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MarkdownRenderer } from "./markdown-renderer";
+
+const MarkdownRenderer = dynamic(
+  () => import("./markdown-renderer").then((mod) => mod.MarkdownRenderer),
+  {
+    loading: () => null,
+  },
+);
 
 type ReasoningBlockProps = {
   thinking: string;

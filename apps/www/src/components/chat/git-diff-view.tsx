@@ -250,7 +250,7 @@ export function GitDiffView({
         {/* Backdrop overlay on small screens */}
         {showFileTree && isSmallScreen && (
           <div
-            className="absolute inset-0 bg-black/50 z-30"
+            className="absolute inset-0 bg-foreground/50 z-30"
             onClick={() => setShowFileTree(false)}
           />
         )}

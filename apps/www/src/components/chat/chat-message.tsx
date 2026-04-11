@@ -180,11 +180,12 @@ export const ChatMessage = memo(function ChatMessage({
     <div
       style={{ overflowAnchor: "none" }}
       className={cn(
-        "p-4 rounded-xl w-full break-words transition-all duration-200 animate-in fade-in slide-in-from-bottom-2 duration-300",
+        "w-full break-words rounded-[calc(var(--radius)+0.15rem)] border px-4 py-3 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2 md:px-5",
         {
-          "bg-[var(--warm-stone)] ml-auto max-w-[85%] w-fit shadow-warm-lift":
+          "ml-auto w-fit max-w-[85%] border-border/40 bg-[var(--warm-stone)] shadow-[var(--shadow-warm-lift)]":
             message.role === "user",
-          "mr-auto bg-white shadow-outline-ring": message.role === "agent",
+          "mr-auto border-border/70 bg-card/92 shadow-[var(--shadow-outline-ring)] supports-[backdrop-filter]:bg-card/88":
+            message.role === "agent",
         },
         className,
       )}

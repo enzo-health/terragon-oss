@@ -18,6 +18,7 @@ import { Eye, CloudOff, PanelRightClose, Split, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCollapsibleThreadList } from "../thread-list/use-collapsible-thread-list";
 import { ThreadAgentIcon } from "../thread-agent-icon";
+import { headerClassName, headerSurfaceClassName } from "../shared/header";
 
 export const ChatHeader = memo(function ChatHeader({
   thread,
@@ -100,7 +101,7 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <>
       <div
-        className="flex w-full items-center justify-between px-6 border-b bg-white/80 backdrop-blur-md gap-4 overflow-hidden h-[56px] shadow-outline-ring relative z-10"
+        className={`relative z-10 flex w-full items-center justify-between gap-4 overflow-hidden px-4 md:px-6 ${headerClassName} ${headerSurfaceClassName}`}
         onClick={isMobile ? onHeaderClick : undefined}
         style={isMobile ? { cursor: "pointer" } : undefined}
       >
@@ -119,7 +120,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
           <div className="flex flex-col min-w-0 w-full gap-0.5">
             <div className="flex items-center gap-3 w-full">
-              <div className="opacity-80 scale-110">
+              <div className="opacity-80">
                 <ThreadStatusIndicator thread={thread} />
               </div>
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -130,7 +131,7 @@ export const ChatHeader = memo(function ChatHeader({
                     onChange={(e) => setEditedName(e.target.value)}
                     onBlur={handleSave}
                     onKeyDown={handleKeyDown}
-                    className="h-auto py-0 px-0 text-xl font-display font-[300] border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm -ml-0.5 w-full"
+                    className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[15px] font-display font-medium tracking-[-0.02em] focus-visible:ring-1 focus-visible:ring-ring md:text-[17px]"
                     placeholder={getThreadTitle(thread)}
                     style={{ minWidth: "150px" }}
                     autoComplete="off"
@@ -139,12 +140,12 @@ export const ChatHeader = memo(function ChatHeader({
                     spellCheck={false}
                   />
                 ) : (
-                  <span className="font-display font-[400] text-[17px] text-foreground truncate leading-tight tracking-tight">
+                  <span className="truncate font-display text-[15px] font-medium leading-tight tracking-[-0.02em] text-foreground md:text-[17px]">
                     {getThreadTitle(thread)}
                   </span>
                 )}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className="opacity-70 scale-90">
+                  <div className="opacity-70">
                     <ThreadAgentIcon thread={thread} />
                   </div>
                   {thread.githubPRNumber && thread.prStatus && (
@@ -159,35 +160,36 @@ export const ChatHeader = memo(function ChatHeader({
               </div>
             </div>
             {/* metadata */}
-            <div className="text-muted-foreground/70 text-[13px] font-sans tracking-[0.14px] flex items-center gap-2 h-5 min-w-0">
-              <span className="flex-shrink-0 whitespace-nowrap opacity-80">
+            <div className="flex h-5 min-w-0 items-center gap-2 text-[12px] tracking-[0.12px] text-muted-foreground/75 md:text-[13px]">
+              <span className="flex-shrink-0 whitespace-nowrap font-medium text-foreground/65">
                 {thread.githubRepoFullName}
               </span>
               {thread.branchName && thread.repoBaseBranchName && (
-                <span className="hidden sm:inline-flex items-center gap-1 min-w-0 overflow-hidden opacity-60 hover:opacity-100 transition-opacity">
-                  <span className="flex-shrink-0">(</span>
+                <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden sm:inline-flex">
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="underline hover:text-foreground truncate min-w-[30px] max-w-[200px] block"
+                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
                     title={thread.repoBaseBranchName}
                   >
                     {thread.repoBaseBranchName}
                   </a>
-                  <span className="flex-shrink-0 mx-1">←</span>
+                  <span className="flex-shrink-0 text-muted-foreground/55">
+                    →
+                  </span>
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.branchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="underline hover:text-foreground truncate min-w-[35px] block"
+                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
                     title={thread.branchName}
                   >
                     {thread.branchName}
                   </a>
                   <button
                     type="button"
-                    className="inline-flex items-center hover:text-foreground transition-colors cursor-pointer ml-1"
+                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-colors hover:bg-muted hover:text-foreground"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -203,7 +205,6 @@ export const ChatHeader = memo(function ChatHeader({
                   >
                     <Copy className="h-3 w-3" />
                   </button>
-                  <span>)</span>
                 </span>
               )}
               {thread.disableGitCheckpointing && (
@@ -236,7 +237,7 @@ export const ChatHeader = memo(function ChatHeader({
         />
       </div>
       {thread.sourceType === "www-fork" && (
-        <div className="flex w-full items-center px-4 py-2 border-b bg-muted overflow-hidden">
+        <div className="flex w-full items-center overflow-hidden border-b border-border/70 bg-muted/55 px-4 py-2.5">
           {(isMobile || isThreadListCollapsed) && (
             <div
               className="px-0 size-auto w-fit block"
@@ -261,7 +262,7 @@ export const ChatHeader = memo(function ChatHeader({
         </div>
       )}
       {isReadOnly && (
-        <div className="flex w-full items-center px-4 py-2 border-b bg-muted overflow-hidden">
+        <div className="flex w-full items-center overflow-hidden border-b border-border/70 bg-muted/55 px-4 py-2.5">
           {(isMobile || isThreadListCollapsed) && (
             <div
               className="px-0 size-auto w-fit block"

@@ -1,3 +1,4 @@
+import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
@@ -7,8 +8,17 @@ import {
   parsePlanSpecViewModelFromText,
   parsePartialPlan,
 } from "@/lib/delivery-loop-plan-view-model";
-import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
+
+const DeliveryLoopPlanReviewCard = dynamic(
+  () =>
+    import("@/components/patterns/delivery-loop-plan-review-card").then(
+      (mod) => mod.DeliveryLoopPlanReviewCard,
+    ),
+  {
+    loading: () => null,
+  },
+);
 
 interface TextPartProps {
   text: string;

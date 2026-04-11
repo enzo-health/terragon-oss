@@ -1,7 +1,8 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { ThreadInfo } from "@terragon/shared";
-import { useCallback, useMemo, memo } from "react";
+import { useCallback, useDeferredValue, useMemo, memo } from "react";
 import {
   LoaderCircle,
   ChevronDown,
@@ -21,7 +22,6 @@ import { tz } from "@date-fns/tz";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { SheetOrMenu } from "@/components/ui/sheet-or-menu";
-import { RecommendedTasks } from "../recommended-tasks";
 import { ThreadListFilters } from "@/queries/thread-queries";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -40,6 +40,13 @@ import { applyThreadPatchToListQueries } from "@/queries/thread-patch-cache";
 import { useQueryClient } from "@tanstack/react-query";
 import { ThreadListContentsClient } from "./thread-list-contents-client";
 
+const RecommendedTasks = dynamic(
+  () => import("../recommended-tasks").then((mod) => mod.RecommendedTasks),
+  {
+    loading: () => null,
+  },
+);
+
 export const ThreadListHeader = memo(function ThreadListHeader({
   className,
   viewFilter,
@@ -55,11 +62,11 @@ export const ThreadListHeader = memo(function ThreadListHeader({
   return (
     <div
       className={cn(
-        "px-4 flex items-center justify-between min-h-12 border-b border-border/20 mb-2",
+        "px-4 flex items-center justify-between min-h-12 mb-1",
         className,
       )}
     >
-      <h2 className="font-display font-[300] text-[18px] tracking-tight text-foreground/90">
+      <h2 className="font-display font-semibold text-[15px] tracking-[-0.01em] text-foreground">
         Tasks
       </h2>
       <div className="flex items-center gap-1">
@@ -69,7 +76,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-fit px-2 hover:bg-accent rounded-full group flex items-center gap-1.5 transition-all duration-200"
+                className="h-8 w-fit px-2 hover:bg-accent rounded-full group flex items-center gap-1.5 transition-colors duration-200"
               >
                 {viewFilter === "active" ? (
                   <Inbox className="h-3.5 w-3.5 opacity-70" />
@@ -114,7 +121,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 hover:bg-accent rounded-full group flex items-center justify-center transition-all duration-200"
+                className="h-8 w-8 hover:bg-accent rounded-full group flex items-center justify-center transition-colors duration-200"
               >
                 <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
               </Button>
@@ -221,7 +228,10 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
     return null;
   }
   return (
-    <div className="mb-6">
+    <div
+      className="mb-6"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "320px" }}
+    >
       <ThreadListSectionHeader
         title={title}
         numThreads={numThreads}
@@ -315,12 +325,13 @@ function useThreadList({
       return true;
     });
   }, [collectionThreads, viewFilter]);
+  const deferredThreads = useDeferredValue(threads);
 
   const threadGroups = useMemo<ThreadGroups>(() => {
     switch (groupBy) {
       case "repository": {
         const repoGroups: Record<string, ThreadInfo[]> = {};
-        for (const thread of threads) {
+        for (const thread of deferredThreads) {
           const repoName = thread.githubRepoFullName || "Unknown Repository";
           if (!repoGroups[repoName]) repoGroups[repoName] = [];
           repoGroups[repoName].push(thread);
@@ -356,16 +367,17 @@ function useThreadList({
           threads: [],
         };
         const groups = [todayGroup, yesterdayGroup, thisWeekGroup, olderGroup];
-        for (const thread of threads) {
+        const timeZoneContext = tz(timeZone);
+        for (const thread of deferredThreads) {
           const dateToUse = new Date(
             groupBy === "createdAt" ? thread.createdAt : thread.updatedAt,
           );
-          if (isToday(dateToUse, { in: tz(timeZone) })) {
+          if (isToday(dateToUse, { in: timeZoneContext })) {
             todayGroup.threads.push(thread);
-          } else if (isYesterday(dateToUse, { in: tz(timeZone) })) {
+          } else if (isYesterday(dateToUse, { in: timeZoneContext })) {
             yesterdayGroup.threads.push(thread);
           } else if (
-            isThisWeek(dateToUse, { weekStartsOn: 1, in: tz(timeZone) })
+            isThisWeek(dateToUse, { weekStartsOn: 1, in: timeZoneContext })
           ) {
             thisWeekGroup.threads.push(thread);
           } else {
@@ -386,7 +398,7 @@ function useThreadList({
         return [];
       }
     }
-  }, [threads, timeZone, groupBy]);
+  }, [deferredThreads, timeZone, groupBy]);
 
   // WebSocket patches write to both TanStack DB (primary) and React Query (legacy)
   const matchThread = useCallback((patch: BroadcastThreadPatch) => {

@@ -58,7 +58,7 @@ function SidebarHeaderContent() {
           variant="ghost"
           size="icon"
           onClick={toggleSidebar}
-          className="size-7 text-muted-foreground"
+          className="size-9 rounded-xl border border-border/70 bg-background/90 text-foreground shadow-[var(--shadow-outline-ring)] hover:bg-accent/80"
         >
           <WordmarkLogo size="md" />
         </Button>
@@ -109,84 +109,78 @@ export function AppSidebar() {
   }, []);
 
   return (
-    <Sidebar collapsible="icon" className="bg-background border-r">
+    <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader
         className={cn(
-          "p-4 pb-2 justify-center group-data-[collapsible=icon]:p-2",
+          "justify-center px-3 pb-2 pt-3 group-data-[collapsible=icon]:px-2 group-data-[collapsible=icon]:pt-3",
           headerClassName,
         )}
       >
         <SidebarHeaderContent />
       </SidebarHeader>
-      <SidebarContent className="px-2 group-data-[collapsible=icon]:px-1.5">
+      <SidebarContent className="px-2.5 pb-3 group-data-[collapsible=icon]:px-2">
         <SidebarGroup>
           <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5">
+            <SidebarMenu>
               <Item
                 title="Home"
                 href="/dashboard"
-                icon={<Home className="h-4 w-4" />}
+                icon={<Home className="h-3.5 w-3.5" />}
               />
               <Item
                 title="Automations"
                 href="/automations"
-                icon={<Workflow className="h-4 w-4" />}
+                icon={<Workflow className="h-3.5 w-3.5" />}
               />
               <Item
                 title="Stats"
                 href="/stats"
-                icon={<ChartColumnBig className="h-4 w-4" />}
+                icon={<ChartColumnBig className="h-3.5 w-3.5" />}
               />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup className="mt-4">
-          <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
-            Configure
-          </SidebarGroupLabel>
+        <SidebarGroup className="mt-3">
+          <SidebarGroupLabel className="mb-1 px-3">Configure</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5">
+            <SidebarMenu>
               <Item
                 title="Environments"
                 href="/environments"
-                icon={<Container className="h-4 w-4" />}
+                icon={<Container className="h-3.5 w-3.5" />}
               />
               <Item
                 title="Settings"
                 href="/settings"
-                icon={<Settings className="h-4 w-4" />}
+                icon={<Settings className="h-3.5 w-3.5" />}
               />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         {isAdmin && (
-          <SidebarGroup className="mt-8">
-            <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
-              Admin
-            </SidebarGroupLabel>
+          <SidebarGroup className="mt-6">
+            <SidebarGroupLabel className="mb-1 px-3">Admin</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
+              <SidebarMenu>
                 <Item
                   title="Admin Panel"
                   href="/internal/admin"
-                  icon={<Shield className="h-4 w-4" />}
+                  icon={<Shield className="h-3.5 w-3.5" />}
                 />
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
 
-        <SidebarGroup className="mt-4">
-          <SidebarGroupLabel className="uppercase tracking-[0.6px] text-[10px] font-semibold text-muted-foreground/50 mb-1 px-3">
-            Support
-          </SidebarGroupLabel>
+        <SidebarGroup className="mt-auto pt-2">
+          <SidebarGroupLabel className="mb-1 px-3">Support</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5">
+            <SidebarMenu>
               <AppMenuItem>
                 <SidebarMenuButton
                   asChild
                   tooltip="Documentation"
-                  className="font-sans font-medium text-caption rounded-lg h-8 px-3"
+                  className="text-caption"
                 >
                   <a
                     href={publicDocsUrl()}
@@ -202,25 +196,25 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="sidebar-footer-pwa p-3 border-t">
+      <SidebarFooter className="sidebar-footer-pwa border-t border-sidebar-border/70 px-3 pb-3 pt-3">
         <SidebarMenu>
           <AppMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
                   tooltip={user?.name ?? "Account"}
-                  className="group-data-[collapsible=icon]:justify-center h-10 rounded-lg hover:bg-accent transition-colors"
+                  className="h-11 rounded-2xl bg-background/70 shadow-[var(--shadow-outline-ring)] group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:justify-center hover:bg-accent/85"
                 >
-                  <Avatar className="size-7 group-data-[collapsible=icon]:mr-0 mr-3 shadow-card">
+                  <Avatar className="mr-3 size-7 shadow-[var(--shadow-card)] group-data-[collapsible=icon]:mr-0">
                     <AvatarImage src={user?.image ?? undefined} />
-                    <AvatarFallback className="bg-[var(--warm-stone)] text-foreground text-xs font-bold">
+                    <AvatarFallback className="bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
                       {user?.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="group-data-[collapsible=icon]:hidden font-sans font-medium text-caption">
+                  <span className="text-caption font-medium group-data-[collapsible=icon]:hidden">
                     {user?.name}
                   </span>
-                  <ChevronUp className="ml-auto group-data-[collapsible=icon]:hidden size-4 opacity-50" />
+                  <ChevronUp className="ml-auto size-4 opacity-40 group-data-[collapsible=icon]:hidden" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -276,16 +270,13 @@ function Item({
         asChild
         isActive={isActive}
         tooltip={title}
-        className={cn(
-          "font-sans font-medium text-caption rounded-lg h-8 px-3 transition-colors group-data-[collapsible=icon]:justify-center",
-          isActive ? "bg-accent" : "hover:bg-accent/50",
-        )}
+        className="text-caption"
       >
         <Link href={href}>
           <span
             className={cn(
               "transition-colors",
-              isActive ? "text-foreground" : "text-muted-foreground/60",
+              isActive ? "text-primary" : "text-muted-foreground/70",
             )}
           >
             {icon}
@@ -294,7 +285,7 @@ function Item({
         </Link>
       </SidebarMenuButton>
       {!!count && (
-        <SidebarMenuBadge className="bg-[var(--warm-stone)] text-foreground rounded-full font-bold text-[10px]">
+        <SidebarMenuBadge className="rounded-full bg-[var(--warm-stone)] px-1.5 text-[10px] font-semibold text-foreground">
           {count}
         </SidebarMenuBadge>
       )}
@@ -304,12 +295,12 @@ function Item({
 
 function ThemeToggle({ resolvedTheme }: { resolvedTheme: string | undefined }) {
   return (
-    <span className="text-sm text-muted-foreground flex items-center gap-2 w-full">
+    <span className="flex w-full items-center gap-2 text-sm text-muted-foreground">
       {resolvedTheme === "light" ? "Light Mode" : "Dark Mode"}
       {resolvedTheme === "light" ? (
-        <SunIcon className="size-4 text-foreground/50" />
+        <SunIcon className="size-4 text-foreground/55" />
       ) : (
-        <MoonIcon className="size-4 text-foreground/50" />
+        <MoonIcon className="size-4 text-foreground/55" />
       )}
     </span>
   );

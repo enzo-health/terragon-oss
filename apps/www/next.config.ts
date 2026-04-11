@@ -1,10 +1,15 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { NextConfig } from "next";
 import bundleAnalyzer from "@next/bundle-analyzer";
 
 const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
 });
 
-const nextConfig = {
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+
+const nextConfig: NextConfig = {
   reactCompiler: true,
   images: {
     remotePatterns: [
@@ -15,8 +20,11 @@ const nextConfig = {
       },
     ],
   },
-  optimizePackageImports: ["lucide-react", "@radix-ui/react-icons"],
+  turbopack: {
+    root: path.join(configDir, "..", ".."),
+  },
   experimental: {
+    optimizePackageImports: ["lucide-react"],
     staleTimes: {
       // Cache dynamic pages for 3 minutes on client-side navigation
       // This makes back/forward navigation instant
@@ -43,6 +51,5 @@ const nextConfig = {
   },
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bundle-analyzer
-// peer-resolves next@15 (docs) vs next@16 (www), causing NextConfig type mismatch
+// bundle-analyzer still peer-types against Next 15, so widen here at the edge.
 export default withBundleAnalyzer(nextConfig as any);

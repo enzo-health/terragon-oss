@@ -173,14 +173,17 @@ export const ThreadListItem = memo(function ThreadListItem({
 
   return (
     <>
-      <div className="relative group animate-in fade-in slide-in-from-top-1 duration-200">
+      <div
+        className="relative group animate-in fade-in slide-in-from-top-1 duration-200"
+        style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
+      >
         <Link
           href={`/task/${thread.id}`}
           className={cn(
-            "block rounded-lg transition-all duration-200 px-3 py-2 relative pr-9 border border-transparent",
+            "block rounded-lg transition-[background-color,border-color] duration-150 px-3 py-2.5 relative pr-9 border border-transparent",
             pathname === `/task/${thread.id}`
-              ? "bg-accent shadow-outline-ring"
-              : "hover:bg-accent/40 hover:border-border/30",
+              ? "bg-primary/8 border-primary/15"
+              : "hover:bg-accent/50",
             isMenuOpen && "bg-accent",
             className,
           )}
@@ -204,7 +207,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                 />
               ) : (
                 <p
-                  className="text-[14px] flex-1 truncate font-medium leading-snug"
+                  className="text-[13.5px] flex-1 truncate font-semibold tracking-[-0.01em] leading-snug text-foreground"
                   title={title}
                 >
                   {title}
@@ -212,7 +215,7 @@ export const ThreadListItem = memo(function ThreadListItem({
               )}
             </div>
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-[13px] text-muted-foreground min-w-0 font-sans tracking-[0.14px]">
+              <div className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground/80 min-w-0 font-sans tracking-normal">
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}

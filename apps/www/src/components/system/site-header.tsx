@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { Wordmark } from "../shared/wordmark";
-import { headerClassName } from "../shared/header";
+import { headerClassName, headerSurfaceClassName } from "../shared/header";
 
 export const SiteHeader = memo(function SiteHeader() {
   const pathname = usePathname();
@@ -31,14 +31,20 @@ export const SiteHeader = memo(function SiteHeader() {
     return null;
   }
   return (
-    <div className={cn("flex flex-col w-full px-4", headerClassName)}>
+    <div
+      className={cn(
+        "flex w-full items-center px-4 md:px-5",
+        headerClassName,
+        headerSurfaceClassName,
+      )}
+    >
       <div
         className={cn(
-          "flex w-full items-center justify-between h-full",
-          isConstrainedPage && "max-w-4xl",
+          "flex h-full w-full items-center justify-between gap-4",
+          isConstrainedPage && "mx-auto max-w-4xl",
         )}
       >
-        <div className="flex gap-2 items-center min-w-0">
+        <div className="flex min-w-0 items-center gap-2.5">
           {isMobile && <SidebarTrigger className="px-0 size-auto w-fit" />}
           {pathname === "/dashboard" && (
             <div
@@ -56,7 +62,7 @@ export const SiteHeader = memo(function SiteHeader() {
           )}
           <SiteHeaderBreadcrumbs />
         </div>
-        <div className="ml-4">
+        <div className="ml-2 md:ml-4">
           <SiteHeaderNav />
         </div>
       </div>
@@ -83,14 +89,16 @@ const SiteHeaderBreadcrumbs = memo(function SiteHeaderBreadcrumbs() {
   }
   return (
     <Breadcrumb className="min-w-0 overflow-hidden">
-      <BreadcrumbList className="text-lg text-foreground flex-nowrap">
+      <BreadcrumbList className="text-sm text-foreground/88 flex-nowrap tracking-[-0.01em] md:text-[15px]">
         {breadcrumbs.map((item, index) => (
           <React.Fragment key={index}>
             {index > 0 && <BreadcrumbSeparator />}
             <BreadcrumbItem
               className={cn(
-                "truncate block",
-                index === breadcrumbs.length - 1 && "font-bold",
+                "block truncate",
+                index === breadcrumbs.length - 1
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground",
               )}
             >
               {item.href ? (
