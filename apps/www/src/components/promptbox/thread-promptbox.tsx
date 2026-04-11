@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import React, { useMemo, useState, useImperativeHandle } from "react";
 import { usePromptBox, HandleSubmit, HandleStop } from "./use-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
@@ -12,9 +13,24 @@ import {
 } from "@terragon/shared";
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { SimplePromptBox } from "./simple-promptbox";
-import { QueuedMessages } from "./queued-messages";
 import { ensureAgent } from "@terragon/agent/utils";
-import { GitHubQuickActions } from "../chat/github-quick-actions";
+
+const QueuedMessages = dynamic(
+  () => import("./queued-messages").then((mod) => mod.QueuedMessages),
+  {
+    loading: () => null,
+  },
+);
+
+const GitHubQuickActions = dynamic(
+  () =>
+    import("../chat/github-quick-actions").then(
+      (mod) => mod.GitHubQuickActions,
+    ),
+  {
+    loading: () => null,
+  },
+);
 
 interface ThreadPromptBoxProps {
   placeholder?: string;

@@ -8,7 +8,7 @@ export default async function SiteHeaderLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col h-[100dvh] min-w-0 w-full items-center">
+    <div className="flex flex-col h-full min-w-0 flex-1 items-center">
       <BannerContainer />
       <PageHeaderProvider>
         <PageFrame>{children}</PageFrame>

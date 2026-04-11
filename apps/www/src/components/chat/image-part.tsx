@@ -33,6 +33,8 @@ export function ImagePart({
         src={imageUrl}
         alt={alt || "Image"}
         className={`max-w-[200px] ${onClick ? "cursor-pointer" : ""}`}
+        loading="lazy"
+        decoding="async"
         onClick={onClick}
       />
     </div>

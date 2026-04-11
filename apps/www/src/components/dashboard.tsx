@@ -156,10 +156,13 @@ export function Dashboard({
         "flex flex-col h-full max-w-chat w-full mx-auto gap-6 justify-start pt-8 pb-20 px-6",
       )}
     >
-      <div className="flex flex-col gap-1">
-        <h1 className="text-title font-display font-[400] tracking-tight leading-tight text-foreground">
+      <div className="flex flex-col gap-2">
+        <h1 className="text-[32px] font-display font-semibold tracking-[-0.02em] leading-[1.1] text-foreground">
           What would you like to build?
         </h1>
+        <p className="text-[14px] text-muted-foreground">
+          Describe a task and I&apos;ll get to work in a sandbox.
+        </p>
       </div>
 
       <DashboardPromptBox
@@ -173,7 +176,7 @@ export function Dashboard({
       />
       {showRecommendedTasks && (
         <div className="space-y-6 hidden md:block">
-          <h3 className="text-caption uppercase tracking-[0.8px] font-bold text-muted-foreground/50">
+          <h3 className="text-[11px] uppercase tracking-[0.12em] font-semibold text-muted-foreground">
             Suggested tasks
           </h3>
           <RecommendedTasks

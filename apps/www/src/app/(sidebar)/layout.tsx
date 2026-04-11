@@ -1,6 +1,9 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { NotificationProvider } from "@/components/system/notification-provider";
+import { SidebarInset } from "@/components/ui/sidebar";
 import { getUserIdOrNull } from "@/lib/auth-server";
+
+export const dynamic = "force-dynamic";
 
 export default async function SidebarLayout({
   children,
@@ -10,11 +13,11 @@ export default async function SidebarLayout({
   const userId = await getUserIdOrNull();
   return (
     <div
-      className="group/sidebar-wrapper flex min-h-svh w-full"
+      className="group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full"
       style={
         {
-          "--sidebar-width": "18rem",
-          "--sidebar-width-mobile": "18rem",
+          "--sidebar-width": "16rem",
+          "--sidebar-width-mobile": "16rem",
         } as React.CSSProperties
       }
     >
@@ -24,7 +27,9 @@ export default async function SidebarLayout({
           <AppSidebar />
         </>
       ) : null}
-      {children}
+      <SidebarInset className="!flex-row overflow-hidden">
+        {children}
+      </SidebarInset>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidateTag } from "next/cache";
 import { redis } from "@/lib/redis";
 import { adminOnly } from "@/lib/auth-server";
 import { User } from "@terragon/shared";
@@ -25,6 +26,7 @@ export const updateBannerConfigAction = adminOnly(
   ) {
     try {
       await redis.set(BANNER_KEY, config);
+      revalidateTag("banner-config", "max");
       return { success: true };
     } catch (error) {
       console.error("Failed to update banner config in Redis:", error);
@@ -37,6 +39,7 @@ export const deleteBannerConfigAction = adminOnly(
   async function deleteBannerConfigAction(adminUser: User) {
     try {
       await redis.del(BANNER_KEY);
+      revalidateTag("banner-config", "max");
       return { success: true };
     } catch (error) {
       console.error("Failed to delete banner config from Redis:", error);

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { UserAtomsHydratorServer } from "@/components/system/user-atoms-server";
-import { Inter, Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ServerProviders } from "@/components/system/server-providers";
 import { KonamiVideo } from "@/components/konami-video";
 
@@ -37,19 +37,22 @@ export const viewport: Viewport = {
   interactiveWidget: "resizes-content",
 };
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-});
-
 const geist = Geist({
   subsets: ["latin"],
+  display: "swap",
   variable: "--font-geist",
 });
 
 const geistMono = Geist_Mono({
   subsets: ["latin"],
+  display: "swap",
   variable: "--font-geist-mono",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-space-grotesk",
 });
 
 export default function RootLayout({
@@ -69,17 +72,17 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta
           name="theme-color"
-          content="#ffffff"
+          content="#f6f3ee"
           media="(prefers-color-scheme: light)"
         />
         <meta
           name="theme-color"
-          content="#000000"
+          content="#161412"
           media="(prefers-color-scheme: dark)"
         />
       </head>
       <body
-        className={`${inter.variable} ${geist.variable} ${geistMono.variable} font-sans antialiased`}
+        className={`${geist.variable} ${geistMono.variable} ${spaceGrotesk.variable} font-sans antialiased`}
       >
         <ServerProviders>
           <UserAtomsHydratorServer>
