@@ -17,7 +17,6 @@ import { checkCliTaskCreationRateLimit } from "@/lib/rate-limit";
 import { ensureAgent } from "@terragon/agent/utils";
 import { getUserIdOrNullFromDaemonToken } from "@/lib/auth-server";
 import { combineThreadStatuses } from "@/agent/thread-status";
-import { getDeliveryLoopStatusCore } from "@/server-actions/get-delivery-loop-status";
 
 const os = implement(cliAPIContract)
   .$context<{
@@ -30,7 +29,7 @@ const os = implement(cliAPIContract)
       headers,
     });
     if (!userId) {
-      throw errors.UNAUTHORIZED({ message: "Unauthorized" });
+      throw errors.UNAUTHORIZED();
     }
     return next({
       context: {
@@ -129,33 +128,6 @@ const threadDetail = os.threads.detail.handler(
       agent: ensureAgent(threadChat.agent as AIAgent | null | undefined),
       hasChanges: Boolean(thread.gitDiffStats?.files),
     };
-  },
-);
-
-const deliveryLoopStatus = os.threads.deliveryLoopStatus.handler(
-  async ({ input, context, errors }) => {
-    console.log("cli delivery loop status", {
-      threadId: input.threadId,
-      userId: context.userId,
-    });
-    const { threadId } = input;
-
-    try {
-      const data = await getDeliveryLoopStatusCore(context.userId, threadId);
-      return data;
-    } catch (error) {
-      // getDeliveryLoopStatusAction throws UserFacingError for unauthorized access
-      if (error instanceof Error && error.message.includes("Unauthorized")) {
-        throw errors.UNAUTHORIZED({ message: "Unauthorized" });
-      }
-      // Re-throw other errors as internal error
-      throw errors.INTERNAL_ERROR({
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to get delivery loop status",
-      });
-    }
   },
 );
 
@@ -302,7 +274,6 @@ export const cliRouter = os.router({
     list: listThreads,
     detail: threadDetail,
     create: createThread,
-    deliveryLoopStatus: deliveryLoopStatus,
   },
   auth: {
     whoami: whoAmI,
