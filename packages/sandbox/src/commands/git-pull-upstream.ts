@@ -12,7 +12,7 @@ export async function gitPullUpstream(
   const repoRoot = args?.repoRoot;
   try {
     // Use || true to always have this return a zero exit code. In a lot of
-    // cases, this would fail because the there's no upstream to pull from.
+    // cases, this would fail because there's no upstream to pull from.
     await session.runCommand("git pull --ff-only || true", {
       cwd: repoRoot,
     });
