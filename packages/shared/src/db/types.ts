@@ -218,6 +218,10 @@ export type ThreadSourceMetadata =
       type: "www";
       deliveryLoopOptIn: boolean;
       deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
+      /** @deprecated Backward compat — old DB rows may still carry this key */
+      sdlcLoopOptIn?: boolean;
+      /** @deprecated Backward compat — old DB rows may still carry this key */
+      sdlcPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
     }
   | {
       type: "github-mention";

@@ -1018,9 +1018,11 @@ export async function maybeHibernateSandboxById({
 
 export async function getSandboxProvider({
   userSetting,
+  sandboxSize,
   userId,
 }: {
   userSetting: UserSettings["sandboxProvider"];
+  sandboxSize: SandboxSize;
   userId: string;
 }): Promise<SandboxProvider> {
   if (process.env.NODE_ENV === "test") {

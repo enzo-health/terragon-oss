@@ -16,6 +16,7 @@ export type BootingSubstatus =
   | "provisioning-done"
   | "cloning-repo"
   | "installing-agent"
+  | "installing-sandbox-scripts"
   | "running-setup-script"
   | "booting-done";
 

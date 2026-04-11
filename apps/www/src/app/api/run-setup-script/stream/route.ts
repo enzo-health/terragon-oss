@@ -119,6 +119,7 @@ export async function POST(request: NextRequest) {
         userId,
         sandboxProvider: await getSandboxProvider({
           userSetting: userSettings?.sandboxProvider,
+          sandboxSize: preferredSandboxSize,
           userId,
         }),
         sandboxSize: preferredSandboxSize,
