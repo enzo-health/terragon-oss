@@ -126,6 +126,40 @@ describe("delivery loop retry jobs", () => {
     );
   });
 
+  it("reschedules legacy dispatch_not_started outcomes as compatibility fallback", async () => {
+    await scheduleFollowUpRetryJob({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      dispatchAttempt: 1,
+      runAt: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const result = await drainWithRetry({
+      now: new Date("2026-03-09T12:00:05.000Z"),
+      leaseOwnerTokenPrefix: "test",
+      processFollowUpQueue: async () => ({
+        processed: false,
+        dispatchLaunched: false,
+        reason: "dispatch_not_started",
+      }),
+    });
+
+    expect(result).toEqual({
+      claimed: 1,
+      completed: 0,
+      rescheduled: 1,
+      skipped: 0,
+    });
+
+    const job = await getRetryJob("follow-up:chat-1");
+    expect(job?.dispatchAttempt).toBe(1);
+    expect(job?.deferCount).toBe(1);
+    expect(job?.runAt.getTime()).toBeGreaterThan(
+      new Date("2026-03-09T12:00:05.000Z").getTime(),
+    );
+  });
+
   it("reschedules transient invalid_event outcomes instead of dropping the retry job", async () => {
     await scheduleFollowUpRetryJob({
       userId: "user-1",
