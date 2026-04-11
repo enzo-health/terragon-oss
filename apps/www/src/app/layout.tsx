@@ -1,10 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import dynamic from "next/dynamic";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { UserAtomsHydratorServer } from "@/components/system/user-atoms-server";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ServerProviders } from "@/components/system/server-providers";
+import { KonamiVideo } from "@/components/konami-video";
 
 export const metadata: Metadata = {
   title: "Terragon",
@@ -54,11 +54,6 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
   variable: "--font-space-grotesk",
 });
-
-const KonamiVideo = dynamic(
-  () => import("@/components/konami-video").then((mod) => mod.KonamiVideo),
-  { ssr: false },
-);
 
 export default function RootLayout({
   children,
