@@ -14,7 +14,7 @@ export function deliveryLoopStatusQueryOptions(threadId: string) {
       return await getDeliveryLoopStatusAction(threadId);
     },
     staleTime: 15_000,
-    refetchInterval: (query) => (query.state.data ? 30_000 : 120_000),
+    refetchInterval: 300_000,
   });
 }
 

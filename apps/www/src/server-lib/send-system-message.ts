@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { DBSystemMessage } from "@terragon/shared";
@@ -42,7 +42,7 @@ export async function sendSystemMessage({
   }
   if (updatedStatus === "working" || updatedStatus === "queued") {
     waitUntil(
-      startAgentMessage({
+      dispatchAgentMessage({
         db,
         message: null,
         userId,

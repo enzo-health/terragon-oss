@@ -26,18 +26,15 @@ const outboxInsertRequiresIdempotency: RequiresIdempotencyKey<DeliveryOutboxV3In
 
 describe("v3 contracts", () => {
   it("round-trips a dispatch_sent event payload", () => {
-    const ackDeadlineAt = new Date("2026-03-18T12:00:45.000Z");
     const serialized = serializeLoopEvent({
       type: "dispatch_sent",
       runId: "run-123",
-      ackDeadlineAt,
     });
     const parsed = parseLoopEvent(serialized);
 
     expect(parsed).toEqual({
       type: "dispatch_sent",
       runId: "run-123",
-      ackDeadlineAt,
     });
   });
 

@@ -164,11 +164,108 @@ function applyInvariantMiddleware(params: {
   });
 }
 
-function isOutOfOrderRunSignal(params: {
+// Unified out-of-order signal detection with configurable strictness
+type OutOfOrderCheckMode = "strict" | "lenient" | "ci-verdict";
+
+// Specialized out-of-order check for gate signals (review/CI)
+// Uses lenient mode to allow signals without runId when there's an active lease
+function isOutOfOrderGateSignal(params: {
   head: WorkflowHead;
   runId: string | null | undefined;
   runSeq?: number | null;
 }): boolean {
+  return isOutOfOrderSignal({ ...params, mode: "lenient" });
+}
+
+// Specialized out-of-order check for failure signals with lane classification
+function isOutOfOrderFailureSignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+  category?: string | null;
+  lane?: "agent" | "infra" | null;
+}): boolean {
+  // Always allow signals without runId (for gate-state failure retries)
+  if (params.runId == null) {
+    return false; // NOT out of order - process the signal
+  }
+
+  // Use lenient mode for infra lane failures (allows signals without full run context)
+  if (params.lane === "infra") {
+    return isOutOfOrderSignal({
+      head: params.head,
+      runId: params.runId,
+      runSeq: params.runSeq,
+      mode: "lenient",
+    });
+  }
+  // Use strict mode for agent lane failures
+  return isOutOfOrderSignal({
+    head: params.head,
+    runId: params.runId,
+    runSeq: params.runSeq,
+    mode: "strict",
+  });
+}
+
+function isOutOfOrderSignal(params: {
+  head: WorkflowHead;
+  runId: string | null | undefined;
+  runSeq?: number | null;
+  headSha?: string | null;
+  mode: OutOfOrderCheckMode;
+}): boolean {
+  // CI verdict mode: requires headSha correlation
+  if (params.mode === "ci-verdict") {
+    // runSeq mismatch check
+    if (params.runSeq != null) {
+      if (params.head.activeRunSeq == null) return true;
+      if (params.runSeq !== params.head.activeRunSeq) return true;
+    } else if (params.head.activeRunSeq == null) {
+      return true;
+    }
+
+    // headSha is required for CI signals
+    const signalHeadSha = params.headSha ?? null;
+    if (!signalHeadSha) return true;
+    if (params.head.headSha !== null && signalHeadSha !== params.head.headSha) {
+      return true;
+    }
+
+    // If we have activeRunId but no runSeq in signal, verify runId matches
+    if (params.head.activeRunId !== null && params.runSeq == null) {
+      const signalRunId = params.runId ?? null;
+      if (signalRunId !== null && signalRunId !== params.head.activeRunId) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Lenient mode: allow signals without runId (for gate verdicts)
+  // This supports gate verdicts that may not include full run context
+  if (params.mode === "lenient") {
+    if (params.runSeq != null) {
+      return (
+        params.head.activeRunSeq == null ||
+        params.runSeq !== params.head.activeRunSeq
+      );
+    }
+
+    // Allow signals without runId - gate verdicts may not include full run context
+    if (params.runId == null) {
+      return false; // NOT out of order - process the signal
+    }
+
+    if (params.head.activeRunId == null) {
+      return false; // NOT out of order - no active lease to mismatch against
+    }
+
+    return params.runId !== params.head.activeRunId;
+  }
+
+  // Strict mode (default): require exact runId/runSeq match
   if (params.runSeq != null) {
     return (
       params.head.activeRunSeq == null ||
@@ -183,113 +280,12 @@ function isOutOfOrderRunSignal(params: {
   if (params.head.activeRunId == null) {
     return false;
   }
+
   if (params.runId == null) {
     return true;
   }
 
   return params.runId !== params.head.activeRunId;
-}
-
-function isOutOfOrderFailureSignal(params: {
-  head: WorkflowHead;
-  runId: string | null | undefined;
-  runSeq?: number | null;
-  category: string | null;
-  lane?: "agent" | "infra";
-}): boolean {
-  return isOutOfOrderRunSignal({
-    head: params.head,
-    runId: params.runId,
-    runSeq: params.runSeq,
-  });
-}
-
-function isOutOfOrderAwaitingPrRetrySignal(params: {
-  head: WorkflowHead;
-  runId: string | null | undefined;
-  runSeq?: number | null;
-}): boolean {
-  if (params.runSeq != null) {
-    return (
-      params.head.activeRunSeq == null ||
-      params.runSeq !== params.head.activeRunSeq
-    );
-  }
-
-  if (params.head.activeRunId != null) {
-    if (params.runId == null) {
-      return true;
-    }
-    return params.runId !== params.head.activeRunId;
-  }
-
-  // Awaiting PR creation can legitimately emit lane-less failures (for example
-  // ensure_pr no-diff/failure) after legacy reconciliation clears active lease.
-  // Treat those as in-order so the workflow can retry implementation.
-  return false;
-}
-
-function isOutOfOrderGateSignal(params: {
-  head: WorkflowHead;
-  runId: string | null | undefined;
-  runSeq?: number | null;
-}): boolean {
-  if (params.runSeq != null) {
-    return (
-      params.head.activeRunSeq == null ||
-      params.runSeq !== params.head.activeRunSeq
-    );
-  }
-
-  if (params.head.activeRunSeq == null) {
-    return true;
-  }
-
-  if (params.runId == null || params.head.activeRunId == null) {
-    return false;
-  }
-
-  return params.runId !== params.head.activeRunId;
-}
-
-function isOutOfOrderCiSignal(params: {
-  head: WorkflowHead;
-  event: Extract<LoopEvent, { type: "gate_ci_passed" | "gate_ci_failed" }>;
-}): boolean {
-  if (params.event.runSeq != null) {
-    if (params.head.activeRunSeq == null) {
-      return true;
-    }
-    if (params.event.runSeq !== params.head.activeRunSeq) {
-      return true;
-    }
-  } else if (params.head.activeRunSeq == null) {
-    return true;
-  }
-
-  const signalHeadSha = params.event.headSha ?? null;
-  if (!signalHeadSha) {
-    return true;
-  }
-
-  if (params.head.headSha !== null && signalHeadSha !== params.head.headSha) {
-    return true;
-  }
-
-  if (params.head.activeRunId === null) {
-    return false;
-  }
-
-  if (params.event.runSeq != null) {
-    return false;
-  }
-
-  const signalRunId = params.event.runId ?? null;
-  if (signalRunId === null) {
-    return false;
-  }
-
-  return signalRunId !== params.head.activeRunId;
 }
 
 function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
@@ -298,17 +294,6 @@ function withVersion(head: WorkflowHead, now: Date): WorkflowHead {
     version: head.version + 1,
     updatedAt: now,
     lastActivityAt: now,
-  };
-}
-
-function normalizeHeadForReduction(head: WorkflowHead): WorkflowHead {
-  if (head.state !== "awaiting_implementation_acceptance") {
-    return head;
-  }
-
-  return {
-    ...head,
-    state: "implementing",
   };
 }
 
@@ -437,11 +422,15 @@ function gateStalenessEffect(head: WorkflowHead, now: Date): EffectSpec {
   };
 }
 
-function retryToImplementing(params: {
+// Unified retry logic shared between planning and implementing retry paths
+type RetryTargetState = "planning" | "implementing";
+
+function executeRetry(params: {
   head: WorkflowHead;
   now: Date;
   lane: "agent" | "infra";
   reason: string | null;
+  targetState: RetryTargetState;
 }): ReduceResult {
   const next = withVersion(params.head, params.now);
   const laneUpdate =
@@ -484,7 +473,7 @@ function retryToImplementing(params: {
 
   const retryHead = {
     ...next,
-    state: "implementing" as const,
+    state: params.targetState,
     activeGate: null,
     ...allocateImplementationLease({
       head: params.head,
@@ -509,6 +498,16 @@ function retryToImplementing(params: {
     ],
     invariantActions: [],
   };
+}
+
+// Convenience wrappers for backward compatibility
+function retryToImplementing(params: {
+  head: WorkflowHead;
+  now: Date;
+  lane: "agent" | "infra";
+  reason: string | null;
+}): ReduceResult {
+  return executeRetry({ ...params, targetState: "implementing" });
 }
 
 function retryInPlanning(params: {
@@ -517,72 +516,7 @@ function retryInPlanning(params: {
   lane: "agent" | "infra";
   reason: string | null;
 }): ReduceResult {
-  const next = withVersion(params.head, params.now);
-  const laneUpdate =
-    params.lane === "infra"
-      ? {
-          infraRetryCount: params.head.infraRetryCount + 1,
-          fixAttemptCount: params.head.fixAttemptCount,
-          max: params.head.maxInfraRetries,
-          count: params.head.infraRetryCount + 1,
-          blockedState: "awaiting_operator_action" as const,
-        }
-      : {
-          infraRetryCount: params.head.infraRetryCount,
-          fixAttemptCount: params.head.fixAttemptCount + 1,
-          max: params.head.maxFixAttempts,
-          count: params.head.fixAttemptCount + 1,
-          blockedState: "awaiting_manual_fix" as const,
-        };
-
-  if (laneUpdate.count >= laneUpdate.max) {
-    const blockedHead = {
-      ...next,
-      state: laneUpdate.blockedState,
-      activeGate: null,
-      ...clearActiveLease(params.head),
-      blockedReason:
-        params.reason ??
-        (params.lane === "infra"
-          ? "Infrastructure retry budget exhausted"
-          : "Fix attempt budget exhausted"),
-      fixAttemptCount: laneUpdate.fixAttemptCount,
-      infraRetryCount: laneUpdate.infraRetryCount,
-    };
-    return {
-      head: blockedHead,
-      effects: [publishStatusEffect(next, params.now)],
-      invariantActions: [],
-    };
-  }
-
-  const retryHead = {
-    ...next,
-    state: "planning" as const,
-    activeGate: null,
-    ...allocateImplementationLease({
-      head: params.head,
-      consumeCurrent: true,
-    }),
-    blockedReason: params.reason ?? null,
-    fixAttemptCount: laneUpdate.fixAttemptCount,
-    infraRetryCount: laneUpdate.infraRetryCount,
-  };
-  return {
-    head: retryHead,
-    effects: [
-      dispatchImplementingEffect(
-        next,
-        params.now,
-        params.lane,
-        laneUpdate.infraRetryCount,
-        laneUpdate.count,
-        params.reason,
-      ),
-      publishStatusEffect(next, params.now),
-    ],
-    invariantActions: [],
-  };
+  return executeRetry({ ...params, targetState: "planning" });
 }
 
 export function reduce(params: {
@@ -591,7 +525,7 @@ export function reduce(params: {
   now?: Date;
 }): ReduceResult {
   const now = params.now ?? new Date();
-  const head = normalizeHeadForReduction(params.head);
+  const head = params.head;
   const event = params.event;
 
   let result: ReduceResult;
@@ -731,9 +665,10 @@ export function reduce(params: {
         }
         if (event.type === "dispatch_ack_timeout") {
           if (
-            isOutOfOrderRunSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
+              mode: "strict",
             })
           ) {
             result = {
@@ -753,12 +688,11 @@ export function reduce(params: {
         }
         if (event.type === "run_failed") {
           if (
-            isOutOfOrderFailureSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
               runSeq: event.runSeq,
-              category: event.category,
-              lane: event.lane,
+              mode: "strict",
             })
           ) {
             result = {
@@ -865,9 +799,10 @@ export function reduce(params: {
         }
         if (event.type === "dispatch_ack_timeout") {
           if (
-            isOutOfOrderRunSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
+              mode: "strict",
             })
           ) {
             result = {
@@ -887,10 +822,11 @@ export function reduce(params: {
         }
         if (event.type === "run_completed") {
           if (
-            isOutOfOrderRunSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
               runSeq: event.runSeq,
+              mode: "strict",
             })
           ) {
             result = {
@@ -942,12 +878,11 @@ export function reduce(params: {
         }
         if (event.type === "run_failed") {
           if (
-            isOutOfOrderFailureSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
               runSeq: event.runSeq,
-              category: event.category,
-              lane: event.lane,
+              mode: "strict",
             })
           ) {
             result = {
@@ -981,10 +916,11 @@ export function reduce(params: {
       case "gating_review": {
         if (event.type === "gate_review_passed") {
           if (
-            isOutOfOrderGateSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
               runSeq: event.runSeq,
+              mode: "lenient",
             })
           ) {
             result = {
@@ -1038,12 +974,11 @@ export function reduce(params: {
         }
         if (event.type === "run_failed") {
           if (
-            isOutOfOrderFailureSignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
               runSeq: event.runSeq,
-              category: event.category,
-              lane: event.lane,
+              mode: "strict",
             })
           ) {
             result = {
@@ -1076,7 +1011,15 @@ export function reduce(params: {
       }
       case "gating_ci": {
         if (event.type === "gate_ci_passed") {
-          if (isOutOfOrderCiSignal({ head, event })) {
+          if (
+            isOutOfOrderSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              headSha: event.headSha,
+              mode: "ci-verdict",
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -1099,7 +1042,15 @@ export function reduce(params: {
           break;
         }
         if (event.type === "gate_ci_failed") {
-          if (isOutOfOrderCiSignal({ head, event })) {
+          if (
+            isOutOfOrderSignal({
+              head,
+              runId: event.runId,
+              runSeq: event.runSeq,
+              headSha: event.headSha,
+              mode: "ci-verdict",
+            })
+          ) {
             result = {
               head,
               effects: [],
@@ -1184,10 +1135,11 @@ export function reduce(params: {
         }
         if (event.type === "gate_review_failed") {
           if (
-            isOutOfOrderAwaitingPrRetrySignal({
+            isOutOfOrderSignal({
               head,
               runId: event.runId,
               runSeq: event.runSeq,
+              mode: "lenient",
             })
           ) {
             result = {
@@ -1269,3 +1221,6 @@ export function reduce(params: {
     effects: result.effects,
   });
 }
+
+// Keep for backward compatibility - re-export the unified retry logic
+export { executeRetry };

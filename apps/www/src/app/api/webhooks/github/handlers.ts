@@ -130,17 +130,21 @@ async function appendV3EventForWorkflowIds(params: {
   }
 
   try {
-    const { appendEventAndAdvance } = await import(
+    const { appendEventAndAdvanceExplicit } = await import(
       "@/server-lib/delivery-loop/v3/kernel"
     );
     await Promise.all(
       workflowIds.map(async (workflowId) => {
-        await appendEventAndAdvance({
+        await appendEventAndAdvanceExplicit({
           db,
           workflowId,
           source: "github",
           idempotencyKey: `${params.idempotencyScope}:${params.deliveryId ?? "no-delivery-id"}`,
           event: params.event,
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
         });
       }),
     );

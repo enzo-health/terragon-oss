@@ -101,12 +101,15 @@ async function drainRelayWithRetry(params: {
   dedupeIndexKey: string;
   leaseOwnerPrefix: string;
   maxItems: number;
+  now?: Date;
 }): Promise<{ processed: number; published: number; failed: number }> {
+  // Use deterministic time progression instead of setTimeout for retries
   let lastResult: { processed: number; published: number; failed: number } = {
     processed: 0,
     published: 0,
     failed: 0,
   };
+  const baseTime = params.now ?? new Date("2026-03-18T10:00:00.000Z");
   for (let attempt = 0; attempt < 3; attempt += 1) {
     lastResult = await relay.drainOutboxRelay({
       db,
@@ -115,11 +118,12 @@ async function drainRelayWithRetry(params: {
       leaseOwnerPrefix: params.leaseOwnerPrefix,
       streamKey: params.streamKey,
       dedupeIndexKey: params.dedupeIndexKey,
+      now: new Date(baseTime.getTime() + attempt * 1000), // Deterministic time progression
     });
     if (lastResult.published > 0 || lastResult.failed === 0) {
       return lastResult;
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // No setTimeout - time is controlled via the now parameter
   }
   return lastResult;
 }

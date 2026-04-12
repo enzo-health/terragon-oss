@@ -35,7 +35,6 @@ const BroadcastBootingSubstatusSchema = z.enum([
   "provisioning-done",
   "cloning-repo",
   "installing-agent",
-  "installing-sandbox-scripts",
   "running-setup-script",
   "booting-done",
 ]);
@@ -184,7 +183,9 @@ const BroadcastThreadPatchSchema = z.object({
       threadName: z.string().optional(),
     })
     .optional(),
-  refetch: z.array(z.enum(["shell", "chat", "diff", "list"])).optional(),
+  refetch: z
+    .array(z.enum(["shell", "chat", "diff", "list", "delivery-loop"]))
+    .optional(),
   // Delta fields — token-level streaming with durable sequencing/replay support
   messageId: z.string().optional(),
   partIndex: z.number().int().nonnegative().optional(),

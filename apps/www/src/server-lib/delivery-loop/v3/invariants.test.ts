@@ -80,7 +80,6 @@ const loopEventArb: fc.Arbitrary<LoopEvent> = fc.oneof(
   fc.record<Extract<LoopEvent, { type: "dispatch_sent" }>>({
     type: fc.constant("dispatch_sent"),
     runId: runIdArb,
-    ackDeadlineAt: fc.constant(new Date("2026-01-01T01:00:00Z")),
   }),
   fc.record<Extract<LoopEvent, { type: "dispatch_acked" }>>({
     type: fc.constant("dispatch_acked"),

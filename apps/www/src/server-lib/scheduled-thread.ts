@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 
 export async function runScheduledThread({
   threadId,
@@ -37,7 +37,7 @@ export async function runScheduledThread({
     throw new Error("Failed to update thread");
   }
   waitUntil(
-    startAgentMessage({
+    dispatchAgentMessage({
       db,
       userId,
       threadId,

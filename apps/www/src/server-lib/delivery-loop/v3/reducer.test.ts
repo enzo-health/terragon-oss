@@ -13,7 +13,6 @@ import {
 function head(state: WorkflowHead["state"]): WorkflowHead {
   const now = new Date("2026-03-18T00:00:00.000Z");
   const activeRunSeq =
-    state === "awaiting_implementation_acceptance" ||
     state === "implementing" ||
     state === "gating_review" ||
     state === "gating_ci" ||
@@ -136,46 +135,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("planning dispatch_sent is a legacy no-op", () => {
-    const now = new Date("2026-03-18T01:00:00.000Z");
-    const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduce({
-      head: head("planning"),
-      event: {
-        type: "dispatch_sent",
-        runId: "run-bootstrap",
-        ackDeadlineAt,
-      },
-      now,
-    });
 
-    expect(result.head.state).toBe("planning");
-    expect(result.head.activeRunId).toBeNull();
-    expect(result.head.version).toBe(2);
-    expect(result.effects).toHaveLength(0);
-  });
-
-  it("gating_review dispatch_sent is a legacy no-op", () => {
-    const now = new Date("2026-03-18T01:00:00.000Z");
-    const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduce({
-      head: {
-        ...head("gating_review"),
-        activeGate: "review",
-      },
-      event: {
-        type: "dispatch_sent",
-        runId: "run-1",
-        ackDeadlineAt,
-      },
-      now,
-    });
-
-    expect(result.head.state).toBe("gating_review");
-    expect(result.head.activeRunId).toBeNull();
-    expect(result.head.version).toBe(2);
-    expect(result.effects).toHaveLength(0);
-  });
 
   it("review failure transitions to implementing and increments fix attempts", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
@@ -291,25 +251,7 @@ describe("reduce", () => {
     expect(result.effects).toHaveLength(0);
   });
 
-  it("legacy awaiting_implementation_acceptance heads normalize into implementing", () => {
-    const now = new Date("2026-03-18T01:00:00.000Z");
-    const result = reduce({
-      head: {
-        ...head("awaiting_implementation_acceptance"),
-        activeRunId: "run-stale",
-      },
-      event: {
-        type: "dispatch_claimed",
-        runId: "run-fresh",
-      },
-      now,
-    });
 
-    expect(result.head.state).toBe("implementing");
-    expect(result.head.activeRunId).toBe("run-stale");
-    expect(result.head.version).toBe(2);
-    expect(result.effects).toHaveLength(0);
-  });
 
   it("implementing run_completed without head SHA retries via implementing", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
@@ -1103,26 +1045,7 @@ describe("reduce", () => {
     expect(result.head.version).toBe(h.version);
   });
 
-  it("dispatch_sent in gating_review is a legacy no-op", () => {
-    const now = new Date("2026-03-18T01:00:00.000Z");
-    const ackDeadlineAt = new Date("2026-03-18T01:01:30.000Z");
-    const result = reduce({
-      head: {
-        ...head("gating_review"),
-        activeGate: "review",
-      },
-      event: {
-        type: "dispatch_sent",
-        runId: "run-review",
-        ackDeadlineAt,
-      },
-      now,
-    });
-    expect(result.head.state).toBe("gating_review");
-    expect(result.head.activeRunId).toBeNull();
-    expect(result.head.version).toBe(2);
-    expect(result.effects).toHaveLength(0);
-  });
+
 
   it("run_completed in gating_ci is a no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");

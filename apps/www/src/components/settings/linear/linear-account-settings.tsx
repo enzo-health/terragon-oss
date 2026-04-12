@@ -339,8 +339,8 @@ function LinearAccountItem({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Choose whether Linear delivery loop runs can continue automatically
-              after planning or wait for manual approval.
+              Choose whether Linear delivery loop runs can continue
+              automatically after planning or wait for manual approval.
             </p>
           </div>
         </div>

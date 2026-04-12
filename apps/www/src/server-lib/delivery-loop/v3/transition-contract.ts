@@ -119,11 +119,7 @@ export const ALL_CANONICAL_EVENTS: LoopEvent[] = [
   },
   { type: "dispatch_claimed", runId: "r-1" },
   { type: "dispatch_accepted", runId: "r-1" },
-  {
-    type: "dispatch_sent",
-    runId: "r-1",
-    ackDeadlineAt: new Date("2030-01-01"),
-  },
+  { type: "dispatch_sent", runId: "r-1" },
   { type: "dispatch_acked", runId: "r-1" },
   { type: "dispatch_ack_timeout", runId: "r-1" },
   { type: "run_completed", runId: "r-1", headSha: "abc123" },
@@ -485,17 +481,7 @@ export const BRANCH_CASES: BranchTransitionCase[] = [
     expectedVersionDelta: 0,
     expectedEffects: [],
   },
-  {
-    name: "legacy awaiting_implementation_acceptance normalizes to implementing on dispatch_claimed",
-    head: {
-      ...makeContractHead("implementing"),
-      state: "awaiting_implementation_acceptance",
-    },
-    event: { type: "dispatch_claimed", runId: "r-2" },
-    expectedState: "implementing",
-    expectedVersionDelta: 0,
-    expectedEffects: [],
-  },
+
   {
     name: "implementing(activeRunId=null) + dispatch_accepted -> noop",
     head: {

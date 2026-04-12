@@ -336,14 +336,29 @@ export function shouldRefreshDeliveryLoopStatusFromThreadPatch(
     return true;
   }
 
+  // Status and URL changes that affect PR link visibility
   if (patch.shell !== undefined) {
-    return true;
+    // Refresh for PR status changes that might transition delivery loop phases
+    if (patch.shell.prStatus !== undefined) {
+      return true;
+    }
+    // Refresh for PR number field changes
+    if (patch.shell.githubPRNumber !== undefined) {
+      return true;
+    }
+    // Refresh for PR checks status changes
+    if (patch.shell.prChecksStatus !== undefined) {
+      return true;
+    }
+    return false;
   }
 
+  // Chat status changes indicate delivery loop phase transitions
   if (patch.chat?.status !== undefined || patch.chat?.updatedAt !== undefined) {
     return true;
   }
 
+  // Agent messages indicate active work that may affect delivery loop state
   return (patch.appendMessages ?? []).some(isAgentMessageLike);
 }
 

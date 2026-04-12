@@ -1,7 +1,10 @@
 import { db } from "@/lib/db";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import {
+  dispatchAgentMessage,
+  type StartAgentMessageParams,
+} from "@/agent/msg/startAgentMessage";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import {
@@ -155,6 +158,212 @@ function isIntentOnlyDeliveryLoopDispatchActive(
     intent?.targetPhase === "ci_gate" ||
     intent?.targetPhase === "ui_gate"
   );
+}
+
+type FetchedThreadChat = Awaited<ReturnType<typeof getThreadChat>>;
+type ThreadChatRecord = NonNullable<FetchedThreadChat>;
+
+function getRunnableThreadChatResult(
+  threadChat: FetchedThreadChat,
+):
+  | { threadChat: ThreadChatRecord }
+  | { result: FollowUpQueueProcessingResult } {
+  if (!threadChat) {
+    return {
+      result: {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "thread_chat_not_found",
+      },
+    };
+  }
+  if (threadChat.status === "queued-agent-rate-limit") {
+    return {
+      result: {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "agent_rate_limited",
+      },
+    };
+  }
+  if (threadChat.status === "scheduled") {
+    return {
+      result: {
+        processed: false,
+        dispatchLaunched: false,
+        reason: "scheduled_not_runnable",
+      },
+    };
+  }
+  return { threadChat };
+}
+
+type FollowUpDispatchPlan = {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  branchName?: string;
+  message?: StartAgentMessageParams["message"];
+  successReason: "dispatch_started_slash" | "dispatch_started_batch";
+};
+
+async function launchFollowUpDispatch(
+  plan: FollowUpDispatchPlan,
+): Promise<FollowUpQueueProcessingResult> {
+  const result = await dispatchAgentMessage({
+    db,
+    userId: plan.userId,
+    message: plan.message,
+    threadId: plan.threadId,
+    threadChatId: plan.threadChatId,
+    isNewThread: false,
+    createNewBranch: false,
+    branchName: plan.branchName,
+  });
+
+  if (result.dispatchLaunched) {
+    return {
+      processed: true,
+      dispatchLaunched: true,
+      reason: plan.successReason,
+    };
+  }
+
+  return {
+    processed: false,
+    dispatchLaunched: false,
+    reason: "dispatch_not_started",
+  };
+}
+
+async function launchSlashFollowUpDispatch(
+  plan: FollowUpDispatchPlan,
+): Promise<FollowUpQueueProcessingResult> {
+  const result = await dispatchAgentMessage({
+    db,
+    userId: plan.userId,
+    message: plan.message,
+    threadId: plan.threadId,
+    threadChatId: plan.threadChatId,
+    isNewThread: false,
+    createNewBranch: false,
+    branchName: plan.branchName,
+  });
+
+  return {
+    processed: true,
+    dispatchLaunched: result.dispatchLaunched,
+    reason: plan.successReason,
+  };
+}
+
+async function launchIntentOnlyFollowUpDispatch({
+  userId,
+  threadId,
+  threadChatId,
+  threadChat,
+  activeDispatchIntent,
+  bypassBusyCheck,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  threadChat: ThreadChatRecord;
+  activeDispatchIntent:
+    | {
+        loopId?: string | null;
+        targetPhase?: string | null;
+      }
+    | null
+    | undefined;
+  bypassBusyCheck: boolean;
+}): Promise<FollowUpQueueProcessingResult> {
+  if (!isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent)) {
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    };
+  }
+
+  const latestRetrySnapshot = await getLatestRetrySnapshot({
+    userId,
+    threadId,
+    threadChatId,
+    fallbackMessages: threadChat.messages ?? null,
+    fallbackQueuedMessages: [],
+  });
+  const latestDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
+    db,
+    {
+      threadChatId,
+    },
+  );
+  const stillAllowIntentOnlyDispatch =
+    isIntentOnlyDeliveryLoopDispatchActive(latestDispatchIntent);
+  if (
+    latestRetrySnapshot.queuedMessagesForRetry.length === 0 &&
+    !stillAllowIntentOnlyDispatch
+  ) {
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    };
+  }
+
+  console.log("Processing delivery-loop follow-up without queued messages", {
+    threadId,
+    threadChatId,
+    targetPhase: latestDispatchIntent?.targetPhase ?? null,
+  });
+  const workflowIdForDispatch =
+    latestDispatchIntent?.loopId ?? activeDispatchIntent?.loopId ?? undefined;
+  try {
+    return await launchDeliveryLoopDispatchFromIntent({
+      userId,
+      threadId,
+      threadChatId,
+      workflowId: workflowIdForDispatch,
+      bypassBusyCheck,
+    });
+  } catch (error) {
+    console.error("Delivery-loop follow-up processing failed", {
+      threadId,
+      threadChatId,
+      workflowId: workflowIdForDispatch,
+      error,
+      targetPhase: latestDispatchIntent?.targetPhase ?? null,
+    });
+    const failure = await handleFollowUpFailure({
+      userId,
+      threadId,
+      threadChatId,
+      messages: latestRetrySnapshot.messages,
+      queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
+      error,
+    });
+    let failureReason: FollowUpQueueProcessingResult["reason"] =
+      "dispatch_retry_persistence_failed";
+    if (failure.exhausted) {
+      failureReason = "dispatch_retry_exhausted";
+    } else if (failure.retryPersisted) {
+      failureReason = "dispatch_retry_scheduled";
+    }
+    return ensureDispatchRetryPersistenceOwnership({
+      owner: "process-follow-up-queue",
+      userId,
+      threadId,
+      threadChatId,
+      result: {
+        processed: false,
+        dispatchLaunched: false,
+        reason: failureReason,
+        retryCount: failure.retriesUsed,
+        maxRetries: MAX_FOLLOW_UP_RETRIES,
+      },
+    });
+  }
 }
 
 type RetryPersistenceOwner =
@@ -411,6 +620,78 @@ async function handleFollowUpFailure({
   }
 }
 
+export async function launchDeliveryLoopDispatchFromIntent({
+  userId,
+  threadId,
+  threadChatId,
+  workflowId,
+  bypassBusyCheck = true,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  workflowId?: string;
+  bypassBusyCheck?: boolean;
+}): Promise<FollowUpQueueProcessingResult> {
+  const threadChat = await getThreadChat({
+    db,
+    threadId,
+    threadChatId,
+    userId,
+  });
+  const runnableThreadChatCheck = getRunnableThreadChatResult(threadChat);
+  if ("result" in runnableThreadChatCheck) {
+    return runnableThreadChatCheck.result;
+  }
+
+  const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
+    db,
+    {
+      threadChatId,
+      loopId: workflowId,
+    },
+  );
+  if (!isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent)) {
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    };
+  }
+
+  const { didUpdateStatus } = await updateThreadChatWithTransition({
+    userId,
+    threadId,
+    threadChatId,
+    eventType: "user.message",
+    requireStatusTransitionForChatUpdates: !bypassBusyCheck,
+  });
+  if (!didUpdateStatus && !bypassBusyCheck) {
+    const noopResult = await checkNoopBusy({
+      threadId,
+      threadChatId,
+      userId,
+    });
+    if (noopResult) {
+      return noopResult;
+    }
+  }
+
+  const thread = await getThreadMinimal({
+    db,
+    threadId,
+    userId,
+  });
+  const threadBranchName = thread?.branchName ?? undefined;
+  return launchFollowUpDispatch({
+    userId,
+    branchName: threadBranchName,
+    threadId,
+    threadChatId,
+    successReason: "dispatch_started_batch",
+  });
+}
+
 export async function maybeProcessFollowUpQueue({
   userId,
   threadId,
@@ -536,179 +817,67 @@ export async function maybeProcessFollowUpQueue({
       };
     }
   }
-  if (!threadChat) {
-    console.warn("Skipping follow-up queue: thread chat not found", {
-      threadId,
-      threadChatId,
-    });
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "thread_chat_not_found",
-    };
-  }
-  // Don't process follow up messages if the thread is rate limited by the agent.
-  if (threadChat.status === "queued-agent-rate-limit") {
-    console.log(
-      `Skipping follow-up queue processing for thread - agent rate limited`,
-      {
+  const runnableThreadChatCheck = getRunnableThreadChatResult(threadChat);
+  if ("result" in runnableThreadChatCheck) {
+    if (runnableThreadChatCheck.result.reason === "thread_chat_not_found") {
+      console.warn("Skipping follow-up queue: thread chat not found", {
         threadId,
-        threadChatId: threadChat.id,
-      },
-    );
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "agent_rate_limited",
-    };
+        threadChatId,
+      });
+    } else if (runnableThreadChatCheck.result.reason === "agent_rate_limited") {
+      console.log(
+        `Skipping follow-up queue processing for thread - agent rate limited`,
+        {
+          threadId,
+          threadChatId: threadChat?.id,
+        },
+      );
+    } else if (
+      runnableThreadChatCheck.result.reason === "scheduled_not_runnable"
+    ) {
+      console.log("Skipping follow-up queue processing: chat is scheduled", {
+        threadId,
+        threadChatId,
+      });
+    }
+    return runnableThreadChatCheck.result;
   }
-  if (threadChat.status === "scheduled") {
-    console.log("Skipping follow-up queue processing: chat is scheduled", {
-      threadId,
-      threadChatId,
-    });
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "scheduled_not_runnable",
-    };
-  }
+  const runnableThreadChat = runnableThreadChatCheck.threadChat;
   const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
     db,
     {
       threadChatId,
     },
   );
-  const allowIntentOnlyDispatch =
-    isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent);
-  if (!threadChat.queuedMessages || threadChat.queuedMessages.length === 0) {
-    if (!allowIntentOnlyDispatch) {
-      return {
-        processed: false,
-        dispatchLaunched: false,
-        reason: "no_queued_messages",
-      };
-    }
-
-    const { didUpdateStatus } = await updateThreadChatWithTransition({
+  if (
+    !runnableThreadChat.queuedMessages ||
+    runnableThreadChat.queuedMessages.length === 0
+  ) {
+    return await launchIntentOnlyFollowUpDispatch({
       userId,
       threadId,
       threadChatId,
-      eventType: "user.message",
-      requireStatusTransitionForChatUpdates: !bypassBusyCheck,
+      threadChat: runnableThreadChat,
+      activeDispatchIntent,
+      bypassBusyCheck,
     });
-    if (!didUpdateStatus && !bypassBusyCheck) {
-      const noopResult = await checkNoopBusy({
-        threadId,
-        threadChatId,
-        userId,
-      });
-      if (noopResult) return noopResult;
-    }
-    const latestRetrySnapshot = await getLatestRetrySnapshot({
-      userId,
-      threadId,
-      threadChatId,
-      fallbackMessages: threadChat.messages ?? null,
-      fallbackQueuedMessages: [],
-    });
-    const latestDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-      db,
-      {
-        threadChatId,
-      },
-    );
-    const stillAllowIntentOnlyDispatch =
-      isIntentOnlyDeliveryLoopDispatchActive(latestDispatchIntent);
-    if (
-      latestRetrySnapshot.queuedMessagesForRetry.length === 0 &&
-      !stillAllowIntentOnlyDispatch
-    ) {
-      return {
-        processed: false,
-        dispatchLaunched: false,
-        reason: "no_queued_messages",
-      };
-    }
-    console.log("Processing delivery-loop follow-up without queued messages", {
-      threadId,
-      threadChatId,
-      targetPhase: latestDispatchIntent?.targetPhase ?? null,
-    });
-    try {
-      const result = await startAgentMessage({
-        db,
-        userId,
-        threadId,
-        threadChatId,
-        isNewThread: false,
-        createNewBranch: false,
-        branchName: threadBranchName,
-      });
-      if (result.dispatchLaunched) {
-        return {
-          processed: true,
-          dispatchLaunched: true,
-          reason: "dispatch_started_batch",
-        };
-      }
-      return {
-        processed: false,
-        dispatchLaunched: false,
-        reason: "dispatch_not_started",
-      };
-    } catch (error) {
-      console.error("Delivery-loop follow-up processing failed", {
-        threadId,
-        threadChatId,
-        error,
-        targetPhase: latestDispatchIntent?.targetPhase ?? null,
-      });
-      const failure = await handleFollowUpFailure({
-        userId,
-        threadId,
-        threadChatId,
-        messages: latestRetrySnapshot.messages,
-        queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
-        error,
-      });
-      let failureReason: FollowUpQueueProcessingResult["reason"] =
-        "dispatch_retry_persistence_failed";
-      if (failure.exhausted) {
-        failureReason = "dispatch_retry_exhausted";
-      } else if (failure.retryPersisted) {
-        failureReason = "dispatch_retry_scheduled";
-      }
-      return ensureDispatchRetryPersistenceOwnership({
-        owner: "process-follow-up-queue",
-        userId,
-        threadId,
-        threadChatId,
-        result: {
-          processed: false,
-          dispatchLaunched: false,
-          reason: failureReason,
-          retryCount: failure.retriesUsed,
-          maxRetries: MAX_FOLLOW_UP_RETRIES,
-        },
-      });
-    }
   }
   console.log("Processing queued follow up messages on thread", {
     threadId,
-    threadChatId: threadChat.id,
+    threadChatId: runnableThreadChat.id,
   });
-  const queuedMessagesSnapshot = [...threadChat.queuedMessages];
+  const queuedMessagesSnapshot = [...runnableThreadChat.queuedMessages];
 
   // Slash commands must be processed standalone. We intentionally scan the queue
   // instead of requiring index 0 so delayed/racy queue writes still route slash
   // commands through the deterministic slash handler path.
-  const slashCommandIndex = threadChat.queuedMessages.findIndex(
+  const slashCommandIndex = runnableThreadChat.queuedMessages.findIndex(
     (queuedMessage) => !!getSlashCommandOrNull(queuedMessage),
   );
   if (slashCommandIndex !== -1) {
-    const slashCommandMessage = threadChat.queuedMessages[slashCommandIndex]!;
-    const restQueuedMessages = threadChat.queuedMessages.filter(
+    const slashCommandMessage =
+      runnableThreadChat.queuedMessages[slashCommandIndex]!;
+    const restQueuedMessages = runnableThreadChat.queuedMessages.filter(
       (_, index) => index !== slashCommandIndex,
     );
 
@@ -735,33 +904,26 @@ export async function maybeProcessFollowUpQueue({
       ...slashCommandMessage,
       model:
         slashCommandMessage.model ??
-        getLastUserMessageModel(threadChat.messages ?? []) ??
+        getLastUserMessageModel(runnableThreadChat.messages ?? []) ??
         getDefaultModelForAgent({
-          agent: threadChat.agent,
-          agentVersion: threadChat.agentVersion,
+          agent: runnableThreadChat.agent,
+          agentVersion: runnableThreadChat.agentVersion,
         }),
     };
     console.log("Processing follow-up", {
       threadId,
       threadChatId,
-      queuedMessageCount: threadChat.queuedMessages?.length ?? 0,
+      queuedMessageCount: runnableThreadChat.queuedMessages?.length ?? 0,
     });
     try {
-      const result = await startAgentMessage({
-        db,
+      return await launchSlashFollowUpDispatch({
         userId,
         message: messageWithModel,
+        branchName: threadBranchName,
         threadId,
         threadChatId,
-        isNewThread: false,
-        createNewBranch: false,
-        branchName: threadBranchName,
+        successReason: "dispatch_started_slash",
       });
-      return {
-        processed: true,
-        dispatchLaunched: result.dispatchLaunched,
-        reason: "dispatch_started_slash",
-      };
     } catch (error) {
       console.error("Follow-up processing failed", {
         threadId,
@@ -772,7 +934,7 @@ export async function maybeProcessFollowUpQueue({
         userId,
         threadId,
         threadChatId,
-        fallbackMessages: threadChat.messages ?? null,
+        fallbackMessages: runnableThreadChat.messages ?? null,
         fallbackQueuedMessages: queuedMessagesSnapshot,
       });
       const failure = await handleFollowUpFailure({
@@ -823,30 +985,16 @@ export async function maybeProcessFollowUpQueue({
   console.log("Processing follow-up", {
     threadId,
     threadChatId,
-    queuedMessageCount: threadChat.queuedMessages?.length ?? 0,
+    queuedMessageCount: runnableThreadChat.queuedMessages?.length ?? 0,
   });
   try {
-    const result = await startAgentMessage({
-      db,
+    return await launchFollowUpDispatch({
       userId,
+      branchName: threadBranchName,
       threadId,
       threadChatId,
-      isNewThread: false,
-      createNewBranch: false,
-      branchName: threadBranchName,
+      successReason: "dispatch_started_batch",
     });
-    if (result.dispatchLaunched) {
-      return {
-        processed: true,
-        dispatchLaunched: true,
-        reason: "dispatch_started_batch",
-      };
-    }
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "dispatch_not_started",
-    };
   } catch (error) {
     console.error("Follow-up processing failed", {
       threadId,
@@ -857,7 +1005,7 @@ export async function maybeProcessFollowUpQueue({
       userId,
       threadId,
       threadChatId,
-      fallbackMessages: threadChat.messages ?? null,
+      fallbackMessages: runnableThreadChat.messages ?? null,
       fallbackQueuedMessages: queuedMessagesSnapshot,
     });
     const failure = await handleFollowUpFailure({

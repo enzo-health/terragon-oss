@@ -181,8 +181,6 @@ function getBootingSubstatusMessage(substatus: BootingSubstatus): string {
       return "Provisioning machine";
     case "cloning-repo":
       return "Cloning repository";
-    case "installing-sandbox-scripts":
-      return "Installing scripts";
     case "installing-agent":
       return "Installing agent";
     case "running-setup-script":

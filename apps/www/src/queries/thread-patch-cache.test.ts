@@ -207,6 +207,28 @@ describe("applyThreadPatchToQueryClient", () => {
     });
   });
 
+  it("invalidates explicit refetch targets without delivery-loop", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.shell("thread-1"),
+      createThreadShell(),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        op: "refetch",
+        refetch: ["shell"],
+      },
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.shell("thread-1"),
+    });
+  });
+
   it("accepts seq-only patches that jump ahead (confirmation after optimistic)", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
@@ -265,6 +287,35 @@ describe("applyThreadPatchToQueryClient", () => {
       queryClient.getQueryData(threadQueryKeys.chat("thread-1", "chat-1")),
     ).toBe(previousChat);
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+    });
+  });
+
+  it("does not invalidate chat for exact delivery-loop refetch patches", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat(),
+    );
+    const previousChat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "refetch",
+        refetch: ["delivery-loop"],
+      },
+    });
+
+    expect(
+      queryClient.getQueryData(threadQueryKeys.chat("thread-1", "chat-1")),
+    ).toBe(previousChat);
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
     });
   });

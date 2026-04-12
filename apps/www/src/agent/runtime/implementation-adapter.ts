@@ -31,7 +31,6 @@ export type ImplementationAdapterInput = {
   sessionId: string | null;
   codexPreviousResponseId: string | null;
   shouldUseCredits: boolean;
-  threadChatId: string;
   enableAcpTransport?: boolean;
 };
 
