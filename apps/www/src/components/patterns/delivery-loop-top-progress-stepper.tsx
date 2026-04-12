@@ -424,7 +424,7 @@ export function DeliveryLoopTopProgressStepper({
                           : undefined
                       }
                       className={cn(
-                        "flex-1 h-[4px] rounded-full transition-all duration-300 hover:h-[6px]",
+                        "flex-1 h-[4px] rounded-full origin-center transition-transform duration-300 hover:scale-y-[1.5]",
                         isExpandable ? "cursor-pointer" : "cursor-default",
                         phase.status === "passed" || phase.status === "degraded"
                           ? "bg-emerald-500"

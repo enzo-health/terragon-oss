@@ -12,7 +12,7 @@
     "tsc-watch": "tsc --noEmit --watch --preserveWatchOutput",
     "tsc-check": "tsc --noEmit",
     "lint": "biome lint .",
-    "analyze": "ANALYZE=true pnpm build"
+    "analyze": "pnpm --filter bundled build && ANALYZE=true next build --webpack"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.42",

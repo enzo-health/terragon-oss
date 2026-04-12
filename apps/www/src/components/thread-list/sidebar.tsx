@@ -36,7 +36,7 @@ export function ThreadListSidebar() {
   }
   return (
     <div
-      className="hidden md:flex sticky top-0 h-screen border-r bg-background flex-shrink-0 z-20"
+      className="hidden md:flex sticky top-0 h-full border-r bg-background flex-shrink-0 z-20"
       style={{ width: `${width}px` }}
     >
       <div className="flex flex-col h-full w-full overflow-hidden">

@@ -55,13 +55,15 @@ export function GitHubQuickActions({
   const shouldShowMarkReadyButton =
     prStatus === "draft" && prChecksStatus !== "failure";
   const isVisible = shouldShowFixButton || shouldShowMarkReadyButton;
+  if (!isVisible) {
+    return null;
+  }
   const isFixingChecks = isFixing;
   const isMarkingReady = isMarking;
   return (
     <div
       className={cn(
-        "box-content border-t border-x rounded-tl-md rounded-tr-md border-border bg-muted/50 pb-2 -mb-2 overflow-hidden flex items-center gap-2 text-sm px-2 transition-all duration-300 ease-in-out h-10",
-        !isVisible && "translate-y-full h-0 opacity-0 pointer-events-none",
+        "box-content border-t border-x rounded-tl-md rounded-tr-md border-border bg-muted/50 pb-2 -mb-2 overflow-hidden flex items-center gap-2 text-sm px-2 h-10",
       )}
     >
       <PRStatusPill

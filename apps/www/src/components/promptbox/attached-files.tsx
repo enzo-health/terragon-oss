@@ -56,7 +56,7 @@ export function AttachedFiles({
                 {/* Upload status overlay */}
                 {file.uploadStatus === "pending" ||
                 file.uploadStatus === "uploading" ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded">
+                  <div className="absolute inset-0 flex items-center justify-center bg-foreground/20 rounded">
                     <Loader2 className="size-4 text-white animate-spin" />
                   </div>
                 ) : null}
@@ -81,7 +81,7 @@ export function AttachedFiles({
                 {/* Upload status overlay */}
                 {file.uploadStatus === "pending" ||
                 file.uploadStatus === "uploading" ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded">
+                  <div className="absolute inset-0 flex items-center justify-center bg-foreground/20 rounded">
                     <Loader2 className="size-4 text-white animate-spin" />
                   </div>
                 ) : null}

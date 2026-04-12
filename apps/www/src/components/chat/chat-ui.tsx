@@ -665,14 +665,14 @@ function ChatUI({
     !shell
   ) {
     return (
-      <div className="flex flex-col h-[100dvh] w-full items-center justify-center">
+      <div className="flex flex-col h-full w-full items-center justify-center">
         <LeafLoading message="Loading task…" />
       </div>
     );
   }
   return (
     <>
-      <div className="flex flex-col h-[100dvh] w-full">
+      <div className="flex flex-col h-full w-full">
         <ChatHeader
           thread={thread}
           threadAgent={chatAgent}

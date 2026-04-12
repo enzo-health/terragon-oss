@@ -128,12 +128,12 @@ export function SimplePromptBox({
     <DragDropWrapper
       onFilesDropped={handleFilesAttached}
       className={cn(
-        "bg-white rounded-xl shadow-card transition-shadow duration-300 hover:shadow-lg focus-within:shadow-premium p-2 flex flex-col gap-2",
+        "flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-border/70 bg-card p-2 shadow-sm transition-[border-color,box-shadow] duration-200 ease-[var(--ease-standard)] hover:shadow-md focus-within:border-primary/25 focus-within:shadow-lg",
         borderClassName,
       )}
     >
       <ScrollArea
-        className="max-h-[calc(60dvh)] overflow-auto"
+        className="max-h-[min(60dvh,28rem)] overflow-auto"
         onClick={() => {
           // Focus editor when clicking in the scroll area
           if (editor && !editor.isFocused) {
@@ -143,12 +143,12 @@ export function SimplePromptBox({
       >
         <EditorContent
           editor={editor}
-          className={cn("px-4 py-2 min-h-[44px]", className)}
+          className={cn("min-h-[44px] px-4 pb-2 pt-3 md:px-5", className)}
         />
       </ScrollArea>
       <AttachedFiles attachedFiles={attachedFiles} onRemoveFile={removeFile} />
-      <div className="flex flex-row gap-3 items-center px-2 pb-1">
-        <div className="flex flex-row gap-1.5 items-center flex-1 min-w-0">
+      <div className="flex flex-row items-center gap-3 border-t border-border/60 px-2 pb-1 pt-2">
+        <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
           {!hideModelSelector && (
             <ModelSelector
               className="flex-initial"
@@ -173,7 +173,7 @@ export function SimplePromptBox({
               />
             )}
         </div>
-        <div className="flex-shrink-0 flex flex-row items-center gap-1.5">
+        <div className="flex flex-shrink-0 flex-row items-center gap-1.5">
           {!hideAddContextButton && (
             <AddContextButton
               editor={editor}
