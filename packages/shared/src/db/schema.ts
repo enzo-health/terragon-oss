@@ -77,6 +77,15 @@ import {
   DeliveryTimerStatusV3,
   DeliveryOutboxTopicV3,
   DeliveryOutboxStatusV3,
+  ReviewPRState,
+  ReviewCIStatus,
+  ReviewRiskLevel,
+  ReviewPhase,
+  ReviewCommentPriority,
+  ReviewCommentResolution,
+  ReviewDecision,
+  ReviewDiffStats,
+  ReviewBotFeedback,
 } from "./types";
 import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";
 import {
@@ -2329,6 +2338,117 @@ export const deliveryOutboxV3 = pgTable(
     index("delivery_outbox_v3_workflow_status_index").on(
       table.workflowId,
       table.status,
+    ),
+  ],
+);
+
+// ── PR Review tables ─────────────────────────────────────────────────
+
+export const review = pgTable(
+  "review",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    threadId: text("thread_id").references(() => thread.id, {
+      onDelete: "set null",
+    }),
+    prNumber: integer("pr_number").notNull(),
+    prUrl: text("pr_url").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    prState: text("pr_state").$type<ReviewPRState>().notNull().default("open"),
+    prTitle: text("pr_title").notNull(),
+    prAuthor: text("pr_author").notNull(),
+    prBaseBranch: text("pr_base_branch"),
+    prHeadBranch: text("pr_head_branch"),
+    ciStatus: text("ci_status").$type<ReviewCIStatus>().default("unknown"),
+    hasConflicts: boolean("has_conflicts").notNull().default(false),
+    riskLevel: text("risk_level").$type<ReviewRiskLevel>(),
+    summary: text("summary"),
+    codeChangeSummary: text("code_change_summary"),
+    doneWell: text("done_well"),
+    diffStats: jsonb("diff_stats").$type<ReviewDiffStats>(),
+    botFeedback: jsonb("bot_feedback").$type<ReviewBotFeedback[]>(),
+    triageTicketUrl: text("triage_ticket_url"),
+    phase: text("phase").$type<ReviewPhase>().notNull().default("ai_reviewing"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("review_repo_pr_index").on(table.repoFullName, table.prNumber),
+    index("review_phase_index").on(table.phase),
+  ],
+);
+
+export const reviewComment = pgTable(
+  "review_comment",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    reviewId: text("review_id")
+      .notNull()
+      .references(() => review.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    priority: text("priority").$type<ReviewCommentPriority>().notNull(),
+    file: text("file").notNull(),
+    line: integer("line"),
+    body: text("body").notNull(),
+    included: boolean("included").notNull().default(true),
+    posted: boolean("posted").notNull().default(false),
+    reviewRound: integer("review_round").notNull().default(1),
+    resolution: text("resolution").$type<ReviewCommentResolution>(),
+    resolutionNote: text("resolution_note"),
+    introducedByPr: boolean("introduced_by_pr"),
+    triageTicketUrl: text("triage_ticket_url"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("review_comment_review_id_index").on(table.reviewId),
+    index("review_comment_review_round_index").on(
+      table.reviewId,
+      table.reviewRound,
+    ),
+  ],
+);
+
+export const reviewAssignment = pgTable(
+  "review_assignment",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    reviewId: text("review_id")
+      .notNull()
+      .references(() => review.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    githubUsername: text("github_username").notNull(),
+    decision: text("decision").$type<ReviewDecision>(),
+    postedAt: timestamp("posted_at"),
+    notifiedAt: timestamp("notified_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("review_assignment_review_id_index").on(table.reviewId),
+    index("review_assignment_user_id_index").on(table.userId),
+    uniqueIndex("review_assignment_review_user_unique").on(
+      table.reviewId,
+      table.userId,
     ),
   ],
 );

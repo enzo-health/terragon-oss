@@ -32,6 +32,7 @@ import {
 import { Automation } from "@terragon/shared/db/types";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import type { LoopEvent } from "@/server-lib/delivery-loop/v3/types";
+import * as reviewModel from "@terragon/shared/model/review";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -515,6 +516,33 @@ export async function handlePullRequestStatusChange(
           merged: event.pull_request.merged === true,
         },
       });
+
+      // Auto-complete any active reviews for this PR
+      try {
+        const activeReview = await reviewModel.getReviewByPR({
+          db,
+          repoFullName: repoName,
+          prNumber,
+        });
+        if (activeReview) {
+          await reviewModel.updateReview({
+            db,
+            reviewId: activeReview.id,
+            data: {
+              phase: "complete",
+              prState: event.pull_request.merged ? "merged" : "closed",
+            },
+          });
+          console.log(
+            `[review] Auto-completed review ${activeReview.id} for closed PR #${prNumber} in ${repoName}`,
+          );
+        }
+      } catch (reviewError) {
+        console.warn(
+          `[review] Failed to auto-complete review for PR #${prNumber} in ${repoName}:`,
+          reviewError,
+        );
+      }
     }
 
     console.log(`Successfully updated PR #${prNumber} status in ${repoName}`);
@@ -1458,4 +1486,120 @@ async function handleIssueAutomation(
       error,
     );
   });
+}
+
+// ── PR Review webhook handler ────────────────────────────────────────
+
+export async function handlePullRequestReviewRequested(
+  payload: PullRequestEvent,
+  requestId: string,
+): Promise<void> {
+  try {
+    const repoFullName = payload.repository.full_name;
+    const prNumber = payload.pull_request.number;
+    const prUrl = payload.pull_request.html_url;
+    const prTitle = payload.pull_request.title;
+    const prAuthor = payload.pull_request.user?.login ?? "unknown";
+    const prBaseBranch = payload.pull_request.base.ref;
+    const prHeadBranch = payload.pull_request.head.ref;
+    const prDraft = payload.pull_request.draft === true;
+
+    // The requested_reviewer is available on review_requested events
+    const requestedReviewer = (payload as any).requested_reviewer as
+      | { login: string }
+      | undefined;
+
+    if (!requestedReviewer?.login) {
+      console.log(
+        `[review webhook] No requested_reviewer found in payload for PR #${prNumber} in ${repoFullName}`,
+      );
+      return;
+    }
+
+    const githubUsername = requestedReviewer.login;
+    console.log(
+      `[review webhook] Review requested for PR #${prNumber} in ${repoFullName} — reviewer: ${githubUsername} (delivery: ${requestId})`,
+    );
+
+    // Check if a review already exists for this PR
+    let review = await reviewModel.getReviewByPR({
+      db,
+      repoFullName,
+      prNumber,
+    });
+
+    if (!review) {
+      // Create a new review record
+      review = await reviewModel.createReview({
+        db,
+        data: {
+          prNumber,
+          prUrl,
+          repoFullName,
+          prTitle,
+          prAuthor,
+          prBaseBranch,
+          prHeadBranch,
+          prState: prDraft ? "draft" : "open",
+          phase: "ai_reviewing",
+        },
+      });
+      if (!review) {
+        console.error(
+          `[review webhook] Failed to create review for PR #${prNumber} in ${repoFullName}`,
+        );
+        return;
+      }
+      console.log(
+        `[review webhook] Created review ${review.id} for PR #${prNumber} in ${repoFullName}`,
+      );
+    }
+
+    // Find the Terragon user matching the GitHub username
+    const user = await reviewModel.findUserByGithubUsername({
+      db,
+      githubUsername,
+    });
+
+    if (!user) {
+      console.log(
+        `[review webhook] No Terragon user found for GitHub username ${githubUsername} — skipping assignment`,
+      );
+      return;
+    }
+
+    // Check if assignment already exists
+    const existingAssignment = await reviewModel.getReviewAssignmentForUser({
+      db,
+      reviewId: review.id,
+      userId: user.id,
+    });
+
+    if (existingAssignment) {
+      console.log(
+        `[review webhook] Assignment already exists for user ${user.id} on review ${review.id}`,
+      );
+      return;
+    }
+
+    // Create assignment
+    await reviewModel.createReviewAssignment({
+      db,
+      data: {
+        reviewId: review.id,
+        userId: user.id,
+        githubUsername,
+      },
+    });
+
+    console.log(
+      `[review webhook] Created assignment for user ${user.id} (${githubUsername}) on review ${review.id}`,
+    );
+    // Future: trigger Slack notification + sandbox execution
+  } catch (error) {
+    console.error(
+      "[review webhook] Error handling pull_request.review_requested:",
+      error,
+    );
+  }
 }

@@ -45,6 +45,7 @@ import {
   handleCheckSuiteEvent,
   handlePullRequestUpdated,
   handleIssueEvent,
+  handlePullRequestReviewRequested,
 } from "./handlers";
 import { Webhooks } from "@octokit/webhooks";
 import { env } from "@terragon/env/apps-www";
@@ -87,6 +88,9 @@ export async function POST(request: NextRequest) {
       await handlePullRequestUpdated(payload);
     },
   );
+  webhooks.on("pull_request.review_requested", async ({ payload }) => {
+    await handlePullRequestReviewRequested(payload, requestId);
+  });
   webhooks.on("issue_comment.created", async ({ payload }) => {
     await handleIssueCommentEvent(payload);
   });

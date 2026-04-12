@@ -907,3 +907,48 @@ export type DispatchIntentExecutionClass =
 export type DispatchIntentDispatchMechanism =
   | "self_dispatch"
   | "queue_fallback";
+
+// ── PR Review feature types ──────────────────────────────────────────
+
+export type ReviewPRState = "open" | "draft" | "merged" | "closed";
+export type ReviewCIStatus = "passing" | "failing" | "pending" | "unknown";
+export type ReviewRiskLevel = "low" | "medium" | "high";
+export type ReviewPhase =
+  | "ai_reviewing"
+  | "waiting_human"
+  | "posting"
+  | "await_author_fixes"
+  | "re_reviewing"
+  | "complete"
+  | "cancelled";
+export type ReviewCommentPriority = "high" | "medium" | "low";
+export type ReviewCommentResolution =
+  | "resolved"
+  | "partially_resolved"
+  | "not_addressed";
+export type ReviewDecision =
+  | "pending"
+  | "approved"
+  | "changes_requested"
+  | "dismissed";
+export type ReviewDiffStats = {
+  files: number;
+  additions: number;
+  deletions: number;
+};
+export type ReviewBotFeedback = {
+  author: string;
+  body: string;
+  file?: string;
+  line?: number;
+  url: string;
+  state: string;
+};
+
+export type Review = typeof schema.review.$inferSelect;
+export type ReviewInsert = typeof schema.review.$inferInsert;
+export type ReviewComment = typeof schema.reviewComment.$inferSelect;
+export type ReviewCommentInsert = typeof schema.reviewComment.$inferInsert;
+export type ReviewAssignment = typeof schema.reviewAssignment.$inferSelect;
+export type ReviewAssignmentInsert =
+  typeof schema.reviewAssignment.$inferInsert;
