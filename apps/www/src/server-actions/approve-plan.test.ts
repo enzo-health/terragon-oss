@@ -42,10 +42,6 @@ vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn(),
 }));
 
-vi.mock("@/lib/subscription", () => ({
-  getAccessInfoForUser: vi.fn(async () => ({ tier: "core" })),
-}));
-
 async function approvePlan({
   threadId,
   threadChatId,
