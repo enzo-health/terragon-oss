@@ -912,6 +912,65 @@ describe("toUIMessages", () => {
     ]);
   });
 
+  test("deduplicates repeated tool-call IDs with updated parameters", () => {
+    const dbMessages: DBMessage[] = [
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "retry tool call" }],
+      },
+      {
+        type: "tool-call",
+        id: "tool-dupe-1",
+        name: "Read",
+        parameters: { file_path: "first.txt" },
+        parent_tool_use_id: null,
+      },
+      {
+        type: "tool-call",
+        id: "tool-dupe-1",
+        name: "Read",
+        parameters: { file_path: "second.txt" },
+        parent_tool_use_id: null,
+      },
+      {
+        type: "tool-result",
+        id: "tool-dupe-1",
+        result: "final result",
+        is_error: null,
+        parent_tool_use_id: null,
+      },
+    ];
+
+    const result = toUIMessages({ dbMessages, agent: "claudeCode" });
+    expect(result).toEqual([
+      {
+        id: "user-0",
+        role: "user",
+        parts: [{ type: "text", text: "retry tool call" }],
+        model: null,
+        timestamp: undefined,
+      },
+      {
+        id: "agent-1",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "tool",
+            agent: "claudeCode",
+            id: "tool-dupe-1",
+            name: "Read",
+            parameters: { file_path: "second.txt" },
+            status: "completed",
+            result: "final result",
+            parts: [],
+          },
+        ],
+      },
+    ]);
+  });
+
   test("deduplicates consecutive TodoWrite tool calls", () => {
     const dbMessages: DBMessage[] = [
       {
