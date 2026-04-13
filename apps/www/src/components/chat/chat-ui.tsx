@@ -160,6 +160,12 @@ function ChatUI({
   const platform = usePlatform();
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  // Defer scroll-to-bottom button visibility so the initial auto-scroll can fire first.
+  const [hasInitialized, setHasInitialized] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setHasInitialized(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
   const {
     shouldAutoOpenSecondaryPanel,
     isSecondaryPanelOpen,
@@ -685,73 +691,91 @@ function ChatUI({
         ) : null}
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-hidden">
-            <ScrollArea
-              ref={scrollAreaRef}
-              className="w-full h-full overflow-auto"
-            >
-              <div ref={transcriptRef} className="min-h-full flex flex-col">
-                <TerragonThread
-                  messages={messages}
-                  threadStatus={effectiveThreadStatus}
-                  thread={thread}
-                  latestGitDiffTimestamp={latestGitDiffTimestamp}
-                  isAgentWorking={isAgentCurrentlyWorking}
-                  artifactDescriptors={artifactDescriptors}
-                  onOpenArtifact={handleOpenArtifact}
-                  onNew={async () => {}}
-                  onCancel={async () => {
-                    await stopThread({
-                      threadId: thread.id,
-                      threadChatId: threadChat.id,
-                    });
-                  }}
-                  redoDialogData={redoDialogData}
-                  forkDialogData={forkDialogData}
-                  toolProps={toolProps}
-                  hasCheckpoint={hasCheckpoint}
-                  error={error || threadChat.errorMessageInfo || undefined}
-                  errorType={threadChat.errorMessage || undefined}
-                  errorInfo={error || threadChat.errorMessageInfo || undefined}
-                  handleRetry={handleRetry}
-                  isRetrying={retryMutation.isPending}
-                  isReadOnly={isReadOnly}
-                  chatAgent={chatAgent}
-                  bootingSubstatus={thread.bootingSubstatus ?? undefined}
-                  reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
-                  threadChatId={threadChat.id}
-                  scheduleAt={threadChat.scheduleAt}
-                  threadChatStatus={threadChat.status}
+            <div className="relative flex-1 overflow-hidden">
+              <ScrollArea
+                ref={scrollAreaRef}
+                className="w-full h-full overflow-auto"
+              >
+                <div ref={transcriptRef} className="min-h-full flex flex-col">
+                  <TerragonThread
+                    messages={messages}
+                    threadStatus={effectiveThreadStatus}
+                    thread={thread}
+                    latestGitDiffTimestamp={latestGitDiffTimestamp}
+                    isAgentWorking={isAgentCurrentlyWorking}
+                    artifactDescriptors={artifactDescriptors}
+                    onOpenArtifact={handleOpenArtifact}
+                    onNew={async () => {}}
+                    onCancel={async () => {
+                      await stopThread({
+                        threadId: thread.id,
+                        threadChatId: threadChat.id,
+                      });
+                    }}
+                    redoDialogData={redoDialogData}
+                    forkDialogData={forkDialogData}
+                    toolProps={toolProps}
+                    hasCheckpoint={hasCheckpoint}
+                    error={error || threadChat.errorMessageInfo || undefined}
+                    errorType={threadChat.errorMessage || undefined}
+                    errorInfo={
+                      error || threadChat.errorMessageInfo || undefined
+                    }
+                    handleRetry={handleRetry}
+                    isRetrying={retryMutation.isPending}
+                    isReadOnly={isReadOnly}
+                    chatAgent={chatAgent}
+                    bootingSubstatus={thread.bootingSubstatus ?? undefined}
+                    reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
+                    threadChatId={threadChat.id}
+                    scheduleAt={threadChat.scheduleAt}
+                    threadChatStatus={threadChat.status}
+                  />
+                </div>
+                <div
+                  ref={messagesEndRef}
+                  className="shrink-0 min-w-[24px] min-h-[24px]"
                 />
+              </ScrollArea>
+              {/* Scroll-to-bottom button floating above scroll area */}
+              <div className="absolute bottom-2 left-0 right-0 flex justify-center pointer-events-none z-10">
+                <button
+                  onClick={forceScrollToBottom}
+                  className={cn(
+                    "pointer-events-auto flex size-9 items-center justify-center rounded-full bg-background border shadow-card transition-all duration-300 hover:scale-110",
+                    hasInitialized && !isAtBottom
+                      ? "opacity-100 translate-y-0"
+                      : "opacity-0 translate-y-4 pointer-events-none",
+                  )}
+                  aria-label="Scroll to bottom"
+                >
+                  <ArrowDown className="size-5" />
+                </button>
               </div>
-              <div
-                ref={messagesEndRef}
-                className="shrink-0 min-w-[24px] min-h-[24px]"
+            </div>
+            {!isReadOnly && (
+              <ChatPromptBox
+                threadId={thread.id}
+                threadChatId={threadChat.id}
+                threadStatus={effectiveThreadStatus}
+                queuedMessages={queuedMessages}
+                permissionMode={threadChat.permissionMode ?? "allowAll"}
+                prStatus={thread.prStatus}
+                prChecksStatus={thread.prChecksStatus}
+                githubPRNumber={thread.githubPRNumber}
+                sandboxId={thread.codesandboxId}
+                repoFullName={thread.githubRepoFullName}
+                branchName={thread.branchName ?? thread.repoBaseBranchName}
+                agent={chatAgent}
+                agentVersion={threadChat.agentVersion}
+                lastUsedModel={lastUsedModel}
+                contextLength={threadChat.contextLength ?? null}
+                setError={setError}
+                refetch={refetchActiveChat}
+                forceScrollToBottom={forceScrollToBottom}
+                promptBoxRef={promptBoxRef}
               />
-              {!isReadOnly && (
-                <ChatPromptBox
-                  threadId={thread.id}
-                  threadChatId={threadChat.id}
-                  threadStatus={effectiveThreadStatus}
-                  queuedMessages={queuedMessages}
-                  permissionMode={threadChat.permissionMode ?? "allowAll"}
-                  prStatus={thread.prStatus}
-                  prChecksStatus={thread.prChecksStatus}
-                  githubPRNumber={thread.githubPRNumber}
-                  sandboxId={thread.codesandboxId}
-                  repoFullName={thread.githubRepoFullName}
-                  branchName={thread.branchName ?? thread.repoBaseBranchName}
-                  agent={chatAgent}
-                  agentVersion={threadChat.agentVersion}
-                  lastUsedModel={lastUsedModel}
-                  contextLength={threadChat.contextLength ?? null}
-                  setError={setError}
-                  refetch={refetchActiveChat}
-                  forceScrollToBottom={forceScrollToBottom}
-                  isAtBottom={isAtBottom}
-                  promptBoxRef={promptBoxRef}
-                />
-              )}
-            </ScrollArea>
+            )}
           </div>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
@@ -798,7 +822,6 @@ const ChatPromptBox = memo(function ChatPromptBox({
   contextLength,
   setError,
   refetch,
-  isAtBottom,
   forceScrollToBottom,
   promptBoxRef,
 }: {
@@ -818,7 +841,6 @@ const ChatPromptBox = memo(function ChatPromptBox({
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   contextLength: number | null;
   setError: (error: ThreadErrorMessage | null) => void;
-  isAtBottom: boolean;
   forceScrollToBottom: () => void;
   refetch: () => Promise<unknown>;
   promptBoxRef: React.RefObject<{
@@ -828,14 +850,6 @@ const ChatPromptBox = memo(function ChatPromptBox({
 }) {
   const chatAgent = ensureAgent(agent);
   const showContextUsageChip = useFeatureFlag("contextUsageChip");
-  // Don't immediately show the scroll button - wait for the page to scroll to the bottom first.
-  const [hasInitialized, setHasInitialized] = useState(false);
-  useEffect(() => {
-    // Defer one frame so the scroll observer can emit its first value,
-    // then mark as initialized. This prevents a flash before the auto-scroll-to-bottom runs.
-    const raf = requestAnimationFrame(() => setHasInitialized(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
   const updateThreadChat = useOptimisticUpdateThreadChat({
     threadId,
@@ -915,21 +929,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   );
 
   return (
-    <div className="sticky bottom-0 z-10 bg-card chat-prompt-box px-6 pb-4 pt-3 max-w-chat w-full mx-auto">
-      <div className="relative h-0 flex justify-center">
-        <button
-          onClick={forceScrollToBottom}
-          className={cn(
-            "absolute -top-16 z-20 flex size-9 items-center justify-center rounded-full bg-background border shadow-card transition-all duration-300 hover:scale-110",
-            hasInitialized && !isAtBottom
-              ? "opacity-100 translate-y-0"
-              : "opacity-0 translate-y-4 pointer-events-none",
-          )}
-          aria-label="Scroll to bottom"
-        >
-          <ArrowDown className="size-5" />
-        </button>
-      </div>
+    <div className="z-10 bg-card chat-prompt-box px-6 pb-4 pt-3 max-w-chat w-full mx-auto border-t border-border/40">
       {showContextUsageChip ? (
         <ContextChip
           contextLength={contextLength}
