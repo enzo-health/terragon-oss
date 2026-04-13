@@ -6,12 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Polyfill WebSocket constants for Node.js test environment
 if (typeof globalThis.WebSocket === "undefined") {
-  (globalThis as any).WebSocket = {
-    CONNECTING: 0,
-    OPEN: 1,
-    CLOSING: 2,
-    CLOSED: 3,
-  };
+  Object.defineProperty(globalThis, "WebSocket", {
+    value: { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 },
+    writable: true,
+  });
 }
 import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
 import {
