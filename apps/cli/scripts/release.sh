@@ -64,12 +64,12 @@ git pull origin "$CURRENT_BRANCH"
 echo -e "${YELLOW}Creating tag $TAG_NAME...${NC}"
 git tag -a "$TAG_NAME" -m "Release Terry CLI v${VERSION}
 
-Auto-update functionality:
-- Automatic background updates
-- Silent installation of new versions
-- No manual intervention required
+Distribution:
+- GitHub Release asset
+- Hosted install script
+- No npm package publish required
 
-Install: npm install -g @terragon-labs/cli"
+Install: curl -fsSL https://terragon-lake.vercel.app/install-terry.sh | bash"
 
 echo -e "${GREEN}Tag created successfully!${NC}"
 
@@ -82,7 +82,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
   echo -e "${GREEN}Tag pushed successfully!${NC}"
   echo
   echo -e "${GREEN}Release tag $TAG_NAME has been created and pushed.${NC}"
-  echo "This will trigger the GitHub Action to publish to npm."
+  echo "This will trigger the GitHub Action to publish a GitHub Release asset."
 else
   echo -e "${YELLOW}Tag created locally but not pushed.${NC}"
   echo "To push the tag later, run:"
