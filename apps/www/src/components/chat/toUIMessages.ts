@@ -27,6 +27,8 @@ type IncrementalUIMessagesCache = UIMessagesBuildResult & {
   dbMessages: DBMessage[];
 };
 
+type InternalToolPart = UIToolPart<string, Record<string, any>>;
+
 /**
  * Converts a collection of DBMessages to UIMessages.
  *
@@ -206,7 +208,7 @@ function buildUIMessagesWithRanges({
   let currentUserMessageStartDbIndex: number | null = null;
 
   // Map to store tool parts by their ID for efficient lookup
-  const toolPartsById: Record<string, UIToolPart<string, any>> = {};
+  const toolPartsById: Record<string, InternalToolPart> = {};
 
   function markPendingToolsAsCompleted() {
     // Mark all pending tool calls as completed with a mock result
@@ -277,12 +279,20 @@ function buildUIMessagesWithRanges({
     parts.push(newPart);
   }
 
-  function pushToolPart(parts: UIPart[], toolPart: UIToolPart<string, any>) {
+  function replaceOrPushToolPart(parts: UIPart[], toolPart: InternalToolPart) {
+    const existing = toolPartsById[toolPart.id];
+    if (existing) {
+      existing.name = toolPart.name;
+      existing.parameters = toolPart.parameters;
+      existing.status = "pending";
+      return;
+    }
+
     if (
       toolPart.name === "TodoWrite" &&
       parts.length > 0 &&
       parts[parts.length - 1]?.type === "tool" &&
-      (parts[parts.length - 1] as UIToolPart<string, any>).name === "TodoWrite"
+      (parts[parts.length - 1] as InternalToolPart).name === "TodoWrite"
     ) {
       // Replace the last tool part with the new one
       parts[parts.length - 1] = toolPart;
@@ -370,7 +380,8 @@ function buildUIMessagesWithRanges({
       }
     } else if (dbMessage.type === "tool-call") {
       clearCurrentUserMessage(dbIndex - 1);
-      const newToolPart: UIToolPart<string, any> = {
+      const existingToolPart = toolPartsById[dbMessage.id];
+      const newToolPart: InternalToolPart = {
         type: "tool",
         id: dbMessage.id,
         agent,
@@ -383,16 +394,18 @@ function buildUIMessagesWithRanges({
       if (dbMessage.parent_tool_use_id) {
         const found = toolPartsById[dbMessage.parent_tool_use_id];
         if (found) {
-          pushToolPart(found.parts, newToolPart);
+          replaceOrPushToolPart(found.parts, newToolPart);
         }
       } else {
         currentAgentMessage = getOrCreateAgentMessage();
         if (currentAgentMessageStartDbIndex === -1) {
           currentAgentMessageStartDbIndex = dbIndex;
         }
-        pushToolPart(currentAgentMessage.parts, newToolPart);
+        replaceOrPushToolPart(currentAgentMessage.parts, newToolPart);
       }
-      toolPartsById[dbMessage.id] = newToolPart;
+      if (!existingToolPart) {
+        toolPartsById[dbMessage.id] = newToolPart;
+      }
     } else if (dbMessage.type === "tool-result") {
       // Find the corresponding tool call and update it with result
       const found = toolPartsById[dbMessage.id];
