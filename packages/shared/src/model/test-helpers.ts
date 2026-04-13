@@ -48,7 +48,7 @@ export async function createTestUser({
   const user = insertUserResult[0]!;
   await getUserFlags({ db, userId: user.id });
 
-  const accountId = Math.floor(Math.random() * 10000000).toString();
+  const accountId = nanoid();
   const insertAccountResult = await db
     .insert(schema.account)
     .values({

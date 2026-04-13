@@ -136,7 +136,7 @@ export function TerragonThread({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <TerragonThreadProvider value={ctx}>
-        <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-6 mt-12 mb-20">
+        <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-6 mt-12 mb-4">
           {messages.map((message, index) => {
             switch (message.role) {
               case "user":
