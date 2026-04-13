@@ -1,12 +1,12 @@
-import net from "node:net";
 import { spawn } from "node:child_process";
+import net from "node:net";
 import readline from "node:readline";
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
 import WebSocket from "ws";
 import {
+  type CodexParserState,
   codexAppServerStartCommand,
   createCodexParserState,
-  type CodexParserState,
 } from "./codex";
 import type { Logger } from "./logger";
 
@@ -927,7 +927,7 @@ export class CodexAppServerManager {
   }
 
   async ensureReady(): Promise<void> {
-    if (this.ready && this.isAlive()) {
+    if (this.ready && this.isAlive() && this.hasOpenConnection()) {
       return;
     }
     if (this.readyPromise) {
@@ -983,15 +983,14 @@ export class CodexAppServerManager {
     if (!this.process) {
       return false;
     }
-    const processAlive = this.process.exitCode === null && !this.process.killed;
-    if (
-      this.transport === "websocket" &&
-      processAlive &&
-      this.ws?.readyState !== WebSocket.OPEN
-    ) {
-      return false;
+    return this.process.exitCode === null && !this.process.killed;
+  }
+
+  hasOpenConnection(): boolean {
+    if (this.transport !== "websocket") {
+      return true;
     }
-    return processAlive;
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   getThreadState(threadId: string): CodexAppServerThreadState | null {

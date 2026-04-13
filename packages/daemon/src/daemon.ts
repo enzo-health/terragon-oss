@@ -1,68 +1,68 @@
+import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { AIAgent } from "@terragon/agent/types";
+import {
+  coalesceAssistantTextMessages,
+  parseAcpLineToClaudeMessages,
+} from "./acp-adapter";
+import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
+import { AgentFrontmatterReader } from "./agent-frontmatter";
+import { ampCommand, getAmpApiKeyOrNull } from "./amp";
+import {
+  claudeCommand,
+  getAnthropicApiKeyOrNull,
+  maybeFixLogsForSessionId,
+} from "./claude";
+import {
+  buildThreadStartParams,
+  buildTurnStartParams,
+  CODEX_TURN_START_MAX_INPUT_CHARS,
+  codexCommand,
+  createCodexParserState,
+  estimateTurnStartRequestSizeChars,
+  parseCodexLine,
+} from "./codex";
+import {
+  type CodexAppServerDiagnostics,
+  CodexAppServerManager,
+  extractThreadEvent,
+  SILENTLY_IGNORED_ITEM_TYPES,
+} from "./codex-app-server";
+import {
+  createGeminiParserState,
+  geminiCommand,
+  parseGeminiLine,
+} from "./gemini";
+import {
+  getOpencodeApiKeyOrNull,
+  opencodeCommand,
+  parseOpencodeLine,
+} from "./opencode";
+import { DEFAULT_RETRY_CONFIG, RetryBackoff, RetryConfig } from "./retry";
 import {
   DaemonServerPostError,
   IDaemonRuntime,
   writeToUnixSocket,
 } from "./runtime";
 import {
+  ClaudeMessage,
+  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
+  DAEMON_VERSION,
+  DaemonDelta,
+  DaemonEventAPIBody,
+  DaemonMessage,
   DaemonMessageClaude,
   DaemonMessageSchema,
-  FeatureFlags,
-  DaemonEventAPIBody,
-  DaemonDelta,
-  ClaudeMessage,
-  DaemonMessage,
-  DAEMON_VERSION,
   DaemonTransportMode,
+  FeatureFlags,
   SdlcSelfDispatchPayload,
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
 } from "./shared";
 import {
-  parseAcpLineToClaudeMessages,
-  coalesceAssistantTextMessages,
-} from "./acp-adapter";
-import { performance } from "node:perf_hooks";
-import { RetryBackoff, RetryConfig, DEFAULT_RETRY_CONFIG } from "./retry";
-import {
-  getAnthropicApiKeyOrNull,
-  maybeFixLogsForSessionId,
-  claudeCommand,
-} from "./claude";
-import {
-  geminiCommand,
-  parseGeminiLine,
-  createGeminiParserState,
-} from "./gemini";
-import {
-  MessageBufferEntry,
-  killProcessGroup,
   createIdleWatchdog,
   IdleWatchdog,
+  killProcessGroup,
+  MessageBufferEntry,
 } from "./utils";
-import {
-  opencodeCommand,
-  getOpencodeApiKeyOrNull,
-  parseOpencodeLine,
-} from "./opencode";
-import { ampCommand, getAmpApiKeyOrNull } from "./amp";
-import {
-  CODEX_TURN_START_MAX_INPUT_CHARS,
-  codexCommand,
-  createCodexParserState,
-  parseCodexLine,
-  buildThreadStartParams,
-  buildTurnStartParams,
-  estimateTurnStartRequestSizeChars,
-} from "./codex";
-import {
-  CodexAppServerManager,
-  type CodexAppServerDiagnostics,
-  extractThreadEvent,
-  SILENTLY_IGNORED_ITEM_TYPES,
-} from "./codex-app-server";
-import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
-import { AgentFrontmatterReader } from "./agent-frontmatter";
-import { createHash, randomUUID } from "node:crypto";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
@@ -1184,6 +1184,13 @@ export class TerragonDaemon {
     );
   }
 
+  private hasAppServerConnection(manager: CodexAppServerManager): boolean {
+    const candidate = manager as CodexAppServerManager & {
+      hasOpenConnection?: () => boolean;
+    };
+    return candidate.hasOpenConnection?.() ?? true;
+  }
+
   private async getOrCreateAppServerManager(
     input: DaemonMessageClaude,
   ): Promise<CodexAppServerManager> {
@@ -1659,7 +1666,9 @@ export class TerragonDaemon {
         if (context.isCompleted || context.isStopping) {
           return;
         }
-        if (manager.isAlive()) {
+        const processAlive = manager.isAlive();
+        const connectionOpen = this.hasAppServerConnection(manager);
+        if (processAlive && connectionOpen) {
           return;
         }
         const diagnostics = formatAppServerDiagnostics(
@@ -1667,7 +1676,9 @@ export class TerragonDaemon {
         );
         context.rejectTurnComplete(
           new Error(
-            `codex app-server exited unexpectedly during turn (${diagnostics})`,
+            processAlive
+              ? `codex app-server connection closed unexpectedly during turn (${diagnostics})`
+              : `codex app-server exited unexpectedly during turn (${diagnostics})`,
           ),
         );
       }, 250);

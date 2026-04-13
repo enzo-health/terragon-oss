@@ -1,30 +1,30 @@
+import { createHash } from "node:crypto";
+import { nanoid } from "nanoid/non-secure";
 import {
-  DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
-  DAEMON_EVENT_CAPABILITIES_HEADER,
-  DAEMON_EVENT_VERSION_HEADER,
-  DAEMON_VERSION,
-  DaemonMessageStop,
-  DaemonMessageClaude,
-  SdlcSelfDispatchPayload,
-} from "./shared";
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  MockInstance,
+  vi,
+} from "vitest";
+import { createCodexParserState } from "./codex";
+import { TerragonDaemon } from "./daemon";
 import {
   DaemonRuntime,
   DaemonServerPostError,
   writeToUnixSocket,
 } from "./runtime";
-import { TerragonDaemon } from "./daemon";
-import { createCodexParserState } from "./codex";
-import { createHash } from "node:crypto";
 import {
-  describe,
-  it,
-  expect,
-  vi,
-  beforeEach,
-  afterEach,
-  MockInstance,
-} from "vitest";
-import { nanoid } from "nanoid/non-secure";
+  DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
+  DAEMON_EVENT_CAPABILITIES_HEADER,
+  DAEMON_EVENT_VERSION_HEADER,
+  DAEMON_VERSION,
+  DaemonMessageClaude,
+  DaemonMessageStop,
+  SdlcSelfDispatchPayload,
+} from "./shared";
 
 async function sleep(ms: number = 10) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -811,6 +811,54 @@ describe("daemon", () => {
     await runPromise;
 
     expect(appServerManager.send).not.toHaveBeenCalled();
+  });
+
+  it("reports app-server connection loss separately from process exit", async () => {
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn(() => () => {}),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      hasOpenConnection: vi.fn(() => false),
+      getDiagnostics: vi.fn(() => ({
+        lastExitCode: null,
+        lastExitSignal: null,
+        lastExitSource: null,
+        lastStderrLine:
+          "WARN codex_core::codex: failed to load skill /root/repo/.claude/skills/planner/SKILL.md: invalid YAML",
+        lastProcessError: null,
+        lastRequestMethod: "turn/start",
+      })),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "fresh-thread-connection-loss",
+            },
+          };
+        }
+        return {};
+      }),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await expect(
+      (daemon as any).runAppServerCommand({
+        ...TEST_INPUT_MESSAGE,
+        agent: "codex",
+        model: "gpt-5",
+        transportMode: "codex-app-server",
+      } satisfies DaemonMessageClaude),
+    ).rejects.toThrow("connection closed unexpectedly during turn");
   });
 
   it("preserves codexPreviousResponseId null when forwarding daemon-event payload", async () => {
