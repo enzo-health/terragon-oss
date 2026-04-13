@@ -57,12 +57,14 @@ describe("delivery-loop-status runtime helpers", () => {
     });
 
     it("preserves transport-specific working detail when it already exists", () => {
+      // booting is overridden to working when delivery loop is active,
+      // since stale booting status shouldn't show "Waiting for assistant"
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "booting",
           deliveryLoopState: "implementing",
         }),
-      ).toBe("booting");
+      ).toBe("working");
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "queued-agent-rate-limit",

@@ -3,6 +3,16 @@ import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Polyfill WebSocket constants for Node.js test environment
+if (typeof globalThis.WebSocket === "undefined") {
+  (globalThis as any).WebSocket = {
+    CONNECTING: 0,
+    OPEN: 1,
+    CLOSING: 2,
+    CLOSED: 3,
+  };
+}
 import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
 import {
   resolveDeliveryLoopReconnectState,
