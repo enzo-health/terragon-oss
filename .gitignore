@@ -61,3 +61,6 @@ apps/vscode-extension/.vscode/
 
 # Eval raw dumps
 eval-dumps/
+
+# CodeDB local indexes
+codedb.snapshot
