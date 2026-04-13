@@ -8,7 +8,7 @@ import { useSaveApiKey } from "../hooks/useApi.js";
 
 const AUTH_PORT = 8742; // Uncommon port
 const TERRAGON_WEB_URL =
-  process.env.TERRAGON_WEB_URL || "http://localhost:3000";
+  process.env.TERRAGON_WEB_URL || "https://terragon-lake.vercel.app";
 
 function openBrowser(url: string) {
   const start =

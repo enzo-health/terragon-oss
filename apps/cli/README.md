@@ -1,23 +1,18 @@
 # Terry CLI
 
-![](https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square) [![npm]](https://www.npmjs.com/package/@terragon-labs/cli)
-
-[npm]: https://img.shields.io/npm/v/@terragon-labs/cli.svg?style=flat-square
+![](https://img.shields.io/badge/Node.js-20%2B-brightgreen?style=flat-square)
 
 The official CLI for Terragon Labs - your AI-powered coding assistant.
 
 ## Installation
 
 ```bash
-# Using npm
-npm install -g @terragon-labs/cli
-
-# Using pnpm
-pnpm add -g @terragon-labs/cli
-
-# Using yarn
-yarn global add @terragon-labs/cli
+curl -fsSL https://terragon-lake.vercel.app/install-terry.sh | bash
 ```
+
+This installer downloads the latest Terry CLI release from GitHub, installs its
+runtime dependencies locally, and writes a `terry` launcher to
+`~/.local/bin/terry` by default.
 
 ## Commands
 

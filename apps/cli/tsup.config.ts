@@ -14,7 +14,7 @@ export default defineConfig({
   noExternal: ["@terragon/cli-api-contract"],
   define: {
     "process.env.TERRAGON_WEB_URL": JSON.stringify(
-      process.env.TERRAGON_WEB_URL || "https://www.terragonlabs.com",
+      process.env.TERRAGON_WEB_URL || "https://terragon-lake.vercel.app",
     ),
     "process.env.TERRY_NO_AUTO_UPDATE": JSON.stringify(
       process.env.TERRY_NO_AUTO_UPDATE || "0",

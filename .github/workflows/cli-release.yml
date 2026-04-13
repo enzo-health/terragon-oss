@@ -1,0 +1,66 @@
+name: CLI Release
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish CLI Release Asset
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Read CLI version
+        id: cli_version
+        working-directory: apps/cli
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches package version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PACKAGE_VERSION: ${{ steps.cli_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag_version="${TAG_NAME#cli-v}"
+
+          if [ "$tag_version" != "$PACKAGE_VERSION" ]; then
+            echo "Tag version ($tag_version) does not match apps/cli/package.json ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
+      - name: Build release archive
+        working-directory: apps/cli
+        run: bash ./scripts/package-release.sh .release
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Terry CLI v${{ steps.cli_version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            apps/cli/.release/terry-cli.tar.gz
+          body: |
+            Install:
+
+            ```bash
+            curl -fsSL https://terragon-lake.vercel.app/install-terry.sh | bash
+            ```
