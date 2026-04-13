@@ -4,41 +4,42 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.995 0.003 95);
-  --foreground: oklch(0.3438 0.0269 95.7226);
+  --background: oklch(0.995 0 0);
+  --foreground: oklch(0.34 0.015 285);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.1908 0.002 106.5859);
+  --card-foreground: oklch(0.19 0.004 285);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2671 0.0196 98.939);
+  --popover-foreground: oklch(0.27 0.006 285);
   --primary: oklch(0.6688 0.1174 50.1276);
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.9245 0.0138 92.9892);
-  --secondary-foreground: oklch(0.4334 0.0177 98.6048);
-  --muted: oklch(0.9341 0.0153 90.239);
-  --muted-foreground: oklch(0.4464 0.0122 97.4233);
-  --accent: oklch(0.9245 0.0138 92.9892);
-  --accent-foreground: oklch(0.2671 0.0196 98.939);
+  --secondary: oklch(0.92 0.004 285);
+  --secondary-foreground: oklch(0.43 0.006 285);
+  --muted: oklch(0.93 0.004 285);
+  --muted-foreground: oklch(0.45 0.004 285);
+  --accent: oklch(0.92 0.004 285);
+  --accent-foreground: oklch(0.27 0.006 285);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.8847 0.0069 97.3627);
-  --input: oklch(0.7621 0.0156 98.3528);
+  --border: oklch(0.885 0.004 285);
+  --input: oklch(0.76 0.005 285);
   --ring: oklch(0.6171 0.1375 39.0427);
   --chart-1: oklch(0.5583 0.1276 42.9956);
   --chart-2: oklch(0.6898 0.1581 290.4107);
-  --chart-3: oklch(0.8816 0.0276 93.128);
+  --chart-3: oklch(0.88 0.01 285);
   --chart-4: oklch(0.8822 0.0403 298.1792);
   --chart-5: oklch(0.5608 0.1348 42.0584);
-  --sidebar: oklch(0.955 0.014 95);
-  --sidebar-foreground: oklch(0.359 0.0051 106.6524);
+  --sidebar: oklch(0.967 0.001 285);
+  --sidebar-foreground: oklch(0.36 0.004 285);
   --sidebar-primary: oklch(0.6171 0.1375 39.0427);
   --sidebar-primary-foreground: oklch(0.9881 0 0);
-  --sidebar-accent: oklch(0.905 0.018 92.9892);
-  --sidebar-accent-foreground: oklch(0.25 0.005 95);
-  --sidebar-border: oklch(0.87 0.012 95);
+  --sidebar-accent: oklch(0.92 0.004 285);
+  --sidebar-accent-foreground: oklch(0.25 0.005 285);
+  --sidebar-border: oklch(0.87 0.004 285);
   --sidebar-ring: oklch(0.6171 0.1375 39.0427);
+  --app-background: oklch(0.967 0.001 285);
 
   --warm-stone: rgba(245, 242, 239, 0.8);
-  --warm-gray: #777169;
+  --warm-gray: #71717a;
 
   /* next/font/google injects --font-geist, --font-geist-mono, --font-space-grotesk
      onto <body> via the `geist.variable` class chain in layout.tsx. Do NOT
@@ -144,6 +145,7 @@
   --sidebar-accent-foreground: oklch(0.9074 0.0142 93.0137);
   --sidebar-border: oklch(0.3618 0.0101 106.8928);
   --sidebar-ring: oklch(0.6724 0.1308 38.7559);
+  --app-background: oklch(0.21 0.006 285);
 
   --invert: #ffffff;
   --invert-foreground: #000000;
@@ -178,6 +180,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-app-background: var(--app-background);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -236,10 +239,11 @@
     @apply border-border outline-ring/50;
   }
   html {
-    @apply bg-background;
+    background-color: var(--color-app-background);
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--color-app-background);
+    @apply text-foreground;
     font-family: var(--font-sans);
     color-scheme: light;
     font-feature-settings:

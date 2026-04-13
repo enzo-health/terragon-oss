@@ -7,11 +7,6 @@ import { MessagePart } from "./message-part";
 import { cn } from "@/lib/utils";
 import { MessageToolbar } from "./chat-message-toolbar";
 import {
-  Message as AIMessage,
-  MessageContent as AIMessageContent,
-  MessageResponse,
-} from "@/components/ai-elements/message";
-import {
   DEFAULT_MESSAGE_PART_PROPS,
   ForkDialogData,
   MessagePartRenderProps,
@@ -29,7 +24,6 @@ import { CollapsibleAgentActivityGroup } from "./chat-message-collapsible-activi
 
 type ChatMessageProps = {
   message: UIMessage;
-  useAiElementsLayout?: boolean;
   className?: string;
   isLatestMessage?: boolean;
   isAgentWorking?: boolean;
@@ -44,7 +38,6 @@ type ChatMessageProps = {
 
 type ChatMessageWithToolbarProps = {
   message: UIMessage;
-  useAiElementsLayout?: boolean;
   messageIndex: number;
   className?: string;
   isFirstUserMessage: boolean;
@@ -63,7 +56,6 @@ type ChatMessageWithToolbarProps = {
 
 export const ChatMessage = memo(function ChatMessage({
   message,
-  useAiElementsLayout = false,
   className,
   isLatestMessage = false,
   isAgentWorking = false,
@@ -98,15 +90,9 @@ export const ChatMessage = memo(function ChatMessage({
     isAgentWorking,
   });
   const lastGroupIndex = groups.length - 1;
-  const from =
-    message.role === "user"
-      ? "user"
-      : message.role === "agent"
-        ? "assistant"
-        : "system";
 
   const content = (
-    <MessageResponse>
+    <div className="flex flex-col gap-3 text-sm leading-relaxed">
       <div className="flex flex-col gap-2">
         {groups.map((group, groupIndex) => {
           if (group.type === "collapsible-agent-activity") {
@@ -118,7 +104,6 @@ export const ChatMessage = memo(function ChatMessage({
                 isLatestMessage={isLatestMessage}
                 isAgentWorking={isAgentWorking}
                 messagePartProps={messagePartProps}
-                useAiElementsLayout={useAiElementsLayout}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
                 planOccurrences={planOccurrences}
@@ -146,7 +131,6 @@ export const ChatMessage = memo(function ChatMessage({
                     part={part}
                     isLatest={isLatestMessage && groupIndex === lastGroupIndex}
                     isAgentWorking={isAgentWorking}
-                    useAiElementsLayout={useAiElementsLayout}
                     {...messagePartProps}
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={onOpenArtifact}
@@ -161,32 +145,17 @@ export const ChatMessage = memo(function ChatMessage({
           <AgentMetaFooter meta={message.meta} />
         )}
       </div>
-    </MessageResponse>
+    </div>
   );
-
-  if (useAiElementsLayout) {
-    return (
-      <AIMessage
-        from={from}
-        style={{ overflowAnchor: "none" }}
-        className={className}
-      >
-        <AIMessageContent from={from}>{content}</AIMessageContent>
-      </AIMessage>
-    );
-  }
 
   return (
     <div
       style={{ overflowAnchor: "none" }}
       className={cn(
-        "w-full break-words rounded-[calc(var(--radius)+0.15rem)] border px-4 py-3 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2 md:px-5",
-        {
-          "ml-auto w-fit max-w-[85%] border-border/40 bg-[var(--warm-stone)] shadow-[var(--shadow-warm-lift)]":
-            message.role === "user",
-          "mr-auto border-border/70 bg-card/92 shadow-[var(--shadow-outline-ring)] supports-[backdrop-filter]:bg-card/88":
-            message.role === "agent",
-        },
+        "w-full break-words transition-all duration-200 animate-in fade-in slide-in-from-bottom-2",
+        message.role === "user"
+          ? "ml-auto w-fit max-w-[85%] rounded-[calc(var(--radius)+0.15rem)] border border-border/40 bg-[var(--warm-stone)] px-4 py-3 shadow-[var(--shadow-warm-lift)] md:px-5"
+          : "mr-auto",
         className,
       )}
     >
@@ -197,7 +166,6 @@ export const ChatMessage = memo(function ChatMessage({
 
 export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   message,
-  useAiElementsLayout = false,
   messageIndex,
   className,
   isLatestMessage = false,
@@ -220,7 +188,6 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
     >
       <ChatMessage
         message={message}
-        useAiElementsLayout={useAiElementsLayout}
         className={className}
         isLatestMessage={isLatestMessage}
         isAgentWorking={isAgentWorking}
@@ -254,7 +221,6 @@ function areChatMessageWithToolbarPropsEqual(
     nextProps.messagePartProps ?? DEFAULT_MESSAGE_PART_PROPS;
   if (
     prevProps.message !== nextProps.message ||
-    prevProps.useAiElementsLayout !== nextProps.useAiElementsLayout ||
     prevProps.messageIndex !== nextProps.messageIndex ||
     prevProps.className !== nextProps.className ||
     prevProps.isFirstUserMessage !== nextProps.isFirstUserMessage ||

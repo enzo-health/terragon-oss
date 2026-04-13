@@ -135,12 +135,6 @@ export const featureFlagsDefinitions = {
     description:
       "Renders Delivery Loop plans from agent output in a structured review card in chat and stepper views.",
   },
-  chatAIV2Renderer: {
-    defaultValue: false,
-    enabledForPreview: true,
-    description:
-      "Enables the AI Elements-inspired chat renderer shell while preserving existing message/tool behavior.",
-  },
   skipDeliveryLoopGates: {
     defaultValue: false,
     description:

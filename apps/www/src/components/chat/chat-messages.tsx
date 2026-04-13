@@ -6,27 +6,22 @@ import {
   ThreadInfoFull,
   ThreadStatus,
   UIMessage,
-  UIPart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
+
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
 import { LeafLoading } from "./leaf-loading";
 import { PromptBoxRef } from "./thread-context";
 import Link from "next/link";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import {
-  Conversation,
-  ConversationContent,
-} from "@/components/ai-elements/conversation";
 import {
   runScheduledThread,
   cancelScheduledThread,
 } from "@/server-actions/scheduled-thread";
 import { useTouchDevice } from "@/hooks/useTouchDevice";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
+import { buildThreadPlanOccurrenceMap } from "./assistant-ui/plan-occurrences";
 
 export const ChatMessages = memo(function ChatMessages({
   messages,
@@ -105,7 +100,6 @@ export const ChatMessages = memo(function ChatMessages({
     }),
     [githubRepoFullName, branchName, baseBranchName, hasCheckpoint, toolProps],
   );
-  const useAiElementsLayout = useFeatureFlag("chatAIV2Renderer");
   // Find the latest agent message
   let latestAgentMessageIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -137,7 +131,6 @@ export const ChatMessages = memo(function ChatMessages({
           <ChatMessageWithToolbar
             key={message.id}
             message={message}
-            useAiElementsLayout={useAiElementsLayout}
             messageIndex={index}
             isAgentWorking={rowIsAgentWorking}
             isLatestMessage={isLatestMessage}
@@ -160,16 +153,6 @@ export const ChatMessages = memo(function ChatMessages({
       })}
     </>
   );
-
-  if (useAiElementsLayout) {
-    return (
-      <Conversation>
-        <ConversationContent className="gap-12">
-          {messageList}
-        </ConversationContent>
-      </Conversation>
-    );
-  }
 
   return messageList;
 });
@@ -402,43 +385,4 @@ export function MessageScheduled({
       />
     </div>
   );
-}
-
-/**
- * Builds a thread-global plan occurrence map across all messages.
- * Mirrors the `planTextOccurrences` counter in `getArtifactDescriptors`
- * so that the render side can match descriptors by occurrence index.
- * Recurses into nested tool parts to match the descriptor traversal.
- */
-function buildThreadPlanOccurrenceMap(
-  messages: UIMessage[],
-): Map<UIPart, number> {
-  const counts = new Map<string, number>();
-  const result = new Map<UIPart, number>();
-
-  function walkParts(parts: UIPart[]) {
-    for (const part of parts) {
-      if (part.type === "text") {
-        const planText = extractProposedPlanText(
-          (part as { text: string }).text,
-        );
-        if (planText) {
-          const count = counts.get(planText) ?? 0;
-          result.set(part, count);
-          counts.set(planText, count + 1);
-        }
-      } else if (part.type === "tool" && "parts" in part) {
-        // Recurse into nested tool output (e.g. Task/subagent)
-        walkParts((part as { parts: UIPart[] }).parts);
-      }
-    }
-  }
-
-  for (const message of messages) {
-    // Only count agent text parts -- mirrors getArtifactDescriptors which only
-    // creates plan descriptors for agent messages.
-    if (message.role !== "agent") continue;
-    walkParts(message.parts);
-  }
-  return result;
 }

@@ -20,11 +20,6 @@ import {
 import { AIAgent } from "@terragon/agent/types";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { useIncrementalUIMessages } from "./toUIMessages";
-import {
-  ChatMessages,
-  WorkingMessage,
-  MessageScheduled,
-} from "./chat-messages";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatHeader } from "./chat-header";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
@@ -32,7 +27,7 @@ import { followUp, queueFollowUp } from "@/server-actions/follow-up";
 import { retryThread } from "@/server-actions/retry-thread";
 import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
 import { stopThread } from "@/server-actions/stop-thread";
-import { ChatError } from "./chat-error";
+import { TerragonThread } from "./assistant-ui/terragon-thread";
 import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -694,56 +689,39 @@ function ChatUI({
               ref={scrollAreaRef}
               className="w-full h-full overflow-auto"
             >
-              <div
-                ref={transcriptRef}
-                className="flex flex-col flex-1 gap-8 w-full max-w-chat mx-auto px-6 mt-12 mb-20"
-              >
-                <ChatMessages
+              <div ref={transcriptRef} className="min-h-full flex flex-col">
+                <TerragonThread
                   messages={messages}
-                  isAgentWorking={isAgentCurrentlyWorking}
+                  threadStatus={effectiveThreadStatus}
                   thread={thread}
                   latestGitDiffTimestamp={latestGitDiffTimestamp}
-                  githubRepoFullName={thread.githubRepoFullName}
-                  branchName={thread.branchName}
-                  baseBranchName={thread.repoBaseBranchName}
-                  hasCheckpoint={hasCheckpoint}
-                  toolProps={toolProps}
-                  redoDialogData={redoDialogData}
-                  forkDialogData={forkDialogData}
+                  isAgentWorking={isAgentCurrentlyWorking}
                   artifactDescriptors={artifactDescriptors}
                   onOpenArtifact={handleOpenArtifact}
+                  onNew={async () => {}}
+                  onCancel={async () => {
+                    await stopThread({
+                      threadId: thread.id,
+                      threadChatId: threadChat.id,
+                    });
+                  }}
+                  redoDialogData={redoDialogData}
+                  forkDialogData={forkDialogData}
+                  toolProps={toolProps}
+                  hasCheckpoint={hasCheckpoint}
+                  error={error || threadChat.errorMessageInfo || undefined}
+                  errorType={threadChat.errorMessage || undefined}
+                  errorInfo={error || threadChat.errorMessageInfo || undefined}
+                  handleRetry={handleRetry}
+                  isRetrying={retryMutation.isPending}
+                  isReadOnly={isReadOnly}
+                  chatAgent={chatAgent}
+                  bootingSubstatus={thread.bootingSubstatus ?? undefined}
+                  reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
+                  threadChatId={threadChat.id}
+                  scheduleAt={threadChat.scheduleAt}
+                  threadChatStatus={threadChat.status}
                 />
-                {(error ||
-                  threadChat.errorMessage ||
-                  threadChat.errorMessageInfo) && (
-                  <ChatError
-                    status={effectiveThreadStatus ?? threadChat.status}
-                    errorType={threadChat.errorMessage || ""}
-                    errorInfo={
-                      error ||
-                      threadChat.errorMessageInfo ||
-                      "An unknown error occurred"
-                    }
-                    handleRetry={handleRetry}
-                    isReadOnly={isReadOnly}
-                    isRetrying={retryMutation.isPending}
-                  />
-                )}
-                {isAgentCurrentlyWorking && (
-                  <WorkingMessage
-                    agent={chatAgent}
-                    status={effectiveThreadStatus ?? "working"}
-                    bootingSubstatus={thread.bootingSubstatus ?? undefined}
-                    reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
-                  />
-                )}
-                {threadChat.status === "scheduled" && threadChat.scheduleAt && (
-                  <MessageScheduled
-                    threadId={threadChat.threadId}
-                    threadChatId={threadChat.id}
-                    scheduleAt={threadChat.scheduleAt}
-                  />
-                )}
               </div>
               <div
                 ref={messagesEndRef}
@@ -937,7 +915,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   );
 
   return (
-    <div className="sticky bottom-0 z-10 bg-background/95 backdrop-blur-sm chat-prompt-box px-6 pb-8 max-w-chat w-full mx-auto [mask-image:linear-gradient(to_bottom,transparent,black_40px)]">
+    <div className="sticky bottom-0 z-10 bg-card chat-prompt-box px-6 pb-4 pt-3 max-w-chat w-full mx-auto">
       <div className="relative h-0 flex justify-center">
         <button
           onClick={forceScrollToBottom}

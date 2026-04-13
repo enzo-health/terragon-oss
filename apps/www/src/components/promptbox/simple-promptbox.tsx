@@ -143,7 +143,7 @@ export function SimplePromptBox({
       >
         <EditorContent
           editor={editor}
-          className={cn("min-h-[44px] px-4 pb-2 pt-3 md:px-5", className)}
+          className={cn("min-h-[44px] px-3 pb-1.5 pt-2.5 md:px-4", className)}
         />
       </ScrollArea>
       <AttachedFiles attachedFiles={attachedFiles} onRemoveFile={removeFile} />

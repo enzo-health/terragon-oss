@@ -2,7 +2,7 @@ import { combineThreadStatuses } from "@/agent/thread-status";
 import { cn } from "@/lib/utils";
 import { ThreadInfo, ThreadStatus } from "@terragon/shared";
 import { Clock, Check, CircleDashed, X, File, Calendar } from "lucide-react";
-import { memo } from "react";
+import React, { memo } from "react";
 
 type MinimalThreadStatus =
   | "unread" // Thread is unread

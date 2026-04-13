@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ThreadInfo } from "@terragon/shared";
-import { memo, useMemo, useState, useRef, useEffect } from "react";
+import React, { memo, useMemo, useState, useRef, useEffect } from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
 import { PRStatusPill } from "../pr-status-pill";
 import { cn } from "@/lib/utils";
@@ -163,6 +163,7 @@ export const ThreadListItem = memo(function ThreadListItem({
   hideRepository: boolean;
 }) {
   const title = useMemo(() => getThreadTitle(thread), [thread]);
+  const isOptimisticThread = thread.id.startsWith("optimistic-");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const relativeTime = useMemo(
     () => formatRelativeTime(thread.updatedAt),
@@ -179,16 +180,28 @@ export const ThreadListItem = memo(function ThreadListItem({
       >
         <Link
           href={`/task/${thread.id}`}
+          prefetch={!isOptimisticThread}
+          aria-disabled={isOptimisticThread}
+          tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-lg transition-[background-color,border-color] duration-150 px-3 py-2.5 relative pr-9 border border-transparent",
+            "block rounded-[8px] transition-[background-color,border-color] duration-150 px-2.5 py-[7px] relative pr-9 border border-transparent",
             pathname === `/task/${thread.id}`
               ? "bg-primary/8 border-primary/15"
               : "hover:bg-accent/50",
             isMenuOpen && "bg-accent",
+            isOptimisticThread && "opacity-80",
             className,
           )}
-          onMouseEnter={() => prefetchThreadIntoCollections(thread.id)}
+          onMouseEnter={() => {
+            if (!isOptimisticThread) {
+              prefetchThreadIntoCollections(thread.id);
+            }
+          }}
           onClick={(e) => {
+            if (isOptimisticThread) {
+              e.preventDefault();
+              return;
+            }
             if (!e.defaultPrevented && thread.draftMessage) {
               e.preventDefault();
               setIsEditingDraft(true);
@@ -207,7 +220,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                 />
               ) : (
                 <p
-                  className="text-[13.5px] flex-1 truncate font-semibold tracking-[-0.01em] leading-snug text-foreground"
+                  className="text-[13px] flex-1 truncate font-medium tracking-[-0.01em] leading-snug text-foreground"
                   title={title}
                 >
                   {title}
@@ -220,7 +233,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
                 >
-                  {relativeTime}
+                  {isOptimisticThread ? "Creating..." : relativeTime}
                 </span>
                 {thread.githubRepoFullName && !hideRepository && (
                   <>
@@ -259,6 +272,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           className={cn(
             "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity group-hover:opacity-100",
             isMenuOpen ? "opacity-100" : "opacity-100 sm:opacity-0",
+            isOptimisticThread && "pointer-events-none opacity-0",
           )}
           onClick={(e) => {
             e.preventDefault();

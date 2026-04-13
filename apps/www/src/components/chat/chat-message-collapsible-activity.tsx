@@ -25,7 +25,6 @@ function CollapsibleAgentActivityGroupLabel({
 export function CollapsibleAgentActivityGroup({
   group,
   agent,
-  useAiElementsLayout = false,
   isLatestMessage = false,
   isAgentWorking = false,
   messagePartProps,
@@ -35,7 +34,6 @@ export function CollapsibleAgentActivityGroup({
 }: {
   group: PartGroup;
   agent: AIAgent | null;
-  useAiElementsLayout?: boolean;
   isLatestMessage: boolean;
   isAgentWorking: boolean;
   messagePartProps: MessagePartRenderProps;
@@ -49,20 +47,20 @@ export function CollapsibleAgentActivityGroup({
     <div className="flex flex-col gap-0.5 group/item">
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="flex items-center gap-1 py-1 text-sm text-muted-foreground opacity-75 group-hover/item:opacity-100 transition-opacity"
+        className="flex items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground/70 hover:text-muted-foreground transition-colors"
       >
+        {isCollapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+        )}
         <CollapsibleAgentActivityGroupLabel
           isLatestMessage={isLatestMessage}
           isAgentWorking={isAgentWorking}
         />
-        {isCollapsed ? (
-          <ChevronRight className="h-4 w-4 shrink-0 opacity-75 group-hover/item:opacity-100 transition-opacity sm:opacity-0" />
-        ) : (
-          <ChevronDown className="h-4 w-4 shrink-0 opacity-75 group-hover/item:opacity-100 transition-opacity" />
-        )}
       </button>
       {!isCollapsed && (
-        <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-xl bg-white shadow-inset-edge">
+        <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-lg bg-muted/15">
           {group.parts.map((part, partIndex) => {
             return (
               <MessagePart
@@ -70,7 +68,6 @@ export function CollapsibleAgentActivityGroup({
                 part={part}
                 isLatest={isLatestMessage && partIndex === numParts - 1}
                 isAgentWorking={isAgentWorking}
-                useAiElementsLayout={useAiElementsLayout}
                 {...messagePartProps}
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}

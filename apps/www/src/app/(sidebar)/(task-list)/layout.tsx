@@ -21,10 +21,14 @@ export default async function TaskListLayout({
   );
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      {userId ? <ThreadListSidebar /> : null}
-      <div className="flex flex-col h-full min-w-0 flex-1 items-center">
-        <BannerContainer />
-        <PageHeaderProvider>{children}</PageHeaderProvider>
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-4 md:pr-4 md:pl-2">
+        <div className="flex min-h-0 flex-1 overflow-hidden bg-card transition-[border-radius,box-shadow] duration-200 md:rounded-[10px] md:border md:border-border md:shadow-sm">
+          {userId ? <ThreadListSidebar /> : null}
+          <div className="flex flex-col h-full min-w-0 flex-1">
+            <BannerContainer />
+            <PageHeaderProvider>{children}</PageHeaderProvider>
+          </div>
+        </div>
       </div>
     </HydrationBoundary>
   );

@@ -293,7 +293,6 @@ export function getDeliveryLoopAwareThreadStatus(params: {
     case "queued-sandbox-creation-rate-limit":
     case "queued-tasks-concurrency":
     case "queued-agent-rate-limit":
-    case "booting":
     case "working":
     case "stopping":
     case "working-stopped":
@@ -301,6 +300,7 @@ export function getDeliveryLoopAwareThreadStatus(params: {
     case "working-done":
     case "checkpointing":
       return params.threadStatus;
+    case "booting":
     case "draft":
     case "scheduled":
     case "stopped":

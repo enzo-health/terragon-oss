@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useMemo } from "react";
+import { memo, useMemo } from "react";
 import {
   AllToolParts,
   UIPart,
@@ -20,11 +20,9 @@ import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
-import { MessagePart as AIMessagePart } from "@/components/ai-elements/message";
 
 export interface MessagePartProps {
   part: UIPart;
-  useAiElementsLayout?: boolean;
   onClick?: () => void;
   isLatest?: boolean;
   isAgentWorking?: boolean;
@@ -42,7 +40,6 @@ export interface MessagePartProps {
 
 export const MessagePart = memo(function MessagePart({
   part,
-  useAiElementsLayout = false,
   onClick,
   isLatest = false,
   isAgentWorking = false,
@@ -103,16 +100,9 @@ export const MessagePart = memo(function MessagePart({
     };
   }, [planArtifactDescriptor, onOpenArtifact]);
 
-  const wrapPart = (node: ReactNode): ReactNode => {
-    if (!useAiElementsLayout) {
-      return node;
-    }
-    return <AIMessagePart>{node}</AIMessagePart>;
-  };
-
   switch (part.type) {
     case "text": {
-      return wrapPart(
+      return (
         <TextPart
           text={part.text}
           streaming={isLatest && isAgentWorking}
@@ -121,67 +111,67 @@ export const MessagePart = memo(function MessagePart({
           baseBranchName={baseBranchName}
           hasCheckpoint={hasCheckpoint}
           onOpenInArtifactWorkspace={handleOpenPlanArtifact}
-        />,
+        />
       );
     }
     case "thinking": {
-      return wrapPart(
+      return (
         <ThinkingPart
           thinking={part.thinking}
           isLatest={isLatest}
           isAgentWorking={isAgentWorking}
-        />,
+        />
       );
     }
     case "tool": {
       const toolPart = part as AllToolParts;
-      return wrapPart(
+      return (
         <ToolPart
           toolPart={toolPart}
           {...toolProps}
           artifactDescriptors={artifactDescriptors}
           onOpenArtifact={onOpenArtifact}
-        />,
+        />
       );
     }
     case "image": {
       const imagePart = part as UIImagePart;
-      return wrapPart(
+      return (
         <ImagePart
           imageUrl={imagePart.image_url}
           onClick={onClick}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />,
+        />
       );
     }
     case "rich-text": {
       const richTextPart = part as UIRichTextPart;
-      return wrapPart(
+      return (
         <RichTextPart
           richTextPart={richTextPart}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />,
+        />
       );
     }
     case "pdf": {
       const pdfPart = part as UIPdfPart;
-      return wrapPart(
+      return (
         <PdfPart
           pdfUrl={pdfPart.pdf_url}
           filename={pdfPart.filename}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />,
+        />
       );
     }
     case "text-file": {
       const textFilePart = part as UITextFilePart;
-      return wrapPart(
+      return (
         <TextFilePart
           textFileUrl={textFilePart.file_url}
           filename={textFilePart.filename}
           mimeType={textFilePart.mime_type}
           onOpenInArtifactWorkspace={handleOpenArtifact}
-        />,
+        />
       );
     }
     case "plan":
@@ -198,7 +188,6 @@ function areMessagePartPropsEqual(
 ) {
   if (
     prevProps.part !== nextProps.part ||
-    prevProps.useAiElementsLayout !== nextProps.useAiElementsLayout ||
     prevProps.onClick !== nextProps.onClick ||
     prevProps.isLatest !== nextProps.isLatest ||
     prevProps.isAgentWorking !== nextProps.isAgentWorking ||

@@ -4,7 +4,11 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { SelectedAIModels } from "@terragon/agent/types";
 import { DBUserMessage, ThreadSource } from "@terragon/shared";
 import { createNewThread } from "../server-lib/new-thread-shared";
-import { newThreadsMultiModel } from "@/server-lib/new-threads-multi-model";
+import {
+  type CreatedThreadSummary,
+  type FailedThreadCreation,
+  newThreadsMultiModel,
+} from "@/server-lib/new-threads-multi-model";
 
 export type NewThreadArgs = {
   message: DBUserMessage;
@@ -20,6 +24,13 @@ export type NewThreadArgs = {
   scheduleAt?: number | null;
   selectedModels?: SelectedAIModels;
   sourceType?: ThreadSource;
+};
+
+export type NewThreadResult = {
+  threadId: string;
+  threadChatId: string;
+  createdThreads: CreatedThreadSummary[];
+  failedModels: FailedThreadCreation[];
 };
 
 export const newThread = userOnlyAction(
@@ -40,11 +51,16 @@ export const newThread = userOnlyAction(
       scheduleAt,
       sourceType = "www",
     }: NewThreadArgs,
-  ): Promise<{ threadId: string; threadChatId: string }> {
-    console.log("newThread", { userId, githubRepoFullName });
+  ): Promise<NewThreadResult> {
+    console.log("newThread", {
+      userId,
+      githubRepoFullName,
+      createNewBranch,
+      branchName,
+    });
     const baseBranchName = createNewBranch ? branchName : null;
     const headBranchName = createNewBranch ? null : branchName;
-    const { threadId, threadChatId } = await createNewThread({
+    const primaryThread = await createNewThread({
       userId,
       message,
       githubRepoFullName,
@@ -67,8 +83,16 @@ export const newThread = userOnlyAction(
       skipSetup,
       runInDeliveryLoop,
     });
+    const createdThreads: CreatedThreadSummary[] = [
+      {
+        threadId: primaryThread.threadId,
+        threadChatId: primaryThread.threadChatId,
+        model: primaryThread.model,
+      },
+    ];
+    let failedModels: FailedThreadCreation[] = [];
     if (selectedModels && !saveAsDraft) {
-      await newThreadsMultiModel({
+      const multiModelResult = await newThreadsMultiModel({
         userId,
         message,
         selectedModels,
@@ -81,9 +105,17 @@ export const newThread = userOnlyAction(
         disableGitCheckpointing,
         skipSetup,
         runInDeliveryLoop,
+        tolerateFailures: true,
       });
+      createdThreads.push(...multiModelResult.createdThreads);
+      failedModels = multiModelResult.failedModels;
     }
-    return { threadId, threadChatId };
+    return {
+      threadId: primaryThread.threadId,
+      threadChatId: primaryThread.threadChatId,
+      createdThreads,
+      failedModels,
+    };
   },
   { defaultErrorMessage: "Failed to create task" },
 );
