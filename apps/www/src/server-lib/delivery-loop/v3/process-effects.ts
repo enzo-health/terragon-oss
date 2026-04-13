@@ -1,19 +1,40 @@
-import { and, eq, ne, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import type { DB } from "@terragon/shared/db";
-import type { AgentRunStatus } from "@terragon/shared/db/types";
 import * as schema from "@terragon/shared/db/schema";
-import type { DeliveryEffectLedgerV3Row } from "@terragon/shared/db/types";
+import type {
+  AgentRunStatus,
+  DeliveryEffectLedgerV3Row,
+} from "@terragon/shared/db/types";
+import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
 import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
-import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
   createDispatchIntent as createDbDispatchIntent,
   markDispatchIntentDispatched,
 } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import { getWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { addMilliseconds } from "date-fns";
+import { and, desc, eq, ne } from "drizzle-orm";
+import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
+import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
+import {
+  type CreateDispatchIntentParams,
+  createDispatchIntent,
+} from "@/server-lib/delivery-loop/dispatch-intent";
+import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
+import type { PlanSpecSource } from "@/server-lib/delivery-loop/promote-plan";
+import {
+  classifyDeliveryPublicationFailure,
+  upsertDeliveryCanonicalCheckSummary,
+  upsertDeliveryCanonicalStatusComment,
+} from "@/server-lib/delivery-loop/publication";
+import {
+  launchDeliveryLoopDispatchFromIntent,
+  maybeProcessFollowUpQueue,
+} from "@/server-lib/process-follow-up-queue";
 import { parseEffectPayload } from "./contracts";
 import { appendEventAndAdvanceExplicit } from "./kernel";
 import {
@@ -24,32 +45,13 @@ import {
   markEffectSucceeded,
 } from "./store";
 import {
-  upsertDeliveryCanonicalStatusComment,
-  upsertDeliveryCanonicalCheckSummary,
-  classifyDeliveryPublicationFailure,
-} from "@/server-lib/delivery-loop/publication";
-import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
-import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
-import type { PlanSpecSource } from "@/server-lib/delivery-loop/promote-plan";
-import {
-  createDispatchIntent,
-  type CreateDispatchIntentParams,
-} from "@/server-lib/delivery-loop/dispatch-intent";
-import { DEFAULT_ACK_TIMEOUT_MS } from "@/server-lib/delivery-loop/ack-lifecycle";
-import {
-  launchDeliveryLoopDispatchFromIntent,
-  maybeProcessFollowUpQueue,
-} from "@/server-lib/process-follow-up-queue";
-import { toSelectedAgent } from "@terragon/shared/delivery-loop/domain/dispatch-types";
-import {
   type EffectPayload,
-  isTerminalState,
-  normalizeEffectApprovalPolicy,
   type EffectResult,
+  isTerminalState,
   type LoopEvent,
+  normalizeEffectApprovalPolicy,
   type WorkflowState,
 } from "./types";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 
 const ACTIVE_RUN_CONTEXT_STATUSES = new Set<AgentRunStatus>(["processing"]);
 type DeliveryWorkflowRecord = NonNullable<
@@ -199,6 +201,25 @@ async function executeStateBlockingEffect(params: {
   handler: () => Promise<EffectResult>;
   now: Date;
 }): Promise<void> {
+  const finalizeEffectSuccess = async (): Promise<boolean> => {
+    const leaseStillHeld = await markEffectSucceeded({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+    });
+
+    if (!leaseStillHeld) {
+      console.warn("[delivery-loop] lease lost during effect processing", {
+        workflowId: params.effect.workflowId,
+        effectId: params.effect.id,
+      });
+      return false;
+    }
+
+    return true;
+  };
+
   let result: EffectResult;
   try {
     result = await params.handler();
@@ -233,25 +254,6 @@ async function executeStateBlockingEffect(params: {
     }
   }
 
-  // Mark effect succeeded — the effect did its work regardless of outcome.
-  // If lease ownership was lost (markEffectSucceeded returns false), suppress
-  // the transition to prevent stale workers from mutating workflow state.
-  const leaseStillHeld = await markEffectSucceeded({
-    db: params.db,
-    effectId: params.effect.id,
-    leaseOwner: params.leaseOwner,
-    leaseEpoch: params.effect.leaseEpoch,
-  });
-
-  if (!leaseStillHeld) {
-    console.warn("[delivery-loop] lease lost during effect processing", {
-      workflowId: params.effect.workflowId,
-      effectId: params.effect.id,
-      effectKind: result.kind,
-    });
-    return;
-  }
-
   // Map result to event and fire if non-null
   const currentHead = await getWorkflowHead({
     db: params.db,
@@ -268,66 +270,74 @@ async function executeStateBlockingEffect(params: {
         currentWorkflowVersion: currentHead?.version ?? null,
       },
     );
+    await finalizeEffectSuccess();
     return;
   }
   const eventRunSeq = currentHead.activeRunSeq;
   const event = effectResultToEvent(result, {
     activeRunSeq: eventRunSeq,
   });
-  if (event) {
-    try {
-      const advanceResult = await appendEventAndAdvanceExplicit({
+  if (!event) {
+    await finalizeEffectSuccess();
+    return;
+  }
+
+  try {
+    const advanceResult = await appendEventAndAdvanceExplicit({
+      db: params.db,
+      workflowId: params.effect.workflowId,
+      source: "system",
+      idempotencyKey: `effect-result:${params.effect.id}`,
+      event,
+      behavior: {
+        applyGateBypass: false,
+        drainEffects: false, // prevent recursive drain — outer drainDueEffects loop handles follow-on effects
+      },
+    });
+
+    const leaseStillHeld = await finalizeEffectSuccess();
+    if (!leaseStillHeld) {
+      return;
+    }
+
+    // Broadcast delivery-loop refetch on material state transitions
+    if (advanceResult.transitioned) {
+      const workflow = await getWorkflow({
         db: params.db,
         workflowId: params.effect.workflowId,
-        source: "system",
-        idempotencyKey: `effect-result:${params.effect.id}`,
-        event,
-        behavior: {
-          applyGateBypass: false,
-          drainEffects: false, // prevent recursive drain — outer drainDueEffects loop handles follow-on effects
-        },
       });
-
-      // Broadcast delivery-loop refetch on material state transitions
-      if (advanceResult.transitioned) {
-        const workflow = await getWorkflow({
+      if (workflow) {
+        await broadcastDeliveryLoopRefetch({
           db: params.db,
           workflowId: params.effect.workflowId,
+          threadId: workflow.threadId,
+          userId: workflow.userId,
+          stateBefore: advanceResult.stateBefore,
+          stateAfter: advanceResult.stateAfter,
         });
-        if (workflow) {
-          await broadcastDeliveryLoopRefetch({
-            db: params.db,
-            workflowId: params.effect.workflowId,
-            threadId: workflow.threadId,
-            userId: workflow.userId,
-            stateBefore: advanceResult.stateBefore,
-            stateAfter: advanceResult.stateAfter,
-          });
-        }
       }
-    } catch (error) {
-      // VAL-PROC-011: Prevent silent succeeded-without-transition state.
-      // If transition append fails, mark the effect as failed so the system
-      // will retry rather than leaving an unrecoverable silently-succeeded state.
-      console.error(
-        "[delivery-loop] effect transition append failed — marking effect for retry",
-        {
-          workflowId: params.effect.workflowId,
-          effectId: params.effect.id,
-          eventType: event.type,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      await markEffectFailed({
-        db: params.db,
-        effectId: params.effect.id,
-        leaseOwner: params.leaseOwner,
-        leaseEpoch: params.effect.leaseEpoch,
-        errorCode: "transition_append_failed",
-        errorMessage: error instanceof Error ? error.message : String(error),
-        retryAt: addMilliseconds(params.now, 2_000),
-      });
     }
+  } catch (error) {
+    // Keep the row in running state until the transition append succeeds, so a
+    // failed append can still be retried safely.
+    console.error(
+      "[delivery-loop] effect transition append failed — marking effect for retry",
+      {
+        workflowId: params.effect.workflowId,
+        effectId: params.effect.id,
+        eventType: event.type,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    await markEffectFailed({
+      db: params.db,
+      effectId: params.effect.id,
+      leaseOwner: params.leaseOwner,
+      leaseEpoch: params.effect.leaseEpoch,
+      errorCode: "transition_append_failed",
+      errorMessage: error instanceof Error ? error.message : String(error),
+      retryAt: addMilliseconds(params.now, 2_000),
+    });
   }
 }
 
@@ -1082,14 +1092,17 @@ async function handleCreatePlanArtifact(params: {
 async function handleRunLeaseExpiryCheck(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
-  payload: Extract<EffectPayload, { kind: "run_lease_expiry_check" }>;
+  payload: Extract<
+    EffectPayload,
+    { kind: "run_lease_expiry_check" | "ack_timeout_check" }
+  >;
 }): Promise<EffectResult> {
-  const staleResult = {
-    kind: "run_lease_expiry_check" as const,
-    outcome: "stale" as const,
-  };
+  const staleResult =
+    params.payload.kind === "run_lease_expiry_check"
+      ? ({ kind: "run_lease_expiry_check", outcome: "stale" } as const)
+      : ({ kind: "ack_timeout_check", outcome: "stale" } as const);
   const firedResult = {
-    kind: "run_lease_expiry_check" as const,
+    kind: params.payload.kind,
     outcome: "fired" as const,
     runId: params.payload.runId,
   };
@@ -1101,14 +1114,21 @@ async function handleRunLeaseExpiryCheck(params: {
     return staleResult;
   }
 
-  if (head.state !== "implementing") {
+  if (
+    head.state !== "implementing" &&
+    head.state !== "awaiting_implementation_acceptance"
+  ) {
     return staleResult;
   }
 
   const hasMatchingLease =
     head.leaseExpiresAt !== null &&
     head.leaseExpiresAt.getTime() <= params.effect.dueAt.getTime();
-  if (head.activeRunId !== params.payload.runId || !hasMatchingLease) {
+  const isLegacyAckTimeout = params.payload.kind === "ack_timeout_check";
+  if (
+    head.activeRunId !== params.payload.runId ||
+    (!hasMatchingLease && !isLegacyAckTimeout)
+  ) {
     return staleResult;
   }
 
@@ -1377,6 +1397,22 @@ async function processSingleEffect(params: {
     }
 
     if (payload.kind === "run_lease_expiry_check") {
+      await executeStateBlockingEffect({
+        db: params.db,
+        effect: params.effect,
+        leaseOwner: params.leaseOwner,
+        now: params.now,
+        handler: () =>
+          handleRunLeaseExpiryCheck({
+            db: params.db,
+            effect: params.effect,
+            payload,
+          }),
+      });
+      return;
+    }
+
+    if (payload.kind === "ack_timeout_check") {
       await executeStateBlockingEffect({
         db: params.db,
         effect: params.effect,

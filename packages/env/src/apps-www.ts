@@ -1,22 +1,27 @@
 import {
+  bool,
   defaultReporter,
   defaultReporterText,
   envsafe,
-  str,
-  bool,
   num,
+  str,
 } from "envsafe";
 import {
-  devDefaultDatabaseUrl,
   devDefaultBetterAuthSecret,
-  devDefaultCronSecret,
-  devDefaultInternalSharedSecret,
-  devDefaultIsAnthropicDownUrl,
-  devDefaultIsAnthropicDownApiSecret,
   devDefaultBetterAuthUrl,
-  devDefaultRedisUrl,
+  devDefaultCronSecret,
+  devDefaultDatabaseUrl,
+  devDefaultInternalSharedSecret,
+  devDefaultIsAnthropicDownApiSecret,
+  devDefaultIsAnthropicDownUrl,
   devDefaultRedisToken,
+  devDefaultRedisUrl,
 } from "./common";
+import { loadMonorepoEnvFiles } from "./load-local-env";
+
+loadMonorepoEnvFiles({
+  appRelativeDir: "apps/www",
+});
 
 function isNextBuildProcess(): boolean {
   const argv = process.argv.join(" ");

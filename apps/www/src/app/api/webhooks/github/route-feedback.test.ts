@@ -104,6 +104,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(newThreadInternal).mockResolvedValue({
       threadId: "new-thread-id",
       threadChatId: "new-thread-chat-id",
+      model: "sonnet",
     });
     vi.mocked(getThread).mockResolvedValue({
       id: "loop-thread-id",

@@ -205,8 +205,13 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
 }
 
 export function parseLoopEvent(payload: unknown): LoopEvent | null {
-  if (!isRecord(payload) || typeof payload.type !== "string") {
+  if (!isRecord(payload)) {
     return null;
+  }
+
+  if (typeof payload.type !== "string") {
+    const legacyEvent = parseLegacySignalEnvelope(payload);
+    return legacyEvent;
   }
 
   switch (payload.type) {
@@ -490,6 +495,23 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         type: "pr_closed",
         merged: payload.merged,
       };
+    default:
+      return null;
+  }
+}
+
+function parseLegacySignalEnvelope(
+  payload: Record<string, unknown>,
+): LoopEvent | null {
+  if (!isRecord(payload.event) || typeof payload.event.kind !== "string") {
+    return null;
+  }
+
+  switch (payload.event.kind) {
+    case "resume_requested":
+      return { type: "resume_requested" };
+    case "stop_requested":
+      return { type: "stop_requested" };
     default:
       return null;
   }

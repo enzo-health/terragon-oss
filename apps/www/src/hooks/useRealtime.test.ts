@@ -1,12 +1,14 @@
 /* @vitest-environment jsdom */
 
+import type {
+  BroadcastThreadPatch,
+  BroadcastUserMessage,
+} from "@terragon/types/broadcast";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
-import type { BroadcastUserMessage } from "@terragon/types/broadcast";
-import { shouldProcessThreadPatch, useRealtimeThread } from "./useRealtime";
 import { resetRealtimeStateForTests } from "./realtime-socket-state";
+import { shouldProcessThreadPatch, useRealtimeThread } from "./useRealtime";
 
 interface MockPartySocketLike extends EventTarget {
   messageListeners: number;
@@ -14,6 +16,7 @@ interface MockPartySocketLike extends EventTarget {
   dispatchUserMessage(message: BroadcastUserMessage): void;
   dispatchOpen(): void;
   dispatchClose(): void;
+  dispatchError(): void;
   close: ReturnType<typeof vi.fn>;
   reconnect: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
@@ -82,6 +85,10 @@ vi.mock("partysocket", () => {
     dispatchClose(): void {
       this.readyState = WebSocket.CLOSED;
       this.dispatchEvent(new CloseEvent("close"));
+    }
+
+    dispatchError(): void {
+      this.dispatchEvent(new Event("error"));
     }
   }
 
@@ -597,6 +604,53 @@ describe("useRealtimeThread", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(receivedPatches).toEqual([gapPatchMessage.data.threadPatches]);
+  });
+
+  it("logs transport issues as warnings instead of opaque console errors", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread("thread-1", "chat-1", () => {});
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      socket?.dispatchError();
+    });
+
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("[broadcast] socket error on channel"),
+      expect.anything(),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "[broadcast] socket transport issue on channel user:",
+      ),
+      {
+        readyState: "connecting",
+        online: true,
+      },
+    );
   });
 
   it("falls back to live patches when replay payload validation fails", async () => {

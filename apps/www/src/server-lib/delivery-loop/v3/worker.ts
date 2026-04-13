@@ -1,10 +1,3 @@
-import { and, asc, eq, gt, or } from "drizzle-orm";
-import { type OutboxPayload } from "./contracts";
-import { parseLoopEvent } from "./contracts";
-import {
-  appendEventAndAdvanceExplicit,
-  normalizeLoopEventForKernel,
-} from "./kernel";
 import { env } from "@terragon/env/apps-www";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -15,7 +8,13 @@ import type {
   DeliverySignalSourceV3,
   DeliveryTimerKindV3,
 } from "@terragon/shared/db/types";
+import { and, asc, eq, gt, or } from "drizzle-orm";
 import { redis } from "@/lib/redis";
+import { type OutboxPayload, parseLoopEvent } from "./contracts";
+import {
+  appendEventAndAdvanceExplicit,
+  normalizeLoopEventForKernel,
+} from "./kernel";
 import { getOutboxRelayStreamKey } from "./relay";
 
 const OUTBOX_WORKER_STREAM_GROUP = "dl3:outbox:v3-consumers";

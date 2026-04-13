@@ -1,6 +1,4 @@
-import { useAtomValue } from "jotai";
-import { useDebouncedCallback } from "use-debounce";
-import { bearerTokenAtom, userAtom } from "@/atoms/user";
+import { publicBroadcastHost } from "@terragon/env/next-public";
 import {
   type BroadcastClientMessage,
   type BroadcastMessage,
@@ -9,6 +7,8 @@ import {
   type BroadcastUserMessage,
   getBroadcastChannelStr,
 } from "@terragon/types/broadcast";
+import { SandboxProvider } from "@terragon/types/sandbox";
+import { useAtomValue } from "jotai";
 import PartySocket from "partysocket";
 import {
   useCallback,
@@ -17,9 +17,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import { z } from "zod";
-import { publicBroadcastHost } from "@terragon/env/next-public";
-import { SandboxProvider } from "@terragon/types/sandbox";
+import { bearerTokenAtom, userAtom } from "@/atoms/user";
 import {
   decrementRealtimeChannelUsage,
   disconnectRealtimePartySocket,
@@ -29,6 +29,21 @@ import {
 
 function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;
+}
+
+function formatSocketReadyState(readyState: number): string {
+  switch (readyState) {
+    case WebSocket.CONNECTING:
+      return "connecting";
+    case WebSocket.OPEN:
+      return "open";
+    case WebSocket.CLOSING:
+      return "closing";
+    case WebSocket.CLOSED:
+      return "closed";
+    default:
+      return `unknown(${readyState})`;
+  }
 }
 
 function getOrCreatePartySocket({
@@ -60,8 +75,21 @@ function getOrCreatePartySocket({
       socket.addEventListener("close", () => {
         console.log(`[broadcast] disconnected from channel: ${channel}`);
       });
-      socket.addEventListener("error", (error) => {
-        console.error(`[broadcast] socket error on channel ${channel}:`, error);
+      socket.addEventListener("error", () => {
+        if (
+          socket.readyState === WebSocket.CLOSING ||
+          socket.readyState === WebSocket.CLOSED
+        ) {
+          return;
+        }
+        console.warn(
+          `[broadcast] socket transport issue on channel ${channel}`,
+          {
+            readyState: formatSocketReadyState(socket.readyState),
+            online:
+              typeof navigator === "undefined" ? undefined : navigator.onLine,
+          },
+        );
       });
       return socket;
     },
@@ -674,6 +702,10 @@ export function useRealtimeThread(
     replayBaseline?.messageSeq,
     socketReadyState,
   ]);
+
+  return {
+    socketReadyState,
+  };
 }
 
 export type BroadcastThreadMatchThread = (

@@ -89,7 +89,11 @@ export async function createNewThread({
   sourceType,
   sourceMetadata,
   delayMs = 0,
-}: CreateThreadOptions): Promise<{ threadId: string; threadChatId: string }> {
+}: CreateThreadOptions): Promise<{
+  threadId: string;
+  threadChatId: string;
+  model: NonNullable<DBUserMessage["model"]>;
+}> {
   // Enforce per-user shadow-ban rate limit if applicable
   await checkShadowBanTaskCreationRateLimit(userId);
   if (!baseBranchName) {
@@ -268,7 +272,7 @@ export async function createNewThread({
         draftMessage: await uploadUserMessageImages({ userId, message }),
       },
     });
-    return { threadId, threadChatId };
+    return { threadId, threadChatId, model: messageWithModel.model };
   }
 
   const updateThreadMetadata = () => {
@@ -371,7 +375,7 @@ export async function createNewThread({
       );
     }
     updateThreadMetadata();
-    return { threadId, threadChatId };
+    return { threadId, threadChatId, model: messageWithModel.model };
   }
 
   // Determine if "Disable git checkpointing" should force no new branch on create
@@ -440,7 +444,11 @@ export async function createNewThread({
     }),
   );
   updateThreadMetadata();
-  return { threadId, threadChatId };
+  return {
+    threadId,
+    threadChatId,
+    model: messageWithModel.model,
+  };
 }
 
 export async function generateAndUpdateThreadName({

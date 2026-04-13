@@ -1,17 +1,16 @@
 "use server";
 
-import { userOnlyAction } from "../lib/auth-server";
+import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
+import type { UserFlags } from "@terragon/shared";
 import {
   getUserFlags,
   updateUserFlags,
 } from "@terragon/shared/model/user-flags";
 import { db } from "@/lib/db";
-import type { UserFlags } from "@terragon/shared";
-import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
+import { userOnlyAction } from "../lib/auth-server";
 
 export const getUserFlagsAction = userOnlyAction(
   async function getUserFlagsAction(userId: string): Promise<UserFlags | null> {
-    console.log("getUserFlagsAction");
     return getUserFlags({ db, userId });
   },
   { defaultErrorMessage: "Failed to get user flags" },
@@ -86,4 +85,27 @@ export const updateMultiAgentMode = userOnlyAction(
     });
   },
   { defaultErrorMessage: "Failed to update multi agent mode" },
+);
+
+export const updatePromptPreferences = userOnlyAction(
+  async function updatePromptPreferences(
+    userId: string,
+    updates: Partial<
+      Pick<
+        UserFlags,
+        | "selectedModel"
+        | "selectedModels"
+        | "multiAgentMode"
+        | "selectedRepo"
+        | "selectedBranch"
+      >
+    >,
+  ) {
+    await updateUserFlags({
+      db,
+      userId,
+      updates,
+    });
+  },
+  { defaultErrorMessage: "Failed to update prompt preferences" },
 );

@@ -4,7 +4,10 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
-import { useDeliveryLoopStatusRealtime } from "./use-delivery-loop-status-realtime";
+import {
+  resolveDeliveryLoopReconnectState,
+  useDeliveryLoopStatusRealtime,
+} from "./use-delivery-loop-status-realtime";
 
 type UseRealtimeThreadMock = (
   threadId: string,
@@ -16,18 +19,22 @@ type UseRealtimeThreadMock = (
         deltaSeq?: number | null;
       }
     | undefined,
-) => void;
+) => { socketReadyState: number };
 
 const useRealtimeThreadMock = vi.fn<UseRealtimeThreadMock>();
 let activeThreadPatchCallback:
   | ((patches: BroadcastThreadPatch[]) => void)
   | null = null;
+let activeSocketReadyState: number = WebSocket.CONNECTING;
 
 vi.mock("./useRealtime", () => {
   return {
-    useRealtimeThread: (...args: Parameters<UseRealtimeThreadMock>): void => {
+    useRealtimeThread: (
+      ...args: Parameters<UseRealtimeThreadMock>
+    ): { socketReadyState: number } => {
       useRealtimeThreadMock(...args);
       activeThreadPatchCallback = args[2];
+      return { socketReadyState: activeSocketReadyState };
     },
   };
 });
@@ -72,6 +79,7 @@ describe("useDeliveryLoopStatusRealtime", () => {
   beforeEach(() => {
     useRealtimeThreadMock.mockClear();
     activeThreadPatchCallback = null;
+    activeSocketReadyState = WebSocket.CONNECTING;
   });
 
   afterEach(() => {
@@ -123,7 +131,7 @@ describe("useDeliveryLoopStatusRealtime", () => {
     ]);
   });
 
-  it("ignores non-delivery-loop refetch targets", () => {
+  it("invalidates for shell refetch patches that affect delivery-loop state", () => {
     const queryClient = createQueryClient();
     const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
     const onThreadPatches = vi.fn();
@@ -146,7 +154,12 @@ describe("useDeliveryLoopStatusRealtime", () => {
       },
     ]);
 
-    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith(
+      {
+        queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+      },
+      { cancelRefetch: false },
+    );
     expect(onThreadPatches).toHaveBeenCalledWith([
       {
         threadId: "thread-1",
@@ -156,7 +169,7 @@ describe("useDeliveryLoopStatusRealtime", () => {
     ]);
   });
 
-  it("ignores mixed refetch targets that include delivery-loop", () => {
+  it("invalidates for mixed refetch targets that include delivery-loop", () => {
     const queryClient = createQueryClient();
     const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
     const onThreadPatches = vi.fn();
@@ -179,7 +192,12 @@ describe("useDeliveryLoopStatusRealtime", () => {
       },
     ]);
 
-    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith(
+      {
+        queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+      },
+      { cancelRefetch: false },
+    );
     expect(onThreadPatches).toHaveBeenCalledWith([
       {
         threadId: "thread-1",
@@ -322,5 +340,46 @@ describe("useDeliveryLoopStatusRealtime", () => {
     expect(onThreadPatches).toHaveBeenNthCalledWith(3, [
       expect.objectContaining({ op: "delta", deltaSeq: 11 }),
     ]);
+  });
+
+  it("invalidates once when the socket reconnects after the initial open", () => {
+    const firstOpen = resolveDeliveryLoopReconnectState({
+      enabled: true,
+      hasSeenOpen: false,
+      previousSocketReadyState: WebSocket.CONNECTING,
+      socketReadyState: WebSocket.OPEN,
+    });
+
+    expect(firstOpen).toEqual({
+      hasSeenOpen: true,
+      previousSocketReadyState: WebSocket.OPEN,
+      shouldInvalidate: false,
+    });
+
+    const closed = resolveDeliveryLoopReconnectState({
+      enabled: true,
+      hasSeenOpen: firstOpen.hasSeenOpen,
+      previousSocketReadyState: firstOpen.previousSocketReadyState,
+      socketReadyState: WebSocket.CLOSED,
+    });
+
+    expect(closed).toEqual({
+      hasSeenOpen: true,
+      previousSocketReadyState: WebSocket.CLOSED,
+      shouldInvalidate: false,
+    });
+
+    const reopened = resolveDeliveryLoopReconnectState({
+      enabled: true,
+      hasSeenOpen: closed.hasSeenOpen,
+      previousSocketReadyState: closed.previousSocketReadyState,
+      socketReadyState: WebSocket.OPEN,
+    });
+
+    expect(reopened).toEqual({
+      hasSeenOpen: true,
+      previousSocketReadyState: WebSocket.OPEN,
+      shouldInvalidate: true,
+    });
   });
 });

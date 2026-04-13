@@ -3,6 +3,11 @@ import {
   devDefaultDatabaseUrl,
   devDefaultInternalSharedSecret,
 } from "./common";
+import { loadMonorepoEnvFiles } from "./load-local-env";
+
+loadMonorepoEnvFiles({
+  appRelativeDir: "packages/shared",
+});
 
 function isNextBuildProcess(): boolean {
   const argv = process.argv.join(" ");

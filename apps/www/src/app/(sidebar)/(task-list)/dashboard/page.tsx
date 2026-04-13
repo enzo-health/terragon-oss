@@ -1,13 +1,12 @@
-import { getUserInfoOrRedirect } from "@/lib/auth-server";
-import { Dashboard } from "@/components/dashboard";
-import type { Metadata } from "next";
-import { PageFrame } from "@/components/system/page-frame";
-import { threadListQueryOptions } from "@/queries/thread-queries";
 import {
   dehydrate,
   HydrationBoundary,
   QueryClient,
 } from "@tanstack/react-query";
+import type { Metadata } from "next";
+import { Dashboard } from "@/components/dashboard";
+import { getUserInfoOrRedirect } from "@/lib/auth-server";
+import { threadListQueryOptions } from "@/queries/thread-queries";
 
 export const metadata: Metadata = {
   title: "Dashboard | Terragon",
@@ -36,9 +35,7 @@ export default async function DashboardPage({
   }
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <PageFrame>
-        <Dashboard showArchived={showArchived} />
-      </PageFrame>
+      <Dashboard showArchived={showArchived} />
     </HydrationBoundary>
   );
 }

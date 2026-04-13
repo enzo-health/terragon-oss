@@ -1,4 +1,17 @@
 import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
+vi.mock("@/server-lib/new-threads-multi-model", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/server-lib/new-threads-multi-model")
+  >("@/server-lib/new-threads-multi-model");
+  return {
+    ...actual,
+    newThreadsMultiModel: vi.fn().mockResolvedValue({
+      createdThreads: [],
+      failedModels: [],
+    }),
+  };
+});
+
 import { newThread } from "./new-thread";
 import { db } from "@/lib/db";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
@@ -11,6 +24,7 @@ import {
 import { getThread } from "@terragon/shared/model/threads";
 import { unwrapResult } from "@/lib/server-actions";
 import { execSync } from "node:child_process";
+import { newThreadsMultiModel } from "@/server-lib/new-threads-multi-model";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {
@@ -36,6 +50,10 @@ describe("newThread", { timeout: 30_000 }, () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.mocked(newThreadsMultiModel).mockResolvedValue({
+      createdThreads: [],
+      failedModels: [],
+    });
     const testUserResult = await createTestUser({ db });
     user = testUserResult.user;
     session = testUserResult.session;
@@ -139,6 +157,78 @@ describe("newThread", { timeout: 30_000 }, () => {
         type: "www",
         deliveryLoopOptIn: true,
       });
+    });
+
+    it("returns created thread summaries for optimistic reconciliation", async () => {
+      await mockWaitUntil();
+      await mockLoggedInUser(session);
+
+      const result = await newThread({
+        message: mockMessage,
+        githubRepoFullName: repoFullName,
+        branchName: "main",
+      });
+      const data = unwrapResult(result);
+
+      expect(data.createdThreads).toEqual([
+        {
+          threadId: data.threadId,
+          threadChatId: data.threadChatId,
+          model: "sonnet",
+        },
+      ]);
+      expect(data.failedModels).toEqual([]);
+    });
+
+    it("preserves the primary thread when additional model creation partially fails", async () => {
+      await mockWaitUntil();
+      await mockLoggedInUser(session);
+      vi.mocked(newThreadsMultiModel).mockResolvedValue({
+        createdThreads: [
+          {
+            threadId: "thread-additional",
+            threadChatId: "thread-chat-additional",
+            model: "gpt-5.4",
+          },
+        ],
+        failedModels: [
+          {
+            model: "gemini-2.5-pro",
+            errorMessage: "rate limited",
+          },
+        ],
+      });
+
+      const result = await newThread({
+        message: mockMessage,
+        githubRepoFullName: repoFullName,
+        branchName: "main",
+        selectedModels: {
+          sonnet: 1,
+          "gpt-5.4": 1,
+          "gemini-2.5-pro": 1,
+        },
+      });
+      const data = unwrapResult(result);
+
+      expect(data.createdThreads).toEqual([
+        {
+          threadId: data.threadId,
+          threadChatId: data.threadChatId,
+          model: "sonnet",
+        },
+        {
+          threadId: "thread-additional",
+          threadChatId: "thread-chat-additional",
+          model: "gpt-5.4",
+        },
+      ]);
+      expect(data.failedModels).toEqual([
+        {
+          model: "gemini-2.5-pro",
+          errorMessage: "rate limited",
+        },
+      ]);
     });
   });
 });

@@ -115,6 +115,7 @@ describe("handleAppMentionEvent", () => {
     vi.mocked(newThreadInternal).mockResolvedValue({
       threadId: "new-thread-created-id",
       threadChatId: "new-thread-chat-created-id",
+      model: "sonnet",
     });
   });
 

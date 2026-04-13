@@ -1,13 +1,38 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { NextConfig } from "next";
 import bundleAnalyzer from "@next/bundle-analyzer";
+import { config as loadDotenv } from "dotenv";
+import type { NextConfig } from "next";
+
+// Turbopack can mis-handle inherited NODE_PATH values from shell wrappers and
+// treat a delimiter-joined list as one lookup directory. This app does not rely
+// on NODE_PATH, so strip it at the boundary.
+delete process.env.NODE_PATH;
 
 const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
 });
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.join(configDir, "..", "..");
+
+function loadLocalEnvFiles() {
+  const localEnvFiles = [
+    path.join(configDir, ".env.local"),
+    path.join(configDir, ".env.development.local"),
+    path.join(repoRoot, ".env.local"),
+    path.join(repoRoot, ".env.development.local"),
+  ];
+
+  for (const envPath of localEnvFiles) {
+    loadDotenv({
+      path: envPath,
+      override: false,
+    });
+  }
+}
+
+loadLocalEnvFiles();
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
@@ -21,7 +46,7 @@ const nextConfig: NextConfig = {
     ],
   },
   turbopack: {
-    root: path.join(configDir, "..", ".."),
+    root: repoRoot,
   },
   experimental: {
     optimizePackageImports: ["lucide-react"],

@@ -80,6 +80,32 @@ describe("v3 contracts", () => {
     });
   });
 
+  it("parses legacy human signal envelopes during migration", () => {
+    expect(
+      parseLoopEvent({
+        source: "human",
+        event: {
+          kind: "resume_requested",
+          actorUserId: "user-1",
+        },
+      }),
+    ).toEqual({
+      type: "resume_requested",
+    });
+
+    expect(
+      parseLoopEvent({
+        source: "human",
+        event: {
+          kind: "stop_requested",
+          actorUserId: "user-1",
+        },
+      }),
+    ).toEqual({
+      type: "stop_requested",
+    });
+  });
+
   it("round-trips planning events with runSeq present", () => {
     const planningCompleted = parseLoopEvent(
       serializeLoopEvent({
