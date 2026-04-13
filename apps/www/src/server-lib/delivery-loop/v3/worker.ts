@@ -1,8 +1,3 @@
-import { and, asc, eq, gt, or } from "drizzle-orm";
-import { parseLoopEvent } from "./contracts";
-import { appendEventAndAdvance } from "./kernel";
-import { type OutboxPayload } from "./contracts";
-import type { LoopEvent } from "./types";
 import { env } from "@terragon/env/apps-www";
 import type { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
@@ -13,7 +8,13 @@ import type {
   DeliverySignalSourceV3,
   DeliveryTimerKindV3,
 } from "@terragon/shared/db/types";
+import { and, asc, eq, gt, or } from "drizzle-orm";
 import { redis } from "@/lib/redis";
+import { type OutboxPayload, parseLoopEvent } from "./contracts";
+import {
+  appendEventAndAdvanceExplicit,
+  normalizeLoopEventForKernel,
+} from "./kernel";
 import { getOutboxRelayStreamKey } from "./relay";
 
 const OUTBOX_WORKER_STREAM_GROUP = "dl3:outbox:v3-consumers";
@@ -95,229 +96,6 @@ type DeadLetterPayload = Pick<
 > & {
   reason: string;
 };
-
-type LegacySignalEnvelopeParseResult =
-  | { kind: "event"; event: LoopEvent }
-  | { kind: "noop"; reason: string }
-  | { kind: "invalid" };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function toOptionalRunSeq(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) ? value : null;
-}
-
-export function parseLegacySignalEnvelopeToLoopEvent(
-  payload: unknown,
-): LegacySignalEnvelopeParseResult {
-  if (!isRecord(payload)) {
-    return { kind: "invalid" };
-  }
-  const rawEvent = payload.event;
-  if (!isRecord(rawEvent) || typeof rawEvent.kind !== "string") {
-    return { kind: "invalid" };
-  }
-
-  switch (rawEvent.kind) {
-    case "run_completed": {
-      if (typeof rawEvent.runId !== "string") {
-        return { kind: "invalid" };
-      }
-      const rawResult = rawEvent.result;
-      const headSha =
-        isRecord(rawResult) && typeof rawResult.headSha === "string"
-          ? rawResult.headSha
-          : null;
-      const runSeq =
-        toOptionalRunSeq(rawEvent.runSeq) ??
-        (isRecord(rawResult) ? toOptionalRunSeq(rawResult.runSeq) : null);
-      return {
-        kind: "event",
-        event: {
-          type: "run_completed",
-          runId: rawEvent.runId,
-          runSeq,
-          headSha,
-        },
-      };
-    }
-    case "run_failed": {
-      if (typeof rawEvent.runId !== "string") {
-        return { kind: "invalid" };
-      }
-      const rawFailure = rawEvent.failure;
-      const message =
-        isRecord(rawFailure) && typeof rawFailure.message === "string"
-          ? rawFailure.message
-          : "Run failed";
-      const category =
-        isRecord(rawFailure) && typeof rawFailure.kind === "string"
-          ? rawFailure.kind
-          : null;
-      const runSeq =
-        toOptionalRunSeq(rawEvent.runSeq) ??
-        (isRecord(rawFailure) ? toOptionalRunSeq(rawFailure.runSeq) : null);
-      return {
-        kind: "event",
-        event: {
-          type: "run_failed",
-          runId: rawEvent.runId,
-          runSeq,
-          message,
-          category,
-          lane: undefined,
-        },
-      };
-    }
-    case "resume_requested":
-    case "plan_approved":
-      return {
-        kind: "event",
-        event: { type: "resume_requested" },
-      };
-    case "stop_requested":
-      return {
-        kind: "event",
-        event: { type: "stop_requested" },
-      };
-    case "ci_changed": {
-      const rawResult = rawEvent.result;
-      if (!isRecord(rawResult) || typeof rawResult.passed !== "boolean") {
-        return { kind: "invalid" };
-      }
-      const ciRunId =
-        typeof rawEvent.runId === "string"
-          ? rawEvent.runId
-          : typeof rawResult.runId === "string"
-            ? rawResult.runId
-            : null;
-      const ciHeadSha =
-        typeof rawEvent.headSha === "string"
-          ? rawEvent.headSha
-          : typeof rawResult.headSha === "string"
-            ? rawResult.headSha
-            : null;
-      const ciRunSeq =
-        toOptionalRunSeq(rawEvent.runSeq) ?? toOptionalRunSeq(rawResult.runSeq);
-      if (!ciRunId && !ciHeadSha) {
-        return {
-          kind: "noop",
-          reason:
-            "Signal event ci_changed missing runId/headSha for v3 mapping",
-        };
-      }
-      if (rawResult.passed) {
-        return {
-          kind: "event",
-          event: {
-            type: "gate_ci_passed",
-            runId: ciRunId,
-            runSeq: ciRunSeq,
-            headSha: ciHeadSha,
-          },
-        };
-      }
-      return {
-        kind: "event",
-        event: {
-          type: "gate_ci_failed",
-          runId: ciRunId,
-          runSeq: ciRunSeq,
-          headSha: ciHeadSha,
-          reason: null,
-        },
-      };
-    }
-    case "review_changed": {
-      const rawResult = rawEvent.result;
-      if (!isRecord(rawResult) || typeof rawResult.passed !== "boolean") {
-        return { kind: "invalid" };
-      }
-      const reviewRunId =
-        typeof rawEvent.runId === "string"
-          ? rawEvent.runId
-          : typeof rawResult.runId === "string"
-            ? rawResult.runId
-            : null;
-      const reviewRunSeq =
-        toOptionalRunSeq(rawEvent.runSeq) ?? toOptionalRunSeq(rawResult.runSeq);
-      const reviewHeadSha =
-        typeof rawEvent.headSha === "string"
-          ? rawEvent.headSha
-          : typeof rawResult.headSha === "string"
-            ? rawResult.headSha
-            : null;
-      if (!reviewRunId) {
-        return {
-          kind: "noop",
-          reason: "Signal event review_changed missing runId for v3 mapping",
-        };
-      }
-      if (rawResult.passed) {
-        return {
-          kind: "event",
-          event: {
-            type: "gate_review_passed",
-            runId: reviewRunId,
-            runSeq: reviewRunSeq,
-            headSha: reviewHeadSha,
-          },
-        };
-      }
-      return {
-        kind: "event",
-        event: {
-          type: "gate_review_failed",
-          runId: reviewRunId,
-          runSeq: reviewRunSeq,
-          reason: null,
-        },
-      };
-    }
-    case "pr_closed": {
-      if (typeof rawEvent.merged !== "boolean") {
-        return { kind: "invalid" };
-      }
-      return {
-        kind: "event",
-        event: {
-          type: "pr_closed",
-          merged: rawEvent.merged,
-        },
-      };
-    }
-    case "pr_synchronized": {
-      if (
-        typeof rawEvent.prNumber !== "number" ||
-        !Number.isInteger(rawEvent.prNumber)
-      ) {
-        return { kind: "invalid" };
-      }
-      return {
-        kind: "event",
-        event: {
-          type: "pr_linked",
-          prNumber: rawEvent.prNumber,
-        },
-      };
-    }
-    case "progress_reported":
-    case "bypass_requested":
-    case "mark_done_requested":
-    case "operator_action_required":
-      return {
-        kind: "noop",
-        reason: `Signal event ${rawEvent.kind} has no v3 loop-event mapping`,
-      };
-    default:
-      return {
-        kind: "noop",
-        reason: `Signal event ${rawEvent.kind} is unsupported by v3 reducer`,
-      };
-  }
-}
 
 function isLocalRedisHttpEndpoint(redisUrl: string | undefined): boolean {
   if (!redisUrl) {
@@ -940,43 +718,23 @@ async function applySignalMessage(params: {
 
   const event = parseLoopEvent(journal.payloadJson);
   if (event) {
-    await appendEventAndAdvance({
+    await appendEventAndAdvanceExplicit({
       db: params.db,
       workflowId: params.message.workflowId,
       source: journal.source,
       idempotencyKey: params.message.idempotencyKey,
-      event,
-      eagerDrain: true,
+      event: normalizeLoopEventForKernel(event),
+      behavior: {
+        applyGateBypass: false,
+        drainEffects: true,
+      },
     });
     return;
   }
 
-  const legacyEvent = parseLegacySignalEnvelopeToLoopEvent(journal.payloadJson);
-  if (legacyEvent.kind === "noop") {
-    console.info(
-      "[delivery-loop/v3/outbox] skipping unmapped signal envelope",
-      {
-        journalId: journal.id,
-        reason: legacyEvent.reason,
-      },
-    );
-    return;
-  }
-
-  if (legacyEvent.kind === "invalid") {
-    throw new Error(
-      `Outbox worker parsed invalid loop event for journal ${journal.id}`,
-    );
-  }
-
-  await appendEventAndAdvance({
-    db: params.db,
-    workflowId: params.message.workflowId,
-    source: journal.source,
-    idempotencyKey: params.message.idempotencyKey,
-    event: legacyEvent.event,
-    eagerDrain: true,
-  });
+  throw new Error(
+    `Outbox worker parsed invalid loop event for journal ${journal.id}`,
+  );
 }
 
 async function processOutboxMessageWithDefaults(params: {

@@ -12,24 +12,16 @@ export default async function SidebarLayout({
 }) {
   const userId = await getUserIdOrNull();
   return (
-    <div
-      className="group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full"
-      style={
-        {
-          "--sidebar-width": "16rem",
-          "--sidebar-width-mobile": "16rem",
-        } as React.CSSProperties
-      }
-    >
+    <>
       {userId ? (
         <>
           <NotificationProvider />
           <AppSidebar />
         </>
       ) : null}
-      <SidebarInset className="!flex-row overflow-hidden">
+      <SidebarInset className="!m-0 !overflow-hidden !rounded-none !shadow-none max-h-svh min-w-0 bg-app-background">
         {children}
       </SidebarInset>
-    </div>
+    </>
   );
 }

@@ -1,15 +1,15 @@
+import { AIAgentCredentials } from "@terragon/agent/types";
 import {
   DaemonMessage,
   defaultPipePath,
   FeatureFlags,
 } from "@terragon/daemon/shared";
-import { McpConfig } from "./mcp-config";
-import { getDaemonFile, getMcpServerFile } from "./constants";
-import { CreateSandboxOptions, ISandboxSession } from "./types";
 import { createHash } from "crypto";
-import { buildMergedMcpConfig } from "./utils/mcp-merge";
+import { getDaemonFile, getMcpServerFile } from "./constants";
 import { getEnv } from "./env";
-import { AIAgentCredentials } from "@terragon/agent/types";
+import { McpConfig } from "./mcp-config";
+import { CreateSandboxOptions, ISandboxSession } from "./types";
+import { buildMergedMcpConfig } from "./utils/mcp-merge";
 
 export const DAEMON_FILE_PATH = "/tmp/terragon-daemon.mjs";
 export const MCP_SERVER_FILE_PATH = "/tmp/terry-mcp-server.mjs";
@@ -147,11 +147,7 @@ export async function installDaemon({
   await waitForDaemonReady(session);
 }
 
-async function waitForDaemonReady(
-  session: ISandboxSession,
-  maxAttempts = 20,
-  intervalMs = 500, // kept for API compat
-) {
+async function waitForDaemonReady(session: ISandboxSession, maxAttempts = 20) {
   let lastError: Error | null = null;
   for (let i = 0; i < maxAttempts; i++) {
     try {
@@ -361,7 +357,7 @@ export async function sendPingMessage({
   try {
     await sendMessage({ session, message: { type: "ping" } });
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }

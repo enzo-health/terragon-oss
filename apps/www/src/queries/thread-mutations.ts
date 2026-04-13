@@ -1,4 +1,9 @@
-import { ThreadInfo, ThreadPageChat, ThreadPageShell } from "@terragon/shared";
+import {
+  DBUserMessage,
+  ThreadInfo,
+  ThreadPageChat,
+  ThreadPageShell,
+} from "@terragon/shared";
 import {
   archiveThread,
   unarchiveThread,
@@ -10,6 +15,10 @@ import {
   threadQueryKeys,
   isValidThreadListFilter,
   isMatchingThreadForFilter,
+  threadQueryOptions,
+  threadChatQueryOptions,
+  threadShellQueryOptions,
+  ThreadListFilters,
 } from "./thread-queries";
 import { updateThreadVisibilityAction } from "@/server-actions/thread-visibility";
 import { updateThreadName } from "@/server-actions/update-thread-name";
@@ -20,6 +29,296 @@ import {
 import { ServerActionResult } from "@/lib/server-actions";
 import { useServerActionMutation } from "./server-action-helpers";
 import { InfiniteData, useQueryClient } from "@tanstack/react-query";
+import {
+  newThread,
+  type NewThreadArgs,
+  type NewThreadResult,
+} from "@/server-actions/new-thread";
+import {
+  insertThreadInfo,
+  removeThreadInfo,
+  replaceThreadInfo,
+} from "@/collections/thread-info-collection";
+import { convertToPlainText } from "@/lib/db-message-helpers";
+import { modelToAgent } from "@terragon/agent/utils";
+import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
+import { toast } from "sonner";
+
+type OptimisticThreadDescriptor = {
+  id: string;
+  model: AIModel;
+  thread: ThreadInfo;
+};
+
+function getThreadStatusForCreate({
+  saveAsDraft,
+  scheduleAt,
+}: Pick<NewThreadArgs, "saveAsDraft" | "scheduleAt">) {
+  if (saveAsDraft) {
+    return "draft" as const;
+  }
+  if (scheduleAt) {
+    return "scheduled" as const;
+  }
+  return "queued" as const;
+}
+
+function getOptimisticModels({
+  userMessage,
+  selectedModels,
+  saveAsDraft,
+}: {
+  userMessage: DBUserMessage;
+  selectedModels?: SelectedAIModels;
+  saveAsDraft?: boolean;
+}): AIModel[] {
+  if (
+    saveAsDraft ||
+    !selectedModels ||
+    Object.keys(selectedModels).length === 0
+  ) {
+    return userMessage.model ? [userMessage.model] : [];
+  }
+
+  const selectedModelKeys = Object.keys(selectedModels) as AIModel[];
+  if (!userMessage.model) {
+    return selectedModelKeys;
+  }
+
+  return [
+    userMessage.model,
+    ...selectedModelKeys.filter((model) => model !== userMessage.model),
+  ];
+}
+
+export function buildOptimisticThreadsForCreate({
+  userMessage,
+  githubRepoFullName,
+  branchName,
+  createNewBranch = true,
+  saveAsDraft,
+  scheduleAt,
+  disableGitCheckpointing,
+  skipSetup,
+  selectedModels,
+}: {
+  userMessage: DBUserMessage;
+  githubRepoFullName: string;
+  branchName: string;
+  createNewBranch?: boolean;
+  saveAsDraft?: boolean;
+  scheduleAt?: number | null;
+  disableGitCheckpointing?: boolean;
+  skipSetup?: boolean;
+  selectedModels?: SelectedAIModels;
+}): OptimisticThreadDescriptor[] {
+  const models = getOptimisticModels({
+    userMessage,
+    selectedModels,
+    saveAsDraft,
+  });
+  const now = new Date();
+  const title =
+    convertToPlainText({
+      message: userMessage,
+      skipAttachments: true,
+    }).slice(0, 100) || "New task";
+  const status = getThreadStatusForCreate({ saveAsDraft, scheduleAt });
+
+  return models.map((model, index) => {
+    const id = `optimistic-${Date.now()}-${index}-${model}`;
+    return {
+      id,
+      model,
+      thread: {
+        id,
+        userId: "",
+        name: title,
+        githubRepoFullName,
+        githubPRNumber: null,
+        githubIssueNumber: null,
+        codesandboxId: null,
+        sandboxProvider: "e2b",
+        sandboxSize: null,
+        sandboxStatus: null,
+        bootingSubstatus: null,
+        createdAt: now,
+        updatedAt: now,
+        repoBaseBranchName: createNewBranch ? branchName || "main" : "main",
+        branchName: createNewBranch ? null : branchName,
+        archived: false,
+        automationId: null,
+        parentThreadId: null,
+        parentToolId: null,
+        draftMessage: saveAsDraft ? userMessage : null,
+        disableGitCheckpointing: disableGitCheckpointing ?? false,
+        skipSetup: skipSetup ?? false,
+        sourceType: "www",
+        sourceMetadata: null,
+        version: 1,
+        gitDiffStats: null,
+        authorName: null,
+        authorImage: null,
+        prStatus: null,
+        prChecksStatus: null,
+        visibility: null,
+        isUnread: false,
+        messageSeq: 0,
+        threadChats: [
+          {
+            id: `optimistic-chat-${index}`,
+            agent: modelToAgent(model),
+            status,
+            errorMessage: null,
+          },
+        ],
+      },
+    };
+  });
+}
+
+function updateThreadListQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  updatePage: (
+    page: ThreadInfo[],
+    filters: ThreadListFilters | null,
+    pageIndex: number,
+  ) => ThreadInfo[],
+) {
+  const cache = queryClient.getQueryCache();
+  const queries = cache.findAll({ queryKey: threadQueryKeys.list(null) });
+
+  queries.forEach((query) => {
+    const queryKey = query.queryKey;
+    const maybeFilters = queryKey[2];
+    const filters = isValidThreadListFilter(maybeFilters) ? maybeFilters : null;
+    queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(queryKey, (old) => {
+      if (!old) {
+        return old;
+      }
+      return {
+        ...old,
+        pages: old.pages.map((page, pageIndex) =>
+          updatePage(page, filters, pageIndex),
+        ),
+      };
+    });
+  });
+}
+
+function insertOptimisticThreadIntoListQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  thread: ThreadInfo,
+) {
+  updateThreadListQueries(queryClient, (page, filters, pageIndex) => {
+    if (filters && !isMatchingThreadForFilter(thread, filters)) {
+      return page;
+    }
+    if (page.some((existingThread) => existingThread.id === thread.id)) {
+      return page;
+    }
+    if (pageIndex > 0) {
+      return page;
+    }
+    return [thread, ...page];
+  });
+}
+
+function removeOptimisticThreadFromListQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  threadId: string,
+) {
+  updateThreadListQueries(queryClient, (page) =>
+    page.filter((thread) => thread.id !== threadId),
+  );
+}
+
+function replaceOptimisticThreadInListQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  {
+    optimisticId,
+    nextThread,
+  }: {
+    optimisticId: string;
+    nextThread: ThreadInfo;
+  },
+) {
+  updateThreadListQueries(queryClient, (page, filters, pageIndex) => {
+    const withoutOptimistic = page.filter(
+      (thread) => thread.id !== optimisticId,
+    );
+    const nextPage = withoutOptimistic.map((thread) =>
+      thread.id === nextThread.id ? nextThread : thread,
+    );
+
+    if (filters && !isMatchingThreadForFilter(nextThread, filters)) {
+      return nextPage;
+    }
+    if (nextPage.some((thread) => thread.id === nextThread.id)) {
+      return nextPage;
+    }
+    if (pageIndex > 0) {
+      return nextPage;
+    }
+    return [nextThread, ...nextPage];
+  });
+}
+
+function reconcileCreatedThreads({
+  optimisticThreads,
+  result,
+  queryClient,
+}: {
+  optimisticThreads: OptimisticThreadDescriptor[];
+  result: NewThreadResult;
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
+  const optimisticByModel = new Map(
+    optimisticThreads.map((thread) => [thread.model, thread]),
+  );
+
+  result.createdThreads.forEach((createdThread) => {
+    const optimistic = optimisticByModel.get(createdThread.model);
+    if (!optimistic) {
+      return;
+    }
+
+    const reconciledThread: ThreadInfo = {
+      ...optimistic.thread,
+      id: createdThread.threadId,
+      threadChats: optimistic.thread.threadChats.map((threadChat, index) =>
+        index === 0
+          ? { ...threadChat, id: createdThread.threadChatId }
+          : threadChat,
+      ),
+    };
+
+    replaceThreadInfo({
+      existingId: optimistic.id,
+      nextThread: reconciledThread,
+    });
+    replaceOptimisticThreadInListQueries(queryClient, {
+      optimisticId: optimistic.id,
+      nextThread: reconciledThread,
+    });
+    optimisticByModel.delete(createdThread.model);
+  });
+
+  result.failedModels.forEach((failedModel) => {
+    const optimistic = optimisticByModel.get(failedModel.model);
+    if (!optimistic) {
+      return;
+    }
+    removeThreadInfo(optimistic.id);
+    removeOptimisticThreadFromListQueries(queryClient, optimistic.id);
+    optimisticByModel.delete(failedModel.model);
+  });
+
+  optimisticByModel.forEach((optimisticThread) => {
+    removeThreadInfo(optimisticThread.id);
+    removeOptimisticThreadFromListQueries(queryClient, optimisticThread.id);
+  });
+}
 
 // Generic hook for thread mutations with optimistic updates
 function useThreadMutation<TVariables extends { threadId: string }>({
@@ -247,5 +546,85 @@ export function useSubmitDraftThreadMutation() {
       scheduleAt: args.scheduleAt ? new Date(args.scheduleAt) : null,
       draftMessage: null,
     }),
+  });
+}
+
+export function useCreateThreadMutation() {
+  const queryClient = useQueryClient();
+
+  return useServerActionMutation<
+    NewThreadArgs,
+    NewThreadResult,
+    { optimisticThreads: OptimisticThreadDescriptor[] }
+  >({
+    mutationFn: newThread,
+    onMutate: async (variables) => {
+      const optimisticThreads = buildOptimisticThreadsForCreate({
+        userMessage: variables.message,
+        githubRepoFullName: variables.githubRepoFullName,
+        branchName: variables.branchName,
+        createNewBranch: variables.createNewBranch,
+        saveAsDraft: variables.saveAsDraft,
+        scheduleAt: variables.scheduleAt,
+        disableGitCheckpointing: variables.disableGitCheckpointing,
+        skipSetup: variables.skipSetup,
+        selectedModels: variables.selectedModels,
+      });
+
+      await queryClient.cancelQueries({ queryKey: ["threads"] });
+
+      optimisticThreads.forEach(({ thread }) => {
+        insertThreadInfo(thread);
+        insertOptimisticThreadIntoListQueries(queryClient, thread);
+      });
+
+      return { optimisticThreads };
+    },
+    onSuccess: (result, variables, context) => {
+      const optimisticThreads = context?.optimisticThreads ?? [];
+      reconcileCreatedThreads({
+        optimisticThreads,
+        result,
+        queryClient,
+      });
+
+      result.createdThreads.forEach((createdThread) => {
+        void queryClient.prefetchQuery(
+          threadQueryOptions(createdThread.threadId),
+        );
+        void queryClient.prefetchQuery(
+          threadShellQueryOptions(createdThread.threadId),
+        );
+        void queryClient.prefetchQuery(
+          threadChatQueryOptions({
+            threadId: createdThread.threadId,
+            threadChatId: createdThread.threadChatId,
+          }),
+        );
+      });
+
+      void queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.list(null),
+      });
+
+      if (result.failedModels.length > 0) {
+        const failedModelList = result.failedModels
+          .map((failedModel) => failedModel.model)
+          .join(", ");
+        toast.error(
+          `Some tasks could not be created: ${failedModelList}. The successful tasks are still available.`,
+        );
+      }
+    },
+    onError: (error, variables, context) => {
+      console.error(error);
+      context?.optimisticThreads.forEach((optimisticThread) => {
+        removeThreadInfo(optimisticThread.id);
+        removeOptimisticThreadFromListQueries(queryClient, optimisticThread.id);
+      });
+      void queryClient.invalidateQueries({
+        queryKey: threadQueryKeys.list(null),
+      });
+    },
   });
 }

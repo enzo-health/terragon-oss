@@ -1,23 +1,24 @@
-import { and, eq } from "drizzle-orm";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { nanoid } from "nanoid/non-secure";
-import { db } from "@/lib/db";
-import * as dispatchIntentModule from "@/server-lib/delivery-loop/dispatch-intent";
-import * as followUpQueueModule from "@/server-lib/process-follow-up-queue";
 import * as schema from "@terragon/shared/db/schema";
 import * as dispatchIntentStoreModule from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
   createTestThread,
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { and, eq } from "drizzle-orm";
+import { nanoid } from "nanoid/non-secure";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { db } from "@/lib/db";
+import * as dispatchIntentModule from "@/server-lib/delivery-loop/dispatch-intent";
+import * as followUpQueueModule from "@/server-lib/process-follow-up-queue";
+import * as kernelModule from "./kernel";
+import { drainDueEffects, effectResultToEvent } from "./process-effects";
 import {
   ensureWorkflowHead,
   getWorkflowHead,
   insertEffects,
   updateWorkflowHead,
 } from "./store";
-import { drainDueEffects, effectResultToEvent } from "./process-effects";
 import type { EffectResult, EffectSpec } from "./types";
 
 const TEST_EFFECT_PREFIX = "dl3:test:v3-effect-worker";
@@ -183,18 +184,6 @@ describe("effectResultToEvent", () => {
       outcome: "stale",
     });
     expect(result).toBeNull();
-  });
-
-  it("legacy ack timeout results still map to dispatch_ack_timeout", () => {
-    const result = effectResultToEvent({
-      kind: "ack_timeout_check",
-      outcome: "fired",
-      runId: "r-legacy",
-    });
-    expect(result).toEqual({
-      type: "dispatch_ack_timeout",
-      runId: "r-legacy",
-    });
   });
 
   // dispatch_implementing
@@ -1300,14 +1289,17 @@ describe("drainDueEffects", () => {
     );
   });
 
-  it("keeps legacy ack timeout effects working during the migration window", async () => {
+  it("retries state-blocking effects when transition append fails", async () => {
     const now = new Date("2026-03-18T10:00:00.000Z");
+    const leaseExpiresAt = new Date("2026-03-18T10:00:00.000Z");
     const workflowId = await createWorkflowFixture();
     const head = await ensureWorkflowHead({ db, workflowId });
-    if (!head) throw new Error("Expected workflow head");
+    if (!head) {
+      throw new Error("Expected workflow head for append retry test");
+    }
 
     const dispatchRunId = `run-${nanoid()}`;
-    const moved = await updateWorkflowHead({
+    const hydrated = await updateWorkflowHead({
       db,
       head: {
         ...head,
@@ -1316,31 +1308,41 @@ describe("drainDueEffects", () => {
         activeGate: null,
         activeRunId: dispatchRunId,
         activeRunSeq: 1,
-        leaseExpiresAt: null,
+        leaseExpiresAt,
+        headSha: "head-before-append-retry",
         blockedReason: null,
         updatedAt: now,
         lastActivityAt: now,
       },
       expectedVersion: head.version,
     });
-    expect(moved).toBe(true);
+    expect(hydrated).toBe(true);
 
-    const effect: EffectSpec = {
-      kind: "ack_timeout_check",
-      effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:legacy-ack-timeout`,
-      dueAt: now,
-      payload: {
-        kind: "ack_timeout_check",
-        runId: dispatchRunId,
-        workflowVersion: head.version + 1,
-      },
-    };
+    await db
+      .delete(schema.agentRunContext)
+      .where(eq(schema.agentRunContext.runId, dispatchRunId));
+
+    const appendSpy = vi
+      .spyOn(kernelModule, "appendEventAndAdvanceExplicit")
+      .mockRejectedValueOnce(new Error("append boom"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const inserted = await insertEffects({
       db,
       workflowId,
       workflowVersion: head.version + 1,
-      effects: [effect],
+      effects: [
+        {
+          kind: "run_lease_expiry_check",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:append-failure`,
+          dueAt: leaseExpiresAt,
+          payload: {
+            kind: "run_lease_expiry_check",
+            runId: dispatchRunId,
+            workflowVersion: head.version + 1,
+          },
+        },
+      ],
     });
     expect(inserted).toBe(1);
 
@@ -1352,13 +1354,40 @@ describe("drainDueEffects", () => {
       now,
     });
     expect(drain.processed).toBe(1);
+    expect(appendSpy).toHaveBeenCalledTimes(1);
 
     const journalRows = await db.query.deliveryLoopJournalV3.findMany({
       where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
     });
     expect(
       journalRows.filter((row) => row.eventType === "dispatch_ack_timeout"),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
+
+    const effectRow = await db.query.deliveryEffectLedgerV3.findFirst({
+      where: and(
+        eq(schema.deliveryEffectLedgerV3.workflowId, workflowId),
+        eq(schema.deliveryEffectLedgerV3.effectKind, "run_lease_expiry_check"),
+      ),
+    });
+    if (!effectRow) {
+      throw new Error("Expected run_lease_expiry_check effect row");
+    }
+    expect(effectRow.status).toBe("planned");
+    expect(effectRow.lastErrorCode).toBe("transition_append_failed");
+    expect(effectRow.lastErrorMessage).toBe("append boom");
+    expect(effectRow.leaseOwner).toBeNull();
+    expect(effectRow.leaseExpiresAt).toBeNull();
+    expect(effectRow.dueAt.getTime()).toBeGreaterThan(now.getTime());
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[delivery-loop] effect transition append failed — marking effect for retry",
+      expect.objectContaining({
+        workflowId,
+        effectId: effectRow.id,
+        eventType: "dispatch_ack_timeout",
+        error: "append boom",
+      }),
+    );
   });
 
   it("lease expiry fires when no daemon run context exists", async () => {
@@ -1727,6 +1756,123 @@ describe("drainDueEffects", () => {
       expect.objectContaining({
         workflowId,
         error: "queue exploded",
+      }),
+    );
+  });
+
+  it("treats implementing launch exceptions as non-fatal and keeps queued dispatch", async () => {
+    const now = new Date("2026-03-18T10:00:00.000Z");
+    const workflowId = await createWorkflowFixture();
+    const workflow = await db.query.deliveryWorkflow.findFirst({
+      where: eq(schema.deliveryWorkflow.id, workflowId),
+    });
+    if (!workflow) {
+      throw new Error(
+        "Expected workflow row for implementing dispatch warning test",
+      );
+    }
+
+    const [threadChat] = await db
+      .insert(schema.threadChat)
+      .values({
+        threadId: workflow.threadId,
+        userId: workflow.userId,
+        status: "working",
+      })
+      .returning({ id: schema.threadChat.id });
+    if (!threadChat) {
+      throw new Error(
+        "Expected thread chat row for implementing dispatch warning test",
+      );
+    }
+
+    const seededHead = await ensureWorkflowHead({ db, workflowId });
+    if (!seededHead) {
+      throw new Error(
+        "Expected workflow head for implementing dispatch warning test",
+      );
+    }
+
+    const moved = await updateWorkflowHead({
+      db,
+      head: {
+        ...seededHead,
+        version: seededHead.version + 1,
+        state: "implementing",
+        activeGate: null,
+        activeRunId: null,
+        activeRunSeq: 2,
+        leaseExpiresAt: null,
+        headSha: "sha-impl-test",
+        blockedReason: null,
+        updatedAt: now,
+        lastActivityAt: now,
+      },
+      expectedVersion: seededHead.version,
+    });
+    expect(moved).toBe(true);
+
+    vi.spyOn(dispatchIntentModule, "createDispatchIntent").mockResolvedValue(
+      {} as Awaited<
+        ReturnType<typeof dispatchIntentModule.createDispatchIntent>
+      >,
+    );
+    vi.spyOn(
+      dispatchIntentStoreModule,
+      "createDispatchIntent",
+    ).mockResolvedValue("dispatch-intent-row-id");
+    vi.spyOn(
+      dispatchIntentStoreModule,
+      "markDispatchIntentDispatched",
+    ).mockResolvedValue(undefined);
+    vi.spyOn(
+      followUpQueueModule,
+      "launchDeliveryLoopDispatchFromIntent",
+    ).mockRejectedValue(new Error("impl queue exploded"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const inserted = await insertEffects({
+      db,
+      workflowId,
+      workflowVersion: seededHead.version + 1,
+      effects: [
+        {
+          kind: "dispatch_implementing",
+          effectKey: `${TEST_EFFECT_PREFIX}:${nanoid()}:implementing-follow-up-warning`,
+          dueAt: now,
+          payload: {
+            kind: "dispatch_implementing",
+            executionClass: "implementation_runtime",
+          },
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+
+    const drain = await drainDueEffects({
+      db,
+      workflowId,
+      maxItems: 1,
+      leaseOwnerPrefix: "test:v3-effects",
+      now,
+    });
+    expect(drain.processed).toBe(1);
+
+    const journalRows = await db.query.deliveryLoopJournalV3.findMany({
+      where: eq(schema.deliveryLoopJournalV3.workflowId, workflowId),
+    });
+    expect(
+      journalRows.filter((row) => row.eventType === "dispatch_queued"),
+    ).toHaveLength(1);
+    expect(
+      journalRows.filter((row) => row.eventType === "run_failed"),
+    ).toHaveLength(0);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[delivery-loop] follow-up queue trigger failed (non-fatal)",
+      expect.objectContaining({
+        workflowId,
+        error: "impl queue exploded",
       }),
     );
   });

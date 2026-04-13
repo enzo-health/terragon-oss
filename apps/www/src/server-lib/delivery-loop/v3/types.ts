@@ -10,7 +10,6 @@ import {
 export type WorkflowState =
   | "planning"
   | "implementing"
-  // Legacy persisted state; normalize to implementing on read/reduce.
   | "awaiting_implementation_acceptance"
   | "gating_review"
   | "gating_ci"
@@ -39,10 +38,9 @@ export type LoopEvent =
   | { type: "dispatch_queued"; runId: string; ackDeadlineAt: Date }
   | { type: "dispatch_claimed"; runId: string }
   | { type: "dispatch_accepted"; runId: string }
-  // Legacy dispatch lifecycle events retained for compatibility.
-  | { type: "dispatch_sent"; runId: string; ackDeadlineAt: Date }
-  | { type: "dispatch_acked"; runId: string }
   | { type: "dispatch_ack_timeout"; runId: string }
+  | { type: "dispatch_sent"; runId: string }
+  | { type: "dispatch_acked"; runId: string }
   | {
       type: "run_completed";
       runId: string;
@@ -105,7 +103,6 @@ export type EffectPayload =
       workflowVersion: number;
     }
   | {
-      // Legacy persisted effect kind retained during the migration window.
       kind: "ack_timeout_check";
       runId: string;
       workflowVersion: number;
@@ -130,7 +127,7 @@ export type EffectSpec = {
 /**
  * Typed result returned by state-blocking effect handlers.
  * The framework maps these to LoopEvent via effectResultToEvent().
- * Handlers return data; they never call appendEventAndAdvance directly.
+ * Handlers return data; they never call kernel advance APIs directly.
  */
 export type EffectResult =
   // create_plan_artifact results

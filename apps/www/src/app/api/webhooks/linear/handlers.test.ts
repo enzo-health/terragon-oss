@@ -214,6 +214,7 @@ describe("handlers", () => {
     vi.mocked(newThreadInternal).mockResolvedValue({
       threadId: "test-thread-id",
       threadChatId: "test-chat-id",
+      model: "sonnet",
     });
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
     mockCreateAgentActivity.mockResolvedValue({ success: true });

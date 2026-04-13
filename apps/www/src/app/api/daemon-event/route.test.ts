@@ -21,7 +21,11 @@ import {
 import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import {
+  publishBroadcastUserMessage,
+  publishDeltaBroadcast,
+} from "@terragon/shared/broadcast-server";
+import { env } from "@terragon/env/apps-www";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -125,6 +129,7 @@ const deltaBroadcastMocks = vi.hoisted(() => ({
 
 const v3BridgeMocks = vi.hoisted(() => ({
   appendEventAndAdvance: vi.fn(),
+  appendEventAndAdvanceExplicit: vi.fn(),
   getWorkflowHead: vi.fn(),
   getActiveWorkflowForThreadV3: vi.fn(),
 }));
@@ -196,10 +201,12 @@ vi.mock("@terragon/shared/model/token-stream-event", () => ({
 
 vi.mock("@terragon/shared/broadcast-server", () => ({
   publishDeltaBroadcast: deltaBroadcastMocks.publishDeltaBroadcast,
+  publishBroadcastUserMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({
   appendEventAndAdvance: v3BridgeMocks.appendEventAndAdvance,
+  appendEventAndAdvanceExplicit: v3BridgeMocks.appendEventAndAdvance,
 }));
 
 vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
@@ -413,6 +420,124 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(401);
     expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("accepts daemon-event requests with test auth in non-production", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-test-auth",
+          runId: "run-1",
+          seq: 0,
+        },
+        {
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        success: true,
+        acknowledgedEventId: "event-test-auth",
+        acknowledgedSeq: 0,
+      }),
+    );
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        runId: "run-1",
+      }),
+    );
+  });
+
+  it("rejects daemon-event test auth when secret is invalid", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+        },
+        {
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": "invalid",
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(401);
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass daemon-token auth when X-Daemon-Token is present", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-token-present",
+          runId: "run-1",
+          seq: 0,
+        },
+        {
+          "X-Daemon-Token": "invalid-token",
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(401);
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects test auth path in production even with valid test headers", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+    vi.stubEnv("NODE_ENV", "production");
+
+    try {
+      const response = await POST(
+        createDaemonRequest(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messages: [createSuccessResultMessage()],
+            timezone: "UTC",
+          },
+          {
+            "X-Terragon-Test-Daemon-Auth": "enabled",
+            "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+            "X-Terragon-Test-User-Id": "user-1",
+          },
+        ),
+      );
+
+      expect(response.status).toBe(401);
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("persists deltas with deterministic idempotency and broadcasts in stream order", async () => {
@@ -797,6 +922,363 @@ describe("daemon-event route", () => {
     );
   });
 
+  // VAL-API-011: Run-id claim mismatch rejection
+  it("rejects daemon-event with run-id claim mismatch with 401 auth error", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-claimed-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "acp",
+        protocolVersion: 2,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    });
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-claimed-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+    // Send request with envelope runId that does NOT match the token claims runId
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-mismatch",
+        runId: "run-different-2", // Different from claims.runId
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data.error).toBe("daemon_event_run_id_claim_mismatch");
+    expect(data.runId).toBe("run-different-2");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  // VAL-API-012: Missing/expired daemon claims rejection
+  it("rejects daemon-event with missing token claims with 401 auth error", async () => {
+    // Return auth context but with null claims (simulating missing claims)
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: null, // Missing claims
+    } as any);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-no-claims",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data.error).toBe("daemon_token_claims_required");
+    expect(data.runId).toBe("run-1");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects daemon-event with expired token claims with 401 auth error", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "acp",
+        protocolVersion: 2,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now() - 120_000, // Issued 2 minutes ago
+        exp: Date.now() - 60_000, // Expired 1 minute ago
+      },
+    });
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-expired",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data.error).toBe("daemon_token_expired");
+    expect(data.runId).toBe("run-1");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  // VAL-API-013: Run-context mismatch conflict rejection
+  it("rejects daemon-event with run-context mismatch with 409 conflict error", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "acp",
+        protocolVersion: 2,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    });
+    // Run context has different threadId than the request
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-different", // Different from request threadId
+      threadChatId: "chat-different", // Different from request threadChatId
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "dispatched",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1", // Different from runContext.threadId
+        threadChatId: "chat-1", // Different from runContext.threadChatId
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-mismatch",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("daemon_event_run_context_mismatch");
+    expect(data.runId).toBe("run-1");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  // VAL-API-014: Pure-v2 terminal events bridge exactly once to canonical v3 transition
+  it("bridges pure-v2 terminal daemon event to v3 kernel exactly once", async () => {
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "wf-pure-v2",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      workflowId: "wf-pure-v2",
+      runSeq: 5,
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "processing",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+    v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+      state: "implementing",
+      activeRunId: "run-1",
+      activeRunSeq: 5,
+    });
+    // Simulate first-time insertion success
+    v3BridgeMocks.appendEventAndAdvance.mockResolvedValue({
+      inserted: true,
+      transitioned: true,
+      effectsInserted: 2,
+      stateBefore: "implementing",
+      stateAfter: "gating_review",
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-terminal-v3",
+        runId: "run-1",
+        seq: 10,
+        headShaAtCompletion: "sha-123",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // v3 kernel bridge should be called exactly once for the first terminal event
+    expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledTimes(1);
+    expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: "wf-pure-v2",
+        source: "daemon",
+        idempotencyKey: "run-completed:event-terminal-v3",
+        event: {
+          type: "run_completed",
+          runId: "run-1",
+          runSeq: 5,
+          headSha: "sha-123",
+        },
+      }),
+    );
+  });
+
+  it("deduplicates replay of pure-v2 terminal daemon event without duplicate v3 side effects", async () => {
+    vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+      id: "wf-pure-v2",
+      threadId: "thread-1",
+      kind: "implementing",
+      generation: 1,
+    } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      workflowId: "wf-pure-v2",
+      runSeq: 5,
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed", // Terminal status
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+    v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+      state: "gating_review", // Already transitioned
+      activeRunId: null,
+      activeRunSeq: null,
+    });
+
+    // First request - should be deduplicated due to run_terminal_ignored
+    const firstResponse = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-terminal-dup",
+        runId: "run-1",
+        seq: 10,
+        headShaAtCompletion: "sha-123",
+      }),
+    );
+
+    expect(firstResponse.status).toBe(202);
+    expect(firstResponse.json()).resolves.toMatchObject({
+      reason: "run_terminal_ignored",
+      deduplicated: true,
+    });
+    // v3 bridge should NOT be called for terminal runs (they're filtered before bridge)
+    expect(v3BridgeMocks.appendEventAndAdvance).not.toHaveBeenCalled();
+
+    // Second request (out-of-order replay) - also deduplicated
+    const secondResponse = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-terminal-dup",
+        runId: "run-1",
+        seq: 9, // Out of order sequence
+        headShaAtCompletion: "sha-123",
+      }),
+    );
+
+    expect(secondResponse.status).toBe(202);
+    // v3 bridge still should not be called
+    expect(v3BridgeMocks.appendEventAndAdvance).not.toHaveBeenCalled();
+  });
+
   // Removed: "re-enqueues daemon-terminal feedback" — v1 follow-up re-enqueue
   // logic was removed; v2 handles dispatch via work items.
 
@@ -987,6 +1469,10 @@ describe("daemon-event route", () => {
         transportMode: "codex-app-server",
         protocolVersion: 1,
         codexPreviousResponseId: "resp-next-999",
+        payloadVersion: 2,
+        eventId: "event-codex-1",
+        runId: "run-1",
+        seq: 0,
       }),
     );
 
@@ -1044,6 +1530,10 @@ describe("daemon-event route", () => {
         transportMode: "codex-app-server",
         protocolVersion: 1,
         codexPreviousResponseId: 123,
+        payloadVersion: 2,
+        eventId: "event-codex-invalid",
+        runId: "run-1",
+        seq: 0,
       }),
     );
     // Invalid codexPreviousResponseId is now non-fatal to avoid rolling back
@@ -1189,6 +1679,149 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
+  // VAL-CROSS-002: Duplicate ingress across API and runtime remains idempotent
+  describe("duplicate ingress idempotency (VAL-CROSS-002)", () => {
+    it("deduplicates duplicate daemon ingress to prevent duplicate logical transitions", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+        id: "wf-dedup-test",
+        threadId: "thread-1",
+        kind: "implementing",
+        generation: 1,
+      } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+      // Align auth claims with envelope runId to avoid claim mismatch
+      vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+        userId: "user-1",
+        keyId: "api-key-1",
+        claims: {
+          kind: "daemon-run",
+          runId: "run-dedup-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          sandboxId: "sandbox-1",
+          agent: "claudeCode",
+          transportMode: "acp",
+          protocolVersion: 2,
+          providers: ["anthropic"],
+          nonce: "nonce-1",
+          issuedAt: Date.now(),
+          exp: Date.now() + 60_000,
+        },
+      });
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-dedup-1",
+        workflowId: "wf-dedup-test",
+        runSeq: 3,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+      // Use non-terminal messages to trigger claim logic path
+      const nonTerminalMessage = {
+        type: "assistant",
+        message: { content: "working" },
+        session_id: "s-1",
+        parent_tool_use_id: null,
+      };
+
+      // First ingress - claim succeeds, processing completes
+      redisMocks.get.mockResolvedValueOnce(null); // not committed
+      redisMocks.set.mockResolvedValueOnce("OK"); // claim succeeds
+
+      const firstResponse = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [nonTerminalMessage],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-dedup-test",
+          runId: "run-dedup-1",
+          seq: 5,
+        }),
+      );
+
+      expect(firstResponse.status).toBe(200);
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+
+      // Second ingress (duplicate) - committed key now present
+      redisMocks.get.mockResolvedValueOnce(new Date().toISOString()); // already committed
+
+      const secondResponse = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [nonTerminalMessage],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-dedup-test", // Same eventId
+          runId: "run-dedup-1",
+          seq: 5,
+        }),
+      );
+
+      expect(secondResponse.status).toBe(202);
+      const secondData = await secondResponse.json();
+      expect(secondData.reason).toBe("duplicate_event");
+      expect(secondData.deduplicated).toBe(true);
+
+      // Handler should only be called once total
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it("handles in-progress claim conflict without duplicate processing", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+        id: "loop-dedup",
+        threadId: "thread-1",
+        kind: "implementing",
+        generation: 1,
+      } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+
+      // Simulate another worker has the claim (set returns null)
+      redisMocks.get.mockResolvedValueOnce(null); // not committed
+      redisMocks.set.mockResolvedValueOnce(null); // claim fails - another worker has it
+      redisMocks.get.mockResolvedValueOnce(null); // still not committed
+
+      // Use non-terminal message to trigger claim logic path
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: { content: "working" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-in-progress-dedup",
+          runId: "run-1", // Matches default beforeEach claims
+          seq: 0,
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(data.error).toBe("daemon_event_claim_in_progress");
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not force implementation transition when enrolled loop has already advanced state", async () => {
     const response = await POST(
       createDaemonRequest({
@@ -1213,6 +1846,45 @@ describe("daemon-event route", () => {
       kind: "implementing",
       generation: 1,
     } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+    // Align auth claims with envelope runId to avoid claim mismatch
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+      userId: "user-1",
+      keyId: "api-key-1",
+      claims: {
+        kind: "daemon-run",
+        runId: "run-rollback-test",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        agent: "claudeCode",
+        transportMode: "acp",
+        protocolVersion: 2,
+        providers: ["anthropic"],
+        nonce: "nonce-1",
+        issuedAt: Date.now(),
+        exp: Date.now() + 60_000,
+      },
+    });
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-rollback-test",
+      workflowId: "loop-1",
+      runSeq: 7,
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "processing",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(handleDaemonEvent)
       .mockResolvedValueOnce({
         success: false,
@@ -1241,7 +1913,7 @@ describe("daemon-event route", () => {
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
-        runId: "run-1",
+        runId: "run-rollback-test",
         seq: 7,
       }),
     );
@@ -1264,7 +1936,7 @@ describe("daemon-event route", () => {
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-rollback",
-        runId: "run-1",
+        runId: "run-rollback-test",
         seq: 7,
       }),
     );
@@ -1772,6 +2444,73 @@ describe("daemon-event route", () => {
       expect(markDispatchIntentCompleted).toHaveBeenCalled();
     });
 
+    it("allows terminal daemon-event via test auth and publishes delivery-loop refetch broadcast", async () => {
+      vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: 2,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest(
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messages: [createSuccessResultMessage()],
+            timezone: "UTC",
+            payloadVersion: 2,
+            eventId: "event-test-auth-terminal-broadcast",
+            runId: "run-1",
+            seq: 10,
+          },
+          {
+            "X-Terragon-Test-Daemon-Auth": "enabled",
+            "X-Terragon-Test-User-Id": "user-1",
+            "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          },
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(publishBroadcastUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "user-1",
+          type: "user",
+          data: expect.objectContaining({
+            threadPatches: expect.arrayContaining([
+              expect.objectContaining({
+                threadId: "thread-1",
+                threadChatId: "chat-1",
+                op: "refetch",
+                refetch: ["delivery-loop"],
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
     it("fences planning terminal completions with persisted runSeq", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
@@ -1972,5 +2711,164 @@ describe("daemon-event route", () => {
     });
 
     // v1 bridged workflow test removed — sdlcLoop table no longer exists
+
+    // VAL-CROSS-002: Duplicate ingress across API and runtime remains idempotent
+    it("ensures duplicate daemon ingress does not cause duplicate logical transitions (VAL-CROSS-002)", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue({
+        id: "wf-dedup-test",
+        threadId: "thread-1",
+        kind: "implementing",
+        generation: 1,
+      } as Awaited<ReturnType<typeof getActiveWorkflowForThread>>);
+      // Align auth claims with envelope runId to avoid claim mismatch
+      vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
+        userId: "user-1",
+        keyId: "api-key-1",
+        claims: {
+          kind: "daemon-run",
+          runId: "run-dedup-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          sandboxId: "sandbox-1",
+          agent: "claudeCode",
+          transportMode: "acp",
+          protocolVersion: 2,
+          providers: ["anthropic"],
+          nonce: "nonce-1",
+          issuedAt: Date.now(),
+          exp: Date.now() + 60_000,
+        },
+      });
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-dedup-1",
+        workflowId: "wf-dedup-test",
+        runSeq: 3,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+        state: "implementing",
+        activeRunId: "run-dedup-1",
+        activeRunSeq: 3,
+      });
+
+      // Simulate successful v3 bridge call
+      let v3BridgeCallCount = 0;
+      v3BridgeMocks.appendEventAndAdvance.mockImplementation(async () => {
+        v3BridgeCallCount++;
+        return {
+          inserted: v3BridgeCallCount === 1, // First call inserts, second call is deduplicated
+          transitioned: v3BridgeCallCount === 1,
+          effectsInserted: v3BridgeCallCount === 1 ? 2 : 0,
+          stateBefore: "implementing",
+          stateAfter:
+            v3BridgeCallCount === 1 ? "gating_review" : "implementing",
+        };
+      });
+
+      // First ingress - should process normally
+      const firstResponse = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-dedup-1",
+          runId: "run-dedup-1",
+          seq: 5,
+          headShaAtCompletion: "sha-dedup",
+        }),
+      );
+
+      expect(firstResponse.status).toBe(200);
+      const firstData = await firstResponse.json();
+      expect(firstData.success).toBe(true);
+
+      // After first request, run context becomes terminal
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-dedup-1",
+        workflowId: "wf-dedup-test",
+        runSeq: 3,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "completed", // Now terminal
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+      // Simulate Redis committed key now present (event was processed)
+      redisMocks.get.mockResolvedValueOnce(new Date().toISOString());
+
+      // Second ingress (duplicate) - should be deduplicated
+      const secondResponse = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-dedup-1", // Same eventId as first
+          runId: "run-dedup-1",
+          seq: 5,
+          headShaAtCompletion: "sha-dedup",
+        }),
+      );
+
+      expect(secondResponse.status).toBe(202);
+      const secondData = await secondResponse.json();
+      // After first request, run context is terminal so route returns run_terminal_ignored
+      // before hitting claim/dedup logic (both are valid dedup paths for VAL-CROSS-002)
+      expect(secondData.reason).toBe("run_terminal_ignored");
+      expect(secondData.deduplicated).toBe(true);
+
+      // Third ingress (replay with different seq but same event) - should also be deduplicated
+      redisMocks.get.mockResolvedValueOnce(new Date().toISOString());
+
+      const thirdResponse = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-dedup-1",
+          runId: "run-dedup-1",
+          seq: 999, // Different seq, but same eventId so still duplicate
+          headShaAtCompletion: "sha-dedup",
+        }),
+      );
+
+      expect(thirdResponse.status).toBe(202);
+      const thirdData = await thirdResponse.json();
+      expect(thirdData.reason).toBe("run_terminal_ignored");
+      expect(thirdData.deduplicated).toBe(true);
+
+      // handlerDaemonEvent should only be called once (first request)
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -1,19 +1,33 @@
-import {
-  updateSelectedModel,
-  updateSelectedModels,
-  updateMultiAgentMode,
-  updateSelectedRepo,
-  updateSelectedBranch,
-  getUserFlagsAction,
-} from "@/server-actions/user-flags";
-import type { UserFlags } from "@terragon/shared";
 import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
+import type { UserFlags } from "@terragon/shared";
 import { atom, Getter, Setter } from "jotai";
-import { userCredentialsAtom } from "./user-credentials";
 import { getDefaultModel } from "@/lib/default-ai-model";
 import { ServerActionResult, unwrapResult } from "@/lib/server-actions";
+import {
+  getUserFlagsAction,
+  updateMultiAgentMode,
+  updatePromptPreferences,
+  updateSelectedBranch,
+  updateSelectedModel,
+  updateSelectedModels,
+  updateSelectedRepo,
+} from "@/server-actions/user-flags";
+import { userCredentialsAtom } from "./user-credentials";
 
 export const userFlagsAtom = atom<UserFlags | null>(null);
+
+const USER_FLAGS_LOCAL_ECHO_WINDOW_MS = 1_500;
+let latestLocalUserFlagsWriteAt = 0;
+
+function markLocalUserFlagsWrite(): void {
+  latestLocalUserFlagsWriteAt = Date.now();
+}
+
+export function shouldSkipUserFlagsBroadcastRefetch(): boolean {
+  return (
+    Date.now() - latestLocalUserFlagsWriteAt < USER_FLAGS_LOCAL_ECHO_WINDOW_MS
+  );
+}
 
 export const userFlagsRefetchAtom = atom(null, async (get, set) => {
   const userFlagsResult = await getUserFlagsAction();
@@ -36,17 +50,30 @@ async function optimisticUpdateUserFlags(
   get: Getter,
   set: Setter,
   updates: Partial<UserFlags>,
-  callback: () => Promise<ServerActionResult<void>>,
+  callback: (
+    changedUpdates: Partial<UserFlags>,
+  ) => Promise<ServerActionResult<void>>,
 ): Promise<void> {
   const userFlags = get(userFlagsOrThrowAtom);
-  const previousValues = Object.fromEntries(
-    Object.entries(userFlags).filter(
-      ([key]) => updates[key as keyof UserFlags],
+  const changedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(
+      ([key, value]) => userFlags[key as keyof UserFlags] !== value,
     ),
   );
-  set(userFlagsAtom, { ...userFlags, ...updates });
+  if (Object.keys(changedUpdates).length === 0) {
+    return;
+  }
+
+  const previousValues = Object.fromEntries(
+    Object.keys(changedUpdates).map((key) => [
+      key,
+      userFlags[key as keyof UserFlags],
+    ]),
+  );
+  set(userFlagsAtom, { ...userFlags, ...changedUpdates });
+  markLocalUserFlagsWrite();
   try {
-    unwrapResult(await callback());
+    unwrapResult(await callback(changedUpdates));
   } catch (error) {
     set(userFlagsAtom, { ...userFlags, ...previousValues });
     throw error;
@@ -81,6 +108,27 @@ export const selectedModelPersistedAtom = atom<null, [AIModel], void>(
     );
   },
 );
+
+export const promptPreferencesPersistedAtom = atom<
+  null,
+  [
+    Partial<
+      Pick<
+        UserFlags,
+        | "selectedModel"
+        | "selectedModels"
+        | "multiAgentMode"
+        | "selectedRepo"
+        | "selectedBranch"
+      >
+    >,
+  ],
+  void
+>(null, async (get, set, updates) => {
+  await optimisticUpdateUserFlags(get, set, updates, async (changedUpdates) =>
+    updatePromptPreferences(changedUpdates),
+  );
+});
 
 // Derived atom for selected repo
 export const selectedRepoAtom = atom<string | null, [string | null], void>(

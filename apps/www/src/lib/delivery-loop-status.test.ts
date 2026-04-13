@@ -57,12 +57,14 @@ describe("delivery-loop-status runtime helpers", () => {
     });
 
     it("preserves transport-specific working detail when it already exists", () => {
+      // booting is overridden to working when delivery loop is active,
+      // since stale booting status shouldn't show "Waiting for assistant"
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "booting",
           deliveryLoopState: "implementing",
         }),
-      ).toBe("booting");
+      ).toBe("working");
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "queued-agent-rate-limit",
@@ -88,15 +90,8 @@ describe("delivery-loop-status runtime helpers", () => {
   });
 
   describe("shouldRefreshDeliveryLoopStatusFromThreadPatch", () => {
-    it("refreshes for shell, status, refetch, and agent-message patches", () => {
+    it("refreshes for shell status changes, refetch, and agent-message patches", () => {
       const patches: BroadcastThreadPatch[] = [
-        {
-          threadId: "thread-1",
-          op: "upsert",
-          shell: {
-            updatedAt: new Date().toISOString(),
-          },
-        },
         {
           threadId: "thread-1",
           op: "upsert",
@@ -151,6 +146,70 @@ describe("delivery-loop-status runtime helpers", () => {
               type: "user",
             },
           ],
+        },
+      ];
+
+      for (const patch of patches) {
+        expect(shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)).toBe(
+          false,
+        );
+      }
+    });
+
+    it("refreshes for PR link and status field changes (VAL-UI-004, VAL-UI-005)", () => {
+      const patches: BroadcastThreadPatch[] = [
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            prStatus: "open",
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            githubPRNumber: 123,
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            prChecksStatus: "pending",
+          },
+        },
+      ];
+
+      for (const patch of patches) {
+        expect(shouldRefreshDeliveryLoopStatusFromThreadPatch(patch)).toBe(
+          true,
+        );
+      }
+    });
+
+    it("ignores non-status shell field changes", () => {
+      const patches: BroadcastThreadPatch[] = [
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            name: "Updated name",
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        {
+          threadId: "thread-1",
+          op: "upsert",
+          shell: {
+            codesandboxId: "new-sandbox-id",
+          },
         },
       ];
 

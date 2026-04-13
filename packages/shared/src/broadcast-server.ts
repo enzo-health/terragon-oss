@@ -52,6 +52,16 @@ export async function getNextPatchVersion(
   }
 }
 
+function getBroadcastPublishUrl(rawUrl: string): string {
+  const normalizedUrl = new URL(rawUrl);
+  if (normalizedUrl.protocol === "ws:") {
+    normalizedUrl.protocol = "http:";
+  } else if (normalizedUrl.protocol === "wss:") {
+    normalizedUrl.protocol = "https:";
+  }
+  return normalizedUrl.toString().replace(/\/$/, "");
+}
+
 async function appendToStreamIfRegistered(
   patches: BroadcastThreadPatch[] | undefined,
 ): Promise<void> {
@@ -137,6 +147,7 @@ export async function publishBroadcastUserMessage(
     console.warn("Party socket URL not set");
     return;
   }
+  const broadcastPublishUrl = getBroadcastPublishUrl(partySocketUrl);
   const channel: BroadcastChannelUser = {
     type: "user",
     id: message.id,
@@ -144,7 +155,7 @@ export async function publishBroadcastUserMessage(
   try {
     await Promise.all([
       fetch(
-        `${partySocketUrl}/parties/main/${getBroadcastChannelStr(channel)}`,
+        `${broadcastPublishUrl}/parties/main/${getBroadcastChannelStr(channel)}`,
         {
           method: "POST",
           body: JSON.stringify(message),

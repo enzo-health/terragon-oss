@@ -26,18 +26,15 @@ const outboxInsertRequiresIdempotency: RequiresIdempotencyKey<DeliveryOutboxV3In
 
 describe("v3 contracts", () => {
   it("round-trips a dispatch_sent event payload", () => {
-    const ackDeadlineAt = new Date("2026-03-18T12:00:45.000Z");
     const serialized = serializeLoopEvent({
       type: "dispatch_sent",
       runId: "run-123",
-      ackDeadlineAt,
     });
     const parsed = parseLoopEvent(serialized);
 
     expect(parsed).toEqual({
       type: "dispatch_sent",
       runId: "run-123",
-      ackDeadlineAt,
     });
   });
 
@@ -80,6 +77,32 @@ describe("v3 contracts", () => {
     expect(parsed).toEqual({
       type: "dispatch_accepted",
       runId: "run-accepted-123",
+    });
+  });
+
+  it("parses legacy human signal envelopes during migration", () => {
+    expect(
+      parseLoopEvent({
+        source: "human",
+        event: {
+          kind: "resume_requested",
+          actorUserId: "user-1",
+        },
+      }),
+    ).toEqual({
+      type: "resume_requested",
+    });
+
+    expect(
+      parseLoopEvent({
+        source: "human",
+        event: {
+          kind: "stop_requested",
+          actorUserId: "user-1",
+        },
+      }),
+    ).toEqual({
+      type: "stop_requested",
     });
   });
 

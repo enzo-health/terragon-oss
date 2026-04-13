@@ -13,7 +13,7 @@ import { headerClassName } from "../shared/header";
 
 const TASK_PANEL_MIN_WIDTH = 280;
 const TASK_PANEL_MAX_WIDTH = 600;
-const TASK_PANEL_DEFAULT_WIDTH = 320;
+const TASK_PANEL_DEFAULT_WIDTH = 251;
 
 export function ThreadListSidebar() {
   const {
@@ -45,7 +45,7 @@ export function ThreadListSidebar() {
         >
           <Link
             href="/dashboard"
-            className="flex-1 flex items-center gap-2 rounded-lg transition-colors duration-150 hover:bg-accent border border-border/40 py-1.5 px-3 text-caption font-medium"
+            className="flex-1 flex items-center gap-2 rounded-md py-1.5 px-3 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
           >
             <SquarePen className="h-3.5 w-3.5 opacity-60" />
             <span>New Task</span>

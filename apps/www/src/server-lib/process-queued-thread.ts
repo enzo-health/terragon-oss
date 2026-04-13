@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
@@ -112,7 +112,7 @@ export async function maybeStartQueuedThreadChat({
     threadId,
     userId,
   });
-  await startAgentMessage({
+  await dispatchAgentMessage({
     db,
     userId,
     threadId,

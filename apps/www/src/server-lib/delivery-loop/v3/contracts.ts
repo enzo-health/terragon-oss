@@ -123,11 +123,10 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
         runSeq: event.runSeq ?? null,
       };
     case "dispatch_queued":
-    case "dispatch_sent":
       return {
         type: event.type,
         runId: event.runId,
-        ackDeadlineAt: event.ackDeadlineAt.toISOString(),
+        ackDeadlineAt: event.ackDeadlineAt,
       };
     case "dispatch_claimed":
       return {
@@ -135,8 +134,13 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
         runId: event.runId,
       };
     case "dispatch_accepted":
-    case "dispatch_acked":
     case "dispatch_ack_timeout":
+      return {
+        type: event.type,
+        runId: event.runId,
+      };
+    case "dispatch_sent":
+    case "dispatch_acked":
       return {
         type: event.type,
         runId: event.runId,
@@ -201,8 +205,13 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
 }
 
 export function parseLoopEvent(payload: unknown): LoopEvent | null {
-  if (!isRecord(payload) || typeof payload.type !== "string") {
+  if (!isRecord(payload)) {
     return null;
+  }
+
+  if (typeof payload.type !== "string") {
+    const legacyEvent = parseLegacySignalEnvelope(payload);
+    return legacyEvent;
   }
 
   switch (payload.type) {
@@ -239,8 +248,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         runId: typeof payload.runId === "string" ? payload.runId : null,
         runSeq: toOptionalInteger(payload.runSeq) ?? null,
       };
-    case "dispatch_queued":
-    case "dispatch_sent": {
+    case "dispatch_queued": {
       if (typeof payload.runId !== "string") {
         return null;
       }
@@ -249,7 +257,7 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         return null;
       }
       return {
-        type: payload.type,
+        type: "dispatch_queued",
         runId: payload.runId,
         ackDeadlineAt,
       };
@@ -263,9 +271,20 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         runId: payload.runId,
       };
     case "dispatch_accepted":
-    case "dispatch_acked":
     case "dispatch_ack_timeout":
       if (typeof payload.runId !== "string") {
+        return null;
+      }
+      return {
+        type: payload.type,
+        runId: payload.runId,
+      };
+    case "dispatch_sent":
+    case "dispatch_acked":
+      if (typeof payload.runId !== "string") {
+        return null;
+      }
+      if (payload.ackDeadlineAt !== undefined) {
         return null;
       }
       return {
@@ -476,6 +495,23 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         type: "pr_closed",
         merged: payload.merged,
       };
+    default:
+      return null;
+  }
+}
+
+function parseLegacySignalEnvelope(
+  payload: Record<string, unknown>,
+): LoopEvent | null {
+  if (!isRecord(payload.event) || typeof payload.event.kind !== "string") {
+    return null;
+  }
+
+  switch (payload.event.kind) {
+    case "resume_requested":
+      return { type: "resume_requested" };
+    case "stop_requested":
+      return { type: "stop_requested" };
     default:
       return null;
   }

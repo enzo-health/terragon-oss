@@ -26,12 +26,12 @@ async function loadSubject(options: {
     id: "thread-1",
     branchName: "terragon/test-branch",
   });
-  const threadChatResponses =
-    options.threadChatResponses ??
-    [
-      options.initialThreadChat,
-      ...(options.latestThreadChat !== undefined ? [options.latestThreadChat] : []),
-    ];
+  const threadChatResponses = options.threadChatResponses ?? [
+    options.initialThreadChat,
+    ...(options.latestThreadChat !== undefined
+      ? [options.latestThreadChat]
+      : []),
+  ];
   for (const response of threadChatResponses) {
     getThreadChat.mockResolvedValueOnce(response);
   }
@@ -63,7 +63,9 @@ async function loadSubject(options: {
 
   const getLatestActiveDispatchIntentForThreadChat = vi.fn();
   const activeDispatchIntentResponses =
-    options.activeDispatchIntentSequence ?? [options.activeDispatchIntent ?? null];
+    options.activeDispatchIntentSequence ?? [
+      options.activeDispatchIntent ?? null,
+    ];
   for (const response of activeDispatchIntentResponses) {
     getLatestActiveDispatchIntentForThreadChat.mockResolvedValueOnce(response);
   }
@@ -84,7 +86,7 @@ async function loadSubject(options: {
     updateThreadChatWithTransition,
   }));
   vi.doMock("@/agent/msg/startAgentMessage", () => ({
-    startAgentMessage,
+    dispatchAgentMessage: startAgentMessage,
   }));
   vi.doMock("@/agent/slash-command-handler", () => ({
     getSlashCommandOrNull,
@@ -274,6 +276,34 @@ describe("maybeProcessFollowUpQueue", () => {
       processed: false,
       dispatchLaunched: false,
       reason: "dispatch_not_started",
+    });
+  });
+
+  it("treats slash follow-up as processed even when no run launches", async () => {
+    const { maybeProcessFollowUpQueue, startAgentMessage } = await loadSubject({
+      initialThreadChat: {
+        id: "chat-1",
+        status: "complete",
+        agent: "claudeCode",
+        agentVersion: 0,
+        queuedMessages: [TEST_USER_MESSAGE],
+        messages: [],
+      },
+      startAgentMessageResult: { dispatchLaunched: false },
+      slashCommand: { name: "/compact" },
+    });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(startAgentMessage).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      processed: true,
+      dispatchLaunched: false,
+      reason: "dispatch_started_slash",
     });
   });
 

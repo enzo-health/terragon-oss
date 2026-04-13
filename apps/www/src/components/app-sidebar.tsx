@@ -1,53 +1,52 @@
 "use client";
 
-import {
-  Home,
-  Settings,
-  Container,
-  BookOpen,
-  Shield,
-  ChevronUp,
-  Workflow,
-  ChartColumnBig,
-  SunIcon,
-  MoonIcon,
-} from "lucide-react";
-import { Wordmark, WordmarkLogo } from "./shared/wordmark";
-import {
-  useSidebar,
-  Sidebar,
-  SidebarTrigger,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarHeader,
-  SidebarMenuBadge,
-  SidebarFooter,
-  SidebarMenuItem,
-  SidebarRail,
-} from "@/components/ui/sidebar";
-import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
-import { useAtomValue } from "jotai";
-import { userAtom } from "@/atoms/user";
 import { publicDocsUrl } from "@terragon/env/next-public";
+import { useAtomValue } from "jotai";
 import {
-  DropdownMenu,
-  DropdownMenuItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  BookOpen,
+  ChartColumnBig,
+  ChevronUp,
+  Container,
+  Home,
+  MoonIcon,
+  Settings,
+  Shield,
+  SunIcon,
+  Workflow,
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useTheme } from "next-themes";
+import React, { useCallback, useEffect, useState } from "react";
+import { userAtom } from "@/atoms/user";
+import { signOut } from "@/components/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { signOut } from "@/components/auth";
-import Link from "next/link";
-import React from "react";
-import { useTheme } from "next-themes";
-import { headerClassName } from "./shared/header";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { headerClassName } from "./shared/header";
+import { Wordmark, WordmarkLogo } from "./shared/wordmark";
 
 function SidebarHeaderContent() {
   const { open, isMobile, toggleSidebar } = useSidebar();
@@ -109,16 +108,16 @@ export function AppSidebar() {
   }, []);
 
   return (
-    <Sidebar collapsible="icon" variant="inset">
+    <Sidebar collapsible="icon" variant="inset" className="bg-app-background">
       <SidebarHeader
         className={cn(
-          "justify-center px-3 pb-2 pt-3 group-data-[collapsible=icon]:px-2 group-data-[collapsible=icon]:pt-3",
+          "justify-center p-2 group-data-[collapsible=icon]:px-2",
           headerClassName,
         )}
       >
         <SidebarHeaderContent />
       </SidebarHeader>
-      <SidebarContent className="px-2.5 pb-3 group-data-[collapsible=icon]:px-2">
+      <SidebarContent className="px-2 pb-4 pt-0 group-data-[collapsible=icon]:px-1.5">
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -140,7 +139,7 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup className="mt-3">
+        <SidebarGroup className="mt-1">
           <SidebarGroupLabel className="mb-1 px-3">Configure</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -158,7 +157,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         {isAdmin && (
-          <SidebarGroup className="mt-6">
+          <SidebarGroup className="mt-2">
             <SidebarGroupLabel className="mb-1 px-3">Admin</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
@@ -172,56 +171,47 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        <SidebarGroup className="mt-auto pt-2">
+        <SidebarGroup className="mt-auto pt-0.5">
           <SidebarGroupLabel className="mb-1 px-3">Support</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <AppMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="Documentation"
-                  className="text-caption"
-                >
-                  <a
-                    href={publicDocsUrl()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <BookOpen className="h-5 w-5 opacity-70" />
-                    <span>Documentation</span>
-                  </a>
-                </SidebarMenuButton>
-              </AppMenuItem>
+              <Item
+                title="Documentation"
+                href={publicDocsUrl()}
+                icon={<BookOpen className="h-3.5 w-3.5" />}
+                external
+              />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="sidebar-footer-pwa border-t border-sidebar-border/70 px-3 pb-3 pt-3">
+      <SidebarFooter className="sidebar-footer-pwa border-t border-sidebar-border/70 px-3 pb-3 pt-3 group-data-[collapsible=icon]:px-1.5">
         <SidebarMenu>
           <AppMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
+                  size="lg"
                   tooltip={user?.name ?? "Account"}
-                  className="h-11 rounded-2xl bg-background/70 shadow-[var(--shadow-outline-ring)] group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:justify-center hover:bg-accent/85"
+                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
-                  <Avatar className="mr-3 size-7 shadow-[var(--shadow-card)] group-data-[collapsible=icon]:mr-0">
+                  <Avatar className="h-8 w-8 rounded-lg">
                     <AvatarImage src={user?.image ?? undefined} />
-                    <AvatarFallback className="bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
+                    <AvatarFallback className="rounded-lg bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
                       {user?.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="text-caption font-medium group-data-[collapsible=icon]:hidden">
-                    {user?.name}
-                  </span>
-                  <ChevronUp className="ml-auto size-4 opacity-40 group-data-[collapsible=icon]:hidden" />
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-medium">{user?.name}</span>
+                  </div>
+                  <ChevronUp className="ml-auto size-4 text-muted-foreground" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 side="top"
-                align="start"
-                alignOffset={1}
-                className="w-(--radix-popper-anchor-width) rounded-xl shadow-card"
+                align="end"
+                className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+                sideOffset={4}
               >
                 {mounted && (
                   <DropdownMenuItem
@@ -255,37 +245,42 @@ function Item({
   href,
   icon,
   count,
+  external = false,
 }: {
   title: string;
   href: string;
   icon: React.ReactNode;
   count?: number;
+  external?: boolean;
 }) {
   const pathname = usePathname();
   const isActive = pathname === href;
 
   return (
     <AppMenuItem>
-      <SidebarMenuButton
-        asChild
-        isActive={isActive}
-        tooltip={title}
-        className="text-caption"
-      >
-        <Link href={href}>
-          <span
-            className={cn(
-              "transition-colors",
-              isActive ? "text-primary" : "text-muted-foreground/70",
-            )}
+      <SidebarMenuButton asChild isActive={isActive} tooltip={title}>
+        {external ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-normal text-xs transition-colors duration-150"
           >
             {icon}
-          </span>
-          <span>{title}</span>
-        </Link>
+            <span>{title}</span>
+          </a>
+        ) : (
+          <Link
+            href={href}
+            className="font-normal text-xs transition-colors duration-150"
+          >
+            {icon}
+            <span>{title}</span>
+          </Link>
+        )}
       </SidebarMenuButton>
       {!!count && (
-        <SidebarMenuBadge className="rounded-full bg-[var(--warm-stone)] px-1.5 text-[10px] font-semibold text-foreground">
+        <SidebarMenuBadge className="right-2 rounded-full border border-sidebar-border/60 bg-[var(--warm-stone)] px-1.5 text-[10px] font-semibold text-foreground">
           {count}
         </SidebarMenuBadge>
       )}

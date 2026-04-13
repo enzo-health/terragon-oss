@@ -149,13 +149,13 @@ function CodeBlockPre(props: unknown) {
 
   return (
     <div className="group/code relative my-3">
-      <div className="absolute top-2 left-3 z-10 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+      <div className="absolute top-2 left-3 z-10 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
         {language ?? "code"}
       </div>
       <pre
         {...rest}
         className={cn(
-          "overflow-x-auto rounded-lg border border-border bg-muted/30 p-3 pt-8 font-mono text-sm",
+          "overflow-x-auto rounded-lg border border-border/50 bg-muted/20 p-3 pt-8 font-mono text-sm",
           className,
         )}
       >
@@ -165,7 +165,7 @@ function CodeBlockPre(props: unknown) {
         type="button"
         size="icon"
         variant="ghost"
-        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-100"
+        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-70"
         onClick={onCopy}
         title={isCopied ? "Copied" : "Copy code"}
         aria-label={isCopied ? "Code copied" : "Copy code"}

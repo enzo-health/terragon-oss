@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:cron": "dotenv -e .env.development.local -- vercel-cron",
-    "build": "pnpm --filter @terragon/shared drizzle-kit-migrate && pnpm --filter bundled build && next build",
+    "build": "pnpm --filter bundled build && next build",
     "start": "next start",
     "test": "node ./scripts/run-vitest.mjs",
     "storybook": "ladle serve",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^2.0.42",
     "@anthropic-ai/sdk": "^0.52.0",
+    "@assistant-ui/react": "^0.12.24",
     "@aws-sdk/client-s3": "^3.803.0",
     "@aws-sdk/s3-request-presigner": "^3.803.0",
     "@date-fns/tz": "^1.2.0",

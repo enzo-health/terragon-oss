@@ -103,11 +103,6 @@ export const WorkingMessage_: Story = () => {
       />
       <WorkingMessage
         status="booting"
-        bootingSubstatus="installing-sandbox-scripts"
-        {...defaultProps}
-      />
-      <WorkingMessage
-        status="booting"
         bootingSubstatus="running-setup-script"
         {...defaultProps}
       />

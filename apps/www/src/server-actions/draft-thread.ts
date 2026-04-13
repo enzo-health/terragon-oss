@@ -17,7 +17,7 @@ import {
 } from "@terragon/shared/model/threads";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { waitUntil } from "@vercel/functions";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getUserMessageToSend } from "@/lib/db-message-helpers";
 import { generateAndUpdateThreadName } from "@/server-lib/new-thread-shared";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
@@ -185,7 +185,7 @@ export const submitDraftThread = userOnlyAction(
         throw new UserFacingError("Failed to submit draft task");
       }
       waitUntil(
-        startAgentMessage({
+        dispatchAgentMessage({
           db,
           userId,
           threadId,

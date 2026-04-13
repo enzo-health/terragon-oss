@@ -599,42 +599,51 @@ async function buildStatusFromActiveWorkflow(params: {
   };
 }
 
+// Core implementation that can be used by both server actions and ORPC routes
+export async function getDeliveryLoopStatusCore(
+  userId: string,
+  threadId: string,
+): Promise<DeliveryLoopStatus | null> {
+  const thread = await db.query.thread.findFirst({
+    columns: {
+      id: true,
+      userId: true,
+    },
+    where: eq(schema.thread.id, threadId),
+  });
+  if (!thread) {
+    throw new UserFacingError("Unauthorized");
+  }
+
+  if (thread.userId !== userId) {
+    const threadWithPermissions = await getThreadWithUserPermissions({
+      userId,
+      threadId,
+    });
+    if (!threadWithPermissions) {
+      throw new UserFacingError("Unauthorized");
+    }
+  }
+
+  const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+  if (!activeWorkflow) {
+    return null;
+  }
+
+  const response = await buildStatusFromActiveWorkflow({
+    workflowRow: activeWorkflow.workflow,
+    v3Head: activeWorkflow.head,
+  });
+  return deliveryLoopStatusSchema.parse(response) as DeliveryLoopStatus;
+}
+
+// Server action wrapper that extracts userId from session
 export const getDeliveryLoopStatusAction = userOnlyAction(
   async function getDeliveryLoopStatusAction(
     userId: string,
     threadId: string,
   ): Promise<DeliveryLoopStatus | null> {
-    const thread = await db.query.thread.findFirst({
-      columns: {
-        id: true,
-        userId: true,
-      },
-      where: eq(schema.thread.id, threadId),
-    });
-    if (!thread) {
-      throw new UserFacingError("Unauthorized");
-    }
-
-    if (thread.userId !== userId) {
-      const threadWithPermissions = await getThreadWithUserPermissions({
-        userId,
-        threadId,
-      });
-      if (!threadWithPermissions) {
-        throw new UserFacingError("Unauthorized");
-      }
-    }
-
-    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
-    if (!activeWorkflow) {
-      return null;
-    }
-
-    const response = await buildStatusFromActiveWorkflow({
-      workflowRow: activeWorkflow.workflow,
-      v3Head: activeWorkflow.head,
-    });
-    return deliveryLoopStatusSchema.parse(response) as DeliveryLoopStatus;
+    return getDeliveryLoopStatusCore(userId, threadId);
   },
   { defaultErrorMessage: "Failed to get delivery loop status" },
 );

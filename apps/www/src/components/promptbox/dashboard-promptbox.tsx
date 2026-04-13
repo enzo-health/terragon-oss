@@ -1,28 +1,25 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
-import {
-  usePromptBox,
-  HandleSubmitArgs as UsePromptBoxHandleSubmitArgs,
-  HandleSubmit as UsePromptBoxHandleSubmit,
-  HandleUpdate,
-  HandleStop,
-} from "./use-promptbox";
-import { SimplePromptBox } from "./simple-promptbox";
-import { useRepositoryCache } from "./typeahead/repository-cache";
+import { modelToAgent } from "@terragon/agent/utils";
 import { ThreadStatus } from "@terragon/shared";
-import {
-  useSelectedRepo,
-  useSelectedBranch,
-} from "@/hooks/useSelectedRepoAndBranch";
+import React, { useCallback, useMemo, useState } from "react";
+import { useCredentialInfoForAgent } from "@/atoms/user-credentials";
+import { useSelectedRepoAndBranch } from "@/hooks/useSelectedRepoAndBranch";
 import { RepoBranchSelector } from "../repo-branch-selector";
 import { CredentialsWarning } from "./credentials-warning";
-import { useCredentialInfoForAgent } from "@/atoms/user-credentials";
 import {
   PromptBoxToolBelt,
   usePromptBoxToolBeltOptions,
 } from "./prompt-box-tool-belt";
-import { modelToAgent } from "@terragon/agent/utils";
+import { SimplePromptBox } from "./simple-promptbox";
+import { useRepositoryCache } from "./typeahead/repository-cache";
+import {
+  HandleStop,
+  HandleUpdate,
+  HandleSubmit as UsePromptBoxHandleSubmit,
+  HandleSubmitArgs as UsePromptBoxHandleSubmitArgs,
+  usePromptBox,
+} from "./use-promptbox";
 
 export type DashboardPromptBoxHandleSubmit = (
   args: UsePromptBoxHandleSubmitArgs & {
@@ -44,16 +41,17 @@ interface DashboardPromptBoxProps {
 }
 
 export function DashboardPromptBox(props: DashboardPromptBoxProps) {
-  const [repoFullName, setRepoFullName] = useSelectedRepo();
-  const [branchName, setBranchName] = useSelectedBranch();
+  const { selectedRepo, selectedBranch, setSelectedRepoAndBranch } =
+    useSelectedRepoAndBranch();
+  const repoFullName = selectedRepo;
+  const branchName = selectedBranch;
   const [isRecording, setIsRecording] = useState(false);
   const [runInDeliveryLoop, setRunInDeliveryLoop] = useState(true);
   const onRepoBranchChange = useCallback(
     (repo: string | null, branch: string | null) => {
-      setRepoFullName(repo);
-      setBranchName(branch);
+      void setSelectedRepoAndBranch(repo, branch);
     },
-    [setRepoFullName, setBranchName],
+    [setSelectedRepoAndBranch],
   );
 
   const repositoryCache = useRepositoryCache({

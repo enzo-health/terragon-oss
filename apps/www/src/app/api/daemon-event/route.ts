@@ -1,6 +1,12 @@
-import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
+import {
+  getDaemonTokenAuthContextOrNull,
+  type DaemonTokenAuthContext,
+} from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import { publishDeltaBroadcast } from "@terragon/shared/broadcast-server";
+import {
+  publishBroadcastUserMessage,
+  publishDeltaBroadcast,
+} from "@terragon/shared/broadcast-server";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -37,7 +43,7 @@ import {
   isRedisTransportParseError,
   redis,
 } from "@/lib/redis";
-import { appendEventAndAdvance } from "@/server-lib/delivery-loop/v3/kernel";
+import { appendEventAndAdvanceExplicit } from "@/server-lib/delivery-loop/v3/kernel";
 import {
   getActiveWorkflowForThreadV3,
   getWorkflowHead,
@@ -50,6 +56,7 @@ import {
   filterDeltasByKnownMaxSeq,
   normalizeDeltasForPersistence,
 } from "@/server-lib/token-stream-guards";
+import { env } from "@terragon/env/apps-www";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -61,6 +68,9 @@ type DaemonEventEnvelopeV2 = {
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
 const DELTA_SEQ_MAX_TTL_SECONDS = 60 * 60 * 24;
+const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
+const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
+const DAEMON_TEST_AUTH_ENABLED_VALUE = "enabled";
 
 type DaemonProcessingEventClaimResult =
   | {
@@ -584,6 +594,40 @@ function hasRequiredThreadChatIdForNonLegacyPayload(
   );
 }
 
+function getDaemonTestAuthContextOrNull(
+  request: Pick<Request, "headers">,
+): DaemonTokenAuthContext | null {
+  if (process.env.NODE_ENV === "production") {
+    return null;
+  }
+
+  if (request.headers.get("X-Daemon-Token")) {
+    return null;
+  }
+
+  if (
+    request.headers.get(DAEMON_TEST_AUTH_HEADER) !==
+    DAEMON_TEST_AUTH_ENABLED_VALUE
+  ) {
+    return null;
+  }
+
+  if (request.headers.get("X-Terragon-Secret") !== env.INTERNAL_SHARED_SECRET) {
+    return null;
+  }
+
+  const userId = request.headers.get(DAEMON_TEST_USER_ID_HEADER);
+  if (!userId || userId.length === 0) {
+    return null;
+  }
+
+  return {
+    userId,
+    keyId: null,
+    claims: null,
+  };
+}
+
 export async function POST(request: Request) {
   const json: DaemonEventAPIBody = await request.json();
   const daemonVersionHeader =
@@ -616,7 +660,12 @@ export async function POST(request: Request) {
       : LEGACY_THREAD_CHAT_ID;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
   let selfDispatchPayload: SdlcSelfDispatchPayload | null = null;
-  const daemonAuthContext = await getDaemonTokenAuthContextOrNull(request);
+  const daemonTokenAuthContext = await getDaemonTokenAuthContextOrNull(request);
+  const daemonTestAuthContext = daemonTokenAuthContext
+    ? null
+    : getDaemonTestAuthContextOrNull(request);
+  const daemonAuthContext = daemonTokenAuthContext ?? daemonTestAuthContext;
+  const usingDaemonTestAuth = daemonTestAuthContext !== null;
   if (!daemonAuthContext) {
     return new Response("Unauthorized", { status: 401 });
   }
@@ -721,14 +770,80 @@ export async function POST(request: Request) {
   }
 
   if (envelopeV2 && !claims) {
-    return Response.json(
-      {
-        success: false,
-        error: "daemon_token_claims_required",
-        runId: envelopeV2.runId,
-      },
-      { status: 401 },
-    );
+    if (!usingDaemonTestAuth) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_claims_required",
+          runId: envelopeV2.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (!runContext) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_not_found",
+          runId: envelopeV2.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      runContext.threadId !== threadId ||
+      runContext.threadChatId !== threadChatId
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      transportMode !== runContext.transportMode ||
+      protocolVersion !== runContext.protocolVersion
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_transport_context_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped"
+    ) {
+      const replayedSelfDispatch =
+        threadChatId !== LEGACY_THREAD_CHAT_ID
+          ? await getReplayableSelfDispatch({
+              threadChatId,
+              sourceEventId: envelopeV2.eventId,
+              sourceSeq: envelopeV2.seq,
+              sourceRunId: runContext.runId,
+            })
+          : null;
+      return jsonTerminalAckResponse(
+        buildTerminalAckState(
+          {
+            status: 202,
+            deduplicated: true,
+            reason: "run_terminal_ignored",
+            runId: runContext.runId,
+            acknowledgedEventId: envelopeV2.eventId,
+            acknowledgedSeq: envelopeV2.seq,
+          },
+          replayedSelfDispatch,
+        ),
+      );
+    }
   }
 
   if (claims) {
@@ -1319,7 +1434,7 @@ export async function POST(request: Request) {
       if (daemonRunStatusFromMessages === "stopped") {
         // Preserve prior behavior: stopped terminals do not advance the v3 loop.
       } else if (daemonRunStatusFromMessages === "completed") {
-        await appendEventAndAdvance({
+        await appendEventAndAdvanceExplicit({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
@@ -1333,9 +1448,13 @@ export async function POST(request: Request) {
             terminalRunSeq,
             daemonHeadShaAtCompletion,
           ),
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
         });
       } else if (daemonRunStatusFromMessages === "failed") {
-        await appendEventAndAdvance({
+        await appendEventAndAdvanceExplicit({
           db,
           workflowId: effectiveLoopId,
           source: "daemon",
@@ -1351,6 +1470,10 @@ export async function POST(request: Request) {
             daemonTerminalErrorInfo.errorMessage ?? undefined,
             daemonTerminalErrorInfo.errorCategory,
           ),
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
         });
       }
     } catch (v3Err) {
@@ -1361,8 +1484,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // NOTE: Explicit inline drain removed — the kernel's appendEventAndAdvance
-    // now eagerly drains effects inline (eagerDrain defaults to true).
+    // NOTE: kernel advance is configured for eager effect drain in this path.
     // The cron at /api/internal/cron/dispatch-ack-timeout remains as safety net.
   }
 
@@ -1370,6 +1492,7 @@ export async function POST(request: Request) {
   // This was deferred from the postHandleOps block so that a tick failure
   // keeps the run non-terminal and allows daemon retries to re-enter the
   // main processing path. Both writes are awaited to prevent silent drops.
+  let didUpdateTerminalDispatchStatus = false;
   {
     const terminalOps: Array<Promise<unknown>> = [];
     if (runContext && resolvedStatus !== "processing") {
@@ -1388,6 +1511,9 @@ export async function POST(request: Request) {
           daemonRunStatus: daemonRunStatusFromMessages,
           daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
           daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+        }).then((result) => {
+          didUpdateTerminalDispatchStatus = true;
+          return result;
         }),
       );
     }
@@ -1408,6 +1534,37 @@ export async function POST(request: Request) {
         }
       }
     }
+  }
+
+  // Broadcast delivery-loop refetch on terminal daemon events that materially
+  // changed the delivery-loop state. This enables event-driven UI updates.
+  if (
+    didUpdateTerminalDispatchStatus &&
+    effectiveLoopId &&
+    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    publishBroadcastUserMessage({
+      type: "user",
+      id: userId,
+      data: {
+        threadPatches: [
+          {
+            threadId,
+            threadChatId,
+            op: "refetch",
+            refetch: ["delivery-loop"],
+          },
+        ],
+      },
+    }).catch((error) => {
+      console.warn("[daemon-event] delivery-loop broadcast failed", {
+        threadId,
+        threadChatId,
+        loopId: effectiveLoopId,
+        error,
+      });
+    });
   }
 
   return jsonTerminalAckResponse(

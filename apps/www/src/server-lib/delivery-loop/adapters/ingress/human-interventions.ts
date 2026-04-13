@@ -1,10 +1,10 @@
 import type { DB } from "@terragon/shared/db";
 import type { DeliverySignalSourceV3 } from "@terragon/shared/db/types";
-import type {
-  WorkflowId,
-  GateKind,
-} from "@terragon/shared/delivery-loop/domain/workflow";
 import type { DeliverySignal } from "@terragon/shared/delivery-loop/domain/signals";
+import type {
+  GateKind,
+  WorkflowId,
+} from "@terragon/shared/delivery-loop/domain/workflow";
 
 export type HumanAction = "resume" | "bypass" | "stop" | "mark_done";
 
@@ -25,12 +25,19 @@ function toV3SignalSource(
 function serializeSignalForJournal(
   signal: DeliverySignal,
 ): Record<string, unknown> {
-  return {
-    source: signal.source,
-    event: {
-      ...signal.event,
-    },
-  };
+  switch (signal.event.kind) {
+    case "resume_requested":
+      return { type: "resume_requested" };
+    case "stop_requested":
+      return { type: "stop_requested" };
+    default:
+      return {
+        source: signal.source,
+        event: {
+          ...signal.event,
+        },
+      };
+  }
 }
 
 /**

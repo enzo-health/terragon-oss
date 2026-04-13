@@ -1,13 +1,13 @@
+import { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
+import { agentToModels, modelToAgent } from "@terragon/agent/utils";
 import { useAtom, useSetAtom } from "jotai";
+import { useCallback, useMemo, useState } from "react";
 import {
-  selectedModelAtom,
-  selectedModelPersistedAtom,
   multiAgentModePersistedAtom,
+  promptPreferencesPersistedAtom,
+  selectedModelAtom,
   selectedModelsPersistedAtom,
 } from "@/atoms/user-flags";
-import { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
-import { useCallback, useMemo, useState } from "react";
-import { agentToModels, modelToAgent } from "@terragon/agent/utils";
 import { useFeatureFlag } from "./use-feature-flag";
 
 export type SetSelectedModel = ({
@@ -48,9 +48,7 @@ export function useSelectedModel({
   const [selectedModelsPersisted, setPersistedSelectedModels] = useAtom(
     selectedModelsPersistedAtom,
   );
-  const [multiAgentModePersisted, setPersistedMultiAgentMode] = useAtom(
-    multiAgentModePersistedAtom,
-  );
+  const [multiAgentModePersisted] = useAtom(multiAgentModePersistedAtom);
   const [multiAgentModeInner, setMultiAgentModeInner] = useState(
     multiAgentModePersisted,
   );
@@ -65,16 +63,6 @@ export function useSelectedModel({
   const isMultiAgentMode = useMemo(() => {
     return supportsMultiAgentPromptSubmission ? multiAgentModeInner : false;
   }, [supportsMultiAgentPromptSubmission, multiAgentModeInner]);
-
-  const setMultiAgentMode = useCallback(
-    (value: boolean) => {
-      setMultiAgentModeInner(value);
-      if (persistToUserFlags) {
-        setPersistedMultiAgentMode(value);
-      }
-    },
-    [persistToUserFlags, setPersistedMultiAgentMode],
-  );
 
   const { selectedModel, selectedModels } = useMemo(() => {
     const selectedModels: SelectedAIModels = {};
@@ -115,12 +103,14 @@ export function useSelectedModel({
     openCodeGemini3ProModel,
   ]);
 
-  const setPersistedSelectedModel = useSetAtom(selectedModelPersistedAtom);
+  const setPersistedPromptPreferences = useSetAtom(
+    promptPreferencesPersistedAtom,
+  );
   const setSelectedModels = useCallback(
     (models: SelectedAIModels) => {
       setSelectedModelsInner(models);
       if (persistToUserFlags) {
-        setPersistedSelectedModels(models);
+        void setPersistedSelectedModels(models);
       }
     },
     [persistToUserFlags, setPersistedSelectedModels],
@@ -134,9 +124,14 @@ export function useSelectedModel({
       if (!isMultiAgentMode) {
         setSelectedModelFromAtom(model);
         const newSelectedModels = { [model]: 1 };
-        setSelectedModels(newSelectedModels);
         if (persistToUserFlags) {
-          setPersistedSelectedModel(model);
+          setSelectedModelsInner(newSelectedModels);
+          void setPersistedPromptPreferences({
+            selectedModel: model,
+            selectedModels: newSelectedModels,
+          });
+        } else {
+          setSelectedModels(newSelectedModels);
         }
         return true;
       }
@@ -156,17 +151,31 @@ export function useSelectedModel({
       setSelectedModelFromAtom,
       forcedAgent,
       persistToUserFlags,
-      setPersistedSelectedModel,
+      setPersistedPromptPreferences,
       setSelectedModels,
     ],
   );
 
   const setIsMultiAgentMode = useCallback(
     (value: boolean) => {
-      setMultiAgentMode(value);
-      setSelectedModels({ [selectedModel]: 1 });
+      const nextSelectedModels = { [selectedModel]: 1 };
+      setMultiAgentModeInner(value);
+      setSelectedModelsInner(nextSelectedModels);
+      if (persistToUserFlags) {
+        void setPersistedPromptPreferences({
+          multiAgentMode: value,
+          selectedModels: nextSelectedModels,
+        });
+      } else {
+        setSelectedModels(nextSelectedModels);
+      }
     },
-    [setMultiAgentMode, selectedModel, setSelectedModels],
+    [
+      persistToUserFlags,
+      selectedModel,
+      setPersistedPromptPreferences,
+      setSelectedModels,
+    ],
   );
 
   return {

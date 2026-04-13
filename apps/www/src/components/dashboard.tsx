@@ -5,12 +5,9 @@ import {
   DashboardPromptBox,
 } from "./promptbox/dashboard-promptbox";
 import { ThreadListMain } from "./thread-list/main";
-import { newThread } from "@/server-actions/new-thread";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { ThreadInfo } from "@terragon/shared";
-import { getThreadInfoCollection } from "@/collections/thread-info-collection";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { HandleUpdate } from "./promptbox/use-promptbox";
@@ -18,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { RecommendedTasks } from "./recommended-tasks";
 import { useAtomValue } from "jotai";
 import { selectedModelAtom } from "@/atoms/user-flags";
-import { unwrapError, unwrapResult } from "@/lib/server-actions";
+import { useCreateThreadMutation } from "@/queries/thread-mutations";
 
 export function Dashboard({
   showArchived = false,
@@ -27,6 +24,7 @@ export function Dashboard({
 }) {
   const [typewriterEffectEnabled, setTypewriterEffectEnabled] = useState(true);
   const placeholder = useTypewriterEffect(typewriterEffectEnabled);
+  const createThreadMutation = useCreateThreadMutation();
   const handleSubmit = useCallback<DashboardPromptBoxHandleSubmit>(
     async ({
       userMessage,
@@ -40,95 +38,23 @@ export function Dashboard({
       createNewBranch,
       runInDeliveryLoop,
     }) => {
-      // Build an optimistic thread to show immediately in the list
-      const optimisticId = `optimistic-${Date.now()}`;
-      const now = new Date();
-      const optimisticThread: ThreadInfo = {
-        id: optimisticId,
-        userId: "",
-        name:
-          convertToPlainText({
-            message: userMessage,
-            skipAttachments: true,
-          }).slice(0, 100) || "New task",
+      await createThreadMutation.mutateAsync({
+        message: userMessage,
         githubRepoFullName: repoFullName,
-        githubPRNumber: null,
-        githubIssueNumber: null,
-        codesandboxId: null,
-        sandboxProvider: "e2b",
-        sandboxSize: null,
-        sandboxStatus: null,
-        bootingSubstatus: null,
-        createdAt: now,
-        updatedAt: now,
-        repoBaseBranchName: branchName || "main",
-        branchName: null,
-        archived: false,
-        automationId: null,
-        parentThreadId: null,
-        parentToolId: null,
-        draftMessage: saveAsDraft ? userMessage : null,
-        disableGitCheckpointing: disableGitCheckpointing ?? false,
-        skipSetup: skipSetup ?? false,
-        sourceType: "www",
-        sourceMetadata: null,
-        version: 1,
-        gitDiffStats: null,
-        authorName: null,
-        authorImage: null,
-        prStatus: null,
-        prChecksStatus: null,
-        visibility: null,
-        isUnread: false,
-        messageSeq: 0,
-        threadChats: [
-          {
-            id: "optimistic-chat",
-            agent: "claudeCode",
-            status: saveAsDraft ? "draft" : scheduleAt ? "scheduled" : "queued",
-            errorMessage: null,
-          },
-        ],
-      };
-
-      // Optimistically insert into the TanStack DB collection
-      const collection = getThreadInfoCollection();
-      if (collection.status === "ready") {
-        collection.insert(optimisticThread);
-      }
-
-      try {
-        unwrapResult(
-          await newThread({
-            message: userMessage,
-            githubRepoFullName: repoFullName,
-            branchName,
-            saveAsDraft,
-            disableGitCheckpointing,
-            skipSetup,
-            createNewBranch,
-            runInDeliveryLoop,
-            scheduleAt,
-            selectedModels,
-          }),
-        );
-        if (saveAsDraft) {
-          toast.success("Task saved as draft successfully.");
-        }
-      } catch (error: unknown) {
-        // Roll back optimistic insert
-        if (
-          collection.status === "ready" &&
-          collection.state.has(optimisticId)
-        ) {
-          collection.delete(optimisticId);
-        }
-        console.error("Failed to create thread:", error);
-        toast.error(unwrapError(error), { duration: 5000 });
-        throw error;
+        branchName,
+        saveAsDraft,
+        disableGitCheckpointing,
+        skipSetup,
+        createNewBranch,
+        runInDeliveryLoop,
+        scheduleAt,
+        selectedModels,
+      });
+      if (saveAsDraft) {
+        toast.success("Task saved as draft successfully.");
       }
     },
-    [],
+    [createThreadMutation],
   );
 
   const handleStop = useCallback(async () => {

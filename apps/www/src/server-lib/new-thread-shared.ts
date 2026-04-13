@@ -16,7 +16,7 @@ import { modelToAgent } from "@terragon/agent/utils";
 import { UserFacingError } from "@/lib/server-actions";
 import { getUserSettings } from "@terragon/shared/model/user";
 import { waitUntil } from "@vercel/functions";
-import { startAgentMessage } from "@/agent/msg/startAgentMessage";
+import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getSandboxProvider } from "@/agent/sandbox";
 import { userMessageToPlainText } from "@/components/promptbox/tiptap-to-richtext";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -89,7 +89,11 @@ export async function createNewThread({
   sourceType,
   sourceMetadata,
   delayMs = 0,
-}: CreateThreadOptions): Promise<{ threadId: string; threadChatId: string }> {
+}: CreateThreadOptions): Promise<{
+  threadId: string;
+  threadChatId: string;
+  model: NonNullable<DBUserMessage["model"]>;
+}> {
   // Enforce per-user shadow-ban rate limit if applicable
   await checkShadowBanTaskCreationRateLimit(userId);
   if (!baseBranchName) {
@@ -171,7 +175,6 @@ export async function createNewThread({
 
   const sandboxProvider = await getSandboxProvider({
     userSetting: userSettings?.sandboxProvider,
-    sandboxSize,
     userId,
   });
 
@@ -269,7 +272,7 @@ export async function createNewThread({
         draftMessage: await uploadUserMessageImages({ userId, message }),
       },
     });
-    return { threadId, threadChatId };
+    return { threadId, threadChatId, model: messageWithModel.model };
   }
 
   const updateThreadMetadata = () => {
@@ -372,7 +375,7 @@ export async function createNewThread({
       );
     }
     updateThreadMetadata();
-    return { threadId, threadChatId };
+    return { threadId, threadChatId, model: messageWithModel.model };
   }
 
   // Determine if "Disable git checkpointing" should force no new branch on create
@@ -424,7 +427,7 @@ export async function createNewThread({
 
   // Start processing the message
   waitUntil(
-    startAgentMessage({
+    dispatchAgentMessage({
       db,
       userId,
       message: messageWithModel,
@@ -437,11 +440,15 @@ export async function createNewThread({
         : headBranchName || baseBranchName,
       delayMs,
     }).catch((error) => {
-      console.error("Error in startAgentMessage:", error);
+      console.error("Error in dispatchAgentMessage:", error);
     }),
   );
   updateThreadMetadata();
-  return { threadId, threadChatId };
+  return {
+    threadId,
+    threadChatId,
+    model: messageWithModel.model,
+  };
 }
 
 export async function generateAndUpdateThreadName({

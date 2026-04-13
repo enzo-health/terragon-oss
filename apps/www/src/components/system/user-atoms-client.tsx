@@ -1,31 +1,35 @@
 "use client";
 
-import { useEffect } from "react";
-import { UserCookies } from "@/lib/cookies";
-import {
-  bearerTokenAtom,
-  userAtom,
-  userSettingsAtom,
-  userSettingsRefetchAtom,
-  impersonationAtom,
-  ImpersonationInfo,
-  userFeatureFlagsAtom,
-} from "@/atoms/user";
-import { userCookiesInitAtom, timeZoneAtom } from "@/atoms/user-cookies";
-import { userFlagsAtom, userFlagsRefetchAtom } from "@/atoms/user-flags";
-import { useHydrateAtoms } from "jotai/utils";
 import {
   User,
-  UserSettings,
-  UserFlags,
   UserCredentials,
+  UserFlags,
+  UserSettings,
 } from "@terragon/shared";
-import { useRealtimeUser } from "@/hooks/useRealtime";
 import { useAtom, useSetAtom } from "jotai";
+import { useHydrateAtoms } from "jotai/utils";
+import { useEffect } from "react";
+import {
+  bearerTokenAtom,
+  ImpersonationInfo,
+  impersonationAtom,
+  userAtom,
+  userFeatureFlagsAtom,
+  userSettingsAtom,
+  userSettingsRefetchAtom,
+} from "@/atoms/user";
+import { timeZoneAtom, userCookiesInitAtom } from "@/atoms/user-cookies";
 import {
   userCredentialsAtom,
   userCredentialsRefetchAtom,
 } from "@/atoms/user-credentials";
+import {
+  shouldSkipUserFlagsBroadcastRefetch,
+  userFlagsAtom,
+  userFlagsRefetchAtom,
+} from "@/atoms/user-flags";
+import { useRealtimeUser } from "@/hooks/useRealtime";
+import { UserCookies } from "@/lib/cookies";
 
 export function UserAtomsHydrator({
   user,
@@ -79,7 +83,12 @@ export function UserAtomsHydrator({
   });
   useRealtimeUser({
     matches: (message) => !!message.data.userFlags,
-    onMessage: () => refetchUserFlags(),
+    onMessage: () => {
+      if (shouldSkipUserFlagsBroadcastRefetch()) {
+        return;
+      }
+      refetchUserFlags();
+    },
   });
   useRealtimeUser({
     matches: (message) => !!message.data.userCredentials,

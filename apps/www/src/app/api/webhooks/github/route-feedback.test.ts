@@ -104,6 +104,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(newThreadInternal).mockResolvedValue({
       threadId: "new-thread-id",
       threadChatId: "new-thread-chat-id",
+      model: "sonnet",
     });
     vi.mocked(getThread).mockResolvedValue({
       id: "loop-thread-id",
@@ -185,7 +186,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       id: "thread-1",
       threadChats: [{ id: "chat-1" }],
       sourceType: "www",
-      sourceMetadata: { type: "www", sdlcLoopOptIn: false },
+      sourceMetadata: { type: "www", deliveryLoopOptIn: false },
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
     vi.mocked(isDeliveryLoopEnrollmentAllowedForThread).mockReturnValue(false);
 
