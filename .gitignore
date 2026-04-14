@@ -48,6 +48,14 @@ output.txt
 
 # claude code
 .claude/settings.local.json
+.claude/mind.*
+.claude/.mind.*
+.claude/session-reads.txt
+**/.claude/session-reads.txt
+
+# scratch planning docs
+delivery-loop-simple-architecture-plan.md
+task_plan.md
 
 # turborepo
 .turbo
@@ -59,8 +67,12 @@ output.txt
 apps/vscode-extension/.vscode/
 .env*.local
 
-# Eval raw dumps
+# CLI build artifacts
+apps/cli/bin/
+
+# Eval raw dumps & run data
 eval-dumps/
+packages/eval/runs/
 
 # CodeDB local indexes
 codedb.snapshot
