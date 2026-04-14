@@ -281,6 +281,13 @@ export type ThreadStatusDeprecated =
   | "stopped"
   | "working-stopped";
 
+/** Statuses where the thread is waiting in a queue before sandbox boot. */
+export type ThreadQueuedStatus =
+  | "queued"
+  | "queued-tasks-concurrency"
+  | "queued-sandbox-creation-rate-limit"
+  | "queued-agent-rate-limit";
+
 export type ThreadStatus =
   // Deprecated
   | ThreadStatusDeprecated
@@ -288,14 +295,8 @@ export type ThreadStatus =
   | "draft"
   // User has scheduled a task to run at a later time
   | "scheduled"
-  // User has clicked "Send"
-  | "queued"
-  // Waiting for a sandbox to become available (concurrency limit)
-  | "queued-tasks-concurrency"
-  // Waiting due to sandbox creation rate limit
-  | "queued-sandbox-creation-rate-limit"
-  // Waiting due to agent (Claude) rate limit
-  | "queued-agent-rate-limit"
+  // Waiting in queue
+  | ThreadQueuedStatus
   // Sandbox is being provisioned
   | "booting"
   // Agent is running
@@ -680,7 +681,6 @@ export type DeliveryLoopState =
   | "implementing"
   | "review_gate"
   | "ci_gate"
-  | "ui_gate"
   | "awaiting_pr_link"
   | "babysitting"
   | "blocked"
@@ -694,7 +694,6 @@ export type DeliveryPhase =
   | "implementing"
   | "review_gate"
   | "ci_gate"
-  | "ui_gate"
   | "awaiting_pr_link"
   | "babysitting";
 
@@ -797,26 +796,7 @@ export type DeliveryLoopCauseType =
   | "pull_request.edited"
   | "pull_request_review"
   | "pull_request_review_comment"
-  | "review-thread-poll-synthetic"
-  // v2 delivery loop cause types
-  | "daemon_run_completed"
-  | "daemon_run_failed"
-  | "daemon_progress"
-  | "github_ci_changed"
-  | "github_review_changed"
-  | "github_pr_closed"
-  | "github_pr_synchronized"
-  | "human_resume"
-  | "human_bypass"
-  | "human_stop"
-  | "human_mark_done"
-  | "human_operator_action_required"
-  | "babysit_recheck"
-  | "babysit_recheck_passed"
-  | "babysit_recheck_blocked"
-  | "timer_dispatch_ack_expired"
-  | "timer_babysit_due"
-  | "timer_heartbeat";
+  | "review-thread-poll-synthetic";
 
 export type DeliveryLoopOutboxActionType =
   | "publish_status_comment"

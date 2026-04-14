@@ -10,10 +10,10 @@ import * as schema from "@terragon/shared/db/schema";
 import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
 import {
   createWorkflow,
-  getActiveWorkflowForThread,
+  getActiveWorkflowForThread as getLegacyActiveWorkflow,
 } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendEventAndAdvanceExplicit } from "./kernel";
-import { getActiveWorkflowForThreadV3 } from "./store";
+import { getActiveWorkflowForThread } from "./store";
 
 export async function enrollWorkflow(params: {
   db: DB;
@@ -24,7 +24,7 @@ export async function enrollWorkflow(params: {
   planApprovalPolicy?: DeliveryPlanApprovalPolicy;
 }): Promise<{ workflowId: string }> {
   // 1. Idempotency: if a workflow already exists for this thread, return it
-  const existing = await getActiveWorkflowForThreadV3({
+  const existing = await getActiveWorkflowForThread({
     db: params.db,
     threadId: params.threadId,
   });
@@ -32,7 +32,7 @@ export async function enrollWorkflow(params: {
     return { workflowId: existing.workflow.id };
   }
 
-  const orphanedLegacyWorkflow = await getActiveWorkflowForThread({
+  const orphanedLegacyWorkflow = await getLegacyActiveWorkflow({
     db: params.db,
     threadId: params.threadId,
   });
@@ -48,7 +48,7 @@ export async function enrollWorkflow(params: {
         drainEffects: true,
       },
     });
-    const healed = await getActiveWorkflowForThreadV3({
+    const healed = await getActiveWorkflowForThread({
       db: params.db,
       threadId: params.threadId,
     });
@@ -112,7 +112,7 @@ export async function enrollWorkflow(params: {
             drainEffects: true,
           },
         });
-        const recovered = await getActiveWorkflowForThreadV3({
+        const recovered = await getActiveWorkflowForThread({
           db: params.db,
           threadId: params.threadId,
         });
@@ -125,7 +125,7 @@ export async function enrollWorkflow(params: {
       }
     }
     // Race: concurrent caller may have inserted between our check and insert.
-    const raceWinner = await getActiveWorkflowForThreadV3({
+    const raceWinner = await getActiveWorkflowForThread({
       db: params.db,
       threadId: params.threadId,
     });

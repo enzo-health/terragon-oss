@@ -9,7 +9,7 @@ import { UserFacingError } from "@/lib/server-actions";
 import { parsePlanSpec } from "@/server-lib/delivery-loop/parse-plan-spec";
 import { extractLatestPlanText } from "@/server-lib/checkpoint-thread-internal";
 import { promotePlanToImplementing } from "@/server-lib/delivery-loop/promote-plan";
-import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
 import { normalizePlanApprovalPolicy } from "@/server-lib/delivery-loop/v3/types";
 
 export const approvePlan = userOnlyAction(
@@ -33,7 +33,7 @@ export const approvePlan = userOnlyAction(
       throw new UserFacingError("Task not found");
     }
 
-    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
     if (!activeWorkflow) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",

@@ -8,7 +8,7 @@ import type {
 
 export type HumanAction = "resume" | "bypass" | "stop" | "mark_done";
 
-function toV3SignalSource(
+function toSignalSource(
   source: DeliverySignal["source"],
 ): DeliverySignalSourceV3 {
   switch (source) {
@@ -112,7 +112,7 @@ export async function handleHumanAction(params: {
 
   const now = new Date();
   const canonicalCauseId = `human:${params.workflowId}:${params.action}:${params.idempotencyKey ?? crypto.randomUUID()}`;
-  const v3Source = toV3SignalSource(signal.source);
+  const v3Source = toSignalSource(signal.source);
   const signalPayload = serializeSignalForJournal(signal);
 
   const writeJournalAndOutbox = async (

@@ -1,5 +1,3 @@
-import type { FailureSignatureMap } from "./failure-signature";
-
 // Branded IDs — prevent silent ID swaps at compile time
 export type WorkflowId = string & { readonly __brand: "WorkflowId" };
 export type SignalId = string & { readonly __brand: "SignalId" };
@@ -9,52 +7,8 @@ export type GitSha = string & { readonly __brand: "GitSha" };
 export type ThreadId = string & { readonly __brand: "ThreadId" };
 export type PlanVersion = number & { readonly __brand: "PlanVersion" };
 
-// Top-level states (11, replacing 12 with better semantics)
-export type WorkflowState =
-  | "planning"
-  | "implementing"
-  | "gating"
-  | "awaiting_pr"
-  | "babysitting"
-  | "awaiting_plan_approval"
-  | "awaiting_manual_fix"
-  | "awaiting_operator_action"
-  | "done"
-  | "stopped"
-  | "terminated";
-
 // Gating substate — which gate is active
 export type GateKind = "review" | "ci" | "ui";
-
-// Dispatch sub-state
-export type DispatchSubState =
-  | {
-      kind: "queued";
-      dispatchId: DispatchId;
-      executionClass: ExecutionClass;
-    }
-  | {
-      kind: "sent";
-      dispatchId: DispatchId;
-      executionClass: ExecutionClass;
-      sentAt: Date;
-      ackDeadlineAt: Date;
-      dispatchMechanism: DispatchMechanism;
-    }
-  | {
-      kind: "acknowledged";
-      dispatchId: DispatchId;
-      executionClass: ExecutionClass;
-      sentAt: Date;
-      acknowledgedAt: Date;
-    }
-  | {
-      kind: "failed";
-      dispatchId: DispatchId;
-      executionClass: ExecutionClass;
-      failure: DispatchFailure;
-      failedAt: Date;
-    };
 
 export type ExecutionClass =
   | "implementation_runtime"
@@ -69,14 +23,6 @@ export type DispatchFailure =
 export type ReviewSurfaceRef =
   | { kind: "github_pr"; prNumber: number | null }
   | { kind: "other"; externalId: string };
-
-// Resumable state — what to return to after human wait resolves
-export type ResumableWorkflowState =
-  | { kind: "planning"; planVersion: PlanVersion | null }
-  | { kind: "implementing"; dispatchId: DispatchId; planVersion: PlanVersion }
-  | { kind: "gating"; gate: GateKind; headSha: GitSha }
-  | { kind: "awaiting_pr"; headSha: GitSha }
-  | { kind: "babysitting"; headSha: GitSha };
 
 // Termination reason
 export type TerminationReason =
@@ -151,63 +97,3 @@ export type UiGateSnapshot = {
   artifactUrl: string | null;
   blockers: readonly string[];
 };
-
-// Workflow aggregate — common fields
-export type WorkflowCommon = {
-  workflowId: WorkflowId;
-  threadId: ThreadId;
-  generation: number;
-  version: number;
-  fixAttemptCount: number;
-  infraRetryCount: number;
-  maxFixAttempts: number;
-  createdAt: Date;
-  updatedAt: Date;
-  lastActivityAt: Date | null;
-};
-
-// Discriminated union of all workflow states
-export type DeliveryWorkflow =
-  | (WorkflowCommon & { kind: "planning"; planVersion: PlanVersion | null })
-  | (WorkflowCommon & {
-      kind: "implementing";
-      planVersion: PlanVersion;
-      dispatch: DispatchSubState;
-      failureSignatures?: FailureSignatureMap;
-      lastFailureSignatureKey?: string;
-    })
-  | (WorkflowCommon & {
-      kind: "gating";
-      headSha: GitSha;
-      gate: GateSubState;
-    })
-  | (WorkflowCommon & { kind: "awaiting_pr"; headSha: GitSha })
-  | (WorkflowCommon & {
-      kind: "babysitting";
-      headSha: GitSha;
-      reviewSurface: ReviewSurfaceRef;
-      nextCheckAt: Date;
-    })
-  | (WorkflowCommon & {
-      kind: "awaiting_plan_approval";
-      planVersion: PlanVersion;
-      resumableFrom: Extract<ResumableWorkflowState, { kind: "planning" }>;
-    })
-  | (WorkflowCommon & {
-      kind: "awaiting_manual_fix";
-      reason: ManualFixIssue;
-      resumableFrom: Exclude<ResumableWorkflowState, { kind: "planning" }>;
-    })
-  | (WorkflowCommon & {
-      kind: "awaiting_operator_action";
-      incidentId: string;
-      reason: OperatorActionReason;
-      resumableFrom: ResumableWorkflowState;
-    })
-  | (WorkflowCommon & {
-      kind: "done";
-      outcome: CompletionOutcome;
-      completedAt: Date;
-    })
-  | (WorkflowCommon & { kind: "stopped"; reason: StopReason })
-  | (WorkflowCommon & { kind: "terminated"; reason: TerminationReason });

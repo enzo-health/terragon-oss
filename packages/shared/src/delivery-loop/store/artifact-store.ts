@@ -531,42 +531,6 @@ export async function createReviewBundleArtifact({
   });
 }
 
-export async function createUiSmokeArtifact({
-  db,
-  loopId,
-  headSha,
-  loopVersion,
-  payload,
-  generatedBy = "system",
-  status = "accepted",
-  workflowId,
-  now = new Date(),
-}: {
-  db: DB;
-  loopId: string;
-  headSha: string;
-  loopVersion: number;
-  payload: DeliveryUiSmokePayload;
-  generatedBy?: DeliveryArtifactGeneratedBy;
-  status?: DeliveryArtifactStatus;
-  workflowId?: string | null;
-  now?: Date;
-}) {
-  return await createHeadScopedArtifact({
-    db,
-    loopId,
-    phase: "ui_gate",
-    artifactType: "ui_smoke_result",
-    headSha,
-    loopVersion,
-    payload,
-    generatedBy,
-    status,
-    workflowId,
-    now,
-  });
-}
-
 export async function createPrLinkArtifact({
   db,
   loopId,

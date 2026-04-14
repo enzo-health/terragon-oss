@@ -411,15 +411,15 @@ export async function ensureWorkflowHead(params: {
   return getWorkflowHead({ db: params.db, workflowId: params.workflowId });
 }
 
-export type ActiveWorkflowForThreadV3 = {
+export type ActiveWorkflowForThread = {
   workflow: DeliveryWorkflowRow;
   head: WorkflowHead;
 };
 
-export async function getActiveWorkflowForThreadV3(params: {
+export async function getActiveWorkflowForThread(params: {
   db: Pick<DB, "query" | "select">;
   threadId: string;
-}): Promise<ActiveWorkflowForThreadV3 | null> {
+}): Promise<ActiveWorkflowForThread | null> {
   const headTable = schema.deliveryWorkflowHeadV3;
   const legacyTable = schema.deliveryWorkflow;
 

@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import {
   buildDeliveryLoopTopProgressPhases,
   buildDeliveryLoopStatusChecks,
-  buildSnapshotFromV3Head,
+  buildSnapshotFromHead,
   type DeliveryLoopTopProgressPhase,
   getDeliveryLoopBlockedAttentionTitle,
   getDeliveryLoopSnapshotStateSummary,
@@ -22,8 +22,8 @@ import {
 } from "@terragon/shared/delivery-loop/store/gate-persistence";
 import type { DeliveryLoopSnapshot } from "@terragon/shared/delivery-loop/domain/snapshot-types";
 import {
-  getActiveWorkflowForThreadV3,
-  type ActiveWorkflowForThreadV3,
+  getActiveWorkflowForThread,
+  type ActiveWorkflowForThread,
 } from "@/server-lib/delivery-loop/v3/store";
 import { normalizePlanApprovalPolicy } from "@/server-lib/delivery-loop/v3/types";
 import { and, desc, eq, isNull } from "drizzle-orm";
@@ -547,12 +547,12 @@ async function assembleLoopStatusData(params: {
  * Build the full DeliveryLoopStatus from the active workflow/head pair.
  */
 async function buildStatusFromActiveWorkflow(params: {
-  workflowRow: ActiveWorkflowForThreadV3["workflow"];
-  v3Head: ActiveWorkflowForThreadV3["head"];
+  workflowRow: ActiveWorkflowForThread["workflow"];
+  v3Head: ActiveWorkflowForThread["head"];
 }): Promise<DeliveryLoopStatus> {
   const { workflowRow, v3Head } = params;
 
-  const loopSnapshot = buildSnapshotFromV3Head(v3Head);
+  const loopSnapshot = buildSnapshotFromHead(v3Head);
   const loopState = loopSnapshot.kind;
 
   const currentHeadSha = v3Head.headSha ?? workflowRow.currentHeadSha ?? null;
@@ -625,7 +625,7 @@ export async function getDeliveryLoopStatusCore(
     }
   }
 
-  const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+  const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   if (!activeWorkflow) {
     return null;
   }

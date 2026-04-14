@@ -1,4 +1,24 @@
-import { ThreadStatusDeprecated, ThreadStatus } from "@terragon/shared";
+import {
+  ThreadStatusDeprecated,
+  ThreadStatus,
+  ThreadQueuedStatus,
+} from "@terragon/shared";
+
+/** Type guard: true when the thread is waiting in a queue before sandbox boot. */
+export function isQueuedStatus(
+  status: ThreadStatus,
+): status is ThreadQueuedStatus | "queued-blocked" {
+  switch (status) {
+    case "queued":
+    case "queued-blocked":
+    case "queued-tasks-concurrency":
+    case "queued-sandbox-creation-rate-limit":
+    case "queued-agent-rate-limit":
+      return true;
+    default:
+      return false;
+  }
+}
 
 export function isAgentWorking(status: ThreadStatus) {
   switch (status) {

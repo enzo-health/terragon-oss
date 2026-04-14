@@ -1,4 +1,0 @@
-{
-  "extends": "@terragon/tsconfig/base.json",
-  "exclude": ["node_modules", "runs"]
-}

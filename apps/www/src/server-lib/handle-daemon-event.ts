@@ -10,6 +10,7 @@ import {
   ThreadChatInsert,
   ThreadStatus,
 } from "@terragon/shared";
+import { isQueuedStatus } from "@/agent/thread-status";
 import {
   getThreadChat,
   getThreadMinimal,
@@ -75,14 +76,6 @@ const SDLC_AUTO_RETRY_PHASES: ReadonlySet<string> = new Set([
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
-const FOLLOW_UP_ACK_PENDING_STATUSES: ReadonlySet<ThreadStatus> = new Set([
-  "queued",
-  "queued-blocked",
-  "queued-sandbox-creation-rate-limit",
-  "queued-tasks-concurrency",
-  "queued-agent-rate-limit",
-  "booting",
-]);
 
 function getFirstAssistantTrackedKey(runId: string) {
   return `${FIRST_ASSISTANT_TRACKED_PREFIX}${runId}`;
@@ -533,7 +526,7 @@ export async function handleDaemonEvent({
   if (
     runId &&
     (threadChat.queuedMessages?.length ?? 0) > 0 &&
-    FOLLOW_UP_ACK_PENDING_STATUSES.has(statusBeforeUpdate)
+    (isQueuedStatus(statusBeforeUpdate) || statusBeforeUpdate === "booting")
   ) {
     threadChatUpdates.replaceQueuedMessages = [];
   }

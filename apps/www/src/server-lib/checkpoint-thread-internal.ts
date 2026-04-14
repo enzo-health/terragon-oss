@@ -32,7 +32,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { sendSystemMessage } from "./send-system-message";
-import { getActiveWorkflowForThreadV3 } from "./delivery-loop/v3/store";
+import { getActiveWorkflowForThread } from "./delivery-loop/v3/store";
 
 const DELIVERY_PLAN_TOOL_NAMES = {
   EXIT_PLAN_MODE: "ExitPlanMode",
@@ -452,10 +452,10 @@ export async function checkpointThreadAndPush({
       throw commitAndPushError;
     }
 
-    // V2-enrolled threads beyond implementing are handled entirely by the
-    // v2 delivery loop coordinator — skip the legacy checkpoint path.
+    // Enrolled threads beyond implementing are handled entirely by the
+    // delivery loop — skip the legacy checkpoint path.
     // We allow `implementing` through so the first PR gets created.
-    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
     if (activeWorkflow) {
       const currentState = activeWorkflow.head.state;
       if (currentState !== "planning" && currentState !== "implementing") {

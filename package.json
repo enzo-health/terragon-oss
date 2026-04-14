@@ -15,10 +15,6 @@
     "worktree:new": "bun scripts/new-worktree.ts",
     "worktree:cleanup": "bun scripts/cleanup-worktree.ts",
     "worktree:list": "bun scripts/cleanup-worktree.ts --list",
-    "eval:capture": "pnpm -C packages/eval capture",
-    "eval:replay": "pnpm -C packages/eval replay",
-    "eval:analyze": "pnpm -C packages/eval analyze",
-    "eval:report": "pnpm -C packages/eval report",
     "build-sandbox-image": "pnpm -C packages/sandbox-image build:local"
   },
   "keywords": [],

@@ -193,13 +193,11 @@ type WorkflowDiagnostics = {
   workflow: SnapshotRow | null;
   threadChat: SnapshotRow | null;
   githubPr: SnapshotRow | null;
-  workflowEvents: SnapshotRow[];
   signalInbox: SnapshotRow[];
   v3Head: SnapshotRow | null;
   v3Journal: SnapshotRow[];
   v3Effects: SnapshotRow[];
   v3Timers: SnapshotRow[];
-  workItems: SnapshotRow[];
 };
 
 function getTextValue(row: SnapshotRow | null, key: string): string | null {
@@ -295,13 +293,11 @@ async function loadWorkflowDiagnostics(params: {
     workflow,
     threadChat,
     githubPr,
-    workflowEvents,
     signalInbox,
     v3Head,
     v3Journal,
     v3Effects,
     v3Timers,
-    workItems,
   ] = await Promise.all([
     params.client.query<SnapshotRow>(
       `select id, status, name, current_branch_name as "branchName",
@@ -340,16 +336,6 @@ async function loadWorkflowDiagnostics(params: {
           order by updated_at desc
           limit 5`,
       [params.threadId],
-    ),
-    params.client.query<SnapshotRow>(
-      `select seq, event_kind as "eventKind", state_before as "stateBefore",
-                state_after as "stateAfter", gate_before as "gateBefore",
-                gate_after as "gateAfter", occurred_at as "occurredAt"
-           from delivery_workflow_event
-          where workflow_id = $1
-          order by seq desc
-          limit 20`,
-      [params.workflowId],
     ),
     params.client.query<SnapshotRow>(
       signalInboxTable
@@ -432,18 +418,6 @@ async function loadWorkflowDiagnostics(params: {
         : `select null::text as id where false`,
       timerLedgerExists ? [params.workflowId] : [],
     ),
-    params.client.query<SnapshotRow>(
-      `select id, kind, status, attempt_count as "attemptCount",
-                scheduled_at as "scheduledAt", claimed_at as "claimedAt",
-                completed_at as "completedAt", claim_token as "claimToken",
-                last_error_code as "lastErrorCode",
-                last_error_message as "lastErrorMessage"
-           from delivery_work_item
-          where workflow_id = $1
-          order by created_at desc
-          limit 20`,
-      [params.workflowId],
-    ),
   ]);
 
   return {
@@ -453,13 +427,11 @@ async function loadWorkflowDiagnostics(params: {
     workflow: workflow.rows[0] ?? null,
     threadChat: threadChat.rows[0] ?? null,
     githubPr: githubPr.rows[0] ?? null,
-    workflowEvents: workflowEvents.rows,
     signalInbox: signalInbox.rows,
     v3Head: v3Head.rows[0] ?? null,
     v3Journal: v3Journal.rows,
     v3Effects: v3Effects.rows,
     v3Timers: v3Timers.rows,
-    workItems: workItems.rows,
   };
 }
 
@@ -923,8 +895,6 @@ function commandRun(profile: RunProfile): void {
         "exec",
         "vitest",
         "run",
-        "src/server-lib/delivery-loop/coordinator/reduce-signals.test.ts",
-        "src/server-lib/delivery-loop/workers/run-dispatch-work.test.ts",
         "src/server-lib/delivery-loop/v3/reducer.test.ts",
       ],
     },
@@ -940,8 +910,6 @@ function commandRun(profile: RunProfile): void {
         "exec",
         "vitest",
         "run",
-        "src/server-lib/delivery-loop/coordinator/pipeline.test.ts",
-        "src/server-lib/delivery-loop/coordinator/tick.test.ts",
         "src/app/api/webhooks/github/route.test.ts",
       ],
     },

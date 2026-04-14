@@ -7,14 +7,11 @@ export {
   type GitSha,
   type ThreadId,
   type PlanVersion,
-  type WorkflowState,
   type GateKind,
-  type DispatchSubState,
   type ExecutionClass,
   type DispatchMechanism,
   type DispatchFailure,
   type ReviewSurfaceRef,
-  type ResumableWorkflowState,
   type TerminationReason,
   type StopReason,
   type CompletionOutcome,
@@ -26,8 +23,6 @@ export {
   type ReviewGateSnapshot,
   type CiGateSnapshot,
   type UiGateSnapshot,
-  type WorkflowCommon,
-  type DeliveryWorkflow,
 } from "./workflow";
 
 // signals.ts

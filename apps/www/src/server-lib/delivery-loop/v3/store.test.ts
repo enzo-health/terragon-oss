@@ -7,7 +7,7 @@ import {
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { ensureWorkflowHead, getActiveWorkflowForThreadV3 } from "./store";
+import { ensureWorkflowHead, getActiveWorkflowForThread } from "./store";
 
 let testUserId: string;
 let testThreadId: string;
@@ -19,7 +19,7 @@ beforeEach(async () => {
   testThreadId = threadId;
 });
 
-describe("getActiveWorkflowForThreadV3", () => {
+describe("getActiveWorkflowForThread", () => {
   it("returns null when the only head is terminal", async () => {
     const workflow = await createWorkflow({
       db,
@@ -40,7 +40,7 @@ describe("getActiveWorkflowForThreadV3", () => {
       .where(eq(schema.deliveryWorkflowHeadV3.workflowId, workflow.id));
 
     await expect(
-      getActiveWorkflowForThreadV3({ db, threadId: testThreadId }),
+      getActiveWorkflowForThread({ db, threadId: testThreadId }),
     ).resolves.toBeNull();
   });
 
@@ -68,7 +68,7 @@ describe("getActiveWorkflowForThreadV3", () => {
     await ensureWorkflowHead({ db, workflowId: secondWorkflow.id });
 
     await expect(
-      getActiveWorkflowForThreadV3({ db, threadId: testThreadId }),
+      getActiveWorkflowForThread({ db, threadId: testThreadId }),
     ).resolves.toEqual(
       expect.objectContaining({
         workflow: expect.objectContaining({ id: secondWorkflow.id }),
