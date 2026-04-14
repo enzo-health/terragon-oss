@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y \\
     supervisor \\
     postgresql \\
     redis-server \\
+    bubblewrap \\
     && rm -rf /var/lib/apt/lists/*
 
 # Configure PostgreSQL for passwordless local dev access
