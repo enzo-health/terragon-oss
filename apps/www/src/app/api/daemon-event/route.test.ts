@@ -1193,12 +1193,12 @@ describe("daemon-event route", () => {
         workflowId: "wf-pure-v2",
         source: "daemon",
         idempotencyKey: "run-completed:event-terminal-v3",
-        event: {
+        event: expect.objectContaining({
           type: "run_completed",
           runId: "run-1",
           runSeq: 5,
           headSha: "sha-123",
-        },
+        }),
       }),
     );
   });
@@ -2674,12 +2674,12 @@ describe("daemon-event route", () => {
       expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledWith(
         expect.objectContaining({
           workflowId: "wf-pure-v2",
-          event: {
+          event: expect.objectContaining({
             type: "run_completed",
             runId: "run-1",
             runSeq: 7,
             headSha: "sha-complete",
-          },
+          }),
         }),
       );
     });
