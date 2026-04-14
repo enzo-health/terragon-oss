@@ -1,0 +1,15 @@
+{
+  "type": "user",
+  "session_id": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+  "parent_tool_use_id": "tool_use_abc123",
+  "message": {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "tool_use_abc123",
+        "content": "total 24\ndrwxr-xr-x  5 user  staff   160 Apr 14 10:30 .\ndrwxr-xr-x  8 user  staff   256 Apr 14 10:25 ..\n-rw-r--r--  1 user  staff  2847 Apr 14 10:30 auth.ts\n-rw-r--r--  1 user  staff  1456 Apr 14 10:25 logger.ts\n-rw-r--r--  1 user  staff  1923 Apr 14 10:25 cors.ts"
+      }
+    ]
+  }
+}

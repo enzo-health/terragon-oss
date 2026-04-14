@@ -1,0 +1,19 @@
+{
+  "type": "assistant",
+  "session_id": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+  "parent_tool_use_id": null,
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "tool_use_abc123",
+        "name": "bash",
+        "input": {
+          "command": "ls -la src/middleware/",
+          "description": "List all files in the middleware directory to understand the structure"
+        }
+      }
+    ]
+  }
+}

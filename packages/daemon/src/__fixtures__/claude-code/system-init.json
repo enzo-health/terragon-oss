@@ -1,0 +1,16 @@
+{
+  "type": "system",
+  "subtype": "init",
+  "session_id": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+  "tools": ["bash", "read_file", "write_file", "edit_file"],
+  "mcp_servers": [
+    {
+      "name": "github",
+      "status": "healthy"
+    },
+    {
+      "name": "filesystem",
+      "status": "healthy"
+    }
+  ]
+}
