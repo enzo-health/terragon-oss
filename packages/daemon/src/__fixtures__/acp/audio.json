@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": {
+        "type": "audio",
+        "mimeType": "audio/wav",
+        "data": "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA=="
+      }
+    }
+  }
+}

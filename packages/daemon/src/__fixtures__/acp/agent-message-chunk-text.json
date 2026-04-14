@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": {
+        "type": "text",
+        "text": "I'll help you refactor the authentication middleware. Let me start by analyzing the current implementation."
+      }
+    }
+  }
+}

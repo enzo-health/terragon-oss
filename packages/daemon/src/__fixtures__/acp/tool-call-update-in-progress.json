@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "tc_8b7c6d5e-4f3a-2b1c-9d8e-7f6a5b4c3d2e",
+      "status": "in_progress",
+      "content": {
+        "type": "text",
+        "text": "Reading file /src/middleware/auth.ts...\nFound 47 lines of authentication middleware code.\nCurrent implementation uses passport.js with JWT strategy."
+      }
+    }
+  }
+}

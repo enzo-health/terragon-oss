@@ -1,0 +1,32 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "plan",
+      "entries": [
+        {
+          "priority": "high",
+          "status": "pending",
+          "content": "Analyze current authentication middleware implementation"
+        },
+        {
+          "priority": "high",
+          "status": "pending",
+          "content": "Refactor JWT strategy to use modern best practices"
+        },
+        {
+          "priority": "medium",
+          "status": "pending",
+          "content": "Update error handling and logging in auth middleware"
+        },
+        {
+          "priority": "low",
+          "status": "pending",
+          "content": "Add comprehensive unit tests for authentication flows"
+        }
+      ]
+    }
+  }
+}
