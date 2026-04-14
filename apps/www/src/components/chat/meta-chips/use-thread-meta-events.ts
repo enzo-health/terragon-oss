@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from "react";
+import { useReducer } from "react";
 import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
 
 /**
@@ -92,6 +92,7 @@ export function useThreadMetaEvents(_threadId: string): {
   dispatch: (action: Action) => void;
 } {
   const [snapshot, dispatch] = useReducer(reducer, INITIAL);
-  const stableDispatch = useCallback(dispatch, [dispatch]);
-  return { snapshot, dispatch: stableDispatch };
+  // React's useReducer already returns a stable dispatch reference, so
+  // wrapping in useCallback is redundant. Keep the direct reference.
+  return { snapshot, dispatch };
 }

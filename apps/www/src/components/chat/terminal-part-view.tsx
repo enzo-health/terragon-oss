@@ -26,11 +26,12 @@ export interface TerminalPartViewProps {
 
 export function TerminalPartView({ part }: TerminalPartViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const chunkCount = part.chunks.length;
 
-  // Auto-scroll only when new content appended
+  // biome-ignore lint/correctness/useExhaustiveDependencies: auto-scroll on append
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "nearest" });
-  }, [part.chunks.length]);
+  }, [chunkCount]);
 
   return (
     <div className="rounded-lg border border-border overflow-hidden text-xs font-mono">
