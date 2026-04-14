@@ -12,7 +12,8 @@
     "tsc-watch": "tsc --noEmit --watch --preserveWatchOutput",
     "tsc-check": "tsc --noEmit",
     "lint": "biome lint .",
-    "analyze": "pnpm --filter bundled build && ANALYZE=true next build --webpack"
+    "analyze": "pnpm --filter bundled build && ANALYZE=true next build --webpack",
+    "recorder": "tsx test/integration/recorder.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.42",

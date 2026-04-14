@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "mcpServer/startupStatus/updated",
+  "params": {
+    "serverName": "github-integration",
+    "status": "ready",
+    "error": null
+  }
+}

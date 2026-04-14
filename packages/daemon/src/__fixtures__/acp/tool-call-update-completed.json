@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "tc_8b7c6d5e-4f3a-2b1c-9d8e-7f6a5b4c3d2e",
+      "status": "completed",
+      "content": {
+        "type": "text",
+        "text": "Successfully read /src/middleware/auth.ts. The file contains 47 lines using passport.js with JWT strategy and basic error handling."
+      },
+      "rawOutput": "File contents read successfully"
+    }
+  }
+}

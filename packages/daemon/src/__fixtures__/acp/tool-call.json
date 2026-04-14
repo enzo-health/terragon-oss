@@ -1,0 +1,31 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "tc_8b7c6d5e-4f3a-2b1c-9d8e-7f6a5b4c3d2e",
+      "title": "Read authentication middleware file",
+      "kind": "read",
+      "status": "pending",
+      "locations": [
+        {
+          "type": "file",
+          "path": "src/middleware/auth.ts",
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 0
+            },
+            "end": {
+              "line": 50,
+              "character": 0
+            }
+          }
+        }
+      ],
+      "rawInput": "Read the authentication middleware file to understand the current implementation"
+    }
+  }
+}

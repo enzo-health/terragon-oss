@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/started",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "item": {
+      "id": "msg_0900a174019cd6ed0169a7422ac12881a0a5dcff0bd264e361",
+      "type": "agentMessage",
+      "text": ""
+    }
+  }
+}

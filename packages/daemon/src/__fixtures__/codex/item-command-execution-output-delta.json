@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/commandExecution/outputDelta",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_cmd_001",
+    "output": "$ npm test\n> Running test suite...\n\nPASS  src/auth/__tests__/middleware.test.ts\n  ✓ validates token correctly (45ms)\n  ✓ handles nullable secret (32ms)\n"
+  }
+}

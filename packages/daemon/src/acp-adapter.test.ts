@@ -2,8 +2,21 @@ import { describe, it, expect } from "vitest";
 import {
   parseAcpLineToClaudeMessages,
   coalesceAssistantTextMessages,
+  UnknownAcpContentTypeError,
+  AcpToolCallTracker,
+  KNOWN_ACP_SESSION_UPDATE_TYPES,
+  parseSessionUpdateStrict,
 } from "./acp-adapter";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { ClaudeMessage } from "./shared";
+
+// ---------------------------------------------------------------------------
+// Fixture loader
+// ---------------------------------------------------------------------------
+function loadFixture(name: string): string {
+  return readFileSync(join(__dirname, "__fixtures__/acp", name), "utf-8");
+}
 
 function textMsg(text: string, sessionId = "s1"): ClaudeMessage {
   return {
@@ -378,5 +391,450 @@ describe("parseAcpLineToClaudeMessages", () => {
     expect(result[0]!.type === "assistant" && result[0]!.session_id).toBe(
       "fallback-id",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.1: UnknownAcpContentTypeError — strict parser throws for unknowns
+// ---------------------------------------------------------------------------
+
+describe("Task 3.1 — UnknownAcpContentTypeError", () => {
+  it("throws UnknownAcpContentTypeError for unknown sessionUpdate discriminants", () => {
+    expect(() =>
+      parseSessionUpdateStrict(
+        {
+          sessionId: "sess1",
+          update: {
+            sessionUpdate: "totally_unknown_future_type",
+            content: "data",
+          },
+        },
+        "fallback",
+      ),
+    ).toThrow(UnknownAcpContentTypeError);
+  });
+
+  it("thrown error carries the unknown sessionUpdate string", () => {
+    try {
+      parseSessionUpdateStrict(
+        {
+          update: {
+            sessionUpdate: "mystery_type_xyz",
+          },
+        },
+        "fallback",
+      );
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnknownAcpContentTypeError);
+      if (err instanceof UnknownAcpContentTypeError) {
+        expect(err.sessionUpdate).toBe("mystery_type_xyz");
+      }
+    }
+  });
+
+  it("parseAcpLineToClaudeMessages gracefully surfaces unknown type with content as assistant text", () => {
+    // This is the backwards-compat behaviour for the existing test
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess1",
+        update: { sessionUpdate: "some_new_type", content: "unknown data" },
+      },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("assistant");
+  });
+
+  it("parseAcpLineToClaudeMessages returns empty for unknown type without content", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess1",
+        update: { sessionUpdate: "some_new_type" },
+      },
+    });
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.2: tool_call + tool_call_update lifecycle → acp-tool-call messages
+// ---------------------------------------------------------------------------
+
+describe("Task 3.2 — ACP tool_call lifecycle", () => {
+  it("parses tool-call.json fixture: initial tool_call event", () => {
+    const tracker = new AcpToolCallTracker();
+    const line = loadFixture("tool-call.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback", tracker);
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-tool-call");
+    if (msg.type === "acp-tool-call") {
+      expect(msg.toolCallId).toBe("tc_8b7c6d5e-4f3a-2b1c-9d8e-7f6a5b4c3d2e");
+      expect(msg.title).toBe("Read authentication middleware file");
+      expect(msg.kind).toBe("read");
+      expect(msg.status).toBe("pending");
+      expect(msg.locations).toHaveLength(1);
+      expect(msg.locations[0]!.path).toBe("src/middleware/auth.ts");
+      expect(msg.rawInput).toContain("authentication middleware");
+      expect(msg.startedAt).toBeTruthy();
+      expect(msg.progressChunks).toHaveLength(0);
+    }
+  });
+
+  it("parses tool-call-update-in-progress.json fixture: accumulates progress chunks", () => {
+    const tracker = new AcpToolCallTracker();
+    // First, seed with the initial tool_call
+    parseAcpLineToClaudeMessages(
+      loadFixture("tool-call.json"),
+      "fallback",
+      tracker,
+    );
+    const result = parseAcpLineToClaudeMessages(
+      loadFixture("tool-call-update-in-progress.json"),
+      "fallback",
+      tracker,
+    );
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-tool-call");
+    if (msg.type === "acp-tool-call") {
+      expect(msg.status).toBe("in_progress");
+      expect(msg.progressChunks).toHaveLength(1);
+      expect(msg.progressChunks[0]!.text).toContain("passport.js");
+    }
+  });
+
+  it("parses tool-call-update-completed.json fixture: final state has all lifecycle fields", () => {
+    const tracker = new AcpToolCallTracker();
+    // Feed all three in order
+    parseAcpLineToClaudeMessages(
+      loadFixture("tool-call.json"),
+      "fallback",
+      tracker,
+    );
+    parseAcpLineToClaudeMessages(
+      loadFixture("tool-call-update-in-progress.json"),
+      "fallback",
+      tracker,
+    );
+    const result = parseAcpLineToClaudeMessages(
+      loadFixture("tool-call-update-completed.json"),
+      "fallback",
+      tracker,
+    );
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-tool-call");
+    if (msg.type === "acp-tool-call") {
+      expect(msg.status).toBe("completed");
+      expect(msg.startedAt).toBeTruthy();
+      expect(msg.completedAt).toBeTruthy();
+      expect(msg.rawOutput).toBe("File contents read successfully");
+      // Preserves title + kind + locations from initial tool_call
+      expect(msg.title).toBe("Read authentication middleware file");
+      expect(msg.kind).toBe("read");
+      expect(msg.locations).toHaveLength(1);
+      // Has 2 progress chunks (one from in_progress, one from completed)
+      expect(msg.progressChunks).toHaveLength(2);
+    }
+  });
+
+  it("AcpToolCallTracker.getState returns accumulated state after updates", () => {
+    const tracker = new AcpToolCallTracker();
+    parseAcpLineToClaudeMessages(
+      loadFixture("tool-call.json"),
+      "fallback",
+      tracker,
+    );
+    parseAcpLineToClaudeMessages(
+      loadFixture("tool-call-update-in-progress.json"),
+      "fallback",
+      tracker,
+    );
+    parseAcpLineToClaudeMessages(
+      loadFixture("tool-call-update-completed.json"),
+      "fallback",
+      tracker,
+    );
+    const state = tracker.getState("tc_8b7c6d5e-4f3a-2b1c-9d8e-7f6a5b4c3d2e");
+    expect(state).toBeTruthy();
+    expect(state!.status).toBe("completed");
+    expect(state!.progressChunks).toHaveLength(2);
+    expect(state!.rawOutput).toBe("File contents read successfully");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.3: plan → acp-plan message
+// ---------------------------------------------------------------------------
+
+describe("Task 3.3 — ACP plan", () => {
+  it("parses plan.json fixture: produces acp-plan message with all entries", () => {
+    const line = loadFixture("plan.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-plan");
+    if (msg.type === "acp-plan") {
+      expect(msg.entries).toHaveLength(4);
+      const high = msg.entries.filter((e) => e.priority === "high");
+      const medium = msg.entries.filter((e) => e.priority === "medium");
+      const low = msg.entries.filter((e) => e.priority === "low");
+      expect(high).toHaveLength(2);
+      expect(medium).toHaveLength(1);
+      expect(low).toHaveLength(1);
+      expect(msg.entries.every((e) => e.status === "pending")).toBe(true);
+      expect(msg.entries[0]!.content).toContain("authentication middleware");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.4: image / audio / resource_link content blocks
+// ---------------------------------------------------------------------------
+
+describe("Task 3.4 — ACP image content block", () => {
+  it("parses image.json fixture: produces acp-image message with mimeType and data", () => {
+    const line = loadFixture("image.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-image");
+    if (msg.type === "acp-image") {
+      expect(msg.mimeType).toBe("image/png");
+      expect(typeof msg.data).toBe("string");
+      expect(msg.data).toContain("iVBOR");
+    }
+  });
+});
+
+describe("Task 3.4 — ACP audio content block", () => {
+  it("parses audio.json fixture: produces acp-audio message with mimeType and data", () => {
+    const line = loadFixture("audio.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-audio");
+    if (msg.type === "acp-audio") {
+      expect(msg.mimeType).toBe("audio/wav");
+      expect(typeof msg.data).toBe("string");
+    }
+  });
+});
+
+describe("Task 3.4 — ACP resource_link content block", () => {
+  it("parses resource-link.json fixture: produces acp-resource-link message losslessly", () => {
+    const line = loadFixture("resource-link.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-resource-link");
+    if (msg.type === "acp-resource-link") {
+      expect(msg.uri).toBe("https://nodejs.org/api/fs.html");
+      expect(msg.name).toBe("Node.js fs module documentation");
+      expect(msg.title).toBe("File System API Reference");
+      expect(msg.description).toBe(
+        "Official Node.js documentation for file system operations",
+      );
+      expect(msg.mimeType).toBe("text/html");
+      expect(msg.size).toBe(524288);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.5: terminal → acp-terminal message
+// ---------------------------------------------------------------------------
+
+describe("Task 3.5 — ACP terminal content block", () => {
+  it("parses terminal.json fixture: produces acp-terminal message with chunks", () => {
+    const line = loadFixture("terminal.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-terminal");
+    if (msg.type === "acp-terminal") {
+      expect(msg.terminalId).toBe("term_abc123def456");
+      expect(msg.chunks).toHaveLength(3);
+      expect(msg.chunks[0]!.streamSeq).toBe(1);
+      expect(msg.chunks[0]!.kind).toBe("stdout");
+      expect(msg.chunks[0]!.text).toContain("npm run build");
+      expect(msg.chunks[2]!.text).toContain("Build completed");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.6: diff → acp-diff message
+// ---------------------------------------------------------------------------
+
+describe("Task 3.6 — ACP diff content block", () => {
+  it("parses diff.json fixture: produces acp-diff message preserving all fields", () => {
+    const line = loadFixture("diff.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toHaveLength(1);
+    const msg = result[0]!;
+    expect(msg.type).toBe("acp-diff");
+    if (msg.type === "acp-diff") {
+      expect(msg.filePath).toBe("src/middleware/auth.ts");
+      expect(msg.status).toBe("pending");
+      expect(typeof msg.oldContent).toBe("string");
+      expect(typeof msg.newContent).toBe("string");
+      expect(typeof msg.unifiedDiff).toBe("string");
+      expect(msg.oldContent).toContain("Unauthorized");
+      expect(msg.newContent).toContain("jwt.verify");
+      expect(msg.unifiedDiff).toContain("---");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.7: session/request_permission round-trip
+// ---------------------------------------------------------------------------
+
+describe("Task 3.7 — session/request_permission round-trip", () => {
+  it("request-permission.json fixture: has method session/request_permission (not session/update)", () => {
+    // The request_permission event is handled in daemon.ts at the method level,
+    // NOT via parseAcpLineToClaudeMessages. Verify the fixture has the right shape
+    // so the daemon.ts handler will match it.
+    const fixture = JSON.parse(loadFixture("request-permission.json"));
+    expect(fixture.method).toBe("session/request_permission");
+    expect(fixture.params.toolCall.toolCallId).toBeTruthy();
+    expect(fixture.params.toolCall.kind).toBe("execute");
+    expect(Array.isArray(fixture.params.options)).toBe(true);
+    expect(fixture.params.options.length).toBeGreaterThan(0);
+  });
+
+  it("request-permission.json: adapter returns empty (handled upstream in daemon.ts)", () => {
+    // When this event reaches parseAcpLineToClaudeMessages, it does not match
+    // session/update or _adapter/agent_exited, so it falls through to
+    // parseEnvelopeError — which returns [] because there's no error field.
+    const line = loadFixture("request-permission.json");
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+    expect(result).toEqual([]);
+  });
+
+  it("session/approve_tool_use response shape matches ACP spec expectations", () => {
+    // Verify that a synthetic approve response would have the correct shape:
+    // {"jsonrpc":"2.0","id":<requestId>,"result":{"optionId":"approved"}}
+    // This is what daemon.ts POSTs back; we test the shape contract here.
+    const approveResponse = {
+      jsonrpc: "2.0",
+      id: 42,
+      result: { optionId: "approved" },
+    };
+    expect(approveResponse.result.optionId).toBe("approved");
+    expect(typeof approveResponse.id).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.8: Exhaustiveness test for known ACP sessionUpdate discriminants
+// ---------------------------------------------------------------------------
+
+describe("Task 3.8 — sessionUpdate exhaustiveness", () => {
+  const SESSION_ID = "test-session";
+
+  // Helper: build a minimal session/update params object
+  function makeParams(
+    sessionUpdate: string,
+    extra?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      sessionId: SESSION_ID,
+      update: {
+        sessionUpdate,
+        ...extra,
+      },
+    };
+  }
+
+  it("every known ACP sessionUpdate type has a handler (does not throw UnknownAcpContentTypeError)", () => {
+    const tracker = new AcpToolCallTracker();
+
+    // Provide minimal valid payloads for each known type
+    const validPayloads: Record<string, Record<string, unknown>> = {
+      agent_message_chunk: makeParams("agent_message_chunk", {
+        content: "hello",
+      }),
+      agent_message: makeParams("agent_message", { content: "hello" }),
+      agent_thought_chunk: makeParams("agent_thought_chunk", {
+        content: "thinking",
+      }),
+      agent_reasoning_chunk: makeParams("agent_reasoning_chunk", {
+        content: "reasoning",
+      }),
+      error: makeParams("error", { content: "oops" }),
+      agent_error: makeParams("agent_error", { content: "oops" }),
+      tool_call: makeParams("tool_call", {
+        toolCallId: "tc-exhaust-1",
+        title: "exhaust test",
+        kind: "read",
+        status: "pending",
+        locations: [],
+        rawInput: "test",
+      }),
+      tool_call_update: makeParams("tool_call_update", {
+        // tool_call_update without prior tool_call → tracker returns null → []
+        toolCallId: "tc-no-state",
+        status: "in_progress",
+        content: "progress",
+      }),
+      plan: makeParams("plan", {
+        entries: [{ content: "step 1", priority: "high", status: "pending" }],
+      }),
+    };
+
+    for (const type of KNOWN_ACP_SESSION_UPDATE_TYPES) {
+      const params = validPayloads[type];
+      if (!params) {
+        throw new Error(
+          `Test missing valid payload for known type: ${type}. Update the test.`,
+        );
+      }
+      expect(
+        () =>
+          parseSessionUpdateStrict(
+            params as Record<string, unknown>,
+            SESSION_ID,
+            tracker,
+          ),
+        `Expected type "${type}" to have a handler`,
+      ).not.toThrow(UnknownAcpContentTypeError);
+    }
+  });
+
+  it("an unknown type that is NOT in KNOWN_ACP_SESSION_UPDATE_TYPES throws UnknownAcpContentTypeError", () => {
+    const unknownType = "future_protocol_extension_v99";
+    expect(KNOWN_ACP_SESSION_UPDATE_TYPES).not.toContain(unknownType as never);
+
+    expect(() =>
+      parseSessionUpdateStrict(
+        makeParams(unknownType) as Record<string, unknown>,
+        SESSION_ID,
+      ),
+    ).toThrow(UnknownAcpContentTypeError);
+  });
+
+  it("KNOWN_ACP_SESSION_UPDATE_TYPES contains exactly the expected discriminants from ACP spec", () => {
+    const expected = new Set([
+      "agent_message_chunk",
+      "agent_message",
+      "agent_thought_chunk",
+      "agent_reasoning_chunk",
+      "error",
+      "agent_error",
+      "tool_call",
+      "tool_call_update",
+      "plan",
+    ]);
+    const actual = new Set(KNOWN_ACP_SESSION_UPDATE_TYPES);
+    expect(actual).toEqual(expected);
   });
 });

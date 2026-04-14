@@ -1,0 +1,11 @@
+{
+  "type": "stream_event",
+  "event": {
+    "type": "content_block_delta",
+    "index": 0,
+    "delta": {
+      "type": "input_json_delta",
+      "partial_json": "{\"path\": \"/tmp\", \"permissions\": \"755\", \"recursive\": tr"
+    }
+  }
+}

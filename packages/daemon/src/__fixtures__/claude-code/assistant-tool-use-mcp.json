@@ -1,0 +1,21 @@
+{
+  "type": "assistant",
+  "session_id": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+  "parent_tool_use_id": null,
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "tool_use_def456",
+        "name": "mcp__github__search_repos",
+        "input": {
+          "query": "authentication middleware typescript",
+          "language": "typescript",
+          "sort": "stars",
+          "per_page": 10
+        }
+      }
+    ]
+  }
+}

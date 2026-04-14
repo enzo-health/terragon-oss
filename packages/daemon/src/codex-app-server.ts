@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import readline from "node:readline";
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
 import WebSocket from "ws";
@@ -11,6 +13,33 @@ import {
 import type { Logger } from "./logger";
 
 export type CodexAppServerTransport = "stdio" | "websocket";
+
+/**
+ * Debug harness: when the daemon is started with
+ * `DEBUG_DUMP_NOTIFICATIONS=<dir>` set, every raw JSON-RPC line received
+ * from Codex app-server is appended to `<dir>/codex-app-server.jsonl`
+ * before any parsing. Used for fixture capture; zero-overhead when the
+ * env flag is unset.
+ *
+ * We cannot partition the file by threadChatId here because `threadChatId`
+ * is not known until after `params` is parsed. One file per adapter keeps
+ * the tee synchronous and cheap; fixture-collection tooling splits per
+ * thread as a post-processing step.
+ */
+export function dumpRawNotification(
+  line: string,
+  dir: string | undefined,
+): void {
+  if (!dir) {
+    return;
+  }
+  try {
+    const target = path.join(dir, "codex-app-server.jsonl");
+    fs.appendFileSync(target, line + "\n");
+  } catch {
+    // Fail soft: the debug harness must never affect daemon behaviour.
+  }
+}
 
 export type JsonRpcRequestEnvelope = {
   jsonrpc: "2.0";
@@ -53,6 +82,118 @@ export type CodexAppServerNotificationHandler = (
   notification: JsonRpcNotificationEnvelope,
   context: CodexAppServerNotificationContext,
 ) => void;
+
+/**
+ * Meta events carry operational metadata (token usage, rate limits, model
+ * re-routing, MCP server health) that the daemon dispatches on a separate
+ * channel from thread-chat content.
+ *
+ * This definition is structurally identical to `ThreadMetaEvent` in
+ * `@terragon/shared` — both packages export the same shape.  The daemon does
+ * not depend on `@terragon/shared` (it would create a circular workspace dep),
+ * so the type is defined here and shared re-exports its own copy for `apps/www`.
+ */
+export type ThreadMetaEvent =
+  | {
+      kind: "thread.token_usage_updated";
+      threadId: string;
+      usage: {
+        inputTokens: number;
+        cachedInputTokens: number;
+        outputTokens: number;
+      };
+    }
+  | {
+      kind: "account.rate_limits_updated";
+      rateLimits: Record<string, unknown>;
+    }
+  | {
+      kind: "model.rerouted";
+      threadId: string;
+      originalModel: string;
+      reroutedModel: string;
+      reason: string;
+    }
+  | {
+      kind: "mcp_server.startup_status_updated";
+      serverName: string;
+      status: "loading" | "ready" | "error";
+      error?: string;
+    }
+  | {
+      kind: "thread.status_changed";
+      threadId: string;
+      status: string;
+    }
+  | {
+      kind: "config.warning";
+      message: string;
+      context?: string;
+    }
+  | {
+      kind: "deprecation.notice";
+      message: string;
+      replacement?: string;
+    }
+  | {
+      kind: "session.initialized";
+      tools: string[];
+      mcpServers: string[];
+    }
+  | {
+      // Emitted for each message_delta usage report from the Claude Code stream.
+      kind: "usage.incremental";
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreation: number;
+      cacheRead: number;
+    }
+  | {
+      // Emitted when the Claude Code stream signals message stop.
+      kind: "message.stop";
+      reason: string;
+    };
+
+/**
+ * Extended item type representing a Codex `collabAgentToolCall` — a sub-agent
+ * delegation event not present in the upstream `@openai/codex-sdk` `ThreadItem`
+ * union.  We carry it as a daemon-local extension so callers can pattern-match
+ * on `item.type === "delegation"`.
+ */
+export type CodexDelegationItem = {
+  type: "delegation";
+  id: string;
+  senderThreadId: string;
+  receiverThreadIds: string[];
+  prompt: string;
+  delegatedModel: string;
+  reasoningEffort?: string;
+  agentsStates: Record<string, string>;
+  tool: string;
+  status: string;
+};
+
+/**
+ * Synthetic event types that extend the SDK `ThreadEvent` union.
+ * Used for methods that have no direct SDK equivalent (e.g., turn/diff/updated).
+ */
+export type CodexTurnDiffUpdatedEvent = {
+  type: "turn.diff_updated";
+  diff: string;
+};
+
+export type CodexTurnPlanUpdatedEvent = {
+  type: "turn.plan_updated";
+  plan: Record<string, unknown>;
+};
+
+/**
+ * Extended ThreadEvent union that includes daemon-local synthetic events.
+ */
+export type DaemonCodexEvent =
+  | ThreadEvent
+  | CodexTurnDiffUpdatedEvent
+  | CodexTurnPlanUpdatedEvent;
 
 export type CodexAppServerSpawnOptions = {
   env: NodeJS.ProcessEnv;
@@ -117,15 +258,8 @@ const EMPTY_USAGE: Usage = {
  * ThreadItem.  `normalizeThreadItemType` returns `null` for these, so
  * `extractThreadEvent` will also return `null`.  Callers (e.g. the daemon
  * notification handler) can check this set to suppress "unknown type" warnings.
- *
- * `collabAgentToolCall` is Codex's sub-agent delegation item. Surfacing it
- * properly requires a new ThreadItem variant + UI component; until that lands
- * we silence the warn log (the narration prose still reaches the user).
  */
-export const SILENTLY_IGNORED_ITEM_TYPES = new Set([
-  "userMessage",
-  "collabAgentToolCall",
-]);
+export const SILENTLY_IGNORED_ITEM_TYPES = new Set(["userMessage"]);
 
 const METHOD_TO_THREAD_EVENT_TYPE: Partial<
   Record<string, ThreadEvent["type"]>
@@ -274,11 +408,39 @@ function extractTextFromContent(contentValue: unknown): string {
 function normalizeThreadItem(
   rawItem: Record<string, unknown>,
   eventType: CodexItemEventType,
-): ThreadItem | null {
+): ThreadItem | CodexDelegationItem | null {
   const itemId = readString(rawItem, "id");
   const rawItemType = readString(rawItem, "type");
   if (!itemId || !rawItemType) {
     return null;
+  }
+
+  // Handle collabAgentToolCall before the generic type normalizer, since it
+  // is not part of the SDK's ThreadItem union and must be mapped to our
+  // daemon-local CodexDelegationItem extension.
+  if (
+    rawItemType.replace(/[_-]/g, "").toLowerCase() === "collabagenttoolcall"
+  ) {
+    const receiverThreadIds =
+      toArray(rawItem.receiverThreadIds)?.filter(
+        (v): v is string => typeof v === "string",
+      ) ?? [];
+    const agentsStates = toRecord(rawItem.agentsStates) as Record<
+      string,
+      string
+    > | null;
+    return {
+      type: "delegation",
+      id: itemId,
+      senderThreadId: readString(rawItem, "senderThreadId") ?? "",
+      receiverThreadIds,
+      prompt: readString(rawItem, "prompt") ?? "",
+      delegatedModel: readString(rawItem, "model") ?? "",
+      reasoningEffort: readString(rawItem, "reasoningEffort") ?? undefined,
+      agentsStates: agentsStates ?? {},
+      tool: readString(rawItem, "tool") ?? "spawn",
+      status: readString(rawItem, "status") ?? "initiated",
+    };
   }
 
   const normalizedType = normalizeThreadItemType(rawItemType);
@@ -561,7 +723,7 @@ function extractThreadEventFromMethod({
 }: {
   method: string;
   params: Record<string, unknown>;
-}): ThreadEvent | null {
+}): DaemonCodexEvent | null {
   // Handle agentMessage/delta — incremental text for an in-progress agent
   // message.  We synthesize an item.updated ThreadEvent so the downstream
   // pipeline (parseCodexItem) can process it like any other item update.
@@ -579,6 +741,207 @@ function extractThreadEventFromMethod({
         type: "agent_message",
         text: delta,
       },
+    };
+  }
+
+  // Handle commandExecution/outputDelta — progressive command output streaming.
+  if (method === "item/commandExecution/outputDelta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const output =
+      readString(params, "output") ?? readString(params, "delta") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "command_execution",
+        command: "",
+        aggregated_output: output,
+        status: "in_progress",
+      },
+    };
+  }
+
+  // Handle fileChange/outputDelta — progressive unified-diff streaming.
+  if (method === "item/fileChange/outputDelta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const delta =
+      readString(params, "delta") ?? readString(params, "output") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "file_change",
+        changes: [],
+        status: "completed",
+        _delta: delta,
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle reasoning/summaryTextDelta — summary text chunks.
+  if (method === "item/reasoning/summaryTextDelta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const delta = readString(params, "delta") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "reasoning",
+        text: delta,
+        _deltaKind: "summaryText",
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle reasoning/summaryPartAdded — a complete summary part appended.
+  if (method === "item/reasoning/summaryPartAdded") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const summaryPart = toRecord(params.summaryPart);
+    const partContent = summaryPart
+      ? (readString(summaryPart, "content") ??
+        readString(summaryPart, "text") ??
+        "")
+      : "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "reasoning",
+        text: partContent,
+        _deltaKind: "summaryPart",
+        _summaryPart: summaryPart ?? {},
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle reasoning/textDelta — raw reasoning text chunks.
+  if (method === "item/reasoning/textDelta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const delta = readString(params, "delta") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "reasoning",
+        text: delta,
+        _deltaKind: "text",
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle mcpToolCall/progress — partial progress on an MCP tool call.
+  if (method === "item/mcpToolCall/progress") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const status = readString(params, "status") ?? "in_progress";
+    const progress = toRecord(params.progress);
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "mcp_tool_call",
+        server: "",
+        tool: "",
+        arguments: {},
+        status: normalizeMcpStatus(status, "item.updated"),
+        _progress: progress ?? {},
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle autoApprovalReview/started — an auto-approval review has begun.
+  if (method === "item/autoApprovalReview/started") {
+    const reviewId = readString(params, "reviewId");
+    const targetItemId = readString(params, "targetItemId");
+    if (!reviewId || !targetItemId) {
+      return null;
+    }
+    const review = toRecord(params.review);
+    const riskLevel =
+      (review ? readString(review, "riskLevel") : null) ??
+      readString(params, "riskLevel") ??
+      "medium";
+    const action =
+      (review ? readString(review, "action") : null) ??
+      readString(params, "action") ??
+      "";
+    return {
+      type: "item.started",
+      item: {
+        id: reviewId,
+        type: "auto_approval_review",
+        reviewId,
+        targetItemId,
+        riskLevel,
+        action,
+        status: "pending",
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle autoApprovalReview/completed — an auto-approval review finished.
+  if (method === "item/autoApprovalReview/completed") {
+    const reviewId = readString(params, "reviewId");
+    const targetItemId = readString(params, "targetItemId");
+    if (!reviewId || !targetItemId) {
+      return null;
+    }
+    const decision = readString(params, "decision") ?? "approved";
+    const rationale = readString(params, "rationale") ?? undefined;
+    return {
+      type: "item.completed",
+      item: {
+        id: reviewId,
+        type: "auto_approval_review",
+        reviewId,
+        targetItemId,
+        riskLevel: "medium",
+        action: "",
+        decision,
+        rationale,
+        status: decision === "approved" ? "approved" : "denied",
+      } as unknown as ThreadItem,
+    };
+  }
+
+  // Handle turn/diff/updated — a unified diff snapshot for the current turn.
+  if (method === "turn/diff/updated") {
+    const diff = readString(params, "diff") ?? "";
+    return {
+      type: "turn.diff_updated",
+      diff,
+    };
+  }
+
+  // Handle turn/plan/updated — a planning step list for the current turn.
+  if (method === "turn/plan/updated") {
+    const plan = toRecord(params.plan) ?? {};
+    return {
+      type: "turn.plan_updated",
+      plan,
     };
   }
 
@@ -629,7 +992,7 @@ function extractThreadEventFromMethod({
       }
       return {
         type: eventType,
-        item: normalizedItem,
+        item: normalizedItem as unknown as ThreadItem,
       };
     }
     case "error": {
@@ -694,7 +1057,7 @@ function extractThreadEventFromCodexMessage(
       }
       return {
         type: eventType,
-        item: normalizedItem,
+        item: normalizedItem as unknown as ThreadItem,
       };
     }
     case "error": {
@@ -752,7 +1115,7 @@ function extractRawThreadEvent(
       }
       return {
         type: threadEventType,
-        item: normalizedItem,
+        item: normalizedItem as unknown as ThreadItem,
       };
     }
     case "error":
@@ -765,7 +1128,120 @@ function extractRawThreadEvent(
   }
 }
 
-export function extractThreadEvent(message: unknown): ThreadEvent | null {
+/**
+ * Extract a `ThreadMetaEvent` from a raw JSON-RPC notification.
+ *
+ * Meta events carry operational metadata (token usage, rate limits, model
+ * re-routing, MCP server health) that the daemon broadcasts on a separate
+ * channel from chat content.  Returns `null` if the notification is not a
+ * meta-event method.
+ */
+export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
+  const record = toRecord(message);
+  if (!record) {
+    return null;
+  }
+  const method = readString(record, "method");
+  if (!method) {
+    return null;
+  }
+  const params = toRecord(record.params) ?? {};
+
+  if (method === "thread/tokenUsage/updated") {
+    const threadId =
+      extractThreadIdFromParams(params) ?? readString(params, "threadId") ?? "";
+    const usageRecord = toRecord(params.usage) ?? {};
+    return {
+      kind: "thread.token_usage_updated",
+      threadId,
+      usage: {
+        inputTokens:
+          readNumber(usageRecord, "input_tokens") ??
+          readNumber(usageRecord, "inputTokens") ??
+          0,
+        cachedInputTokens:
+          readNumber(usageRecord, "cached_input_tokens") ??
+          readNumber(usageRecord, "cachedInputTokens") ??
+          0,
+        outputTokens:
+          readNumber(usageRecord, "output_tokens") ??
+          readNumber(usageRecord, "outputTokens") ??
+          0,
+      },
+    };
+  }
+
+  if (method === "account/rateLimits/updated") {
+    const rateLimits = toRecord(params.rateLimits) ?? params;
+    return {
+      kind: "account.rate_limits_updated",
+      rateLimits: rateLimits as Record<string, unknown>,
+    };
+  }
+
+  if (method === "model/rerouted") {
+    const threadId = extractThreadIdFromParams(params) ?? "";
+    return {
+      kind: "model.rerouted",
+      threadId,
+      originalModel: readString(params, "originalModel") ?? "",
+      reroutedModel: readString(params, "reroutedModel") ?? "",
+      reason: readString(params, "reason") ?? "",
+    };
+  }
+
+  if (method === "mcpServer/startupStatus/updated") {
+    const serverName = readString(params, "serverName") ?? "";
+    const rawStatus = readString(params, "status") ?? "loading";
+    const status: "loading" | "ready" | "error" =
+      rawStatus === "ready"
+        ? "ready"
+        : rawStatus === "error"
+          ? "error"
+          : "loading";
+    const errorValue = readString(params, "error") ?? undefined;
+    return {
+      kind: "mcp_server.startup_status_updated",
+      serverName,
+      status,
+      ...(errorValue !== undefined ? { error: errorValue } : {}),
+    };
+  }
+
+  if (method === "thread/status/changed") {
+    const threadId = extractThreadIdFromParams(params) ?? "";
+    const status = readString(params, "status") ?? "";
+    return {
+      kind: "thread.status_changed",
+      threadId,
+      status,
+    };
+  }
+
+  if (method === "config/warning") {
+    const msg = readString(params, "message") ?? "";
+    const ctx = readString(params, "context") ?? undefined;
+    return {
+      kind: "config.warning",
+      message: msg,
+      ...(ctx !== undefined ? { context: ctx } : {}),
+    };
+  }
+
+  if (method === "deprecation/notice") {
+    const msg = readString(params, "message") ?? "";
+    const replacement = readString(params, "replacement") ?? undefined;
+    return {
+      kind: "deprecation.notice",
+      message: msg,
+      ...(replacement !== undefined ? { replacement } : {}),
+    };
+  }
+
+  return null;
+}
+
+export function extractThreadEvent(message: unknown): DaemonCodexEvent | null {
   const messageRecord = toRecord(message);
   if (!messageRecord) {
     return null;
@@ -1192,6 +1668,9 @@ export class CodexAppServerManager {
     if (!trimmedLine) {
       return;
     }
+
+    // Tee for fixture capture (no-op when DEBUG_DUMP_NOTIFICATIONS is unset).
+    dumpRawNotification(trimmedLine, process.env.DEBUG_DUMP_NOTIFICATIONS);
 
     let parsedLine: unknown;
     try {

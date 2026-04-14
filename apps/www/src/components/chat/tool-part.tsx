@@ -25,6 +25,8 @@ import { ExitPlanModeTool } from "./tools/exit-plan-mode-tool";
 import { PermissionRequestTool } from "./tools/permission-request-tool";
 import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
+import { ProgressChunks } from "./tools/progress-chunks";
+import { Badge } from "@/components/ui/badge";
 import { RichTextPart } from "./rich-text-part";
 import { TextFilePart } from "./text-file-part";
 import { PdfPart } from "./pdf-part";
@@ -256,13 +258,69 @@ const ToolPart = memo(function ToolPart({
       part.type === "image",
   );
 
-  if (artifactParts.length === 0) {
+  // Extended lifecycle fields carried from DBToolCall via InternalToolPart
+  const extendedPart = toolPart as AllToolParts & {
+    progressChunks?: Array<{ seq: number; text: string }>;
+    mcpMetadata?: { server: string; tool: string };
+    toolStatus?: string;
+  };
+  const progressChunks = extendedPart.progressChunks;
+  const mcpMetadata = extendedPart.mcpMetadata;
+  const isInProgress =
+    extendedPart.toolStatus === "in_progress" && toolPart.status === "pending";
+
+  // Show MCP server badge for mcp__ prefixed tools or when mcpMetadata present
+  const mcpServer =
+    mcpMetadata?.server ??
+    (() => {
+      const match = toolPart.name.match(/^mcp__([^_]+)__/);
+      return match ? match[1] : null;
+    })();
+
+  const extraContent = (
+    <>
+      {mcpServer && (
+        <Badge
+          variant="outline"
+          className="text-[10px] px-1.5 py-0 font-mono"
+          data-testid="mcp-badge"
+        >
+          MCP: {mcpServer}
+        </Badge>
+      )}
+      {progressChunks && progressChunks.length > 0 && (
+        <ProgressChunks chunks={progressChunks} />
+      )}
+      {isInProgress && !progressChunks?.length && (
+        <span className="text-xs text-muted-foreground animate-pulse">
+          Working…
+        </span>
+      )}
+    </>
+  );
+
+  if (
+    artifactParts.length === 0 &&
+    !mcpServer &&
+    !progressChunks?.length &&
+    !isInProgress
+  ) {
     return renderedTool;
+  }
+
+  if (artifactParts.length === 0) {
+    return (
+      <div className="flex flex-col gap-1">
+        {renderedTool}
+        {extraContent}
+      </div>
+    );
   }
 
   return (
     <div className="flex flex-col gap-2">
       {renderedTool}
+      {extraContent}
       <div className="flex flex-col gap-2 pl-4">
         {artifactParts.map((part, index) => {
           const artifactDescriptor = findArtifactDescriptorForPart({

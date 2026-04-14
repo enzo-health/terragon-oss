@@ -20,6 +20,13 @@ import { RichTextPart } from "./rich-text-part";
 import { ThinkingPart } from "./thinking-part";
 import { assertNever } from "@terragon/shared/utils";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
+import type { UIPartExtended } from "./ui-parts-extended";
+import { AudioPartView } from "./audio-part-view";
+import { ResourceLinkView } from "./resource-link-view";
+import { TerminalPartView } from "./terminal-part-view";
+import { DiffPartView } from "./diff-part";
+import { AutoApprovalReviewCard } from "./auto-approval-review-card";
+import { PlanPartView } from "./plan-part";
 
 export interface MessagePartProps {
   part: UIPart;
@@ -100,11 +107,15 @@ export const MessagePart = memo(function MessagePart({
     };
   }, [planArtifactDescriptor, onOpenArtifact]);
 
-  switch (part.type) {
+  // Cast to extended union so the switch can handle rich part types emitted
+  // by dbAgentPartToUIPart in Sprint 5. The extra cases are www-local.
+  const extendedPart = part as UIPartExtended;
+
+  switch (extendedPart.type) {
     case "text": {
       return (
         <TextPart
-          text={part.text}
+          text={extendedPart.text}
           streaming={isLatest && isAgentWorking}
           githubRepoFullName={githubRepoFullName}
           branchName={branchName ?? undefined}
@@ -117,14 +128,14 @@ export const MessagePart = memo(function MessagePart({
     case "thinking": {
       return (
         <ThinkingPart
-          thinking={part.thinking}
+          thinking={extendedPart.thinking}
           isLatest={isLatest}
           isAgentWorking={isAgentWorking}
         />
       );
     }
     case "tool": {
-      const toolPart = part as AllToolParts;
+      const toolPart = extendedPart as AllToolParts;
       return (
         <ToolPart
           toolPart={toolPart}
@@ -135,7 +146,7 @@ export const MessagePart = memo(function MessagePart({
       );
     }
     case "image": {
-      const imagePart = part as UIImagePart;
+      const imagePart = extendedPart as UIImagePart;
       return (
         <ImagePart
           imageUrl={imagePart.image_url}
@@ -145,7 +156,7 @@ export const MessagePart = memo(function MessagePart({
       );
     }
     case "rich-text": {
-      const richTextPart = part as UIRichTextPart;
+      const richTextPart = extendedPart as UIRichTextPart;
       return (
         <RichTextPart
           richTextPart={richTextPart}
@@ -154,7 +165,7 @@ export const MessagePart = memo(function MessagePart({
       );
     }
     case "pdf": {
-      const pdfPart = part as UIPdfPart;
+      const pdfPart = extendedPart as UIPdfPart;
       return (
         <PdfPart
           pdfUrl={pdfPart.pdf_url}
@@ -164,7 +175,7 @@ export const MessagePart = memo(function MessagePart({
       );
     }
     case "text-file": {
-      const textFilePart = part as UITextFilePart;
+      const textFilePart = extendedPart as UITextFilePart;
       return (
         <TextFilePart
           textFileUrl={textFilePart.file_url}
@@ -177,8 +188,25 @@ export const MessagePart = memo(function MessagePart({
     case "plan":
       // Plan parts are rendered via the artifact workspace panel, not inline
       return null;
+    // --- Extended rich content types (Sprint 5, www-local) ---
+    case "audio":
+      return <AudioPartView part={extendedPart} />;
+    case "resource-link":
+      return <ResourceLinkView part={extendedPart} />;
+    case "terminal":
+      return <TerminalPartView part={extendedPart} />;
+    case "diff":
+      return <DiffPartView part={extendedPart} />;
+    case "auto-approval-review":
+      return <AutoApprovalReviewCard part={extendedPart} />;
+    case "plan-structured":
+      return (
+        <PlanPartView part={{ type: "plan", entries: extendedPart.entries }} />
+      );
     default:
-      assertNever(part);
+      // TypeScript exhaustiveness check — will error at compile time if a
+      // UIPartExtended variant is added without a corresponding case above.
+      assertNever(extendedPart);
   }
 }, areMessagePartPropsEqual);
 

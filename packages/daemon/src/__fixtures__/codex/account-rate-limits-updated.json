@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "account/rateLimits/updated",
+  "params": {
+    "rateLimits": {
+      "requests_per_minute": 30,
+      "tokens_per_minute": 90000,
+      "remaining_requests": 28,
+      "remaining_tokens": 87500,
+      "reset_at": 1712534400000
+    }
+  }
+}

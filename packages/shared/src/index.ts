@@ -3,6 +3,7 @@ export type * from "./db/types";
 export type * from "./db/schema";
 export type * from "./db/ui-messages";
 export type * from "./db/db-message";
+export type * from "./delivery-loop/thread-meta-event";
 export type { FeatureFlagName } from "./model/feature-flags-definitions";
 export {
   MAX_CONTEXT_TOKENS,

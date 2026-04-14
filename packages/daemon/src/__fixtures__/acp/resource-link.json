@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": {
+        "type": "resource_link",
+        "uri": "https://nodejs.org/api/fs.html",
+        "name": "Node.js fs module documentation",
+        "title": "File System API Reference",
+        "description": "Official Node.js documentation for file system operations",
+        "mimeType": "text/html",
+        "size": 524288
+      }
+    }
+  }
+}

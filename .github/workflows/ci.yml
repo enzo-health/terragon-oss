@@ -113,4 +113,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
       - name: Tests
+        # Includes integration harness (test/integration/*.test.tsx) which
+        # replays daemon-event recordings against the real Next.js route handler
+        # and asserts UI rendering from synthesized parts. Recordings are
+        # committed fixtures (no live sandbox required); Docker containers are
+        # spun up by vitest globalSetup for the DB-backed test dependencies.
         run: pnpm turbo test

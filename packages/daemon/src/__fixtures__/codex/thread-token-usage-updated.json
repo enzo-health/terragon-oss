@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "thread/tokenUsage/updated",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "usage": {
+      "input_tokens": 2048,
+      "cached_input_tokens": 512,
+      "output_tokens": 1024
+    }
+  }
+}

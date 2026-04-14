@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": {
+        "type": "text",
+        "text": "The user wants to refactor the authentication middleware to use a more modern approach. I should examine the current implementation first to understand the existing patterns and then suggest improvements that maintain backward compatibility."
+      }
+    }
+  }
+}

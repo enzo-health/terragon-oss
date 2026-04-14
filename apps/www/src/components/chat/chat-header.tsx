@@ -19,6 +19,11 @@ import { Button } from "@/components/ui/button";
 import { useCollapsibleThreadList } from "../thread-list/use-collapsible-thread-list";
 import { ThreadAgentIcon } from "../thread-agent-icon";
 import { headerClassName, headerSurfaceClassName } from "../shared/header";
+import { useThreadMetaEvents } from "./meta-chips/use-thread-meta-events";
+import { UsageChip } from "./meta-chips/usage-chip";
+import { RateLimitChip } from "./meta-chips/rate-limit-chip";
+import { ModelRoutingChip } from "./meta-chips/model-routing-chip";
+import { McpServerHealthChip } from "./meta-chips/mcp-server-health-chip";
 
 export const ChatHeader = memo(function ChatHeader({
   thread,
@@ -44,6 +49,7 @@ export const ChatHeader = memo(function ChatHeader({
   onTerminalClick?: () => void;
 }) {
   const { isMobile } = useSidebar();
+  const { snapshot: metaSnapshot } = useThreadMetaEvents(thread.id);
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(thread.name || "");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -223,6 +229,14 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 )}
                 {thread.archived && <Pill label="Archived" />}
+              </span>
+              <span className="flex items-center gap-1.5 flex-shrink-0">
+                <UsageChip tokenUsage={metaSnapshot.tokenUsage} />
+                <RateLimitChip rateLimits={metaSnapshot.rateLimits} />
+                <ModelRoutingChip modelReroute={metaSnapshot.modelReroute} />
+                <McpServerHealthChip
+                  mcpServerStatus={metaSnapshot.mcpServerStatus}
+                />
               </span>
             </div>
           </div>

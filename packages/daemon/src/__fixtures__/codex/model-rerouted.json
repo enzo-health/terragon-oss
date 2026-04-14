@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "model/rerouted",
+  "params": {
+    "originalModel": "claude-3-5-sonnet-20241022",
+    "reroutedModel": "claude-3-opus-20250219",
+    "reason": "model_overloaded"
+  }
+}

@@ -1,8 +1,13 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   CodexAppServerManager,
+  dumpRawNotification,
+  extractMetaEvent,
   extractThreadEvent,
   SILENTLY_IGNORED_ITEM_TYPES,
   type CodexAppServerProcess,
@@ -10,6 +15,18 @@ import {
   type CodexAppServerSpawnOptions,
   type CodexAppServerStdin,
 } from "./codex-app-server";
+
+function loadFixture(name: string): Record<string, unknown> {
+  const raw = fs.readFileSync(
+    new URL(`./__fixtures__/codex/${name}.json`, import.meta.url),
+    "utf8",
+  );
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Fixture ${name} is not a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
 
 const APP_SERVER_ITEM_COMPLETED_TRANSCRIPT =
   '{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"msg_0900a174019cd6ed0169a7422ac12881a0a5dcff0bd264e361","text":"hello"},"threadId":"019cb55a-6ab5-7ad2-876b-dd1d3dedcf52","turnId":"0"}}';
@@ -275,8 +292,189 @@ describe("extractThreadEvent", () => {
     expect(SILENTLY_IGNORED_ITEM_TYPES.has("userMessage")).toBe(true);
   });
 
-  test("SILENTLY_IGNORED_ITEM_TYPES includes collabAgentToolCall", () => {
-    expect(SILENTLY_IGNORED_ITEM_TYPES.has("collabAgentToolCall")).toBe(true);
+  // Task 2.1: collabAgentToolCall is now handled — not silently ignored.
+  test("SILENTLY_IGNORED_ITEM_TYPES does NOT include collabAgentToolCall", () => {
+    expect(SILENTLY_IGNORED_ITEM_TYPES.has("collabAgentToolCall")).toBe(false);
+  });
+
+  // Task 2.1: collabAgentToolCall fixture produces a delegation item.started event.
+  test("collab-agent-tool-call-started fixture → item.started with delegation item", () => {
+    const fixture = loadFixture("collab-agent-tool-call-started");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.started");
+    if (event?.type !== "item.started") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("delegation");
+    expect(item.id).toBe("item_collab_001");
+    expect(item.senderThreadId).toBe("019cb55a-6ab5-7ad2-876b-dd1d3dedcf52");
+    expect(item.receiverThreadIds).toEqual([
+      "019cb55b-7bc6-8be3-987c-ee2e4eefdg63",
+      "019cb55c-8cd7-9cf4-a98d-ff3f5ffgeh74",
+    ]);
+    expect(item.tool).toBe("spawn");
+    expect(item.status).toBe("initiated");
+  });
+
+  // Task 2.2: turn/diff/updated fixture.
+  test("turn-diff-updated fixture → turn.diff_updated event with diff string", () => {
+    const fixture = loadFixture("turn-diff-updated");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("turn.diff_updated");
+    if (event?.type !== "turn.diff_updated") {
+      return;
+    }
+    expect(typeof event.diff).toBe("string");
+    expect(event.diff).toContain("--- a/");
+  });
+
+  // Task 2.2: turn/plan/updated fixture.
+  test("turn-plan-updated fixture → turn.plan_updated event with plan object", () => {
+    const fixture = loadFixture("turn-plan-updated");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("turn.plan_updated");
+    if (event?.type !== "turn.plan_updated") {
+      return;
+    }
+    expect(event.plan).toBeDefined();
+    expect(typeof event.plan).toBe("object");
+  });
+
+  // Task 2.3: item/commandExecution/outputDelta fixture.
+  test("item-command-execution-output-delta fixture → item.updated with command_execution and output", () => {
+    const fixture = loadFixture("item-command-execution-output-delta");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.updated");
+    if (event?.type !== "item.updated") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("command_execution");
+    expect(item.id).toBe("item_cmd_001");
+    expect(typeof item.aggregated_output).toBe("string");
+    expect((item.aggregated_output as string).length).toBeGreaterThan(0);
+  });
+
+  // Task 2.4: item/fileChange/outputDelta fixture.
+  test("item-file-change-output-delta fixture → item.updated with file_change and delta", () => {
+    const fixture = loadFixture("item-file-change-output-delta");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.updated");
+    if (event?.type !== "item.updated") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("file_change");
+    expect(item.id).toBe("item_file_001");
+    expect(typeof item._delta).toBe("string");
+    expect((item._delta as string).length).toBeGreaterThan(0);
+  });
+
+  // Task 2.5: item/reasoning/summaryTextDelta fixture.
+  test("item-reasoning-summary-text-delta fixture → item.updated with reasoning + summaryText delta", () => {
+    const fixture = loadFixture("item-reasoning-summary-text-delta");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.updated");
+    if (event?.type !== "item.updated") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("reasoning");
+    expect(item.id).toBe("item_reasoning_001");
+    expect(item._deltaKind).toBe("summaryText");
+    expect(typeof item.text).toBe("string");
+  });
+
+  // Task 2.5: item/reasoning/summaryPartAdded fixture.
+  test("item-reasoning-summary-part-added fixture → item.updated with reasoning + summaryPart delta", () => {
+    const fixture = loadFixture("item-reasoning-summary-part-added");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.updated");
+    if (event?.type !== "item.updated") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("reasoning");
+    expect(item.id).toBe("item_reasoning_001");
+    expect(item._deltaKind).toBe("summaryPart");
+    expect(item._summaryPart).toBeDefined();
+  });
+
+  // Task 2.5: item/reasoning/textDelta fixture.
+  test("item-reasoning-text-delta fixture → item.updated with reasoning + text delta", () => {
+    const fixture = loadFixture("item-reasoning-text-delta");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.updated");
+    if (event?.type !== "item.updated") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("reasoning");
+    expect(item.id).toBe("item_reasoning_001");
+    expect(item._deltaKind).toBe("text");
+    expect(typeof item.text).toBe("string");
+  });
+
+  // Task 2.6: item/mcpToolCall/progress fixture.
+  test("item-mcp-tool-call-progress fixture → item.updated with mcp_tool_call and progress", () => {
+    const fixture = loadFixture("item-mcp-tool-call-progress");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.updated");
+    if (event?.type !== "item.updated") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("mcp_tool_call");
+    expect(item.id).toBe("item_mcp_001");
+    expect(item.status).toBe("in_progress");
+    expect(item._progress).toBeDefined();
+  });
+
+  // Task 2.7: item/autoApprovalReview/started fixture.
+  test("item-auto-approval-review-started fixture → item.started with auto_approval_review", () => {
+    const fixture = loadFixture("item-auto-approval-review-started");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.started");
+    if (event?.type !== "item.started") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("auto_approval_review");
+    expect(item.reviewId).toBe("review_001");
+    expect(item.targetItemId).toBe("item_file_001");
+    expect(item.status).toBe("pending");
+  });
+
+  // Task 2.7: item/autoApprovalReview/completed fixture.
+  test("item-auto-approval-review-completed fixture → item.completed with auto_approval_review decision", () => {
+    const fixture = loadFixture("item-auto-approval-review-completed");
+    const event = extractThreadEvent(fixture);
+    expect(event).not.toBeNull();
+    expect(event?.type).toBe("item.completed");
+    if (event?.type !== "item.completed") {
+      return;
+    }
+    const item = event.item as Record<string, unknown>;
+    expect(item.type).toBe("auto_approval_review");
+    expect(item.reviewId).toBe("review_001");
+    expect(item.decision).toBe("approved");
+    expect(item.status).toBe("approved");
+  });
+
+  // Task 2.9: SILENTLY_IGNORED_ITEM_TYPES shrinks to only "userMessage".
+  test("SILENTLY_IGNORED_ITEM_TYPES equals Set(['userMessage'])", () => {
+    expect(SILENTLY_IGNORED_ITEM_TYPES).toEqual(new Set(["userMessage"]));
   });
 
   test("converts item/agentMessage/delta into item.updated event", () => {
@@ -302,6 +500,173 @@ describe("extractThreadEvent", () => {
       ),
     );
     expect(event).toBeNull();
+  });
+});
+
+describe("extractMetaEvent (Task 2.8)", () => {
+  // thread/tokenUsage/updated fixture.
+  test("thread-token-usage-updated fixture → thread.token_usage_updated", () => {
+    const fixture = loadFixture("thread-token-usage-updated");
+    const meta = extractMetaEvent(fixture);
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("thread.token_usage_updated");
+    if (meta?.kind !== "thread.token_usage_updated") {
+      return;
+    }
+    expect(meta.threadId).toBe("019cb55a-6ab5-7ad2-876b-dd1d3dedcf52");
+    expect(meta.usage.inputTokens).toBe(2048);
+    expect(meta.usage.cachedInputTokens).toBe(512);
+    expect(meta.usage.outputTokens).toBe(1024);
+  });
+
+  // account/rateLimits/updated fixture.
+  test("account-rate-limits-updated fixture → account.rate_limits_updated", () => {
+    const fixture = loadFixture("account-rate-limits-updated");
+    const meta = extractMetaEvent(fixture);
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("account.rate_limits_updated");
+    if (meta?.kind !== "account.rate_limits_updated") {
+      return;
+    }
+    expect(meta.rateLimits).toBeDefined();
+    expect(typeof meta.rateLimits).toBe("object");
+  });
+
+  // model/rerouted fixture.
+  test("model-rerouted fixture → model.rerouted", () => {
+    const fixture = loadFixture("model-rerouted");
+    const meta = extractMetaEvent(fixture);
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("model.rerouted");
+    if (meta?.kind !== "model.rerouted") {
+      return;
+    }
+    expect(meta.originalModel).toBe("claude-3-5-sonnet-20241022");
+    expect(meta.reroutedModel).toBe("claude-3-opus-20250219");
+    expect(meta.reason).toBe("model_overloaded");
+  });
+
+  // mcpServer/startupStatus/updated fixture.
+  test("mcp-server-startup-status-updated fixture → mcp_server.startup_status_updated", () => {
+    const fixture = loadFixture("mcp-server-startup-status-updated");
+    const meta = extractMetaEvent(fixture);
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("mcp_server.startup_status_updated");
+    if (meta?.kind !== "mcp_server.startup_status_updated") {
+      return;
+    }
+    expect(meta.serverName).toBe("github-integration");
+    expect(meta.status).toBe("ready");
+  });
+
+  // thread/status/changed (synthesized inline — no fixture).
+  test("thread/status/changed inline → thread.status_changed", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "thread/status/changed",
+      params: { threadId: "t-abc", status: "running" },
+    });
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("thread.status_changed");
+    if (meta?.kind !== "thread.status_changed") {
+      return;
+    }
+    expect(meta.threadId).toBe("t-abc");
+    expect(meta.status).toBe("running");
+  });
+
+  // config/warning (synthesized inline — no fixture).
+  test("config/warning inline → config.warning", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "config/warning",
+      params: { message: "deprecated option", context: "model config" },
+    });
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("config.warning");
+    if (meta?.kind !== "config.warning") {
+      return;
+    }
+    expect(meta.message).toBe("deprecated option");
+    expect(meta.context).toBe("model config");
+  });
+
+  // deprecation/notice (synthesized inline — no fixture).
+  test("deprecation/notice inline → deprecation.notice", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "deprecation/notice",
+      params: { message: "old param removed", replacement: "newParam" },
+    });
+    expect(meta).not.toBeNull();
+    expect(meta?.kind).toBe("deprecation.notice");
+    if (meta?.kind !== "deprecation.notice") {
+      return;
+    }
+    expect(meta.message).toBe("old param removed");
+    expect(meta.replacement).toBe("newParam");
+  });
+
+  // Non-meta method returns null.
+  test("non-meta method returns null", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { id: "x", type: "agent_message" } },
+    });
+    expect(meta).toBeNull();
+  });
+});
+
+describe("DEBUG_DUMP_NOTIFICATIONS harness", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-dump-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("writes raw notification line to <dir>/codex-app-server.jsonl when dir is set", () => {
+    const line = '{"method":"item/started","params":{"item":{"type":"x"}}}';
+    dumpRawNotification(line, tmpDir);
+    const dumpPath = path.join(tmpDir, "codex-app-server.jsonl");
+    const contents = fs.readFileSync(dumpPath, "utf8");
+    expect(contents.trim()).toBe(line);
+  });
+
+  test("appends multiple lines separated by newlines", () => {
+    const lineA = '{"method":"item/started"}';
+    const lineB = '{"method":"item/completed"}';
+    dumpRawNotification(lineA, tmpDir);
+    dumpRawNotification(lineB, tmpDir);
+    const dumpPath = path.join(tmpDir, "codex-app-server.jsonl");
+    const contents = fs.readFileSync(dumpPath, "utf8");
+    expect(contents.split("\n").filter(Boolean)).toEqual([lineA, lineB]);
+  });
+
+  test("is a no-op when dir is undefined", () => {
+    dumpRawNotification('{"method":"test"}', undefined);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  test("is a no-op when dir is empty string", () => {
+    dumpRawNotification('{"method":"test"}', "");
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  test("fails soft on a nonexistent parent directory (logs but does not throw)", () => {
+    const badDir = path.join(tmpDir, "does-not-exist-yet");
+    expect(() => dumpRawNotification('{"test":1}', badDir)).not.toThrow();
+  });
+
+  test("zero-overhead when dir is undefined — no fs calls occur", () => {
+    const spy = vi.spyOn(fs, "appendFileSync");
+    dumpRawNotification('{"test":1}', undefined);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

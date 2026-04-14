@@ -1,0 +1,6 @@
+{
+  "type": "custom-error",
+  "session_id": null,
+  "duration_ms": 5432,
+  "error_info": "File not found: src/middleware/auth.ts - unable to read the requested file during analysis phase"
+}

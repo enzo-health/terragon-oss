@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": {
+        "type": "diff",
+        "path": "src/middleware/auth.ts",
+        "oldContent": "const authenticateUser = (req, res, next) => {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token) {\n    res.status(401).send('Unauthorized');\n  }\n};\n",
+        "newContent": "const authenticateUser = (req, res, next) => {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }\n  try {\n    const decoded = jwt.verify(token, process.env.JWT_SECRET);\n    req.user = decoded;\n    next();\n  } catch (err) {\n    return res.status(401).json({ error: 'Invalid token' });\n  }\n};\n",
+        "unifiedDiff": "--- a/src/middleware/auth.ts\n+++ b/src/middleware/auth.ts\n@@ -1,7 +1,15 @@\n const authenticateUser = (req, res, next) => {\n   const token = req.headers.authorization?.split(' ')[1];\n   if (!token) {\n-    res.status(401).send('Unauthorized');\n+    return res.status(401).json({ error: 'Unauthorized' });\n+  }\n+  try {\n+    const decoded = jwt.verify(token, process.env.JWT_SECRET);\n+    req.user = decoded;\n+    next();\n+  } catch (err) {\n+    return res.status(401).json({ error: 'Invalid token' });\n   }\n };\n",
+        "status": "pending"
+      }
+    }
+  }
+}
