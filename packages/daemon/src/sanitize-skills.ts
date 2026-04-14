@@ -11,18 +11,32 @@ type Logger = {
  * Returns null if no frontmatter block is found.
  */
 export function extractFrontmatter(content: string): string | null {
-  if (!content.startsWith("---")) {
+  // Support both LF and CRLF line endings, and require exactly "---"
+  // followed by a newline (not "----" or other variants).
+  let startIndex: number;
+  let newline: "\n" | "\r\n";
+
+  if (content.startsWith("---\r\n")) {
+    startIndex = "---\r\n".length;
+    newline = "\r\n";
+  } else if (content.startsWith("---\n")) {
+    startIndex = "---\n".length;
+    newline = "\n";
+  } else {
     return null;
   }
-  let endIndex = content.indexOf("\n---\n", 4);
+
+  const closingWithTrailing = `${newline}---${newline}`;
+  let endIndex = content.indexOf(closingWithTrailing, startIndex);
   if (endIndex === -1) {
-    if (content.endsWith("\n---")) {
-      endIndex = content.length - "\n---".length;
+    const closingAtEnd = `${newline}---`;
+    if (content.endsWith(closingAtEnd)) {
+      endIndex = content.length - closingAtEnd.length;
     } else {
       return null;
     }
   }
-  return content.substring(4, endIndex);
+  return content.substring(startIndex, endIndex);
 }
 
 /**
@@ -65,7 +79,10 @@ export function isFrontmatterValid(frontmatter: string): boolean {
       continue;
     }
 
-    // Check for unquoted values that contain colons (the exact error Codex hit)
+    // Check for unquoted values that contain "colon-space" — the YAML mapping
+    // value indicator that Codex's strict parser rejects. Bare colons without
+    // a trailing space (e.g. URLs like https://... or timestamps) are valid
+    // in YAML plain scalars and must not be flagged.
     if (
       !value.startsWith('"') &&
       !value.startsWith("'") &&
@@ -73,7 +90,7 @@ export function isFrontmatterValid(frontmatter: string): boolean {
       !value.startsWith("{") &&
       !value.startsWith("|") &&
       !value.startsWith(">") &&
-      value.includes(":")
+      value.includes(": ")
     ) {
       return false;
     }

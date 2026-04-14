@@ -32,6 +32,15 @@ describe("extractFrontmatter", () => {
   it("returns null for unclosed frontmatter", () => {
     expect(extractFrontmatter("---\nname: test\nno closing")).toBeNull();
   });
+
+  it("handles CRLF line endings", () => {
+    const content = '---\r\nname: "test"\r\n---\r\n# Body';
+    expect(extractFrontmatter(content)).toBe('name: "test"');
+  });
+
+  it("rejects ---- (four dashes) as frontmatter delimiter", () => {
+    expect(extractFrontmatter("----\nname: test\n---\n")).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -80,6 +89,21 @@ describe("isFrontmatterValid", () => {
 
   it("accepts list items", () => {
     expect(isFrontmatterValid("tags:\n- one\n- two")).toBe(true);
+  });
+
+  it("accepts URLs with colons as valid plain scalars", () => {
+    expect(isFrontmatterValid("url: https://example.com/path")).toBe(true);
+    expect(isFrontmatterValid("repo: git@github.com:org/repo.git")).toBe(true);
+  });
+
+  it("accepts timestamps with colons as valid plain scalars", () => {
+    expect(isFrontmatterValid("created: 2026-03-18T01:00:00Z")).toBe(true);
+  });
+
+  it("rejects colon-space in unquoted values (YAML mapping indicator)", () => {
+    expect(isFrontmatterValid("description: Some text: with a colon")).toBe(
+      false,
+    );
   });
 
   it("rejects unbalanced double quotes", () => {
