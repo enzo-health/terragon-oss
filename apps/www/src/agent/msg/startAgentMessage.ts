@@ -18,7 +18,7 @@ import {
 } from "@terragon/shared";
 import { DB } from "@terragon/shared/db";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
 import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -662,7 +662,7 @@ export async function startAgentMessage({
               sourceType: thread?.sourceType ?? null,
               sourceMetadata: thread?.sourceMetadata ?? null,
             });
-          let activeWorkflow = await getActiveWorkflowForThreadV3({
+          let activeWorkflow = await getActiveWorkflowForThread({
             db,
             threadId,
           });
@@ -679,7 +679,7 @@ export async function startAgentMessage({
                 threadId,
                 planApprovalPolicy,
               });
-              activeWorkflow = await getActiveWorkflowForThreadV3({
+              activeWorkflow = await getActiveWorkflowForThread({
                 db,
                 threadId,
               });

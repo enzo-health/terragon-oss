@@ -11,6 +11,7 @@ import {
   getThreadChat,
   getThreadMinimal,
 } from "@terragon/shared/model/threads";
+import { isAgentWorking } from "@/agent/thread-status";
 import {
   getAgentRunContextByRunId,
   getLatestAgentRunContextForThreadChat,
@@ -45,10 +46,7 @@ async function checkNoopBusy({
     threadChatId,
     userId,
   });
-  if (
-    latestThreadChat &&
-    FOLLOW_UP_ACTIVE_PROCESSING_STATUSES.has(latestThreadChat.status)
-  ) {
+  if (latestThreadChat && isAgentWorking(latestThreadChat.status)) {
     let dispatchLaunched = false;
     try {
       const latestRunContext = await getLatestAgentRunContextForThreadChat({
@@ -108,17 +106,6 @@ async function checkNoopBusy({
 
 const MAX_FOLLOW_UP_RETRIES = 3;
 const FOLLOW_UP_RETRY_BASE_DELAY_MS = 2_000;
-const FOLLOW_UP_ACTIVE_PROCESSING_STATUSES = new Set([
-  "queued",
-  "queued-blocked",
-  "queued-sandbox-creation-rate-limit",
-  "queued-tasks-concurrency",
-  "queued-agent-rate-limit",
-  "booting",
-  "working",
-  "stopping",
-  "checkpointing",
-]);
 
 export type FollowUpQueueProcessingResult = {
   processed: boolean;
@@ -155,8 +142,7 @@ function isIntentOnlyDeliveryLoopDispatchActive(
   return (
     intent?.targetPhase === "implementing" ||
     intent?.targetPhase === "review_gate" ||
-    intent?.targetPhase === "ci_gate" ||
-    intent?.targetPhase === "ui_gate"
+    intent?.targetPhase === "ci_gate"
   );
 }
 

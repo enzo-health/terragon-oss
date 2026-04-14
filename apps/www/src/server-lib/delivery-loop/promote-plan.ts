@@ -6,7 +6,7 @@ import {
   createPlanArtifact,
   replacePlanTasksForArtifact,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
-import { getActiveWorkflowForThreadV3 } from "./v3/store";
+import { getActiveWorkflowForThread } from "./v3/store";
 import type { ParsedPlanSpec } from "./parse-plan-spec";
 
 type PlanningLoopContext = {
@@ -298,7 +298,7 @@ export async function promotePlanToImplementing(params: {
 }): Promise<PromotePlanToImplementingResult> {
   const activeWorkflow =
     params.workflowId == null && params.threadId
-      ? await getActiveWorkflowForThreadV3({
+      ? await getActiveWorkflowForThread({
           db: params.db,
           threadId: params.threadId,
         })

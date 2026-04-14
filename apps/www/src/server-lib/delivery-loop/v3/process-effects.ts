@@ -815,7 +815,7 @@ async function broadcastDeliveryLoopRefetch(params: {
   }
 }
 
-function formatStatusBodyV3(state: string): string {
+function formatStatusBody(state: string): string {
   const label = STATE_LABELS[state] ?? `State: ${state}`;
   return `Terragon Delivery Loop status update.\n\n- Current state: \`${state}\`\n- ${label}`;
 }
@@ -845,7 +845,7 @@ async function processPublishStatusEffect(params: {
     workflowId: params.effect.workflowId,
   });
   const currentState = head?.state ?? workflow.kind;
-  const body = formatStatusBodyV3(currentState);
+  const body = formatStatusBody(currentState);
   const isTerminal = isTerminalState(currentState as WorkflowState);
 
   try {

@@ -45,7 +45,7 @@ import {
 } from "@/lib/redis";
 import { appendEventAndAdvanceExplicit } from "@/server-lib/delivery-loop/v3/kernel";
 import {
-  getActiveWorkflowForThreadV3,
+  getActiveWorkflowForThread,
   getWorkflowHead,
 } from "@/server-lib/delivery-loop/v3/store";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
@@ -1114,7 +1114,7 @@ export async function POST(request: Request) {
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
 
-  const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+  const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   const effectiveLoopId =
     runContext?.workflowId ?? activeWorkflow?.workflow.id ?? null;
 

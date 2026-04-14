@@ -15,6 +15,7 @@ import { TerragonAssistantMessage } from "./assistant-message";
 import { TerragonSystemMessage } from "./system-message";
 import { ChatError } from "../chat-error";
 import { WorkingMessage, MessageScheduled } from "../chat-messages";
+import { isQueuedStatus } from "@/agent/thread-status";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
@@ -99,6 +100,19 @@ export function TerragonThread({
     return -1;
   }, [messages]);
 
+  const hasAgentMessages = latestAgentMessageIndex >= 0;
+
+  // Hide the "Waiting to start" indicator when the agent has already produced
+  // messages — the status DB field may still be "queued" while the agent is
+  // actively working due to broadcast-before-persist timing.
+  const showWorkingMessage =
+    isAgentWorking &&
+    !(
+      hasAgentMessages &&
+      threadStatus !== null &&
+      isQueuedStatus(threadStatus)
+    );
+
   const ctx = useMemo<TerragonThreadContext>(
     () => ({
       messages,
@@ -177,7 +191,7 @@ export function TerragonThread({
               isRetrying={isRetrying}
             />
           )}
-          {isAgentWorking && (
+          {showWorkingMessage && (
             <WorkingMessage
               agent={chatAgent}
               status={threadStatus ?? "working"}

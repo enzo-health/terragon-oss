@@ -6,7 +6,7 @@ import { UserFacingError } from "@/lib/server-actions";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { DBUserMessage } from "@terragon/shared";
 import { handleHumanAction } from "@/server-lib/delivery-loop/adapters/ingress/human-interventions";
-import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
 import type { WorkflowId } from "@terragon/shared/delivery-loop/domain/workflow";
 import { getThreadWithUserPermissions } from "@/server-actions/get-thread";
 import * as schema from "@terragon/shared/db/schema";
@@ -55,7 +55,7 @@ export const requestDeliveryLoopResumeFromBlocked = userOnlyAction(
       }
     }
 
-    const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+    const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
     if (!activeWorkflow) {
       throw new UserFacingError(
         "No active Delivery Loop found for this thread",

@@ -13,7 +13,6 @@ describe("delivery-loop-status runtime helpers", () => {
       expect(isDeliveryLoopStateActivelyWorking("implementing")).toBe(true);
       expect(isDeliveryLoopStateActivelyWorking("review_gate")).toBe(true);
       expect(isDeliveryLoopStateActivelyWorking("ci_gate")).toBe(true);
-      expect(isDeliveryLoopStateActivelyWorking("ui_gate")).toBe(true);
       expect(isDeliveryLoopStateActivelyWorking("babysitting")).toBe(true);
     });
 

@@ -6,7 +6,7 @@ import {
   markPlanTasksCompletedByAgent,
 } from "@terragon/shared/delivery-loop/store/artifact-store";
 import type { DeliveryPlanTaskCompletionEvidence } from "@terragon/shared/db/types";
-import { getActiveWorkflowForThreadV3 } from "@/server-lib/delivery-loop/v3/store";
+import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
 
 const completedTaskSchema = z.object({
   stableTaskId: z.string().min(1),
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const activeWorkflow = await getActiveWorkflowForThreadV3({ db, threadId });
+  const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   if (!activeWorkflow) {
     return Response.json(
       { success: false, error: "no_active_loop" },

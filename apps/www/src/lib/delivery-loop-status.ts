@@ -107,11 +107,6 @@ const DELIVERY_STATE_SUMMARY = {
     explanation: "Required CI checks are running.",
     progressPercent: 55,
   },
-  ui_gate: {
-    stateLabel: "UI Gate",
-    explanation: "Browser smoke testing is validating UI behavior.",
-    progressPercent: 65,
-  },
   awaiting_pr_link: {
     stateLabel: "Awaiting PR",
     explanation:
@@ -183,13 +178,6 @@ function getBlockedStateSummary(
           "CI is blocked and needs intervention before the loop can continue.",
         progressPercent: 55,
       };
-    case "ui_gate":
-      return {
-        stateLabel: "Blocked in UI Gate",
-        explanation:
-          "UI validation is blocked and needs intervention before the loop can continue.",
-        progressPercent: 65,
-      };
     case "awaiting_pr_link":
       return {
         stateLabel: "Blocked Awaiting PR",
@@ -219,8 +207,6 @@ export function getDeliveryLoopBlockedAttentionTitle(
       return "Review gate is blocked and needs human feedback";
     case "ci_gate":
       return "CI gate is blocked and needs human feedback";
-    case "ui_gate":
-      return "UI gate is blocked and needs human feedback";
     case "awaiting_pr_link":
       return "Awaiting PR linkage or human intervention";
     case "babysitting":
@@ -238,7 +224,6 @@ export function getDeliveryLoopSnapshotStateSummary(
     case "implementing":
     case "review_gate":
     case "ci_gate":
-    case "ui_gate":
     case "awaiting_pr_link":
     case "babysitting":
     case "done":
@@ -260,7 +245,6 @@ export function isDeliveryLoopStateActivelyWorking(
     case "implementing":
     case "review_gate":
     case "ci_gate":
-    case "ui_gate":
     case "babysitting":
       return true;
     case "awaiting_pr_link":
@@ -373,79 +357,67 @@ function getEffectiveLoopStateForChecks(
   return snapshot.kind;
 }
 
-function inferCiStatusFromLoopState(
-  snapshot: DeliveryLoopSnapshot,
-): DeliveryLoopStatusCheckStatus {
-  const loopState = getEffectiveLoopStateForChecks(snapshot);
-  switch (loopState) {
-    case "planning":
-    case "implementing":
-    case "review_gate":
-      return "not_started";
-    case "ci_gate":
-      return "pending";
-    case "ui_gate":
-    case "babysitting":
-    case "awaiting_pr_link":
-    case "done":
-    case "terminated_pr_merged":
-      return "passed";
-    case "terminated_pr_closed":
-    case "stopped":
-      return "degraded";
-    default:
-      return assertNever(loopState, "loop state for CI fallback");
-  }
-}
+/**
+ * Pipeline ordering of non-terminal delivery loop states.
+ * Each phase becomes "pending" at the state matching its key in
+ * PHASE_PENDING_AT; states earlier in the pipeline are "not_started",
+ * states later are "passed". Terminal states are handled separately.
+ */
+const STATE_PIPELINE = [
+  "planning",
+  "implementing",
+  "review_gate",
+  "ci_gate",
+  "babysitting",
+  "awaiting_pr_link",
+  "done",
+] as const;
 
-function inferReviewThreadsStatusFromLoopState(
-  snapshot: DeliveryLoopSnapshot,
-): DeliveryLoopStatusCheckStatus {
-  const loopState = getEffectiveLoopStateForChecks(snapshot);
-  switch (loopState) {
-    case "planning":
-    case "implementing":
-    case "review_gate":
-    case "ci_gate":
-    case "ui_gate":
-      return "not_started";
-    case "babysitting":
-      return "pending";
-    case "awaiting_pr_link":
-    case "done":
-    case "terminated_pr_merged":
-      return "passed";
-    case "terminated_pr_closed":
-    case "stopped":
-      return "degraded";
-    default:
-      return assertNever(loopState, "loop state for review-thread fallback");
-  }
-}
+type PhaseKey = "ci" | "reviewThreads" | "reviewGate";
 
-function inferReviewGateStatusFromLoopState(
+const PHASE_PENDING_AT: Record<PhaseKey, (typeof STATE_PIPELINE)[number]> = {
+  ci: "ci_gate",
+  reviewThreads: "babysitting",
+  reviewGate: "review_gate",
+};
+
+function inferPhaseStatusFromLoopState(
   snapshot: DeliveryLoopSnapshot,
+  phase: PhaseKey,
 ): DeliveryLoopStatusCheckStatus {
   const loopState = getEffectiveLoopStateForChecks(snapshot);
+
+  // Terminal states always map to a fixed result
   switch (loopState) {
-    case "planning":
-    case "implementing":
-      return "not_started";
-    case "review_gate":
-      return "pending";
-    case "ci_gate":
-    case "ui_gate":
-    case "awaiting_pr_link":
-    case "babysitting":
-    case "done":
-    case "terminated_pr_merged":
-      return "passed";
     case "terminated_pr_closed":
     case "stopped":
       return "degraded";
+    case "terminated_pr_merged":
+      return "passed";
     default:
-      return assertNever(loopState, "loop state for review-gate fallback");
+      break;
   }
+
+  const pendingState = PHASE_PENDING_AT[phase];
+  const pendingIndex = STATE_PIPELINE.indexOf(pendingState);
+  const currentIndex = STATE_PIPELINE.indexOf(loopState);
+
+  if (currentIndex === -1) {
+    // Exhaustiveness: if a new state is added but not to STATE_PIPELINE,
+    // this will fire at runtime.
+    return assertNever(
+      loopState as never,
+      `loop state for ${phase} phase fallback`,
+    );
+  }
+
+  if (currentIndex < pendingIndex) {
+    return "not_started";
+  }
+  if (currentIndex === pendingIndex) {
+    return "pending";
+  }
+  return "passed";
 }
 
 function aggregateTopProgressStatuses(
@@ -522,7 +494,6 @@ export function buildDeliveryLoopTopProgressPhases({
         : effectiveState === "review_gate" && reviewStatus === "not_started"
           ? "pending"
           : effectiveState === "ci_gate" ||
-              effectiveState === "ui_gate" ||
               effectiveState === "awaiting_pr_link" ||
               effectiveState === "babysitting" ||
               effectiveState === "done" ||
@@ -560,16 +531,14 @@ export function buildDeliveryLoopTopProgressPhases({
       : effectiveState === "stopped" ||
           effectiveState === "terminated_pr_closed"
         ? "degraded"
-        : effectiveState === "ui_gate" && uiStatus === "not_started"
-          ? "pending"
-          : effectiveState === "awaiting_pr_link" ||
-              effectiveState === "babysitting" ||
-              effectiveState === "done" ||
-              effectiveState === "terminated_pr_merged"
-            ? uiStatus === "not_started"
-              ? "pending"
-              : uiStatus
-            : uiStatus;
+        : effectiveState === "awaiting_pr_link" ||
+            effectiveState === "babysitting" ||
+            effectiveState === "done" ||
+            effectiveState === "terminated_pr_merged"
+          ? uiStatus === "not_started"
+            ? "pending"
+            : uiStatus
+          : uiStatus;
 
   return [
     {
@@ -600,6 +569,55 @@ export function buildDeliveryLoopTopProgressPhases({
   ];
 }
 
+/** Shared builder for gate-style status checks (CI, review, deep review, etc.) */
+function buildGateCheck({
+  key,
+  label,
+  currentHeadSha,
+  runStatus,
+  fallbackStatus,
+  blockedDetail,
+  transientErrorDetail,
+  details,
+}: {
+  key: DeliveryLoopStatusCheckKey;
+  label: string;
+  currentHeadSha: string | null;
+  runStatus: string | null;
+  fallbackStatus: DeliveryLoopStatusCheckStatus;
+  blockedDetail: string | null;
+  transientErrorDetail?: string | null;
+  details: {
+    notStarted: string;
+    passed: string;
+    pending: string;
+    degraded: string;
+    blocked: string;
+  };
+}): DeliveryLoopStatusCheck {
+  if (!currentHeadSha) {
+    return { key, label, status: "not_started", detail: details.notStarted };
+  }
+  if (runStatus === "passed") {
+    return { key, label, status: "passed", detail: details.passed };
+  }
+  if (transientErrorDetail) {
+    return { key, label, status: "degraded", detail: transientErrorDetail };
+  }
+  if (blockedDetail) {
+    return { key, label, status: "blocked", detail: blockedDetail };
+  }
+  const detail =
+    fallbackStatus === "blocked"
+      ? details.blocked
+      : fallbackStatus === "passed"
+        ? details.passed
+        : fallbackStatus === "degraded"
+          ? details.degraded
+          : details.pending;
+  return { key, label, status: fallbackStatus, detail };
+}
+
 export function buildDeliveryLoopStatusChecks({
   loopSnapshot,
   currentHeadSha,
@@ -623,170 +641,107 @@ export function buildDeliveryLoopStatusChecks({
   videoCaptureStatus: DeliveryVideoCaptureStatus;
   videoFailureMessage: string | null;
 }): DeliveryLoopStatusCheck[] {
-  const ciFallbackStatus = inferCiStatusFromLoopState(loopSnapshot);
-  const reviewThreadsFallbackStatus =
-    inferReviewThreadsStatusFromLoopState(loopSnapshot);
-  const deepReviewFallbackStatus =
-    inferReviewGateStatusFromLoopState(loopSnapshot);
-  const carmackFallbackStatus =
-    inferReviewGateStatusFromLoopState(loopSnapshot);
+  const ciFallbackStatus = inferPhaseStatusFromLoopState(loopSnapshot, "ci");
+  const reviewThreadsFallbackStatus = inferPhaseStatusFromLoopState(
+    loopSnapshot,
+    "reviewThreads",
+  );
+  const deepReviewFallbackStatus = inferPhaseStatusFromLoopState(
+    loopSnapshot,
+    "reviewGate",
+  );
+  const carmackFallbackStatus = inferPhaseStatusFromLoopState(
+    loopSnapshot,
+    "reviewGate",
+  );
 
-  const ciCheck: DeliveryLoopStatusCheck = !currentHeadSha
-    ? {
-        key: "ci",
-        label: "CI",
-        status: "not_started",
-        detail: "Waiting for the first pushed head SHA.",
-      }
-    : ciRun?.status === "passed"
-      ? {
-          key: "ci",
-          label: "CI",
-          status: "passed",
-          detail: "Required checks are passing.",
-        }
-      : ciRun?.status === "blocked" || ciRun?.status === "capability_error"
-        ? {
-            key: "ci",
-            label: "CI",
-            status: "blocked",
-            detail:
-              ciRun.failingRequiredChecks.length > 0
-                ? `${ciRun.failingRequiredChecks.length} required check(s) failing.`
-                : "Required checks are currently blocked.",
-          }
-        : {
-            key: "ci",
-            label: "CI",
-            status: ciFallbackStatus,
-            detail:
-              ciFallbackStatus === "blocked"
-                ? "Loop is blocked on CI."
-                : ciFallbackStatus === "passed"
-                  ? "Required checks are passing."
-                  : ciFallbackStatus === "degraded"
-                    ? "Loop ended before CI evaluation completed."
-                    : "Awaiting CI evaluation for the current head.",
-          };
+  // --- Build individual checks using shared helper ---
 
-  const reviewThreadsCheck: DeliveryLoopStatusCheck = !currentHeadSha
-    ? {
-        key: "review_threads",
-        label: "Review Threads",
-        status: "not_started",
-        detail: "Review gate starts after a head SHA is available.",
-      }
-    : reviewThreadRun?.status === "passed"
-      ? {
-          key: "review_threads",
-          label: "Review Threads",
-          status: "passed",
-          detail: "No unresolved review threads.",
-        }
-      : reviewThreadRun?.status === "blocked"
-        ? {
-            key: "review_threads",
-            label: "Review Threads",
-            status: "blocked",
-            detail: `${reviewThreadRun.unresolvedThreadCount} unresolved review thread(s).`,
-          }
-        : reviewThreadRun?.status === "transient_error"
-          ? {
-              key: "review_threads",
-              label: "Review Threads",
-              status: "degraded",
-              detail:
-                "Review-thread evaluation had a transient error and will retry.",
-            }
-          : {
-              key: "review_threads",
-              label: "Review Threads",
-              status: reviewThreadsFallbackStatus,
-              detail:
-                reviewThreadsFallbackStatus === "blocked"
-                  ? "Loop is blocked on unresolved review threads."
-                  : reviewThreadsFallbackStatus === "passed"
-                    ? "No unresolved review threads."
-                    : reviewThreadsFallbackStatus === "degraded"
-                      ? "Loop ended before review-thread evaluation completed."
-                      : "Awaiting review thread evaluation.",
-            };
+  const ciCheck = buildGateCheck({
+    key: "ci",
+    label: "CI",
+    currentHeadSha,
+    runStatus: ciRun?.status ?? null,
+    fallbackStatus: ciFallbackStatus,
+    blockedDetail:
+      ciRun?.status === "blocked" || ciRun?.status === "capability_error"
+        ? ciRun.failingRequiredChecks.length > 0
+          ? `${ciRun.failingRequiredChecks.length} required check(s) failing.`
+          : "Required checks are currently blocked."
+        : null,
+    details: {
+      notStarted: "Waiting for the first pushed head SHA.",
+      passed: "Required checks are passing.",
+      pending: "Awaiting CI evaluation for the current head.",
+      degraded: "Loop ended before CI evaluation completed.",
+      blocked: "Loop is blocked on CI.",
+    },
+  });
 
-  const deepReviewCheck: DeliveryLoopStatusCheck = !currentHeadSha
-    ? {
-        key: "deep_review",
-        label: "Deep Review",
-        status: "not_started",
-        detail: "Deep review starts after CI and review-thread signals.",
-      }
-    : deepReviewRun?.status === "passed"
-      ? {
-          key: "deep_review",
-          label: "Deep Review",
-          status: "passed",
-          detail: "No blocking deep review findings.",
-        }
-      : deepReviewRun
-        ? {
-            key: "deep_review",
-            label: "Deep Review",
-            status: "blocked",
-            detail:
-              unresolvedDeepFindingCount > 0
-                ? `${unresolvedDeepFindingCount} unresolved blocking finding(s).`
-                : "Deep review reported blocking output.",
-          }
-        : {
-            key: "deep_review",
-            label: "Deep Review",
-            status: deepReviewFallbackStatus,
-            detail:
-              deepReviewFallbackStatus === "blocked"
-                ? "Loop is blocked on deep review output."
-                : deepReviewFallbackStatus === "passed"
-                  ? "No blocking deep review findings."
-                  : deepReviewFallbackStatus === "degraded"
-                    ? "Loop ended before deep review completed."
-                    : "Awaiting deep review run.",
-          };
+  const reviewThreadsCheck = buildGateCheck({
+    key: "review_threads",
+    label: "Review Threads",
+    currentHeadSha,
+    runStatus: reviewThreadRun?.status ?? null,
+    fallbackStatus: reviewThreadsFallbackStatus,
+    blockedDetail:
+      reviewThreadRun?.status === "blocked"
+        ? `${reviewThreadRun.unresolvedThreadCount} unresolved review thread(s).`
+        : null,
+    transientErrorDetail:
+      reviewThreadRun?.status === "transient_error"
+        ? "Review-thread evaluation had a transient error and will retry."
+        : null,
+    details: {
+      notStarted: "Review gate starts after a head SHA is available.",
+      passed: "No unresolved review threads.",
+      pending: "Awaiting review thread evaluation.",
+      degraded: "Loop ended before review-thread evaluation completed.",
+      blocked: "Loop is blocked on unresolved review threads.",
+    },
+  });
 
-  const carmackCheck: DeliveryLoopStatusCheck = !currentHeadSha
-    ? {
-        key: "architecture_carmack",
-        label: "Architecture/Carmack",
-        status: "not_started",
-        detail: "Architecture gate starts after deep review pass.",
-      }
-    : carmackReviewRun?.status === "passed"
-      ? {
-          key: "architecture_carmack",
-          label: "Architecture/Carmack",
-          status: "passed",
-          detail: "No blocking architecture findings.",
-        }
-      : carmackReviewRun
-        ? {
-            key: "architecture_carmack",
-            label: "Architecture/Carmack",
-            status: "blocked",
-            detail:
-              unresolvedCarmackFindingCount > 0
-                ? `${unresolvedCarmackFindingCount} unresolved blocking finding(s).`
-                : "Architecture gate reported blocking output.",
-          }
-        : {
-            key: "architecture_carmack",
-            label: "Architecture/Carmack",
-            status: carmackFallbackStatus,
-            detail:
-              carmackFallbackStatus === "blocked"
-                ? "Loop is blocked on architecture findings."
-                : carmackFallbackStatus === "passed"
-                  ? "No blocking architecture findings."
-                  : carmackFallbackStatus === "degraded"
-                    ? "Loop ended before architecture review completed."
-                    : "Awaiting architecture gate run.",
-          };
+  const deepReviewCheck = buildGateCheck({
+    key: "deep_review",
+    label: "Deep Review",
+    currentHeadSha,
+    runStatus: deepReviewRun?.status ?? null,
+    fallbackStatus: deepReviewFallbackStatus,
+    blockedDetail:
+      deepReviewRun && deepReviewRun.status !== "passed"
+        ? unresolvedDeepFindingCount > 0
+          ? `${unresolvedDeepFindingCount} unresolved blocking finding(s).`
+          : "Deep review reported blocking output."
+        : null,
+    details: {
+      notStarted: "Deep review starts after CI and review-thread signals.",
+      passed: "No blocking deep review findings.",
+      pending: "Awaiting deep review run.",
+      degraded: "Loop ended before deep review completed.",
+      blocked: "Loop is blocked on deep review output.",
+    },
+  });
+
+  const carmackCheck = buildGateCheck({
+    key: "architecture_carmack",
+    label: "Architecture/Carmack",
+    currentHeadSha,
+    runStatus: carmackReviewRun?.status ?? null,
+    fallbackStatus: carmackFallbackStatus,
+    blockedDetail:
+      carmackReviewRun && carmackReviewRun.status !== "passed"
+        ? unresolvedCarmackFindingCount > 0
+          ? `${unresolvedCarmackFindingCount} unresolved blocking finding(s).`
+          : "Architecture gate reported blocking output."
+        : null,
+    details: {
+      notStarted: "Architecture gate starts after deep review pass.",
+      passed: "No blocking architecture findings.",
+      pending: "Awaiting architecture gate run.",
+      degraded: "Loop ended before architecture review completed.",
+      blocked: "Loop is blocked on architecture findings.",
+    },
+  });
 
   const videoCheck: DeliveryLoopStatusCheck =
     videoCaptureStatus === "captured"
@@ -827,7 +782,7 @@ export function buildDeliveryLoopStatusChecks({
  * Maps a v3 WorkflowHead to the DeliveryLoopSnapshot shape consumed by
  * the UI status builder functions.
  */
-export function buildSnapshotFromV3Head(
+export function buildSnapshotFromHead(
   head: WorkflowHead,
 ): DeliveryLoopSnapshot {
   switch (head.state) {

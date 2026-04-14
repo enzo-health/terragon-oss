@@ -8,7 +8,7 @@ import {
 } from "@terragon/shared/model/test-helpers";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { enrollWorkflow } from "./enrollment";
-import { getActiveWorkflowForThreadV3, getWorkflowHead } from "./store";
+import { getActiveWorkflowForThread, getWorkflowHead } from "./store";
 
 let testUserId: string;
 let testThreadId: string;
@@ -242,7 +242,7 @@ describe("enrollWorkflow", () => {
 
     expect(result.workflowId).toBe(orphan.id);
     await expect(
-      getActiveWorkflowForThreadV3({ db, threadId: testThreadId }),
+      getActiveWorkflowForThread({ db, threadId: testThreadId }),
     ).resolves.toEqual(
       expect.objectContaining({
         workflow: expect.objectContaining({ id: orphan.id }),

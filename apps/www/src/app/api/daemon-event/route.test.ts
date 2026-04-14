@@ -131,7 +131,7 @@ const v3BridgeMocks = vi.hoisted(() => ({
   appendEventAndAdvance: vi.fn(),
   appendEventAndAdvanceExplicit: vi.fn(),
   getWorkflowHead: vi.fn(),
-  getActiveWorkflowForThreadV3: vi.fn(),
+  getActiveWorkflowForThread: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-server", () => ({
@@ -211,7 +211,7 @@ vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({
 
 vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
   getWorkflowHead: v3BridgeMocks.getWorkflowHead,
-  getActiveWorkflowForThreadV3: v3BridgeMocks.getActiveWorkflowForThreadV3,
+  getActiveWorkflowForThread: v3BridgeMocks.getActiveWorkflowForThread,
 }));
 
 const redisMocks = vi.hoisted(() => {
@@ -379,7 +379,7 @@ describe("daemon-event route", () => {
     dispatchIntentMocks.updateDispatchIntent.mockResolvedValue(undefined);
     v3BridgeMocks.appendEventAndAdvance.mockResolvedValue(undefined);
     v3BridgeMocks.getWorkflowHead.mockResolvedValue(null);
-    v3BridgeMocks.getActiveWorkflowForThreadV3.mockImplementation(
+    v3BridgeMocks.getActiveWorkflowForThread.mockImplementation(
       async ({ threadId }: { threadId: string }) => {
         const workflow = await vi.mocked(getActiveWorkflowForThread)({
           db: dbMocks.db as never,

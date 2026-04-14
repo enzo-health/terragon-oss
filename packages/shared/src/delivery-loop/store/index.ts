@@ -16,7 +16,6 @@ export {
   verifyPlanTaskCompletionForHead,
   createImplementationArtifact,
   createReviewBundleArtifact,
-  createUiSmokeArtifact,
   createPrLinkArtifact,
   createBabysitEvaluationArtifact,
   getArtifactsForWorkflow,
