@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import readline from "node:readline";
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
 import WebSocket from "ws";
@@ -11,6 +13,33 @@ import {
 import type { Logger } from "./logger";
 
 export type CodexAppServerTransport = "stdio" | "websocket";
+
+/**
+ * Debug harness: when the daemon is started with
+ * `DEBUG_DUMP_NOTIFICATIONS=<dir>` set, every raw JSON-RPC line received
+ * from Codex app-server is appended to `<dir>/codex-app-server.jsonl`
+ * before any parsing. Used for fixture capture; zero-overhead when the
+ * env flag is unset.
+ *
+ * We cannot partition the file by threadChatId here because `threadChatId`
+ * is not known until after `params` is parsed. One file per adapter keeps
+ * the tee synchronous and cheap; fixture-collection tooling splits per
+ * thread as a post-processing step.
+ */
+export function dumpRawNotification(
+  line: string,
+  dir: string | undefined,
+): void {
+  if (!dir) {
+    return;
+  }
+  try {
+    const target = path.join(dir, "codex-app-server.jsonl");
+    fs.appendFileSync(target, line + "\n");
+  } catch {
+    // Fail soft: the debug harness must never affect daemon behaviour.
+  }
+}
 
 export type JsonRpcRequestEnvelope = {
   jsonrpc: "2.0";
@@ -1192,6 +1221,9 @@ export class CodexAppServerManager {
     if (!trimmedLine) {
       return;
     }
+
+    // Tee for fixture capture (no-op when DEBUG_DUMP_NOTIFICATIONS is unset).
+    dumpRawNotification(trimmedLine, process.env.DEBUG_DUMP_NOTIFICATIONS);
 
     let parsedLine: unknown;
     try {

@@ -1,8 +1,12 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   CodexAppServerManager,
+  dumpRawNotification,
   extractThreadEvent,
   SILENTLY_IGNORED_ITEM_TYPES,
   type CodexAppServerProcess,
@@ -302,6 +306,58 @@ describe("extractThreadEvent", () => {
       ),
     );
     expect(event).toBeNull();
+  });
+});
+
+describe("DEBUG_DUMP_NOTIFICATIONS harness", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-dump-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("writes raw notification line to <dir>/codex-app-server.jsonl when dir is set", () => {
+    const line = '{"method":"item/started","params":{"item":{"type":"x"}}}';
+    dumpRawNotification(line, tmpDir);
+    const dumpPath = path.join(tmpDir, "codex-app-server.jsonl");
+    const contents = fs.readFileSync(dumpPath, "utf8");
+    expect(contents.trim()).toBe(line);
+  });
+
+  test("appends multiple lines separated by newlines", () => {
+    const lineA = '{"method":"item/started"}';
+    const lineB = '{"method":"item/completed"}';
+    dumpRawNotification(lineA, tmpDir);
+    dumpRawNotification(lineB, tmpDir);
+    const dumpPath = path.join(tmpDir, "codex-app-server.jsonl");
+    const contents = fs.readFileSync(dumpPath, "utf8");
+    expect(contents.split("\n").filter(Boolean)).toEqual([lineA, lineB]);
+  });
+
+  test("is a no-op when dir is undefined", () => {
+    dumpRawNotification('{"method":"test"}', undefined);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  test("is a no-op when dir is empty string", () => {
+    dumpRawNotification('{"method":"test"}', "");
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  test("fails soft on a nonexistent parent directory (logs but does not throw)", () => {
+    const badDir = path.join(tmpDir, "does-not-exist-yet");
+    expect(() => dumpRawNotification('{"test":1}', badDir)).not.toThrow();
+  });
+
+  test("zero-overhead when dir is undefined — no fs calls occur", () => {
+    const spy = vi.spyOn(fs, "appendFileSync");
+    dumpRawNotification('{"test":1}', undefined);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 
