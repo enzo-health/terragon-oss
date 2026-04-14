@@ -65,4 +65,16 @@ export type ThreadMetaEvent =
       // Emitted when the Claude Code stream signals message stop.
       kind: "message.stop";
       reason: string;
+    }
+  | {
+      /**
+       * Emitted when the delivery-loop escalates to awaiting_manual_fix because
+       * the agent has been stuck in a narrate-only loop — responding with prose
+       * but invoking zero tools across multiple consecutive retries.
+       * The UI should surface this to the user so they know manual intervention
+       * is needed.
+       */
+      kind: "agent.narration_only_escalation";
+      consecutiveNarrationOnlyRetries: number;
+      message: string;
     };

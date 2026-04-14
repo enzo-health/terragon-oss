@@ -517,11 +517,38 @@ function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
   );
 }
 
+/**
+ * Returns true if any message in the batch contains at least one tool_use
+ * content block (i.e. the agent invoked at least one tool during this run).
+ * Used by the no-progress guard in the v3 delivery-loop reducer.
+ */
+function hasToolCallsInMessages(
+  messages: DaemonEventAPIBody["messages"],
+): boolean {
+  for (const msg of messages) {
+    if (msg.type !== "assistant") continue;
+    const content = msg.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (
+        block !== null &&
+        typeof block === "object" &&
+        "type" in block &&
+        block.type === "tool_use"
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function buildCompletedEvent(
   state: string | undefined,
   runId: string,
   runSeq: number | null,
   headSha: string | null | undefined,
+  hasToolCalls?: boolean,
 ) {
   switch (state) {
     case "planning":
@@ -533,7 +560,13 @@ function buildCompletedEvent(
     case "gating_ci":
       return { type: "gate_ci_passed" as const, runId, runSeq, headSha };
     default:
-      return { type: "run_completed" as const, runId, runSeq, headSha };
+      return {
+        type: "run_completed" as const,
+        runId,
+        runSeq,
+        headSha,
+        hasToolCalls,
+      };
   }
 }
 
@@ -1449,6 +1482,7 @@ export async function POST(request: Request) {
             envelopeV2.runId,
             terminalRunSeq,
             daemonHeadShaAtCompletion,
+            hasToolCallsInMessages(messages),
           ),
           behavior: {
             applyGateBypass: false,

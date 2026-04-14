@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reduce } from "./reducer";
+import { NO_PROGRESS_RETRY_THRESHOLD, reduce } from "./reducer";
 import type { WorkflowHead, WorkflowState } from "./types";
 import {
   ALL_CANONICAL_EVENTS,
@@ -36,6 +36,7 @@ function head(state: WorkflowHead["state"]): WorkflowHead {
     infraRetryCount: 0,
     maxFixAttempts: 6,
     maxInfraRetries: 10,
+    narrationOnlyRetryCount: 0,
     blockedReason: null,
     createdAt: now,
     updatedAt: now,
@@ -1319,6 +1320,246 @@ describe("reduce", () => {
       expect(result.head.state).toBe("awaiting_manual_fix");
       expect(result.head.version).toBe(h.version);
       expect(result.effects).toHaveLength(0);
+    });
+  });
+
+  describe("no-progress narration-only escalation guard", () => {
+    const NOW = new Date("2026-03-18T01:00:00.000Z");
+    const BASE_SHA = "sha-initial";
+
+    /**
+     * Simulate a no-op run_completed with zero tool calls (hasToolCalls: false).
+     * This is the pattern that Codex produces when it crash-retries and responds
+     * with prose instead of invoking tools.
+     */
+    function simulateNarrationOnlyRetry(
+      currentHead: WorkflowHead,
+      runId: string,
+    ): WorkflowHead {
+      const result = reduce({
+        head: currentHead,
+        event: {
+          type: "run_completed",
+          runId,
+          headSha: BASE_SHA, // same SHA → triggers isNoOpRun
+          hasToolCalls: false,
+        },
+        now: NOW,
+      });
+      return result.head;
+    }
+
+    it("escalates to awaiting_manual_fix after N consecutive narration-only retries", () => {
+      let h: WorkflowHead = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: null,
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 0,
+      };
+
+      // Simulate NO_PROGRESS_RETRY_THRESHOLD narration-only retries
+      for (let i = 0; i < NO_PROGRESS_RETRY_THRESHOLD - 1; i++) {
+        h = simulateNarrationOnlyRetry(h, `run-narration-${i}`);
+        expect(h.state).toBe("implementing"); // still retrying
+        expect(h.narrationOnlyRetryCount).toBe(i + 1);
+      }
+
+      // The Nth retry tips over the threshold
+      const finalResult = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: `run-narration-${NO_PROGRESS_RETRY_THRESHOLD - 1}`,
+          headSha: BASE_SHA,
+          hasToolCalls: false,
+        },
+        now: NOW,
+      });
+
+      expect(finalResult.head.state).toBe("awaiting_manual_fix");
+      expect(finalResult.head.narrationOnlyRetryCount).toBe(
+        NO_PROGRESS_RETRY_THRESHOLD,
+      );
+      expect(finalResult.head.blockedReason).toContain("narrate-only loop");
+      expect(finalResult.effects).toHaveLength(1);
+      expect(finalResult.effects[0]?.kind).toBe("publish_status");
+    });
+
+    it("does NOT escalate when at least one retry had tool calls (threshold not reached)", () => {
+      let h: WorkflowHead = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: null,
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 0,
+      };
+
+      // First retry: has tool calls → resets counter
+      const withToolCallsResult = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "run-with-tools",
+          headSha: BASE_SHA,
+          hasToolCalls: true, // agent made tools but SHA unchanged
+        },
+        now: NOW,
+      });
+      expect(withToolCallsResult.head.state).toBe("implementing");
+      expect(withToolCallsResult.head.narrationOnlyRetryCount).toBe(0);
+      h = withToolCallsResult.head;
+
+      // Two narration-only retries (below threshold of 3)
+      h = simulateNarrationOnlyRetry(h, "run-narration-1");
+      expect(h.state).toBe("implementing");
+      expect(h.narrationOnlyRetryCount).toBe(1);
+
+      h = simulateNarrationOnlyRetry(h, "run-narration-2");
+      expect(h.state).toBe("implementing");
+      expect(h.narrationOnlyRetryCount).toBe(2);
+
+      // 4th retry dispatched — should still be implementing (count < threshold)
+      expect(h.state).toBe("implementing");
+      expect(h.narrationOnlyRetryCount).toBeLessThan(
+        NO_PROGRESS_RETRY_THRESHOLD,
+      );
+    });
+
+    it("never trips on first narration-only failure (count=1 < threshold)", () => {
+      const h = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: null,
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 0,
+      };
+
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "run-first-narration",
+          headSha: BASE_SHA,
+          hasToolCalls: false,
+        },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("implementing"); // retry, not escalate
+      expect(result.head.narrationOnlyRetryCount).toBe(1);
+    });
+
+    it("mixed: 1 tool-call retry then 2 narration-only — no escalation (count resets)", () => {
+      let h: WorkflowHead = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: null,
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 0,
+      };
+
+      // One narration-only
+      h = simulateNarrationOnlyRetry(h, "run-narration-1");
+      expect(h.narrationOnlyRetryCount).toBe(1);
+
+      // One with tool calls → resets counter
+      const toolCallResult = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "run-with-tools",
+          headSha: BASE_SHA,
+          hasToolCalls: true,
+        },
+        now: NOW,
+      });
+      expect(toolCallResult.head.narrationOnlyRetryCount).toBe(0);
+      h = toolCallResult.head;
+
+      // Two more narration-only (total 2, below threshold of 3)
+      h = simulateNarrationOnlyRetry(h, "run-narration-2");
+      expect(h.narrationOnlyRetryCount).toBe(1);
+
+      h = simulateNarrationOnlyRetry(h, "run-narration-3");
+      expect(h.narrationOnlyRetryCount).toBe(2);
+
+      // Still implementing — hasn't hit threshold since reset
+      expect(h.state).toBe("implementing");
+    });
+
+    it("run_failed resets narrationOnlyRetryCount (genuine failure, not narrate-only)", () => {
+      const h = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: "run-current",
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 2,
+      };
+
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_failed",
+          runId: "run-current",
+          runSeq: 1,
+          message: "Codex app-server crashed",
+          category: "effect_failure",
+        },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.narrationOnlyRetryCount).toBe(0);
+    });
+
+    it("run_completed with hasToolCalls=undefined (legacy callers) does not increment counter", () => {
+      const h = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: null,
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 0,
+      };
+
+      // No hasToolCalls field → treated as hasToolCalls: true (agentHadToolCalls=true)
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "run-legacy",
+          headSha: BASE_SHA,
+          // hasToolCalls omitted
+        },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("implementing"); // retries (no-op SHA)
+      expect(result.head.narrationOnlyRetryCount).toBe(0); // counter not incremented
+    });
+
+    it("successful run (new SHA) resets narrationOnlyRetryCount", () => {
+      const h = {
+        ...head("implementing"),
+        headSha: BASE_SHA,
+        activeRunId: null,
+        activeRunSeq: 1,
+        narrationOnlyRetryCount: 2,
+      };
+
+      const result = reduce({
+        head: h,
+        event: {
+          type: "run_completed",
+          runId: "run-success",
+          headSha: "sha-new", // different SHA → real progress
+          hasToolCalls: true,
+        },
+        now: NOW,
+      });
+
+      expect(result.head.state).toBe("gating_review"); // success path
+      expect(result.head.narrationOnlyRetryCount).toBe(0);
     });
   });
 
