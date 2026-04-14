@@ -1,6 +1,11 @@
 import { useMemo, useRef } from "react";
 import type { AIAgent } from "@terragon/agent/types";
-import type { DBMessage, UIMessage, UIUserMessage } from "@terragon/shared";
+import type {
+  DBMessage,
+  UIMessage,
+  UIUserMessage,
+  DBAgentMessagePart,
+} from "@terragon/shared";
 import type {
   UIAgentMessage,
   UIToolPart,
@@ -9,6 +14,34 @@ import type {
   UIGitDiffPart,
   ThreadStatus,
 } from "@terragon/shared";
+
+/**
+ * Convert a DBAgentMessage part to a UIPart, returning null for part types
+ * that do not yet have a UI representation (rendered in future sprints).
+ */
+function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPart | null {
+  switch (part.type) {
+    case "text":
+      return { type: "text", text: part.text };
+    case "thinking":
+      return { type: "thinking", thinking: part.thinking };
+    case "image":
+      return { type: "image", image_url: part.image_url };
+    // Rich content types — not yet rendered; will be wired in Sprint 5
+    case "audio":
+    case "resource-link":
+    case "terminal":
+    case "diff":
+    case "auto-approval-review":
+    case "plan":
+      return null;
+    default: {
+      const _exhaustive: never = part;
+      void _exhaustive;
+      return null;
+    }
+  }
+}
 import type { DeltaAccumulator, DeltaChunk } from "@/hooks/useDeltaAccumulator";
 
 type UIMessageRange = {
@@ -353,7 +386,8 @@ function buildUIMessagesWithRanges({
         if (found) {
           // Add agent message parts to the parent tool's parts
           for (const part of dbMessage.parts) {
-            pushPart(found.parts, part);
+            const uiPart = dbAgentPartToUIPart(part);
+            if (uiPart) pushPart(found.parts, uiPart);
           }
         }
       } else {
@@ -362,25 +396,27 @@ function buildUIMessagesWithRanges({
           currentAgentMessageStartDbIndex = dbIndex;
         }
         for (const part of dbMessage.parts) {
+          const uiPart = dbAgentPartToUIPart(part);
+          if (!uiPart) continue;
           // Merge consecutive text parts into one (e.g. ACP streams word-by-word)
-          if (part.type === "text") {
+          if (uiPart.type === "text") {
             const lastPart =
               currentAgentMessage.parts[currentAgentMessage.parts.length - 1];
             if (lastPart && lastPart.type === "text") {
-              lastPart.text += part.text;
+              lastPart.text += uiPart.text;
               continue;
             }
           }
           // Merge consecutive thinking parts into one (same ACP streaming pattern)
-          if (part.type === "thinking") {
+          if (uiPart.type === "thinking") {
             const lastPart =
               currentAgentMessage.parts[currentAgentMessage.parts.length - 1];
             if (lastPart && lastPart.type === "thinking") {
-              lastPart.thinking += part.thinking;
+              lastPart.thinking += uiPart.thinking;
               continue;
             }
           }
-          pushPart(currentAgentMessage.parts, part);
+          pushPart(currentAgentMessage.parts, uiPart);
         }
       }
     } else if (dbMessage.type === "tool-call") {
