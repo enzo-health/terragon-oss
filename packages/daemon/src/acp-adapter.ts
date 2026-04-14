@@ -1,5 +1,27 @@
 import { ClaudeMessage } from "./shared";
 
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when the adapter encounters a `sessionUpdate` discriminant it has no
+ * handler for. Callers can catch this to decide whether to surface as an error
+ * or silently drop the event.
+ */
+export class UnknownAcpContentTypeError extends Error {
+  readonly sessionUpdate: string;
+  constructor(sessionUpdate: string) {
+    super(`Unknown ACP sessionUpdate type: ${sessionUpdate}`);
+    this.name = "UnknownAcpContentTypeError";
+    this.sessionUpdate = sessionUpdate;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal utility types
+// ---------------------------------------------------------------------------
+
 type JsonObject = Record<string, unknown>;
 
 type JsonRpcEnvelope = {
@@ -11,11 +33,196 @@ type JsonRpcEnvelope = {
   error?: unknown;
 };
 
+// ---------------------------------------------------------------------------
+// Tool-call lifecycle tracker (Task 3.2)
+// ---------------------------------------------------------------------------
+
+export type AcpToolCallState = {
+  toolCallId: string;
+  title: string;
+  kind:
+    | "read"
+    | "edit"
+    | "delete"
+    | "search"
+    | "execute"
+    | "think"
+    | "fetch"
+    | "other";
+  locations: Array<{ type: string; path: string; range: unknown | null }>;
+  rawInput: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  startedAt: string;
+  completedAt?: string;
+  rawOutput?: string;
+  progressChunks: Array<{ seq: number; text: string }>;
+};
+
+/**
+ * Stateful per-session tracker for ACP tool-call lifecycle events.
+ * Keyed by toolCallId. Holds the accumulated state so that successive
+ * tool_call_update events can enrich the original tool_call.
+ */
+export class AcpToolCallTracker {
+  private states = new Map<string, AcpToolCallState>();
+
+  /**
+   * Process a `tool_call` initial event. Creates the tracker entry.
+   */
+  handleToolCall(update: JsonObject, sessionId: string): ClaudeMessage | null {
+    const toolCallId = readString(update, "toolCallId");
+    if (!toolCallId) return null;
+
+    const title = readString(update, "title") ?? "";
+    const kind = normalizeKind(readString(update, "kind"));
+    const rawInput = readString(update, "rawInput") ?? "";
+    const locations = readLocations(update.locations);
+    const status = (readString(update, "status") ?? "pending") as
+      | "pending"
+      | "in_progress"
+      | "completed"
+      | "failed";
+
+    const state: AcpToolCallState = {
+      toolCallId,
+      title,
+      kind,
+      locations,
+      rawInput,
+      status,
+      startedAt: new Date().toISOString(),
+      progressChunks: [],
+    };
+
+    this.states.set(toolCallId, state);
+
+    return {
+      type: "acp-tool-call",
+      session_id: sessionId,
+      toolCallId: state.toolCallId,
+      title: state.title,
+      kind: state.kind,
+      status: state.status,
+      locations: state.locations,
+      rawInput: state.rawInput,
+      startedAt: state.startedAt,
+      progressChunks: [],
+    };
+  }
+
+  /**
+   * Process a `tool_call_update` event. Updates the tracker entry and emits a
+   * new snapshot.
+   */
+  handleToolCallUpdate(
+    update: JsonObject,
+    sessionId: string,
+  ): ClaudeMessage | null {
+    const toolCallId = readString(update, "toolCallId");
+    if (!toolCallId) return null;
+
+    const state = this.states.get(toolCallId);
+    if (!state) return null;
+
+    const newStatus = (readString(update, "status") ??
+      state.status) as AcpToolCallState["status"];
+    const contentText = toTextContent(update.content);
+    const rawOutput = readString(update, "rawOutput");
+
+    if (contentText) {
+      state.progressChunks.push({
+        seq: state.progressChunks.length,
+        text: contentText,
+      });
+    }
+
+    state.status = newStatus;
+    if (rawOutput !== null) {
+      state.rawOutput = rawOutput;
+    }
+    if (newStatus === "completed" || newStatus === "failed") {
+      state.completedAt = new Date().toISOString();
+    }
+
+    return {
+      type: "acp-tool-call",
+      session_id: sessionId,
+      toolCallId: state.toolCallId,
+      title: state.title,
+      kind: state.kind,
+      status: state.status,
+      locations: state.locations,
+      rawInput: state.rawInput,
+      rawOutput: state.rawOutput,
+      startedAt: state.startedAt,
+      completedAt: state.completedAt,
+      progressChunks: [...state.progressChunks],
+    };
+  }
+
+  /** Access the accumulated state (for tests). */
+  getState(toolCallId: string): AcpToolCallState | undefined {
+    return this.states.get(toolCallId);
+  }
+
+  /** Clear all tracked state. */
+  clear(): void {
+    this.states.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
 function asObject(value: unknown): JsonObject | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
   return value as JsonObject;
+}
+
+function readString(obj: JsonObject, key: string): string | null {
+  const val = obj[key];
+  return typeof val === "string" ? val : null;
+}
+
+function normalizeKind(raw: string | null): AcpToolCallState["kind"] {
+  const valid = new Set([
+    "read",
+    "edit",
+    "delete",
+    "search",
+    "execute",
+    "think",
+    "fetch",
+    "other",
+  ] as const);
+  if (raw && valid.has(raw as AcpToolCallState["kind"])) {
+    return raw as AcpToolCallState["kind"];
+  }
+  return "other";
+}
+
+function readLocations(
+  value: unknown,
+): Array<{ type: string; path: string; range: unknown | null }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((loc) => {
+      const obj = asObject(loc);
+      if (!obj) return null;
+      return {
+        type: typeof obj.type === "string" ? obj.type : "file",
+        path: typeof obj.path === "string" ? obj.path : "",
+        range: obj.range ?? null,
+      };
+    })
+    .filter(Boolean) as Array<{
+    type: string;
+    path: string;
+    range: unknown | null;
+  }>;
 }
 
 function toTextContent(content: unknown): string {
@@ -57,9 +264,194 @@ function getSessionId(params: JsonObject, fallbackSessionId: string): string {
   return fallbackSessionId;
 }
 
+// ---------------------------------------------------------------------------
+// Content-block handlers (used inside the switch)
+// ---------------------------------------------------------------------------
+
+function handleAgentMessageContent(
+  content: unknown,
+  sessionId: string,
+): ClaudeMessage[] {
+  const contentObj = asObject(content);
+  if (!contentObj) {
+    // Fallback: plain string or array of strings → text
+    const text = toTextContent(content);
+    if (!text) return [];
+    return [
+      {
+        type: "assistant",
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: { role: "assistant", content: [{ type: "text", text }] },
+      },
+    ];
+  }
+
+  const blockType = contentObj.type;
+
+  // image
+  if (blockType === "image") {
+    return [
+      {
+        type: "acp-image",
+        session_id: sessionId,
+        mimeType:
+          typeof contentObj.mimeType === "string" ? contentObj.mimeType : "",
+        data: typeof contentObj.data === "string" ? contentObj.data : undefined,
+        uri: typeof contentObj.uri === "string" ? contentObj.uri : undefined,
+      },
+    ];
+  }
+
+  // audio
+  if (blockType === "audio") {
+    return [
+      {
+        type: "acp-audio",
+        session_id: sessionId,
+        mimeType:
+          typeof contentObj.mimeType === "string" ? contentObj.mimeType : "",
+        data: typeof contentObj.data === "string" ? contentObj.data : undefined,
+        uri: typeof contentObj.uri === "string" ? contentObj.uri : undefined,
+      },
+    ];
+  }
+
+  // resource_link
+  if (blockType === "resource_link") {
+    return [
+      {
+        type: "acp-resource-link",
+        session_id: sessionId,
+        uri: typeof contentObj.uri === "string" ? contentObj.uri : "",
+        name: typeof contentObj.name === "string" ? contentObj.name : "",
+        title:
+          typeof contentObj.title === "string" ? contentObj.title : undefined,
+        description:
+          typeof contentObj.description === "string"
+            ? contentObj.description
+            : undefined,
+        mimeType:
+          typeof contentObj.mimeType === "string"
+            ? contentObj.mimeType
+            : undefined,
+        size: typeof contentObj.size === "number" ? contentObj.size : undefined,
+      },
+    ];
+  }
+
+  // terminal
+  if (blockType === "terminal") {
+    const terminalId =
+      typeof contentObj.terminalId === "string" ? contentObj.terminalId : "";
+    const chunks = Array.isArray(contentObj.chunks)
+      ? contentObj.chunks
+          .map((ch) => {
+            const chObj = asObject(ch);
+            if (!chObj) return null;
+            return {
+              streamSeq:
+                typeof chObj.streamSeq === "number" ? chObj.streamSeq : 0,
+              kind:
+                chObj.kind === "stdout" ||
+                chObj.kind === "stderr" ||
+                chObj.kind === "interaction"
+                  ? (chObj.kind as "stdout" | "stderr" | "interaction")
+                  : ("stdout" as const),
+              text: typeof chObj.text === "string" ? chObj.text : "",
+            };
+          })
+          .filter(Boolean)
+      : [];
+    return [
+      {
+        type: "acp-terminal",
+        session_id: sessionId,
+        terminalId,
+        chunks: chunks as Array<{
+          streamSeq: number;
+          kind: "stdout" | "stderr" | "interaction";
+          text: string;
+        }>,
+      },
+    ];
+  }
+
+  // diff
+  if (blockType === "diff") {
+    const filePath =
+      typeof contentObj.path === "string"
+        ? contentObj.path
+        : typeof contentObj.filePath === "string"
+          ? contentObj.filePath
+          : "";
+    const rawStatus = contentObj.status;
+    const status: "pending" | "applied" | "rejected" =
+      rawStatus === "applied" || rawStatus === "rejected"
+        ? rawStatus
+        : "pending";
+    return [
+      {
+        type: "acp-diff",
+        session_id: sessionId,
+        filePath,
+        oldContent:
+          typeof contentObj.oldContent === "string"
+            ? contentObj.oldContent
+            : undefined,
+        newContent:
+          typeof contentObj.newContent === "string"
+            ? contentObj.newContent
+            : "",
+        unifiedDiff:
+          typeof contentObj.unifiedDiff === "string"
+            ? contentObj.unifiedDiff
+            : undefined,
+        status,
+      },
+    ];
+  }
+
+  // Default: treat as text
+  const text = toTextContent(content);
+  if (!text) return [];
+  return [
+    {
+      type: "assistant",
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: { role: "assistant", content: [{ type: "text", text }] },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Core session-update dispatcher (Task 3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * All known ACP `sessionUpdate` discriminants from the pinned ACP spec
+ * @ d212761dd4555d0140fac29e5437256e90ec7997.
+ */
+export const KNOWN_ACP_SESSION_UPDATE_TYPES = [
+  "agent_message_chunk",
+  "agent_message",
+  "agent_thought_chunk",
+  "agent_reasoning_chunk",
+  "error",
+  "agent_error",
+  "tool_call",
+  "tool_call_update",
+  "plan",
+] as const;
+
+export type KnownAcpSessionUpdateType =
+  (typeof KNOWN_ACP_SESSION_UPDATE_TYPES)[number];
+
 function parseSessionUpdate(
   params: JsonObject,
   fallbackSessionId: string,
+  toolCallTracker?: AcpToolCallTracker,
 ): ClaudeMessage[] {
   const update = asObject(params.update);
   if (!update) {
@@ -70,84 +462,123 @@ function parseSessionUpdate(
     typeof update.sessionUpdate === "string"
       ? update.sessionUpdate
       : "agent_message_chunk";
-  const contentText = toTextContent(update.content);
 
-  if (
-    sessionUpdate === "agent_thought_chunk" ||
-    sessionUpdate === "agent_reasoning_chunk"
-  ) {
-    if (!contentText) {
-      return [];
+  switch (sessionUpdate as KnownAcpSessionUpdateType | string) {
+    // -----------------------------------------------------------------------
+    // Text / thinking chunks
+    // -----------------------------------------------------------------------
+    case "agent_thought_chunk":
+    case "agent_reasoning_chunk": {
+      const contentText = toTextContent(update.content);
+      if (!contentText) return [];
+      return [
+        {
+          type: "assistant",
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "thinking",
+                thinking: contentText,
+                signature: "acp-synthetic-signature",
+              },
+            ],
+          },
+        },
+      ];
     }
-    return [
-      {
-        type: "assistant",
-        session_id: sessionId,
-        parent_tool_use_id: null,
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "thinking",
-              thinking: contentText,
-              signature: "acp-synthetic-signature",
-            },
-          ],
-        },
-      },
-    ];
-  }
 
-  if (
-    sessionUpdate === "agent_message_chunk" ||
-    sessionUpdate === "agent_message"
-  ) {
-    if (!contentText) {
-      return [];
+    case "agent_message_chunk":
+    case "agent_message": {
+      return handleAgentMessageContent(update.content, sessionId);
     }
-    return [
-      {
-        type: "assistant",
-        session_id: sessionId,
-        parent_tool_use_id: null,
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: contentText }],
+
+    // -----------------------------------------------------------------------
+    // Errors
+    // -----------------------------------------------------------------------
+    case "error":
+    case "agent_error": {
+      const contentText = toTextContent(update.content);
+      const errorMessage =
+        contentText ||
+        (typeof update.message === "string" ? update.message : "acp_error");
+      return [
+        {
+          type: "custom-error",
+          session_id: null,
+          duration_ms: 0,
+          error_info: errorMessage,
         },
-      },
-    ];
-  }
+      ];
+    }
 
-  if (sessionUpdate === "error" || sessionUpdate === "agent_error") {
-    const errorMessage =
-      contentText ||
-      (typeof update.message === "string" ? update.message : "acp_error");
-    return [
-      {
-        type: "custom-error",
-        session_id: null,
-        duration_ms: 0,
-        error_info: errorMessage,
-      },
-    ];
-  }
+    // -----------------------------------------------------------------------
+    // Tool-call lifecycle (Task 3.2)
+    // -----------------------------------------------------------------------
+    case "tool_call": {
+      if (!toolCallTracker) return [];
+      const msg = toolCallTracker.handleToolCall(update, sessionId);
+      return msg ? [msg] : [];
+    }
 
-  // Fallback: surface unknown sessionUpdate types as assistant text if content exists
-  if (contentText) {
-    return [
-      {
-        type: "assistant",
-        session_id: sessionId,
-        parent_tool_use_id: null,
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: contentText }],
+    case "tool_call_update": {
+      if (!toolCallTracker) return [];
+      const msg = toolCallTracker.handleToolCallUpdate(update, sessionId);
+      return msg ? [msg] : [];
+    }
+
+    // -----------------------------------------------------------------------
+    // Plan (Task 3.3)
+    // -----------------------------------------------------------------------
+    case "plan": {
+      const rawEntries = Array.isArray(update.entries) ? update.entries : [];
+      const entries = rawEntries
+        .map((e) => {
+          const entryObj = asObject(e);
+          if (!entryObj) return null;
+          const content =
+            typeof entryObj.content === "string" ? entryObj.content : "";
+          const priority =
+            entryObj.priority === "high" ||
+            entryObj.priority === "medium" ||
+            entryObj.priority === "low"
+              ? entryObj.priority
+              : ("medium" as const);
+          const status =
+            entryObj.status === "in_progress" || entryObj.status === "completed"
+              ? entryObj.status
+              : ("pending" as const);
+          const id = typeof entryObj.id === "string" ? entryObj.id : undefined;
+          return { id, content, priority, status };
+        })
+        .filter(Boolean) as Array<{
+        id?: string;
+        content: string;
+        priority: "high" | "medium" | "low";
+        status: "pending" | "in_progress" | "completed";
+      }>;
+
+      return [
+        {
+          type: "acp-plan",
+          session_id: sessionId,
+          entries,
         },
-      },
-    ];
-  }
+      ];
+    }
 
-  return [];
+    // -----------------------------------------------------------------------
+    // Unknown — throw named error (Task 3.1)
+    // -----------------------------------------------------------------------
+    default: {
+      // TypeScript exhaustiveness hint — the `never` cast documents intent.
+      const _unknownType: never = sessionUpdate as never;
+      void _unknownType;
+      throw new UnknownAcpContentTypeError(sessionUpdate);
+    }
+  }
 }
 
 function parseEnvelopeError(envelope: JsonObject): ClaudeMessage[] {
@@ -185,6 +616,10 @@ function parseAgentExited(params: JsonObject): ClaudeMessage[] {
     },
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Coalescing
+// ---------------------------------------------------------------------------
 
 /**
  * Coalesce consecutive top-level assistant text-only messages into a single message.
@@ -252,9 +687,14 @@ export function coalesceAssistantTextMessages(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
 export function parseAcpLineToClaudeMessages(
   line: string,
   fallbackSessionId: string,
+  toolCallTracker?: AcpToolCallTracker,
 ): ClaudeMessage[] {
   let parsed: JsonRpcEnvelope | null = null;
   try {
@@ -291,7 +731,30 @@ export function parseAcpLineToClaudeMessages(
     if (!params) {
       return [];
     }
-    return parseSessionUpdate(params, fallbackSessionId);
+    try {
+      return parseSessionUpdate(params, fallbackSessionId, toolCallTracker);
+    } catch (err) {
+      if (err instanceof UnknownAcpContentTypeError) {
+        // Surface unknown types as assistant text if content exists, or drop
+        const update = asObject(params.update);
+        const contentText = update ? toTextContent(update.content) : "";
+        if (contentText) {
+          return [
+            {
+              type: "assistant",
+              session_id: getSessionId(params, fallbackSessionId),
+              parent_tool_use_id: null,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: contentText }],
+              },
+            },
+          ];
+        }
+        return [];
+      }
+      throw err;
+    }
   }
   if (method === "_adapter/agent_exited" || method === "adapter/agent_exited") {
     const params = asObject(envelope.params);
@@ -301,4 +764,24 @@ export function parseAcpLineToClaudeMessages(
     return parseAgentExited(params);
   }
   return parseEnvelopeError(envelope);
+}
+
+// ---------------------------------------------------------------------------
+// Raw session-update parser (throws UnknownAcpContentTypeError — for tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a session/update envelope's inner update object, throwing
+ * `UnknownAcpContentTypeError` for unrecognised discriminants.
+ *
+ * Used by the exhaustiveness test (Task 3.8) and by callers that want to
+ * handle unknown-type errors themselves rather than relying on the catch in
+ * `parseAcpLineToClaudeMessages`.
+ */
+export function parseSessionUpdateStrict(
+  params: JsonObject,
+  fallbackSessionId: string,
+  toolCallTracker?: AcpToolCallTracker,
+): ClaudeMessage[] {
+  return parseSessionUpdate(params, fallbackSessionId, toolCallTracker);
 }
