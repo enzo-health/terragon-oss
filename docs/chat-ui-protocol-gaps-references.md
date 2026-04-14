@@ -14,15 +14,15 @@ We pin exact upstream SHAs and package versions so that (1) future pull requests
 ## Zed Industries Agent Client Protocol (ACP)
 
 - **Repo:** https://github.com/zed-industries/agent-client-protocol
-- **SHA:** `2d9c5417c233e27eebf9dd4f58c175be7337c9b7` (head of `main` branch as of 2026-04-14)
-- **Browse canonical source:** https://github.com/zed-industries/agent-client-protocol/tree/2d9c5417c233e27eebf9dd4f58c175be7337c9b7
+- **SHA:** `d212761dd4555d0140fac29e5437256e90ec7997` (head of `main` branch as of 2026-04-14)
+- **Browse canonical source:** https://github.com/zed-industries/agent-client-protocol/tree/d212761dd4555d0140fac29e5437256e90ec7997
 - **Use:** Defines `sessionUpdate` content-block discriminants and Zed's reference TypeScript/Rust types. Referenced in daemon adapter to map ACP payloads into message parts.
 
 ## Anthropic Claude Code CLI
 
 - **Package:** `@anthropic-ai/claude-code` on npm
-- **Version:** `2.1.52` (pinned in `packages/sandbox-image/src/dockerfile-template.ts`)
-- **Registry:** https://www.npmjs.com/package/@anthropic-ai/claude-code/v/2.1.52
+- **Version:** `2.1.107` (pinned in `packages/sandbox-image/src/dockerfile-template.ts`)
+- **Registry:** https://www.npmjs.com/package/@anthropic-ai/claude-code/v/2.1.107
 - **Use:** Claude Code runs in Terragon sandboxes and emits `stream-json` events. We parse system init, message deltas, and content-block deltas from its stdout.
 
 ## How to Refresh
