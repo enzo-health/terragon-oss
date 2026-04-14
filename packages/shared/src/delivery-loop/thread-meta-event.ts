@@ -65,16 +65,11 @@ export type ThreadMetaEvent =
       // Emitted when the Claude Code stream signals message stop.
       kind: "message.stop";
       reason: string;
-    }
-  | {
-      /**
-       * Emitted when the delivery-loop escalates to awaiting_manual_fix because
-       * the agent has been stuck in a narrate-only loop — responding with prose
-       * but invoking zero tools across multiple consecutive retries.
-       * The UI should surface this to the user so they know manual intervention
-       * is needed.
-       */
-      kind: "agent.narration_only_escalation";
-      consecutiveNarrationOnlyRetries: number;
-      message: string;
     };
+
+// Note: the narrate-only escalation no longer emits a dedicated meta event.
+// The reducer transitions to `awaiting_manual_fix` and writes a human-readable
+// `blockedReason` on the workflow head, which is published via the existing
+// `publishStatusEffect` and rendered by the UI as part of the standard
+// awaiting_manual_fix surface. A dedicated meta event would be additional
+// noise without a distinct rendering path.
