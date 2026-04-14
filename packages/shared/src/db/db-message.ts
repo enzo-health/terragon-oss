@@ -129,6 +129,8 @@ export type DBToolCall = {
   completedAt?: string;
   status?: "started" | "in_progress" | "completed" | "failed";
   progressChunks?: Array<{ seq: number; text: string }>;
+  /** Structured MCP tool metadata, set when name matches `mcp__<server>__<tool>`. */
+  mcpMetadata?: { server: string; tool: string };
 };
 
 type DBToolResult = {

@@ -9,6 +9,7 @@ import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
 import {
+  ClaudeCodeParser,
   claudeCommand,
   getAnthropicApiKeyOrNull,
   maybeFixLogsForSessionId,
@@ -3551,6 +3552,7 @@ export class TerragonDaemon {
     if (input.sessionId) {
       maybeFixLogsForSessionId(this.runtime, input.sessionId);
     }
+    const claudeCodeParser = new ClaudeCodeParser();
     return this.spawnAgentProcess({
       agentName: "Claude",
       input,
@@ -3575,26 +3577,67 @@ export class TerragonDaemon {
       },
       onStdoutLine: (line) => {
         try {
-          const outputMessage = JSON.parse(line);
-          const sessionId = outputMessage.session_id;
-          if (sessionId) {
-            this.updateActiveProcessState(input.threadChatId, {
-              sessionId,
-              isWorking: true,
+          const { messages, metaEvents, deltas } =
+            claudeCodeParser.parseClaudeCodeLine(line);
+
+          // Enqueue meta events (session.initialized, usage.incremental, message.stop)
+          for (const metaEvent of metaEvents) {
+            this.enqueueMetaEvent({
+              metaEvent,
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
             });
           }
-          if (outputMessage.type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
+
+          // Push text/thinking deltas into the delta buffer
+          if (deltas.length > 0) {
+            const runState = this.getOrCreateDaemonEventRunState(
+              input.threadChatId,
+            );
+            for (const delta of deltas) {
+              const deltaSeq = runState.nextDeltaSeq;
+              runState.nextDeltaSeq += 1;
+              this.deltaBuffer.push({
+                messageId: delta.messageId,
+                partIndex: delta.partIndex,
+                deltaSeq,
+                kind: delta.kind,
+                text: delta.text,
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+            }
+            if (!this.isFlushInProgress && !this.messageFlushTimer) {
+              this.messageFlushTimer = setTimeout(() => {
+                this.flushMessageBuffer();
+              }, 50);
+            }
+          }
+
+          // Push parsed chat messages into the message buffer
+          for (const outputMessage of messages) {
+            const sessionId = (outputMessage as any).session_id;
+            if (sessionId) {
+              this.updateActiveProcessState(input.threadChatId, {
+                sessionId,
+                isWorking: true,
+              });
+            }
+            if (outputMessage.type === "result") {
+              this.updateActiveProcessState(input.threadChatId, {
+                isCompleted: true,
+              });
+            }
+            this.addMessageToBuffer({
+              agent: "claudeCode",
+              message: outputMessage,
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
             });
           }
-          this.addMessageToBuffer({
-            agent: "claudeCode",
-            message: outputMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
         } catch (e) {
           this.runtime.logger.error("Failed to parse Claude output line", {
             line,

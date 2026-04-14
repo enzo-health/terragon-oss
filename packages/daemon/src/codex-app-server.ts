@@ -139,6 +139,19 @@ export type ThreadMetaEvent =
       kind: "session.initialized";
       tools: string[];
       mcpServers: string[];
+    }
+  | {
+      // Emitted for each message_delta usage report from the Claude Code stream.
+      kind: "usage.incremental";
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreation: number;
+      cacheRead: number;
+    }
+  | {
+      // Emitted when the Claude Code stream signals message stop.
+      kind: "message.stop";
+      reason: string;
     };
 
 /**

@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import { nanoid } from "nanoid/non-secure";
+import type { ThreadMetaEvent } from "./codex-app-server";
+import type { ClaudeMessage, DaemonDelta } from "./shared";
 import { IDaemonRuntime } from "./runtime";
 
 export function getAnthropicApiKeyOrNull(runtime: IDaemonRuntime) {
@@ -244,3 +246,314 @@ export function claudeCommand({
 }
 
 const systemPrompt = `Your name is Terry and you are a coding agent that works for Terragon Labs. You can use the gh cli to interact with github. You are running as part of a system that might automatically commit and push changes to the remote for you. You can use the git commands to orient yourself.`;
+
+// ---------------------------------------------------------------------------
+// Sprint 4: Claude Code stream-json parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an MCP tool name of the form `mcp__<server>__<tool>`.
+ * Returns `null` if the name does not follow the pattern.
+ * The server name is the segment between the first and second `__` pair;
+ * the tool name is everything after the second `__`.
+ */
+export function parseMcpToolName(
+  name: string,
+): { server: string; tool: string } | null {
+  if (!name.startsWith("mcp__")) return null;
+  const rest = name.slice("mcp__".length); // "<server>__<tool>"
+  const sepIdx = rest.indexOf("__");
+  if (sepIdx < 1) return null; // must have a non-empty server segment
+  const server = rest.slice(0, sepIdx);
+  const tool = rest.slice(sepIdx + 2);
+  if (!tool) return null;
+  return { server, tool };
+}
+
+/**
+ * A single streaming delta produced by the Claude Code stream parser.
+ * This is a superset of `DaemonDelta` — it omits the run-state fields
+ * (`threadId`, `threadChatId`, `token`, `deltaSeq`) which are filled in by
+ * the caller from the active run context.
+ */
+export type ClaudeCodeDelta = Omit<DaemonDelta, "deltaSeq"> & {
+  /** The content block index this delta belongs to (0-based). */
+  blockIndex: number;
+};
+
+/**
+ * A tool-call progress update produced when `input_json_delta` fragments
+ * arrive before the tool_use block is finalised.
+ */
+export type ClaudeCodeToolProgress = {
+  /** The `tool_use` block id this fragment belongs to. */
+  toolUseId: string;
+  /** Accumulated partial JSON so far. */
+  accumulatedJson: string;
+  /** The chunk to append. */
+  chunk: string;
+};
+
+/**
+ * The result of parsing a single Claude Code NDJSON line.
+ */
+export type ClaudeCodeParseResult = {
+  /** Parsed chat messages (may be empty for stream-only events). */
+  messages: ClaudeMessage[];
+  /** Meta events to enqueue (session.initialized, usage.incremental, message.stop). */
+  metaEvents: ThreadMetaEvent[];
+  /** Streaming text/thinking deltas to push into the delta buffer. */
+  deltas: ClaudeCodeDelta[];
+  /** Tool-call partial JSON progress fragments. */
+  toolProgress: ClaudeCodeToolProgress[];
+};
+
+/**
+ * Stateful Claude Code stream parser.  One instance per agent run.
+ *
+ * Handles (Sprint 4):
+ *   4.1  `system/init`            → `session.initialized` meta event
+ *   4.2  `stream_event / content_block_delta / text_delta`    → text delta
+ *   4.3  `stream_event / content_block_delta / input_json_delta` → tool progress
+ *   4.4  `stream_event / content_block_delta / thinking_delta`   → thinking delta
+ *   4.5  `stream_event / message_delta`  → `usage.incremental` + `message.stop`
+ *   4.6  `assistant / tool_use` with `mcp__<server>__<tool>` name → mcpMetadata
+ */
+export class ClaudeCodeParser {
+  /**
+   * Accumulated partial JSON keyed by tool_use_id.
+   * Used to collate `input_json_delta` fragments.
+   */
+  private readonly partialJsonByToolUseId = new Map<string, string>();
+
+  /**
+   * Parse a single raw NDJSON line emitted by `claude --output-format stream-json`.
+   *
+   * Returns an empty result (all arrays empty) when the line is unrecognised
+   * or carries no actionable content.
+   */
+  parseClaudeCodeLine(line: string): ClaudeCodeParseResult {
+    const result: ClaudeCodeParseResult = {
+      messages: [],
+      metaEvents: [],
+      deltas: [],
+      toolProgress: [],
+    };
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return result;
+    }
+
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return result;
+    }
+
+    const obj = parsed as Record<string, unknown>;
+    const type = obj["type"] as string | undefined;
+
+    switch (type) {
+      // ------------------------------------------------------------------
+      // Task 4.1: system/init → session.initialized meta event
+      // ------------------------------------------------------------------
+      case "system": {
+        if (obj["subtype"] === "init") {
+          const tools = Array.isArray(obj["tools"])
+            ? (obj["tools"] as unknown[]).filter(
+                (t): t is string => typeof t === "string",
+              )
+            : [];
+          const mcpServerObjs = Array.isArray(obj["mcp_servers"])
+            ? (obj["mcp_servers"] as unknown[])
+            : [];
+          const mcpServers = mcpServerObjs
+            .filter(
+              (s): s is Record<string, unknown> =>
+                s !== null && typeof s === "object",
+            )
+            .map((s) => (typeof s["name"] === "string" ? s["name"] : ""))
+            .filter((name) => name.length > 0);
+
+          result.metaEvents.push({
+            kind: "session.initialized",
+            tools,
+            mcpServers,
+          });
+        }
+        // Always pass system/init through as a ClaudeMessage so downstream
+        // handlers can update sessionId etc.
+        result.messages.push(obj as unknown as ClaudeMessage);
+        break;
+      }
+
+      // ------------------------------------------------------------------
+      // Tasks 4.2, 4.3, 4.4, 4.5: stream_event
+      // ------------------------------------------------------------------
+      case "stream_event": {
+        const event = obj["event"] as Record<string, unknown> | undefined;
+        if (!event || typeof event !== "object") break;
+
+        const eventType = event["type"] as string | undefined;
+
+        if (eventType === "content_block_delta") {
+          const blockIndex =
+            typeof event["index"] === "number" ? event["index"] : 0;
+          const delta = event["delta"] as Record<string, unknown> | undefined;
+          if (!delta) break;
+          const deltaType = delta["type"] as string | undefined;
+
+          // Task 4.2: text_delta → text streaming delta
+          if (deltaType === "text_delta") {
+            const text = delta["text"] as string | undefined;
+            if (text) {
+              result.deltas.push({
+                messageId: `block:${blockIndex}`,
+                partIndex: blockIndex,
+                blockIndex,
+                kind: "text",
+                text,
+              });
+            }
+            break;
+          }
+
+          // Task 4.3: input_json_delta → tool-call progress
+          if (deltaType === "input_json_delta") {
+            const partialJson = delta["partial_json"] as string | undefined;
+            if (partialJson !== undefined) {
+              // We don't have a tool_use_id from stream_event alone —
+              // use the block index as a synthetic key.
+              const syntheticKey = `block_index:${blockIndex}`;
+              const prev = this.partialJsonByToolUseId.get(syntheticKey) ?? "";
+              const accumulated = prev + partialJson;
+              this.partialJsonByToolUseId.set(syntheticKey, accumulated);
+              result.toolProgress.push({
+                toolUseId: syntheticKey,
+                accumulatedJson: accumulated,
+                chunk: partialJson,
+              });
+            }
+            break;
+          }
+
+          // Task 4.4: thinking_delta → thinking streaming delta
+          if (deltaType === "thinking_delta") {
+            const thinking = delta["thinking"] as string | undefined;
+            if (thinking) {
+              result.deltas.push({
+                messageId: `block:${blockIndex}`,
+                partIndex: blockIndex,
+                blockIndex,
+                kind: "thinking",
+                text: thinking,
+              });
+            }
+            break;
+          }
+        }
+
+        // Task 4.5: message_delta → usage.incremental + message.stop
+        if (eventType === "message_delta") {
+          const delta = event["delta"] as Record<string, unknown> | undefined;
+          const usage = event["usage"] as Record<string, unknown> | undefined;
+
+          if (delta) {
+            const stopReason = delta["stop_reason"] as string | undefined;
+            if (stopReason) {
+              result.metaEvents.push({
+                kind: "message.stop",
+                reason: stopReason,
+              });
+            }
+          }
+
+          if (usage) {
+            result.metaEvents.push({
+              kind: "usage.incremental",
+              inputTokens:
+                typeof usage["input_tokens"] === "number"
+                  ? usage["input_tokens"]
+                  : 0,
+              outputTokens:
+                typeof usage["output_tokens"] === "number"
+                  ? usage["output_tokens"]
+                  : 0,
+              cacheCreation:
+                typeof usage["cache_creation_input_tokens"] === "number"
+                  ? usage["cache_creation_input_tokens"]
+                  : 0,
+              cacheRead:
+                typeof usage["cache_read_input_tokens"] === "number"
+                  ? usage["cache_read_input_tokens"]
+                  : 0,
+            });
+          }
+        }
+
+        // stream_event lines are not surfaced as ClaudeMessage chat items.
+        break;
+      }
+
+      // ------------------------------------------------------------------
+      // Task 4.6: assistant messages — attach mcpMetadata to tool_use blocks
+      // ------------------------------------------------------------------
+      case "assistant": {
+        const message = obj["message"] as Record<string, unknown> | undefined;
+        if (message && Array.isArray(message["content"])) {
+          const content = message["content"] as unknown[];
+          for (const block of content) {
+            if (
+              block !== null &&
+              typeof block === "object" &&
+              (block as Record<string, unknown>)["type"] === "tool_use"
+            ) {
+              const b = block as Record<string, unknown>;
+              const toolName = b["name"] as string | undefined;
+              if (toolName) {
+                const mcpMeta = parseMcpToolName(toolName);
+                if (mcpMeta) {
+                  b["mcpMetadata"] = mcpMeta;
+                }
+              }
+            }
+          }
+        }
+        result.messages.push(obj as unknown as ClaudeMessage);
+        break;
+      }
+
+      // ------------------------------------------------------------------
+      // All other message types (user, result, custom-stop, custom-error)
+      // pass through as-is.
+      // ------------------------------------------------------------------
+      default: {
+        result.messages.push(obj as unknown as ClaudeMessage);
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Register a definitive tool_use_id → block index mapping once the
+   * full `tool_use` block is received in an `assistant` message.
+   * This allows callers to re-key accumulated JSON from the block-index
+   * synthetic key to the real tool_use_id.
+   */
+  resolveToolUseId(blockIndex: number, toolUseId: string): string | undefined {
+    const syntheticKey = `block_index:${blockIndex}`;
+    const accumulated = this.partialJsonByToolUseId.get(syntheticKey);
+    if (accumulated !== undefined) {
+      this.partialJsonByToolUseId.set(toolUseId, accumulated);
+      this.partialJsonByToolUseId.delete(syntheticKey);
+    }
+    return accumulated;
+  }
+}
