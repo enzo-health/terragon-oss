@@ -738,18 +738,18 @@ function ChatUI({
                 />
               </ScrollArea>
               {/* Scroll-to-bottom button floating above scroll area */}
-              <div className="absolute bottom-2 left-0 right-0 flex justify-center pointer-events-none z-10">
+              <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
                 <button
                   onClick={forceScrollToBottom}
                   className={cn(
-                    "pointer-events-auto flex size-9 items-center justify-center rounded-full bg-background border shadow-card transition-all duration-300 hover:scale-110",
+                    "pointer-events-auto flex size-8 items-center justify-center rounded-full bg-background/90 backdrop-blur-sm border border-border/50 shadow-sm transition-all duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md hover:bg-background",
                     hasInitialized && !isAtBottom
-                      ? "opacity-100 translate-y-0"
-                      : "opacity-0 translate-y-4 pointer-events-none",
+                      ? "opacity-100 translate-y-0 scale-100"
+                      : "opacity-0 translate-y-2 scale-95 pointer-events-none",
                   )}
                   aria-label="Scroll to bottom"
                 >
-                  <ArrowDown className="size-5" />
+                  <ArrowDown className="size-4 text-muted-foreground" />
                 </button>
               </div>
             </div>
@@ -929,7 +929,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   );
 
   return (
-    <div className="z-10 bg-card chat-prompt-box px-6 pb-4 pt-3 max-w-chat w-full mx-auto border-t border-border/40">
+    <div className="z-10 bg-background chat-prompt-box px-6 pb-4 pt-3 max-w-chat w-full mx-auto">
       {showContextUsageChip ? (
         <ContextChip
           contextLength={contextLength}

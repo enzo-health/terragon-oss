@@ -73,6 +73,20 @@ export const ChatMessage = memo(function ChatMessage({
   );
   const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
 
+  // Hooks must be called unconditionally (before any early return).
+  // Cast: groupParts expects UIUserOrAgentPart[] but message.parts is a
+  // discriminated union that hasn't narrowed yet. The result is only used
+  // in the non-system branch below.
+  const groups = useMemo(
+    () =>
+      groupParts({
+        parts: message.parts as UIPart[],
+        isLatestMessage,
+        isAgentWorking,
+      }),
+    [message.parts, isLatestMessage, isAgentWorking],
+  );
+
   if (message.role === "system") {
     return (
       <SystemMessage
@@ -84,11 +98,6 @@ export const ChatMessage = memo(function ChatMessage({
       />
     );
   }
-  const groups = groupParts({
-    parts: message.parts,
-    isLatestMessage,
-    isAgentWorking,
-  });
   const lastGroupIndex = groups.length - 1;
 
   const content = (

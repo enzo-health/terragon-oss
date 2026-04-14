@@ -249,17 +249,29 @@ const TextPart = memo(function TextPart({
     );
     bodies.forEach((body, index) => {
       const entry = blocks.get(index);
-      if (entry && !entry.expanded) {
-        body.style.maxHeight = `${VISIBLE_LINES * LINE_HEIGHT_PX}px`;
-        body.style.overflow = "hidden";
+      if (entry) {
+        body.style.transition =
+          "max-height var(--duration-base) var(--ease-standard)";
         body.style.position = "relative";
-      } else if (entry && entry.expanded) {
-        body.style.maxHeight = "";
-        body.style.overflow = "";
-        body.style.position = "relative";
+        if (!entry.expanded) {
+          body.style.maxHeight = `${VISIBLE_LINES * LINE_HEIGHT_PX}px`;
+          body.style.overflow = "hidden";
+        } else {
+          // Use scrollHeight for a concrete target so CSS can interpolate
+          body.style.maxHeight = `${body.scrollHeight}px`;
+          body.style.overflow = "";
+          // After transition completes, remove maxHeight so the element
+          // can grow naturally if content changes
+          const onEnd = () => {
+            body.style.maxHeight = "";
+            body.removeEventListener("transitionend", onEnd);
+          };
+          body.addEventListener("transitionend", onEnd, { once: true });
+        }
       } else {
         body.style.maxHeight = "";
         body.style.overflow = "";
+        body.style.transition = "";
       }
     });
   }, [blocks]);
@@ -329,7 +341,13 @@ const TextPart = memo(function TextPart({
         />
       ) : null}
       {showStreamdown && (
-        <div className="prose prose-sm max-w-none" ref={containerRef}>
+        <div
+          className={cn(
+            "prose prose-sm max-w-none",
+            streaming && "streaming-cursor",
+          )}
+          ref={containerRef}
+        >
           <MarkdownRenderer
             content={processedText}
             controls={{ code: true }}

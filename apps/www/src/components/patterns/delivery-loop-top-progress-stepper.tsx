@@ -101,15 +101,15 @@ function getCheckStatusLabel(status: DeliveryLoopStatusCheckStatus): string {
 function getGateDotColor(status: DeliveryLoopStatusCheckStatus): string {
   switch (status) {
     case "passed":
-      return "bg-emerald-500";
+      return "bg-success";
     case "blocked":
-      return "bg-red-500";
+      return "bg-destructive";
     case "degraded":
-      return "bg-amber-500";
+      return "bg-warning";
     case "not_started":
       return "bg-muted-foreground/30";
     default:
-      return "bg-sky-500";
+      return "bg-info";
   }
 }
 
@@ -166,7 +166,7 @@ function PlanTaskStatusIcon({
   switch (status) {
     case "done":
     case "skipped":
-      return <CheckIcon className="size-3 shrink-0 text-emerald-600" />;
+      return <CheckIcon className="size-3 shrink-0 text-success" />;
     case "in_progress":
       return (
         <LoaderCircleIcon className="size-3 shrink-0 animate-spin text-foreground" />
@@ -427,11 +427,11 @@ export function DeliveryLoopTopProgressStepper({
                         "flex-1 h-[4px] rounded-full origin-center transition-transform duration-300 hover:scale-y-[1.5]",
                         isExpandable ? "cursor-pointer" : "cursor-default",
                         phase.status === "passed" || phase.status === "degraded"
-                          ? "bg-emerald-500"
+                          ? "bg-success"
                           : phase.status === "pending"
-                            ? "bg-amber-400 animate-pulse"
+                            ? "bg-warning animate-pulse"
                             : phase.status === "blocked"
-                              ? "bg-red-500"
+                              ? "bg-destructive"
                               : "bg-border",
                       )}
                     />

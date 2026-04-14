@@ -201,11 +201,11 @@ export function SecondaryPanel({
     <>
       <div
         className={cn(
-          "w-1.5 transition-colors flex-shrink-0",
+          "group/resize relative w-2 transition-colors duration-[var(--duration-quick)] flex-shrink-0 flex items-center justify-center",
           isMaximized
             ? "cursor-default"
-            : "cursor-col-resize hover:bg-blue-500/50",
-          isResizing && !isMaximized && "bg-blue-500/50",
+            : "cursor-col-resize hover:bg-border/50",
+          isResizing && !isMaximized && "bg-border/60",
         )}
         onMouseDown={isMaximized ? undefined : handleMouseDown}
         onKeyDown={isMaximized ? undefined : handleResizeKeyDown}
@@ -227,7 +227,15 @@ export function SecondaryPanel({
             ? undefined
             : "Drag or use arrow keys to resize the artifact workspace"
         }
-      />
+      >
+        {!isMaximized && (
+          <div className="flex flex-col gap-[3px] opacity-0 transition-opacity duration-[var(--duration-quick)] group-hover/resize:opacity-60">
+            <div className="h-px w-1 rounded-full bg-muted-foreground" />
+            <div className="h-px w-1 rounded-full bg-muted-foreground" />
+            <div className="h-px w-1 rounded-full bg-muted-foreground" />
+          </div>
+        )}
+      </div>
       <div
         className="flex-shrink-0 border-l bg-background flex flex-col h-full"
         style={{ width: `${width}px` }}

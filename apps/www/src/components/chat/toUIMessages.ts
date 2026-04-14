@@ -69,7 +69,9 @@ export function useIncrementalUIMessages({
 }) {
   const cacheRef = useRef<IncrementalUIMessagesCache | null>(null);
 
-  return useMemo(() => {
+  // Memo 1: Stable message tree — only rebuilds when dbMessages actually change.
+  // This is the expensive path (walks the full message array, does range tracking).
+  const builtMessages = useMemo(() => {
     const previous = cacheRef.current;
     const nextState = buildIncrementalUIMessages({
       previous,
@@ -79,14 +81,17 @@ export function useIncrementalUIMessages({
       cacheKey,
     });
     cacheRef.current = nextState;
-
-    // If there are accumulated deltas, append a synthetic agent message
-    if (deltas && deltas.size > 0) {
-      return appendDeltaMessages(nextState.messages, agent, deltas);
-    }
-
     return nextState.messages;
-  }, [agent, cacheKey, dbMessages, threadStatus, deltas]);
+  }, [agent, cacheKey, dbMessages, threadStatus]);
+
+  // Memo 2: Append ephemeral delta text — cheap, runs on every delta arrival.
+  // Only creates a new array + one synthetic message, never rebuilds the tree.
+  return useMemo(() => {
+    if (deltas && deltas.size > 0) {
+      return appendDeltaMessages(builtMessages, agent, deltas);
+    }
+    return builtMessages;
+  }, [builtMessages, agent, deltas]);
 }
 
 function buildIncrementalUIMessages({
