@@ -71,6 +71,7 @@ const INFRA_FAILURE_MESSAGE_MARKERS = [
   "out of memory",
   "oom",
   "codex app-server exited unexpectedly",
+  "connection closed unexpectedly",
   "ws connect timeout",
 ] as const;
 

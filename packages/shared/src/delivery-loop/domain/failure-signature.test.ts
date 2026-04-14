@@ -489,6 +489,16 @@ describe("isInfrastructureFailure", () => {
       }),
     ).toBe(true);
   });
+
+  it("classifies codex app-server connection closed unexpectedly as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "effect_failure",
+        message:
+          "codex app-server connection closed unexpectedly during turn (lastRequestMethod=turn/start)",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("classifyFailureLane", () => {

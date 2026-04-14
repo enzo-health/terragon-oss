@@ -65,6 +65,34 @@ describe("reduce", () => {
     });
   });
 
+  it("planning run_failed with connection-closed message retries as infra", () => {
+    const now = new Date("2026-03-18T01:00:00.000Z");
+    const result = reduce({
+      head: {
+        ...head("planning"),
+        activeRunId: "run-planning",
+        activeRunSeq: 1,
+      },
+      event: {
+        type: "run_failed",
+        runId: "run-planning",
+        runSeq: 1,
+        message:
+          "codex app-server connection closed unexpectedly during turn (lastRequestMethod=turn/start)",
+        category: "effect_failure",
+      },
+      now,
+    });
+
+    // Should retry in planning (infra lane), NOT go to awaiting_manual_fix
+    expect(result.head.state).toBe("planning");
+    expect(result.head.infraRetryCount).toBe(1);
+    expect(result.head.fixAttemptCount).toBe(0);
+    expect(result.effects).toHaveLength(2);
+    expect(result.effects[0]?.kind).toBe("dispatch_implementing");
+    expect(result.effects[1]?.kind).toBe("publish_status");
+  });
+
   it("plan_completed transitions to implementing without plan artifact", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
     const result = reduce({
@@ -134,8 +162,6 @@ describe("reduce", () => {
     expect(result.head.state).toBe("implementing");
     expect(result.effects).toHaveLength(0);
   });
-
-
 
   it("review failure transitions to implementing and increments fix attempts", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
@@ -250,8 +276,6 @@ describe("reduce", () => {
     expect(result.head.version).toBe(2);
     expect(result.effects).toHaveLength(0);
   });
-
-
 
   it("implementing run_completed without head SHA retries via implementing", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");
@@ -1044,8 +1068,6 @@ describe("reduce", () => {
     expect(result.head.activeRunId).toBe("run-1");
     expect(result.head.version).toBe(h.version);
   });
-
-
 
   it("run_completed in gating_ci is a no-op", () => {
     const now = new Date("2026-03-18T01:00:00.000Z");

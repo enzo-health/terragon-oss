@@ -547,17 +547,19 @@ function buildFailedEvent(
 ) {
   switch (state) {
     case "planning":
-      return runSeq == null
-        ? {
-            type: "plan_failed" as const,
-            reason: errorMessage ?? "Planning run failed",
-          }
-        : {
-            type: "plan_failed" as const,
-            reason: errorMessage ?? "Planning run failed",
-            runId,
-            runSeq,
-          };
+      // Daemon-reported failures during planning are process crashes (e.g.
+      // Codex app-server died from bad skill YAML), NOT plan-artifact parse
+      // failures.  Emit run_failed so the reducer routes through
+      // classifyFailureLane → retryInPlanning with proper lane/budget logic.
+      // plan_failed is reserved for the effect system (process-effects.ts)
+      // when a plan artifact itself cannot be parsed.
+      return {
+        type: "run_failed" as const,
+        runId,
+        runSeq,
+        message: errorMessage ?? "Planning run failed",
+        category: errorCategory,
+      };
     case "gating_review":
       return {
         type: "gate_review_failed" as const,
