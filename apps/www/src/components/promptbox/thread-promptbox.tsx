@@ -4,7 +4,11 @@ import dynamic from "next/dynamic";
 import React, { useMemo, useState, useImperativeHandle } from "react";
 import { usePromptBox, HandleSubmit, HandleStop } from "./use-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
-import { isAgentStoppable, isAgentWorking } from "@/agent/thread-status";
+import {
+  isAgentStoppable,
+  isAgentWorking,
+  isPreSandboxStatus,
+} from "@/agent/thread-status";
 import {
   ThreadStatus,
   DBUserMessage,
@@ -69,17 +73,17 @@ export const ThreadPromptBox = React.forwardRef<
     if (props.placeholder != null) {
       return props.placeholder;
     }
-    if (!props.sandboxId) {
-      // Only show "provisioning" message if agent is actually working
-      if (props.status !== null && isAgentWorking(props.status)) {
-        return "Sandbox is provisioning...";
-      }
+    // "Provisioning" should only appear before the sandbox boots. After that,
+    // the server knows a sandbox exists even if the client prop hasn't been
+    // updated yet (e.g. broadcast race, stale props).
+    if (props.status !== null && isPreSandboxStatus(props.status)) {
+      return "Sandbox is provisioning...";
     }
     if (props.status !== null && isAgentWorking(props.status)) {
       return "Queue a message to send when agent is done";
     }
     return "Type your message here...";
-  }, [props.placeholder, props.status, props.sandboxId]);
+  }, [props.placeholder, props.status]);
 
   const shouldQueue = !!props.status && isAgentWorking(props.status);
   const {

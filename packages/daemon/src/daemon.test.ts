@@ -386,6 +386,75 @@ describe("daemon", () => {
     );
   });
 
+  it("includes v2 envelope on delta-only flush so enrolled loops accept it", async () => {
+    const pushDelta = (messageId: string, deltaSeq: number) =>
+      (daemon as any).deltaBuffer.push({
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        token: TEST_INPUT_MESSAGE.token,
+        messageId,
+        partIndex: 0,
+        deltaSeq,
+        kind: "text",
+        text: "hi",
+      });
+
+    (daemon as any).deltaBuffer = [];
+    pushDelta("msg-env-1", 0);
+
+    await (daemon as any).sendMessagesToAPI({
+      messages: [],
+      entryCount: 0,
+      timezone: "UTC",
+      token: TEST_INPUT_MESSAGE.token,
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+    });
+
+    const firstPayload = serverPostMock.mock.calls.at(-1)?.[0] as {
+      payloadVersion: number;
+      runId: string;
+      eventId: string;
+      seq: number;
+      deltas: { messageId: string }[];
+    };
+    expect(firstPayload.payloadVersion).toBe(2);
+    expect(firstPayload.runId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(firstPayload.eventId).toMatch(/^[0-9a-f]{64}$/);
+    expect(Number.isInteger(firstPayload.seq)).toBe(true);
+    expect(firstPayload.seq).toBeGreaterThanOrEqual(0);
+    expect(firstPayload.deltas).toEqual([
+      expect.objectContaining({ messageId: "msg-env-1" }),
+    ]);
+
+    // A second delta-only flush on the same thread reuses runId but must
+    // advance seq to a strictly greater value (events are distinct) and
+    // must derive a different eventId.
+    pushDelta("msg-env-2", 1);
+    await (daemon as any).sendMessagesToAPI({
+      messages: [],
+      entryCount: 0,
+      timezone: "UTC",
+      token: TEST_INPUT_MESSAGE.token,
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+    });
+
+    const secondPayload = serverPostMock.mock.calls.at(-1)?.[0] as {
+      payloadVersion: number;
+      runId: string;
+      eventId: string;
+      seq: number;
+    };
+    expect(secondPayload.payloadVersion).toBe(2);
+    expect(secondPayload.runId).toBe(firstPayload.runId);
+    expect(secondPayload.seq).toBeGreaterThan(firstPayload.seq);
+    expect(secondPayload.eventId).not.toBe(firstPayload.eventId);
+    expect(secondPayload.eventId).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it("interrupts app-server turn on stop message instead of killing process", async () => {
     (daemon as any).appServerRunContexts.set(
       TEST_STOP_MESSAGE.threadChatId,
