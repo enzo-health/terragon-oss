@@ -318,12 +318,14 @@ export async function gitCloneRepo(
   cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${session.repoDir}`;
   await session.runCommand(cloneCommand, { cwd: `/${session.homeDir}` });
 
-  // Exclude core dumps from git status to prevent accidental commits
-  // Core dumps from crashing binaries (e.g. ESLint custom-rules) pollute /tmp overlay
-  const excludeFile = `${session.repoDir}/.git/info/exclude`;
+  // Exclude core dumps from git status to prevent accidental commits.
+  // Core dumps from crashing binaries (e.g. ESLint custom-rules) pollute the
+  // /tmp overlay. Use an absolute path so the rule lands in the actual checkout
+  // regardless of cwd, and exec under the home dir for safety.
+  const excludeFile = `/${session.homeDir}/${session.repoDir}/.git/info/exclude`;
   await session.runCommand(
     `mkdir -p $(dirname ${bashQuote(excludeFile)}) && echo "core.*" >> ${bashQuote(excludeFile)}`,
-    { cwd: "/" },
+    { cwd: `/${session.homeDir}` },
   );
 }
 
