@@ -317,6 +317,14 @@ export async function gitCloneRepo(
   }
   cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${session.repoDir}`;
   await session.runCommand(cloneCommand, { cwd: `/${session.homeDir}` });
+
+  // Exclude core dumps from git status to prevent accidental commits
+  // Core dumps from crashing binaries (e.g. ESLint custom-rules) pollute /tmp overlay
+  const excludeFile = `${session.repoDir}/.git/info/exclude`;
+  await session.runCommand(
+    `mkdir -p $(dirname ${bashQuote(excludeFile)}) && echo "core.*" >> ${bashQuote(excludeFile)}`,
+    { cwd: "/" },
+  );
 }
 
 export async function setupGitCredentials(
