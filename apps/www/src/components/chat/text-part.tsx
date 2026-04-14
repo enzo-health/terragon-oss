@@ -257,8 +257,16 @@ const TextPart = memo(function TextPart({
           body.style.maxHeight = `${VISIBLE_LINES * LINE_HEIGHT_PX}px`;
           body.style.overflow = "hidden";
         } else {
-          body.style.maxHeight = "";
+          // Use scrollHeight for a concrete target so CSS can interpolate
+          body.style.maxHeight = `${body.scrollHeight}px`;
           body.style.overflow = "";
+          // After transition completes, remove maxHeight so the element
+          // can grow naturally if content changes
+          const onEnd = () => {
+            body.style.maxHeight = "";
+            body.removeEventListener("transitionend", onEnd);
+          };
+          body.addEventListener("transitionend", onEnd, { once: true });
         }
       } else {
         body.style.maxHeight = "";

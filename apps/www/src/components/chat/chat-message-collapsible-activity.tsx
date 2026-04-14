@@ -61,29 +61,24 @@ export function CollapsibleAgentActivityGroup({
           isAgentWorking={isAgentWorking}
         />
       </button>
-      <div
-        className="grid transition-[grid-template-rows] duration-[var(--duration-base)] ease-[var(--ease-standard)]"
-        style={{ gridTemplateRows: isCollapsed ? "0fr" : "1fr" }}
-      >
-        <div className="overflow-hidden min-h-0">
-          <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-lg bg-muted/15">
-            {group.parts.map((part, partIndex) => {
-              return (
-                <MessagePart
-                  key={partIndex}
-                  part={part}
-                  isLatest={isLatestMessage && partIndex === numParts - 1}
-                  isAgentWorking={isAgentWorking}
-                  {...messagePartProps}
-                  artifactDescriptors={artifactDescriptors}
-                  onOpenArtifact={onOpenArtifact}
-                  planOccurrenceIndex={planOccurrences.get(part)}
-                />
-              );
-            })}
-          </div>
+      {!isCollapsed && (
+        <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-lg bg-muted/15 animate-in fade-in slide-in-from-top-1 duration-200">
+          {group.parts.map((part, partIndex) => {
+            return (
+              <MessagePart
+                key={partIndex}
+                part={part}
+                isLatest={isLatestMessage && partIndex === numParts - 1}
+                isAgentWorking={isAgentWorking}
+                {...messagePartProps}
+                artifactDescriptors={artifactDescriptors}
+                onOpenArtifact={onOpenArtifact}
+                planOccurrenceIndex={planOccurrences.get(part)}
+              />
+            );
+          })}
         </div>
-      </div>
+      )}
     </div>
   );
 }
