@@ -24,7 +24,9 @@ import {
 } from "./codex";
 import {
   type CodexAppServerDiagnostics,
+  type ThreadMetaEvent,
   CodexAppServerManager,
+  extractMetaEvent,
   extractThreadEvent,
   SILENTLY_IGNORED_ITEM_TYPES,
 } from "./codex-app-server";
@@ -340,6 +342,18 @@ export class TerragonDaemon {
   private deltaBuffer: Array<
     DaemonDelta & { threadId: string; threadChatId: string; token: string }
   > = [];
+  /**
+   * Queued meta events to be sent on the next daemon-event POST.  Meta events
+   * are piggybacked on the existing `/api/daemon-event` endpoint via the
+   * optional `metaEvents` field in `DaemonEventAPIBody`, so no new endpoint
+   * is required.  They are fire-and-forget: logged and dropped on flush error.
+   */
+  private metaEventBuffer: Array<{
+    metaEvent: ThreadMetaEvent;
+    threadId: string;
+    threadChatId: string;
+    token: string;
+  }> = [];
   private runtime: IDaemonRuntime;
   private mcpConfigPath: string | undefined;
 
@@ -1368,6 +1382,22 @@ export class TerragonDaemon {
             return;
           }
 
+          // Dispatch meta events (token usage, rate limits, model re-routing,
+          // MCP server health) on a separate channel before attempting to
+          // extract a thread-chat event. Meta events are piggybacked on the
+          // daemon-event POST body via a new `metaEvents` field so we don't
+          // need a new HTTP endpoint.
+          const metaEvent = extractMetaEvent(notification);
+          if (metaEvent) {
+            this.enqueueMetaEvent({
+              metaEvent,
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
+            });
+            return;
+          }
+
           const threadEvent = extractThreadEvent(notification);
           if (!threadEvent) {
             if (notification.method?.includes("item")) {
@@ -1392,6 +1422,16 @@ export class TerragonDaemon {
                 }
               }
             }
+            return;
+          }
+
+          // Synthetic-only events (turn diffs and plan snapshots) are not chat
+          // messages — they don't enter parseCodexLine. Future sprints will
+          // surface them as dedicated UI components via the meta channel.
+          if (
+            threadEvent.type === "turn.diff_updated" ||
+            threadEvent.type === "turn.plan_updated"
+          ) {
             return;
           }
 
@@ -1479,6 +1519,122 @@ export class TerragonDaemon {
             // (agent_message item.updated is a no-op) but we keep the
             // pipeline consistent for other side effects.
           }
+
+          // Route commandExecution/outputDelta through the delta buffer as
+          // "text" kind so the client can stream command output progressively.
+          if (
+            threadEvent.type === "item.updated" &&
+            notification.method === "item/commandExecution/outputDelta"
+          ) {
+            const item = threadEvent.item as Record<string, unknown>;
+            const itemId = item?.id as string | undefined;
+            const output = item?.aggregated_output as string | undefined;
+            if (itemId && output) {
+              const runState = this.getOrCreateDaemonEventRunState(
+                input.threadChatId,
+              );
+              const deltaSeq = runState.nextDeltaSeq;
+              runState.nextDeltaSeq += 1;
+              this.deltaBuffer.push({
+                messageId: itemId,
+                partIndex: 0,
+                deltaSeq,
+                kind: "text",
+                text: output,
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+              if (!this.isFlushInProgress && !this.messageFlushTimer) {
+                this.messageFlushTimer = setTimeout(() => {
+                  this.flushMessageBuffer();
+                }, 50);
+              }
+            }
+            // commandExecution/outputDelta is delta-only — don't pass to
+            // parseCodexLine since there's no full item to persist yet.
+            return;
+          }
+
+          // Route fileChange/outputDelta through the delta buffer as "text"
+          // kind so the client can stream unified-diff output progressively.
+          if (
+            threadEvent.type === "item.updated" &&
+            notification.method === "item/fileChange/outputDelta"
+          ) {
+            const item = threadEvent.item as Record<string, unknown>;
+            const itemId = item?.id as string | undefined;
+            const delta = item?._delta as string | undefined;
+            if (itemId && delta) {
+              const runState = this.getOrCreateDaemonEventRunState(
+                input.threadChatId,
+              );
+              const deltaSeq = runState.nextDeltaSeq;
+              runState.nextDeltaSeq += 1;
+              this.deltaBuffer.push({
+                messageId: itemId,
+                partIndex: 0,
+                deltaSeq,
+                kind: "text",
+                text: delta,
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+              if (!this.isFlushInProgress && !this.messageFlushTimer) {
+                this.messageFlushTimer = setTimeout(() => {
+                  this.flushMessageBuffer();
+                }, 50);
+              }
+            }
+            return;
+          }
+
+          // Route reasoning deltas through the delta buffer as "thinking" kind.
+          if (
+            threadEvent.type === "item.updated" &&
+            (notification.method === "item/reasoning/summaryTextDelta" ||
+              notification.method === "item/reasoning/textDelta" ||
+              notification.method === "item/reasoning/summaryPartAdded")
+          ) {
+            const item = threadEvent.item as Record<string, unknown>;
+            const itemId = item?.id as string | undefined;
+            const text = item?.text as string | undefined;
+            if (itemId && text) {
+              const runState = this.getOrCreateDaemonEventRunState(
+                input.threadChatId,
+              );
+              const deltaSeq = runState.nextDeltaSeq;
+              runState.nextDeltaSeq += 1;
+              this.deltaBuffer.push({
+                messageId: itemId,
+                partIndex: 0,
+                deltaSeq,
+                kind: "thinking",
+                text,
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+              if (!this.isFlushInProgress && !this.messageFlushTimer) {
+                this.messageFlushTimer = setTimeout(() => {
+                  this.flushMessageBuffer();
+                }, 50);
+              }
+            }
+            return;
+          }
+
+          // mcpToolCall/progress updates are delta-only — don't persist them
+          // as messages; future sprints will surface progress via the UI layer.
+          if (notification.method === "item/mcpToolCall/progress") {
+            return;
+          }
+
+          // autoApprovalReview events are surfaced as chat messages containing
+          // a DBAutoApprovalReviewPart. They go through parseCodexLine below,
+          // which will emit them when we add a handler in a future sprint.
+          // For now they fall through gracefully as unknown item types.
 
           const parsedMessages = parseCodexLine({
             line: JSON.stringify(threadEvent),
@@ -3778,6 +3934,26 @@ export class TerragonDaemon {
     }
 
     return entries;
+  }
+
+  /**
+   * Queue a meta event for delivery on the next daemon-event POST.
+   * Meta events are piggybacked on the existing `/api/daemon-event` endpoint
+   * via the optional `metaEvents` field in `DaemonEventAPIBody`.
+   */
+  private enqueueMetaEvent(entry: {
+    metaEvent: ThreadMetaEvent;
+    threadId: string;
+    threadChatId: string;
+    token: string;
+  }): void {
+    this.metaEventBuffer.push(entry);
+    // Trigger a prompt flush so meta events are delivered quickly.
+    if (!this.isFlushInProgress && !this.messageFlushTimer) {
+      this.messageFlushTimer = setTimeout(() => {
+        this.flushMessageBuffer();
+      }, 50);
+    }
   }
 
   /**
