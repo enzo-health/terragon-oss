@@ -56,7 +56,11 @@ export function loadRecording(recordingPath: string): RecordedDaemonEvent[] {
   const raw = fs.readFileSync(path.resolve(recordingPath), "utf8");
   return raw
     .split("\n")
-    .filter((line) => line.trim().length > 0)
+    .filter((line) => {
+      const trimmed = line.trim();
+      // Skip blank lines and comment lines (// ...) in JSONL fixture files.
+      return trimmed.length > 0 && !trimmed.startsWith("//");
+    })
     .map((line) => JSON.parse(line) as RecordedDaemonEvent);
 }
 
