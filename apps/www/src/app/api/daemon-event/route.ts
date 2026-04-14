@@ -522,9 +522,21 @@ function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
  * content block (i.e. the agent invoked at least one tool during this run).
  * Used by the no-progress guard in the v3 delivery-loop reducer.
  */
+/**
+ * Returns `true` if any tool usage is OBSERVED in this POST's messages. Returns
+ * `undefined` when no tool usage is found — IMPORTANT: do NOT return `false`,
+ * because tool calls are commonly emitted in earlier flushes of the same run
+ * while the terminal `result` flush carries no tool blocks. The narration-only
+ * escalation reducer treats `undefined` as "had tool calls" (safe default), so
+ * a `false` here would falsely increment the escalation counter for runs that
+ * actually used tools but spread their messages across multiple POSTs.
+ *
+ * If we ever need authoritative per-run accounting, the daemon should send an
+ * explicit `hasToolCallsAtCompletion` field computed across the whole run.
+ */
 function hasToolCallsInMessages(
   messages: DaemonEventAPIBody["messages"],
-): boolean {
+): true | undefined {
   for (const msg of messages) {
     if (msg.type !== "assistant") continue;
     const content = msg.message?.content;
@@ -540,7 +552,7 @@ function hasToolCallsInMessages(
       }
     }
   }
-  return false;
+  return undefined;
 }
 
 function buildCompletedEvent(
