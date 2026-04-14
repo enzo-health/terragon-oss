@@ -23,7 +23,6 @@ const db = createDb(env.DATABASE_URL!);
 
 describe("DBDelegationMessage — DB roundtrip", () => {
   let user: User;
-  let threadId: string;
   let threadChatId: string;
 
   beforeEach(async () => {
@@ -34,7 +33,6 @@ describe("DBDelegationMessage — DB roundtrip", () => {
       userId: user.id,
       enableThreadChatCreation: true,
     });
-    threadId = result.threadId;
     threadChatId = result.threadChatId;
   });
 
