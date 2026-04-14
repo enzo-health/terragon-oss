@@ -93,7 +93,7 @@ export type DBTextPart = {
   text: string;
 };
 
-type DBImagePart = {
+export type DBImagePart = {
   type: "image";
   mime_type: string;
   image_url: string;
@@ -176,6 +176,16 @@ export type DBDiffPart = {
   status: "pending" | "applied" | "rejected";
 };
 
+export type DBPlanPart = {
+  type: "plan";
+  entries: Array<{
+    id?: string;
+    content: string;
+    priority: "high" | "medium" | "low";
+    status: "pending" | "in_progress" | "completed";
+  }>;
+};
+
 /**
  * Represents a Codex `autoApprovalReview` item — an automated risk assessment
  * that decides whether a proposed action (e.g. a file change) should be
@@ -196,18 +206,22 @@ export type DBAutoApprovalReviewPart = {
   status: "pending" | "approved" | "denied";
 };
 
+/** Union of all part types that can appear in a DBAgentMessage. */
+export type DBAgentMessagePart =
+  | DBTextPart
+  | DBThinkingPart
+  | DBTerminalPart
+  | DBDiffPart
+  | DBResourceLinkPart
+  | DBAudioPart
+  | DBAutoApprovalReviewPart
+  | DBImagePart
+  | DBPlanPart;
+
 type DBAgentMessage = {
   type: "agent";
   parent_tool_use_id: string | null;
-  parts: (
-    | DBTextPart
-    | DBThinkingPart
-    | DBTerminalPart
-    | DBDiffPart
-    | DBResourceLinkPart
-    | DBAudioPart
-    | DBAutoApprovalReviewPart
-  )[];
+  parts: DBAgentMessagePart[];
 };
 
 type DBGitDiffMessage = {
