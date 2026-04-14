@@ -38,6 +38,7 @@ import {
   opencodeCommand,
   parseOpencodeLine,
 } from "./opencode";
+import { sanitizeRepoSkillFiles } from "./sanitize-skills";
 import { DEFAULT_RETRY_CONFIG, RetryBackoff, RetryConfig } from "./retry";
 import {
   DaemonServerPostError,
@@ -1344,6 +1345,10 @@ export class TerragonDaemon {
       } catch {
         this.runtime.logger.warn("Failed to write MCP env file for app-server");
       }
+
+      // Pre-flight: disable skill files with broken YAML frontmatter before
+      // Codex starts. Codex treats invalid skill YAML as fatal and crashes.
+      sanitizeRepoSkillFiles(this.runtime.logger);
 
       await this.applyAppServerRespawnBackoff();
       await manager.restartIfTokenChanged(input.token);
