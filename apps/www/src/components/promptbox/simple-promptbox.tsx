@@ -128,7 +128,7 @@ export function SimplePromptBox({
     <DragDropWrapper
       onFilesDropped={handleFilesAttached}
       className={cn(
-        "flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-border/70 bg-card p-2 shadow-sm transition-[border-color,box-shadow] duration-200 ease-[var(--ease-standard)] hover:shadow-md focus-within:border-primary/25 focus-within:shadow-lg",
+        "flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-border/60 bg-card p-2 shadow-xs transition-[border-color,box-shadow] duration-[var(--duration-base)] ease-[var(--ease-standard)] hover:border-border/80 hover:shadow-sm focus-within:border-border focus-within:shadow-sm focus-within:ring-1 focus-within:ring-ring/10",
         borderClassName,
       )}
     >
@@ -147,7 +147,7 @@ export function SimplePromptBox({
         />
       </ScrollArea>
       <AttachedFiles attachedFiles={attachedFiles} onRemoveFile={removeFile} />
-      <div className="flex flex-row items-center gap-3 border-t border-border/60 px-2 pb-1 pt-2">
+      <div className="flex flex-row items-center gap-3 border-t border-border/40 px-2 pb-1 pt-2">
         <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
           {!hideModelSelector && (
             <ModelSelector

@@ -1,6 +1,36 @@
 import React from "react";
 import { AlertTriangle, LayoutDashboard, Loader2 } from "lucide-react";
 
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-3">
+      {/* File header skeleton */}
+      <div className="flex items-center gap-2">
+        <div className="h-3.5 w-3.5 rounded bg-muted animate-pulse [animation-duration:1.5s]" />
+        <div className="h-3.5 w-32 rounded bg-muted animate-pulse [animation-duration:1.5s]" />
+      </div>
+      {/* Content lines */}
+      <div className="space-y-1.5 pl-5">
+        <div className="h-3 w-full rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:50ms]" />
+        <div className="h-3 w-4/5 rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:100ms]" />
+        <div className="h-3 w-3/5 rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:150ms]" />
+        <div className="h-3 w-11/12 rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:200ms]" />
+        <div className="h-3 w-2/3 rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:250ms]" />
+      </div>
+      {/* Second group */}
+      <div className="flex items-center gap-2 pt-2">
+        <div className="h-3.5 w-3.5 rounded bg-muted animate-pulse [animation-duration:1.5s] [animation-delay:300ms]" />
+        <div className="h-3.5 w-40 rounded bg-muted animate-pulse [animation-duration:1.5s] [animation-delay:300ms]" />
+      </div>
+      <div className="space-y-1.5 pl-5">
+        <div className="h-3 w-full rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:350ms]" />
+        <div className="h-3 w-3/4 rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:400ms]" />
+        <div className="h-3 w-5/6 rounded bg-muted/70 animate-pulse [animation-duration:1.5s] [animation-delay:450ms]" />
+      </div>
+    </div>
+  );
+}
+
 export function ArtifactWorkspaceState({
   title,
   description,
@@ -12,17 +42,14 @@ export function ArtifactWorkspaceState({
 }) {
   if (variant === "loading") {
     return (
-      <div className="flex flex-col gap-4 p-6">
+      <div className="flex flex-col gap-4 p-6 animate-in fade-in duration-150">
         <div className="flex items-center gap-2">
-          <Loader2 className="size-4 animate-spin text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">{title}</span>
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground/70" />
+          <span className="text-xs font-medium text-muted-foreground">
+            {title}
+          </span>
         </div>
-        <div className="space-y-2">
-          <div className="h-8 rounded bg-muted animate-pulse" />
-          <div className="h-4 w-3/4 rounded bg-muted animate-pulse" />
-          <div className="h-4 w-1/2 rounded bg-muted animate-pulse" />
-          <div className="h-4 w-5/6 rounded bg-muted animate-pulse" />
-        </div>
+        <LoadingSkeleton />
       </div>
     );
   }

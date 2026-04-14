@@ -84,11 +84,15 @@ export const ChatMessage = memo(function ChatMessage({
       />
     );
   }
-  const groups = groupParts({
-    parts: message.parts,
-    isLatestMessage,
-    isAgentWorking,
-  });
+  const groups = useMemo(
+    () =>
+      groupParts({
+        parts: message.parts,
+        isLatestMessage,
+        isAgentWorking,
+      }),
+    [message.parts, isLatestMessage, isAgentWorking],
+  );
   const lastGroupIndex = groups.length - 1;
 
   const content = (

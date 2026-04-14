@@ -102,13 +102,22 @@ export function useScrollToBottom({
 
     updateIsAtBottom(container);
 
+    // Coalesce rapid scroll events into a single rAF to avoid
+    // re-rendering the scroll-to-bottom button on every pixel.
+    let rafId: number | null = null;
     const onScroll = () => {
-      updateIsAtBottom(container);
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          updateIsAtBottom(container);
+        });
+      }
     };
 
-    container.addEventListener("scroll", onScroll);
+    container.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       container.removeEventListener("scroll", onScroll);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, [container, updateIsAtBottom]);
 
@@ -178,14 +187,25 @@ export function useScrollToBottom({
   useEffect(() => {
     const observedNode = observedRef?.current ?? container;
     if (container && observedNode) {
+      // Coalesce rapid DOM mutations (e.g. streaming text) into one
+      // scroll-to-bottom check per frame instead of per mutation.
+      let rafId: number | null = null;
       const observer = new MutationObserver(() => {
-        maybeScrollToBottom();
+        if (rafId === null) {
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            maybeScrollToBottom();
+          });
+        }
       });
       observer.observe(observedNode, {
         childList: true,
         subtree: true,
       });
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        if (rafId !== null) cancelAnimationFrame(rafId);
+      };
     }
   }, [container, maybeScrollToBottom, observedRef]);
   return {
