@@ -393,10 +393,20 @@ async function forceKillAllDaemonProcesses({
   session: ISandboxSession;
 }) {
   try {
+    // First pass: SIGTERM with a short grace window so well-behaved daemons
+    // can shut down cleanly (release sockets, flush buffers).
     await session.runCommand(`pkill -TERM -f terragon-daemon.mjs || true`, {
       cwd: "/",
     });
-    // Brief wait so signals are delivered before we start the new daemon
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    // Second pass: SIGKILL anything still running. If the daemon is wedged
+    // (the actual root cause of the multi-daemon accumulation we're fixing),
+    // SIGTERM alone won't unblock the new daemon spawn; SIGKILL guarantees
+    // the slot is free.
+    await session.runCommand(`pkill -KILL -f terragon-daemon.mjs || true`, {
+      cwd: "/",
+    });
+    // Brief wait so the kernel finishes reaping before we start the new daemon
     await new Promise((resolve) => setTimeout(resolve, 200));
   } catch (error) {
     // Non-fatal: best-effort cleanup; log and continue
