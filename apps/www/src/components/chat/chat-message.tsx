@@ -73,6 +73,17 @@ export const ChatMessage = memo(function ChatMessage({
   );
   const planOccurrences = planOccurrencesProp ?? perMessagePlanOccurrences;
 
+  // Hooks must be called unconditionally (before any early return).
+  const groups = useMemo(
+    () =>
+      groupParts({
+        parts: message.parts,
+        isLatestMessage,
+        isAgentWorking,
+      }),
+    [message.parts, isLatestMessage, isAgentWorking],
+  );
+
   if (message.role === "system") {
     return (
       <SystemMessage
@@ -84,15 +95,6 @@ export const ChatMessage = memo(function ChatMessage({
       />
     );
   }
-  const groups = useMemo(
-    () =>
-      groupParts({
-        parts: message.parts,
-        isLatestMessage,
-        isAgentWorking,
-      }),
-    [message.parts, isLatestMessage, isAgentWorking],
-  );
   const lastGroupIndex = groups.length - 1;
 
   const content = (
