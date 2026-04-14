@@ -172,9 +172,13 @@ pnpm -C apps/cli uninstall:dev
 - **Follow-up Tasks**: Suggest follow-up task tool integration
 - **Copy Features**: Copy buttons for chat messages and code blocks
 - **Scroll Navigation**: Floating scroll-to-bottom button with delayed visibility
+- **Rich Part Renderers**: Dedicated components for delegation, plan, diff, terminal, image, audio, resource-link, and auto-approval-review parts (one component per `DBPart` discriminant; `message-part.tsx` dispatches via a typed switch)
+- **Meta Event Chips** (`meta-chips/`): Header chips subscribed to the daemon's `ThreadMetaEvent` channel — token usage, rate limits, model re-routing, MCP server health
+- **Integration Harness** (`apps/www/test/integration/`): Replay-based E2E tests. The recorder CLI (`pnpm recorder`) captures live `daemon-event` POST traffic to JSONL; the replayer drives recordings through the real Next.js API route + chat UI in-process for deterministic CI assertions without a live sandbox
 
 ### Database Schema (`packages/shared/src/db/`)
 
+- **Messages** (`db-message.ts`): JSONB-stored `DBMessage` discriminated union. Top-level variants include `DBUserMessage`, `DBAgentMessage`, `DBToolCall`, `DBToolResult`, `DBSystemMessage`, `DBDelegationMessage` (sub-agent delegation), and others. Agent message `parts` accept text, thinking, image, audio, resource-link, terminal, diff, plan, and auto-approval-review variants. `DBToolCall` carries lifecycle fields (`startedAt`, `completedAt`, `status`, `progressChunks`, `mcpMetadata`). The schema version is exported as `DB_MESSAGE_SCHEMA_VERSION`. Read-side parsers must tolerate unknown variants — extend the union before changing read code.
 - **Threads**: Chat sessions with sandbox and GitHub integration, parent thread relationships, task sharing
 - **Users**: Authentication, settings, API key management, roles and permissions
 - **Environments**: User-repository combinations with environment variables and MCP config
