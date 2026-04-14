@@ -12,7 +12,14 @@ export type DBMessage =
   | DBErrorMessage
   | DBMetaMessage
   | DBThreadContextMessage
-  | DBThreadContextResultMessage;
+  | DBThreadContextResultMessage
+  | DBDelegationMessage;
+
+/**
+ * Schema version — bump when the DBMessage union gains new variants or
+ * existing shapes change in a backward-incompatible way.
+ */
+export const DB_MESSAGE_SCHEMA_VERSION = 1;
 
 export type DBUserMessage = {
   type: "user";
@@ -111,12 +118,17 @@ export type DBThinkingPart = {
   thinking: string;
 };
 
-type DBToolCall = {
+export type DBToolCall = {
   type: "tool-call";
   id: string;
   name: string;
   parameters: Record<string, any>;
   parent_tool_use_id: string | null;
+  // Lifecycle fields — optional so existing callers remain valid
+  startedAt?: string;
+  completedAt?: string;
+  status?: "started" | "in_progress" | "completed" | "failed";
+  progressChunks?: Array<{ seq: number; text: string }>;
 };
 
 type DBToolResult = {
@@ -127,10 +139,54 @@ type DBToolResult = {
   result: string;
 };
 
+export type DBAudioPart = {
+  type: "audio";
+  mimeType: string;
+  data?: string; // base64-encoded audio
+  uri?: string; // alternative: URI reference
+};
+
+export type DBResourceLinkPart = {
+  type: "resource-link";
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+};
+
+export type DBTerminalPart = {
+  type: "terminal";
+  sandboxId: string;
+  terminalId: string;
+  chunks: Array<{
+    streamSeq: number;
+    kind: "stdout" | "stderr" | "interaction";
+    text: string;
+  }>;
+};
+
+export type DBDiffPart = {
+  type: "diff";
+  filePath: string;
+  oldContent?: string;
+  newContent: string;
+  unifiedDiff?: string;
+  status: "pending" | "applied" | "rejected";
+};
+
 type DBAgentMessage = {
   type: "agent";
   parent_tool_use_id: string | null;
-  parts: (DBTextPart | DBThinkingPart)[];
+  parts: (
+    | DBTextPart
+    | DBThinkingPart
+    | DBTerminalPart
+    | DBDiffPart
+    | DBResourceLinkPart
+    | DBAudioPart
+  )[];
 };
 
 type DBGitDiffMessage = {
@@ -181,4 +237,33 @@ export type DBResultMetaMessage = {
   num_turns: number;
   result?: string;
   session_id: string;
+};
+
+/**
+ * Represents a Codex collabAgentToolCall item persisted as a chat message.
+ *
+ * Field mapping verified against fixture at:
+ *   packages/daemon/src/__fixtures__/codex/collab-agent-tool-call-completed.json
+ *
+ * Fixture fields: id → delegationId, type (collabAgentToolCall) → implicit via message type:
+ *   "delegation", senderThreadId, receiverThreadIds, prompt, model → delegatedModel,
+ *   reasoningEffort, agentsStates, tool, status.
+ * The fixture also has threadId + turnId at the params level (not stored here).
+ */
+export type DBDelegationMessage = {
+  type: "delegation";
+  model: AIModel | null;
+  delegationId: string; // the item id from Codex
+  tool: "spawn" | "message" | "kill";
+  status: "initiated" | "running" | "completed" | "failed";
+  senderThreadId: string;
+  receiverThreadIds: string[];
+  prompt: string;
+  delegatedModel: string; // the sub-agent's model
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  agentsStates: Record<
+    string,
+    "initiated" | "running" | "completed" | "failed"
+  >;
+  timestamp?: string;
 };
