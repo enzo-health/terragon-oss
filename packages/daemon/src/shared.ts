@@ -203,6 +203,99 @@ export type ClaudeMessage =
         name: string;
         status: string;
       }[];
+    }
+
+  // ACP tool-call lifecycle event (tool_call / tool_call_update)
+  | {
+      type: "acp-tool-call";
+      session_id: string;
+      toolCallId: string;
+      title: string;
+      kind:
+        | "read"
+        | "edit"
+        | "delete"
+        | "search"
+        | "execute"
+        | "think"
+        | "fetch"
+        | "other";
+      status: "pending" | "in_progress" | "completed" | "failed";
+      locations: Array<{
+        type: string;
+        path: string;
+        range: unknown | null;
+      }>;
+      rawInput: string;
+      rawOutput?: string;
+      startedAt?: string;
+      completedAt?: string;
+      progressChunks: Array<{ seq: number; text: string }>;
+    }
+
+  // ACP plan event
+  | {
+      type: "acp-plan";
+      session_id: string;
+      entries: Array<{
+        id?: string;
+        content: string;
+        priority: "high" | "medium" | "low";
+        status: "pending" | "in_progress" | "completed";
+      }>;
+    }
+
+  // ACP image content block
+  | {
+      type: "acp-image";
+      session_id: string;
+      mimeType: string;
+      data?: string;
+      uri?: string;
+    }
+
+  // ACP audio content block
+  | {
+      type: "acp-audio";
+      session_id: string;
+      mimeType: string;
+      data?: string;
+      uri?: string;
+    }
+
+  // ACP resource_link content block
+  | {
+      type: "acp-resource-link";
+      session_id: string;
+      uri: string;
+      name: string;
+      title?: string;
+      description?: string;
+      mimeType?: string;
+      size?: number;
+    }
+
+  // ACP terminal content block
+  | {
+      type: "acp-terminal";
+      session_id: string;
+      terminalId: string;
+      chunks: Array<{
+        streamSeq: number;
+        kind: "stdout" | "stderr" | "interaction";
+        text: string;
+      }>;
+    }
+
+  // ACP diff content block
+  | {
+      type: "acp-diff";
+      session_id: string;
+      filePath: string;
+      oldContent?: string;
+      newContent: string;
+      unifiedDiff?: string;
+      status: "pending" | "applied" | "rejected";
     };
 
 export type DeliveryLoopSelfDispatchPayload = {
