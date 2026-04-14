@@ -386,6 +386,43 @@ describe("daemon", () => {
     );
   });
 
+  it("includes v2 envelope on delta-only flush so enrolled loops accept it", async () => {
+    (daemon as any).deltaBuffer = [
+      {
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        token: TEST_INPUT_MESSAGE.token,
+        messageId: "msg-env",
+        partIndex: 0,
+        deltaSeq: 0,
+        kind: "text",
+        text: "hi",
+      },
+    ];
+
+    await (daemon as any).sendMessagesToAPI({
+      messages: [],
+      entryCount: 0,
+      timezone: "UTC",
+      token: TEST_INPUT_MESSAGE.token,
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+    });
+
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payloadVersion: 2,
+        runId: expect.any(String),
+        eventId: expect.any(String),
+        seq: expect.any(Number),
+        deltas: expect.arrayContaining([
+          expect.objectContaining({ messageId: "msg-env" }),
+        ]),
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
+  });
+
   it("interrupts app-server turn on stop message instead of killing process", async () => {
     (daemon as any).appServerRunContexts.set(
       TEST_STOP_MESSAGE.threadChatId,

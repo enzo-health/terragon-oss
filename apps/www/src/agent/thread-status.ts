@@ -26,7 +26,7 @@ export function isQueuedStatus(
  * Once the thread moves past booting, the sandbox exists server-side even if
  * the client prop hasn't caught up yet.
  */
-export function isPreSandboxStatus(status: ThreadStatus) {
+export function isPreSandboxStatus(status: ThreadStatus): boolean {
   switch (status) {
     case "queued":
     case "queued-blocked":

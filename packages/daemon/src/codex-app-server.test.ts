@@ -275,6 +275,10 @@ describe("extractThreadEvent", () => {
     expect(SILENTLY_IGNORED_ITEM_TYPES.has("userMessage")).toBe(true);
   });
 
+  test("SILENTLY_IGNORED_ITEM_TYPES includes collabAgentToolCall", () => {
+    expect(SILENTLY_IGNORED_ITEM_TYPES.has("collabAgentToolCall")).toBe(true);
+  });
+
   test("converts item/agentMessage/delta into item.updated event", () => {
     const event = extractThreadEvent(
       parseJsonObject(
