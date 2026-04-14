@@ -176,6 +176,26 @@ export type DBDiffPart = {
   status: "pending" | "applied" | "rejected";
 };
 
+/**
+ * Represents a Codex `autoApprovalReview` item — an automated risk assessment
+ * that decides whether a proposed action (e.g. a file change) should be
+ * approved without human intervention.
+ *
+ * Field mapping verified against fixtures at:
+ *   packages/daemon/src/__fixtures__/codex/item-auto-approval-review-started.json
+ *   packages/daemon/src/__fixtures__/codex/item-auto-approval-review-completed.json
+ */
+export type DBAutoApprovalReviewPart = {
+  type: "auto-approval-review";
+  reviewId: string;
+  targetItemId: string;
+  riskLevel: "low" | "medium" | "high";
+  action: string;
+  decision?: "approved" | "denied";
+  rationale?: string;
+  status: "pending" | "approved" | "denied";
+};
+
 type DBAgentMessage = {
   type: "agent";
   parent_tool_use_id: string | null;
@@ -186,6 +206,7 @@ type DBAgentMessage = {
     | DBDiffPart
     | DBResourceLinkPart
     | DBAudioPart
+    | DBAutoApprovalReviewPart
   )[];
 };
 
