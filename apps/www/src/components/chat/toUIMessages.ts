@@ -16,10 +16,10 @@ import type {
 } from "@terragon/shared";
 
 /**
- * Convert a DBAgentMessage part to a UIPart, returning null for part types
- * that do not yet have a UI representation (rendered in future sprints).
+ * Convert a DBAgentMessage part to a UIPartExtended (the local www union),
+ * returning null only for part types with no known renderer.
  */
-function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPart | null {
+function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPartExtended | null {
   switch (part.type) {
     case "text":
       return { type: "text", text: part.text };
@@ -27,14 +27,23 @@ function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPart | null {
       return { type: "thinking", thinking: part.thinking };
     case "image":
       return { type: "image", image_url: part.image_url };
-    // Rich content types — not yet rendered; will be wired in Sprint 5
     case "audio":
+      return part; // UIAudioPart = DBAudioPart passthrough
     case "resource-link":
+      return part; // UIResourceLinkPart = DBResourceLinkPart passthrough
     case "terminal":
+      return part; // UITerminalPart = DBTerminalPart passthrough
     case "diff":
+      return part; // UIDiffPart = DBDiffPart passthrough
     case "auto-approval-review":
-    case "plan":
-      return null;
+      return part; // UIAutoApprovalReviewPart passthrough
+    case "plan": {
+      const structured: UIStructuredPlanPart = {
+        type: "plan-structured",
+        entries: part.entries,
+      };
+      return structured;
+    }
     default: {
       const _exhaustive: never = part;
       void _exhaustive;
@@ -42,6 +51,7 @@ function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPart | null {
     }
   }
 }
+import type { UIPartExtended, UIStructuredPlanPart } from "./ui-parts-extended";
 import type { DeltaAccumulator, DeltaChunk } from "@/hooks/useDeltaAccumulator";
 
 type UIMessageRange = {
@@ -60,7 +70,16 @@ type IncrementalUIMessagesCache = UIMessagesBuildResult & {
   dbMessages: DBMessage[];
 };
 
-type InternalToolPart = UIToolPart<string, Record<string, any>>;
+/**
+ * Extended UIToolPart that carries lifecycle metadata from DBToolCall.
+ * The extra fields are not part of the shared UIToolPart type (Sprint 5 www-only
+ * constraint), so they live here and are read via runtime access in tool-part.tsx.
+ */
+type InternalToolPart = UIToolPart<string, Record<string, any>> & {
+  progressChunks?: Array<{ seq: number; text: string }>;
+  mcpMetadata?: { server: string; tool: string };
+  toolStatus?: "started" | "in_progress" | "completed" | "failed";
+};
 
 /**
  * Converts a collection of DBMessages to UIMessages.
@@ -310,11 +329,13 @@ function buildUIMessagesWithRanges({
     }
   }
 
-  function pushPart(parts: UIPart[], newPart: UIPart) {
+  function pushPart(parts: UIPart[], newPart: UIPartExtended) {
     if (newPart.type === "text" && newPart.text.trim() === "") {
       return;
     }
-    parts.push(newPart);
+    // UIPartExtended is a superset of UIPart; the extra variants are handled
+    // by the extended message-part.tsx dispatcher.
+    parts.push(newPart as UIPart);
   }
 
   function replaceOrPushToolPart(parts: UIPart[], toolPart: InternalToolPart) {
@@ -430,6 +451,14 @@ function buildUIMessagesWithRanges({
         parameters: dbMessage.parameters,
         status: "pending",
         parts: [],
+        // Carry lifecycle metadata from DBToolCall (Sprint 5 www-only extension)
+        ...(dbMessage.progressChunks
+          ? { progressChunks: dbMessage.progressChunks }
+          : {}),
+        ...(dbMessage.mcpMetadata
+          ? { mcpMetadata: dbMessage.mcpMetadata }
+          : {}),
+        ...(dbMessage.status ? { toolStatus: dbMessage.status } : {}),
       };
       // Handle tool calls with parent_tool_use_id (nested inside another tool)
       if (dbMessage.parent_tool_use_id) {
