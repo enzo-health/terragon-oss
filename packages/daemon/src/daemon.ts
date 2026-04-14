@@ -2964,6 +2964,31 @@ export class TerragonDaemon {
     };
   }
 
+  /**
+   * Construct a v2 envelope for a delta-only HTTP flush (no associated
+   * messages). Each delta POST needs its own seq so the server can treat it
+   * as a distinct event; v3-enrolled loops reject payloads without the v2
+   * envelope (`enrolled_loop_requires_v2_envelope`), which silently breaks
+   * streaming even though the subsequent full-message POST still succeeds.
+   */
+  private createDeltaOnlyDaemonEventEnvelope(
+    threadChatId: string,
+  ): DaemonEventEnvelopePayload {
+    const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+    const seq = runState.nextSeq;
+    runState.nextSeq += 1;
+    const eventId = createHash("sha256")
+      .update(`${runState.runId}:${seq}:delta-only`)
+      .digest("hex");
+    this.daemonEventRunStates.set(threadChatId, runState);
+    return {
+      payloadVersion: 2,
+      eventId,
+      runId: runState.runId,
+      seq,
+    };
+  }
+
   private markDaemonEventEnvelopeDelivered({
     threadChatId,
     eventId,
@@ -3931,6 +3956,9 @@ export class TerragonDaemon {
             const runState = this.getOrCreateDaemonEventRunState(
               first.threadChatId,
             );
+            const deltaEnvelope = this.createDeltaOnlyDaemonEventEnvelope(
+              first.threadChatId,
+            );
             const deltaPayload: DaemonEventAPIBody = {
               messages: [],
               threadId: first.threadId,
@@ -3938,6 +3966,12 @@ export class TerragonDaemon {
               threadChatId: first.threadChatId,
               transportMode: runState.transportMode,
               protocolVersion: runState.protocolVersion,
+              acpServerId: runState.acpServerId,
+              acpSessionId: runState.acpSessionId,
+              payloadVersion: deltaEnvelope.payloadVersion,
+              eventId: deltaEnvelope.eventId,
+              runId: deltaEnvelope.runId,
+              seq: deltaEnvelope.seq,
               deltas: deltas.map((d) => ({
                 messageId: d.messageId,
                 partIndex: d.partIndex,
