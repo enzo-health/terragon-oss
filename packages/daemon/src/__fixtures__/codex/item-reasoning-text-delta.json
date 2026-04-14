@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/reasoning/textDelta",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_reasoning_001",
+    "delta": "I should consider the implications of making secret nullable. This means:\n1. All callers must be updated to handle null\n2. The validation logic needs to distinguish between missing and null values\n3. Test coverage should include null cases"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/reasoning/summaryTextDelta",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_reasoning_001",
+    "delta": "The authentication middleware needs to handle nullable secrets for backward compatibility. The change will add a type union (string | null) and update validation logic accordingly."
+  }
+}

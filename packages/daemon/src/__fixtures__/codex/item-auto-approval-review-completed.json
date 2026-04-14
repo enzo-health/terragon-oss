@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/autoApprovalReview/completed",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "reviewId": "review_001",
+    "targetItemId": "item_file_001",
+    "decision": "approved",
+    "rationale": "Type signature change is backward compatible and includes adequate null handling"
+  }
+}

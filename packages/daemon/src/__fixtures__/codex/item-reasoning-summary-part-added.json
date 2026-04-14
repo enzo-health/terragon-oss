@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/reasoning/summaryPartAdded",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_reasoning_001",
+    "summaryPart": {
+      "id": "summary_part_1",
+      "type": "text",
+      "content": "Decision: Adding null support to the secret parameter will improve flexibility for legacy integrations. This requires updating type signatures across three files."
+    }
+  }
+}

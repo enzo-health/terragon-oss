@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/commandExecution/terminalInteraction",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_cmd_001",
+    "interaction": {
+      "type": "output",
+      "content": "Would you like to overwrite the existing configuration? [y/n] "
+    }
+  }
+}

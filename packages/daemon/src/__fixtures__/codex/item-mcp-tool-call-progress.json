@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/mcpToolCall/progress",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_mcp_001",
+    "status": "in_progress",
+    "progress": {
+      "currentStep": 2,
+      "totalSteps": 5,
+      "message": "Analyzing file structure...",
+      "partialResult": {
+        "filesAnalyzed": 8,
+        "issuesFound": 3
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "method": "turn/plan/updated",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "plan": {
+      "entries": [
+        {
+          "id": "plan_step_1",
+          "content": "Analyze the authentication middleware structure and identify type safety issues",
+          "status": "completed"
+        },
+        {
+          "id": "plan_step_2",
+          "content": "Add null-safety validation for the secret parameter in authMiddleware",
+          "status": "in_progress"
+        },
+        {
+          "id": "plan_step_3",
+          "content": "Update function signature and tests for nullable secret handling",
+          "status": "pending"
+        }
+      ]
+    }
+  }
+}

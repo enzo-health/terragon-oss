@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/fileChange/outputDelta",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "itemId": "item_file_001",
+    "delta": "--- a/src/auth/middleware.ts\n+++ b/src/auth/middleware.ts\n@@ -10,7 +10,7 @@ import { verifyToken } from './verify';\n \n export async function authMiddleware(\n   req: Request,\n-  secret: string,\n+  secret: string | null,\n ) {\n   const token = req.headers.authorization?.split(' ')[1];\n   if (!token) {\n"
+  }
+}

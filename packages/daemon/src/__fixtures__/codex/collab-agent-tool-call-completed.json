@@ -1,0 +1,26 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/completed",
+  "params": {
+    "threadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+    "turnId": "0",
+    "item": {
+      "id": "item_collab_001",
+      "type": "collabAgentToolCall",
+      "senderThreadId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",
+      "receiverThreadIds": [
+        "019cb55b-7bc6-8be3-987c-ee2e4eefdg63",
+        "019cb55c-8cd7-9cf4-a98d-ff3f5ffgeh74"
+      ],
+      "prompt": "Please help me refactor the authentication module with improved type safety and error handling",
+      "model": "claude-3-5-sonnet-20241022",
+      "reasoningEffort": "medium",
+      "agentsStates": {
+        "019cb55b-7bc6-8be3-987c-ee2e4eefdg63": "completed",
+        "019cb55c-8cd7-9cf4-a98d-ff3f5ffgeh74": "completed"
+      },
+      "tool": "message",
+      "status": "completed"
+    }
+  }
+}
