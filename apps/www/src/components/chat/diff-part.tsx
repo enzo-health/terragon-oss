@@ -104,22 +104,28 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
       {expanded && diffContent && (
         <div className="overflow-x-auto">
           <pre className="text-xs font-mono p-3 leading-relaxed">
-            {diffContent.split("\n").map((line, i) => (
-              <div
-                key={i}
-                className={
-                  line.startsWith("+")
-                    ? "bg-green-500/10 text-green-700 dark:text-green-400"
-                    : line.startsWith("-")
-                      ? "bg-red-500/10 text-red-700 dark:text-red-400"
-                      : line.startsWith("@@")
-                        ? "text-blue-600 dark:text-blue-400"
-                        : "text-muted-foreground"
-                }
-              >
-                {line}
-              </div>
-            ))}
+            <code>
+              {diffContent.split("\n").map((line, i) => (
+                // Use <span> with display:block so the markup stays inside
+                // the phrasing-content contract of <pre><code>. <div> inside
+                // <pre> is invalid HTML and renders inconsistently.
+                // biome-ignore lint/suspicious/noArrayIndexKey: split-by-line index is stable within a single render.
+                <span
+                  key={i}
+                  className={`block ${
+                    line.startsWith("+")
+                      ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                      : line.startsWith("-")
+                        ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                        : line.startsWith("@@")
+                          ? "text-blue-600 dark:text-blue-400"
+                          : "text-muted-foreground"
+                  }`}
+                >
+                  {line || "\u00A0"}
+                </span>
+              ))}
+            </code>
           </pre>
         </div>
       )}

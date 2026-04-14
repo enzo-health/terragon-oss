@@ -184,7 +184,7 @@ export type DBPlanPart = {
     id?: string;
     content: string;
     priority: "high" | "medium" | "low";
-    status: "pending" | "in_progress" | "completed";
+    status: "pending" | "in_progress" | "completed" | "failed";
   }>;
 };
 
