@@ -20,6 +20,39 @@ export function isQueuedStatus(
   }
 }
 
+/**
+ * True only for statuses that occur before the sandbox is running. Used to
+ * decide whether the UI should tell the user "sandbox is provisioning".
+ * Once the thread moves past booting, the sandbox exists server-side even if
+ * the client prop hasn't caught up yet.
+ */
+export function isPreSandboxStatus(status: ThreadStatus) {
+  switch (status) {
+    case "queued":
+    case "queued-blocked":
+    case "queued-sandbox-creation-rate-limit":
+    case "queued-tasks-concurrency":
+    case "queued-agent-rate-limit":
+    case "booting":
+      return true;
+    case "draft":
+    case "scheduled":
+    case "working":
+    case "stopping":
+    case "checkpointing":
+    case "working-stopped":
+    case "working-error":
+    case "working-done":
+    case "stopped":
+    case "complete":
+    case "error":
+      return false;
+    default:
+      const _exhaustiveCheck: never = status;
+      return _exhaustiveCheck && false;
+  }
+}
+
 export function isAgentWorking(status: ThreadStatus) {
   switch (status) {
     case "queued":
