@@ -81,11 +81,9 @@ describe("createRecorderServer", () => {
   let recorderPort: number;
   let outFile: string;
   let upstreamHitCount: number;
-  let lastUpstreamBody: string;
 
   beforeEach(async () => {
     upstreamHitCount = 0;
-    lastUpstreamBody = "";
 
     // Spin up a fake upstream that echoes back 200 OK
     upstreamServer = http.createServer((req, res) => {
@@ -93,7 +91,8 @@ describe("createRecorderServer", () => {
       req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => {
         upstreamHitCount++;
-        lastUpstreamBody = Buffer.concat(chunks).toString("utf8");
+        // Drain body to release the request, but value is unused in tests.
+        Buffer.concat(chunks).toString("utf8");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
       });

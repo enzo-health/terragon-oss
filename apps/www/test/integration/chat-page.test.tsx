@@ -9,7 +9,6 @@
  * the accumulated message state (as toUIMessages.ts would produce after
  * processing the events) and passing it directly to the renderers.
  */
-import React from "react";
 import { describe, expect, it } from "vitest";
 import {
   renderDelegationItem,
