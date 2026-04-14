@@ -117,8 +117,15 @@ const EMPTY_USAGE: Usage = {
  * ThreadItem.  `normalizeThreadItemType` returns `null` for these, so
  * `extractThreadEvent` will also return `null`.  Callers (e.g. the daemon
  * notification handler) can check this set to suppress "unknown type" warnings.
+ *
+ * `collabAgentToolCall` is Codex's sub-agent delegation item. Surfacing it
+ * properly requires a new ThreadItem variant + UI component; until that lands
+ * we silence the warn log (the narration prose still reaches the user).
  */
-export const SILENTLY_IGNORED_ITEM_TYPES = new Set(["userMessage"]);
+export const SILENTLY_IGNORED_ITEM_TYPES = new Set([
+  "userMessage",
+  "collabAgentToolCall",
+]);
 
 const METHOD_TO_THREAD_EVENT_TYPE: Partial<
   Record<string, ThreadEvent["type"]>
