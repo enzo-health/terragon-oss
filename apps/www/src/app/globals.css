@@ -476,8 +476,10 @@
   animation-delay: 0.4s;
 }
 
-/* Streaming cursor — appended to the last text node while agent is working */
-.streaming-cursor > :last-child::after,
+/* Streaming cursor — appended to the deepest last-child while agent is working.
+   The :not(:has(> *)) guard prevents the shallow selector from firing when the
+   element wraps nested children, avoiding duplicate cursors on two DOM levels. */
+.streaming-cursor > :last-child:not(:has(> *))::after,
 .streaming-cursor > :last-child > :last-child::after {
   content: "";
   display: inline-block;
