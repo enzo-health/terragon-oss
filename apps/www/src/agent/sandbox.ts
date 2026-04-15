@@ -872,23 +872,41 @@ async function getOrCreateSandboxForThread({
       fastResume: shouldFastResume,
     });
   } catch (error) {
-    if (!shouldFastResume) {
-      throw error;
-    }
-    const bootstrapOptions = buildSandboxOptions(bootstrap);
-    try {
-      session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
-        ...bootstrapOptions,
-        fastResume: false,
-      });
-    } catch (reconcileError) {
-      if (!isRecoverableSandboxIdError(reconcileError)) {
-        throw reconcileError;
-      }
+    // Self-heal stale sandbox IDs on any cold boot, not just fast-resume.
+    // If the stored codesandboxId points at a sandbox that has been GC'd,
+    // cancelled, or otherwise disappeared, recovering by retrying the same
+    // ID will never succeed — only creating a fresh sandbox can make
+    // progress. Previously this recovery was gated behind `shouldFastResume`,
+    // which left regular cold boots in a retry loop producing chat errors
+    // reading "Sandbox not found" while the delivery loop kept the thread
+    // in "active" indefinitely.
+    if (isRecoverableSandboxIdError(error)) {
       session = await getOrCreateSandboxWithTimeout(null, {
         ...bootstrapOptions,
         fastResume: false,
       });
+    } else if (!shouldFastResume) {
+      throw error;
+    } else {
+      // Fast-resume may fail for reasons unrelated to a stale ID (e.g. the
+      // provider rejected the fast path). Retry once without fast-resume
+      // before giving up; if that too reveals a stale ID, fall back to
+      // creating fresh.
+      const bootstrapOptions = buildSandboxOptions(bootstrap);
+      try {
+        session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
+          ...bootstrapOptions,
+          fastResume: false,
+        });
+      } catch (reconcileError) {
+        if (!isRecoverableSandboxIdError(reconcileError)) {
+          throw reconcileError;
+        }
+        session = await getOrCreateSandboxWithTimeout(null, {
+          ...bootstrapOptions,
+          fastResume: false,
+        });
+      }
     }
   }
 
