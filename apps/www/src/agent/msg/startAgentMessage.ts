@@ -483,6 +483,19 @@ export async function startAgentMessage({
         });
 
         if (bootingStatus !== null) {
+          // Normalise `provisioning-done` → `provisioning` so it doesn't
+          // appear as a distinct step (mirrors boot-checklist.tsx precedent).
+          const normalised: BootingSubstatus =
+            bootingStatus === "provisioning-done"
+              ? "provisioning"
+              : bootingStatus;
+
+          // Skip duplicate transitions — same substatus arriving twice would
+          // corrupt the client reducer by appending a row with from === to.
+          if (normalised === lastBootingSubstatus) {
+            return;
+          }
+
           const now = Date.now();
           const durationMs =
             lastBootingTransitionAt !== null
@@ -492,7 +505,7 @@ export async function startAgentMessage({
             kind: "boot.substatus_changed",
             threadId,
             from: lastBootingSubstatus,
-            to: bootingStatus,
+            to: normalised,
             timestamp: new Date(now).toISOString(),
             ...(durationMs !== undefined ? { durationMs } : {}),
           };
@@ -518,7 +531,7 @@ export async function startAgentMessage({
               },
             );
           });
-          lastBootingSubstatus = bootingStatus;
+          lastBootingSubstatus = normalised;
           lastBootingTransitionAt = now;
         }
       };

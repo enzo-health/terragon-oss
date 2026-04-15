@@ -162,6 +162,99 @@ describe("boot.substatus_changed meta event emission", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Dedup guard tests (review requirement)
+// ---------------------------------------------------------------------------
+
+describe("boot.substatus_changed dedup guard", () => {
+  const THREAD_ID = "thread-dedup";
+  let published: ThreadMetaEvent[];
+  let publishFn: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    published = [];
+    publishFn = vi.fn(async (event: ThreadMetaEvent) => {
+      published.push(event);
+    });
+  });
+
+  it("does not emit when called twice with the same substatus", async () => {
+    // Extend the tracker with the dedup guard that mirrors production code.
+    let lastBootingSubstatus: BootingSubstatus | null = null;
+    let lastBootingTransitionAt: number | null = null;
+
+    async function trackerWithDedup(
+      threadId: string,
+      bootingStatus: BootingSubstatus | null,
+      nowMs: number,
+    ): Promise<void> {
+      if (bootingStatus === null) return;
+      const normalised: BootingSubstatus =
+        bootingStatus === "provisioning-done" ? "provisioning" : bootingStatus;
+      if (normalised === lastBootingSubstatus) return; // dedup guard
+      const durationMs =
+        lastBootingTransitionAt !== null
+          ? nowMs - lastBootingTransitionAt
+          : undefined;
+      const metaEvent: ThreadMetaEvent = {
+        kind: "boot.substatus_changed",
+        threadId,
+        from: lastBootingSubstatus,
+        to: normalised,
+        timestamp: new Date(nowMs).toISOString(),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      };
+      await publishFn(metaEvent);
+      lastBootingSubstatus = normalised;
+      lastBootingTransitionAt = nowMs;
+    }
+
+    await trackerWithDedup(THREAD_ID, "cloning-repo", 1000);
+    await trackerWithDedup(THREAD_ID, "cloning-repo", 2000); // duplicate — must be ignored
+
+    expect(publishFn).toHaveBeenCalledTimes(1);
+    expect(published[0]!.to).toBe("cloning-repo");
+  });
+
+  it("does not emit when provisioning-done follows provisioning", async () => {
+    let lastBootingSubstatus: BootingSubstatus | null = null;
+    let lastBootingTransitionAt: number | null = null;
+
+    async function trackerWithDedup(
+      threadId: string,
+      bootingStatus: BootingSubstatus | null,
+      nowMs: number,
+    ): Promise<void> {
+      if (bootingStatus === null) return;
+      const normalised: BootingSubstatus =
+        bootingStatus === "provisioning-done" ? "provisioning" : bootingStatus;
+      if (normalised === lastBootingSubstatus) return; // dedup guard
+      const durationMs =
+        lastBootingTransitionAt !== null
+          ? nowMs - lastBootingTransitionAt
+          : undefined;
+      const metaEvent: ThreadMetaEvent = {
+        kind: "boot.substatus_changed",
+        threadId,
+        from: lastBootingSubstatus,
+        to: normalised,
+        timestamp: new Date(nowMs).toISOString(),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      };
+      await publishFn(metaEvent);
+      lastBootingSubstatus = normalised;
+      lastBootingTransitionAt = nowMs;
+    }
+
+    await trackerWithDedup(THREAD_ID, "provisioning", 1000);
+    // provisioning-done normalises to "provisioning" → same as last → no-op
+    await trackerWithDedup(THREAD_ID, "provisioning-done", 3000);
+
+    expect(publishFn).toHaveBeenCalledTimes(1);
+    expect(published[0]!.to).toBe("provisioning");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Schema-sync guard
 // ---------------------------------------------------------------------------
 

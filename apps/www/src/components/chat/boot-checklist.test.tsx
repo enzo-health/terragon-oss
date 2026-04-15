@@ -1,8 +1,9 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { BootChecklist } from "./boot-checklist";
+import { BootChecklist, formatDuration } from "./boot-checklist";
 import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
+import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
 
 // ---------------------------------------------------------------------------
 // Mock useThreadMetaEvents so the component doesn't need realtime/WebSocket.
@@ -63,7 +64,7 @@ describe("BootChecklist", () => {
     expect(html).toContain("Provisioning machine");
     expect(html).toContain("Cloning repository");
     expect(html).toContain("Installing agent");
-    expect(html).toContain("Running terragon-setup.sh");
+    expect(html).toContain("Configuring environment");
     expect(html).toContain("Waiting for assistant to start");
   });
 
@@ -229,5 +230,132 @@ describe("BootChecklist", () => {
     const html = render("provisioning");
     expect(html).toContain('role="list"');
     expect(html).toContain('aria-label="Boot progress"');
+  });
+
+  it("active step icon uses text-foreground (not text-muted-foreground)", () => {
+    const html = render("cloning-repo");
+    // Active icon span should contain text-foreground
+    expect(html).toContain("text-foreground");
+  });
+
+  it("currentPackage has title attribute for full-name tooltip", () => {
+    const longPackageName = "@very-long-scope/some-deeply-nested-package-name";
+    const html = render("installing-agent", {
+      bootSteps: [
+        {
+          substatus: "provisioning",
+          startedAt: "2026-01-01T10:00:00.000Z",
+          completedAt: "2026-01-01T10:00:02.000Z",
+          durationMs: 2000,
+        },
+        {
+          substatus: "cloning-repo",
+          startedAt: "2026-01-01T10:00:02.000Z",
+          completedAt: "2026-01-01T10:00:20.000Z",
+          durationMs: 18000,
+        },
+        {
+          substatus: "installing-agent",
+          startedAt: "2026-01-01T10:00:20.000Z",
+        },
+      ],
+      installProgress: {
+        resolved: 10,
+        reused: 0,
+        downloaded: 10,
+        added: 0,
+        total: 100,
+        currentPackage: longPackageName,
+        elapsedMs: 1000,
+      },
+    });
+
+    expect(html).toContain(`title="${longPackageName}"`);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Indeterminate progress bar (total = undefined)
+  // ---------------------------------------------------------------------------
+
+  it("renders progress bar in indeterminate mode when total is undefined", () => {
+    const html = render("installing-agent", {
+      installProgress: {
+        resolved: 15,
+        reused: 0,
+        downloaded: 15,
+        added: 0,
+        // total intentionally omitted — indeterminate
+        currentPackage: "typescript",
+        elapsedMs: 1200,
+      },
+    });
+
+    // Bar characters must still be present
+    expect(html).toContain("━");
+    // Determinate "resolved/total" count must NOT appear
+    expect(html).not.toContain("40/200");
+    // Package name must still appear
+    expect(html).toContain("typescript");
+  });
+
+  it("renders indeterminate bar with '15 resolved' label instead of fraction", () => {
+    const html = render("installing-agent", {
+      installProgress: {
+        resolved: 15,
+        reused: 0,
+        downloaded: 15,
+        added: 0,
+        elapsedMs: 1200,
+      },
+    });
+
+    // The indeterminate path uses "{resolved} resolved" aria-label text
+    expect(html).toContain("15 resolved");
+    // No slash-separated fraction
+    expect(html).not.toContain("15/");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Unknown substatus fallback
+  // ---------------------------------------------------------------------------
+
+  it("shows first step as active and does not crash for an unknown future substatus", () => {
+    // The component's findIndex returns -1 for an unknown substatus; the
+    // currentStepIndex helper maps -1 → 0.  Cast is required because the type
+    // union won't include this value at compile time.
+    const html = render("future-unknown-step" as BootingSubstatus);
+
+    // Spinner present — first step is treated as in-progress
+    expect(html).toContain("animate-spin");
+    // First step label must be rendered
+    expect(html).toContain("Provisioning machine");
+    // No crash — HTML was produced
+    expect(html.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatDuration unit tests
+// ---------------------------------------------------------------------------
+
+describe("formatDuration", () => {
+  it("sub-second returns ms", () => {
+    expect(formatDuration(0)).toBe("0ms");
+    expect(formatDuration(500)).toBe("500ms");
+    expect(formatDuration(999)).toBe("999ms");
+  });
+
+  it("1s–59.9s returns X.Xs", () => {
+    expect(formatDuration(1000)).toBe("1.0s");
+    expect(formatDuration(1500)).toBe("1.5s");
+    expect(formatDuration(2000)).toBe("2.0s");
+    expect(formatDuration(59_999)).toBe("60.0s");
+  });
+
+  it("60s+ returns Mm Ss", () => {
+    expect(formatDuration(60_000)).toBe("1m 0s");
+    expect(formatDuration(90_000)).toBe("1m 30s");
+    expect(formatDuration(120_000)).toBe("2m 0s");
+    expect(formatDuration(3_661_000)).toBe("61m 1s");
   });
 });

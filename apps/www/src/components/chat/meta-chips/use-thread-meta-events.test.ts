@@ -37,6 +37,15 @@ function applyEvent(
       };
     case "boot.substatus_changed": {
       const prevSteps = state.bootSteps;
+
+      // Defense-in-depth dedup: mirrors use-thread-meta-events.ts.
+      if (
+        prevSteps.length > 0 &&
+        prevSteps[prevSteps.length - 1]!.substatus === event.to
+      ) {
+        return state;
+      }
+
       let updatedSteps: BootStep[] = prevSteps;
       if (prevSteps.length > 0) {
         const last = prevSteps[prevSteps.length - 1]!;
@@ -291,6 +300,44 @@ describe("reducer: install.progress", () => {
     const next = applyEvent(INITIAL, event);
     expect(next.installProgress!.total).toBeUndefined();
     expect(next.installProgress!.currentPackage).toBeUndefined();
+  });
+});
+
+describe("reducer: dedup guard for boot.substatus_changed", () => {
+  it("ignores duplicate boot.substatus_changed for the same substatus", () => {
+    const event: ThreadMetaEvent = {
+      kind: "boot.substatus_changed",
+      threadId: "t1",
+      from: null,
+      to: "cloning-repo",
+      timestamp: "2026-01-01T10:00:00.000Z",
+    };
+    const state1 = applyEvent(INITIAL, event);
+    // Dispatch the same substatus again — should be a no-op.
+    const state2 = applyEvent(state1, {
+      kind: "boot.substatus_changed",
+      threadId: "t1",
+      from: "cloning-repo",
+      to: "cloning-repo",
+      timestamp: "2026-01-01T10:00:01.000Z",
+    });
+
+    expect(state2.bootSteps).toHaveLength(1);
+    expect(state2.bootSteps[0]!.substatus).toBe("cloning-repo");
+    // The step must NOT be marked completed by the duplicate event.
+    expect(state2.bootSteps[0]!.completedAt).toBeUndefined();
+  });
+
+  it("reducer handles unknown event kinds on default branch", () => {
+    // Cast an unknown kind through the reducer to exercise the default branch.
+    const unknown = {
+      kind: "unknown.future_event_kind",
+      threadId: "t1",
+    } as unknown as ThreadMetaEvent;
+
+    // Should return state unchanged without throwing.
+    const next = applyEvent(INITIAL, unknown);
+    expect(next).toBe(INITIAL);
   });
 });
 

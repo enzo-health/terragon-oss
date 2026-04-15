@@ -713,7 +713,7 @@ const INSTALL_PROGRESS_THROTTLE_MS = 200;
  * `flush` function to call once after the command finishes (to emit any
  * final state that was suppressed by the throttle).
  */
-function buildInstallProgressReporter(
+export function buildInstallProgressReporter(
   startMs: number,
   onInstallProgress: (
     snapshot: InstallProgressSnapshot,

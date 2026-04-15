@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Loader2, Check, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
@@ -17,7 +17,7 @@ const BOOT_STEPS: BootStep[] = [
   { substatus: "provisioning", label: "Provisioning machine" },
   { substatus: "cloning-repo", label: "Cloning repository" },
   { substatus: "installing-agent", label: "Installing agent" },
-  { substatus: "running-setup-script", label: "Running terragon-setup.sh" },
+  { substatus: "running-setup-script", label: "Configuring environment" },
   { substatus: "booting-done", label: "Waiting for assistant to start" },
 ];
 
@@ -36,9 +36,41 @@ function currentStepIndex(substatus: BootingSubstatus | null): number {
 
 // ----- duration formatting -----
 
-function formatDuration(ms: number): string {
+export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const totalSecs = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return `${mins}m ${secs}s`;
+}
+
+// ----- live elapsed timer -----
+
+/**
+ * Ticking elapsed counter for the active step.
+ * Isolated in its own component so only this node re-renders on each tick.
+ */
+function ActiveStepTimer({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+
+  const elapsedMs = now - new Date(startedAt).getTime();
+  const elapsed = Math.max(0, elapsedMs);
+
+  return (
+    <span
+      className="font-mono text-xs text-muted-foreground/60 flex-shrink-0 tabular-nums"
+      aria-live="polite"
+      aria-label={`Running for ${formatDuration(elapsed)}`}
+    >
+      {formatDuration(elapsed)}
+    </span>
+  );
 }
 
 // ----- install progress bar -----
@@ -55,7 +87,6 @@ function InstallProgressBar({
   const BAR_WIDTH = 20;
 
   let filled = BAR_WIDTH;
-  let barStr: string;
 
   if (total !== undefined && total > 0) {
     filled = Math.round((resolved / total) * BAR_WIDTH);
@@ -66,7 +97,8 @@ function InstallProgressBar({
   }
 
   const empty = BAR_WIDTH - filled;
-  barStr = "━".repeat(filled) + "░".repeat(empty);
+  const filledChars = "━".repeat(filled);
+  const emptyChars = "░".repeat(empty);
 
   return (
     <div className="mt-1 pl-6 flex flex-col gap-0.5">
@@ -78,7 +110,18 @@ function InstallProgressBar({
             : `Install progress: ${resolved} packages resolved`
         }
       >
-        {barStr}{" "}
+        {total === undefined ? (
+          // Indeterminate: pulse the filled portion to signal ongoing activity
+          <span>
+            <span className="animate-pulse">{filledChars}</span>
+            {emptyChars}
+          </span>
+        ) : (
+          <span>
+            {filledChars}
+            {emptyChars}
+          </span>
+        )}{" "}
         {total !== undefined ? (
           <span>
             {resolved}/{total}
@@ -88,7 +131,10 @@ function InstallProgressBar({
         )}
       </span>
       {currentPackage && (
-        <span className="text-xs text-muted-foreground/70 truncate max-w-[260px]">
+        <span
+          className="text-xs text-muted-foreground/70 truncate max-w-full"
+          title={currentPackage}
+        >
           Installing {currentPackage}
         </span>
       )}
@@ -148,6 +194,7 @@ export function BootChecklist({
         // Look up duration from meta event steps if available.
         const metaStep = bootSteps.find((s) => s.substatus === step.substatus);
         const durationMs = metaStep?.durationMs;
+        const startedAt = metaStep?.startedAt;
 
         return (
           <div key={step.substatus} role="listitem">
@@ -158,7 +205,8 @@ export function BootChecklist({
                   "flex-shrink-0 w-4 h-4 flex items-center justify-center",
                   {
                     "text-primary": isCompleted,
-                    "text-muted-foreground": isActive || isPending,
+                    "text-foreground": isActive,
+                    "text-muted-foreground opacity-30": isPending,
                   },
                 )}
                 aria-hidden
@@ -168,7 +216,7 @@ export function BootChecklist({
                 ) : isActive ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Circle className="w-3 h-3 opacity-30" />
+                  <Circle className="w-3 h-3" />
                 )}
               </span>
 
@@ -183,14 +231,17 @@ export function BootChecklist({
                 {step.label}
               </span>
 
-              {/* Duration */}
-              {durationMs !== undefined && (
+              {/* Duration: static badge for completed steps, live timer for active */}
+              {isCompleted && durationMs !== undefined && (
                 <span
                   className="font-mono text-xs text-muted-foreground/60 flex-shrink-0 tabular-nums"
                   aria-label={`Completed in ${formatDuration(durationMs)}`}
                 >
                   {formatDuration(durationMs)}
                 </span>
+              )}
+              {isActive && startedAt !== undefined && (
+                <ActiveStepTimer startedAt={startedAt} />
               )}
             </div>
 

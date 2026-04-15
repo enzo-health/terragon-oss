@@ -98,6 +98,15 @@ function reducer(
     case "boot.substatus_changed": {
       const prevSteps = state.bootSteps;
 
+      // Defense-in-depth dedup: ignore duplicate substatus — the server should
+      // already filter these, but guard here too so the reducer stays correct.
+      if (
+        prevSteps.length > 0 &&
+        prevSteps[prevSteps.length - 1]!.substatus === event.to
+      ) {
+        return state;
+      }
+
       // Mark the previous (last) step as completed with durationMs from the event.
       let updatedSteps = prevSteps;
       if (prevSteps.length > 0 && event.durationMs !== undefined) {
