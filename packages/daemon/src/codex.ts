@@ -113,11 +113,10 @@ function transformCollabToolCall({
   state: CodexParserState;
 }): ClaudeMessage[] {
   const item = codexMsg.item as unknown as CollabToolCallItem;
-  // Both `spawn` (initial delegation on the WS transport) and `send_input`
-  // (stdio transport + follow-up inputs) represent sub-agent delegations.
-  // activeTaskToolUseIds deduplicates by toolUseId so the same delegation
-  // only emits one Task tool_use even if both events arrive.
-  if (item.tool !== "send_input" && item.tool !== "spawn") {
+  // Only the `send_input` delegation shape is rendered as a Task tool_use.
+  // The codex-app-server normalizer collapses WS `tool: "spawn"` to
+  // `send_input` so both transports reach this handler with a uniform shape.
+  if (item.tool !== "send_input") {
     return [];
   }
 
@@ -866,6 +865,14 @@ function transformAutoApprovalReview({
   if (eventType === "item.updated") {
     return [];
   }
+  // Status resolution order (most-trusted first):
+  //   1. item.status — the normalizer sets this explicitly on both events
+  //   2. item.decision — completed events without a status field
+  //   3. "pending" (started) / "approved" (completed) default
+  const resolvedStatus: "pending" | "approved" | "denied" =
+    item.status ??
+    item.decision ??
+    (eventType === "item.completed" ? "approved" : "pending");
   return [
     {
       type: "codex-auto-approval-review",
@@ -876,10 +883,7 @@ function transformAutoApprovalReview({
       action: item.action ?? "",
       ...(item.decision !== undefined ? { decision: item.decision } : {}),
       ...(item.rationale !== undefined ? { rationale: item.rationale } : {}),
-      status:
-        eventType === "item.completed"
-          ? (item.decision ?? "approved")
-          : (item.status ?? "pending"),
+      status: resolvedStatus,
     },
   ];
 }

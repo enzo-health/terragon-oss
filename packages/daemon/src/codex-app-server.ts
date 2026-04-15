@@ -453,6 +453,12 @@ function normalizeThreadItem(
         };
       }
     }
+    // Always normalize `tool` to `"send_input"` so downstream has a single
+    // shape regardless of transport. The WS transport emits `tool: "spawn"`
+    // on the initial delegation; the stdio transport emits `"send_input"`.
+    // Both represent "a sub-agent was delegated" — collapse to one so
+    // transformCollabToolCall's activeTaskToolUseIds dedup works cleanly
+    // (same item id → same toolUseId → exactly one Task tool_use emitted).
     return {
       type: "collab_tool_call",
       id: itemId,
@@ -460,9 +466,7 @@ function normalizeThreadItem(
       receiver_thread_ids: receiverThreadIds,
       prompt: readString(rawItem, "prompt") ?? "",
       agents_states: agentsStates,
-      // `tool` is `send_input` for the only delegation shape transformCollabToolCall
-      // handles today; default to that so the WS path is guaranteed to render.
-      tool: readString(rawItem, "tool") ?? "send_input",
+      tool: "send_input",
       status: readString(rawItem, "status") ?? "initiated",
     };
   }
@@ -944,6 +948,17 @@ function extractThreadEventFromMethod({
     }
     const decision = readString(params, "decision") ?? "approved";
     const rationale = readString(params, "rationale") ?? undefined;
+    // Read riskLevel + action defensively — Codex may carry them on the
+    // completed event, or only on the started event. If absent here, leave
+    // them `undefined` so the downstream `DBAutoApprovalReviewPart` doesn't
+    // record a fake "medium"/"" value that contradicts the started record.
+    const review = toRecord(params.review);
+    const riskLevel =
+      (review ? readString(review, "riskLevel") : null) ??
+      readString(params, "riskLevel");
+    const action =
+      (review ? readString(review, "action") : null) ??
+      readString(params, "action");
     return {
       type: "item.completed",
       item: {
@@ -951,8 +966,8 @@ function extractThreadEventFromMethod({
         type: "auto_approval_review",
         reviewId,
         targetItemId,
-        riskLevel: "medium",
-        action: "",
+        ...(riskLevel ? { riskLevel } : {}),
+        ...(action ? { action } : {}),
         decision,
         rationale,
         status: decision === "approved" ? "approved" : "denied",

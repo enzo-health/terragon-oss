@@ -350,8 +350,10 @@ describe("extractThreadEvent", () => {
       "019cb55b-7bc6-8be3-987c-ee2e4eefdg63",
       "019cb55c-8cd7-9cf4-a98d-ff3f5ffgeh74",
     ]);
-    // Default tool is "send_input" so transformCollabToolCall handles it.
-    expect(["send_input", "spawn"]).toContain(item.tool);
+    // Normalizer collapses WS `spawn` to `send_input` so both transports
+    // reach transformCollabToolCall with one uniform shape. The fixture's
+    // raw `tool: "spawn"` is intentionally rewritten here.
+    expect(item.tool).toBe("send_input");
     expect(item.status).toBe("initiated");
   });
 
