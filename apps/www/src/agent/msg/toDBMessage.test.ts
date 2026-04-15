@@ -1467,6 +1467,111 @@ describe("toDBMessage", () => {
       ]);
     });
 
+    test("persists Codex auto-approval review into DBAutoApprovalReviewPart", () => {
+      const msg: ClaudeMessage = {
+        type: "codex-auto-approval-review",
+        session_id: "thread-1",
+        reviewId: "rev_1",
+        targetItemId: "cmd_1",
+        riskLevel: "high",
+        action: "rm -rf node_modules",
+        decision: "approved",
+        rationale: "Safe — only touches node_modules",
+        status: "approved",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "auto-approval-review",
+        reviewId: "rev_1",
+        targetItemId: "cmd_1",
+        riskLevel: "high",
+        action: "rm -rf node_modules",
+        status: "approved",
+        decision: "approved",
+        rationale: "Safe — only touches node_modules",
+      });
+    });
+
+    test("persists Codex turn diff into DBDiffPart with unifiedDiff", () => {
+      const msg: ClaudeMessage = {
+        type: "codex-diff",
+        session_id: "thread-1",
+        diff: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "diff",
+        filePath: "",
+        newContent: "",
+        unifiedDiff:
+          "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+        status: "pending",
+      });
+    });
+
+    test("maps Claude SDK url-sourced document block to DBResourceLinkPart", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "document",
+              source: {
+                type: "url",
+                url: "https://example.com/doc.pdf",
+                media_type: "application/pdf",
+              },
+              title: "Design doc",
+              context: "Referenced for the auth refactor",
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "resource-link",
+        uri: "https://example.com/doc.pdf",
+        name: "Design doc",
+        title: "Design doc",
+        mimeType: "application/pdf",
+        description: "Referenced for the auth refactor",
+      });
+    });
+
+    test("maps Claude SDK file-sourced document block to DBTextPart summary", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "document",
+              source: { type: "file", file_id: "file_abc123" },
+              title: "Report",
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "text",
+        text: "**Report (file:file_abc123)**",
+      });
+    });
+
     test("converts ACP image with data URI fallback", () => {
       const msg: ClaudeMessage = {
         type: "acp-image",

@@ -3,6 +3,7 @@ import { ClaudeMessage } from "@terragon/daemon/shared";
 import {
   DBAgentMessagePart,
   DBAudioPart,
+  DBAutoApprovalReviewPart,
   DBDiffPart,
   DBImagePart,
   DBMessage,
@@ -101,6 +102,10 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
       return convertAcpPlan(claudeMessage);
     case "codex-plan":
       return convertCodexPlan(claudeMessage);
+    case "codex-auto-approval-review":
+      return convertCodexAutoApprovalReview(claudeMessage);
+    case "codex-diff":
+      return convertCodexDiff(claudeMessage);
     case "acp-image":
       return convertAcpImage(claudeMessage);
     case "acp-audio":
@@ -246,6 +251,39 @@ function convertAcpTerminal(
     chunks: msg.chunks,
   };
   return [{ type: "agent", parent_tool_use_id: null, parts: [terminal] }];
+}
+
+function convertCodexAutoApprovalReview(
+  msg: Extract<ClaudeMessage, { type: "codex-auto-approval-review" }>,
+): DBMessage[] {
+  const part: DBAutoApprovalReviewPart = {
+    type: "auto-approval-review",
+    reviewId: msg.reviewId,
+    targetItemId: msg.targetItemId,
+    riskLevel: msg.riskLevel,
+    action: msg.action,
+    status: msg.status,
+    ...(msg.decision !== undefined ? { decision: msg.decision } : {}),
+    ...(msg.rationale !== undefined ? { rationale: msg.rationale } : {}),
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [part] }];
+}
+
+function convertCodexDiff(
+  msg: Extract<ClaudeMessage, { type: "codex-diff" }>,
+): DBMessage[] {
+  // Codex emits a full unified diff string for the turn. We store it with
+  // `filePath: ""` because it's a turn-level diff, not a per-file diff — the
+  // UI's DiffPartView already handles empty filePath by rendering just the
+  // unified diff block.
+  const diff: DBDiffPart = {
+    type: "diff",
+    filePath: "",
+    newContent: "",
+    unifiedDiff: msg.diff,
+    status: "pending",
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [diff] }];
 }
 
 function convertAcpDiff(
@@ -420,6 +458,50 @@ function convertAssistantMessage(
           input: stu.input ?? {},
         };
         agentParts.push(serverToolUse);
+        continue;
+      }
+      if (partWithType.type === "document") {
+        // Anthropic document block (Files API / citations). We don't have a
+        // dedicated DBDocumentPart yet, so we preserve fidelity by mapping
+        // URL-sourced documents to DBResourceLinkPart and file/base64
+        // documents to a DBTextPart summary. Either way the reference is
+        // in chat history on reload.
+        const doc = part as {
+          source?: {
+            type?: "file" | "url" | "base64";
+            url?: string;
+            file_id?: string;
+            media_type?: string;
+          };
+          title?: string;
+          context?: string;
+        };
+        const title =
+          typeof doc.title === "string" && doc.title.length > 0
+            ? doc.title
+            : "Document";
+        if (doc.source?.type === "url" && doc.source.url) {
+          const link: DBResourceLinkPart = {
+            type: "resource-link",
+            uri: doc.source.url,
+            name: title,
+            title,
+            ...(doc.source.media_type
+              ? { mimeType: doc.source.media_type }
+              : {}),
+            ...(doc.context ? { description: doc.context } : {}),
+          };
+          agentParts.push(link);
+        } else {
+          const label =
+            doc.source?.type === "file" && doc.source.file_id
+              ? `${title} (file:${doc.source.file_id})`
+              : title;
+          agentParts.push({
+            type: "text",
+            text: `**${label}**${doc.context ? `\n\n${doc.context}` : ""}`,
+          });
+        }
         continue;
       }
       if (partWithType.type === "web_search_tool_result") {

@@ -918,6 +918,123 @@ describe("parseCodexLine", () => {
   });
 });
 
+describe("transformAutoApprovalReview via parseCodexLine", () => {
+  // auto_approval_review items flow through parseCodexItem's switch to
+  // transformAutoApprovalReview. Unit-testing via parseCodexLine covers
+  // both the switch case registration and the transform output shape.
+  const mockRuntime = {
+    logger: {
+      info: vi.fn<(message: string, data?: Record<string, unknown>) => void>(),
+      warn: vi.fn<(message: string, data?: Record<string, unknown>) => void>(),
+      error: vi.fn<(message: string, data?: Record<string, unknown>) => void>(),
+      debug: vi.fn<(message: string, data?: Record<string, unknown>) => void>(),
+    },
+  } as unknown as IDaemonRuntime;
+
+  function runReview(
+    eventType: "item.started" | "item.updated" | "item.completed",
+    item: Record<string, unknown>,
+  ) {
+    return parseCodexLine({
+      line: JSON.stringify({ type: eventType, item }),
+      runtime: mockRuntime,
+      state: createCodexParserState(),
+    });
+  }
+
+  test("emits pending codex-auto-approval-review on item.started", () => {
+    const messages = runReview("item.started", {
+      id: "rev_1",
+      type: "auto_approval_review",
+      reviewId: "rev_1",
+      targetItemId: "cmd_1",
+      riskLevel: "high",
+      action: "rm -rf node_modules",
+      status: "pending",
+    });
+    expect(messages).toHaveLength(1);
+    const m = messages[0];
+    expect(m?.type).toBe("codex-auto-approval-review");
+    if (m?.type !== "codex-auto-approval-review") return;
+    expect(m.status).toBe("pending");
+    expect(m.riskLevel).toBe("high");
+    expect(m.decision).toBeUndefined();
+  });
+
+  test("emits approved codex-auto-approval-review on item.completed", () => {
+    const messages = runReview("item.completed", {
+      id: "rev_1",
+      type: "auto_approval_review",
+      reviewId: "rev_1",
+      targetItemId: "cmd_1",
+      riskLevel: "high",
+      action: "rm -rf node_modules",
+      decision: "approved",
+      rationale: "Safe — only touches node_modules",
+      status: "approved",
+    });
+    expect(messages).toHaveLength(1);
+    const m = messages[0];
+    if (m?.type !== "codex-auto-approval-review") {
+      throw new Error("wrong message type");
+    }
+    expect(m.status).toBe("approved");
+    expect(m.decision).toBe("approved");
+    expect(m.rationale).toBe("Safe — only touches node_modules");
+    // Critical: risk level from completed event MUST be preserved, not
+    // defaulted. Regression guard for the "silent medium default" bug.
+    expect(m.riskLevel).toBe("high");
+  });
+
+  test("emits denied codex-auto-approval-review when decision is denied", () => {
+    const messages = runReview("item.completed", {
+      id: "rev_2",
+      type: "auto_approval_review",
+      reviewId: "rev_2",
+      targetItemId: "cmd_2",
+      decision: "denied",
+      status: "denied",
+    });
+    const m = messages[0];
+    if (m?.type !== "codex-auto-approval-review") {
+      throw new Error("wrong message type");
+    }
+    expect(m.status).toBe("denied");
+    expect(m.decision).toBe("denied");
+  });
+
+  test("drops item.updated to avoid duplicate DB rows", () => {
+    const messages = runReview("item.updated", {
+      id: "rev_1",
+      type: "auto_approval_review",
+      reviewId: "rev_1",
+      targetItemId: "cmd_1",
+      status: "pending",
+    });
+    expect(messages).toEqual([]);
+  });
+
+  test("falls back to decision when status is absent (defense-in-depth)", () => {
+    // The normalizer sets status explicitly, but if a future code path
+    // emits a completed event without it, we use decision. This is a
+    // regression guard for the `status ?? decision ?? "approved"` chain.
+    const messages = runReview("item.completed", {
+      id: "rev_3",
+      type: "auto_approval_review",
+      reviewId: "rev_3",
+      targetItemId: "cmd_3",
+      decision: "denied",
+    });
+    const m = messages[0];
+    if (m?.type !== "codex-auto-approval-review") {
+      throw new Error("wrong message type");
+    }
+    // Must be denied, NOT approved (the earlier bug defaulted to approved
+    // when status was missing even though decision said denied).
+    expect(m.status).toBe("denied");
+  });
+});
+
 describe("codexCommand", () => {
   const mockRuntime: IDaemonRuntime = {
     logger: {

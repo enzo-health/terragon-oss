@@ -158,18 +158,17 @@ export type ThreadMetaEvent =
 /**
  * Extended item type representing a Codex `collabAgentToolCall` — a sub-agent
  * delegation event not present in the upstream `@openai/codex-sdk` `ThreadItem`
- * union.  We carry it as a daemon-local extension so callers can pattern-match
- * on `item.type === "delegation"`.
+ * union. Shape mirrors `CollabToolCallItem` in codex.ts so parseCodexLine →
+ * transformCollabToolCall can handle the WS transport identically to stdio.
+ * Daemon-local extension only; not exposed through the SDK types.
  */
 export type CodexDelegationItem = {
-  type: "delegation";
+  type: "collab_tool_call";
   id: string;
-  senderThreadId: string;
-  receiverThreadIds: string[];
+  sender_thread_id: string;
+  receiver_thread_ids: string[];
   prompt: string;
-  delegatedModel: string;
-  reasoningEffort?: string;
-  agentsStates: Record<string, string>;
+  agents_states: Record<string, { status?: string; message?: string | null }>;
   tool: string;
   status: string;
 };
@@ -416,9 +415,12 @@ function normalizeThreadItem(
     return null;
   }
 
-  // Handle collabAgentToolCall before the generic type normalizer, since it
-  // is not part of the SDK's ThreadItem union and must be mapped to our
-  // daemon-local CodexDelegationItem extension.
+  // Handle collabAgentToolCall before the generic type normalizer. The WS
+  // transport emits camelCase; we normalize to the same snake_case shape that
+  // the stdio transport uses (`collab_tool_call`) so parseCodexLine →
+  // transformCollabToolCall handles both transports identically. This is what
+  // makes sub-agent delegations surface as `Task` tool-use messages in the
+  // chat UI (rendered by the existing delegation card).
   if (
     rawItemType.replace(/[_-]/g, "").toLowerCase() === "collabagenttoolcall"
   ) {
@@ -426,20 +428,45 @@ function normalizeThreadItem(
       toArray(rawItem.receiverThreadIds)?.filter(
         (v): v is string => typeof v === "string",
       ) ?? [];
-    const agentsStates = toRecord(rawItem.agentsStates) as Record<
+    // agentsStates in the WS transport is a map of thread_id → state object,
+    // but older fixtures stored flat strings. Tolerate both: wrap string
+    // values into `{ status }` objects so the downstream handler has a
+    // uniform shape.
+    const rawAgentsStates = toRecord(rawItem.agentsStates) ?? {};
+    const agentsStates: Record<
       string,
-      string
-    > | null;
+      { status?: string; message?: string | null }
+    > = {};
+    for (const [key, value] of Object.entries(rawAgentsStates)) {
+      if (typeof value === "string") {
+        agentsStates[key] = { status: value };
+      } else if (value && typeof value === "object") {
+        const v = value as Record<string, unknown>;
+        agentsStates[key] = {
+          status: typeof v.status === "string" ? v.status : undefined,
+          message:
+            typeof v.message === "string"
+              ? v.message
+              : v.message === null
+                ? null
+                : undefined,
+        };
+      }
+    }
+    // Always normalize `tool` to `"send_input"` so downstream has a single
+    // shape regardless of transport. The WS transport emits `tool: "spawn"`
+    // on the initial delegation; the stdio transport emits `"send_input"`.
+    // Both represent "a sub-agent was delegated" — collapse to one so
+    // transformCollabToolCall's activeTaskToolUseIds dedup works cleanly
+    // (same item id → same toolUseId → exactly one Task tool_use emitted).
     return {
-      type: "delegation",
+      type: "collab_tool_call",
       id: itemId,
-      senderThreadId: readString(rawItem, "senderThreadId") ?? "",
-      receiverThreadIds,
+      sender_thread_id: readString(rawItem, "senderThreadId") ?? "",
+      receiver_thread_ids: receiverThreadIds,
       prompt: readString(rawItem, "prompt") ?? "",
-      delegatedModel: readString(rawItem, "model") ?? "",
-      reasoningEffort: readString(rawItem, "reasoningEffort") ?? undefined,
-      agentsStates: agentsStates ?? {},
-      tool: readString(rawItem, "tool") ?? "spawn",
+      agents_states: agentsStates,
+      tool: "send_input",
       status: readString(rawItem, "status") ?? "initiated",
     };
   }
@@ -921,6 +948,17 @@ function extractThreadEventFromMethod({
     }
     const decision = readString(params, "decision") ?? "approved";
     const rationale = readString(params, "rationale") ?? undefined;
+    // Read riskLevel + action defensively — Codex may carry them on the
+    // completed event, or only on the started event. If absent here, leave
+    // them `undefined` so the downstream `DBAutoApprovalReviewPart` doesn't
+    // record a fake "medium"/"" value that contradicts the started record.
+    const review = toRecord(params.review);
+    const riskLevel =
+      (review ? readString(review, "riskLevel") : null) ??
+      readString(params, "riskLevel");
+    const action =
+      (review ? readString(review, "action") : null) ??
+      readString(params, "action");
     return {
       type: "item.completed",
       item: {
@@ -928,8 +966,8 @@ function extractThreadEventFromMethod({
         type: "auto_approval_review",
         reviewId,
         targetItemId,
-        riskLevel: "medium",
-        action: "",
+        ...(riskLevel ? { riskLevel } : {}),
+        ...(action ? { action } : {}),
         decision,
         rationale,
         status: decision === "approved" ? "approved" : "denied",

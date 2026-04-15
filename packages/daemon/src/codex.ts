@@ -113,6 +113,9 @@ function transformCollabToolCall({
   state: CodexParserState;
 }): ClaudeMessage[] {
   const item = codexMsg.item as unknown as CollabToolCallItem;
+  // Only the `send_input` delegation shape is rendered as a Task tool_use.
+  // The codex-app-server normalizer collapses WS `tool: "spawn"` to
+  // `send_input` so both transports reach this handler with a uniform shape.
   if (item.tool !== "send_input") {
     return [];
   }
@@ -837,6 +840,54 @@ function formatWebSearchResults(rawResults: unknown, query: string): string {
     .join("\n");
 }
 
+type AutoApprovalReviewItem = {
+  id: string;
+  type: "auto_approval_review";
+  reviewId?: string;
+  targetItemId?: string;
+  riskLevel?: "low" | "medium" | "high";
+  action?: string;
+  decision?: "approved" | "denied";
+  rationale?: string;
+  status?: "pending" | "approved" | "denied";
+};
+
+function transformAutoApprovalReview({
+  codexMsg,
+  eventType,
+}: {
+  codexMsg: CodexItemEvent;
+  eventType: CodexItemEvent["type"];
+}): ClaudeMessage[] {
+  const item = codexMsg.item as unknown as AutoApprovalReviewItem;
+  // Emit on started and completed so the UI can show pending→decided state
+  // transitions. item.updated is dropped to avoid duplicate DB rows.
+  if (eventType === "item.updated") {
+    return [];
+  }
+  // Status resolution order (most-trusted first):
+  //   1. item.status — the normalizer sets this explicitly on both events
+  //   2. item.decision — completed events without a status field
+  //   3. "pending" (started) / "approved" (completed) default
+  const resolvedStatus: "pending" | "approved" | "denied" =
+    item.status ??
+    item.decision ??
+    (eventType === "item.completed" ? "approved" : "pending");
+  return [
+    {
+      type: "codex-auto-approval-review",
+      session_id: null,
+      reviewId: item.reviewId ?? item.id,
+      targetItemId: item.targetItemId ?? "",
+      riskLevel: item.riskLevel ?? "medium",
+      action: item.action ?? "",
+      ...(item.decision !== undefined ? { decision: item.decision } : {}),
+      ...(item.rationale !== undefined ? { rationale: item.rationale } : {}),
+      status: resolvedStatus,
+    },
+  ];
+}
+
 export function parseCodexItem({
   codexMsg,
   runtime,
@@ -1146,6 +1197,9 @@ export function parseCodexItem({
         runtime,
         state,
       });
+    }
+    case "auto_approval_review": {
+      return transformAutoApprovalReview({ codexMsg, eventType });
     }
     default: {
       runtime.logger.warn("Unknown Codex item type", {

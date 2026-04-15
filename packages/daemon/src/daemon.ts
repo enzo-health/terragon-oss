@@ -308,6 +308,12 @@ type AppServerRunContext = {
   watchdogTimer: NodeJS.Timeout | null;
   /** Last full agent_message text by item id (for cumulative update dedupe). */
   agentMessageTextById: Map<string, string>;
+  /**
+   * Most recent non-empty diff from `turn/diff/updated`. Held across
+   * intermediate updates and flushed as a single `codex-diff` ClaudeMessage
+   * when the turn completes, so N file edits produce ONE DBDiffPart.
+   */
+  pendingTurnDiff: string | null;
   resolveTurnComplete: (result: AppServerTurnCompletion) => void;
   rejectTurnComplete: (error: Error) => void;
   resolveThreadReady: (threadId: string) => void;
@@ -972,6 +978,7 @@ export class TerragonDaemon {
       threadReadyPromise,
       watchdogTimer: null,
       agentMessageTextById: new Map<string, string>(),
+      pendingTurnDiff: null,
       resolveTurnComplete: (result) => {
         if (context.isCompleted) {
           return;
@@ -1426,11 +1433,10 @@ export class TerragonDaemon {
             return;
           }
 
-          // Synthetic-only events (turn diffs and plan snapshots) are not chat
-          // messages — they don't enter parseCodexLine. Persist plan snapshots
-          // as `codex-plan` ClaudeMessages so chat history shows them on reload.
-          // turn.diff_updated is still dropped here; diffs are surfaced through
-          // the diff item pipeline instead.
+          // Synthetic-only events (turn diffs and plan snapshots) don't flow
+          // through parseCodexLine. We emit them as dedicated ClaudeMessages
+          // so chat history shows them on reload (the live stream already
+          // updates the UI in flight).
           if (threadEvent.type === "turn.plan_updated") {
             const planEntries = normalizeCodexPlanEntries(threadEvent.plan);
             if (planEntries.length > 0) {
@@ -1449,6 +1455,14 @@ export class TerragonDaemon {
             return;
           }
           if (threadEvent.type === "turn.diff_updated") {
+            // Store the latest diff on the run context. Do NOT persist yet —
+            // Codex fires this on every mutation, so a 5-file edit would
+            // produce 5 DBDiffPart rows. We flush exactly one codex-diff
+            // ClaudeMessage on turn.completed below using this stored value.
+            context.pendingTurnDiff =
+              threadEvent.diff && threadEvent.diff.length > 0
+                ? threadEvent.diff
+                : null;
             return;
           }
 
@@ -1717,6 +1731,25 @@ export class TerragonDaemon {
           }
 
           if (threadEvent.type === "turn.completed") {
+            // Flush the turn's final unified diff as exactly one codex-diff
+            // ClaudeMessage (see turn.diff_updated handler). This replaces
+            // what used to be per-update diff emissions with a single
+            // per-turn DBDiffPart.
+            if (context.pendingTurnDiff) {
+              this.addMessageToBuffer({
+                agent: "codex",
+                message: {
+                  type: "codex-diff",
+                  session_id: context.threadId ?? null,
+                  diff: context.pendingTurnDiff,
+                },
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+              context.pendingTurnDiff = null;
+            }
+
             const params = notification.params ?? {};
             const completionStatus = isTurnInterruptedFromParams(params)
               ? "interrupted"
