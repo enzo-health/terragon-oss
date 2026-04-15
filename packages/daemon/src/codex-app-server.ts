@@ -85,6 +85,19 @@ export type CodexAppServerNotificationHandler = (
 ) => void;
 
 /**
+ * Mirrors `BootingSubstatus` from `@terragon/sandbox/types`.  Duplicated here
+ * (and in `@terragon/shared/delivery-loop/thread-meta-event`) because the
+ * daemon does not depend on `@terragon/sandbox` at runtime.
+ */
+type BootingSubstatus =
+  | "provisioning"
+  | "provisioning-done"
+  | "cloning-repo"
+  | "installing-agent"
+  | "running-setup-script"
+  | "booting-done";
+
+/**
  * Meta events carry operational metadata (token usage, rate limits, model
  * re-routing, MCP server health) that the daemon dispatches on a separate
  * channel from thread-chat content.
@@ -153,6 +166,31 @@ export type ThreadMetaEvent =
       // Emitted when the Claude Code stream signals message stop.
       kind: "message.stop";
       reason: string;
+    }
+  | {
+      // Emitted by the server when the sandbox booting substatus transitions.
+      // `from` is null on the very first transition (no prior substatus recorded).
+      // `durationMs` is absent when the previous transition timestamp is unavailable.
+      kind: "boot.substatus_changed";
+      threadId: string;
+      from: BootingSubstatus | null;
+      to: BootingSubstatus;
+      timestamp: string; // ISO 8601
+      durationMs?: number;
+    }
+  | {
+      // Emitted during sandbox setup when package-install progress is observed.
+      // Fields map to pnpm install output counters; `total` is omitted when
+      // pnpm doesn't expose it.
+      kind: "install.progress";
+      threadId: string;
+      resolved: number;
+      reused: number;
+      downloaded: number;
+      added: number;
+      total?: number;
+      currentPackage?: string;
+      elapsedMs: number;
     };
 
 /**
