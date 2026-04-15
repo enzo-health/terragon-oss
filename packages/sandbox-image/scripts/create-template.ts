@@ -103,6 +103,42 @@ function runCommand(command: string): Promise<void> {
   });
 }
 
+function runCommandCapture(command: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      stdio: ["inherit", "pipe", "pipe"],
+      shell: true,
+    });
+    let stdout = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      process.stderr.write(d);
+    });
+    child.on("close", (code: number | null) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`Command failed (${code}): ${command}`));
+    });
+    child.on("error", reject);
+  });
+}
+
+async function verifyDaytonaSnapshotRegistered(name: string): Promise<void> {
+  // Previous silent registration failures left templates.json pointing at
+  // ghost snapshots (see hotfix PR #129). Confirm the name is queryable
+  // before we let the caller persist the entry.
+  console.log(`Verifying Daytona snapshot "${name}" is registered...`);
+  const output = await runCommandCapture(`daytona snapshot list`);
+  if (!output.includes(name)) {
+    throw new Error(
+      `Daytona snapshot "${name}" did not appear in 'daytona snapshot list' after create. ` +
+        `Refusing to update templates.json — registration likely failed silently.`,
+    );
+  }
+  console.log(`Verified: "${name}" is registered in Daytona.`);
+}
+
 function getDockerfileHash(): string {
   const dockerfileHbsContent = fs.readFileSync(dockerfileHbsPath, "utf-8");
   return crypto.createHash("sha256").update(dockerfileHbsContent).digest("hex");
@@ -133,6 +169,7 @@ async function buildDaytonaTemplate(templateArgs: TemplateArgs) {
 
   const { name, args } = getDaytonaBuildFlags(templateArgs);
   await runCommand(`daytona snapshot create ${args.join(" ")}`);
+  await verifyDaytonaSnapshotRegistered(name);
   console.log(`Template built successfully: ${name}`);
   return name;
 }
