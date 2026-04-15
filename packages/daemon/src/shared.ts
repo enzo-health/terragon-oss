@@ -261,6 +261,31 @@ export type ClaudeMessage =
       }>;
     }
 
+  // Codex autoApprovalReview item — risk assessment for a proposed action
+  // (command execution, file change) that Codex decides whether to
+  // auto-approve. Users need to see these in chat history to audit what
+  // was approved vs denied. Maps to DBAutoApprovalReviewPart.
+  | {
+      type: "codex-auto-approval-review";
+      session_id: string | null;
+      reviewId: string;
+      targetItemId: string;
+      riskLevel: "low" | "medium" | "high";
+      action: string;
+      decision?: "approved" | "denied";
+      rationale?: string;
+      status: "pending" | "approved" | "denied";
+    }
+
+  // Codex turn/diff/updated event — unified diff snapshot of the turn's
+  // pending file changes. Rendered alongside command_execution items so
+  // users can see the patch the turn is proposing. Maps to DBDiffPart.
+  | {
+      type: "codex-diff";
+      session_id: string | null;
+      diff: string;
+    }
+
   // ACP image content block
   | {
       type: "acp-image";

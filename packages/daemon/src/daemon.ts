@@ -1426,11 +1426,10 @@ export class TerragonDaemon {
             return;
           }
 
-          // Synthetic-only events (turn diffs and plan snapshots) are not chat
-          // messages — they don't enter parseCodexLine. Persist plan snapshots
-          // as `codex-plan` ClaudeMessages so chat history shows them on reload.
-          // turn.diff_updated is still dropped here; diffs are surfaced through
-          // the diff item pipeline instead.
+          // Synthetic-only events (turn diffs and plan snapshots) don't flow
+          // through parseCodexLine. We emit them as dedicated ClaudeMessages
+          // so chat history shows them on reload (the live stream already
+          // updates the UI in flight).
           if (threadEvent.type === "turn.plan_updated") {
             const planEntries = normalizeCodexPlanEntries(threadEvent.plan);
             if (planEntries.length > 0) {
@@ -1449,6 +1448,22 @@ export class TerragonDaemon {
             return;
           }
           if (threadEvent.type === "turn.diff_updated") {
+            // Emit only non-empty diffs — Codex fires this on every mutation
+            // including pre-change snapshots that may be empty. Empty-string
+            // diffs would produce a no-op DBDiffPart on reload.
+            if (threadEvent.diff && threadEvent.diff.length > 0) {
+              this.addMessageToBuffer({
+                agent: "codex",
+                message: {
+                  type: "codex-diff",
+                  session_id: context.threadId ?? null,
+                  diff: threadEvent.diff,
+                },
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+            }
             return;
           }
 

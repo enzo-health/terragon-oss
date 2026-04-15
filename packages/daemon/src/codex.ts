@@ -841,6 +841,49 @@ function formatWebSearchResults(rawResults: unknown, query: string): string {
     .join("\n");
 }
 
+type AutoApprovalReviewItem = {
+  id: string;
+  type: "auto_approval_review";
+  reviewId?: string;
+  targetItemId?: string;
+  riskLevel?: "low" | "medium" | "high";
+  action?: string;
+  decision?: "approved" | "denied";
+  rationale?: string;
+  status?: "pending" | "approved" | "denied";
+};
+
+function transformAutoApprovalReview({
+  codexMsg,
+  eventType,
+}: {
+  codexMsg: CodexItemEvent;
+  eventType: CodexItemEvent["type"];
+}): ClaudeMessage[] {
+  const item = codexMsg.item as unknown as AutoApprovalReviewItem;
+  // Emit on started and completed so the UI can show pending→decided state
+  // transitions. item.updated is dropped to avoid duplicate DB rows.
+  if (eventType === "item.updated") {
+    return [];
+  }
+  return [
+    {
+      type: "codex-auto-approval-review",
+      session_id: null,
+      reviewId: item.reviewId ?? item.id,
+      targetItemId: item.targetItemId ?? "",
+      riskLevel: item.riskLevel ?? "medium",
+      action: item.action ?? "",
+      ...(item.decision !== undefined ? { decision: item.decision } : {}),
+      ...(item.rationale !== undefined ? { rationale: item.rationale } : {}),
+      status:
+        eventType === "item.completed"
+          ? (item.decision ?? "approved")
+          : (item.status ?? "pending"),
+    },
+  ];
+}
+
 export function parseCodexItem({
   codexMsg,
   runtime,
@@ -1150,6 +1193,9 @@ export function parseCodexItem({
         runtime,
         state,
       });
+    }
+    case "auto_approval_review": {
+      return transformAutoApprovalReview({ codexMsg, eventType });
     }
     default: {
       runtime.logger.warn("Unknown Codex item type", {
