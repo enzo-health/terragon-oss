@@ -158,10 +158,70 @@ describe("parsePnpmProgressLine", () => {
       expect(parsePnpmProgressLine(long)).toBeNull();
     });
 
-    it("does not throw on binary-like content", () => {
+    it("does not throw on binary-like content and returns null", () => {
       const binary = "\x00\x01\x02\x03\xFF\xFE";
       expect(() => parsePnpmProgressLine(binary)).not.toThrow();
+      expect(parsePnpmProgressLine(binary)).toBeNull();
     });
+
+    // ---------------------------------------------------------------------------
+    // False-positive guards — phrases that *contain* the magic words but should
+    // not match because the regexes are anchored with ^ at the line start.
+    // ---------------------------------------------------------------------------
+
+    it("returns null for a mid-sentence Progress phrase (README / postinstall hook output)", () => {
+      // The PROGRESS_RE is anchored with ^, so a sentence that starts with
+      // something else before "Progress:" must return null.
+      expect(
+        parsePnpmProgressLine("See Progress: resolved issues in CHANGELOG.md"),
+      ).toBeNull();
+    });
+
+    it("returns null for a mid-sentence Scope phrase", () => {
+      // Similarly, SCOPE_RE is anchored with ^.
+      expect(
+        parsePnpmProgressLine(
+          "The Scope: all workspace projects should be listed",
+        ),
+      ).toBeNull();
+    });
+
+    it("returns null for a Progress line with non-numeric fields", () => {
+      // \d+ in the regex means non-digit tokens cannot match at all, so this
+      // line simply fails the regex test and returns null.
+      expect(
+        parsePnpmProgressLine(
+          "Progress: resolved --, reused N/A, downloaded 0, added 0, done",
+        ),
+      ).toBeNull();
+    });
+
+    it("returns a valid snapshot for an all-zero progress line (start of install)", () => {
+      // All-zero is a legitimate line emitted at the very beginning of pnpm
+      // install — it must NOT be rejected as NaN or otherwise invalid.
+      expect(
+        parsePnpmProgressLine(
+          "Progress: resolved 0, reused 0, downloaded 0, added 0, done",
+        ),
+      ).toEqual({ resolved: 0, reused: 0, downloaded: 0, added: 0 });
+    });
+
+    it("returns null for a raw binary blob (\\x00\\x01\\xff)", () => {
+      // Full range of non-printable / high bytes — must not throw and must
+      // return null (not a snapshot with NaN fields).
+      const binary = "\x00\x01\xff";
+      expect(() => parsePnpmProgressLine(binary)).not.toThrow();
+      expect(parsePnpmProgressLine(binary)).toBeNull();
+    });
+
+    // ---------------------------------------------------------------------------
+    // pnpm version compatibility note
+    // ---------------------------------------------------------------------------
+    // The three regex patterns (PROGRESS_RE, SCOPE_RE, PACKAGE_LINE_RE) were
+    // verified against pnpm v8.15.x and pnpm v9.15.x output.  As of pnpm v9 /
+    // v10 the progress-line format is identical to v8 — if pnpm ever changes
+    // the format, this section should be updated to add the new fixture.
+    // ---------------------------------------------------------------------------
   });
 
   describe("Integration: accumulating a sequence of lines", () => {
