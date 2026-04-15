@@ -124,6 +124,55 @@ function runCommandCapture(command: string): Promise<string> {
   });
 }
 
+/**
+ * Assert the Daytona CLI's active organization is the one prod actually uses.
+ *
+ * Three prior prod outages (#129 bcogzd, #136 nhrope/3ldxcp) shipped snapshots
+ * into an Enzo-org namespace that prod's Personal-org API key couldn't see.
+ * `daytona snapshot list` happily reported them as "registered" in Enzo, so
+ * the post-create verification at `verifyDaytonaSnapshotRegistered` passed
+ * while prod remained broken.
+ *
+ * Fix: read the CLI's currently-active org and fail loudly if it doesn't
+ * match the ID in `DAYTONA_PROD_ORG_ID`. The intent is to make it impossible
+ * to publish a Daytona snapshot to the wrong namespace.
+ *
+ * The env var is required only for `create-template.ts`; other tests and
+ * scripts don't set it and aren't affected.
+ */
+async function assertActiveDaytonaOrg(): Promise<void> {
+  const expectedId = process.env.DAYTONA_PROD_ORG_ID?.trim();
+  if (!expectedId) {
+    throw new Error(
+      "DAYTONA_PROD_ORG_ID is not set. Export the org id that prod's " +
+        "DAYTONA_API_KEY is scoped to before running create-template. " +
+        "Example: export DAYTONA_PROD_ORG_ID=f9c41839-9458-4a4b-b51d-f54d63236df5",
+    );
+  }
+  const output = await runCommandCapture("daytona organization list");
+  // Format: `[[Name id last-seen] [*ActiveName id last-seen]]`. Parse the
+  // starred line to find the active org id.
+  const activeMatch = output.match(/\*([^\s\]]+)\s+([0-9a-f-]{36})/);
+  if (!activeMatch) {
+    throw new Error(
+      "Could not determine active Daytona organization. Is the CLI " +
+        "authenticated? Run: daytona login",
+    );
+  }
+  const [, activeName, activeId] = activeMatch;
+  if (activeId !== expectedId) {
+    throw new Error(
+      `Refusing to build: Daytona CLI is in org "${activeName}" (${activeId}) ` +
+        `but prod expects ${expectedId}. Fix with:\n` +
+        `  daytona organization use ${expectedId}\n` +
+        `Then re-run.`,
+    );
+  }
+  console.log(
+    `Verified Daytona CLI is in the prod org "${activeName}" (${activeId}).`,
+  );
+}
+
 async function verifyDaytonaSnapshotRegistered(name: string): Promise<void> {
   // Previous silent registration failures left templates.json pointing at
   // ghost snapshots (see hotfix PR #129). Confirm the name is queryable
@@ -162,6 +211,10 @@ async function buildE2BTemplate(templateArgs: TemplateArgs) {
 }
 
 async function buildDaytonaTemplate(templateArgs: TemplateArgs) {
+  // Pre-flight: assert the CLI is in the prod org before we push ANYTHING.
+  // If this fails, nothing is built or uploaded — cheapest possible guard.
+  await assertActiveDaytonaOrg();
+
   // Render the Dockerfile for daytona
   const dockerfileContent = renderDockerfile("daytona");
   const dockerfilePath = getDockerfilePath("daytona");
