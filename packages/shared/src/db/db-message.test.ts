@@ -341,7 +341,7 @@ describe("DB_MESSAGE_SCHEMA_VERSION", () => {
     expect(DB_MESSAGE_SCHEMA_VERSION).toBeGreaterThan(0);
   });
 
-  it("is currently 1 (bump when union changes incompatibly)", () => {
-    expect(DB_MESSAGE_SCHEMA_VERSION).toBe(1);
+  it("is currently 2 (bump when union changes incompatibly)", () => {
+    expect(DB_MESSAGE_SCHEMA_VERSION).toBe(2);
   });
 });

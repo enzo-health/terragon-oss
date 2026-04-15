@@ -112,8 +112,10 @@ describe("DBDelegationMessage — DB roundtrip", () => {
     expect(rows[0]!.messages).toEqual(messages);
   });
 
-  it("schema version is exported and equals 1", () => {
+  it("schema version is exported and equals 2", () => {
     // Sanity-check that the constant travels through the module boundary correctly.
-    expect(DB_MESSAGE_SCHEMA_VERSION).toBe(1);
+    // Bumped to 2 when DBServerToolUsePart / DBWebSearchResultPart were added
+    // to the DBAgentMessagePart union (Wave 2 PR C).
+    expect(DB_MESSAGE_SCHEMA_VERSION).toBe(2);
   });
 });
