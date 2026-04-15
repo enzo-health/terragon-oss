@@ -1,4 +1,5 @@
 import { ClaudeMessage } from "./shared";
+import { recordUnknownEvent } from "./unknown-event-telemetry";
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -735,9 +736,21 @@ export function parseAcpLineToClaudeMessages(
       return parseSessionUpdate(params, fallbackSessionId, toolCallTracker);
     } catch (err) {
       if (err instanceof UnknownAcpContentTypeError) {
-        // Surface unknown types as assistant text if content exists, or drop
+        // Surface unknown types as assistant text if content exists, or drop.
+        // Either way, record the drop so operators can see which ACP
+        // sessionUpdate kinds the daemon doesn't recognize yet.
         const update = asObject(params.update);
         const contentText = update ? toTextContent(update.content) : "";
+        recordUnknownEvent({
+          transport: "acp",
+          method: "session/update",
+          itemType: err.sessionUpdate,
+          threadChatId: getSessionId(params, fallbackSessionId),
+          reason: contentText
+            ? "surfaced as text (no structured handler)"
+            : "dropped (no content)",
+          payload: update,
+        });
         if (contentText) {
           return [
             {

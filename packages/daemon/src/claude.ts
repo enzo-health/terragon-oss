@@ -3,6 +3,7 @@ import { nanoid } from "nanoid/non-secure";
 import type { ThreadMetaEvent } from "./codex-app-server";
 import type { ClaudeMessage, DaemonDelta } from "./shared";
 import { IDaemonRuntime } from "./runtime";
+import { recordUnknownEvent } from "./unknown-event-telemetry";
 
 export function getAnthropicApiKeyOrNull(runtime: IDaemonRuntime) {
   // Check if the user has Claude credentials.
@@ -456,6 +457,17 @@ export class ClaudeCodeParser {
             }
             break;
           }
+
+          // Unknown delta kind — record so we can see new Claude SDK features
+          // (e.g. citations_delta) the moment Anthropic ships them instead of
+          // waiting for user reports.
+          recordUnknownEvent({
+            transport: "claude-sdk",
+            method: "stream_event/content_block_delta",
+            itemType: deltaType ?? "<missing>",
+            reason: "unhandled content_block_delta kind",
+            payload: delta,
+          });
         }
 
         // Task 4.5: message_delta → usage.incremental + message.stop
@@ -494,6 +506,23 @@ export class ClaudeCodeParser {
                   : 0,
             });
           }
+        }
+
+        // Any eventType we didn't explicitly handle above (content_block_start,
+        // content_block_stop, message_start, message_stop, etc.) falls through
+        // here. Record so we know what Anthropic's SSE protocol is emitting
+        // that we're not yet consuming.
+        if (
+          eventType !== "content_block_delta" &&
+          eventType !== "message_delta"
+        ) {
+          recordUnknownEvent({
+            transport: "claude-sdk",
+            method: "stream_event",
+            itemType: eventType ?? "<missing>",
+            reason: "unhandled stream_event kind",
+            payload: event,
+          });
         }
 
         // stream_event lines are not surfaced as ClaudeMessage chat items.
