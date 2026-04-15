@@ -1421,6 +1421,52 @@ describe("toDBMessage", () => {
       ]);
     });
 
+    test("converts Codex turn/plan/updated snapshot into DBPlanPart", () => {
+      const msg: ClaudeMessage = {
+        type: "codex-plan",
+        session_id: "thread-1",
+        entries: [
+          {
+            id: "plan_step_1",
+            content: "Analyze auth middleware",
+            priority: "high",
+            status: "completed",
+          },
+          {
+            id: "plan_step_2",
+            content: "Add null-safety",
+            priority: "medium",
+            status: "in_progress",
+          },
+        ],
+      };
+      expect(toDBMessage(msg)).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "plan",
+              entries: [
+                {
+                  id: "plan_step_1",
+                  content: "Analyze auth middleware",
+                  priority: "high",
+                  status: "completed",
+                },
+                {
+                  id: "plan_step_2",
+                  content: "Add null-safety",
+                  priority: "medium",
+                  status: "in_progress",
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+    });
+
     test("converts ACP image with data URI fallback", () => {
       const msg: ClaudeMessage = {
         type: "acp-image",

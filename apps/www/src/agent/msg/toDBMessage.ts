@@ -99,6 +99,8 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
       return convertAcpToolCall(claudeMessage);
     case "acp-plan":
       return convertAcpPlan(claudeMessage);
+    case "codex-plan":
+      return convertCodexPlan(claudeMessage);
     case "acp-image":
       return convertAcpImage(claudeMessage);
     case "acp-audio":
@@ -161,13 +163,30 @@ function convertAcpToolCall(
 function convertAcpPlan(
   msg: Extract<ClaudeMessage, { type: "acp-plan" }>,
 ): DBMessage[] {
+  return planMessageFromEntries(msg.entries);
+}
+
+function convertCodexPlan(
+  msg: Extract<ClaudeMessage, { type: "codex-plan" }>,
+): DBMessage[] {
+  return planMessageFromEntries(msg.entries);
+}
+
+function planMessageFromEntries(
+  entries: Array<{
+    id?: string;
+    content: string;
+    priority: "high" | "medium" | "low";
+    status: "pending" | "in_progress" | "completed";
+  }>,
+): DBMessage[] {
   const plan: DBPlanPart = {
     type: "plan",
-    entries: msg.entries.map((e) => ({
+    entries: entries.map((e) => ({
       ...(e.id ? { id: e.id } : {}),
       content: e.content,
       priority: e.priority,
-      // DBPlanPart allows "failed"; ACP spec only emits the three shown here.
+      // DBPlanPart allows "failed"; ACP/Codex only emit the three above.
       status: e.status,
     })),
   };

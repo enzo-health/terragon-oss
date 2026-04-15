@@ -245,6 +245,21 @@ export type ClaudeMessage =
       }>;
     }
 
+  // Codex turn/plan/updated event — same shape as acp-plan but emitted by
+  // the Codex app-server rather than ACP. Kept as a distinct discriminant so
+  // the server can tell transports apart for observability; both map to the
+  // same DBPlanPart in toDBMessage.
+  | {
+      type: "codex-plan";
+      session_id: string | null;
+      entries: Array<{
+        id?: string;
+        content: string;
+        priority: "high" | "medium" | "low";
+        status: "pending" | "in_progress" | "completed";
+      }>;
+    }
+
   // ACP image content block
   | {
       type: "acp-image";
