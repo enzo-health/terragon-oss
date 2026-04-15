@@ -193,6 +193,11 @@ const BroadcastThreadPatchSchema = z.object({
   deltaIdempotencyKey: z.string().optional(),
   deltaKind: z.enum(["text", "thinking"]).optional(),
   text: z.string().optional(),
+  // Meta events — non-chat operational signals (token usage, rate limits,
+  // model re-routing, MCP server health, config warnings). Typed as
+  // `unknown[]` here to avoid a dep cycle with @terragon/shared, which owns
+  // the ThreadMetaEvent union. Consumers cast via the union type.
+  metaEvents: z.array(z.unknown()).optional(),
 });
 
 export type BroadcastThreadPatch = z.infer<typeof BroadcastThreadPatchSchema>;

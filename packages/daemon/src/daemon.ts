@@ -4050,7 +4050,11 @@ export class TerragonDaemon {
       return;
     }
 
-    if (this.messageBuffer.length === 0 && this.deltaBuffer.length === 0) {
+    if (
+      this.messageBuffer.length === 0 &&
+      this.deltaBuffer.length === 0 &&
+      this.metaEventBuffer.length === 0
+    ) {
       this.maybeCleanupAllDaemonEventRunStates();
       return;
     }
@@ -4172,33 +4176,68 @@ export class TerragonDaemon {
         }
       }
 
-      // Send any remaining deltas that weren't drained by sendMessagesToAPI
-      // (e.g., delta-only flush with no messages for that threadChatId).
-      if (this.deltaBuffer.length > 0) {
-        const deltasByThread = new Map<string, typeof this.deltaBuffer>();
-        for (const d of this.deltaBuffer) {
-          let arr = deltasByThread.get(d.threadChatId);
-          if (!arr) {
-            arr = [];
-            deltasByThread.set(d.threadChatId, arr);
+      // Send any remaining deltas / meta events that weren't drained by
+      // sendMessagesToAPI (e.g., delta-only or meta-only flush with no
+      // messages for that threadChatId).
+      if (this.deltaBuffer.length > 0 || this.metaEventBuffer.length > 0) {
+        type RemainingTail = {
+          threadId: string;
+          threadChatId: string;
+          token: string;
+          deltas: DaemonDelta[];
+          metaEvents: ThreadMetaEvent[];
+        };
+        const tailByThread = new Map<string, RemainingTail>();
+        const ensure = (
+          threadChatId: string,
+          threadId: string,
+          token: string,
+        ): RemainingTail => {
+          let t = tailByThread.get(threadChatId);
+          if (!t) {
+            t = {
+              threadId,
+              threadChatId,
+              token,
+              deltas: [],
+              metaEvents: [],
+            };
+            tailByThread.set(threadChatId, t);
           }
-          arr.push(d);
+          return t;
+        };
+        for (const d of this.deltaBuffer) {
+          ensure(d.threadChatId, d.threadId, d.token).deltas.push({
+            messageId: d.messageId,
+            partIndex: d.partIndex,
+            deltaSeq: d.deltaSeq,
+            kind: d.kind,
+            text: d.text,
+          });
+        }
+        for (const entry of this.metaEventBuffer) {
+          ensure(
+            entry.threadChatId,
+            entry.threadId,
+            entry.token,
+          ).metaEvents.push(entry.metaEvent);
         }
         this.deltaBuffer = [];
-        for (const [, deltas] of deltasByThread) {
-          const first = deltas[0]!;
+        this.metaEventBuffer = [];
+
+        for (const tail of tailByThread.values()) {
           try {
             const runState = this.getOrCreateDaemonEventRunState(
-              first.threadChatId,
+              tail.threadChatId,
             );
             const deltaEnvelope = this.createDeltaOnlyDaemonEventEnvelope(
-              first.threadChatId,
+              tail.threadChatId,
             );
-            const deltaPayload: DaemonEventAPIBody = {
+            const tailPayload: DaemonEventAPIBody = {
               messages: [],
-              threadId: first.threadId,
+              threadId: tail.threadId,
               timezone,
-              threadChatId: first.threadChatId,
+              threadChatId: tail.threadChatId,
               transportMode: runState.transportMode,
               protocolVersion: runState.protocolVersion,
               acpServerId: runState.acpServerId,
@@ -4207,19 +4246,18 @@ export class TerragonDaemon {
               eventId: deltaEnvelope.eventId,
               runId: deltaEnvelope.runId,
               seq: deltaEnvelope.seq,
-              deltas: deltas.map((d) => ({
-                messageId: d.messageId,
-                partIndex: d.partIndex,
-                deltaSeq: d.deltaSeq,
-                kind: d.kind,
-                text: d.text,
-              })),
+              ...(tail.deltas.length > 0 ? { deltas: tail.deltas } : {}),
+              ...(tail.metaEvents.length > 0
+                ? { metaEvents: tail.metaEvents }
+                : {}),
             };
-            await this.runtime.serverPost(deltaPayload, first.token);
+            await this.runtime.serverPost(tailPayload, tail.token);
           } catch (error) {
-            // Deltas are ephemeral — log and drop on failure
-            this.runtime.logger.warn("Delta-only flush failed", {
-              threadId: first.threadId,
+            // Deltas + meta events are ephemeral — log and drop on failure
+            this.runtime.logger.warn("Tail flush failed", {
+              threadId: tail.threadId,
+              deltaCount: tail.deltas.length,
+              metaEventCount: tail.metaEvents.length,
               error,
             });
           }
@@ -4426,6 +4464,20 @@ export class TerragonDaemon {
       }
       this.deltaBuffer = remainingDeltas;
 
+      // Drain meta events matching this threadChatId — they ride on the same
+      // POST as messages so the client sees them within one broadcast round
+      // trip rather than requiring a separate endpoint.
+      const matchingMetaEvents: ThreadMetaEvent[] = [];
+      const remainingMetaEvents: typeof this.metaEventBuffer = [];
+      for (const entry of this.metaEventBuffer) {
+        if (entry.threadChatId === threadChatId) {
+          matchingMetaEvents.push(entry.metaEvent);
+        } else {
+          remainingMetaEvents.push(entry);
+        }
+      }
+      this.metaEventBuffer = remainingMetaEvents;
+
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -4441,6 +4493,9 @@ export class TerragonDaemon {
         ...(envelopeV2 ?? {}),
         ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
         ...(matchingDeltas.length > 0 ? { deltas: matchingDeltas } : {}),
+        ...(matchingMetaEvents.length > 0
+          ? { metaEvents: matchingMetaEvents }
+          : {}),
       };
 
       const selfDispatchPayload = await this.runtime.serverPost(payload, token);
