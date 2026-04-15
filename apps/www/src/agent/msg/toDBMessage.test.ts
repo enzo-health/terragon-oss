@@ -1145,4 +1145,208 @@ describe("toDBMessage", () => {
       ]);
     });
   });
+
+  describe("Claude SDK content-block coverage (Wave 2)", () => {
+    test("preserves thinking signature for multi-turn continuations", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "reasoning about the problem",
+              signature: "enc-sig-abc123",
+            },
+            { type: "text", text: "Here's the answer." },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "thinking",
+              thinking: "reasoning about the problem",
+              signature: "enc-sig-abc123",
+            },
+            { type: "text", text: "Here's the answer." },
+          ],
+        },
+      ]);
+    });
+
+    test("omits signature field when not emitted by SDK", () => {
+      // Cast content to `any` — the Anthropic ThinkingBlockParam type requires
+      // signature, but we want to verify the translator handles the case where
+      // the SDK emits a thinking block without one (e.g. older models).
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "no sig" } as never],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "thinking",
+        thinking: "no sig",
+      });
+    });
+
+    test("converts server_tool_use block into DBServerToolUsePart", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "server_tool_use",
+              id: "srvtoolu_1",
+              name: "web_search",
+              input: { query: "capital of France" },
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "server-tool-use",
+              id: "srvtoolu_1",
+              name: "web_search",
+              input: { query: "capital of France" },
+            },
+          ],
+        },
+      ]);
+    });
+
+    test("converts web_search_tool_result success into DBWebSearchResultPart", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtoolu_1",
+              content: [
+                {
+                  type: "web_search_result",
+                  url: "https://example.com/a",
+                  title: "Result A",
+                  page_age: "2 days ago",
+                  encrypted_content: "enc-a",
+                },
+                {
+                  type: "web_search_result",
+                  url: "https://example.com/b",
+                  title: "Result B",
+                  // encrypted_content intentionally omitted — the translator
+                  // treats it as optional; type-cast to silence the API
+                  // requirement so we exercise the optional path.
+                } as never,
+              ],
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "web-search-result",
+        toolUseId: "srvtoolu_1",
+        results: [
+          {
+            url: "https://example.com/a",
+            title: "Result A",
+            pageAge: "2 days ago",
+            encryptedContent: "enc-a",
+          },
+          { url: "https://example.com/b", title: "Result B" },
+        ],
+      });
+    });
+
+    test("converts web_search_tool_result error into errorCode-only part", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtoolu_2",
+              content: {
+                type: "web_search_tool_result_error",
+                error_code: "max_uses_exceeded",
+              },
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "web-search-result",
+        toolUseId: "srvtoolu_2",
+        errorCode: "max_uses_exceeded",
+      });
+    });
+
+    test("keeps client tool_use blocks as DBToolCall (distinct from server-tool-use)", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "Bash",
+              input: { command: "ls" },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "tool-call",
+          id: "toolu_1",
+          name: "Bash",
+          parameters: { command: "ls" },
+          parent_tool_use_id: null,
+        },
+      ]);
+    });
+  });
 });

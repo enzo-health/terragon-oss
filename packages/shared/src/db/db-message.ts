@@ -19,7 +19,7 @@ export type DBMessage =
  * Schema version — bump when the DBMessage union gains new variants or
  * existing shapes change in a backward-incompatible way.
  */
-export const DB_MESSAGE_SCHEMA_VERSION = 1;
+export const DB_MESSAGE_SCHEMA_VERSION = 2;
 
 export type DBUserMessage = {
   type: "user";
@@ -116,6 +116,50 @@ type DBTextFilePart = {
 export type DBThinkingPart = {
   type: "thinking";
   thinking: string;
+  /**
+   * Encrypted signature from the Anthropic API that must be resubmitted
+   * when continuing a multi-turn conversation that used extended thinking.
+   * If we drop this, continuation requests lose their thinking context.
+   */
+  signature?: string;
+};
+
+/**
+ * A `server_tool_use` block — the Anthropic API's own server executed a tool
+ * (e.g. `web_search`, `code_execution`) without a round-trip to the agent.
+ * The accompanying result arrives as a `DBWebSearchResultPart` (or similar)
+ * later in the same message's content array.
+ *
+ * Distinct from `DBToolCall` which represents client-side tools that require
+ * the agent to round-trip for execution.
+ */
+export type DBServerToolUsePart = {
+  type: "server-tool-use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+};
+
+/** Single result row in a web_search_tool_result. */
+export type DBWebSearchResultEntry = {
+  url: string;
+  title: string;
+  pageAge?: string;
+  encryptedContent?: string;
+};
+
+/**
+ * Result of a server-side `web_search` tool invocation. Pairs with a prior
+ * `DBServerToolUsePart` via `toolUseId`.
+ *
+ * Either `results` (success) or `errorCode` (failure) is set. Both-missing
+ * is invalid but tolerated for forward compatibility with unknown shapes.
+ */
+export type DBWebSearchResultPart = {
+  type: "web-search-result";
+  toolUseId: string;
+  results?: DBWebSearchResultEntry[];
+  errorCode?: string;
 };
 
 export type DBToolCall = {
@@ -218,7 +262,9 @@ export type DBAgentMessagePart =
   | DBAudioPart
   | DBAutoApprovalReviewPart
   | DBImagePart
-  | DBPlanPart;
+  | DBPlanPart
+  | DBServerToolUsePart
+  | DBWebSearchResultPart;
 
 type DBAgentMessage = {
   type: "agent";

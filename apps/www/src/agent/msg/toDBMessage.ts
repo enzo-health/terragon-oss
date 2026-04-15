@@ -1,6 +1,13 @@
 import { Anthropic } from "@anthropic-ai/sdk";
 import { ClaudeMessage } from "@terragon/daemon/shared";
-import { DBMessage, DBTextPart, DBThinkingPart } from "@terragon/shared";
+import {
+  DBAgentMessagePart,
+  DBMessage,
+  DBServerToolUsePart,
+  DBThinkingPart,
+  DBWebSearchResultEntry,
+  DBWebSearchResultPart,
+} from "@terragon/shared";
 
 /**
  * Converts a ClaudeMessage to one or more DBMessages
@@ -204,28 +211,97 @@ function convertAssistantMessage(
       ],
     });
   } else if (Array.isArray(message.content)) {
-    // Collect text & thinking parts for the agent message
-    const textAndThinkingParts: (DBTextPart | DBThinkingPart)[] = [];
+    // Collect inline narration parts (text, thinking, and server-side tools
+    // whose result rides in the same message content array).
+    const agentParts: DBAgentMessagePart[] = [];
     for (const part of message.content) {
-      if (part.type === "text") {
-        textAndThinkingParts.push({ type: "text" as const, text: part.text });
-      }
-      if (part.type === "thinking") {
-        textAndThinkingParts.push({
-          type: "thinking" as const,
-          thinking: part.thinking,
+      const partWithType = part as { type?: string };
+      if (partWithType.type === "text") {
+        agentParts.push({
+          type: "text" as const,
+          text: (part as Anthropic.TextBlockParam).text,
         });
+        continue;
+      }
+      if (partWithType.type === "thinking") {
+        const thinkingPart = part as Anthropic.ThinkingBlockParam;
+        const thinking: DBThinkingPart = {
+          type: "thinking",
+          thinking: thinkingPart.thinking,
+        };
+        // Anthropic SDK types may not expose `signature` yet; preserve when
+        // present so multi-turn continuations retain thinking context.
+        const signature = (thinkingPart as { signature?: string }).signature;
+        if (typeof signature === "string") {
+          thinking.signature = signature;
+        }
+        agentParts.push(thinking);
+        continue;
+      }
+      if (partWithType.type === "server_tool_use") {
+        const stu = part as {
+          id: string;
+          name: string;
+          input?: Record<string, unknown>;
+        };
+        const serverToolUse: DBServerToolUsePart = {
+          type: "server-tool-use",
+          id: stu.id,
+          name: stu.name,
+          input: stu.input ?? {},
+        };
+        agentParts.push(serverToolUse);
+        continue;
+      }
+      if (partWithType.type === "web_search_tool_result") {
+        const wst = part as {
+          tool_use_id: string;
+          content:
+            | Array<{
+                type?: string;
+                url?: string;
+                title?: string;
+                page_age?: string;
+                encrypted_content?: string;
+              }>
+            | { type?: string; error_code?: string };
+        };
+        const result: DBWebSearchResultPart = {
+          type: "web-search-result",
+          toolUseId: wst.tool_use_id,
+        };
+        if (Array.isArray(wst.content)) {
+          result.results = wst.content
+            .filter((r) => r.type === "web_search_result" && r.url && r.title)
+            .map(
+              (r): DBWebSearchResultEntry => ({
+                url: r.url!,
+                title: r.title!,
+                ...(r.page_age ? { pageAge: r.page_age } : {}),
+                ...(r.encrypted_content
+                  ? { encryptedContent: r.encrypted_content }
+                  : {}),
+              }),
+            );
+        } else if (wst.content && typeof wst.content === "object") {
+          if (typeof wst.content.error_code === "string") {
+            result.errorCode = wst.content.error_code;
+          }
+        }
+        agentParts.push(result);
+        continue;
       }
     }
-    if (textAndThinkingParts.length > 0) {
+    if (agentParts.length > 0) {
       dbMessages.push({
         type: "agent",
         parent_tool_use_id,
-        parts: textAndThinkingParts,
+        parts: agentParts,
       });
     }
 
-    // Extract tool calls
+    // Extract tool calls (client-executed tools — server_tool_use is handled
+    // above and goes into the agent message's inline narration).
     message.content
       .filter(
         (part): part is Anthropic.ToolUseBlockParam => part.type === "tool_use",
