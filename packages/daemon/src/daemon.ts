@@ -1427,12 +1427,28 @@ export class TerragonDaemon {
           }
 
           // Synthetic-only events (turn diffs and plan snapshots) are not chat
-          // messages — they don't enter parseCodexLine. Future sprints will
-          // surface them as dedicated UI components via the meta channel.
-          if (
-            threadEvent.type === "turn.diff_updated" ||
-            threadEvent.type === "turn.plan_updated"
-          ) {
+          // messages — they don't enter parseCodexLine. Persist plan snapshots
+          // as `codex-plan` ClaudeMessages so chat history shows them on reload.
+          // turn.diff_updated is still dropped here; diffs are surfaced through
+          // the diff item pipeline instead.
+          if (threadEvent.type === "turn.plan_updated") {
+            const planEntries = normalizeCodexPlanEntries(threadEvent.plan);
+            if (planEntries.length > 0) {
+              this.addMessageToBuffer({
+                agent: "codex",
+                message: {
+                  type: "codex-plan",
+                  session_id: context.threadId ?? null,
+                  entries: planEntries,
+                },
+                threadId: input.threadId,
+                threadChatId: input.threadChatId,
+                token: input.token,
+              });
+            }
+            return;
+          }
+          if (threadEvent.type === "turn.diff_updated") {
             return;
           }
 
@@ -4565,4 +4581,50 @@ export class TerragonDaemon {
       clearTimeout(this.messageFlushTimer);
     }
   }
+}
+
+/**
+ * Normalize the `plan` payload from a Codex `turn/plan/updated` notification
+ * into the entries shape expected by the `codex-plan` ClaudeMessage. Codex
+ * emits unknown-shape objects here (typed as Record<string, unknown>), so we
+ * read defensively and drop malformed entries rather than crash the handler.
+ */
+function normalizeCodexPlanEntries(plan: Record<string, unknown>): Array<{
+  id?: string;
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+}> {
+  const rawEntries = plan["entries"];
+  if (!Array.isArray(rawEntries)) return [];
+  return rawEntries
+    .map((raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      const r = raw as Record<string, unknown>;
+      const content = typeof r["content"] === "string" ? r["content"] : null;
+      if (!content) return null;
+      const rawStatus = typeof r["status"] === "string" ? r["status"] : null;
+      const status: "pending" | "in_progress" | "completed" =
+        rawStatus === "in_progress" || rawStatus === "completed"
+          ? rawStatus
+          : "pending";
+      const rawPriority =
+        typeof r["priority"] === "string" ? r["priority"] : null;
+      const priority: "high" | "medium" | "low" =
+        rawPriority === "high" || rawPriority === "low"
+          ? rawPriority
+          : "medium";
+      const id = typeof r["id"] === "string" ? r["id"] : undefined;
+      return { ...(id ? { id } : {}), content, priority, status };
+    })
+    .filter(
+      (
+        v,
+      ): v is {
+        id?: string;
+        content: string;
+        priority: "high" | "medium" | "low";
+        status: "pending" | "in_progress" | "completed";
+      } => v !== null,
+    );
 }

@@ -1145,4 +1145,434 @@ describe("toDBMessage", () => {
       ]);
     });
   });
+
+  describe("Claude SDK content-block coverage (Wave 2)", () => {
+    test("preserves thinking signature for multi-turn continuations", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "reasoning about the problem",
+              signature: "enc-sig-abc123",
+            },
+            { type: "text", text: "Here's the answer." },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "thinking",
+              thinking: "reasoning about the problem",
+              signature: "enc-sig-abc123",
+            },
+            { type: "text", text: "Here's the answer." },
+          ],
+        },
+      ]);
+    });
+
+    test("omits signature field when not emitted by SDK", () => {
+      // Cast content to `any` — the Anthropic ThinkingBlockParam type requires
+      // signature, but we want to verify the translator handles the case where
+      // the SDK emits a thinking block without one (e.g. older models).
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "no sig" } as never],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "thinking",
+        thinking: "no sig",
+      });
+    });
+
+    test("converts server_tool_use block into DBServerToolUsePart", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "server_tool_use",
+              id: "srvtoolu_1",
+              name: "web_search",
+              input: { query: "capital of France" },
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "server-tool-use",
+              id: "srvtoolu_1",
+              name: "web_search",
+              input: { query: "capital of France" },
+            },
+          ],
+        },
+      ]);
+    });
+
+    test("converts web_search_tool_result success into DBWebSearchResultPart", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtoolu_1",
+              content: [
+                {
+                  type: "web_search_result",
+                  url: "https://example.com/a",
+                  title: "Result A",
+                  page_age: "2 days ago",
+                  encrypted_content: "enc-a",
+                },
+                {
+                  type: "web_search_result",
+                  url: "https://example.com/b",
+                  title: "Result B",
+                  // encrypted_content intentionally omitted — the translator
+                  // treats it as optional; type-cast to silence the API
+                  // requirement so we exercise the optional path.
+                } as never,
+              ],
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "web-search-result",
+        toolUseId: "srvtoolu_1",
+        results: [
+          {
+            url: "https://example.com/a",
+            title: "Result A",
+            pageAge: "2 days ago",
+            encryptedContent: "enc-a",
+          },
+          { url: "https://example.com/b", title: "Result B" },
+        ],
+      });
+    });
+
+    test("converts web_search_tool_result error into errorCode-only part", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtoolu_2",
+              content: {
+                type: "web_search_tool_result_error",
+                error_code: "max_uses_exceeded",
+              },
+            } as never,
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+
+      const [agent] = toDBMessage(claudeMessage) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "web-search-result",
+        toolUseId: "srvtoolu_2",
+        errorCode: "max_uses_exceeded",
+      });
+    });
+
+    test("persists completed ACP tool-call with progressChunks + metadata", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-tool-call",
+        session_id: "s1",
+        toolCallId: "call_1",
+        title: "Read src/index.ts",
+        kind: "read",
+        status: "completed",
+        locations: [{ type: "file", path: "src/index.ts", range: null }],
+        rawInput: '{"path":"src/index.ts"}',
+        rawOutput: "…file contents…",
+        startedAt: "2026-04-15T12:00:00.000Z",
+        completedAt: "2026-04-15T12:00:01.000Z",
+        progressChunks: [
+          { seq: 0, text: "chunk 1" },
+          { seq: 1, text: "chunk 2" },
+        ],
+      };
+
+      expect(toDBMessage(msg)).toEqual([
+        {
+          type: "tool-call",
+          id: "call_1",
+          name: "Read src/index.ts",
+          parameters: {
+            kind: "read",
+            title: "Read src/index.ts",
+            locations: [{ type: "file", path: "src/index.ts", range: null }],
+            rawInput: '{"path":"src/index.ts"}',
+            rawOutput: "…file contents…",
+          },
+          parent_tool_use_id: null,
+          status: "completed",
+          startedAt: "2026-04-15T12:00:00.000Z",
+          completedAt: "2026-04-15T12:00:01.000Z",
+          progressChunks: [
+            { seq: 0, text: "chunk 1" },
+            { seq: 1, text: "chunk 2" },
+          ],
+        },
+      ]);
+    });
+
+    test("skips non-terminal ACP tool-call snapshots to avoid DB duplicates", () => {
+      const base: Omit<
+        Extract<ClaudeMessage, { type: "acp-tool-call" }>,
+        "status"
+      > = {
+        type: "acp-tool-call",
+        session_id: "s1",
+        toolCallId: "call_1",
+        title: "x",
+        kind: "other",
+        locations: [],
+        rawInput: "",
+        progressChunks: [],
+      };
+      expect(toDBMessage({ ...base, status: "pending" })).toEqual([]);
+      expect(toDBMessage({ ...base, status: "in_progress" })).toEqual([]);
+    });
+
+    test("converts ACP plan into DBAgentMessage with DBPlanPart", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-plan",
+        session_id: "s1",
+        entries: [
+          {
+            id: "e1",
+            content: "Implement foo",
+            priority: "high",
+            status: "in_progress",
+          },
+          { content: "Add tests", priority: "medium", status: "pending" },
+        ],
+      };
+      expect(toDBMessage(msg)).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "plan",
+              entries: [
+                {
+                  id: "e1",
+                  content: "Implement foo",
+                  priority: "high",
+                  status: "in_progress",
+                },
+                {
+                  content: "Add tests",
+                  priority: "medium",
+                  status: "pending",
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+    });
+
+    test("converts Codex turn/plan/updated snapshot into DBPlanPart", () => {
+      const msg: ClaudeMessage = {
+        type: "codex-plan",
+        session_id: "thread-1",
+        entries: [
+          {
+            id: "plan_step_1",
+            content: "Analyze auth middleware",
+            priority: "high",
+            status: "completed",
+          },
+          {
+            id: "plan_step_2",
+            content: "Add null-safety",
+            priority: "medium",
+            status: "in_progress",
+          },
+        ],
+      };
+      expect(toDBMessage(msg)).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "plan",
+              entries: [
+                {
+                  id: "plan_step_1",
+                  content: "Analyze auth middleware",
+                  priority: "high",
+                  status: "completed",
+                },
+                {
+                  id: "plan_step_2",
+                  content: "Add null-safety",
+                  priority: "medium",
+                  status: "in_progress",
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+    });
+
+    test("converts ACP image with data URI fallback", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-image",
+        session_id: "s1",
+        mimeType: "image/png",
+        data: "BASE64DATA",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "image",
+        mime_type: "image/png",
+        image_url: "data:image/png;base64,BASE64DATA",
+      });
+    });
+
+    test("converts ACP resource-link passthrough with optional fields", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-resource-link",
+        session_id: "s1",
+        uri: "https://example.com/doc.md",
+        name: "doc.md",
+        title: "Docs",
+        mimeType: "text/markdown",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "resource-link",
+        uri: "https://example.com/doc.md",
+        name: "doc.md",
+        title: "Docs",
+        mimeType: "text/markdown",
+      });
+    });
+
+    test("converts ACP diff into DBDiffPart", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-diff",
+        session_id: "s1",
+        filePath: "src/a.ts",
+        oldContent: "old",
+        newContent: "new",
+        unifiedDiff: "--- a\n+++ b\n",
+        status: "applied",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "diff",
+        filePath: "src/a.ts",
+        oldContent: "old",
+        newContent: "new",
+        unifiedDiff: "--- a\n+++ b\n",
+        status: "applied",
+      });
+    });
+
+    test("converts ACP terminal with chunks", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-terminal",
+        session_id: "s1",
+        terminalId: "term_1",
+        chunks: [{ streamSeq: 0, kind: "stdout", text: "$ ls" }],
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "terminal",
+        sandboxId: "term_1",
+        terminalId: "term_1",
+        chunks: [{ streamSeq: 0, kind: "stdout", text: "$ ls" }],
+      });
+    });
+
+    test("keeps client tool_use blocks as DBToolCall (distinct from server-tool-use)", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "Bash",
+              input: { command: "ls" },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "s1",
+      };
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "tool-call",
+          id: "toolu_1",
+          name: "Bash",
+          parameters: { command: "ls" },
+          parent_tool_use_id: null,
+        },
+      ]);
+    });
+  });
 });

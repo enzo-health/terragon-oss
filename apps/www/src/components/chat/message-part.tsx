@@ -27,6 +27,8 @@ import { TerminalPartView } from "./terminal-part-view";
 import { DiffPartView } from "./diff-part";
 import { AutoApprovalReviewCard } from "./auto-approval-review-card";
 import { PlanPartView } from "./plan-part";
+import { ServerToolUseView } from "./server-tool-use-view";
+import { WebSearchResultView } from "./web-search-result-view";
 
 export interface MessagePartProps {
   part: UIPart;
@@ -203,6 +205,10 @@ export const MessagePart = memo(function MessagePart({
       return (
         <PlanPartView part={{ type: "plan", entries: extendedPart.entries }} />
       );
+    case "server-tool-use":
+      return <ServerToolUseView part={extendedPart} />;
+    case "web-search-result":
+      return <WebSearchResultView part={extendedPart} />;
     default:
       // TypeScript exhaustiveness check — will error at compile time if a
       // UIPartExtended variant is added without a corresponding case above.

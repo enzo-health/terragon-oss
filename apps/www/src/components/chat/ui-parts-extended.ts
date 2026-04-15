@@ -15,6 +15,8 @@ import type {
   DBDiffPart,
   DBAutoApprovalReviewPart,
   DBPlanPart,
+  DBServerToolUsePart,
+  DBWebSearchResultPart,
 } from "@terragon/shared";
 import type { UIPart } from "@terragon/shared";
 
@@ -44,6 +46,12 @@ export type UIStructuredPlanPart = {
   entries: DBPlanPart["entries"];
 };
 
+/** Server-executed tool call passthrough (e.g. Anthropic `web_search`). */
+export type UIServerToolUsePart = DBServerToolUsePart;
+
+/** Server-tool result passthrough (pairs with UIServerToolUsePart by id). */
+export type UIWebSearchResultPart = DBWebSearchResultPart;
+
 /**
  * Extended UIPart union that includes all rich content types.
  * Used in apps/www rendering pipeline only.
@@ -55,4 +63,6 @@ export type UIPartExtended =
   | UITerminalPart
   | UIDiffPart
   | UIAutoApprovalReviewPart
-  | UIStructuredPlanPart;
+  | UIStructuredPlanPart
+  | UIServerToolUsePart
+  | UIWebSearchResultPart;
