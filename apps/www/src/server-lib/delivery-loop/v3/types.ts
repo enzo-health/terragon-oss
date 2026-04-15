@@ -46,6 +46,13 @@ export type LoopEvent =
       runId: string;
       runSeq?: number | null;
       headSha?: string | null;
+      /**
+       * Whether the agent invoked at least one tool call during this run.
+       * Used to detect narration-only loops (agent responds with prose but
+       * never calls any tools), triggering escalation to awaiting_manual_fix
+       * after NO_PROGRESS_RETRY_THRESHOLD consecutive such retries.
+       */
+      hasToolCalls?: boolean;
     }
   | {
       type: "run_failed";
@@ -190,6 +197,13 @@ export type WorkflowHead = {
   infraRetryCount: number;
   maxFixAttempts: number;
   maxInfraRetries: number;
+  /**
+   * Counts consecutive implementation retries where the agent produced
+   * zero tool calls (narration-only). Resets to 0 when a run makes tool calls.
+   * When this reaches NO_PROGRESS_RETRY_THRESHOLD the reducer escalates to
+   * awaiting_manual_fix instead of scheduling another retry.
+   */
+  narrationOnlyRetryCount: number;
   blockedReason: string | null;
   createdAt: Date;
   updatedAt: Date;

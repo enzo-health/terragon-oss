@@ -2089,6 +2089,9 @@ export const deliveryWorkflowHeadV3 = pgTable(
     infraRetryCount: integer("infra_retry_count").notNull().default(0),
     maxFixAttempts: integer("max_fix_attempts").notNull().default(6),
     maxInfraRetries: integer("max_infra_retries").notNull().default(10),
+    narrationOnlyRetryCount: integer("narration_only_retry_count")
+      .notNull()
+      .default(0),
     blockedReason: text("blocked_reason"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" })

@@ -7,6 +7,13 @@ import {
   type WorkflowHead,
 } from "./types";
 
+/**
+ * Number of consecutive narration-only retries (zero tool calls) before
+ * the reducer escalates to awaiting_manual_fix rather than scheduling
+ * another dispatch. Hardcoded — no feature flag.
+ */
+export const NO_PROGRESS_RETRY_THRESHOLD = 3;
+
 const DISPATCH_COHERENT_STATES = new Set([
   "planning",
   "implementing",
@@ -812,8 +819,9 @@ export function reduce(params: {
             };
             break;
           }
+          // Infra timeout (not agent narration) — reset the narration counter.
           result = retryToImplementing({
-            head,
+            head: { ...head, narrationOnlyRetryCount: 0 },
             now,
             lane: "infra",
             reason: `Dispatch ack timeout for run ${event.runId}`,
@@ -839,7 +847,7 @@ export function reduce(params: {
           const completedHeadSha = event.headSha ?? head.headSha;
           if (!completedHeadSha) {
             result = retryToImplementing({
-              head,
+              head: { ...head, narrationOnlyRetryCount: 0 },
               now,
               lane: "agent",
               reason: "Run completed without head SHA",
@@ -850,15 +858,58 @@ export function reduce(params: {
           const isNoOpRun =
             head.headSha !== null && completedHeadSha === head.headSha;
           if (isNoOpRun) {
-            result = retryToImplementing({
-              head,
-              now,
-              lane: "agent",
-              reason: "Agent completed without making code changes",
-            });
+            // No-progress guard: if the agent produced zero tool calls, this
+            // is a narration-only response. Track consecutive occurrences and
+            // escalate to awaiting_manual_fix after NO_PROGRESS_RETRY_THRESHOLD
+            // to break the narrate-only retry loop (e.g. Codex crash pattern).
+            const agentHadToolCalls = event.hasToolCalls !== false;
+            if (!agentHadToolCalls) {
+              const nextNarrationCount = head.narrationOnlyRetryCount + 1;
+              if (nextNarrationCount >= NO_PROGRESS_RETRY_THRESHOLD) {
+                // Escalate: agent is stuck in a narrate-only loop
+                const next = withVersion(head, now);
+                result = {
+                  head: {
+                    ...next,
+                    state: "awaiting_manual_fix",
+                    activeGate: null,
+                    ...clearActiveLease(head),
+                    narrationOnlyRetryCount: nextNarrationCount,
+                    blockedReason:
+                      "Agent is stuck in a narrate-only loop: completed without making code changes or invoking any tools in the last " +
+                      nextNarrationCount +
+                      " consecutive retries. Manual fix required.",
+                  },
+                  effects: [publishStatusEffect(next, now)],
+                  invariantActions: [],
+                };
+                break;
+              }
+              result = retryToImplementing({
+                head: {
+                  ...head,
+                  narrationOnlyRetryCount: nextNarrationCount,
+                },
+                now,
+                lane: "agent",
+                reason: "Agent completed without making code changes",
+              });
+            } else {
+              // Agent made tool calls but still no-op — reset narration counter
+              result = retryToImplementing({
+                head: { ...head, narrationOnlyRetryCount: 0 },
+                now,
+                lane: "agent",
+                reason: "Agent completed without making code changes",
+              });
+            }
             break;
           }
-          const next = withVersion(head, now);
+          // Successful progress: reset narration-only counter
+          const next = withVersion(
+            { ...head, narrationOnlyRetryCount: 0 },
+            now,
+          );
           result = {
             head: {
               ...next,
@@ -898,8 +949,10 @@ export function reduce(params: {
               category: event.category,
               message: event.message,
             });
+          // A real failure (not narration-only) resets the narration counter:
+          // the agent was genuinely attempting work even if it crashed.
           result = retryToImplementing({
-            head,
+            head: { ...head, narrationOnlyRetryCount: 0 },
             now,
             lane,
             reason: event.message,

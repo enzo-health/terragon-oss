@@ -82,7 +82,18 @@ Object.defineProperty(process, "getuid", {\\
 # Start Supervisor in the foreground (PID 1)
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN mkdir -p /var/run /var/log/supervisor
-ENTRYPOINT ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
+# Create entrypoint wrapper to disable core dumps before starting supervisord
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+# Disable core dumps to prevent disk pollution in /tmp overlay
+ulimit -c 0
+exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf
+EOF
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 "
 `;
 

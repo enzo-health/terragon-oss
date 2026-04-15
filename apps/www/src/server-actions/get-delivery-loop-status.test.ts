@@ -118,6 +118,7 @@ describe("getDeliveryLoopStatusAction", () => {
         infraRetryCount: 0,
         maxFixAttempts: 6,
         maxInfraRetries: 10,
+        narrationOnlyRetryCount: 0,
         blockedReason,
         createdAt: new Date("2026-03-18T00:00:00.000Z"),
         updatedAt: new Date("2026-03-18T00:00:00.000Z"),

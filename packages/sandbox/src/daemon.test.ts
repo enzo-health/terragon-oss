@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { installDaemon, sendMessage } from "./daemon";
+import {
+  installDaemon,
+  sendMessage,
+  restartDaemonIfNotRunning,
+  updateDaemonIfOutdated,
+} from "./daemon";
 import type { ISandboxSession } from "./types";
+import type { CreateSandboxOptions } from "./types";
 
 // Mock the bundled imports
 vi.mock("@terragon/bundled", () => ({
@@ -342,6 +348,189 @@ describe("daemon installation", () => {
         (mockSession.writeTextFile as any).mock.calls.length - 1
       ];
       expect(executedCommands).toContain(`rm -f ${messageFilePath}`);
+    });
+  });
+});
+
+describe("daemon restart process-leak guard", () => {
+  // Only the fields consumed by restartDaemonIfNotRunning / updateDaemonIfOutdated
+  // are required here; cast to CreateSandboxOptions to avoid listing every field.
+  const baseOptions = {
+    environmentVariables: [],
+    githubAccessToken: "test-token",
+    agentCredentials: null,
+    publicUrl: "http://localhost:3000",
+    featureFlags: {},
+  } as unknown as CreateSandboxOptions;
+
+  let mockSession: ISandboxSession;
+  let executedCommands: string[];
+
+  function makeMockSession(
+    opts: {
+      pingResponds?: boolean;
+      killMessageFails?: boolean;
+      daemonExists?: boolean;
+    } = {},
+  ): ISandboxSession {
+    const {
+      pingResponds = false,
+      killMessageFails = false,
+      daemonExists = true,
+    } = opts;
+
+    // Track whether background command (new daemon start) has been called.
+    // After that point, simulate a live daemon so waitForDaemonReady resolves.
+    let daemonStarted = false;
+
+    const runBackgroundCommand = vi.fn(async () => {
+      daemonStarted = true;
+    });
+
+    const runCommand = vi.fn(async (command: string) => {
+      executedCommands.push(command);
+
+      // After new daemon has been started, any ping attempt should succeed.
+      if (daemonStarted && command.includes("--write <")) {
+        return "";
+      }
+
+      // Simulate stuck/dead old daemon: --write commands fail before restart
+      if (command.includes("--write <")) {
+        if (killMessageFails || !pingResponds) {
+          throw new Error("ENOENT: socket not found");
+        }
+        return "";
+      }
+
+      // test -f daemon exists check
+      if (
+        command.includes("test -f /tmp/terragon-daemon.mjs") ||
+        command.includes(`echo "exists"`) ||
+        command.includes(`echo "missing"`)
+      ) {
+        return daemonExists ? "exists" : "missing";
+      }
+
+      // sha256sum hash check for updateDaemonIfOutdated
+      if (command.includes("sha256sum")) {
+        return "differenthash";
+      }
+
+      // pkill — always exits successfully (may return 1 if no processes found,
+      // but we never throw)
+      if (command.startsWith("pkill")) {
+        return "";
+      }
+
+      // rm -f for file cleanup
+      if (command.startsWith("rm -f")) {
+        return "";
+      }
+
+      return "";
+    });
+
+    return {
+      sandboxId: "test-sandbox-id",
+      sandboxProvider: "docker",
+      repoDir: "repo",
+      homeDir: "root",
+      hibernate: vi.fn(),
+      shutdown: vi.fn(),
+      runCommand,
+      runBackgroundCommand,
+      readTextFile: vi.fn(),
+      writeTextFile: vi.fn(async (_path: string, _content: string) => {}),
+      writeFile: vi.fn(),
+    };
+  }
+
+  beforeEach(() => {
+    executedCommands = [];
+    vi.mock("@terragon/bundled", () => ({
+      daemonAsStr: "mock-daemon-content",
+      mcpServerAsStr: "mock-mcp-server-content",
+    }));
+  });
+
+  describe("restartDaemonIfNotRunning", () => {
+    it("force-kills existing daemon processes via pkill before starting a new one when graceful kill fails", async () => {
+      mockSession = makeMockSession({
+        pingResponds: false,
+        killMessageFails: true,
+        daemonExists: true,
+      });
+
+      await restartDaemonIfNotRunning({
+        session: mockSession,
+        options: baseOptions,
+      });
+
+      const pkillCmd = executedCommands.find((c) => c.startsWith("pkill"));
+      expect(
+        pkillCmd,
+        "pkill -f terragon-daemon.mjs must run when graceful kill fails to prevent process accumulation",
+      ).toBeDefined();
+      expect(pkillCmd).toContain("terragon-daemon.mjs");
+
+      // New daemon must have been started after force-kill
+      expect(mockSession.runBackgroundCommand).toHaveBeenCalled();
+    });
+
+    it("force-kills existing daemon processes via pkill even when graceful kill succeeds", async () => {
+      mockSession = makeMockSession({
+        pingResponds: false,
+        killMessageFails: false,
+        daemonExists: true,
+      });
+
+      await restartDaemonIfNotRunning({
+        session: mockSession,
+        options: baseOptions,
+      });
+
+      const pkillCmd = executedCommands.find((c) => c.startsWith("pkill"));
+      expect(
+        pkillCmd,
+        "pkill must run to guard against any remaining daemon instances",
+      ).toBeDefined();
+      expect(pkillCmd).toContain("terragon-daemon.mjs");
+    });
+
+    it("does not start a new daemon if the existing one is alive (ping succeeds)", async () => {
+      // Daemon responds to pings — restartDaemonIfNotRunning should return early
+      mockSession = makeMockSession({ pingResponds: true });
+
+      await restartDaemonIfNotRunning({
+        session: mockSession,
+        options: baseOptions,
+      });
+
+      // Daemon is alive → no background command
+      expect(mockSession.runBackgroundCommand).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateDaemonIfOutdated", () => {
+    it("force-kills via pkill before installing the updated daemon when graceful kill fails", async () => {
+      mockSession = makeMockSession({
+        pingResponds: false,
+        killMessageFails: true,
+        daemonExists: true,
+      });
+
+      await updateDaemonIfOutdated({
+        session: mockSession,
+        options: baseOptions,
+      });
+
+      const pkillCmd = executedCommands.find((c) => c.startsWith("pkill"));
+      expect(
+        pkillCmd,
+        "pkill must be called to prevent stale daemon accumulation during updates",
+      ).toBeDefined();
+      expect(pkillCmd).toContain("terragon-daemon.mjs");
     });
   });
 });

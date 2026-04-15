@@ -214,6 +214,8 @@ export async function updateDaemonIfOutdated({
         `Daemon update needed: existing hash=${existingHash}, new hash=${newDaemonHash}`,
       );
       await sendKillMessage({ session });
+      // Force-kill any remaining daemon processes before installing the update
+      await forceKillAllDaemonProcesses({ session });
       // Remove the old daemon files
       await session.runCommand(
         `rm -f ${DAEMON_FILE_PATH} ${MCP_SERVER_FILE_PATH} ${MCP_SERVER_JSON_FILE_PATH} ${defaultPipePath}`,
@@ -274,6 +276,9 @@ export async function restartDaemonIfNotRunning({
 
   console.log("Killing existing daemon");
   await sendKillMessage({ session });
+  // Force-kill any remaining daemon processes to prevent accumulation across
+  // delivery-loop retries (graceful kill may silently fail when daemon is stuck)
+  await forceKillAllDaemonProcesses({ session });
   console.log("Starting daemon");
   await startDaemon({
     session,
@@ -371,5 +376,42 @@ async function sendKillMessage({ session }: { session: ISandboxSession }) {
   } catch (error) {
     // Ignore errors during kill
     console.error("Error killing existing daemon", { error });
+  }
+}
+
+/**
+ * Force-kill ALL terragon-daemon.mjs processes running in the sandbox using
+ * pkill. This is a safety net that runs after the graceful `sendKillMessage`
+ * attempt to prevent daemon process accumulation across delivery-loop retries.
+ *
+ * We use `|| true` so the command exits 0 even when pkill finds no processes
+ * (exit code 1 would cause session.runCommand to throw in some providers).
+ */
+async function forceKillAllDaemonProcesses({
+  session,
+}: {
+  session: ISandboxSession;
+}) {
+  try {
+    // First pass: SIGTERM with a short grace window so well-behaved daemons
+    // can shut down cleanly (release sockets, flush buffers).
+    await session.runCommand(`pkill -TERM -f terragon-daemon.mjs || true`, {
+      cwd: "/",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    // Second pass: SIGKILL anything still running. If the daemon is wedged
+    // (the actual root cause of the multi-daemon accumulation we're fixing),
+    // SIGTERM alone won't unblock the new daemon spawn; SIGKILL guarantees
+    // the slot is free.
+    await session.runCommand(`pkill -KILL -f terragon-daemon.mjs || true`, {
+      cwd: "/",
+    });
+    // Brief wait so the kernel finishes reaping before we start the new daemon
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  } catch (error) {
+    // Non-fatal: best-effort cleanup; log and continue
+    console.warn("forceKillAllDaemonProcesses: pkill failed (non-fatal)", {
+      error,
+    });
   }
 }

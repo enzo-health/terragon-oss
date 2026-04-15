@@ -517,11 +517,50 @@ function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
   );
 }
 
+/**
+ * Returns true if any message in the batch contains at least one tool_use
+ * content block (i.e. the agent invoked at least one tool during this run).
+ * Used by the no-progress guard in the v3 delivery-loop reducer.
+ */
+/**
+ * Returns `true` if any tool usage is OBSERVED in this POST's messages. Returns
+ * `undefined` when no tool usage is found — IMPORTANT: do NOT return `false`,
+ * because tool calls are commonly emitted in earlier flushes of the same run
+ * while the terminal `result` flush carries no tool blocks. The narration-only
+ * escalation reducer treats `undefined` as "had tool calls" (safe default), so
+ * a `false` here would falsely increment the escalation counter for runs that
+ * actually used tools but spread their messages across multiple POSTs.
+ *
+ * If we ever need authoritative per-run accounting, the daemon should send an
+ * explicit `hasToolCallsAtCompletion` field computed across the whole run.
+ */
+function hasToolCallsInMessages(
+  messages: DaemonEventAPIBody["messages"],
+): true | undefined {
+  for (const msg of messages) {
+    if (msg.type !== "assistant") continue;
+    const content = msg.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (
+        block !== null &&
+        typeof block === "object" &&
+        "type" in block &&
+        block.type === "tool_use"
+      ) {
+        return true;
+      }
+    }
+  }
+  return undefined;
+}
+
 function buildCompletedEvent(
   state: string | undefined,
   runId: string,
   runSeq: number | null,
   headSha: string | null | undefined,
+  hasToolCalls?: boolean,
 ) {
   switch (state) {
     case "planning":
@@ -533,7 +572,13 @@ function buildCompletedEvent(
     case "gating_ci":
       return { type: "gate_ci_passed" as const, runId, runSeq, headSha };
     default:
-      return { type: "run_completed" as const, runId, runSeq, headSha };
+      return {
+        type: "run_completed" as const,
+        runId,
+        runSeq,
+        headSha,
+        hasToolCalls,
+      };
   }
 }
 
@@ -1449,6 +1494,7 @@ export async function POST(request: Request) {
             envelopeV2.runId,
             terminalRunSeq,
             daemonHeadShaAtCompletion,
+            hasToolCallsInMessages(messages),
           ),
           behavior: {
             applyGateBypass: false,

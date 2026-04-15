@@ -66,3 +66,10 @@ export type ThreadMetaEvent =
       kind: "message.stop";
       reason: string;
     };
+
+// Note: the narrate-only escalation no longer emits a dedicated meta event.
+// The reducer transitions to `awaiting_manual_fix` and writes a human-readable
+// `blockedReason` on the workflow head, which is published via the existing
+// `publishStatusEffect` and rendered by the UI as part of the standard
+// awaiting_manual_fix surface. A dedicated meta event would be additional
+// noise without a distinct rendering path.
