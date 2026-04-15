@@ -1,5 +1,8 @@
 import { useCallback, useReducer } from "react";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type {
+  ThreadMetaEvent,
+  BootingSubstatus,
+} from "@terragon/shared/delivery-loop/thread-meta-event";
 import {
   getThreadPatches,
   shouldProcessThreadPatch,
@@ -33,6 +36,35 @@ export interface ThreadMetaSnapshot {
 
   /** Per-server health status (last seen). */
   mcpServerStatus: Record<string, "loading" | "ready" | "error">;
+
+  /**
+   * Ordered list of boot steps received via `boot.substatus_changed` events.
+   * Each entry records the substatus, when it started, and (once the next
+   * step arrives) when it completed with its duration.
+   */
+  bootSteps: Array<{
+    substatus: BootingSubstatus;
+    /** ISO 8601 timestamp of when this step started. */
+    startedAt: string;
+    /** ISO 8601 timestamp of when this step completed (set by the next event). */
+    completedAt?: string;
+    /** Duration of this step in milliseconds. */
+    durationMs?: number;
+  }>;
+
+  /**
+   * Latest install progress snapshot from `install.progress` events.
+   * Null until the first such event arrives.
+   */
+  installProgress: {
+    resolved: number;
+    reused: number;
+    downloaded: number;
+    added: number;
+    total?: number;
+    currentPackage?: string;
+    elapsedMs: number;
+  } | null;
 }
 
 type Action = { event: ThreadMetaEvent };
@@ -63,6 +95,59 @@ function reducer(
           [event.serverName]: event.status,
         },
       };
+    case "boot.substatus_changed": {
+      const prevSteps = state.bootSteps;
+
+      // Mark the previous (last) step as completed with durationMs from the event.
+      let updatedSteps = prevSteps;
+      if (prevSteps.length > 0 && event.durationMs !== undefined) {
+        const last = prevSteps[prevSteps.length - 1]!;
+        updatedSteps = [
+          ...prevSteps.slice(0, -1),
+          {
+            ...last,
+            completedAt: event.timestamp,
+            durationMs: event.durationMs,
+          },
+        ];
+      } else if (prevSteps.length > 0 && event.durationMs === undefined) {
+        // Compute duration from timestamps if not provided.
+        const last = prevSteps[prevSteps.length - 1]!;
+        const computedMs =
+          new Date(event.timestamp).getTime() -
+          new Date(last.startedAt).getTime();
+        updatedSteps = [
+          ...prevSteps.slice(0, -1),
+          {
+            ...last,
+            completedAt: event.timestamp,
+            durationMs: computedMs >= 0 ? computedMs : undefined,
+          },
+        ];
+      }
+
+      // Append the new step.
+      return {
+        ...state,
+        bootSteps: [
+          ...updatedSteps,
+          { substatus: event.to, startedAt: event.timestamp },
+        ],
+      };
+    }
+    case "install.progress":
+      return {
+        ...state,
+        installProgress: {
+          resolved: event.resolved,
+          reused: event.reused,
+          downloaded: event.downloaded,
+          added: event.added,
+          total: event.total,
+          currentPackage: event.currentPackage,
+          elapsedMs: event.elapsedMs,
+        },
+      };
     // Other event kinds don't affect the chip snapshot
     default:
       return state;
@@ -74,6 +159,8 @@ const INITIAL: ThreadMetaSnapshot = {
   rateLimits: null,
   modelReroute: null,
   mcpServerStatus: {},
+  bootSteps: [],
+  installProgress: null,
 };
 
 /**

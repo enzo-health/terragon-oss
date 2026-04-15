@@ -197,6 +197,7 @@ export function TerragonThread({
               status={threadStatus ?? "working"}
               bootingSubstatus={bootingSubstatus}
               reattemptQueueAt={reattemptQueueAt}
+              threadId={thread.id}
             />
           )}
           {threadChatStatus === "scheduled" && scheduleAt && threadChatId && (
