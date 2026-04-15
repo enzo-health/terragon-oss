@@ -190,6 +190,20 @@
       "when": 1775731200000,
       "tag": "0026_linear_delivery_loop_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1776125970000,
+      "tag": "0027_drop_v2_delivery_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1776208687000,
+      "tag": "0028_narration_only_retry_count",
+      "breakpoints": true
     }
   ]
 }
