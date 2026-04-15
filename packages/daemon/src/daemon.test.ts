@@ -17,6 +17,7 @@ import {
   writeToUnixSocket,
 } from "./runtime";
 import {
+  ClaudeMessage,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
@@ -25,6 +26,7 @@ import {
   DaemonMessageStop,
   SdlcSelfDispatchPayload,
 } from "./shared";
+import type { ThreadMetaEvent } from "./codex-app-server";
 
 async function sleep(ms: number = 10) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -453,6 +455,94 @@ describe("daemon", () => {
     expect(secondPayload.seq).toBeGreaterThan(firstPayload.seq);
     expect(secondPayload.eventId).not.toBe(firstPayload.eventId);
     expect(secondPayload.eventId).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("drains meta events into the outbound daemon-event POST alongside messages", async () => {
+    type MetaBufferEntry = {
+      metaEvent: ThreadMetaEvent;
+      threadId: string;
+      threadChatId: string;
+      token: string;
+    };
+    type DaemonInternals = {
+      metaEventBuffer: MetaBufferEntry[];
+      sendMessagesToAPI: (input: {
+        messages: ClaudeMessage[];
+        entryCount: number;
+        timezone: string;
+        token: string;
+        threadId: string;
+        threadChatId: string;
+      }) => Promise<unknown>;
+      flushMessageBuffer: () => Promise<void>;
+    };
+    const internals = daemon as unknown as DaemonInternals;
+
+    internals.metaEventBuffer.push({
+      metaEvent: {
+        kind: "thread.token_usage_updated",
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        usage: { inputTokens: 100, cachedInputTokens: 50, outputTokens: 200 },
+      },
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      token: TEST_INPUT_MESSAGE.token,
+    });
+
+    await internals.sendMessagesToAPI({
+      messages: [
+        {
+          type: "user",
+          message: { role: "user", content: "hi" },
+        } as ClaudeMessage,
+      ],
+      entryCount: 1,
+      timezone: "UTC",
+      token: TEST_INPUT_MESSAGE.token,
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+    });
+
+    const payload = serverPostMock.mock.calls.at(-1)?.[0] as {
+      metaEvents?: ThreadMetaEvent[];
+    };
+    expect(payload.metaEvents).toHaveLength(1);
+    expect(payload.metaEvents?.[0]?.kind).toBe("thread.token_usage_updated");
+    // Buffer drained after flush.
+    expect(internals.metaEventBuffer).toHaveLength(0);
+  });
+
+  it("flushes meta-only batches via the delta-tail path when no messages exist", async () => {
+    type MetaBufferEntry = {
+      metaEvent: ThreadMetaEvent;
+      threadId: string;
+      threadChatId: string;
+      token: string;
+    };
+    type DaemonInternals = {
+      metaEventBuffer: MetaBufferEntry[];
+      flushMessageBuffer: () => Promise<void>;
+    };
+    const internals = daemon as unknown as DaemonInternals;
+
+    internals.metaEventBuffer.push({
+      metaEvent: {
+        kind: "account.rate_limits_updated",
+        rateLimits: { requests_remaining: 42 },
+      },
+      threadId: TEST_INPUT_MESSAGE.threadId,
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      token: TEST_INPUT_MESSAGE.token,
+    });
+
+    await internals.flushMessageBuffer();
+
+    const payload = serverPostMock.mock.calls.at(-1)?.[0] as {
+      messages: unknown[];
+      metaEvents?: ThreadMetaEvent[];
+    };
+    expect(payload.messages).toEqual([]);
+    expect(payload.metaEvents?.[0]?.kind).toBe("account.rate_limits_updated");
   });
 
   it("interrupts app-server turn on stop message instead of killing process", async () => {

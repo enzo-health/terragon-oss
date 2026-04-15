@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { Anthropic } from "@anthropic-ai/sdk";
 import { AIAgentSchema } from "@terragon/agent/types";
+import type { ThreadMetaEvent } from "./codex-app-server";
 
 export const defaultPipePath = "/tmp/terragon-daemon.pipe";
 export const defaultUnixSocketPath = "/tmp/terragon-daemon.sock";
@@ -360,4 +361,12 @@ export type DaemonEventAPIBody = {
   headShaAtCompletion?: string | null;
   /** Token-level deltas for streaming text to clients. */
   deltas?: DaemonDelta[];
+  /**
+   * Meta events (token usage, rate limits, model re-routing, MCP health,
+   * config warnings) — operational signals that live on a separate channel
+   * from chat messages so the UI can update status chips without polluting
+   * the message stream. Imported from the shared package to keep the single
+   * source of truth; forward-compat: older daemons simply omit this field.
+   */
+  metaEvents?: ThreadMetaEvent[];
 };

@@ -720,6 +720,37 @@ export async function POST(request: Request) {
   const claims = daemonAuthContext.claims;
 
   const deltas = json.deltas;
+
+  // Meta events (token usage, rate limits, model re-routing, MCP health,
+  // config warnings) are fire-and-forget operational signals. They don't
+  // need DB persistence — the chip UI displays only the current value.
+  // Broadcast them immediately so the UI updates without waiting for the
+  // downstream DB write or delivery-loop processing.
+  const metaEvents = Array.isArray(json.metaEvents) ? json.metaEvents : null;
+  if (metaEvents && metaEvents.length > 0) {
+    publishBroadcastUserMessage({
+      type: "user",
+      id: userId,
+      data: {
+        threadPatches: [
+          {
+            threadId,
+            threadChatId,
+            op: "upsert",
+            metaEvents,
+          },
+        ],
+      },
+    }).catch((error) => {
+      console.warn("[daemon-event] meta-event broadcast failed", {
+        threadId,
+        threadChatId,
+        count: metaEvents.length,
+        error,
+      });
+    });
+  }
+
   const dbPreflight = await getDaemonEventDbPreflight(db);
   const canPersistTokenStreamEvents = dbPreflight.tokenStreamEventReady;
   const canPersistRunContextFailureMeta =
