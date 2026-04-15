@@ -2,6 +2,7 @@ import { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
 import { AIAgent, AIAgentCredentials } from "@terragon/agent/types";
 import { FeatureFlags } from "@terragon/daemon/shared";
 import { McpConfig } from "./mcp-config";
+import { InstallProgressSnapshot } from "./install-progress-parser";
 // NOTE: This is stored in the database, so don't remove any values from this list.
 export type SandboxStatus =
   | "unknown"
@@ -58,6 +59,16 @@ export type CreateSandboxOptions = {
     sandboxId: string;
     isCreatingSandbox: boolean;
   }) => Promise<void>;
+  /**
+   * Called (throttled, at most once per 200 ms) with the latest accumulated
+   * install-progress snapshot while the setup script's `pnpm install` step
+   * is running.  `elapsedMs` is the wall-clock time since `runSetupScript`
+   * started processing stdout.
+   */
+  onInstallProgress?: (
+    snapshot: InstallProgressSnapshot,
+    elapsedMs: number,
+  ) => void;
 };
 
 export interface ISandboxProvider {

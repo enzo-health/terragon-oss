@@ -12,6 +12,7 @@ import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptor
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
+import { BootChecklist } from "./boot-checklist";
 import { LeafLoading } from "./leaf-loading";
 import { PromptBoxRef } from "./thread-context";
 import Link from "next/link";
@@ -157,25 +158,6 @@ export const ChatMessages = memo(function ChatMessages({
   return messageList;
 });
 
-function getBootingSubstatusMessage(substatus: BootingSubstatus): string {
-  switch (substatus) {
-    case "provisioning":
-    case "provisioning-done":
-      return "Provisioning machine";
-    case "cloning-repo":
-      return "Cloning repository";
-    case "installing-agent":
-      return "Installing agent";
-    case "running-setup-script":
-      return "Running terragon-setup.sh";
-    case "booting-done":
-      return "Waiting for assistant to start";
-    default:
-      const _exhaustiveCheck: never = substatus;
-      return _exhaustiveCheck;
-  }
-}
-
 function getAgentRateLimitMessage({
   agent,
   retryAtStr,
@@ -253,18 +235,8 @@ function getStatusMessage({
       return getAgentRateLimitMessage({ agent, retryAtStr: "" });
     }
     case "booting":
-      return (
-        <p>
-          {bootingSubstatus
-            ? getBootingSubstatusMessage(bootingSubstatus)
-            : "Booting environment"}{" "}
-          {!isTouchDevice && (
-            <span className="font-mono text-xs text-muted-foreground/70 inline-block">
-              (esc to interrupt)
-            </span>
-          )}
-        </p>
-      );
+      // Handled directly in WorkingMessage (renders BootChecklist with hooks).
+      return null;
     case "working":
       return (
         <p>
@@ -304,11 +276,14 @@ export function WorkingMessage({
   status,
   bootingSubstatus,
   reattemptQueueAt,
+  threadId,
 }: {
   agent: AIAgent;
   status: ThreadStatus;
   bootingSubstatus?: BootingSubstatus;
   reattemptQueueAt: Date | null;
+  /** Required when status === "booting" to power the BootChecklist. */
+  threadId?: string;
 }) {
   const isTouchDevice = useTouchDevice();
   const [_, setForceUpdate] = useState(0);
@@ -320,6 +295,21 @@ export function WorkingMessage({
       return () => clearInterval(interval);
     }
   }, [status, reattemptQueueAt]);
+
+  // The booting status renders a persistent checklist instead of a single line.
+  if (status === "booting" && threadId) {
+    return (
+      <LeafLoading
+        message={
+          <BootChecklist
+            threadId={threadId}
+            currentSubstatus={bootingSubstatus ?? null}
+          />
+        }
+      />
+    );
+  }
+
   const message = getStatusMessage({
     agent,
     status,

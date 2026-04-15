@@ -1,5 +1,9 @@
 import { CreateSandboxOptions, ISandboxSession } from "./types";
 import {
+  parsePnpmProgressLine,
+  InstallProgressSnapshot,
+} from "./install-progress-parser";
+import {
   updateDaemonIfOutdated,
   restartDaemonIfNotRunning,
   installDaemon,
@@ -294,6 +298,7 @@ export async function setupSandboxOneTime(
           githubAccessToken: options.githubAccessToken,
           agentCredentials: options.agentCredentials,
           setupScript: options.setupScript,
+          onInstallProgress: options.onInstallProgress,
         },
       }),
     ]);
@@ -699,6 +704,69 @@ async function executeSetupScriptCommand({
   await session.runCommand("git status");
 }
 
+const INSTALL_PROGRESS_THROTTLE_MS = 200;
+
+/**
+ * Build a throttled install-progress reporter.
+ *
+ * Returns a `processLine` function to call on each stdout line, and a
+ * `flush` function to call once after the command finishes (to emit any
+ * final state that was suppressed by the throttle).
+ */
+function buildInstallProgressReporter(
+  startMs: number,
+  onInstallProgress: (
+    snapshot: InstallProgressSnapshot,
+    elapsedMs: number,
+  ) => void,
+): {
+  processLine: (line: string) => void;
+  flush: () => void;
+} {
+  let accumulated: InstallProgressSnapshot = {
+    resolved: 0,
+    reused: 0,
+    downloaded: 0,
+    added: 0,
+  };
+  let lastEmitMs = 0;
+  let hasData = false;
+
+  function emit() {
+    const now = Date.now();
+    lastEmitMs = now;
+    onInstallProgress({ ...accumulated }, now - startMs);
+  }
+
+  return {
+    processLine(line: string) {
+      const update = parsePnpmProgressLine(line);
+      if (!update) return;
+      hasData = true;
+
+      // Merge partial update into accumulated snapshot.
+      if (update.resolved !== undefined) accumulated.resolved = update.resolved;
+      if (update.reused !== undefined) accumulated.reused = update.reused;
+      if (update.downloaded !== undefined)
+        accumulated.downloaded = update.downloaded;
+      if (update.added !== undefined) accumulated.added = update.added;
+      if (update.total !== undefined) accumulated.total = update.total;
+      if (update.currentPackage !== undefined)
+        accumulated.currentPackage = update.currentPackage;
+
+      const now = Date.now();
+      if (now - lastEmitMs >= INSTALL_PROGRESS_THROTTLE_MS) {
+        emit();
+      }
+    },
+    flush() {
+      if (hasData) {
+        emit();
+      }
+    },
+  };
+}
+
 export async function runSetupScript({
   session,
   options,
@@ -706,7 +774,10 @@ export async function runSetupScript({
   session: ISandboxSession;
   options: Pick<
     CreateSandboxOptions,
-    "environmentVariables" | "githubAccessToken" | "agentCredentials"
+    | "environmentVariables"
+    | "githubAccessToken"
+    | "agentCredentials"
+    | "onInstallProgress"
   > & {
     setupScript?: string | null;
     setupScriptPath?: string;
@@ -720,9 +791,21 @@ export async function runSetupScript({
   const customScriptPath =
     options.setupScriptPath || "/tmp/terragon-setup-custom.sh";
   const outputs: string[] = [];
+
+  const setupStartMs = Date.now();
+  const installProgress = options.onInstallProgress
+    ? buildInstallProgressReporter(setupStartMs, options.onInstallProgress)
+    : null;
+
   const onUpdateWrapped: OnUpdateCallback = (type, output) => {
     if (type === "stdout" || type === "stderr") {
       outputs.push(output);
+    }
+    if (type === "stdout" && installProgress) {
+      // pnpm emits multi-line chunks; split and process each line.
+      for (const line of output.split("\n")) {
+        installProgress.processLine(line);
+      }
     }
     options.onUpdate?.(type, output);
   };
@@ -758,6 +841,7 @@ export async function runSetupScript({
         onUpdate: onUpdateWrapped,
       });
     }
+    installProgress?.flush();
     console.log("Setup script output:", outputs.join("\n"));
   } catch (error) {
     // Include the full output in the error message
