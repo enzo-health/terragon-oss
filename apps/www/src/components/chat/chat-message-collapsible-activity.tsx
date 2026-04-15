@@ -10,16 +10,14 @@ import { MessagePart } from "./message-part";
 import { MessagePartRenderProps, PartGroup } from "./chat-message.types";
 import { cn } from "@/lib/utils";
 
-function CollapsibleAgentActivityGroupLabel({
-  isLatestMessage,
-  isAgentWorking,
-}: {
-  isLatestMessage: boolean;
-  isAgentWorking: boolean;
-}) {
-  if (isLatestMessage && isAgentWorking) {
-    return <span className="truncate animate-shine">Working...</span>;
-  }
+function CollapsibleAgentActivityGroupLabel() {
+  // A `CollapsibleAgentActivityGroup` is, by construction, never the latest
+  // group in its message: `groupParts` renders the message's last part
+  // (and anything at or after the last text part) as its own
+  // non-collapsible group. So any collapsed block represents historical
+  // activity that has been superseded by visible content beneath it.
+  // Labeling it "Working..." based on a message/thread-level active flag
+  // was misleading — the thread footer already communicates that state.
   return <span className="truncate">Finished working</span>;
 }
 
@@ -56,10 +54,7 @@ export function CollapsibleAgentActivityGroup({
             !isCollapsed && "rotate-90",
           )}
         />
-        <CollapsibleAgentActivityGroupLabel
-          isLatestMessage={isLatestMessage}
-          isAgentWorking={isAgentWorking}
-        />
+        <CollapsibleAgentActivityGroupLabel />
       </button>
       {!isCollapsed && (
         <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-lg bg-muted/15 animate-in fade-in slide-in-from-top-1 duration-200">
