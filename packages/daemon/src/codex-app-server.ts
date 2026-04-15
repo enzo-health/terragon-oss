@@ -158,18 +158,17 @@ export type ThreadMetaEvent =
 /**
  * Extended item type representing a Codex `collabAgentToolCall` — a sub-agent
  * delegation event not present in the upstream `@openai/codex-sdk` `ThreadItem`
- * union.  We carry it as a daemon-local extension so callers can pattern-match
- * on `item.type === "delegation"`.
+ * union. Shape mirrors `CollabToolCallItem` in codex.ts so parseCodexLine →
+ * transformCollabToolCall can handle the WS transport identically to stdio.
+ * Daemon-local extension only; not exposed through the SDK types.
  */
 export type CodexDelegationItem = {
-  type: "delegation";
+  type: "collab_tool_call";
   id: string;
-  senderThreadId: string;
-  receiverThreadIds: string[];
+  sender_thread_id: string;
+  receiver_thread_ids: string[];
   prompt: string;
-  delegatedModel: string;
-  reasoningEffort?: string;
-  agentsStates: Record<string, string>;
+  agents_states: Record<string, { status?: string; message?: string | null }>;
   tool: string;
   status: string;
 };
@@ -416,9 +415,12 @@ function normalizeThreadItem(
     return null;
   }
 
-  // Handle collabAgentToolCall before the generic type normalizer, since it
-  // is not part of the SDK's ThreadItem union and must be mapped to our
-  // daemon-local CodexDelegationItem extension.
+  // Handle collabAgentToolCall before the generic type normalizer. The WS
+  // transport emits camelCase; we normalize to the same snake_case shape that
+  // the stdio transport uses (`collab_tool_call`) so parseCodexLine →
+  // transformCollabToolCall handles both transports identically. This is what
+  // makes sub-agent delegations surface as `Task` tool-use messages in the
+  // chat UI (rendered by the existing delegation card).
   if (
     rawItemType.replace(/[_-]/g, "").toLowerCase() === "collabagenttoolcall"
   ) {
@@ -426,20 +428,41 @@ function normalizeThreadItem(
       toArray(rawItem.receiverThreadIds)?.filter(
         (v): v is string => typeof v === "string",
       ) ?? [];
-    const agentsStates = toRecord(rawItem.agentsStates) as Record<
+    // agentsStates in the WS transport is a map of thread_id → state object,
+    // but older fixtures stored flat strings. Tolerate both: wrap string
+    // values into `{ status }` objects so the downstream handler has a
+    // uniform shape.
+    const rawAgentsStates = toRecord(rawItem.agentsStates) ?? {};
+    const agentsStates: Record<
       string,
-      string
-    > | null;
+      { status?: string; message?: string | null }
+    > = {};
+    for (const [key, value] of Object.entries(rawAgentsStates)) {
+      if (typeof value === "string") {
+        agentsStates[key] = { status: value };
+      } else if (value && typeof value === "object") {
+        const v = value as Record<string, unknown>;
+        agentsStates[key] = {
+          status: typeof v.status === "string" ? v.status : undefined,
+          message:
+            typeof v.message === "string"
+              ? v.message
+              : v.message === null
+                ? null
+                : undefined,
+        };
+      }
+    }
     return {
-      type: "delegation",
+      type: "collab_tool_call",
       id: itemId,
-      senderThreadId: readString(rawItem, "senderThreadId") ?? "",
-      receiverThreadIds,
+      sender_thread_id: readString(rawItem, "senderThreadId") ?? "",
+      receiver_thread_ids: receiverThreadIds,
       prompt: readString(rawItem, "prompt") ?? "",
-      delegatedModel: readString(rawItem, "model") ?? "",
-      reasoningEffort: readString(rawItem, "reasoningEffort") ?? undefined,
-      agentsStates: agentsStates ?? {},
-      tool: readString(rawItem, "tool") ?? "spawn",
+      agents_states: agentsStates,
+      // `tool` is `send_input` for the only delegation shape transformCollabToolCall
+      // handles today; default to that so the WS path is guaranteed to render.
+      tool: readString(rawItem, "tool") ?? "send_input",
       status: readString(rawItem, "status") ?? "initiated",
     };
   }

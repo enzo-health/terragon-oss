@@ -113,7 +113,11 @@ function transformCollabToolCall({
   state: CodexParserState;
 }): ClaudeMessage[] {
   const item = codexMsg.item as unknown as CollabToolCallItem;
-  if (item.tool !== "send_input") {
+  // Both `spawn` (initial delegation on the WS transport) and `send_input`
+  // (stdio transport + follow-up inputs) represent sub-agent delegations.
+  // activeTaskToolUseIds deduplicates by toolUseId so the same delegation
+  // only emits one Task tool_use even if both events arrive.
+  if (item.tool !== "send_input" && item.tool !== "spawn") {
     return [];
   }
 

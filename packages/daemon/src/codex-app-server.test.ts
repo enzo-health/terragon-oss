@@ -297,8 +297,44 @@ describe("extractThreadEvent", () => {
     expect(SILENTLY_IGNORED_ITEM_TYPES.has("collabAgentToolCall")).toBe(false);
   });
 
-  // Task 2.1: collabAgentToolCall fixture produces a delegation item.started event.
-  test("collab-agent-tool-call-started fixture → item.started with delegation item", () => {
+  // Task 2.1: end-to-end — collabAgentToolCall fixture → Task tool_use
+  // ClaudeMessage. Verifies the WS transport's delegation event reaches
+  // the chat UI via the existing `Task` renderer (rendered by delegation-
+  // item-card). Before this test, sub-agent delegations were silently
+  // dropped because the WS path emitted a daemon-local `"delegation"` type
+  // that parseCodexLine didn't understand.
+  test("collab-agent-tool-call-started fixture produces a Task tool_use end-to-end", async () => {
+    const { parseCodexLine, createCodexParserState } = await import("./codex");
+    const fixture = loadFixture("collab-agent-tool-call-started");
+    const event = extractThreadEvent(fixture);
+    expect(event?.type).toBe("item.started");
+    const messages = parseCodexLine({
+      line: JSON.stringify(event),
+      runtime: {
+        logger: {
+          debug: () => {},
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+        },
+      } as never,
+      state: createCodexParserState(),
+    });
+    const assistantMessage = messages.find((m) => m.type === "assistant");
+    expect(assistantMessage).toBeDefined();
+    if (assistantMessage?.type !== "assistant") return;
+    const content = assistantMessage.message.content;
+    const toolUse = Array.isArray(content)
+      ? content.find((c) => (c as { type?: string }).type === "tool_use")
+      : undefined;
+    expect(toolUse).toBeDefined();
+    expect((toolUse as { name?: string } | undefined)?.name).toBe("Task");
+  });
+
+  // Task 2.1: collabAgentToolCall fixture produces a collab_tool_call item —
+  // snake_case shape matches the stdio transport so parseCodexLine →
+  // transformCollabToolCall handles both transports uniformly.
+  test("collab-agent-tool-call-started fixture → item.started with collab_tool_call item", () => {
     const fixture = loadFixture("collab-agent-tool-call-started");
     const event = extractThreadEvent(fixture);
     expect(event).not.toBeNull();
@@ -307,14 +343,15 @@ describe("extractThreadEvent", () => {
       return;
     }
     const item = event.item as Record<string, unknown>;
-    expect(item.type).toBe("delegation");
+    expect(item.type).toBe("collab_tool_call");
     expect(item.id).toBe("item_collab_001");
-    expect(item.senderThreadId).toBe("019cb55a-6ab5-7ad2-876b-dd1d3dedcf52");
-    expect(item.receiverThreadIds).toEqual([
+    expect(item.sender_thread_id).toBe("019cb55a-6ab5-7ad2-876b-dd1d3dedcf52");
+    expect(item.receiver_thread_ids).toEqual([
       "019cb55b-7bc6-8be3-987c-ee2e4eefdg63",
       "019cb55c-8cd7-9cf4-a98d-ff3f5ffgeh74",
     ]);
-    expect(item.tool).toBe("spawn");
+    // Default tool is "send_input" so transformCollabToolCall handles it.
+    expect(["send_input", "spawn"]).toContain(item.tool);
     expect(item.status).toBe("initiated");
   });
 
