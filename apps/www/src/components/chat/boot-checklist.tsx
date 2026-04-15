@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Loader2, Check, Circle } from "lucide-react";
+import { Loader2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
 import { useThreadMetaEvents } from "./meta-chips/use-thread-meta-events";
@@ -73,7 +73,7 @@ function ActiveStepTimer({ startedAt }: { startedAt: string }) {
 
   return (
     <span
-      className="font-mono text-xs text-muted-foreground/60 flex-shrink-0 tabular-nums"
+      className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums"
       aria-live="polite"
       aria-label={`Running for ${formatDuration(elapsed)}`}
     >
@@ -110,9 +110,9 @@ function InstallProgressBar({
   const emptyChars = "░".repeat(empty);
 
   return (
-    <div className="mt-1 pl-6 flex flex-col gap-0.5">
+    <div className="mt-1 mb-1.5 pl-[26px] flex flex-col gap-0.5">
       <span
-        className="font-mono text-xs text-muted-foreground tracking-tight"
+        className="font-mono text-[11px] tracking-tight tabular-nums"
         aria-label={
           total !== undefined
             ? `Install progress: ${resolved} of ${total} packages`
@@ -122,26 +122,26 @@ function InstallProgressBar({
         {total === undefined ? (
           // Indeterminate: pulse the filled portion to signal ongoing activity
           <span>
-            <span className="animate-pulse">{filledChars}</span>
-            {emptyChars}
+            <span className="animate-pulse text-primary/70">{filledChars}</span>
+            <span className="text-muted-foreground/30">{emptyChars}</span>
           </span>
         ) : (
           <span>
-            {filledChars}
-            {emptyChars}
+            <span className="text-primary/70">{filledChars}</span>
+            <span className="text-muted-foreground/30">{emptyChars}</span>
           </span>
         )}{" "}
         {total !== undefined ? (
-          <span>
+          <span className="text-muted-foreground/80">
             {resolved}/{total}
           </span>
         ) : (
-          <span>{resolved} resolved</span>
+          <span className="text-muted-foreground/80">{resolved} resolved</span>
         )}
       </span>
       {currentPackage && (
         <span
-          className="text-xs text-muted-foreground/70 truncate max-w-full"
+          className="text-[11px] text-muted-foreground/60 truncate max-w-full"
           title={currentPackage}
         >
           Installing {currentPackage}
@@ -200,10 +200,16 @@ export function BootChecklist({
 
   return (
     <div
-      className="flex flex-col gap-0 py-0.5"
+      className="relative flex flex-col py-1"
       role="list"
       aria-label="Boot progress"
     >
+      {/* Timeline rail connecting the step icons. Sits behind the
+          icon chips; icons use z-10 + bg-background to "mask" it. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-2 top-4 bottom-4 w-px bg-border"
+      />
       {BOOT_STEPS.map((step, index) => {
         const isCompleted = index < activeIndex;
         const isActive = index === activeIndex;
@@ -215,12 +221,12 @@ export function BootChecklist({
         const startedAt = metaStep?.startedAt;
 
         return (
-          <div key={step.substatus} role="listitem">
-            <div className="flex items-center gap-2 py-[3px] min-h-[24px]">
-              {/* Status icon */}
+          <div key={step.substatus} role="listitem" className="relative">
+            <div className="flex items-center gap-2.5 py-1 min-h-[26px]">
+              {/* Status icon (chip over the rail) */}
               <span
                 className={cn(
-                  "flex-shrink-0 w-4 h-4 flex items-center justify-center",
+                  "relative z-10 flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-background transition-colors duration-200",
                   {
                     "text-primary": isCompleted,
                     "text-foreground": isActive,
@@ -234,17 +240,20 @@ export function BootChecklist({
                 ) : isActive ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Circle className="w-3 h-3" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
                 )}
               </span>
 
               {/* Step label */}
               <span
-                className={cn("flex-1 text-sm", {
-                  "text-foreground": isActive,
-                  "text-muted-foreground": isCompleted || isPending,
-                  "opacity-40": isPending,
-                })}
+                className={cn(
+                  "flex-1 text-sm transition-colors duration-200",
+                  {
+                    "text-foreground font-medium": isActive,
+                    "text-muted-foreground": isCompleted,
+                    "text-muted-foreground opacity-40": isPending,
+                  },
+                )}
               >
                 {step.label}
               </span>
@@ -252,7 +261,7 @@ export function BootChecklist({
               {/* Duration: static badge for completed steps, live timer for active */}
               {isCompleted && durationMs !== undefined && (
                 <span
-                  className="font-mono text-xs text-muted-foreground/60 flex-shrink-0 tabular-nums"
+                  className="font-mono text-[11px] text-muted-foreground/60 flex-shrink-0 tabular-nums"
                   aria-label={`Completed in ${formatDuration(durationMs)}`}
                 >
                   {formatDuration(durationMs)}
