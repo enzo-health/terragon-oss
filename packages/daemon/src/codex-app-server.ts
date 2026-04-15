@@ -11,6 +11,7 @@ import {
   createCodexParserState,
 } from "./codex";
 import type { Logger } from "./logger";
+import { recordUnknownEvent } from "./unknown-event-telemetry";
 
 export type CodexAppServerTransport = "stdio" | "websocket";
 
@@ -445,6 +446,15 @@ function normalizeThreadItem(
 
   const normalizedType = normalizeThreadItemType(rawItemType);
   if (!normalizedType) {
+    if (!SILENTLY_IGNORED_ITEM_TYPES.has(rawItemType)) {
+      recordUnknownEvent({
+        transport: "codex",
+        method: "item",
+        itemType: rawItemType,
+        reason: "unhandled itemType in normalizeThreadItemType",
+        payload: rawItem,
+      });
+    }
     return null;
   }
 
@@ -947,6 +957,12 @@ function extractThreadEventFromMethod({
 
   const eventType = METHOD_TO_THREAD_EVENT_TYPE[method];
   if (!eventType) {
+    recordUnknownEvent({
+      transport: "codex",
+      method,
+      reason: "method absent from METHOD_TO_THREAD_EVENT_TYPE",
+      payload: params,
+    });
     return null;
   }
 
