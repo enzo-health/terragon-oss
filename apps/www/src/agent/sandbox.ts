@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { DB } from "@terragon/shared/db";
 import { AIAgent, AIModel, AIAgentCredentials } from "@terragon/agent/types";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
 import {
   getThreadMinimal,
   updateThread,
@@ -821,6 +823,39 @@ async function getOrCreateSandboxForThread({
           sandboxId,
           sandboxStatus,
           bootingStatus,
+        });
+      },
+      onInstallProgress: (snapshot, elapsedMs) => {
+        const metaEvent: ThreadMetaEvent = {
+          kind: "install.progress",
+          threadId,
+          resolved: snapshot.resolved,
+          reused: snapshot.reused,
+          downloaded: snapshot.downloaded,
+          added: snapshot.added,
+          ...(snapshot.total !== undefined ? { total: snapshot.total } : {}),
+          ...(snapshot.currentPackage !== undefined
+            ? { currentPackage: snapshot.currentPackage }
+            : {}),
+          elapsedMs,
+        };
+        publishBroadcastUserMessage({
+          type: "user",
+          id: userId,
+          data: {
+            threadPatches: [
+              {
+                threadId,
+                op: "upsert",
+                metaEvents: [metaEvent],
+              },
+            ],
+          },
+        }).catch((error) => {
+          console.warn(
+            "[sandbox] install.progress meta-event broadcast failed",
+            { threadId, error },
+          );
         });
       },
     };

@@ -9,7 +9,11 @@ import {
 } from "@terragon/agent/utils";
 import { env } from "@terragon/env/apps-www";
 import { gitPullUpstream } from "@terragon/sandbox/commands";
-import { CreateSandboxOptions, ISandboxSession } from "@terragon/sandbox/types";
+import {
+  type BootingSubstatus,
+  CreateSandboxOptions,
+  ISandboxSession,
+} from "@terragon/sandbox/types";
 import {
   DBMessage,
   DBUserMessage,
@@ -23,6 +27,8 @@ import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
 import {
   activeThreadStatuses,
   getActiveThreadCount,
@@ -455,6 +461,12 @@ export async function startAgentMessage({
       const startTime = Date.now();
       // We need to provide onStatusUpdate for both new and resumed threads
       // so the UI can show sandbox setup progress (e.g., "Running terragon-setup.sh")
+
+      // Track the last booting substatus transition so we can compute durationMs
+      // for the boot.substatus_changed meta event.
+      let lastBootingSubstatus: BootingSubstatus | null = null;
+      let lastBootingTransitionAt: number | null = null;
+
       const onStatusUpdate: CreateSandboxOptions["onStatusUpdate"] = async ({
         sandboxId,
         sandboxStatus,
@@ -469,6 +481,59 @@ export async function startAgentMessage({
             bootingSubstatus: bootingStatus,
           },
         });
+
+        if (bootingStatus !== null) {
+          // Normalise `provisioning-done` → `provisioning` so it doesn't
+          // appear as a distinct step (mirrors boot-checklist.tsx precedent).
+          const normalised: BootingSubstatus =
+            bootingStatus === "provisioning-done"
+              ? "provisioning"
+              : bootingStatus;
+
+          // Skip duplicate transitions — same substatus arriving twice would
+          // corrupt the client reducer by appending a row with from === to.
+          if (normalised === lastBootingSubstatus) {
+            return;
+          }
+
+          const now = Date.now();
+          const durationMs =
+            lastBootingTransitionAt !== null
+              ? now - lastBootingTransitionAt
+              : undefined;
+          const metaEvent: ThreadMetaEvent = {
+            kind: "boot.substatus_changed",
+            threadId,
+            from: lastBootingSubstatus,
+            to: normalised,
+            timestamp: new Date(now).toISOString(),
+            ...(durationMs !== undefined ? { durationMs } : {}),
+          };
+          publishBroadcastUserMessage({
+            type: "user",
+            id: userId,
+            data: {
+              threadPatches: [
+                {
+                  threadId,
+                  op: "upsert",
+                  metaEvents: [metaEvent],
+                },
+              ],
+            },
+          }).catch((error) => {
+            console.warn(
+              "[start-agent-message] boot.substatus_changed broadcast failed",
+              {
+                threadId,
+                to: bootingStatus,
+                error,
+              },
+            );
+          });
+          lastBootingSubstatus = normalised;
+          lastBootingTransitionAt = now;
+        }
       };
       await withSandboxResource({
         // If we're creating a new sandbox, just pass the threadId in as a placeholder.

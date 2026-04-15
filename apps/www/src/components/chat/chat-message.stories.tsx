@@ -1,6 +1,7 @@
 import type { Story, StoryDefault } from "@ladle/react";
 import { ChatMessage } from "./chat-message";
 import { WorkingMessage } from "./chat-messages";
+import { BootChecklist } from "./boot-checklist";
 import { UIMessage } from "@terragon/shared";
 
 export default {
@@ -82,35 +83,71 @@ const defaultProps = {
   reattemptQueueAt: null,
 };
 
+// ----- BootChecklist stories -----
+
+export const BootChecklist_FirstStep: Story = () => (
+  <div className="p-4 max-w-sm">
+    <p className="text-xs text-muted-foreground mb-2">
+      First step — provisioning in-progress, no meta events yet
+    </p>
+    <BootChecklist threadId="story-thread-1" currentSubstatus="provisioning" />
+  </div>
+);
+
+export const BootChecklist_MidBoot: Story = () => (
+  <div className="p-4 max-w-sm">
+    <p className="text-xs text-muted-foreground mb-2">
+      Mid-boot — cloning-repo in-progress (fallback from currentSubstatus)
+    </p>
+    <BootChecklist threadId="story-thread-2" currentSubstatus="cloning-repo" />
+  </div>
+);
+
+export const BootChecklist_InstallingAgent: Story = () => (
+  <div className="p-4 max-w-sm">
+    <p className="text-xs text-muted-foreground mb-2">
+      Installing agent — in-progress (no install progress events yet)
+    </p>
+    <BootChecklist
+      threadId="story-thread-3"
+      currentSubstatus="installing-agent"
+    />
+  </div>
+);
+
+export const BootChecklist_RunningSetupScript: Story = () => (
+  <div className="p-4 max-w-sm">
+    <p className="text-xs text-muted-foreground mb-2">Running setup script</p>
+    <BootChecklist
+      threadId="story-thread-4"
+      currentSubstatus="running-setup-script"
+    />
+  </div>
+);
+
+export const BootChecklist_BootingDone: Story = () => (
+  <div className="p-4 max-w-sm">
+    <p className="text-xs text-muted-foreground mb-2">
+      Booting done — waiting for assistant to start
+    </p>
+    <BootChecklist threadId="story-thread-5" currentSubstatus="booting-done" />
+  </div>
+);
+
+export const BootChecklist_NoSubstatus: Story = () => (
+  <div className="p-4 max-w-sm">
+    <p className="text-xs text-muted-foreground mb-2">
+      No substatus yet — first step shown as in-progress
+    </p>
+    <BootChecklist threadId="story-thread-6" currentSubstatus={null} />
+  </div>
+);
+
+// ----- WorkingMessage stories (non-booting) -----
+
 export const WorkingMessage_: Story = () => {
   return (
     <div className="space-y-4">
-      <WorkingMessage status="booting" {...defaultProps} />
-      <WorkingMessage
-        status="booting"
-        bootingSubstatus="provisioning"
-        {...defaultProps}
-      />
-      <WorkingMessage
-        status="booting"
-        bootingSubstatus="cloning-repo"
-        {...defaultProps}
-      />
-      <WorkingMessage
-        status="booting"
-        bootingSubstatus="installing-agent"
-        {...defaultProps}
-      />
-      <WorkingMessage
-        status="booting"
-        bootingSubstatus="running-setup-script"
-        {...defaultProps}
-      />
-      <WorkingMessage
-        status="booting"
-        bootingSubstatus="booting-done"
-        {...defaultProps}
-      />
       <WorkingMessage status="working" {...defaultProps} />
       <WorkingMessage status="checkpointing" {...defaultProps} />
       <WorkingMessage status="complete" {...defaultProps} />
