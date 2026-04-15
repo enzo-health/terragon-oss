@@ -2,9 +2,16 @@ import { Anthropic } from "@anthropic-ai/sdk";
 import { ClaudeMessage } from "@terragon/daemon/shared";
 import {
   DBAgentMessagePart,
+  DBAudioPart,
+  DBDiffPart,
+  DBImagePart,
   DBMessage,
+  DBPlanPart,
+  DBResourceLinkPart,
   DBServerToolUsePart,
+  DBTerminalPart,
   DBThinkingPart,
+  DBToolCall,
   DBWebSearchResultEntry,
   DBWebSearchResultPart,
 } from "@terragon/shared";
@@ -82,6 +89,27 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
         ];
       }
       return [];
+
+    // ACP sessionUpdate events — previously dropped at this default branch.
+    // The daemon's AcpToolCallTracker emits a fresh `acp-tool-call` snapshot
+    // on every tool_call and tool_call_update, so we only persist the final
+    // (terminal) snapshot to avoid duplicate DB entries. Intermediate updates
+    // still reach live viewers through the broadcast layer. See Wave 2 PR D.
+    case "acp-tool-call":
+      return convertAcpToolCall(claudeMessage);
+    case "acp-plan":
+      return convertAcpPlan(claudeMessage);
+    case "acp-image":
+      return convertAcpImage(claudeMessage);
+    case "acp-audio":
+      return convertAcpAudio(claudeMessage);
+    case "acp-resource-link":
+      return convertAcpResourceLink(claudeMessage);
+    case "acp-terminal":
+      return convertAcpTerminal(claudeMessage);
+    case "acp-diff":
+      return convertAcpDiff(claudeMessage);
+
     default: {
       // eslint-disable-next-line no-console
       console.warn(
@@ -91,6 +119,128 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
       return [];
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// ACP converters — each maps a ClaudeMessage acp-* variant to one or more
+// DBMessage entries so ACP sessions are fully represented in chat history
+// (not just in the ephemeral broadcast stream).
+// ---------------------------------------------------------------------------
+
+function convertAcpToolCall(
+  msg: Extract<ClaudeMessage, { type: "acp-tool-call" }>,
+): DBMessage[] {
+  // Persist only terminal snapshots. "pending" and "in_progress" states are
+  // streamed live but would produce duplicate DB rows for the same toolCallId
+  // since the ACP adapter emits a fresh snapshot on every update.
+  if (msg.status !== "completed" && msg.status !== "failed") {
+    return [];
+  }
+  const dbToolCall: DBToolCall = {
+    type: "tool-call",
+    id: msg.toolCallId,
+    name: msg.title || msg.kind,
+    parameters: {
+      kind: msg.kind,
+      title: msg.title,
+      locations: msg.locations,
+      rawInput: msg.rawInput,
+      rawOutput: msg.rawOutput,
+    },
+    parent_tool_use_id: null,
+    status: msg.status,
+    ...(msg.startedAt ? { startedAt: msg.startedAt } : {}),
+    ...(msg.completedAt ? { completedAt: msg.completedAt } : {}),
+    ...(msg.progressChunks.length > 0
+      ? { progressChunks: msg.progressChunks }
+      : {}),
+  };
+  return [dbToolCall];
+}
+
+function convertAcpPlan(
+  msg: Extract<ClaudeMessage, { type: "acp-plan" }>,
+): DBMessage[] {
+  const plan: DBPlanPart = {
+    type: "plan",
+    entries: msg.entries.map((e) => ({
+      ...(e.id ? { id: e.id } : {}),
+      content: e.content,
+      priority: e.priority,
+      // DBPlanPart allows "failed"; ACP spec only emits the three shown here.
+      status: e.status,
+    })),
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [plan] }];
+}
+
+function convertAcpImage(
+  msg: Extract<ClaudeMessage, { type: "acp-image" }>,
+): DBMessage[] {
+  const imageUrl =
+    msg.uri ?? (msg.data ? `data:${msg.mimeType};base64,${msg.data}` : null);
+  if (!imageUrl) return [];
+  const image: DBImagePart = {
+    type: "image",
+    mime_type: msg.mimeType,
+    image_url: imageUrl,
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [image] }];
+}
+
+function convertAcpAudio(
+  msg: Extract<ClaudeMessage, { type: "acp-audio" }>,
+): DBMessage[] {
+  const audio: DBAudioPart = {
+    type: "audio",
+    mimeType: msg.mimeType,
+    ...(msg.data ? { data: msg.data } : {}),
+    ...(msg.uri ? { uri: msg.uri } : {}),
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [audio] }];
+}
+
+function convertAcpResourceLink(
+  msg: Extract<ClaudeMessage, { type: "acp-resource-link" }>,
+): DBMessage[] {
+  const link: DBResourceLinkPart = {
+    type: "resource-link",
+    uri: msg.uri,
+    name: msg.name,
+    ...(msg.title ? { title: msg.title } : {}),
+    ...(msg.description ? { description: msg.description } : {}),
+    ...(msg.mimeType ? { mimeType: msg.mimeType } : {}),
+    ...(typeof msg.size === "number" ? { size: msg.size } : {}),
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [link] }];
+}
+
+function convertAcpTerminal(
+  msg: Extract<ClaudeMessage, { type: "acp-terminal" }>,
+): DBMessage[] {
+  const terminal: DBTerminalPart = {
+    type: "terminal",
+    // ACP terminal events carry their own terminal id but no sandbox id.
+    // Use terminalId as the sandbox key — the UI treats the pair as opaque.
+    sandboxId: msg.terminalId,
+    terminalId: msg.terminalId,
+    chunks: msg.chunks,
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [terminal] }];
+}
+
+function convertAcpDiff(
+  msg: Extract<ClaudeMessage, { type: "acp-diff" }>,
+): DBMessage[] {
+  const diff: DBDiffPart = {
+    type: "diff",
+    filePath: msg.filePath,
+    newContent: msg.newContent,
+    status: msg.status,
+    ...(msg.oldContent !== undefined ? { oldContent: msg.oldContent } : {}),
+    ...(msg.unifiedDiff !== undefined ? { unifiedDiff: msg.unifiedDiff } : {}),
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [diff] }];
 }
 
 function convertUserMessage(

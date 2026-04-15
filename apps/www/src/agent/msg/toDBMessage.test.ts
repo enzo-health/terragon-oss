@@ -1320,6 +1320,186 @@ describe("toDBMessage", () => {
       });
     });
 
+    test("persists completed ACP tool-call with progressChunks + metadata", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-tool-call",
+        session_id: "s1",
+        toolCallId: "call_1",
+        title: "Read src/index.ts",
+        kind: "read",
+        status: "completed",
+        locations: [{ type: "file", path: "src/index.ts", range: null }],
+        rawInput: '{"path":"src/index.ts"}',
+        rawOutput: "…file contents…",
+        startedAt: "2026-04-15T12:00:00.000Z",
+        completedAt: "2026-04-15T12:00:01.000Z",
+        progressChunks: [
+          { seq: 0, text: "chunk 1" },
+          { seq: 1, text: "chunk 2" },
+        ],
+      };
+
+      expect(toDBMessage(msg)).toEqual([
+        {
+          type: "tool-call",
+          id: "call_1",
+          name: "Read src/index.ts",
+          parameters: {
+            kind: "read",
+            title: "Read src/index.ts",
+            locations: [{ type: "file", path: "src/index.ts", range: null }],
+            rawInput: '{"path":"src/index.ts"}',
+            rawOutput: "…file contents…",
+          },
+          parent_tool_use_id: null,
+          status: "completed",
+          startedAt: "2026-04-15T12:00:00.000Z",
+          completedAt: "2026-04-15T12:00:01.000Z",
+          progressChunks: [
+            { seq: 0, text: "chunk 1" },
+            { seq: 1, text: "chunk 2" },
+          ],
+        },
+      ]);
+    });
+
+    test("skips non-terminal ACP tool-call snapshots to avoid DB duplicates", () => {
+      const base: Omit<
+        Extract<ClaudeMessage, { type: "acp-tool-call" }>,
+        "status"
+      > = {
+        type: "acp-tool-call",
+        session_id: "s1",
+        toolCallId: "call_1",
+        title: "x",
+        kind: "other",
+        locations: [],
+        rawInput: "",
+        progressChunks: [],
+      };
+      expect(toDBMessage({ ...base, status: "pending" })).toEqual([]);
+      expect(toDBMessage({ ...base, status: "in_progress" })).toEqual([]);
+    });
+
+    test("converts ACP plan into DBAgentMessage with DBPlanPart", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-plan",
+        session_id: "s1",
+        entries: [
+          {
+            id: "e1",
+            content: "Implement foo",
+            priority: "high",
+            status: "in_progress",
+          },
+          { content: "Add tests", priority: "medium", status: "pending" },
+        ],
+      };
+      expect(toDBMessage(msg)).toEqual([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [
+            {
+              type: "plan",
+              entries: [
+                {
+                  id: "e1",
+                  content: "Implement foo",
+                  priority: "high",
+                  status: "in_progress",
+                },
+                {
+                  content: "Add tests",
+                  priority: "medium",
+                  status: "pending",
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+    });
+
+    test("converts ACP image with data URI fallback", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-image",
+        session_id: "s1",
+        mimeType: "image/png",
+        data: "BASE64DATA",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "image",
+        mime_type: "image/png",
+        image_url: "data:image/png;base64,BASE64DATA",
+      });
+    });
+
+    test("converts ACP resource-link passthrough with optional fields", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-resource-link",
+        session_id: "s1",
+        uri: "https://example.com/doc.md",
+        name: "doc.md",
+        title: "Docs",
+        mimeType: "text/markdown",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "resource-link",
+        uri: "https://example.com/doc.md",
+        name: "doc.md",
+        title: "Docs",
+        mimeType: "text/markdown",
+      });
+    });
+
+    test("converts ACP diff into DBDiffPart", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-diff",
+        session_id: "s1",
+        filePath: "src/a.ts",
+        oldContent: "old",
+        newContent: "new",
+        unifiedDiff: "--- a\n+++ b\n",
+        status: "applied",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "diff",
+        filePath: "src/a.ts",
+        oldContent: "old",
+        newContent: "new",
+        unifiedDiff: "--- a\n+++ b\n",
+        status: "applied",
+      });
+    });
+
+    test("converts ACP terminal with chunks", () => {
+      const msg: ClaudeMessage = {
+        type: "acp-terminal",
+        session_id: "s1",
+        terminalId: "term_1",
+        chunks: [{ streamSeq: 0, kind: "stdout", text: "$ ls" }],
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.parts[0]).toEqual({
+        type: "terminal",
+        sandboxId: "term_1",
+        terminalId: "term_1",
+        chunks: [{ streamSeq: 0, kind: "stdout", text: "$ ls" }],
+      });
+    });
+
     test("keeps client tool_use blocks as DBToolCall (distinct from server-tool-use)", () => {
       const claudeMessage: ClaudeMessage = {
         type: "assistant",
