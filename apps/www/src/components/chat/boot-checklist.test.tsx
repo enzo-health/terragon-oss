@@ -319,6 +319,26 @@ describe("BootChecklist", () => {
   // Unknown substatus fallback
   // ---------------------------------------------------------------------------
 
+  it("provisioning-done from meta events still renders provisioning as active (regression)", () => {
+    // Regression: before the normalizeBootSubstatus fix in the meta-events
+    // path, a bootSteps entry with substatus="provisioning-done" would send
+    // findIndex → -1 → every step pending (blank UI). After the fix, it
+    // normalizes to "provisioning" and renders step 0 as in-progress.
+    const html = render("provisioning", {
+      bootSteps: [
+        {
+          substatus: "provisioning-done",
+          startedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    // First step (Provisioning machine) rendered with spinner.
+    expect(html).toContain("Provisioning machine");
+    expect(html).toContain("animate-spin");
+    // No steps are silently all-pending — at least one step must be marked
+    // active (has a spinner). This is the guard against the regression.
+  });
+
   it("shows first step as active and does not crash for an unknown future substatus", () => {
     // The component's findIndex returns -1 for an unknown substatus; the
     // currentStepIndex helper maps -1 → 0.  Cast is required because the type

@@ -844,6 +844,10 @@ export async function runSetupScript({
     installProgress?.flush();
     console.log("Setup script output:", outputs.join("\n"));
   } catch (error) {
+    // Flush the final install-progress snapshot even on failure so the UI's
+    // last visible state reflects what actually happened (not a stale
+    // throttle-window value).
+    installProgress?.flush();
     // Include the full output in the error message
     let errorMessage = "Setup script failed";
     if (error instanceof Error) {

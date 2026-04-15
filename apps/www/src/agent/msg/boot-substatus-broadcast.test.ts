@@ -212,7 +212,12 @@ describe("boot.substatus_changed dedup guard", () => {
     await trackerWithDedup(THREAD_ID, "cloning-repo", 2000); // duplicate — must be ignored
 
     expect(publishFn).toHaveBeenCalledTimes(1);
-    expect(published[0]!.to).toBe("cloning-repo");
+    const first = published[0];
+    if (!first || first.kind !== "boot.substatus_changed") {
+      expect.fail("Expected boot.substatus_changed kind");
+      return;
+    }
+    expect(first.to).toBe("cloning-repo");
   });
 
   it("does not emit when provisioning-done follows provisioning", async () => {
@@ -250,7 +255,12 @@ describe("boot.substatus_changed dedup guard", () => {
     await trackerWithDedup(THREAD_ID, "provisioning-done", 3000);
 
     expect(publishFn).toHaveBeenCalledTimes(1);
-    expect(published[0]!.to).toBe("provisioning");
+    const first = published[0];
+    if (!first || first.kind !== "boot.substatus_changed") {
+      expect.fail("Expected boot.substatus_changed kind");
+      return;
+    }
+    expect(first.to).toBe("provisioning");
   });
 });
 

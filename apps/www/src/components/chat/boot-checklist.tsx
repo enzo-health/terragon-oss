@@ -22,15 +22,24 @@ const BOOT_STEPS: BootStep[] = [
 ];
 
 /**
+ * `provisioning-done` maps to the same UI row as `provisioning` — both
+ * represent the "still in the provisioning phase" window. Used on BOTH
+ * the meta-events path and the fallback path so an unmapped substatus
+ * never sends activeIndex to -1 (which would mark every step pending).
+ */
+function normalizeBootSubstatus(substatus: BootingSubstatus): BootingSubstatus {
+  return substatus === "provisioning-done" ? "provisioning" : substatus;
+}
+
+/**
  * Given the current substatus (from DB/props), return the index of the
  * currently in-progress step.
  */
 function currentStepIndex(substatus: BootingSubstatus | null): number {
   if (substatus === null) return 0;
-  // `provisioning-done` maps to the same step as `provisioning`
-  const normalized: BootingSubstatus =
-    substatus === "provisioning-done" ? "provisioning" : substatus;
-  const idx = BOOT_STEPS.findIndex((s) => s.substatus === normalized);
+  const idx = BOOT_STEPS.findIndex(
+    (s) => s.substatus === normalizeBootSubstatus(substatus),
+  );
   return idx === -1 ? 0 : idx;
 }
 
@@ -174,10 +183,19 @@ export function BootChecklist({
   // Determine which step is currently active using meta events when available,
   // falling back to the currentSubstatus prop.
   const hasMetaSteps = bootSteps.length > 0;
+  // Normalize the latest meta-events substatus before the lookup so an
+  // `provisioning-done` event doesn't send activeIndex to -1 (which would
+  // mark every step pending). Mirrors the fallback path.
+  const rawLatest = hasMetaSteps
+    ? bootSteps[bootSteps.length - 1]!.substatus
+    : null;
   const activeIndex = hasMetaSteps
-    ? BOOT_STEPS.findIndex(
-        (s) => s.substatus === bootSteps[bootSteps.length - 1]!.substatus,
-      )
+    ? (() => {
+        const idx = BOOT_STEPS.findIndex(
+          (s) => s.substatus === normalizeBootSubstatus(rawLatest!),
+        );
+        return idx === -1 ? 0 : idx;
+      })()
     : currentStepIndex(currentSubstatus);
 
   return (
