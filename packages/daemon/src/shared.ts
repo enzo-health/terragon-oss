@@ -280,6 +280,12 @@ export type ClaudeMessage =
   // Codex turn/diff/updated event — unified diff snapshot of the turn's
   // pending file changes. Rendered alongside command_execution items so
   // users can see the patch the turn is proposing. Maps to DBDiffPart.
+  //
+  // Duplicate suppression is enforced upstream: the live daemon coalesces
+  // intermediate `turn.diff_updated` events and flushes exactly one
+  // `codex-diff` on `turn.completed`, and the parser dedupes identical
+  // snapshots within a turn via a content hash. There is no per-row
+  // upsert contract downstream — DBDiffPart rows are append-only.
   | {
       type: "codex-diff";
       session_id: string | null;

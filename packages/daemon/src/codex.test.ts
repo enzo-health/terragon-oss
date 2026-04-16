@@ -82,32 +82,141 @@ describe("parseCodexLine", () => {
     });
   });
 
-  test("should skip agent_message on item.started", () => {
+  test("should emit agent_message intermediate content on item.started with non-empty text", () => {
     const line =
       '{"type":"item.started","item":{"id":"item_1","type":"agent_message","text":"Hey!"}}';
-    const results = parseCodexLine({ line, runtime: mockRuntime });
-    expect(results).toHaveLength(0);
+    const state = createCodexParserState();
+    const results = parseCodexLine({ line, runtime: mockRuntime, state });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hey!" }],
+      },
+    });
+    // Starting with empty text: should not emit.
+    const emptyLine =
+      '{"type":"item.started","item":{"id":"item_2","type":"agent_message","text":""}}';
+    const emptyResults = parseCodexLine({
+      line: emptyLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(emptyResults).toHaveLength(0);
   });
 
-  test("should skip agent_message on item.updated", () => {
-    const line =
+  test("should emit intermediate agent_message on item.updated when content grows", () => {
+    const state = createCodexParserState();
+    const firstLine =
+      '{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Hey!"}}';
+    const firstResults = parseCodexLine({
+      line: firstLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(firstResults).toHaveLength(1);
+
+    // Cumulative update: should emit again since content grew.
+    const secondLine =
       '{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Hey! What can I"}}';
-    const results = parseCodexLine({ line, runtime: mockRuntime });
-    expect(results).toHaveLength(0);
+    const secondResults = parseCodexLine({
+      line: secondLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(secondResults).toHaveLength(1);
+    expect(secondResults[0]).toMatchObject({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hey! What can I" }],
+      },
+    });
+
+    // Re-emission of the SAME cumulative text should be deduped.
+    const dupResults = parseCodexLine({
+      line: secondLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(dupResults).toHaveLength(0);
   });
 
-  test("should skip reasoning on item.started", () => {
+  test("should suppress agent_message item.completed when identical to last emitted", () => {
+    const state = createCodexParserState();
+    const updateLine =
+      '{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Final text."}}';
+    const completedLine =
+      '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Final text."}}';
+    parseCodexLine({ line: updateLine, runtime: mockRuntime, state });
+    const completedResults = parseCodexLine({
+      line: completedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    // Already emitted identical text on item.updated; item.completed dedups.
+    expect(completedResults).toHaveLength(0);
+  });
+
+  test("should emit intermediate reasoning chunks on item.started", () => {
     const line =
       '{"type":"item.started","item":{"id":"item_0","type":"reasoning","text":"Thinking..."}}';
-    const results = parseCodexLine({ line, runtime: mockRuntime });
-    expect(results).toHaveLength(0);
+    const state = createCodexParserState();
+    const results = parseCodexLine({ line, runtime: mockRuntime, state });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "thinking",
+            thinking: "Thinking...",
+            signature: "codex-synthetic-signature",
+          },
+        ],
+      },
+    });
   });
 
-  test("should skip reasoning on item.updated", () => {
-    const line =
+  test("should emit intermediate reasoning content on item.updated when content grows", () => {
+    const state = createCodexParserState();
+    const firstLine =
+      '{"type":"item.updated","item":{"id":"item_0","type":"reasoning","text":"Thinking..."}}';
+    const secondLine =
       '{"type":"item.updated","item":{"id":"item_0","type":"reasoning","text":"Thinking about the problem..."}}';
-    const results = parseCodexLine({ line, runtime: mockRuntime });
-    expect(results).toHaveLength(0);
+    const firstResults = parseCodexLine({
+      line: firstLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(firstResults).toHaveLength(1);
+    const secondResults = parseCodexLine({
+      line: secondLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(secondResults).toHaveLength(1);
+    expect(secondResults[0]).toMatchObject({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          expect.objectContaining({
+            type: "thinking",
+            thinking: "Thinking about the problem...",
+          }),
+        ],
+      },
+    });
+    // Identical resend: deduped.
+    const dupResults = parseCodexLine({
+      line: secondLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(dupResults).toHaveLength(0);
   });
 
   test("should parse command_execution with in_progress status", () => {
@@ -619,12 +728,48 @@ describe("parseCodexLine", () => {
     }
   });
 
-  test("should ignore in-progress todo_list updates", () => {
-    const line =
+  test("should emit todo_list item.updated when content changes", () => {
+    const state = createCodexParserState();
+    const firstLine =
       '{"type":"item.updated","item":{"id":"item_todo","type":"todo_list","items":[{"text":"Write tests","completed":false}]}}';
-    const results = parseCodexLine({ line, runtime: mockRuntime });
+    const firstResults = parseCodexLine({
+      line: firstLine,
+      runtime: mockRuntime,
+      state,
+    });
+    // Intermediate todo update now emits a TodoWrite tool_use + tool_result
+    // pair so users see live progress.
+    expect(firstResults).toHaveLength(2);
+    expect(firstResults[0]).toMatchObject({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          expect.objectContaining({
+            type: "tool_use",
+            name: "TodoWrite",
+          }),
+        ],
+      },
+    });
 
-    expect(results).toHaveLength(0);
+    // Same list emitted again: deduped by content hash.
+    const dupResults = parseCodexLine({
+      line: firstLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(dupResults).toHaveLength(0);
+
+    // List changed (item marked complete): emits a new pair.
+    const changedLine =
+      '{"type":"item.updated","item":{"id":"item_todo","type":"todo_list","items":[{"text":"Write tests","completed":true}]}}';
+    const changedResults = parseCodexLine({
+      line: changedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(changedResults).toHaveLength(2);
   });
 
   test("should parse top-level error event into result message", () => {
@@ -915,6 +1060,222 @@ describe("parseCodexLine", () => {
         ? childComplete[0].parent_tool_use_id
         : null,
     ).toBe("item_parent_collab");
+  });
+
+  test("turn.diff_updated is a no-op in default (production) mode — the live daemon owns emission", () => {
+    // In production the daemon coalesces turn diffs and flushes exactly one
+    // codex-diff on turn.completed. The parser stays silent so we don't
+    // double-emit when the live event stream also flows through parseCodexLine.
+    const state = createCodexParserState();
+    parseCodexLine({
+      line: '{"type":"thread.started","thread_id":"thread_abc"}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"turn.started"}',
+      runtime: mockRuntime,
+      state,
+    });
+    const diffLine = JSON.stringify({
+      type: "turn.diff_updated",
+      diff: "diff --git a/foo b/foo\n@@\n-old\n+new\n",
+    });
+    const results = parseCodexLine({
+      line: diffLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(results).toHaveLength(0);
+  });
+
+  test("turn.diff_updated emits when emitTurnDiffs opt-in is set (replay/test harness)", () => {
+    const state = createCodexParserState({ emitTurnDiffs: true });
+    parseCodexLine({
+      line: '{"type":"thread.started","thread_id":"thread_abc"}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"turn.started"}',
+      runtime: mockRuntime,
+      state,
+    });
+    const diffLine = JSON.stringify({
+      type: "turn.diff_updated",
+      diff: "diff --git a/foo b/foo\n@@\n-old\n+new\n",
+    });
+    const firstResults = parseCodexLine({
+      line: diffLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(firstResults).toHaveLength(1);
+    expect(firstResults[0]).toMatchObject({
+      type: "codex-diff",
+      session_id: "thread_abc",
+      diff: "diff --git a/foo b/foo\n@@\n-old\n+new\n",
+    });
+    // The shared contract no longer carries an idempotencyKey — downstream
+    // DBDiffPart rows are append-only and dedup is enforced upstream.
+    expect(firstResults[0]).not.toHaveProperty("idempotencyKey");
+
+    // Identical diff re-emitted within the same turn: deduped.
+    const dupResults = parseCodexLine({
+      line: diffLine,
+      runtime: mockRuntime,
+      state,
+    });
+    expect(dupResults).toHaveLength(0);
+
+    // A new turn resets the in-turn dedup hash so identical content from
+    // the previous turn would emit again (not applicable here — content
+    // is different — but we assert the state cleared).
+    parseCodexLine({
+      line: '{"type":"turn.started"}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(state.lastEmittedTurnDiffHash).toBeNull();
+  });
+
+  test("turn.diff_updated with empty diff string emits nothing", () => {
+    const state = createCodexParserState({ emitTurnDiffs: true });
+    parseCodexLine({
+      line: '{"type":"thread.started","thread_id":"t1"}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"turn.started"}',
+      runtime: mockRuntime,
+      state,
+    });
+    const results = parseCodexLine({
+      line: '{"type":"turn.diff_updated","diff":""}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(results).toHaveLength(0);
+  });
+
+  test("turn.started clears per-item dedup maps so item ids from the prior turn don't suppress fresh emissions", () => {
+    // Codex item ids are per-turn; clearing on turn.started prevents the
+    // dedup maps from growing unboundedly and prevents stale-id collisions.
+    const state = createCodexParserState();
+    parseCodexLine({
+      line: '{"type":"thread.started","thread_id":"thread_xyz"}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"turn.started"}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"hello"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(state.lastEmittedTextByItemId.size).toBe(1);
+    parseCodexLine({
+      line: '{"type":"item.updated","item":{"id":"item_todo","type":"todo_list","items":[{"text":"Task","completed":false}]}}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(state.lastEmittedTodoHashByItemId.size).toBe(1);
+
+    // New turn: dedup maps must be empty.
+    parseCodexLine({
+      line: '{"type":"turn.started"}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(state.lastEmittedTextByItemId.size).toBe(0);
+    expect(state.lastEmittedTodoHashByItemId.size).toBe(0);
+  });
+
+  test("agent_message item.started → N updates → completed persists exactly one row in daemon mode", () => {
+    // In daemon mode, the daemon short-circuits `item.updated` for
+    // agent_message before it reaches parseCodexLine (those deltas go
+    // through the broadcast buffer instead). So only `item.started` and
+    // `item.completed` reach the parser. Dedup by last-emitted text keeps
+    // this at exactly one row when `item.started` carries the initial
+    // chunk and `item.completed` holds the final text.
+    const state = createCodexParserState();
+    // item.started with non-empty text (mirrors what the daemon forwards).
+    const startedResults = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"m1","type":"agent_message","text":"Hi"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    // item.completed with final cumulative text.
+    const completedResults = parseCodexLine({
+      line: '{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"Hi there"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    // Exactly two parser emissions: the started seed and the final grew.
+    // In the daemon, the seed is intercepted and deltas stream via the
+    // broadcast buffer — so production persists only the completed row.
+    expect(startedResults).toHaveLength(1);
+    expect(completedResults).toHaveLength(1);
+    expect(completedResults[0]).toMatchObject({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hi there" }],
+      },
+    });
+  });
+
+  test("agent_message item.started → N updates → completed persists exactly one row in replay mode", () => {
+    // Replay/test harnesses don't intercept item.updated, so the parser
+    // sees every event. Cumulative growth triggers one row per growth
+    // step; identical re-emissions dedup. The final completed is
+    // suppressed if it matches the last emitted text, or emits once if
+    // grew further.
+    const state = createCodexParserState();
+    parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"m1","type":"agent_message","text":""}}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"item.updated","item":{"id":"m1","type":"agent_message","text":"Hi"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"item.updated","item":{"id":"m1","type":"agent_message","text":"Hi there"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    // item.completed with identical cumulative text as the final update.
+    const completedResults = parseCodexLine({
+      line: '{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"Hi there"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    // The final completed is deduped because its text == last emitted.
+    expect(completedResults).toHaveLength(0);
+    // Last emitted state reflects exactly one committed version of the text.
+    expect(state.lastEmittedTextByItemId.get("m1")).toBe("Hi there");
+  });
+
+  test("unknown item.type under item.updated is a no-op (invariant guard for the daemon short-circuit)", () => {
+    // If codex-app-server renames `agent_message`, the daemon's
+    // item.type-based short-circuit would miss it. This test asserts
+    // that the parser's fallback path for unknown item.types under
+    // item.updated doesn't silently double-persist — it emits nothing.
+    const state = createCodexParserState();
+    const results = parseCodexLine({
+      line: '{"type":"item.updated","item":{"id":"m1","type":"not_yet_known","text":"renamed?"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    expect(results).toHaveLength(0);
   });
 });
 

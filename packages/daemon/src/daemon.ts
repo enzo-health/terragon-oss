@@ -1492,9 +1492,20 @@ export class TerragonDaemon {
             return;
           }
 
-          // Intercept agentMessage deltas before they reach parseCodexLine
-          // (which drops item.updated for agent_message). Route them through
-          // the delta buffer for ephemeral streaming to clients.
+          // Intercept agentMessage deltas before they reach parseCodexLine.
+          // Route them through the delta buffer for ephemeral streaming to
+          // clients, then short-circuit to avoid persisting a DBMessage per
+          // character-level accumulation.
+          //
+          // INVARIANT: this guard's `item.type === "agent_message"` check
+          // MUST stay in sync with parseCodexLine's `agent_message` case
+          // under `item.updated`. If codex-app-server ever renames this
+          // item type, both branches must be updated atomically — otherwise
+          // the parser's fall-through default path (which treats unknown
+          // types as no-ops) will silently double-persist deltas via the
+          // daemon's pass-through to parseCodexLine. A parser unit test
+          // asserts the unknown-item-type default is a no-op so the
+          // surface area of this invariant is explicit.
           if (
             threadEvent.type === "item.updated" &&
             threadEvent.item &&
@@ -1546,9 +1557,13 @@ export class TerragonDaemon {
                 }
               }
             }
-            // Still pass through to parseCodexLine — it will be dropped
-            // (agent_message item.updated is a no-op) but we keep the
-            // pipeline consistent for other side effects.
+            // Deltas were routed through the broadcast buffer above; skip
+            // parseCodexLine for agent_message item.updated so we don't
+            // also persist a DBMessage per character-level accumulation
+            // (parseCodexLine now emits intermediate agent_message rows
+            // for replay / test harnesses, but the production daemon
+            // already streams deltas and persists the final item.completed).
+            return;
           }
 
           // Route commandExecution/outputDelta through the delta buffer as
