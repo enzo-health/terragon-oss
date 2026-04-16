@@ -281,14 +281,15 @@ export type ClaudeMessage =
   // pending file changes. Rendered alongside command_execution items so
   // users can see the patch the turn is proposing. Maps to DBDiffPart.
   //
-  // `idempotencyKey` enables handle-daemon-event to upsert per-turn diffs
-  // instead of appending N rows when Codex emits intermediate updates
-  // during a single turn. Key format: `codex-diff:${threadId}:${turnIndex}`.
+  // Duplicate suppression is enforced upstream: the live daemon coalesces
+  // intermediate `turn.diff_updated` events and flushes exactly one
+  // `codex-diff` on `turn.completed`, and the parser dedupes identical
+  // snapshots within a turn via a content hash. There is no per-row
+  // upsert contract downstream — DBDiffPart rows are append-only.
   | {
       type: "codex-diff";
       session_id: string | null;
       diff: string;
-      idempotencyKey?: string;
     }
 
   // ACP image content block

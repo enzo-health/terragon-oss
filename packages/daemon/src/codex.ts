@@ -35,17 +35,29 @@ export type CodexParserState = {
    */
   lastEmittedTodoHashByItemId: Map<string, string>;
   /**
-   * Monotonic turn counter, incremented on every `turn.started`. Used to
-   * build stable idempotency keys for turn-level synthetic events (codex-diff).
+   * Monotonic turn counter. Seeded externally (e.g. by the live daemon) and
+   * NOT mutated by the parser. Callers that run the parser standalone
+   * (replay harness, unit tests) are responsible for incrementing this on
+   * their own `turn.started` handling if they need it.
    */
   turnIndex: number;
-  /** Thread id captured from `thread.started` — feeds into turn-diff idempotency key. */
+  /** Thread id captured from `thread.started`. */
   threadId: string | null;
   /** Hash of the last emitted turn diff, to dedupe identical snapshots within a turn. */
   lastEmittedTurnDiffHash: string | null;
+  /**
+   * When true, `turn.diff_updated` emits a synthetic `codex-diff`
+   * ClaudeMessage. Defaults to `false` because the live daemon owns turn-
+   * diff emission (it coalesces per-update noise and flushes exactly one
+   * diff on `turn.completed`). Replay/test harnesses that don't go through
+   * the daemon opt in by setting this to `true`.
+   */
+  emitTurnDiffs: boolean;
 };
 
-export function createCodexParserState(): CodexParserState {
+export function createCodexParserState(
+  overrides: Partial<CodexParserState> = {},
+): CodexParserState {
   return {
     activeTaskToolUseIds: [],
     lastEmittedTextByItemId: new Map(),
@@ -53,6 +65,8 @@ export function createCodexParserState(): CodexParserState {
     turnIndex: 0,
     threadId: null,
     lastEmittedTurnDiffHash: null,
+    emitTurnDiffs: false,
+    ...overrides,
   };
 }
 
@@ -880,7 +894,6 @@ export function parseCodexLine({
       parserState.lastEmittedTextByItemId = new Map();
       parserState.lastEmittedTodoHashByItemId = new Map();
       parserState.lastEmittedTurnDiffHash = null;
-      parserState.turnIndex = 0;
       messages.push({
         type: "system",
         subtype: "init",
@@ -891,18 +904,32 @@ export function parseCodexLine({
       return messages;
     }
     case "turn.started": {
-      // Start of a new turn — bump turn index so turn-level synthetic
-      // events (codex-diff) get a fresh idempotency key, and reset the
-      // turn-scoped diff hash so the first diff of the new turn emits
-      // even if identical to the previous turn's final diff.
-      parserState.turnIndex += 1;
+      // Start of a new turn — reset turn-scoped caches so the first diff
+      // of the new turn emits even if identical to the previous turn's
+      // final diff, and so per-item text/todo dedup maps don't retain
+      // stale entries across turns. Codex item ids are per-turn, so
+      // clearing here is safe.
+      //
+      // We intentionally do NOT increment `turnIndex` here: the live
+      // daemon owns the monotonic turn counter and seeds it via
+      // `CodexParserState` so the parser and daemon stay in sync.
+      // Standalone callers (replay/tests) can bump `state.turnIndex` on
+      // their own if they depend on it.
       parserState.lastEmittedTurnDiffHash = null;
+      parserState.lastEmittedTextByItemId.clear();
+      parserState.lastEmittedTodoHashByItemId.clear();
       return messages;
     }
     case "turn.diff_updated": {
       // Synthetic event emitted by codex-app-server for `turn/diff/updated`.
-      // We persist one `codex-diff` ClaudeMessage per turn (downstream
-      // consumers dedupe via idempotencyKey = `codex-diff:${threadId}:${turn}`).
+      // The live daemon owns turn-diff emission (coalesces intermediate
+      // updates, flushes exactly one `codex-diff` on `turn.completed`), so
+      // the parser stays silent in the default (production) mode. Replay
+      // harnesses / unit tests that don't run through the daemon can opt
+      // in via `createCodexParserState({ emitTurnDiffs: true })`.
+      if (!parserState.emitTurnDiffs) {
+        return messages;
+      }
       const diff = (codexMsg as { diff?: string }).diff ?? "";
       if (diff.length === 0) {
         return messages;
@@ -913,12 +940,10 @@ export function parseCodexLine({
         return messages;
       }
       parserState.lastEmittedTurnDiffHash = diffHash;
-      const threadIdForKey = parserState.threadId ?? "unknown";
       messages.push({
         type: "codex-diff",
         session_id: parserState.threadId,
         diff,
-        idempotencyKey: `codex-diff:${threadIdForKey}:${parserState.turnIndex}`,
       });
       return messages;
     }
