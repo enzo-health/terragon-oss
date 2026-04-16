@@ -34,13 +34,6 @@ export type CodexParserState = {
    * producing duplicate DB rows when the same list replays.
    */
   lastEmittedTodoHashByItemId: Map<string, string>;
-  /**
-   * Monotonic turn counter. Seeded externally (e.g. by the live daemon) and
-   * NOT mutated by the parser. Callers that run the parser standalone
-   * (replay harness, unit tests) are responsible for incrementing this on
-   * their own `turn.started` handling if they need it.
-   */
-  turnIndex: number;
   /** Thread id captured from `thread.started`. */
   threadId: string | null;
   /** Hash of the last emitted turn diff, to dedupe identical snapshots within a turn. */
@@ -62,7 +55,6 @@ export function createCodexParserState(
     activeTaskToolUseIds: [],
     lastEmittedTextByItemId: new Map(),
     lastEmittedTodoHashByItemId: new Map(),
-    turnIndex: 0,
     threadId: null,
     lastEmittedTurnDiffHash: null,
     emitTurnDiffs: false,
@@ -909,12 +901,6 @@ export function parseCodexLine({
       // final diff, and so per-item text/todo dedup maps don't retain
       // stale entries across turns. Codex item ids are per-turn, so
       // clearing here is safe.
-      //
-      // We intentionally do NOT increment `turnIndex` here: the live
-      // daemon owns the monotonic turn counter and seeds it via
-      // `CodexParserState` so the parser and daemon stay in sync.
-      // Standalone callers (replay/tests) can bump `state.turnIndex` on
-      // their own if they depend on it.
       parserState.lastEmittedTurnDiffHash = null;
       parserState.lastEmittedTextByItemId.clear();
       parserState.lastEmittedTodoHashByItemId.clear();

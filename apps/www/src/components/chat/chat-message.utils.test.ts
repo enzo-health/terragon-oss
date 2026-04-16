@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { AllToolParts, UITextPart } from "@terragon/shared";
-import { groupParts } from "./chat-message.utils";
+import type {
+  AllToolParts,
+  UIAgentMessage,
+  UIMessage,
+  UITextPart,
+  UIUserMessage,
+} from "@terragon/shared";
+import { getActiveAgentMessageId, groupParts } from "./chat-message.utils";
 import type { UIUserOrAgentPart } from "./chat-message.types";
 
 function text(s: string): UITextPart {
@@ -18,6 +24,14 @@ function bashTool(id: string): AllToolParts {
     status: "completed",
     result: "hi\n",
   };
+}
+
+function userMessage(id: string): UIUserMessage {
+  return { id, role: "user", parts: [] };
+}
+
+function agentMessage(id: string): UIAgentMessage {
+  return { id, role: "agent", agent: "claudeCode", parts: [] };
 }
 
 function readTool(id: string): AllToolParts {
@@ -151,5 +165,69 @@ describe("groupParts", () => {
     expect(
       historicalGroups.some((g) => g.type === "collapsible-agent-activity"),
     ).toBe(true);
+  });
+});
+
+describe("getActiveAgentMessageId", () => {
+  it("returns null for an empty message list", () => {
+    expect(
+      getActiveAgentMessageId({ messages: [], isAgentWorking: true }),
+    ).toBeNull();
+  });
+
+  it("returns null when there are no agent messages", () => {
+    const messages: UIMessage[] = [userMessage("u1")];
+    expect(
+      getActiveAgentMessageId({ messages, isAgentWorking: true }),
+    ).toBeNull();
+  });
+
+  it("returns the latest agent message id when [user, agent] and agent is working", () => {
+    const messages: UIMessage[] = [userMessage("u1"), agentMessage("a1")];
+    expect(getActiveAgentMessageId({ messages, isAgentWorking: true })).toBe(
+      "a1",
+    );
+  });
+
+  it("returns null when [user, agent] but agent is not working", () => {
+    const messages: UIMessage[] = [userMessage("u1"), agentMessage("a1")];
+    expect(
+      getActiveAgentMessageId({ messages, isAgentWorking: false }),
+    ).toBeNull();
+  });
+
+  it("returns null when the latest message is a user message superseding the agent", () => {
+    // [user, agent, user] — the trailing user turn supersedes the previous
+    // agent message; it must immediately flip to historical regardless of
+    // whether the thread is still nominally working.
+    const messages: UIMessage[] = [
+      userMessage("u1"),
+      agentMessage("a1"),
+      userMessage("u2"),
+    ];
+    expect(
+      getActiveAgentMessageId({ messages, isAgentWorking: true }),
+    ).toBeNull();
+  });
+
+  it("returns the LAST agent's id when two agent messages are adjacent at the tail", () => {
+    // [agent_A, agent_B] — only the very last agent message qualifies as
+    // active; agent_A is now historical even though both are agents.
+    const messages: UIMessage[] = [agentMessage("a1"), agentMessage("a2")];
+    expect(getActiveAgentMessageId({ messages, isAgentWorking: true })).toBe(
+      "a2",
+    );
+  });
+
+  it("returns the LAST agent's id when [user, agent_A, user, agent_B] and that agent is also the very last message", () => {
+    const messages: UIMessage[] = [
+      userMessage("u1"),
+      agentMessage("a1"),
+      userMessage("u2"),
+      agentMessage("a2"),
+    ];
+    expect(getActiveAgentMessageId({ messages, isAgentWorking: true })).toBe(
+      "a2",
+    );
   });
 });

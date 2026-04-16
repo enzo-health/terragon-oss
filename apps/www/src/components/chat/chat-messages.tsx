@@ -23,6 +23,7 @@ import {
 import { useTouchDevice } from "@/hooks/useTouchDevice";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { buildThreadPlanOccurrenceMap } from "./assistant-ui/plan-occurrences";
+import { getActiveAgentMessageId } from "./chat-message.utils";
 
 export const ChatMessages = memo(function ChatMessages({
   messages,
@@ -101,7 +102,7 @@ export const ChatMessages = memo(function ChatMessages({
     }),
     [githubRepoFullName, branchName, baseBranchName, hasCheckpoint, toolProps],
   );
-  // Find the latest agent message
+  // Find the latest agent message (used for `isLatestAgentMessage` row prop).
   let latestAgentMessageIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]?.role === "agent") {
@@ -111,22 +112,15 @@ export const ChatMessages = memo(function ChatMessages({
   }
 
   // Identify the agent message the user is actively waiting on (the one
-  // currently being executed). This is message-scoped — ONLY this message
-  // receives `isActiveTurn=true`, so all previous agent messages collapse
+  // currently being executed). See `getActiveAgentMessageId` for the
+  // heuristic; the value is message-scoped, so only that one message
+  // receives `isActiveTurn=true` and all previous agent messages collapse
   // their pre-final activity under "Finished working" the moment a newer
   // agent message (or a newer user turn) supersedes them.
-  //
-  // Heuristic: the last agent message in the list qualifies IF it is also
-  // the very last message overall (no newer user message superseding it)
-  // AND the thread is currently working. As soon as the user sends a
-  // follow-up, a new UIUserMessage is appended → `activeAgentMessageId`
-  // becomes null → the previous agent message flips to historical.
-  const activeAgentMessageId: string | null =
-    isAgentWorking &&
-    latestAgentMessageIndex !== -1 &&
-    latestAgentMessageIndex === messages.length - 1
-      ? (messages[latestAgentMessageIndex]?.id ?? null)
-      : null;
+  const activeAgentMessageId = getActiveAgentMessageId({
+    messages,
+    isAgentWorking,
+  });
 
   // Thread-global plan occurrence map: keyed by UIPart reference -> its
   // thread-global occurrence index for that plan text. This mirrors the

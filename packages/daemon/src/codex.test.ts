@@ -1196,26 +1196,6 @@ describe("parseCodexLine", () => {
     expect(state.lastEmittedTodoHashByItemId.size).toBe(0);
   });
 
-  test("turn.started does NOT bump turnIndex — daemon owns the counter", () => {
-    // The live daemon (or any external harness) is the sole author of
-    // turnIndex; the parser must not mutate it or the two will drift.
-    const state = createCodexParserState({ turnIndex: 5 });
-    parseCodexLine({
-      line: '{"type":"thread.started","thread_id":"thread_abc"}',
-      runtime: mockRuntime,
-      state,
-    });
-    // thread.started must not reset turnIndex either.
-    expect(state.turnIndex).toBe(5);
-
-    parseCodexLine({
-      line: '{"type":"turn.started"}',
-      runtime: mockRuntime,
-      state,
-    });
-    expect(state.turnIndex).toBe(5);
-  });
-
   test("agent_message item.started → N updates → completed persists exactly one row in daemon mode", () => {
     // In daemon mode, the daemon short-circuits `item.updated` for
     // agent_message before it reaches parseCodexLine (those deltas go

@@ -161,6 +161,46 @@ export function groupParts({
   return groups;
 }
 
+/**
+ * Identify the agent message that the user is actively waiting on (the one
+ * currently being executed). This id is message-scoped — ONLY this message
+ * receives `isActiveTurn=true`, so all previous agent messages collapse
+ * their pre-final activity under "Finished working" the moment a newer
+ * agent message (or a newer user turn) supersedes them.
+ *
+ * Heuristic: the last agent message in the list qualifies IF it is also
+ * the very last message overall (no newer user message superseding it)
+ * AND the thread is currently working. As soon as the user sends a
+ * follow-up, a new UIUserMessage is appended → this returns null → the
+ * previous agent message flips to historical.
+ */
+export function getActiveAgentMessageId({
+  messages,
+  isAgentWorking,
+}: {
+  messages: UIMessage[];
+  isAgentWorking: boolean;
+}): string | null {
+  if (!isAgentWorking) {
+    return null;
+  }
+  // Find the latest agent message
+  let latestAgentMessageIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "agent") {
+      latestAgentMessageIndex = i;
+      break;
+    }
+  }
+  if (
+    latestAgentMessageIndex === -1 ||
+    latestAgentMessageIndex !== messages.length - 1
+  ) {
+    return null;
+  }
+  return messages[latestAgentMessageIndex]?.id ?? null;
+}
+
 export function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
