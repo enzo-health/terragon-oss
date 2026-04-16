@@ -27,6 +27,14 @@ type ChatMessageProps = {
   className?: string;
   isLatestMessage?: boolean;
   isAgentWorking?: boolean;
+  /**
+   * True only when THIS specific agent message is the one currently being
+   * executed (id matches the thread's `activeAgentMessageId` and the agent
+   * is working). Drives `groupParts` — when false, pre-final activity
+   * collapses under "Finished working" even if the overall thread is still
+   * working on a different (newer) message.
+   */
+  isActiveTurn?: boolean;
   messagePartProps?: MessagePartRenderProps;
   thread?: ThreadInfoFull | null;
   latestGitDiffTimestamp?: string | null;
@@ -43,6 +51,7 @@ type ChatMessageWithToolbarProps = {
   isFirstUserMessage: boolean;
   isLatestMessage: boolean;
   isAgentWorking: boolean;
+  isActiveTurn: boolean;
   isLatestAgentMessage: boolean;
   messagePartProps?: MessagePartRenderProps;
   thread?: ThreadInfoFull | null;
@@ -59,6 +68,7 @@ export const ChatMessage = memo(function ChatMessage({
   className,
   isLatestMessage = false,
   isAgentWorking = false,
+  isActiveTurn = false,
   messagePartProps = DEFAULT_MESSAGE_PART_PROPS,
   thread = null,
   latestGitDiffTimestamp = null,
@@ -81,10 +91,9 @@ export const ChatMessage = memo(function ChatMessage({
     () =>
       groupParts({
         parts: message.parts as UIPart[],
-        isLatestMessage,
-        isAgentWorking,
+        isActiveTurn,
       }),
-    [message.parts, isLatestMessage, isAgentWorking],
+    [message.parts, isActiveTurn],
   );
 
   if (message.role === "system") {
@@ -180,6 +189,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   isLatestMessage = false,
   isFirstUserMessage = false,
   isAgentWorking = false,
+  isActiveTurn = false,
   isLatestAgentMessage = false,
   messagePartProps = DEFAULT_MESSAGE_PART_PROPS,
   thread = null,
@@ -200,6 +210,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         className={className}
         isLatestMessage={isLatestMessage}
         isAgentWorking={isAgentWorking}
+        isActiveTurn={isActiveTurn}
         messagePartProps={messagePartProps}
         thread={thread}
         latestGitDiffTimestamp={latestGitDiffTimestamp}
@@ -235,6 +246,7 @@ function areChatMessageWithToolbarPropsEqual(
     prevProps.isFirstUserMessage !== nextProps.isFirstUserMessage ||
     prevProps.isLatestMessage !== nextProps.isLatestMessage ||
     prevProps.isAgentWorking !== nextProps.isAgentWorking ||
+    prevProps.isActiveTurn !== nextProps.isActiveTurn ||
     prevProps.isLatestAgentMessage !== nextProps.isLatestAgentMessage
   ) {
     return false;

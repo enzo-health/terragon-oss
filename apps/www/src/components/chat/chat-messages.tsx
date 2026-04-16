@@ -110,6 +110,24 @@ export const ChatMessages = memo(function ChatMessages({
     }
   }
 
+  // Identify the agent message the user is actively waiting on (the one
+  // currently being executed). This is message-scoped — ONLY this message
+  // receives `isActiveTurn=true`, so all previous agent messages collapse
+  // their pre-final activity under "Finished working" the moment a newer
+  // agent message (or a newer user turn) supersedes them.
+  //
+  // Heuristic: the last agent message in the list qualifies IF it is also
+  // the very last message overall (no newer user message superseding it)
+  // AND the thread is currently working. As soon as the user sends a
+  // follow-up, a new UIUserMessage is appended → `activeAgentMessageId`
+  // becomes null → the previous agent message flips to historical.
+  const activeAgentMessageId: string | null =
+    isAgentWorking &&
+    latestAgentMessageIndex !== -1 &&
+    latestAgentMessageIndex === messages.length - 1
+      ? (messages[latestAgentMessageIndex]?.id ?? null)
+      : null;
+
   // Thread-global plan occurrence map: keyed by UIPart reference -> its
   // thread-global occurrence index for that plan text. This mirrors the
   // `planTextOccurrences` counter in `getArtifactDescriptors` so the render
@@ -128,12 +146,15 @@ export const ChatMessages = memo(function ChatMessages({
           message.role === "agent" && index === latestAgentMessageIndex;
         const rowIsAgentWorking =
           isAgentWorking && isLatestMessage && message.role === "agent";
+        const isActiveTurn =
+          activeAgentMessageId !== null && message.id === activeAgentMessageId;
         return (
           <ChatMessageWithToolbar
             key={message.id}
             message={message}
             messageIndex={index}
             isAgentWorking={rowIsAgentWorking}
+            isActiveTurn={isActiveTurn}
             isLatestMessage={isLatestMessage}
             isFirstUserMessage={isFirstUserMessage}
             isLatestAgentMessage={isLatestAgentMessage}

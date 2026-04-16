@@ -48,10 +48,11 @@ function getPartGroupType({
   lastTextPartIdx: number;
   isActiveTurn: boolean;
 }): PartGroup["type"] {
-  // For the currently active turn (latest message + agent still working),
-  // never collapse intermediate tool/text/thinking parts. The user needs
-  // live visibility into what the agent is doing right now; history only
-  // becomes "finished" once the turn is superseded by a later message.
+  // For the currently executing agent message (the one the user is actively
+  // waiting on), never collapse intermediate tool/text/thinking parts. The
+  // user needs live visibility into what the agent is doing right now;
+  // activity only becomes "finished" once this message is superseded by a
+  // newer agent message or a newer user turn.
   if (isActiveTurn) {
     return part.type;
   }
@@ -89,10 +90,12 @@ function getPartGroupType({
  * them behind a single expander.
  *
  * Special cases:
- * - For the currently active turn (latest message + agent still working),
- *   nothing collapses: the user needs live visibility into in-flight work.
- *   The "Finished working" disclosure only applies to historical activity
- *   that has been superseded by a later message.
+ * - When `isActiveTurn` is true, nothing collapses: the user needs live
+ *   visibility into the message the agent is currently executing. The
+ *   "Finished working" disclosure only applies to historical activity that
+ *   has been superseded by a newer agent message or a newer user turn.
+ *   This flag is message-scoped, not thread-scoped — only the one agent
+ *   message that the user is actively waiting on receives it.
  * - The last part of a message always renders as its own group (never
  *   collapses), so the most recent content is always visible.
  * - Anything at or after the last text part also never collapses, so
@@ -100,16 +103,20 @@ function getPartGroupType({
  */
 export function groupParts({
   parts,
-  isLatestMessage,
-  isAgentWorking,
+  isActiveTurn,
 }: {
   parts: UIUserOrAgentPart[];
-  isLatestMessage: boolean;
-  isAgentWorking: boolean;
+  /**
+   * True only for the specific agent message that is currently executing
+   * (i.e. `message.id === activeAgentMessageId && isAgentWorking`). When
+   * a newer agent message or a newer user message arrives, the previous
+   * agent message immediately flips to `isActiveTurn=false` and its
+   * pre-final activity collapses under "Finished working".
+   */
+  isActiveTurn: boolean;
 }): PartGroup[] {
   const groups: PartGroup[] = [];
   let currentGroup: PartGroup | null = null;
-  const isActiveTurn = isLatestMessage && isAgentWorking;
 
   // Find the index of the last text part in the message
   let lastTextPartIdx = -1;
