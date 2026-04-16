@@ -314,6 +314,12 @@ type AppServerRunContext = {
    * when the turn completes, so N file edits produce ONE DBDiffPart.
    */
   pendingTurnDiff: string | null;
+  /**
+   * Monotonic turn counter — incremented on every `turn.started`. Feeds
+   * into the `codex-diff` idempotency key so downstream consumers can
+   * upsert the turn's final diff instead of appending duplicates.
+   */
+  turnIndex: number;
   resolveTurnComplete: (result: AppServerTurnCompletion) => void;
   rejectTurnComplete: (error: Error) => void;
   resolveThreadReady: (threadId: string) => void;
@@ -979,6 +985,7 @@ export class TerragonDaemon {
       watchdogTimer: null,
       agentMessageTextById: new Map<string, string>(),
       pendingTurnDiff: null,
+      turnIndex: 0,
       resolveTurnComplete: (result) => {
         if (context.isCompleted) {
           return;
@@ -1433,6 +1440,12 @@ export class TerragonDaemon {
             return;
           }
 
+          // Bump the turn counter at turn.started so synthetic per-turn
+          // events (codex-diff) get a stable, monotonic idempotency key.
+          if (threadEvent.type === "turn.started") {
+            context.turnIndex += 1;
+          }
+
           // Synthetic-only events (turn diffs and plan snapshots) don't flow
           // through parseCodexLine. We emit them as dedicated ClaudeMessages
           // so chat history shows them on reload (the live stream already
@@ -1546,9 +1559,13 @@ export class TerragonDaemon {
                 }
               }
             }
-            // Still pass through to parseCodexLine — it will be dropped
-            // (agent_message item.updated is a no-op) but we keep the
-            // pipeline consistent for other side effects.
+            // Deltas were routed through the broadcast buffer above; skip
+            // parseCodexLine for agent_message item.updated so we don't
+            // also persist a DBMessage per character-level accumulation
+            // (parseCodexLine now emits intermediate agent_message rows
+            // for replay / test harnesses, but the production daemon
+            // already streams deltas and persists the final item.completed).
+            return;
           }
 
           // Route commandExecution/outputDelta through the delta buffer as
@@ -1736,12 +1753,17 @@ export class TerragonDaemon {
             // what used to be per-update diff emissions with a single
             // per-turn DBDiffPart.
             if (context.pendingTurnDiff) {
+              const threadIdForKey = context.threadId ?? "unknown";
               this.addMessageToBuffer({
                 agent: "codex",
                 message: {
                   type: "codex-diff",
                   session_id: context.threadId ?? null,
                   diff: context.pendingTurnDiff,
+                  // Stable per-turn idempotency key: downstream (handle-
+                  // daemon-event) can upsert-by-key when a turn retries
+                  // and re-emits the same diff.
+                  idempotencyKey: `codex-diff:${threadIdForKey}:${context.turnIndex}`,
                 },
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,

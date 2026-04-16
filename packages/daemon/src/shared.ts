@@ -280,10 +280,15 @@ export type ClaudeMessage =
   // Codex turn/diff/updated event — unified diff snapshot of the turn's
   // pending file changes. Rendered alongside command_execution items so
   // users can see the patch the turn is proposing. Maps to DBDiffPart.
+  //
+  // `idempotencyKey` enables handle-daemon-event to upsert per-turn diffs
+  // instead of appending N rows when Codex emits intermediate updates
+  // during a single turn. Key format: `codex-diff:${threadId}:${turnIndex}`.
   | {
       type: "codex-diff";
       session_id: string | null;
       diff: string;
+      idempotencyKey?: string;
     }
 
   // ACP image content block

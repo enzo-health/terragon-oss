@@ -21,12 +21,51 @@ type CollabToolCallItem = {
 
 export type CodexParserState = {
   activeTaskToolUseIds: string[];
+  /**
+   * Last emitted text per agent_message/reasoning item id. Used to dedupe
+   * intermediate `item.updated` emissions so we only persist a new row when
+   * the accumulated text has grown, and to suppress a trailing
+   * `item.completed` emission if we already emitted the exact same text.
+   */
+  lastEmittedTextByItemId: Map<string, string>;
+  /**
+   * Hash of the last emitted todo_list snapshot per item id. We dedupe
+   * intermediate updates by content so todo progress is live without
+   * producing duplicate DB rows when the same list replays.
+   */
+  lastEmittedTodoHashByItemId: Map<string, string>;
+  /**
+   * Monotonic turn counter, incremented on every `turn.started`. Used to
+   * build stable idempotency keys for turn-level synthetic events (codex-diff).
+   */
+  turnIndex: number;
+  /** Thread id captured from `thread.started` — feeds into turn-diff idempotency key. */
+  threadId: string | null;
+  /** Hash of the last emitted turn diff, to dedupe identical snapshots within a turn. */
+  lastEmittedTurnDiffHash: string | null;
 };
 
 export function createCodexParserState(): CodexParserState {
   return {
     activeTaskToolUseIds: [],
+    lastEmittedTextByItemId: new Map(),
+    lastEmittedTodoHashByItemId: new Map(),
+    turnIndex: 0,
+    threadId: null,
+    lastEmittedTurnDiffHash: null,
   };
+}
+
+/**
+ * Stable hash for todo_list / turn-diff content dedup. Not cryptographic —
+ * small footprint, just needs to discriminate content changes.
+ */
+function hashContent(content: string): string {
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    hash = ((hash << 5) - hash + content.charCodeAt(i)) | 0;
+  }
+  return `${hash}:${content.length}`;
 }
 
 function getActiveTaskToolUseId(state: CodexParserState): string | null {
@@ -218,6 +257,8 @@ function transformMcpToolCall({
     response?: unknown;
     output?: unknown;
     error?: unknown;
+    stdout?: unknown;
+    stderr?: unknown;
   };
   switch (status) {
     case "in_progress":
@@ -256,10 +297,38 @@ function transformMcpToolCall({
           : itemData.error
             ? JSON.stringify(itemData.error, null, 2)
             : null;
+      // Preserve stdout/stderr from the MCP tool result. Some MCP servers
+      // surface command output via sibling `stdout`/`stderr` fields rather
+      // than folding them into `result`; without this we'd silently drop
+      // them from chat history.
+      const stdout =
+        typeof itemData.stdout === "string"
+          ? itemData.stdout
+          : itemData.stdout !== undefined
+            ? JSON.stringify(itemData.stdout)
+            : null;
+      const stderr =
+        typeof itemData.stderr === "string"
+          ? itemData.stderr
+          : itemData.stderr !== undefined
+            ? JSON.stringify(itemData.stderr)
+            : null;
       const isError = status === "failed" || errorPayload !== null;
-      const resultContent = errorPayload
-        ? `Error from MCP tool ${server}::${tool}: ${errorPayload}`
-        : serializedResult;
+      const sections: string[] = [];
+      if (errorPayload) {
+        sections.push(
+          `Error from MCP tool ${server}::${tool}: ${errorPayload}`,
+        );
+      } else {
+        sections.push(serializedResult);
+      }
+      if (stdout && stdout.length > 0) {
+        sections.push(`[stdout]\n${stdout}`);
+      }
+      if (stderr && stderr.length > 0) {
+        sections.push(`[stderr]\n${stderr}`);
+      }
+      const resultContent = sections.join("\n\n");
       messages.push({
         type: "user",
         message: {
@@ -293,11 +362,13 @@ function transformTodoListItem({
   eventType,
   runtime,
   parentToolUseId,
+  state,
 }: {
   codexMsg: CodexItemEvent;
   eventType: "item.started" | "item.updated" | "item.completed";
   runtime: IDaemonRuntime;
   parentToolUseId: string | null;
+  state: CodexParserState;
 }): ClaudeMessage[] {
   const items =
     (codexMsg.item as { items?: Array<{ text: string; completed: boolean }> })
@@ -397,10 +468,17 @@ function transformTodoListItem({
   }
 
   if (eventType === "item.updated") {
-    runtime.logger.debug("Ignoring in-progress todo_list update", {
+    // Emit on in-progress updates when content actually changed so the
+    // todo UI shows live progress. Dedupe by content hash so identical
+    // snapshots (Codex sometimes re-emits) don't produce duplicate rows.
+    return emitTodoUpdateIfChanged({
+      items,
+      formattedItems,
       itemId: codexMsg.item.id,
+      parentToolUseId,
+      state,
+      runtime,
     });
-    return [];
   }
 
   const _exhaustiveCheck: never = eventType;
@@ -408,6 +486,73 @@ function transformTodoListItem({
     type: _exhaustiveCheck,
   });
   return [];
+}
+
+function emitTodoUpdateIfChanged({
+  items,
+  formattedItems,
+  itemId,
+  parentToolUseId,
+  state,
+  runtime,
+}: {
+  items: Array<{ text: string; completed: boolean }>;
+  formattedItems: string;
+  itemId: string;
+  parentToolUseId: string | null;
+  state: CodexParserState;
+  runtime: IDaemonRuntime;
+}): ClaudeMessage[] {
+  const contentHash = hashContent(formattedItems);
+  const lastHash = state.lastEmittedTodoHashByItemId.get(itemId);
+  if (lastHash === contentHash) {
+    runtime.logger.debug("Deduped identical todo_list update", { itemId });
+    return [];
+  }
+  state.lastEmittedTodoHashByItemId.set(itemId, contentHash);
+  const toolUseId = `${itemId}-update`;
+  const todos = items.map((item, index) => ({
+    id: `${index + 1}`,
+    content: item.text,
+    status: (item.completed ? "completed" : "in_progress") as
+      | "completed"
+      | "pending"
+      | "in_progress",
+  }));
+  return [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            name: "TodoWrite",
+            input: { todos },
+            id: toolUseId,
+          },
+        ],
+      },
+      parent_tool_use_id: parentToolUseId,
+      session_id: "",
+    },
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content: `Updated todo list (in progress):\n${formattedItems}`,
+            is_error: false,
+          },
+        ],
+      },
+      parent_tool_use_id: parentToolUseId,
+      session_id: "",
+    },
+  ];
 }
 
 type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
@@ -730,6 +875,12 @@ export function parseCodexLine({
   switch (msgType) {
     case "thread.started": {
       parserState.activeTaskToolUseIds = [];
+      parserState.threadId =
+        (codexMsg as { thread_id?: string }).thread_id || null;
+      parserState.lastEmittedTextByItemId = new Map();
+      parserState.lastEmittedTodoHashByItemId = new Map();
+      parserState.lastEmittedTurnDiffHash = null;
+      parserState.turnIndex = 0;
       messages.push({
         type: "system",
         subtype: "init",
@@ -740,6 +891,35 @@ export function parseCodexLine({
       return messages;
     }
     case "turn.started": {
+      // Start of a new turn — bump turn index so turn-level synthetic
+      // events (codex-diff) get a fresh idempotency key, and reset the
+      // turn-scoped diff hash so the first diff of the new turn emits
+      // even if identical to the previous turn's final diff.
+      parserState.turnIndex += 1;
+      parserState.lastEmittedTurnDiffHash = null;
+      return messages;
+    }
+    case "turn.diff_updated": {
+      // Synthetic event emitted by codex-app-server for `turn/diff/updated`.
+      // We persist one `codex-diff` ClaudeMessage per turn (downstream
+      // consumers dedupe via idempotencyKey = `codex-diff:${threadId}:${turn}`).
+      const diff = (codexMsg as { diff?: string }).diff ?? "";
+      if (diff.length === 0) {
+        return messages;
+      }
+      const diffHash = hashContent(diff);
+      if (parserState.lastEmittedTurnDiffHash === diffHash) {
+        // Identical snapshot re-emitted — nothing new to persist.
+        return messages;
+      }
+      parserState.lastEmittedTurnDiffHash = diffHash;
+      const threadIdForKey = parserState.threadId ?? "unknown";
+      messages.push({
+        type: "codex-diff",
+        session_id: parserState.threadId,
+        diff,
+        idempotencyKey: `codex-diff:${threadIdForKey}:${parserState.turnIndex}`,
+      });
       return messages;
     }
     case "turn.completed": {
@@ -918,13 +1098,34 @@ export function parseCodexItem({
   // Handle different item types
   switch (itemType) {
     case "reasoning": {
-      // Only emit on item.completed — item.started/item.updated carry
-      // accumulated text that coalesceAssistantTextMessages concatenates,
-      // causing duplication. Other item types (web_search, mcp_tool_call)
-      // already guard on eventType.
-      if (eventType !== "item.completed") {
+      // Emit intermediate reasoning chunks so the thinking UI shows progress
+      // instead of appearing only at turn end. We dedupe via
+      // `lastEmittedTextByItemId` so we don't persist duplicate rows when
+      // Codex re-sends identical accumulated text (and we suppress the
+      // trailing `item.completed` if the text is unchanged from the last
+      // update we already emitted).
+      const currentText = item.text || "";
+      if (currentText.length === 0) {
         return messages;
       }
+      const lastEmitted = state.lastEmittedTextByItemId.get(item.id) ?? "";
+      if (eventType === "item.started") {
+        // item.started typically carries empty text; only emit if non-empty.
+        if (currentText === lastEmitted) {
+          return messages;
+        }
+      } else if (eventType === "item.updated") {
+        // Only emit when content strictly grew (Codex updates are cumulative).
+        if (currentText.length <= lastEmitted.length) {
+          return messages;
+        }
+      } else if (eventType === "item.completed") {
+        // Suppress duplicate emission if we already emitted the exact same text.
+        if (currentText === lastEmitted) {
+          return messages;
+        }
+      }
+      state.lastEmittedTextByItemId.set(item.id, currentText);
       messages.push({
         type: "assistant",
         message: {
@@ -932,7 +1133,7 @@ export function parseCodexItem({
           content: [
             {
               type: "thinking",
-              thinking: item.text || "",
+              thinking: currentText,
               signature: "codex-synthetic-signature",
             },
           ],
@@ -943,14 +1144,35 @@ export function parseCodexItem({
       return messages;
     }
     case "agent_message": {
-      if (eventType !== "item.completed") {
+      // Emit intermediate agent_message chunks so streaming text is
+      // preserved (the daemon also broadcasts these as deltas via
+      // `item/agentMessage/delta`; the parser-level emission covers
+      // replay, test harnesses, and any transport that skips delta
+      // routing). Dedup by last-emitted text per item id.
+      const currentText = item.text || "";
+      if (currentText.length === 0) {
         return messages;
       }
+      const lastEmitted = state.lastEmittedTextByItemId.get(item.id) ?? "";
+      if (eventType === "item.started") {
+        if (currentText === lastEmitted) {
+          return messages;
+        }
+      } else if (eventType === "item.updated") {
+        if (currentText.length <= lastEmitted.length) {
+          return messages;
+        }
+      } else if (eventType === "item.completed") {
+        if (currentText === lastEmitted) {
+          return messages;
+        }
+      }
+      state.lastEmittedTextByItemId.set(item.id, currentText);
       messages.push({
         type: "assistant",
         message: {
           role: "assistant",
-          content: [{ type: "text", text: item.text || "" }],
+          content: [{ type: "text", text: currentText }],
         },
         parent_tool_use_id: parentToolUseId,
         session_id: "",
@@ -1189,6 +1411,7 @@ export function parseCodexItem({
         eventType,
         runtime,
         parentToolUseId,
+        state,
       });
     }
     case "collab_tool_call": {
