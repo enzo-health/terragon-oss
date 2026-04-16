@@ -40,12 +40,21 @@ function getPartGroupType({
   partIdx,
   numParts,
   lastTextPartIdx,
+  isActiveTurn,
 }: {
   part: UIUserOrAgentPart;
   partIdx: number;
   numParts: number;
   lastTextPartIdx: number;
+  isActiveTurn: boolean;
 }): PartGroup["type"] {
+  // For the currently active turn (latest message + agent still working),
+  // never collapse intermediate tool/text/thinking parts. The user needs
+  // live visibility into what the agent is doing right now; history only
+  // becomes "finished" once the turn is superseded by a later message.
+  if (isActiveTurn) {
+    return part.type;
+  }
   const isLastPart = partIdx === numParts - 1;
   if (isLastPart) {
     return part.type;
@@ -80,14 +89,14 @@ function getPartGroupType({
  * them behind a single expander.
  *
  * Special cases:
+ * - For the currently active turn (latest message + agent still working),
+ *   nothing collapses: the user needs live visibility into in-flight work.
+ *   The "Finished working" disclosure only applies to historical activity
+ *   that has been superseded by a later message.
  * - The last part of a message always renders as its own group (never
  *   collapses), so the most recent content is always visible.
  * - Anything at or after the last text part also never collapses, so
  *   trailing tool calls following the final assistant text stay expanded.
- *
- * `isLatestMessage` and `isAgentWorking` are accepted for parity with the
- * call site but are reserved for future grouping rules; current logic does
- * not branch on them.
  */
 export function groupParts({
   parts,
@@ -100,6 +109,7 @@ export function groupParts({
 }): PartGroup[] {
   const groups: PartGroup[] = [];
   let currentGroup: PartGroup | null = null;
+  const isActiveTurn = isLatestMessage && isAgentWorking;
 
   // Find the index of the last text part in the message
   let lastTextPartIdx = -1;
@@ -121,6 +131,7 @@ export function groupParts({
       partIdx: i,
       numParts,
       lastTextPartIdx,
+      isActiveTurn,
     });
     if (currentGroup === null) {
       currentGroup = { type: partGroupType, parts: [part] };
