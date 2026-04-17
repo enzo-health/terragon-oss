@@ -6,6 +6,7 @@ import type {
   GithubInstallationProjectionInsert,
   GithubPrProjection,
   GithubPrProjectionInsert,
+  GithubPRStatus,
   GithubRepoProjection,
   GithubRepoProjectionInsert,
 } from "../db/types";
@@ -17,13 +18,20 @@ type GithubInstallationProjectionUpsertFields = Omit<
 
 type GithubRepoProjectionUpsertFields = Omit<
   GithubRepoProjectionInsert,
-  "id" | "repoId" | "createdAt" | "updatedAt"
+  | "id"
+  | "installationProjectionId"
+  | "installationId"
+  | "repoId"
+  | "createdAt"
+  | "updatedAt"
 >;
 
-type GithubPrProjectionUpsertFields = Omit<
+type GithubPrProjectionUpsertFields = Pick<
   GithubPrProjectionInsert,
-  "id" | "prNodeId" | "createdAt" | "updatedAt"
->;
+  "number" | "baseRef" | "headRef" | "headSha"
+> & {
+  status: GithubPRStatus;
+};
 
 export async function getGithubInstallationProjectionByInstallationId({
   db,
@@ -66,6 +74,27 @@ export async function upsertGithubInstallationProjection({
   return projection;
 }
 
+async function requireGithubInstallationProjection({
+  db,
+  installationId,
+}: {
+  db: DB;
+  installationId: number;
+}): Promise<GithubInstallationProjection> {
+  const projection = await getGithubInstallationProjectionByInstallationId({
+    db,
+    installationId,
+  });
+
+  if (!projection) {
+    throw new Error(
+      `GitHub installation projection not found for installation ${installationId}`,
+    );
+  }
+
+  return projection;
+}
+
 export async function getGithubRepoProjectionByRepoId({
   db,
   repoId,
@@ -82,22 +111,33 @@ export async function getGithubRepoProjectionByRepoId({
 
 export async function upsertGithubRepoProjection({
   db,
+  installationId,
   repoId,
   fields,
 }: {
   db: DB;
+  installationId: number;
   repoId: number;
   fields: GithubRepoProjectionUpsertFields;
 }): Promise<GithubRepoProjection> {
+  const installationProjection = await requireGithubInstallationProjection({
+    db,
+    installationId,
+  });
+
   const [projection] = await db
     .insert(schema.githubRepoProjection)
     .values({
+      installationId,
+      installationProjectionId: installationProjection.id,
       repoId,
       ...fields,
     })
     .onConflictDoUpdate({
       target: schema.githubRepoProjection.repoId,
       set: {
+        installationId,
+        installationProjectionId: installationProjection.id,
         ...fields,
         updatedAt: new Date(),
       },
@@ -105,6 +145,29 @@ export async function upsertGithubRepoProjection({
     .returning();
 
   return projection;
+}
+
+async function requireGithubRepoProjection({
+  db,
+  repoId,
+}: {
+  db: DB;
+  repoId: number;
+}): Promise<GithubRepoProjection> {
+  const projection = await getGithubRepoProjectionByRepoId({
+    db,
+    repoId,
+  });
+
+  if (!projection) {
+    throw new Error(`GitHub repo projection not found for repo ${repoId}`);
+  }
+
+  return projection;
+}
+
+function getGithubPrIsDraft(status: GithubPRStatus): boolean {
+  return status === "draft";
 }
 
 export async function getGithubPrProjectionByPrNodeId({
@@ -121,18 +184,18 @@ export async function getGithubPrProjectionByPrNodeId({
   return projection ?? null;
 }
 
-export async function getGithubPrProjectionByRepoProjectionIdAndNumber({
+export async function getGithubPrProjectionByRepoIdAndNumber({
   db,
-  repoProjectionId,
+  repoId,
   number,
 }: {
   db: DB;
-  repoProjectionId: string;
+  repoId: number;
   number: number;
 }): Promise<GithubPrProjection | null> {
   const projection = await db.query.githubPrProjection.findFirst({
     where: and(
-      eq(schema.githubPrProjection.repoProjectionId, repoProjectionId),
+      eq(schema.githubPrProjection.repoId, repoId),
       eq(schema.githubPrProjection.number, number),
     ),
   });
@@ -143,26 +206,61 @@ export async function getGithubPrProjectionByRepoProjectionIdAndNumber({
 export async function upsertGithubPrProjection({
   db,
   prNodeId,
+  repoId,
   fields,
 }: {
   db: DB;
   prNodeId: string;
+  repoId: number;
   fields: GithubPrProjectionUpsertFields;
 }): Promise<GithubPrProjection> {
+  const repoProjection = await requireGithubRepoProjection({
+    db,
+    repoId,
+  });
+  const isDraft = getGithubPrIsDraft(fields.status);
+
   const [projection] = await db
     .insert(schema.githubPrProjection)
     .values({
       prNodeId,
+      repoId,
+      repoProjectionId: repoProjection.id,
       ...fields,
+      isDraft,
     })
     .onConflictDoUpdate({
       target: schema.githubPrProjection.prNodeId,
       set: {
+        repoId,
+        repoProjectionId: repoProjection.id,
         ...fields,
+        isDraft,
         updatedAt: new Date(),
       },
+      setWhere: and(
+        eq(schema.githubPrProjection.repoId, repoId),
+        eq(schema.githubPrProjection.number, fields.number),
+      ),
     })
     .returning();
+
+  if (!projection) {
+    const existingProjection = await getGithubPrProjectionByPrNodeId({
+      db,
+      prNodeId,
+    });
+
+    if (!existingProjection) {
+      throw new Error(
+        `GitHub PR projection upsert returned no rows for ${prNodeId}`,
+      );
+    }
+
+    throw new Error(
+      `GitHub PR projection identity mismatch for ${prNodeId}: existing ${existingProjection.repoId}#${existingProjection.number}, received ${repoId}#${fields.number}`,
+    );
+  }
 
   return projection;
 }

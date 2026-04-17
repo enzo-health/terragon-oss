@@ -8,6 +8,8 @@ import {
   bigserial,
   index,
   uniqueIndex,
+  foreignKey,
+  check,
   AnyPgColumn,
   numeric,
   bigint,
@@ -559,6 +561,10 @@ export const githubInstallationProjection = pgTable(
     uniqueIndex("github_installation_projection_installation_id_unique").on(
       table.installationId,
     ),
+    uniqueIndex("github_installation_projection_id_installation_id_unique").on(
+      table.id,
+      table.installationId,
+    ),
   ],
 );
 
@@ -568,11 +574,8 @@ export const githubRepoProjection = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    installationProjectionId: text("installation_projection_id")
-      .notNull()
-      .references(() => githubInstallationProjection.id, {
-        onDelete: "cascade",
-      }),
+    installationProjectionId: text("installation_projection_id").notNull(),
+    installationId: bigint("installation_id", { mode: "number" }).notNull(),
     repoId: bigint("repo_id", { mode: "number" }).notNull(),
     repoNodeId: text("repo_node_id"),
     currentSlug: text("current_slug").notNull(),
@@ -589,10 +592,25 @@ export const githubRepoProjection = pgTable(
   },
   (table) => [
     uniqueIndex("github_repo_projection_repo_id_unique").on(table.repoId),
+    uniqueIndex("github_repo_projection_id_repo_id_unique").on(
+      table.id,
+      table.repoId,
+    ),
+    index("github_repo_projection_installation_id_index").on(
+      table.installationId,
+    ),
     index("github_repo_projection_installation_projection_id_index").on(
       table.installationProjectionId,
     ),
     index("github_repo_projection_current_slug_index").on(table.currentSlug),
+    foreignKey({
+      columns: [table.installationProjectionId, table.installationId],
+      foreignColumns: [
+        githubInstallationProjection.id,
+        githubInstallationProjection.installationId,
+      ],
+      name: "github_repo_projection_installation_projection_id_installation_id_fk",
+    }).onDelete("cascade"),
   ],
 );
 
@@ -602,11 +620,8 @@ export const githubPrProjection = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    repoProjectionId: text("repo_projection_id")
-      .notNull()
-      .references(() => githubRepoProjection.id, {
-        onDelete: "cascade",
-      }),
+    repoProjectionId: text("repo_projection_id").notNull(),
+    repoId: bigint("repo_id", { mode: "number" }).notNull(),
     prNodeId: text("pr_node_id").notNull(),
     number: integer("number").notNull(),
     status: text("status").$type<GithubPRStatus>().notNull().default("open"),
@@ -622,9 +637,21 @@ export const githubPrProjection = pgTable(
   },
   (table) => [
     uniqueIndex("github_pr_projection_pr_node_id_unique").on(table.prNodeId),
-    uniqueIndex("github_pr_projection_repo_projection_number_unique").on(
-      table.repoProjectionId,
+    uniqueIndex("github_pr_projection_repo_id_number_unique").on(
+      table.repoId,
       table.number,
+    ),
+    index("github_pr_projection_repo_projection_id_index").on(
+      table.repoProjectionId,
+    ),
+    foreignKey({
+      columns: [table.repoProjectionId, table.repoId],
+      foreignColumns: [githubRepoProjection.id, githubRepoProjection.repoId],
+      name: "github_pr_projection_repo_projection_id_repo_id_fk",
+    }).onDelete("cascade"),
+    check(
+      "github_pr_projection_status_is_draft_consistent",
+      sql`(("status" = 'draft' AND "is_draft" = true) OR ("status" <> 'draft' AND "is_draft" = false))`,
     ),
   ],
 );
