@@ -211,6 +211,13 @@
       "when": 1776643200000,
       "tag": "0029_drop_github_check_run",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1776729600000,
+      "tag": "0030_resurrection_cooldown",
+      "breakpoints": true
     }
   ]
 }

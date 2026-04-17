@@ -37,6 +37,7 @@ function head(state: WorkflowHead["state"]): WorkflowHead {
     maxFixAttempts: 6,
     maxInfraRetries: 10,
     narrationOnlyRetryCount: 0,
+    lastResurrectedAt: null,
     blockedReason: null,
     createdAt: now,
     updatedAt: now,

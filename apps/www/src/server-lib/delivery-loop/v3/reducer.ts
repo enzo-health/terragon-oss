@@ -14,6 +14,12 @@ import {
  */
 export const NO_PROGRESS_RETRY_THRESHOLD = 3;
 
+// Reason: A user with PR write access could trigger a wake-storm by posting
+// many comments in quick succession, each resetting the agent's retry budgets
+// and dispatching a new run (see PR #145 security review). Resurrection
+// events within this window of the last successful resurrection no-op.
+export const RESURRECTION_COOLDOWN_MS = 60_000;
+
 const DISPATCH_COHERENT_STATES = new Set([
   "planning",
   "implementing",
@@ -546,6 +552,25 @@ export function reduce(params: {
         effects: [],
         invariantActions: [],
       };
+    } else if (
+      head.lastResurrectedAt != null &&
+      now.getTime() - head.lastResurrectedAt.getTime() <
+        RESURRECTION_COOLDOWN_MS
+    ) {
+      // Cooldown active — a resurrection fired recently. Drop this event to
+      // prevent wake-storms triggered by rapid-fire PR comments / webhook
+      // bursts. Same no-op shape as the non-terminal branch above.
+      const secondsSince = Math.round(
+        (now.getTime() - head.lastResurrectedAt.getTime()) / 1000,
+      );
+      console.warn(
+        `[delivery-loop] workflow_resurrected cooldown skip workflowId=${head.workflowId} secondsSinceLast=${secondsSince} cooldownSeconds=${RESURRECTION_COOLDOWN_MS / 1000}`,
+      );
+      result = {
+        head,
+        effects: [],
+        invariantActions: [],
+      };
     } else {
       const next = withVersion(head, now);
       const resurrectedHead: WorkflowHead = {
@@ -556,6 +581,7 @@ export function reduce(params: {
         fixAttemptCount: 0,
         infraRetryCount: 0,
         narrationOnlyRetryCount: 0,
+        lastResurrectedAt: now,
         ...allocateImplementationLease({
           head,
           consumeCurrent: false,
