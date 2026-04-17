@@ -357,8 +357,6 @@ export async function checkpointThreadAndPush({
     }
   };
 
-  // Git integrity checks are now always enabled
-
   try {
     let commitAndPushError: unknown = null;
     const updates: Partial<ThreadInsert> = {};
@@ -372,7 +370,6 @@ export async function checkpointThreadAndPush({
           baseBranch: thread.repoBaseBranchName,
           generateCommitMessage: generateCommitMessage,
         },
-        enableIntegrityChecks: true,
       });
       if (errorMessage) {
         console.error("Failed at gitCommitAndPushBranch:", errorMessage);

@@ -1226,7 +1226,6 @@ describe(`sandbox ${providerName}`, () => {
               generateCommitMessage: async () => "Test commit message",
               repoRoot: testDir,
             },
-            enableIntegrityChecks: false,
           }),
         ).rejects.toThrow();
 
@@ -1278,7 +1277,6 @@ describe(`sandbox ${providerName}`, () => {
             generateCommitMessage: async () => "Test commit",
             repoRoot: testDir,
           },
-          enableIntegrityChecks: false,
         });
 
         // Should return branch name without error
@@ -1328,7 +1326,6 @@ describe(`sandbox ${providerName}`, () => {
             },
             repoRoot: testDir,
           },
-          enableIntegrityChecks: false,
         });
 
         // Should return branch name without error
@@ -1400,7 +1397,6 @@ describe(`sandbox ${providerName}`, () => {
             },
             repoRoot: testDir,
           },
-          enableIntegrityChecks: false,
         });
 
         // Should return branch name without error
@@ -1479,7 +1475,6 @@ describe(`sandbox ${providerName}`, () => {
             generateCommitMessage: async () => "Test commit",
             repoRoot: testDir,
           },
-          enableIntegrityChecks: false,
         });
 
         // Should return branch name without error
@@ -1531,7 +1526,6 @@ describe(`sandbox ${providerName}`, () => {
             repoRoot: testDir,
             generateCommitMessage: async () => "Test commit",
           },
-          enableIntegrityChecks: false,
         });
         expect(result).toEqual({ branchName: "feature-branch" });
 
