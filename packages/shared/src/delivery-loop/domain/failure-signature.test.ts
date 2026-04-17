@@ -543,17 +543,16 @@ describe("isInfrastructureFailure", () => {
     ).toBe(true);
   });
 
-  it("classifies GitHub 502 bad gateway as infra", () => {
+  it("classifies GitHub 502 via RPC-failed prefix as infra", () => {
     expect(
       isInfrastructureFailure({
         category: "git-checkpoint-push-failed",
-        message:
-          "remote: 502 Bad Gateway\nerror: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502",
+        message: "error: RPC failed; HTTP 502 curl 22",
       }),
     ).toBe(true);
   });
 
-  it("classifies GitHub 503 service unavailable as infra", () => {
+  it("classifies GitHub 503 via RPC-failed prefix as infra", () => {
     expect(
       isInfrastructureFailure({
         category: "git-checkpoint-push-failed",
@@ -562,11 +561,30 @@ describe("isInfrastructureFailure", () => {
     ).toBe(true);
   });
 
-  it("classifies GitHub 504 gateway timeout as infra", () => {
+  it("classifies GitHub 504 via RPC-failed prefix as infra", () => {
     expect(
       isInfrastructureFailure({
         category: "git-checkpoint-push-failed",
         message: "error: RPC failed; HTTP 504 gateway timeout",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies GitHub 500 via RPC-failed prefix as infra (documents 5xx prefix coverage)", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "error: RPC failed; HTTP 500 internal proxy error",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies curl-style 'returned error: 5xx' as infra (no RPC prefix)", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "fatal: unable to access 'https://github.com/foo/bar.git/': The requested URL returned error: 502",
       }),
     ).toBe(true);
   });

@@ -77,15 +77,17 @@ const INFRA_FAILURE_MESSAGE_MARKERS = [
   // These are surfaced by `git push` via `git-checkpoint-push-failed` and are
   // not agent-fixable — quietly retry on the infra lane instead of burning
   // fixAttemptCount budget on a problem the LLM cannot reason about.
+  //
+  // The HTTP 5xx bucket is matched via the two git/curl prefixes git emits:
+  // `error: RPC failed; HTTP 5xx …` and `returned error: 5xx` (from curl).
+  // The `5` suffix catches any 500-599 code without false-positiving on 4xx.
   "could not resolve host",
   "connection refused",
   "connection timed out",
   "connection reset",
   "temporary failure in name resolution",
-  "502 bad gateway",
-  "503 service unavailable",
-  "504 gateway timeout",
   "rpc failed; http 5",
+  "returned error: 5",
   "ssl_connect",
   "remote: shutting down",
 ] as const;
