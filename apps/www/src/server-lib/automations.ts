@@ -411,14 +411,13 @@ export async function runPullRequestAutomation({
     if (!runAutomationResult) {
       throw new Error("Failed to create thread");
     }
-    const { threadId, threadChatId } = runAutomationResult;
+    const { threadId } = runAutomationResult;
     if (checkRunId !== null) {
       await updateGitHubCheckRunForAutomation({
         userId,
         automationId,
         checkRunId,
         threadIdOrNull: threadId,
-        threadChatIdOrNull: threadChatId,
         status: "in_progress",
         summary: `Automation started: ${threadId}`,
       });
@@ -434,7 +433,6 @@ export async function runPullRequestAutomation({
         summary: `Error running automation`,
         conclusion: "failure",
         threadIdOrNull: null,
-        threadChatIdOrNull: null,
       });
     }
   }

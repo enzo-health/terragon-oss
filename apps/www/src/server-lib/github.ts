@@ -6,12 +6,7 @@ import {
   GithubCheckRunConclusion,
   Automation,
 } from "@terragon/shared/db/types";
-import {
-  getGithubCheckRunForThreadChat,
-  upsertGithubCheckRun,
-} from "@terragon/shared/model/github";
 import { getAutomation } from "@terragon/shared/model/automations";
-import { getThreadMinimal } from "@terragon/shared/model/threads";
 import { publicAppUrl } from "@terragon/env/next-public";
 
 type CreateCheckRunParams =
@@ -151,7 +146,6 @@ export async function updateGitHubCheckRunForAutomation({
   automationId,
   checkRunId,
   threadIdOrNull,
-  threadChatIdOrNull,
   status,
   summary,
   conclusion,
@@ -160,7 +154,6 @@ export async function updateGitHubCheckRunForAutomation({
   automationId: string;
   checkRunId: number;
   threadIdOrNull: string | null;
-  threadChatIdOrNull: string | null;
   status: GithubCheckRunStatus;
   conclusion?: GithubCheckRunConclusion;
   summary: string;
@@ -172,7 +165,6 @@ export async function updateGitHubCheckRunForAutomation({
       conclusion,
       summary,
       threadIdOrNull,
-      threadChatIdOrNull,
     },
   );
   const automation = await getAutomation({ db, userId, automationId });
@@ -190,86 +182,4 @@ export async function updateGitHubCheckRunForAutomation({
       threadIdOrNull,
     }),
   });
-  if (threadIdOrNull && threadChatIdOrNull) {
-    await upsertGithubCheckRun({
-      db,
-      threadId: threadIdOrNull,
-      threadChatId: threadChatIdOrNull,
-      checkRunId,
-      updates: {
-        status,
-        conclusion,
-      },
-    });
-  }
-}
-
-export async function maybeUpdateGitHubCheckRunForThreadChat({
-  userId,
-  threadId,
-  threadChatId,
-  summary,
-  status,
-  conclusion,
-}: {
-  userId: string;
-  threadId: string;
-  threadChatId: string;
-  status: GithubCheckRunStatus;
-  conclusion?: GithubCheckRunConclusion;
-  summary: string;
-}) {
-  const checkRun = await getGithubCheckRunForThreadChat({
-    db,
-    threadId,
-    threadChatId,
-  });
-  if (!checkRun || checkRun.status === "completed") {
-    return;
-  }
-  const thread = await getThreadMinimal({
-    db,
-    userId,
-    threadId,
-  });
-  if (!thread) {
-    return;
-  }
-  try {
-    console.log(
-      `Updating check run ${checkRun.checkRunId} for thread ${threadId}`,
-      { status, conclusion },
-    );
-    const [owner, repo] = parseRepoFullName(thread.githubRepoFullName);
-    const octokit = await getOctokitForApp({ owner, repo });
-    const { data: checkRunExisting } = await octokit.rest.checks.get({
-      owner,
-      repo,
-      check_run_id: checkRun.checkRunId,
-    });
-    await updateGitHubCheckRun({
-      repoFullName: thread.githubRepoFullName,
-      checkRunId: checkRun.checkRunId,
-      payload: {
-        status,
-        conclusion,
-        output: {
-          title: checkRunExisting.output.title ?? undefined,
-          summary,
-        },
-      },
-    });
-    await upsertGithubCheckRun({
-      db,
-      threadId,
-      threadChatId,
-      checkRunId: checkRun.checkRunId,
-      updates: {
-        status,
-        conclusion,
-      },
-    });
-  } catch (error) {
-    console.error(`Failed to update check run ${checkRun.checkRunId}:`, error);
-  }
 }

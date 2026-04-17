@@ -546,8 +546,6 @@ export type LinearMentionThreadInsert = Omit<ThreadInsert, "sourceMetadata"> & {
 
 export type GitHubPR = typeof schema.githubPR.$inferSelect;
 export type GitHubPRInsert = typeof schema.githubPR.$inferInsert;
-export type GitHubCheckRun = typeof schema.githubCheckRun.$inferSelect;
-export type GitHubCheckRunInsert = typeof schema.githubCheckRun.$inferInsert;
 
 export type FeatureFlagDB = typeof schema.featureFlags.$inferSelect;
 export type FeatureFlag = FeatureFlagDB & {

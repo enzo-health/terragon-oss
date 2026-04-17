@@ -24,8 +24,6 @@ import {
 } from "@terragon/agent/types";
 import {
   GithubPRStatus,
-  GithubCheckRunConclusion,
-  GithubCheckRunStatus,
   ThreadStatus,
   GitDiffStats,
   ThreadErrorMessage,
@@ -560,38 +558,6 @@ export const githubPR = pgTable(
   },
   (table) => [
     uniqueIndex("repo_number_unique").on(table.repoFullName, table.number),
-  ],
-);
-
-export const githubCheckRun = pgTable(
-  "github_check_run",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    threadId: text("thread_id").references(() => thread.id, {
-      onDelete: "set null",
-    }),
-    threadChatId: text("thread_chat_id").references(() => threadChat.id, {
-      onDelete: "set null",
-    }),
-    checkRunId: bigint("check_run_id", { mode: "number" }).notNull(),
-    status: text("status")
-      .$type<GithubCheckRunStatus>()
-      .notNull()
-      .default("queued"),
-    conclusion: text("conclusion").$type<GithubCheckRunConclusion>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at")
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("thread_id_thread_chat_id_unique").on(
-      table.threadId,
-      table.threadChatId,
-    ),
   ],
 );
 
