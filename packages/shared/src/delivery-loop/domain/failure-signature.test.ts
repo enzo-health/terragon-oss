@@ -499,6 +499,152 @@ describe("isInfrastructureFailure", () => {
       }),
     ).toBe(true);
   });
+
+  // ---------------------------------------------------------------------------
+  // Transient git transport failures (git-checkpoint-push-failed → infra lane)
+  // ---------------------------------------------------------------------------
+
+  it("classifies git DNS resolution failure as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "fatal: unable to access 'https://github.com/foo/bar.git/': Could not resolve host: github.com",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies git connection refused as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "fatal: unable to access 'https://github.com/foo/bar.git/': Failed to connect to github.com port 443: Connection refused",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies git connection timed out as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "fatal: unable to access 'https://github.com/foo/bar.git/': Connection timed out after 30000 ms",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies git connection reset as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "OpenSSL SSL_connect: Connection reset by peer in connection",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies GitHub 502 via RPC-failed prefix as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "error: RPC failed; HTTP 502 curl 22",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies GitHub 503 via RPC-failed prefix as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "error: RPC failed; HTTP 503 service unavailable",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies GitHub 504 via RPC-failed prefix as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "error: RPC failed; HTTP 504 gateway timeout",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies GitHub 500 via RPC-failed prefix as infra (documents 5xx prefix coverage)", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "error: RPC failed; HTTP 500 internal proxy error",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies curl-style 'returned error: 5xx' as infra (no RPC prefix)", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "fatal: unable to access 'https://github.com/foo/bar.git/': The requested URL returned error: 502",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies TLS handshake failure as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies GitHub maintenance shutdown as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "remote: shutting down, please retry",
+      }),
+    ).toBe(true);
+  });
+
+  it("classifies DNS temporary failure as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "fatal: unable to access: Temporary failure in name resolution",
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT classify merge conflict push failure as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "error: failed to push some refs to 'https://github.com/foo/bar.git'\nhint: Updates were rejected because the tip of your current branch is behind",
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT classify protected-branch push rejection as infra", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message:
+          "remote: error: GH006: Protected branch update failed for refs/heads/main",
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT match generic 4xx HTTP errors", () => {
+    expect(
+      isInfrastructureFailure({
+        category: "git-checkpoint-push-failed",
+        message: "error: RPC failed; HTTP 403 forbidden",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("classifyFailureLane", () => {
