@@ -30,6 +30,7 @@ export function makeContractHead(state: ContractWorkflowState): WorkflowHead {
     maxFixAttempts: 6,
     maxInfraRetries: 10,
     narrationOnlyRetryCount: 0,
+    lastResurrectedAt: null,
     blockedReason: null,
     createdAt: CONTRACT_NOW,
     updatedAt: CONTRACT_NOW,

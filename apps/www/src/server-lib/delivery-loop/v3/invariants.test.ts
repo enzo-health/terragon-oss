@@ -52,6 +52,7 @@ function makeHead(overrides: Partial<WorkflowHead> = {}): WorkflowHead {
     maxFixAttempts: 5,
     maxInfraRetries: 5,
     narrationOnlyRetryCount: 0,
+    lastResurrectedAt: null,
     createdAt: now,
     updatedAt: now,
     lastActivityAt: now,

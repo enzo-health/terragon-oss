@@ -219,6 +219,14 @@ export type WorkflowHead = {
    * awaiting_manual_fix instead of scheduling another retry.
    */
   narrationOnlyRetryCount: number;
+  /**
+   * Timestamp of the most recent workflow_resurrected transition. Used by the
+   * reducer to enforce a cooldown so a user with PR write access cannot
+   * trigger a wake-storm of back-to-back dispatches by posting many comments
+   * in quick succession. Null means the workflow has never been resurrected
+   * (first resurrection always fires).
+   */
+  lastResurrectedAt: Date | null;
   blockedReason: string | null;
   createdAt: Date;
   updatedAt: Date;

@@ -2058,6 +2058,14 @@ export const deliveryWorkflowHeadV3 = pgTable(
     narrationOnlyRetryCount: integer("narration_only_retry_count")
       .notNull()
       .default(0),
+    /**
+     * Timestamp of the last successful workflow_resurrected event. Used by the
+     * reducer to enforce a per-workflow cooldown so a user with PR write
+     * access cannot trigger a wake-storm by posting many comments in quick
+     * succession. Null means "never resurrected" — first resurrection always
+     * fires.
+     */
+    lastResurrectedAt: timestamp("last_resurrected_at", { mode: "date" }),
     blockedReason: text("blocked_reason"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" })
