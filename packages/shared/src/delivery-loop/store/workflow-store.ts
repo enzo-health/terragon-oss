@@ -2,7 +2,10 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
-const TERMINAL_KINDS = ["done", "stopped", "terminated"] as const;
+// Exported for handlers that need to split matched workflows into active and
+// terminal buckets without duplicating the list. Keep in sync with the
+// reducer's isTerminalState.
+export const TERMINAL_KINDS = ["done", "stopped", "terminated"] as const;
 
 export async function getWorkflow(params: {
   db: Pick<DB, "query">;

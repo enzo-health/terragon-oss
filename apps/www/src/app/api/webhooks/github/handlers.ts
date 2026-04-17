@@ -22,7 +22,10 @@ import {
   PullRequestTriggerConfig,
   IssueTriggerConfig,
 } from "@terragon/shared/automations";
-import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
+import {
+  getActiveWorkflowForGithubPR,
+  TERMINAL_KINDS,
+} from "@terragon/shared/delivery-loop/store/workflow-store";
 import { and, eq, isNotNull, notInArray } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import {
@@ -118,11 +121,11 @@ function getUniqueUserIdsFromActiveLoops(
   return routeUserIds;
 }
 
-// Terminal-state kinds kept in sync with workflow-store TERMINAL_KINDS.
-// When a webhook matches a terminal workflow, handlers emit a
-// `workflow_resurrected` event so the agent can wake and triage rather than
-// silently dropping the signal.
-const TERMINAL_WORKFLOW_KINDS = new Set(["done", "stopped", "terminated"]);
+// Single source of truth for which workflow kinds count as terminal lives in
+// `workflow-store.ts`. When a webhook matches a terminal workflow, handlers
+// emit a `workflow_resurrected` event so the agent can wake and triage rather
+// than silently dropping the signal.
+const TERMINAL_WORKFLOW_KINDS: ReadonlySet<string> = new Set(TERMINAL_KINDS);
 
 function isTerminalWorkflowKind(kind: string): boolean {
   return TERMINAL_WORKFLOW_KINDS.has(kind);
@@ -576,7 +579,9 @@ export async function handlePullRequestStatusChange(
 
     // Resurrect terminal workflows on reopen. A user reopened a PR that was
     // previously done / stopped / terminated — bring the thread back so the
-    // agent can pick up whatever conversation prompted the reopen.
+    // agent can pick up whatever conversation prompted the reopen. Include
+    // the current head SHA in the scope so a reopen-close-reopen sequence
+    // doesn't collide on idempotency with the first reopen.
     if (event.action === "reopened") {
       const matched = await getActiveWorkflowForGithubPR({
         db,
@@ -590,7 +595,7 @@ export async function handlePullRequestStatusChange(
         deliveryId,
         cause: "pr_reopened",
         reason: `PR #${prNumber} reopened`,
-        scopeSuffix: `${repoName}:${prNumber}`,
+        scopeSuffix: `${repoName}:${prNumber}:${event.pull_request.head?.sha ?? "unknown-sha"}`,
       });
     }
 
@@ -1081,17 +1086,24 @@ export async function handlePullRequestReviewEvent(
       });
     }
     // Terminal workflows can't accept gate_review_* events (the reducer drops
-    // them on terminal states). Resurrect instead — the agent will pick up the
-    // review body via the follow-up queue below and triage accordingly.
-    await emitWorkflowResurrectedForTerminals({
-      terminalWorkflows,
-      deliveryId,
-      cause: "pr_review",
-      reason:
-        reviewBody?.trim() ||
-        `Review ${normalizedReviewState} on PR #${prNumber}`,
-      scopeSuffix: `${repoFullName}:${prNumber}:${event.review.id}`,
-    });
+    // them on terminal states). Resurrect only when the review is actually
+    // actionable: changes_requested, or any review with a non-empty body.
+    // An "approved" review with no body is just a thumbs-up on a shipped PR —
+    // no reason to wake the agent.
+    const reviewIsActionable =
+      normalizedReviewState === "changes_requested" ||
+      (reviewBody != null && reviewBody.trim().length > 0);
+    if (reviewIsActionable) {
+      await emitWorkflowResurrectedForTerminals({
+        terminalWorkflows,
+        deliveryId,
+        cause: "pr_review",
+        reason:
+          reviewBody?.trim() ||
+          `Review ${normalizedReviewState} on PR #${prNumber}`,
+        scopeSuffix: `${repoFullName}:${prNumber}:${event.review.id}`,
+      });
+    }
 
     const enrolledLoopUserIds =
       getUniqueUserIdsFromActiveLoops(matchedWorkflows);
