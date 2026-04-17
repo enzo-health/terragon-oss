@@ -500,6 +500,19 @@ describe("isInfrastructureFailure", () => {
     ).toBe(true);
   });
 
+  it("classifies codex WS connection-closed error with full diagnostics suffix as infra", () => {
+    // Guards against regressions of the de-duplication fix in daemon.ts:
+    // the message must continue to match the infra-lane marker even when
+    // the full multi-field diagnostics block is present.
+    expect(
+      isInfrastructureFailure({
+        category: "effect_failure",
+        message:
+          "codex app-server connection closed unexpectedly during turn (lastRequestMethod=turn/start, lastExitCode=null, lastExitSignal=null, lastExitSource=null, lastStderrLine=codex app-server (WebSockets)\n  listening on: ws://127.0.0.1:38909, lastProcessError=null)",
+      }),
+    ).toBe(true);
+  });
+
   // ---------------------------------------------------------------------------
   // Transient git transport failures (git-checkpoint-push-failed → infra lane)
   // ---------------------------------------------------------------------------

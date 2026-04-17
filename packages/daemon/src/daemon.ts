@@ -1986,6 +1986,12 @@ export class TerragonDaemon {
                 manager.getDiagnostics(),
               );
               if (error instanceof Error) {
+                // Avoid double-appending diagnostics when the error was
+                // raised by a site that already formatted them (e.g. the
+                // process-health interval below).
+                if (error.message.includes("lastRequestMethod=")) {
+                  return error.message;
+                }
                 return `${error.message} (${diagnostics})`;
               }
               return `Codex app-server error (${diagnostics})`;
