@@ -133,6 +133,11 @@ export const ALL_CANONICAL_EVENTS: LoopEvent[] = [
   { type: "resume_requested" },
   { type: "stop_requested" },
   { type: "pr_closed", merged: false },
+  {
+    type: "workflow_resurrected",
+    reason: "test",
+    cause: "pr_comment",
+  },
 ];
 
 export type TransitionExpectation = {
@@ -158,6 +163,19 @@ function makeNoopTransitionRow(): TransitionRow {
     };
   }
   return row;
+}
+
+// Terminal states are sinks for every event EXCEPT workflow_resurrected,
+// which transitions them back to implementing so the agent can triage a new
+// GitHub event on the already-shipped PR.
+function makeTerminalTransitionRow(): TransitionRow {
+  return {
+    ...makeNoopTransitionRow(),
+    workflow_resurrected: {
+      target: "implementing",
+      effects: ["dispatch_implementing", "publish_status"],
+    },
+  };
 }
 
 export const EXPECTED_TRANSITIONS: TransitionMatrix = {
@@ -197,6 +215,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     resume_requested: { target: "noop", effects: [] },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   implementing: {
     bootstrap: { target: "noop", effects: [] },
@@ -231,6 +250,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     resume_requested: { target: "noop", effects: [] },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   gating_review: {
     bootstrap: { target: "noop", effects: [] },
@@ -262,6 +282,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     resume_requested: { target: "noop", effects: [] },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   gating_ci: {
     bootstrap: { target: "noop", effects: [] },
@@ -293,6 +314,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     resume_requested: { target: "noop", effects: [] },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   awaiting_pr_creation: {
     bootstrap: { target: "noop", effects: [] },
@@ -321,6 +343,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     resume_requested: { target: "noop", effects: [] },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   awaiting_pr_lifecycle: {
     bootstrap: { target: "noop", effects: [] },
@@ -343,6 +366,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     resume_requested: { target: "noop", effects: [] },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   awaiting_manual_fix: {
     bootstrap: { target: "noop", effects: [] },
@@ -368,6 +392,7 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
   awaiting_operator_action: {
     bootstrap: { target: "noop", effects: [] },
@@ -393,10 +418,11 @@ export const EXPECTED_TRANSITIONS: TransitionMatrix = {
     },
     stop_requested: { target: "stopped", effects: ["publish_status"] },
     pr_closed: { target: "terminated", effects: ["publish_status"] },
+    workflow_resurrected: { target: "noop", effects: [] },
   },
-  done: makeNoopTransitionRow(),
-  stopped: makeNoopTransitionRow(),
-  terminated: makeNoopTransitionRow(),
+  done: makeTerminalTransitionRow(),
+  stopped: makeTerminalTransitionRow(),
+  terminated: makeTerminalTransitionRow(),
 };
 
 export type BranchTransitionCase = {

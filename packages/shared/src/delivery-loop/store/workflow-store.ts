@@ -2,7 +2,10 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import type { DB } from "../../db";
 import * as schema from "../../db/schema";
 
-const TERMINAL_KINDS = ["done", "stopped", "terminated"] as const;
+// Exported for handlers that need to split matched workflows into active and
+// terminal buckets without duplicating the list. Keep in sync with the
+// reducer's isTerminalState.
+export const TERMINAL_KINDS = ["done", "stopped", "terminated"] as const;
 
 export async function getWorkflow(params: {
   db: Pick<DB, "query">;
@@ -75,13 +78,23 @@ export async function getActiveWorkflowForGithubPR(params: {
   db: Pick<DB, "query">;
   repoFullName: string;
   prNumber: number;
+  // When true, include workflows whose kind is in TERMINAL_KINDS (done /
+  // stopped / terminated). Used by webhook handlers that want to resurrect a
+  // finished thread when a new event lands on its PR.
+  includeTerminal?: boolean;
 }) {
+  const filter = params.includeTerminal
+    ? and(
+        eq(schema.deliveryWorkflow.repoFullName, params.repoFullName),
+        eq(schema.deliveryWorkflow.prNumber, params.prNumber),
+      )
+    : and(
+        eq(schema.deliveryWorkflow.repoFullName, params.repoFullName),
+        eq(schema.deliveryWorkflow.prNumber, params.prNumber),
+        notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
+      );
   return params.db.query.deliveryWorkflow.findMany({
-    where: and(
-      eq(schema.deliveryWorkflow.repoFullName, params.repoFullName),
-      eq(schema.deliveryWorkflow.prNumber, params.prNumber),
-      notInArray(schema.deliveryWorkflow.kind, [...TERMINAL_KINDS]),
-    ),
+    where: filter,
   });
 }
 

@@ -91,7 +91,22 @@ export type LoopEvent =
     }
   | { type: "resume_requested" }
   | { type: "stop_requested" }
-  | { type: "pr_closed"; merged: boolean };
+  | { type: "pr_closed"; merged: boolean }
+  | {
+      // Wake a thread whose workflow is in a terminal state so the agent can
+      // triage a new GitHub event (review comment, CI failure, push, etc.) on
+      // the already-shipped PR. Emitted by the GitHub webhook handlers when
+      // the matched workflow is already done / stopped / terminated.
+      type: "workflow_resurrected";
+      reason: string;
+      cause:
+        | "check_failure"
+        | "review_comment"
+        | "pr_comment"
+        | "pr_review"
+        | "pr_reopened"
+        | "pr_synchronize";
+    };
 
 export type EffectKind = DeliveryEffectKindV3;
 

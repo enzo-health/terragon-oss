@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
     },
   );
   webhooks.on("issue_comment.created", async ({ payload }) => {
-    await handleIssueCommentEvent(payload);
+    await handleIssueCommentEvent(payload, requestId);
   });
   webhooks.on("pull_request_review.submitted", async ({ payload }) => {
     await handlePullRequestReviewEvent(payload, requestId);
@@ -139,6 +139,31 @@ export async function POST(request: NextRequest) {
         { success: false, error: "Missing GitHub delivery ID" },
         { status: 400 },
       );
+    }
+
+    // Drop webhooks triggered by Terragon's own GitHub App bot. Without this,
+    // our own pushes / PR comments / synchronize events would wake the agent
+    // in an infinite loop. Third-party bots (dependabot, renovate) still go
+    // through — only our own app login is hard-dropped.
+    const ownBotLogin = `${env.NEXT_PUBLIC_GITHUB_APP_NAME}[bot]`.toLowerCase();
+    try {
+      const parsedPayload = JSON.parse(body) as {
+        sender?: { login?: string | null } | null;
+      };
+      const senderLogin = parsedPayload.sender?.login?.toLowerCase();
+      if (senderLogin && senderLogin === ownBotLogin) {
+        console.log("[github webhook] skipping webhook from own bot", {
+          deliveryId: requestId,
+          eventType,
+          senderLogin,
+        });
+        return NextResponse.json(
+          { success: true, skipped: "own-bot" },
+          { status: 200 },
+        );
+      }
+    } catch {
+      // Malformed payload — let verify/receive below surface the real error.
     }
 
     const claimantToken = `github-webhook:${randomUUID()}`;
