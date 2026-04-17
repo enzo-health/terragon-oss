@@ -73,6 +73,21 @@ const INFRA_FAILURE_MESSAGE_MARKERS = [
   "codex app-server exited unexpectedly",
   "connection closed unexpectedly",
   "ws connect timeout",
+  // Transient git transport failures (network / DNS / GitHub 5xx / TLS flakes).
+  // These are surfaced by `git push` via `git-checkpoint-push-failed` and are
+  // not agent-fixable — quietly retry on the infra lane instead of burning
+  // fixAttemptCount budget on a problem the LLM cannot reason about.
+  "could not resolve host",
+  "connection refused",
+  "connection timed out",
+  "connection reset",
+  "temporary failure in name resolution",
+  "502 bad gateway",
+  "503 service unavailable",
+  "504 gateway timeout",
+  "rpc failed; http 5",
+  "ssl_connect",
+  "remote: shutting down",
 ] as const;
 
 const TURN_INPUT_TOO_LARGE_PATTERNS = [
