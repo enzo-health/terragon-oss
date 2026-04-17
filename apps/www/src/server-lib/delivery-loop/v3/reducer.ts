@@ -536,7 +536,48 @@ export function reduce(params: {
   const event = params.event;
 
   let result: ReduceResult;
-  if (isTerminalState(head.state)) {
+  if (event.type === "workflow_resurrected") {
+    // Resurrection fires only on terminal states. On a non-terminal workflow
+    // it's a no-op — the in-flight run already has its own retry budgets and
+    // we don't want a racing webhook to clobber them mid-flight.
+    if (!isTerminalState(head.state)) {
+      result = {
+        head,
+        effects: [],
+        invariantActions: [],
+      };
+    } else {
+      const next = withVersion(head, now);
+      const resurrectedHead: WorkflowHead = {
+        ...next,
+        state: "implementing",
+        activeGate: null,
+        blockedReason: null,
+        fixAttemptCount: 0,
+        infraRetryCount: 0,
+        narrationOnlyRetryCount: 0,
+        ...allocateImplementationLease({
+          head,
+          consumeCurrent: false,
+        }),
+      };
+      result = {
+        head: resurrectedHead,
+        effects: [
+          dispatchImplementingEffect(
+            resurrectedHead,
+            now,
+            "agent",
+            resurrectedHead.infraRetryCount,
+            undefined,
+            `workflow_resurrected:${event.cause}`,
+          ),
+          publishStatusEffect(resurrectedHead, now),
+        ],
+        invariantActions: [],
+      };
+    }
+  } else if (isTerminalState(head.state)) {
     result = {
       head,
       effects: [],

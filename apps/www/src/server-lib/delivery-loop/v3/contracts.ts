@@ -201,6 +201,12 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
         type: event.type,
         merged: event.merged,
       };
+    case "workflow_resurrected":
+      return {
+        type: event.type,
+        reason: event.reason,
+        cause: event.cause,
+      };
   }
 }
 
@@ -495,6 +501,31 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         type: "pr_closed",
         merged: payload.merged,
       };
+    case "workflow_resurrected": {
+      if (typeof payload.reason !== "string") {
+        return null;
+      }
+      const allowedCauses = [
+        "check_failure",
+        "review_comment",
+        "pr_comment",
+        "pr_review",
+        "pr_reopened",
+        "pr_synchronize",
+      ] as const;
+      type Cause = (typeof allowedCauses)[number];
+      if (
+        typeof payload.cause !== "string" ||
+        !allowedCauses.includes(payload.cause as Cause)
+      ) {
+        return null;
+      }
+      return {
+        type: "workflow_resurrected",
+        reason: payload.reason,
+        cause: payload.cause as Cause,
+      };
+    }
     default:
       return null;
   }

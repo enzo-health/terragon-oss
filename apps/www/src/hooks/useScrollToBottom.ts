@@ -140,7 +140,7 @@ export function useScrollToBottom({
       if (endRef.current) {
         endRef.current.scrollIntoView({
           behavior,
-          block: "start",
+          block: "end",
         });
       }
     },

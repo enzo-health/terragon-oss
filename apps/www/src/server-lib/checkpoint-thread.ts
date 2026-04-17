@@ -14,7 +14,6 @@ import { getAutomation } from "@terragon/shared/model/automations";
 import { PullRequestTriggerConfig } from "@terragon/shared/automations";
 import { checkpointThreadAndPush } from "./checkpoint-thread-internal";
 import { maybeSaveClaudeSessionToR2 } from "./claude-session";
-import { maybeUpdateGitHubCheckRunForThreadChat } from "./github";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -129,22 +128,6 @@ export async function checkpointThread({
         });
       }
       await maybeAutoArchiveThread({ userId, threadId, threadChatId });
-      try {
-        await maybeUpdateGitHubCheckRunForThreadChat({
-          userId,
-          threadId,
-          threadChatId,
-          status: "completed",
-          conclusion: "success",
-          summary: `Task completed: ${threadId}`,
-        });
-      } catch (e) {
-        console.error("Post-checkpoint GitHub check run update failed", {
-          threadId,
-          threadChatId,
-          error: e,
-        });
-      }
       try {
         await maybeProcessFollowUpQueue({
           threadId,

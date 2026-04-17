@@ -2278,4 +2278,67 @@ describe("GitHub webhook route", () => {
       expect(data.error).toBe("Internal server error");
     });
   });
+
+  describe("bot-author loop guard", () => {
+    it("drops webhooks whose sender.login matches the Terragon app bot", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const ownBotLogin = `${env.NEXT_PUBLIC_GITHUB_APP_NAME}[bot]`;
+      const body = {
+        ...createPullRequestBody({
+          action: "synchronize",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+        }),
+        sender: { login: ownBotLogin, id: 999, type: "Bot" },
+      };
+      const request = await createMockRequest(body);
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.skipped).toBe("own-bot");
+      expect(updateGitHubPR).not.toHaveBeenCalled();
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+    });
+
+    it("accepts webhooks from third-party bots (dependabot)", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const body = {
+        ...createPullRequestBody({
+          action: "opened",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+        }),
+        sender: { login: "dependabot[bot]", id: 49699333, type: "Bot" },
+      };
+      const request = await createMockRequest(body);
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.claimOutcome).toBe("claimed_new");
+      expect(data.skipped).toBeUndefined();
+    });
+
+    it("accepts webhooks with case-mismatched own-bot login", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const ownBotLoginUpper =
+        `${env.NEXT_PUBLIC_GITHUB_APP_NAME}[bot]`.toUpperCase();
+      const body = {
+        ...createPullRequestBody({
+          action: "closed",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+        }),
+        sender: { login: ownBotLoginUpper, id: 999, type: "Bot" },
+      };
+      const request = await createMockRequest(body);
+      const response = await POST(request);
+      const data = await response.json();
+
+      // Case-insensitive match: should still be dropped.
+      expect(response.status).toBe(200);
+      expect(data.skipped).toBe("own-bot");
+    });
+  });
 });

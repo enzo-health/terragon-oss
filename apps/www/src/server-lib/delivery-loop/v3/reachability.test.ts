@@ -58,15 +58,76 @@ describe("BFS reachability", () => {
 
 describe("terminal state absorption", () => {
   for (const state of ["done", "stopped", "terminated"] as const) {
-    it(`${state} absorbs all events`, () => {
+    it(`${state} absorbs all events except workflow_resurrected`, () => {
       for (const event of ALL_CANONICAL_EVENTS) {
         const result = reduce({
           head: makeContractHead(state),
           event,
           now: CONTRACT_NOW,
         });
-        expect(result.head.state).toBe(state);
+        // workflow_resurrected is the one intentional escape hatch — it
+        // takes terminal workflows back to implementing so the agent can
+        // triage a new GitHub event on the shipped PR.
+        if (event.type === "workflow_resurrected") {
+          expect(result.head.state).toBe("implementing");
+        } else {
+          expect(result.head.state).toBe(state);
+        }
       }
+    });
+  }
+
+  for (const state of ["done", "stopped", "terminated"] as const) {
+    it(`${state} resurrects to implementing with reset retry budgets`, () => {
+      const head = makeContractHead(state);
+      const result = reduce({
+        head: { ...head, fixAttemptCount: 5, infraRetryCount: 3 },
+        event: {
+          type: "workflow_resurrected",
+          reason: "test",
+          cause: "check_failure",
+        },
+        now: CONTRACT_NOW,
+      });
+      expect(result.head.state).toBe("implementing");
+      expect(result.head.fixAttemptCount).toBe(0);
+      expect(result.head.infraRetryCount).toBe(0);
+      expect(result.head.narrationOnlyRetryCount).toBe(0);
+      expect(result.head.blockedReason).toBeNull();
+      expect(result.head.activeGate).toBeNull();
+      expect(result.effects.map((e) => e.kind)).toContain(
+        "dispatch_implementing",
+      );
+      expect(result.effects.map((e) => e.kind)).toContain("publish_status");
+    });
+  }
+});
+
+describe("workflow_resurrected on non-terminal states", () => {
+  for (const state of [
+    "planning",
+    "implementing",
+    "gating_review",
+    "gating_ci",
+    "awaiting_pr_creation",
+    "awaiting_pr_lifecycle",
+    "awaiting_manual_fix",
+    "awaiting_operator_action",
+  ] as const) {
+    it(`${state} ignores workflow_resurrected (no-op)`, () => {
+      const head = makeContractHead(state);
+      const result = reduce({
+        head,
+        event: {
+          type: "workflow_resurrected",
+          reason: "test",
+          cause: "pr_comment",
+        },
+        now: CONTRACT_NOW,
+      });
+      expect(result.head.state).toBe(state);
+      expect(result.head.version).toBe(head.version);
+      expect(result.effects).toEqual([]);
     });
   }
 });
