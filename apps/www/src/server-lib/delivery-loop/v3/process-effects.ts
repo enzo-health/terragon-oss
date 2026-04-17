@@ -721,11 +721,28 @@ async function processImplementingDispatchEffect(params: {
   }
 
   const ackDeadlineAt = new Date(params.now.getTime() + DEFAULT_ACK_TIMEOUT_MS);
+  // Retry lane is derived from the effect's executionClass, which the reducer
+  // sets deterministically: `implementation_runtime_fallback` is only emitted
+  // when `infraRetryCount > 0` (see reducer.ts `planImplementingDispatchEffect`).
+  // This lets operators distinguish silent infra retries (e.g. transient git
+  // push failures) from agent-lane fix retries (LLM turn consumed) in logs.
+  // TODO(#144 follow-up): plumb failure category through the effect payload so
+  // we can log it here without a second DB read.
+  const lane: "agent" | "infra" =
+    params.executionClass === "implementation_runtime_fallback"
+      ? "infra"
+      : "agent";
+  const headAtDispatch = await getWorkflowHead({ db: params.db, workflowId });
   console.log("[delivery-loop] dispatch_implementing effect complete", {
     workflowId,
     runId: launchResult.context.runId,
     ackDeadlineAt: ackDeadlineAt.toISOString(),
     isRetry: params.retryReason != null,
+    lane,
+    executionClass: params.executionClass,
+    retryReason: params.retryReason ?? null,
+    fixAttemptCount: headAtDispatch?.fixAttemptCount ?? null,
+    infraRetryCount: headAtDispatch?.infraRetryCount ?? null,
   });
 
   return {
