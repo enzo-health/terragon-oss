@@ -218,6 +218,13 @@
       "when": 1776729600000,
       "tag": "0030_resurrection_cooldown",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1776816000000,
+      "tag": "0031_github_projection_tables",
+      "breakpoints": true
     }
   ]
 }

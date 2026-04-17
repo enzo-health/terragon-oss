@@ -23,6 +23,7 @@ import {
   AgentModelPreferences,
 } from "@terragon/agent/types";
 import {
+  GithubInstallationPermissions,
   GithubPRStatus,
   ThreadStatus,
   GitDiffStats,
@@ -530,6 +531,102 @@ export const threadVisibility = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [index("thread_visibility_thread_id_index").on(table.threadId)],
+);
+
+export const githubInstallationProjection = pgTable(
+  "github_installation_projection",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    installationId: bigint("installation_id", { mode: "number" }).notNull(),
+    targetAccountId: bigint("target_account_id", { mode: "number" }),
+    targetAccountLogin: text("target_account_login"),
+    targetAccountType: text("target_account_type"),
+    permissionsJson:
+      jsonb("permissions_json").$type<GithubInstallationPermissions>(),
+    isSuspended: boolean("is_suspended").notNull().default(false),
+    suspendedAt: timestamp("suspended_at"),
+    lastWebhookReceivedAt: timestamp("last_webhook_received_at"),
+    lastWebhookSucceededAt: timestamp("last_webhook_succeeded_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_installation_projection_installation_id_unique").on(
+      table.installationId,
+    ),
+  ],
+);
+
+export const githubRepoProjection = pgTable(
+  "github_repo_projection",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    installationProjectionId: text("installation_projection_id")
+      .notNull()
+      .references(() => githubInstallationProjection.id, {
+        onDelete: "cascade",
+      }),
+    repoId: bigint("repo_id", { mode: "number" }).notNull(),
+    repoNodeId: text("repo_node_id"),
+    currentSlug: text("current_slug").notNull(),
+    defaultBranch: text("default_branch"),
+    isPrivate: boolean("is_private").notNull().default(false),
+    hasReadAccess: boolean("has_read_access").notNull().default(false),
+    hasWriteAccess: boolean("has_write_access").notNull().default(false),
+    hasAdminAccess: boolean("has_admin_access").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_repo_projection_repo_id_unique").on(table.repoId),
+    index("github_repo_projection_installation_projection_id_index").on(
+      table.installationProjectionId,
+    ),
+    index("github_repo_projection_current_slug_index").on(table.currentSlug),
+  ],
+);
+
+export const githubPrProjection = pgTable(
+  "github_pr_projection",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    repoProjectionId: text("repo_projection_id")
+      .notNull()
+      .references(() => githubRepoProjection.id, {
+        onDelete: "cascade",
+      }),
+    prNodeId: text("pr_node_id").notNull(),
+    number: integer("number").notNull(),
+    status: text("status").$type<GithubPRStatus>().notNull().default("open"),
+    isDraft: boolean("is_draft").notNull().default(false),
+    baseRef: text("base_ref"),
+    headRef: text("head_ref"),
+    headSha: text("head_sha"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_pr_projection_pr_node_id_unique").on(table.prNodeId),
+    uniqueIndex("github_pr_projection_repo_projection_number_unique").on(
+      table.repoProjectionId,
+      table.number,
+    ),
+  ],
 );
 
 export const githubPR = pgTable(

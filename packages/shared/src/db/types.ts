@@ -358,6 +358,7 @@ export type ThreadFailureMetadata = {
   failureSignatureHash: number | null;
   failureTerminalReason: string | null;
 };
+export type GithubInstallationPermissions = Record<string, string>;
 export type GithubPRStatus = "draft" | "open" | "closed" | "merged";
 export type GithubCheckRunConclusion =
   | "success"
@@ -544,6 +545,16 @@ export type LinearMentionThreadInsert = Omit<ThreadInsert, "sourceMetadata"> & {
   sourceMetadata: LinearMentionSourceMetadataInsert;
 };
 
+export type GithubInstallationProjection =
+  typeof schema.githubInstallationProjection.$inferSelect;
+export type GithubInstallationProjectionInsert =
+  typeof schema.githubInstallationProjection.$inferInsert;
+export type GithubRepoProjection = typeof schema.githubRepoProjection.$inferSelect;
+export type GithubRepoProjectionInsert =
+  typeof schema.githubRepoProjection.$inferInsert;
+export type GithubPrProjection = typeof schema.githubPrProjection.$inferSelect;
+export type GithubPrProjectionInsert =
+  typeof schema.githubPrProjection.$inferInsert;
 export type GitHubPR = typeof schema.githubPR.$inferSelect;
 export type GitHubPRInsert = typeof schema.githubPR.$inferInsert;
 
