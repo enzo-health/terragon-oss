@@ -1,0 +1,14 @@
+-- Drop the github_check_run table.
+--
+-- Follow-up to PR #145, which removed all call sites of
+-- maybeUpdateGitHubCheckRunForThreadChat (Terragon's own per-threadChat
+-- GitHub check run). That check was write-only internally: the table was
+-- written to by maybeUpdateGitHubCheckRunForThreadChat and the automations
+-- flow, but nothing in Terragon read it back. Task state stays visible via
+-- the Terragon UI, PR comments, and the per-loop canonical check summary
+-- (a separate, still-active mechanism — see upsertDeliveryCanonicalCheckSummary).
+--
+-- Foreign keys from thread_id / thread_chat_id are dropped automatically
+-- when the table is dropped. The unique index
+-- thread_id_thread_chat_id_unique is dropped implicitly with the table.
+DROP TABLE IF EXISTS "github_check_run";
