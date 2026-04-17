@@ -35,4 +35,3 @@ export { gitPushWithRebase } from "./git-push-with-rebase";
 export { getGitDefaultBranch } from "./git-default-branch";
 export { gitPullUpstream } from "./git-pull-upstream";
 export { isLocalBranchAheadOfRemote } from "./git-is-ahead";
-export { verifyGitIntegrity } from "./git-integrity";

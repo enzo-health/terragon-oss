@@ -127,7 +127,6 @@ export async function openPullRequestForThread({
         baseBranch,
         generateCommitMessage,
       },
-      enableIntegrityChecks: true,
     });
   }
   if (!skipCommitAndPush || thread.gitDiff === "too-large") {
