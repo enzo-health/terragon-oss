@@ -85,7 +85,7 @@ This document assumes the following decisions are final for the target architect
 
 4. **One canonical PR workspace**
 
-   - every `(installation_id, repo_id, pr_id)` has at most one active Terragon workspace
+   - every `(installation_id, repo_id, pr_id)` maps to exactly one canonical Terragon workspace
    - multiple executions are modeled as runs or lanes inside that workspace
 
 5. **`head_sha` is the causal boundary**
@@ -252,7 +252,7 @@ In other words, the workspace is the canonical owner, lanes are execution modes 
 
    - durable desired state for outbound comments, replies, checks, labels, or PR metadata
 
-### 4.2 Workspace model
+### 4.3 Workspace model
 
 ```text
 GitHub PR
@@ -270,7 +270,7 @@ GitHub comments/checks/reviews
      - create new run in a lane
 ```
 
-### 4.3 Lanes
+### 4.4 Lanes
 
 The system should support explicit lanes rather than implicit thread types:
 
@@ -753,9 +753,9 @@ Desired rule:
 
 ### 11.1 Phase 0: lock product semantics
 
-Before implementation starts, confirm:
+Before implementation starts, treat the following as locked:
 
-1. one workspace per PR
+1. one workspace per PR: yes
 2. multiple runs are lanes or runs inside that workspace, not peer workspaces
 3. review and CI signals default to inbox-first, with auto-run policy layered on top
 
@@ -802,11 +802,11 @@ Remove or downgrade the following as primary ownership mechanisms:
 
 ## 12. Open Questions
 
-These are the real product questions that should be answered before coding:
+These are the remaining product questions that should be answered before coding:
 
-1. Should review and CI feedback auto-start agent work, or only create actionable Terragon inbox items until a user confirms?
+1. What auto-run policies should Terragon support on top of the inbox-first default for review and CI feedback?
 2. Should mention routing policy be global, per repo, or per automation?
-3. Should archived workspaces reopen on new GitHub feedback, or should new feedback always fork a new run?
+3. Should archived workspaces reopen on new GitHub feedback, or should new feedback always create a new run?
 4. Should `Ready for review` require passing checks, non-failing checks, or remain a manual user choice?
 5. What should happen when a public GitHub user mentions Terragon on a repo with no mapped Terragon identity?
 
