@@ -61,6 +61,31 @@ import {
   shadowRefreshGitHubProjectionsForWebhook,
 } from "./shadow-refresh";
 
+type SupportedGitHubWebhookName =
+  | "pull_request"
+  | "issue_comment"
+  | "pull_request_review"
+  | "pull_request_review_comment"
+  | "check_run"
+  | "check_suite"
+  | "issues";
+
+const supportedGitHubWebhookNames = new Set<string>([
+  "pull_request",
+  "issue_comment",
+  "pull_request_review",
+  "pull_request_review_comment",
+  "check_run",
+  "check_suite",
+  "issues",
+]);
+
+function isSupportedGitHubWebhookName(
+  name: string,
+): name is SupportedGitHubWebhookName {
+  return supportedGitHubWebhookNames.has(name);
+}
+
 export async function POST(request: NextRequest) {
   const webhooks = new Webhooks({
     secret: env.GITHUB_WEBHOOK_SECRET,
@@ -213,12 +238,23 @@ export async function POST(request: NextRequest) {
       await shadowRefreshGitHubProjectionsForWebhook(shadowRefreshEvent);
     }
 
+    if (
+      parsedPayload === null ||
+      typeof parsedPayload !== "object" ||
+      Array.isArray(parsedPayload)
+    ) {
+      throw new Error("Invalid GitHub webhook payload");
+    }
+
+    if (!isSupportedGitHubWebhookName(eventType)) {
+      throw new Error(`Unsupported GitHub webhook event: ${eventType}`);
+    }
+
     try {
-      await webhooks.verifyAndReceive({
+      await webhooks.receive({
         id: requestId,
         name: eventType,
-        payload: body,
-        signature,
+        payload: JSON.parse(body),
       });
     } catch (error) {
       try {

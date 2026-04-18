@@ -11,6 +11,8 @@ import type {
 } from "../db/types";
 import { getGithubPrWorkspaceById } from "./github-workspaces";
 
+type GithubSurfaceBindingDb = Pick<DB, "query" | "insert">;
+
 type GithubSurfaceBindingLookupKey<
   K extends GithubSurfaceBindingKind = GithubSurfaceBindingKind,
 > = {
@@ -60,7 +62,7 @@ async function requireGithubPrWorkspace({
   db,
   workspaceId,
 }: {
-  db: DB;
+  db: GithubSurfaceBindingDb;
   workspaceId: string;
 }): Promise<GithubPrWorkspace> {
   const workspace = await getGithubPrWorkspaceById({ db, workspaceId });
@@ -82,7 +84,7 @@ function requireWorkspaceHeadSha(
     );
   }
 
-  if (expectedHeadSha && workspace.headSha !== expectedHeadSha) {
+  if (expectedHeadSha !== undefined && workspace.headSha !== expectedHeadSha) {
     throw new Error(
       `GitHub PR workspace ${workspace.id} head SHA mismatch: expected ${expectedHeadSha}, found ${workspace.headSha}`,
     );
@@ -154,7 +156,7 @@ export async function getGithubSurfaceBindingBySurface<
   surfaceKind,
   surfaceGitHubId,
 }: {
-  db: DB;
+  db: GithubSurfaceBindingDb;
   surfaceKind: K;
   surfaceGitHubId: string;
 }): Promise<GithubSurfaceBindingRecordForKind<K> | null> {
@@ -177,7 +179,7 @@ export async function createGithubSurfaceBinding<
   surfaceGitHubId,
   fields,
 }: GithubSurfaceBindingLookupKey & {
-  db: DB;
+  db: GithubSurfaceBindingDb;
   workspaceId: string;
   surfaceKind: K;
   fields: GithubSurfaceBindingMutableFields<K>;
@@ -213,7 +215,7 @@ export async function upsertGithubSurfaceBinding<
   surfaceGitHubId,
   fields,
 }: GithubSurfaceBindingLookupKey & {
-  db: DB;
+  db: GithubSurfaceBindingDb;
   workspaceId: string;
   surfaceKind: K;
   fields: GithubSurfaceBindingMutableFields<K>;
@@ -287,7 +289,7 @@ export async function resolveGithubSurfaceBinding<
   surfaceKind,
   surfaceGitHubId,
 }: {
-  db: DB;
+  db: GithubSurfaceBindingDb;
   surfaceKind: K;
   surfaceGitHubId: string;
 }): Promise<GithubSurfaceBindingResolution<K> | null> {

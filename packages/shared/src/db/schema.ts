@@ -753,6 +753,19 @@ export const githubSurfaceBinding = pgTable(
     uniqueIndex(
       "github_surface_binding_surface_kind_surface_github_id_unique",
     ).on(table.surfaceKind, table.surfaceGitHubId),
+    check(
+      "github_surface_binding_surface_metadata_kind_check",
+      sql`
+        (
+          "surface_kind" = 'issue_comment_mention'
+          AND "surface_metadata" IS NOT NULL
+        )
+        OR (
+          "surface_kind" <> 'issue_comment_mention'
+          AND "surface_metadata" IS NULL
+        )
+      `,
+    ),
     index("github_surface_binding_workspace_id_index").on(table.workspaceId),
   ],
 );

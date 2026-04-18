@@ -26,12 +26,27 @@ import {
   getUserSettings,
 } from "@terragon/shared/model/user";
 import { UserFacingError } from "./server-actions";
-import { bootstrapThreadGithubWorkspace } from "@/server-lib/github-workspace-bootstrap";
 import type { GithubPRStatus } from "@terragon/shared/db/types";
 
 type PullRequestAssociationSource =
   | Endpoints["GET /repos/{owner}/{repo}/pulls"]["response"]["data"][number]
   | Endpoints["POST /repos/{owner}/{repo}/pulls"]["response"]["data"];
+
+type BootstrapThreadGithubWorkspaceFn =
+  typeof import("@/server-lib/github-workspace-bootstrap").bootstrapThreadGithubWorkspace;
+
+let bootstrapThreadGithubWorkspaceFnPromise: Promise<BootstrapThreadGithubWorkspaceFn> | null =
+  null;
+
+async function getDefaultBootstrapThreadGithubWorkspaceFn(): Promise<BootstrapThreadGithubWorkspaceFn> {
+  if (bootstrapThreadGithubWorkspaceFnPromise === null) {
+    bootstrapThreadGithubWorkspaceFnPromise = import(
+      "@/server-lib/github-workspace-bootstrap"
+    ).then((module) => module.bootstrapThreadGithubWorkspace);
+  }
+
+  return bootstrapThreadGithubWorkspaceFnPromise;
+}
 
 export type PullRequestAssociationIdentity = {
   number: number;
@@ -734,13 +749,13 @@ export async function associateThreadWithPullRequest({
   threadId,
   repoFullName,
   pullRequest,
-  bootstrapThreadGithubWorkspaceFn = bootstrapThreadGithubWorkspace,
+  bootstrapThreadGithubWorkspaceFn,
 }: {
   userId: string;
   threadId: string;
   repoFullName: string;
   pullRequest: PullRequestAssociationIdentity;
-  bootstrapThreadGithubWorkspaceFn?: typeof bootstrapThreadGithubWorkspace;
+  bootstrapThreadGithubWorkspaceFn?: BootstrapThreadGithubWorkspaceFn;
 }): Promise<number> {
   await Promise.all([
     updateThread({
@@ -760,7 +775,11 @@ export async function associateThreadWithPullRequest({
       },
     }),
   ]);
-  await bootstrapThreadGithubWorkspaceFn({
+  const resolvedBootstrapThreadGithubWorkspaceFn =
+    bootstrapThreadGithubWorkspaceFn ??
+    (await getDefaultBootstrapThreadGithubWorkspaceFn());
+
+  await resolvedBootstrapThreadGithubWorkspaceFn({
     repoFullName,
     prNumber: pullRequest.number,
     threadId,

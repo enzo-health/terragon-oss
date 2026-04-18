@@ -14,7 +14,7 @@ import { upsertGithubPrWorkspace } from "@terragon/shared/model/github-workspace
 import { db as defaultDb } from "@/lib/db";
 
 type GitHubSurfaceBindingCoordinatorDependencies = {
-  db: DB;
+  db: Pick<DB, "query" | "insert">;
 };
 type GithubSurfaceBindingKindWithoutMetadata = Exclude<
   GithubSurfaceBindingKind,

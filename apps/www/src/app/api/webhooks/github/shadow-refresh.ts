@@ -412,7 +412,7 @@ export async function shadowRefreshGitHubProjectionsForWebhook(
 
     const failures = results.flatMap((result, index) => {
       if (result.status === "fulfilled") {
-        return;
+        return [];
       }
 
       const target = targets[index];

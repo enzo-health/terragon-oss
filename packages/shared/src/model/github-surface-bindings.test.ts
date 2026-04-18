@@ -250,4 +250,46 @@ describe("github surface binding helpers", () => {
       }),
     ).rejects.toThrow("head SHA mismatch");
   });
+
+  it("rejects an empty bound head sha instead of skipping validation", async () => {
+    const { workspace } = await createWorkspace({
+      prNumber: 22,
+      headSha: "sha-five",
+    });
+
+    await expect(
+      createGithubSurfaceBinding({
+        db,
+        workspaceId: workspace.id,
+        surfaceKind: "review_thread",
+        surfaceGitHubId: "RT_1000",
+        fields: {
+          lane: "review_response",
+          routingReason: "existing-thread",
+          boundHeadSha: "",
+        },
+      }),
+    ).rejects.toThrow("head SHA mismatch");
+  });
+
+  it("enforces the surface metadata kind invariant at the database boundary", async () => {
+    const { workspace } = await createWorkspace({
+      prNumber: 23,
+      headSha: "sha-six",
+    });
+
+    await expect(
+      db.insert(schema.githubSurfaceBinding).values({
+        workspaceId: workspace.id,
+        surfaceKind: "review_thread",
+        surfaceGitHubId: "RT_1001",
+        surfaceMetadata: {
+          issueOrPrType: "issue",
+        },
+        lane: "review_response",
+        routingReason: "existing-thread",
+        boundHeadSha: workspace.headSha!,
+      }),
+    ).rejects.toThrow();
+  });
 });

@@ -49,6 +49,16 @@ type RepoCoordinates = {
   repoFullName: string;
 };
 
+const GITHUB_REQUEST_TIMEOUT_MS = 10_000;
+
+function getGithubRequestOptions() {
+  return {
+    request: {
+      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+    },
+  };
+}
+
 type RefreshInstallationProjectionResult = {
   installationProjection: GithubInstallationProjection;
 };
@@ -203,6 +213,7 @@ function createDefaultAppClient(): GitHubProjectionAppClient {
         {
           owner,
           repo,
+          ...getGithubRequestOptions(),
         },
       );
       return data.id;
@@ -213,6 +224,7 @@ function createDefaultAppClient(): GitHubProjectionAppClient {
         "GET /app/installations/{installation_id}",
         {
           installation_id: installationId,
+          ...getGithubRequestOptions(),
         },
       );
 
@@ -242,6 +254,7 @@ async function createDefaultRepoClient({
       const { data } = await octokit.rest.repos.get({
         owner: repoOwner,
         repo: repoName,
+        ...getGithubRequestOptions(),
       });
 
       return {
@@ -261,6 +274,7 @@ async function createDefaultRepoClient({
         owner: repoOwner,
         repo: repoName,
         pull_number: pullNumber,
+        ...getGithubRequestOptions(),
       });
 
       return {

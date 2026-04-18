@@ -14,10 +14,7 @@ import {
   refreshGitHubPrProjection,
   type GitHubPullRequestSnapshot,
 } from "./github-projection-refresh";
-import {
-  createGitHubSurfaceBindingCoordinator,
-  type GitHubSurfaceBindingCoordinator,
-} from "./github-surface-bindings";
+import { createGitHubSurfaceBindingCoordinator } from "./github-surface-bindings";
 
 type RefreshGithubPrProjectionResult = Awaited<
   ReturnType<typeof refreshGitHubPrProjection>
@@ -30,10 +27,6 @@ type GitHubWorkspaceBootstrapDependencies = {
     prNumber: number;
   }): Promise<RefreshGithubPrProjectionResult>;
   getActiveWorkflowForThread: typeof getActiveWorkflowForThread;
-  surfaceBindingCoordinator: Pick<
-    GitHubSurfaceBindingCoordinator,
-    "upsertBindingForWorkspace"
-  >;
 };
 
 export type BootstrapThreadGithubWorkspaceParams = {
@@ -115,18 +108,12 @@ export function createGitHubWorkspaceBootstrapClient(
   ): Promise<BootstrapThreadGithubWorkspaceResult>;
 } {
   const resolvedDb = dependencies?.db ?? defaultDb;
-  const resolvedSurfaceBindingCoordinator =
-    dependencies?.surfaceBindingCoordinator ??
-    createGitHubSurfaceBindingCoordinator({
-      db: resolvedDb,
-    });
   const resolvedDependencies: GitHubWorkspaceBootstrapDependencies = {
     db: resolvedDb,
     refreshPrProjection:
       dependencies?.refreshPrProjection ?? refreshGitHubPrProjection,
     getActiveWorkflowForThread:
       dependencies?.getActiveWorkflowForThread ?? getActiveWorkflowForThread,
-    surfaceBindingCoordinator: resolvedSurfaceBindingCoordinator,
   };
 
   return {
@@ -149,52 +136,58 @@ export function createGitHubWorkspaceBootstrapClient(
         identityHeadSha: params.pullRequestIdentity?.headSha,
       });
 
-      const [{ workspace, binding }, activeWorkflow] = await Promise.all([
-        resolvedDependencies.surfaceBindingCoordinator.upsertBindingForWorkspace(
-          {
-            installationId: installationProjection.installationId,
-            repoId: repoProjection.repoId,
-            prNodeId,
-            surfaceKind: "pull_request",
-            surfaceGitHubId: prNodeId,
-            lane: "authoring",
-            routingReason: "input-user-id",
-            boundHeadSha,
-            workspaceHeadSha: boundHeadSha,
-          },
-        ),
-        resolvedDependencies.getActiveWorkflowForThread({
-          db: resolvedDependencies.db,
+      return await resolvedDependencies.db.transaction(async (tx) => {
+        const transactionalSurfaceBindingCoordinator =
+          createGitHubSurfaceBindingCoordinator({
+            db: tx,
+          });
+        const { workspace, binding } =
+          await transactionalSurfaceBindingCoordinator.upsertBindingForWorkspace(
+            {
+              installationId: installationProjection.installationId,
+              repoId: repoProjection.repoId,
+              prNodeId,
+              surfaceKind: "pull_request",
+              surfaceGitHubId: prNodeId,
+              lane: "authoring",
+              routingReason: "input-user-id",
+              boundHeadSha,
+              workspaceHeadSha: boundHeadSha,
+            },
+          );
+        const activeWorkflow =
+          await resolvedDependencies.getActiveWorkflowForThread({
+            db: tx,
+            threadId: params.threadId,
+          });
+        const existingRuns = await listGithubWorkspaceRunsForWorkspace({
+          db: tx,
+          workspaceId: workspace.id,
+        });
+        const attempt = selectAuthoringAttempt({
+          runs: existingRuns,
           threadId: params.threadId,
-        }),
-      ]);
-      const existingRuns = await listGithubWorkspaceRunsForWorkspace({
-        db: resolvedDependencies.db,
-        workspaceId: workspace.id,
-      });
-      const attempt = selectAuthoringAttempt({
-        runs: existingRuns,
-        threadId: params.threadId,
-        headSha: boundHeadSha,
-      });
-      const run = await upsertGithubWorkspaceRun({
-        db: resolvedDependencies.db,
-        workspaceId: workspace.id,
-        lane: "authoring",
-        headSha: boundHeadSha,
-        attempt,
-        threadId: params.threadId,
-        fields: {
-          ...(activeWorkflow ? { workflowId: activeWorkflow.id } : {}),
-          ...(activeWorkflow ? { status: "running" as const } : {}),
-        },
-      });
+          headSha: boundHeadSha,
+        });
+        const run = await upsertGithubWorkspaceRun({
+          db: tx,
+          workspaceId: workspace.id,
+          lane: "authoring",
+          headSha: boundHeadSha,
+          attempt,
+          threadId: params.threadId,
+          fields: {
+            ...(activeWorkflow ? { workflowId: activeWorkflow.id } : {}),
+            ...(activeWorkflow ? { status: "running" as const } : {}),
+          },
+        });
 
-      return {
-        workspace,
-        binding,
-        run,
-      };
+        return {
+          workspace,
+          binding,
+          run,
+        };
+      });
     },
   };
 }

@@ -2139,6 +2139,31 @@ describe("GitHub webhook route", () => {
 
       errorSpy.mockRestore();
     });
+
+    it("does not log a shadow refresh failure when refresh succeeds", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const request = await createMockRequest(
+        createPullRequestBody({
+          action: "opened",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+        }),
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        "[github webhook] shadow refresh failed",
+        expect.anything(),
+      );
+
+      errorSpy.mockRestore();
+    });
   });
 
   describe("check suite events", () => {

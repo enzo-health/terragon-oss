@@ -15,6 +15,8 @@ import {
   getGithubRepoProjectionByRepoId,
 } from "./github-projections";
 
+type GithubWorkspaceDb = Pick<DB, "query" | "insert">;
+
 type GithubPrWorkspaceUpsertFields = Partial<
   Pick<GithubPrWorkspaceInsert, "status" | "headSha">
 >;
@@ -27,7 +29,7 @@ async function requireGithubPrWorkspaceById({
   db,
   workspaceId,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   workspaceId: string;
 }): Promise<GithubPrWorkspace> {
   const workspace = await getGithubPrWorkspaceById({ db, workspaceId });
@@ -45,7 +47,7 @@ async function resolveGithubPrWorkspaceParents({
   repoId,
   prNodeId,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   installationId: number;
   repoId: number;
   prNodeId: string;
@@ -98,7 +100,7 @@ export async function getGithubPrWorkspaceById({
   db,
   workspaceId,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   workspaceId: string;
 }): Promise<GithubPrWorkspace | null> {
   const workspace = await db.query.githubPrWorkspace.findFirst({
@@ -114,7 +116,7 @@ export async function getGithubPrWorkspaceByCanonicalId({
   repoId,
   prNodeId,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   installationId: number;
   repoId: number;
   prNodeId: string;
@@ -137,7 +139,7 @@ export async function upsertGithubPrWorkspace({
   prNodeId,
   fields,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   installationId: number;
   repoId: number;
   prNodeId: string;
@@ -201,7 +203,7 @@ export async function getGithubWorkspaceRun({
   headSha,
   attempt,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   workspaceId: string;
   lane: GithubWorkspaceRun["lane"];
   headSha: string;
@@ -223,7 +225,7 @@ export async function listGithubWorkspaceRunsForWorkspace({
   db,
   workspaceId,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   workspaceId: string;
 }): Promise<GithubWorkspaceRun[]> {
   return await db.query.githubWorkspaceRun.findMany({
@@ -245,7 +247,7 @@ export async function upsertGithubWorkspaceRun({
   threadId,
   fields,
 }: {
-  db: DB;
+  db: GithubWorkspaceDb;
   workspaceId: string;
   lane: GithubWorkspaceRun["lane"];
   headSha: string;

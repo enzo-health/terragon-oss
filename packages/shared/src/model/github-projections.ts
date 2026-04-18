@@ -11,6 +11,8 @@ import type {
   GithubRepoProjectionInsert,
 } from "../db/types";
 
+type GithubProjectionDb = Pick<DB, "query" | "insert">;
+
 const POSTGRES_UNIQUE_VIOLATION = "23505";
 
 type GithubInstallationProjectionUpsertFields = Omit<
@@ -39,7 +41,7 @@ export async function getGithubInstallationProjectionByInstallationId({
   db,
   installationId,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   installationId: number;
 }): Promise<GithubInstallationProjection | null> {
   const projection = await db.query.githubInstallationProjection.findFirst({
@@ -57,7 +59,7 @@ export async function upsertGithubInstallationProjection({
   installationId,
   fields,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   installationId: number;
   fields: GithubInstallationProjectionUpsertFields;
 }): Promise<GithubInstallationProjection> {
@@ -89,7 +91,7 @@ async function requireGithubInstallationProjection({
   db,
   installationId,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   installationId: number;
 }): Promise<GithubInstallationProjection> {
   const projection = await getGithubInstallationProjectionByInstallationId({
@@ -110,7 +112,7 @@ export async function getGithubRepoProjectionByRepoId({
   db,
   repoId,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   repoId: number;
 }): Promise<GithubRepoProjection | null> {
   const projection = await db.query.githubRepoProjection.findFirst({
@@ -126,7 +128,7 @@ export async function upsertGithubRepoProjection({
   repoId,
   fields,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   installationId: number;
   repoId: number;
   fields: GithubRepoProjectionUpsertFields;
@@ -168,7 +170,7 @@ async function requireGithubRepoProjection({
   db,
   repoId,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   repoId: number;
 }): Promise<GithubRepoProjection> {
   const projection = await getGithubRepoProjectionByRepoId({
@@ -202,7 +204,7 @@ export async function getGithubPrProjectionByPrNodeId({
   db,
   prNodeId,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   prNodeId: string;
 }): Promise<GithubPrProjection | null> {
   const projection = await db.query.githubPrProjection.findFirst({
@@ -217,7 +219,7 @@ export async function getGithubPrProjectionByRepoIdAndNumber({
   repoId,
   number,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   repoId: number;
   number: number;
 }): Promise<GithubPrProjection | null> {
@@ -237,7 +239,7 @@ export async function upsertGithubPrProjection({
   repoId,
   fields,
 }: {
-  db: DB;
+  db: GithubProjectionDb;
   prNodeId: string;
   repoId: number;
   fields: GithubPrProjectionUpsertFields;
