@@ -109,6 +109,137 @@ type ShadowRefreshWebhookEvent =
       payload: IssuesOpenedWebhookPayload;
     };
 
+function getWebhookAction(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+
+  const action = (payload as { action?: unknown }).action;
+  return typeof action === "string" ? action : null;
+}
+
+function formatShadowRefreshErrorReason(reason: unknown): {
+  message: string;
+  stack?: string;
+} {
+  if (reason instanceof Error) {
+    return {
+      message: reason.message,
+      stack: reason.stack,
+    };
+  }
+
+  if (typeof reason === "string") {
+    return { message: reason };
+  }
+
+  return { message: JSON.stringify(reason) };
+}
+
+export function getShadowRefreshWebhookEvent(
+  eventType: string,
+  payload: unknown,
+): ShadowRefreshWebhookEvent | null {
+  const action = getWebhookAction(payload);
+
+  switch (eventType) {
+    case "pull_request": {
+      switch (action) {
+        case "opened":
+        case "reopened":
+        case "closed":
+        case "ready_for_review":
+        case "converted_to_draft":
+        case "synchronize":
+          return {
+            name: `pull_request.${action}` as
+              | "pull_request.opened"
+              | "pull_request.reopened"
+              | "pull_request.closed"
+              | "pull_request.ready_for_review"
+              | "pull_request.converted_to_draft"
+              | "pull_request.synchronize",
+            payload: payload as PullRequestWebhookPayload,
+          };
+        default:
+          return null;
+      }
+    }
+    case "issue_comment": {
+      if (action !== "created") {
+        return null;
+      }
+
+      return {
+        name: "issue_comment.created",
+        payload: payload as IssueCommentWebhookPayload,
+      };
+    }
+    case "pull_request_review": {
+      if (action !== "submitted") {
+        return null;
+      }
+
+      return {
+        name: "pull_request_review.submitted",
+        payload: payload as PullRequestReviewWebhookPayload,
+      };
+    }
+    case "pull_request_review_comment": {
+      if (action !== "created") {
+        return null;
+      }
+
+      return {
+        name: "pull_request_review_comment.created",
+        payload: payload as PullRequestReviewWebhookPayload,
+      };
+    }
+    case "check_run": {
+      switch (action) {
+        case "completed":
+        case "created":
+        case "rerequested":
+          return {
+            name: `check_run.${action}` as
+              | "check_run.completed"
+              | "check_run.created"
+              | "check_run.rerequested",
+            payload: payload as CheckRunWebhookPayload,
+          };
+        default:
+          return null;
+      }
+    }
+    case "check_suite": {
+      switch (action) {
+        case "completed":
+        case "rerequested":
+          return {
+            name: `check_suite.${action}` as
+              | "check_suite.completed"
+              | "check_suite.rerequested",
+            payload: payload as CheckSuiteWebhookPayload,
+          };
+        default:
+          return null;
+      }
+    }
+    case "issues": {
+      if (action !== "opened") {
+        return null;
+      }
+
+      return {
+        name: "issues.opened",
+        payload: payload as IssuesOpenedWebhookPayload,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 function getUniquePrNumbers(prNumbers: number[]): number[] {
   return [...new Set(prNumbers)];
 }
@@ -288,7 +419,7 @@ export async function shadowRefreshGitHubProjectionsForWebhook(
       return [
         {
           target,
-          reason: result.reason,
+          reason: formatShadowRefreshErrorReason(result.reason),
         },
       ];
     });
@@ -302,7 +433,7 @@ export async function shadowRefreshGitHubProjectionsForWebhook(
   } catch (error) {
     console.error("[github webhook] shadow refresh target resolution failed", {
       eventName: event.name,
-      error,
+      error: formatShadowRefreshErrorReason(error),
     });
   }
 }

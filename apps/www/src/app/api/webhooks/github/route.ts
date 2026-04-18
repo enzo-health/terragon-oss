@@ -56,7 +56,10 @@ import {
   handlePullRequestStatusChange,
   handlePullRequestUpdated,
 } from "./handlers";
-import { shadowRefreshGitHubProjectionsForWebhook } from "./shadow-refresh";
+import {
+  getShadowRefreshWebhookEvent,
+  shadowRefreshGitHubProjectionsForWebhook,
+} from "./shadow-refresh";
 
 export async function POST(request: NextRequest) {
   const webhooks = new Webhooks({
@@ -66,6 +69,12 @@ export async function POST(request: NextRequest) {
   const signature = headersList.get("x-hub-signature-256") ?? "";
   const eventType = headersList.get("x-github-event") ?? "";
   const requestId = headersList.get("x-github-delivery") ?? "";
+  let parsedPayload: unknown = null;
+  try {
+    parsedPayload = JSON.parse(body);
+  } catch {
+    // Let webhook verification surface malformed JSON when needed.
+  }
   webhooks.on(
     [
       "pull_request.opened",
@@ -76,10 +85,6 @@ export async function POST(request: NextRequest) {
       "pull_request.synchronize",
     ],
     async ({ payload }) => {
-      await shadowRefreshGitHubProjectionsForWebhook({
-        name: `pull_request.${payload.action}`,
-        payload,
-      });
       switch (payload.action) {
         case "opened":
         case "reopened":
@@ -103,51 +108,27 @@ export async function POST(request: NextRequest) {
     },
   );
   webhooks.on("issue_comment.created", async ({ payload }) => {
-    await shadowRefreshGitHubProjectionsForWebhook({
-      name: "issue_comment.created",
-      payload,
-    });
     await handleIssueCommentEvent(payload, requestId);
   });
   webhooks.on("pull_request_review.submitted", async ({ payload }) => {
-    await shadowRefreshGitHubProjectionsForWebhook({
-      name: "pull_request_review.submitted",
-      payload,
-    });
     await handlePullRequestReviewEvent(payload, requestId);
   });
   webhooks.on("pull_request_review_comment.created", async ({ payload }) => {
-    await shadowRefreshGitHubProjectionsForWebhook({
-      name: "pull_request_review_comment.created",
-      payload,
-    });
     await handlePullRequestReviewCommentEvent(payload, requestId);
   });
   webhooks.on(
     ["check_run.completed", "check_run.created", "check_run.rerequested"],
     async ({ payload }) => {
-      await shadowRefreshGitHubProjectionsForWebhook({
-        name: `check_run.${payload.action}`,
-        payload,
-      });
       await handleCheckRunEvent(payload, requestId);
     },
   );
   webhooks.on(
     ["check_suite.completed", "check_suite.rerequested"],
     async ({ payload }) => {
-      await shadowRefreshGitHubProjectionsForWebhook({
-        name: `check_suite.${payload.action}`,
-        payload,
-      });
       await handleCheckSuiteEvent(payload, requestId);
     },
   );
   webhooks.on(["issues.opened"], async ({ payload }) => {
-    await shadowRefreshGitHubProjectionsForWebhook({
-      name: "issues.opened",
-      payload,
-    });
     await handleIssueEvent(payload);
   });
   webhooks.onAny(({ name, payload }) => {
@@ -205,6 +186,11 @@ export async function POST(request: NextRequest) {
       // Malformed payload — let verify/receive below surface the real error.
     }
 
+    const shadowRefreshEvent = getShadowRefreshWebhookEvent(
+      eventType,
+      parsedPayload,
+    );
+
     const claimantToken = `github-webhook:${randomUUID()}`;
     const claim = await claimGithubWebhookDelivery({
       db,
@@ -221,6 +207,10 @@ export async function POST(request: NextRequest) {
         },
         { status: getGithubWebhookClaimHttpStatus(claim.outcome) },
       );
+    }
+
+    if (shadowRefreshEvent) {
+      await shadowRefreshGitHubProjectionsForWebhook(shadowRefreshEvent);
     }
 
     try {

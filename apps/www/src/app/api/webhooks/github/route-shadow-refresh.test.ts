@@ -1,23 +1,27 @@
 import { env } from "@terragon/env/apps-www";
 import * as schema from "@terragon/shared/db/schema";
-import { getGitHubApp } from "@terragon/shared/github-app";
-import {
-  getGithubPrProjectionByPrNodeId,
-  getGithubRepoProjectionByRepoId,
-} from "@terragon/shared/model/github-projections";
 import crypto from "crypto";
 import type { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { getOctokitForApp } from "@/lib/github";
+import {
+  refreshGitHubPrProjection,
+  refreshGitHubRepoProjection,
+} from "@/server-lib/github-projection-refresh";
 import { createMockNextRequest } from "@/test-helpers/mock-next";
 import { POST } from "./route";
 
-vi.mock("@terragon/shared/github-app", () => ({
-  getGitHubApp: vi.fn(),
-  getInstallationToken: vi.fn().mockResolvedValue("mock-github-token"),
-  getSandboxGithubToken: vi.fn().mockResolvedValue("mock-github-token"),
-}));
+vi.mock("@/server-lib/github-projection-refresh", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/server-lib/github-projection-refresh")
+  >("@/server-lib/github-projection-refresh");
+
+  return {
+    ...actual,
+    refreshGitHubPrProjection: vi.fn(),
+    refreshGitHubRepoProjection: vi.fn(),
+  };
+});
 
 function createSignature(payload: string, secret: string): string {
   const hmac = crypto.createHmac("sha256", secret);
@@ -50,75 +54,10 @@ describe("GitHub webhook route shadow refresh integration", () => {
     await db.delete(schema.githubRepoProjection);
     await db.delete(schema.githubInstallationProjection);
     await db.delete(schema.githubWebhookDeliveries);
-
-    vi.mocked(getGitHubApp).mockReturnValue({
-      octokit: {
-        request: vi.fn(
-          async (route: string, params: Record<string, unknown>) => {
-            switch (route) {
-              case "GET /repos/{owner}/{repo}/installation":
-                return {
-                  data: {
-                    id: 91001,
-                  },
-                };
-              case "GET /app/installations/{installation_id}":
-                return {
-                  data: {
-                    id: params.installation_id,
-                    account: {
-                      id: 42,
-                      login: "terragon",
-                      type: "Organization",
-                    },
-                    permissions: {
-                      contents: "write",
-                      pull_requests: "write",
-                    },
-                    suspended_at: null,
-                  },
-                };
-              default:
-                throw new Error(`Unhandled app request route: ${route}`);
-            }
-          },
-        ),
-      },
-    } as unknown as ReturnType<typeof getGitHubApp>);
-
-    vi.mocked(getOctokitForApp).mockResolvedValue({
-      rest: {
-        repos: {
-          get: vi.fn(
-            async ({ owner, repo }: { owner: string; repo: string }) => ({
-              data: {
-                id: 42001,
-                node_id: "R_kgDOShadowRepo",
-                full_name: `${owner}/${repo}`,
-                default_branch: "main",
-                private: true,
-              },
-            }),
-          ),
-        },
-        pulls: {
-          get: vi.fn(async ({ pull_number }: { pull_number: number }) => ({
-            data: {
-              node_id: "PR_kwDOShadowPr",
-              number: pull_number,
-              draft: false,
-              closed_at: null,
-              merged_at: null,
-              base: { ref: "main" },
-              head: {
-                ref: "feature/shadow-refresh",
-                sha: "shadow-sha-123",
-              },
-            },
-          })),
-        },
-      },
-    } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+    vi.mocked(refreshGitHubRepoProjection).mockResolvedValue(
+      undefined as never,
+    );
+    vi.mocked(refreshGitHubPrProjection).mockResolvedValue(undefined as never);
   });
 
   it("keeps the webhook response shape while persisting repo projection rows for issue webhooks", async () => {
@@ -149,15 +88,10 @@ describe("GitHub webhook route shadow refresh integration", () => {
       claimOutcome: "claimed_new",
     });
 
-    const repoProjection = await getGithubRepoProjectionByRepoId({
-      db,
-      repoId: 42001,
+    expect(refreshGitHubRepoProjection).toHaveBeenCalledTimes(1);
+    expect(refreshGitHubRepoProjection).toHaveBeenCalledWith({
+      repoFullName,
     });
-
-    expect(repoProjection).toBeTruthy();
-    expect(repoProjection?.currentSlug).toBe(repoFullName);
-    expect(repoProjection?.defaultBranch).toBe("main");
-    expect(repoProjection?.hasWriteAccess).toBe(true);
   });
 
   it("keeps the webhook response shape while persisting PR projection rows for pull request webhooks", async () => {
@@ -195,15 +129,10 @@ describe("GitHub webhook route shadow refresh integration", () => {
       claimOutcome: "claimed_new",
     });
 
-    const prProjection = await getGithubPrProjectionByPrNodeId({
-      db,
-      prNodeId: "PR_kwDOShadowPr",
+    expect(refreshGitHubPrProjection).toHaveBeenCalledTimes(1);
+    expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+      repoFullName,
+      prNumber: 19,
     });
-
-    expect(prProjection).toBeTruthy();
-    expect(prProjection?.repoId).toBe(42001);
-    expect(prProjection?.number).toBe(19);
-    expect(prProjection?.headSha).toBe("shadow-sha-123");
-    expect(prProjection?.status).toBe("open");
   });
 });

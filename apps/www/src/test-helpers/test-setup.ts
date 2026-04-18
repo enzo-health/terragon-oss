@@ -119,6 +119,7 @@ vi.mock("@/server-lib/generate-session-summary", () => ({
   generateSessionSummary: vi.fn().mockResolvedValue("test-summary"),
 }));
 vi.mock("@terragon/shared/github-app", () => ({
+  getGitHubApp: vi.fn(),
   getInstallationToken: vi.fn().mockResolvedValue("mock-github-token"),
   getSandboxGithubToken: vi.fn().mockResolvedValue("mock-github-token"),
 }));
@@ -161,10 +162,6 @@ index 1234567..89abcdef 100644
     }),
   };
 });
-vi.mock("@terragon/shared/github-app", () => ({
-  getInstallationToken: vi.fn().mockResolvedValue("mock-github-token"),
-  getSandboxGithubToken: vi.fn().mockResolvedValue("mock-github-token"),
-}));
 vi.mock("@/server-lib/claude-session.ts", () => ({
   maybeSaveClaudeSessionToR2: vi.fn().mockResolvedValue(undefined),
 }));
