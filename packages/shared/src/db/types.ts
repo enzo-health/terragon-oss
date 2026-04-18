@@ -366,6 +366,26 @@ export type GithubWorkspaceLane =
   | "ci_repair"
   | "review_response"
   | "automation";
+export type GithubSurfaceBindingIssueOrPrType = "issue" | "pull_request";
+export type GithubSurfaceBindingKind =
+  | "pull_request"
+  | "review_thread"
+  | "review_comment"
+  | "issue_comment_mention"
+  | "check_run"
+  | "check_suite";
+export type GithubSurfaceBindingMetadata = {
+  issueOrPrType?: GithubSurfaceBindingIssueOrPrType;
+};
+export type GithubSurfaceBindingRoutingReason =
+  | "input-user-id"
+  | "github-pr-thread-id"
+  | "existing-unarchived-thread"
+  | "existing-thread"
+  | "pr-author-fallback"
+  | "ambiguous-unarchived-thread-owners"
+  | "ambiguous-thread-owners"
+  | "no-owner-found";
 export type GithubWorkspaceRunStatus =
   | "pending"
   | "running"
@@ -572,6 +592,10 @@ export type GithubPrProjectionInsert =
 export type GithubPrWorkspace = typeof schema.githubPrWorkspace.$inferSelect;
 export type GithubPrWorkspaceInsert =
   typeof schema.githubPrWorkspace.$inferInsert;
+export type GithubSurfaceBinding =
+  typeof schema.githubSurfaceBinding.$inferSelect;
+export type GithubSurfaceBindingInsert =
+  typeof schema.githubSurfaceBinding.$inferInsert;
 export type GithubWorkspaceRun = typeof schema.githubWorkspaceRun.$inferSelect;
 export type GithubWorkspaceRunInsert =
   typeof schema.githubWorkspaceRun.$inferInsert;

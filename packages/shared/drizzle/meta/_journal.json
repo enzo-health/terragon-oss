@@ -232,6 +232,13 @@
       "when": 1776902400000,
       "tag": "0032_github_workspace_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1776988800000,
+      "tag": "0033_github_surface_binding",
+      "breakpoints": true
     }
   ]
 }

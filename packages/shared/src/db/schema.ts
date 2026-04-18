@@ -76,6 +76,9 @@ import {
   GithubInstallationPermissions,
   GithubPRMergeableState,
   GithubPRStatus,
+  GithubSurfaceBindingKind,
+  GithubSurfaceBindingMetadata,
+  GithubSurfaceBindingRoutingReason,
   GithubWorkspaceLane,
   GithubWorkspaceRunStatus,
   ThreadErrorMessage,
@@ -717,6 +720,40 @@ export const githubPrWorkspace = pgTable(
       foreignColumns: [githubPrProjection.id, githubPrProjection.repoId],
       name: "github_pr_workspace_pr_projection_id_repo_id_fk",
     }).onDelete("cascade"),
+  ],
+);
+
+export const githubSurfaceBinding = pgTable(
+  "github_surface_binding",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => githubPrWorkspace.id, { onDelete: "cascade" }),
+    surfaceKind: text("surface_kind")
+      .$type<GithubSurfaceBindingKind>()
+      .notNull(),
+    surfaceGitHubId: text("surface_github_id").notNull(),
+    surfaceMetadata:
+      jsonb("surface_metadata").$type<GithubSurfaceBindingMetadata>(),
+    lane: text("lane").$type<GithubWorkspaceLane>().notNull(),
+    routingReason: text("routing_reason")
+      .$type<GithubSurfaceBindingRoutingReason>()
+      .notNull(),
+    boundHeadSha: text("bound_head_sha").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex(
+      "github_surface_binding_surface_kind_surface_github_id_unique",
+    ).on(table.surfaceKind, table.surfaceGitHubId),
+    index("github_surface_binding_workspace_id_index").on(table.workspaceId),
   ],
 );
 
