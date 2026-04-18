@@ -1,45 +1,46 @@
 import {
+  AgentModelPreferences,
+  AIAgent,
+  AIModel,
+  SelectedAIModels,
+} from "@terragon/agent/types";
+import type { BootingSubstatus, SandboxStatus } from "@terragon/sandbox/types";
+import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
+import { sql } from "drizzle-orm";
+import {
+  AnyPgColumn,
+  bigint,
+  bigserial,
+  boolean,
+  check,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
-  boolean,
-  jsonb,
-  integer,
-  bigserial,
-  index,
+  unique,
   uniqueIndex,
-  AnyPgColumn,
-  numeric,
-  bigint,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import {
+  AutomationAction,
+  AutomationTriggerConfig,
+  AutomationTriggerType,
+} from "../automations";
+import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";
 import { DBMessage, DBUserMessage } from "./db-message";
-import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
-import type { SandboxStatus, BootingSubstatus } from "@terragon/sandbox/types";
 import {
-  AIModel,
-  AIAgent,
-  SelectedAIModels,
-  AgentModelPreferences,
-} from "@terragon/agent/types";
-import {
-  GithubPRStatus,
-  ThreadStatus,
-  GitDiffStats,
-  ThreadErrorMessage,
-  GithubPRMergeableState,
-  GithubCheckStatus,
-  ThreadVisibility,
-  UsageEventType,
-  UsageSku,
-  ClaudeOrganizationType,
-  ThreadSource,
-  ThreadSourceMetadata,
-  UserCreditGrantType,
-  AgentTransportMode,
+  AgentProviderMetadata,
   AgentRunProtocolVersion,
   AgentRunStatus,
-  AgentProviderMetadata,
+  AgentTransportMode,
+  ClaudeOrganizationType,
+  DeliveryArtifactGeneratedBy,
+  DeliveryArtifactStatus,
+  DeliveryArtifactType,
+  DeliveryBabysitEvaluationPayload,
   DeliveryCarmackReviewSeverity,
   DeliveryCarmackReviewStatus,
   DeliveryCiCapabilityState,
@@ -47,41 +48,49 @@ import {
   DeliveryCiRequiredCheckSource,
   DeliveryDeepReviewSeverity,
   DeliveryDeepReviewStatus,
-  DeliveryLoopCauseType,
-  DeliveryLoopState,
-  DeliveryParityTargetClass,
-  DeliveryReviewThreadEvaluationSource,
-  DeliveryReviewThreadGateStatus,
-  ThreadFailureSource,
-  DispatchIntentStatus,
-  DispatchIntentExecutionClass,
-  DispatchIntentDispatchMechanism,
-  DeliveryPhase,
-  DeliveryArtifactType,
-  DeliveryArtifactStatus,
-  DeliveryArtifactGeneratedBy,
-  DeliveryPlanSpecPayload,
-  DeliveryImplementationSnapshotPayload,
-  DeliveryReviewBundlePayload,
-  DeliveryUiSmokePayload,
-  DeliveryPrLinkPayload,
-  DeliveryBabysitEvaluationPayload,
-  DeliveryPlanTaskStatus,
-  DeliveryPlanTaskCompletedBy,
-  DeliverySignalSourceV3,
   DeliveryEffectKindV3,
   DeliveryEffectStatusV3,
+  DeliveryImplementationSnapshotPayload,
+  DeliveryLoopCauseType,
+  DeliveryLoopState,
+  DeliveryOutboxStatusV3,
+  DeliveryOutboxTopicV3,
+  DeliveryParityTargetClass,
+  DeliveryPhase,
+  DeliveryPlanSpecPayload,
+  DeliveryPlanTaskCompletedBy,
+  DeliveryPlanTaskStatus,
+  DeliveryPrLinkPayload,
+  DeliveryReviewBundlePayload,
+  DeliveryReviewThreadEvaluationSource,
+  DeliveryReviewThreadGateStatus,
+  DeliverySignalSourceV3,
   DeliveryTimerKindV3,
   DeliveryTimerStatusV3,
-  DeliveryOutboxTopicV3,
-  DeliveryOutboxStatusV3,
+  DeliveryUiSmokePayload,
+  DispatchIntentDispatchMechanism,
+  DispatchIntentExecutionClass,
+  DispatchIntentStatus,
+  GitDiffStats,
+  GithubCheckStatus,
+  GithubInstallationPermissions,
+  GithubPRMergeableState,
+  GithubPRStatus,
+  GithubSurfaceBindingKind,
+  GithubSurfaceBindingMetadata,
+  GithubSurfaceBindingRoutingReason,
+  GithubWorkspaceLane,
+  GithubWorkspaceRunStatus,
+  ThreadErrorMessage,
+  ThreadFailureSource,
+  ThreadSource,
+  ThreadSourceMetadata,
+  ThreadStatus,
+  ThreadVisibility,
+  UsageEventType,
+  UsageSku,
+  UserCreditGrantType,
 } from "./types";
-import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";
-import {
-  AutomationAction,
-  AutomationTriggerType,
-  AutomationTriggerConfig,
-} from "../automations";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -530,6 +539,235 @@ export const threadVisibility = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [index("thread_visibility_thread_id_index").on(table.threadId)],
+);
+
+export const githubInstallationProjection = pgTable(
+  "github_installation_projection",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    installationId: bigint("installation_id", { mode: "number" }).notNull(),
+    targetAccountId: bigint("target_account_id", { mode: "number" }),
+    targetAccountLogin: text("target_account_login"),
+    targetAccountType: text("target_account_type"),
+    permissionsJson:
+      jsonb("permissions_json").$type<GithubInstallationPermissions>(),
+    isSuspended: boolean("is_suspended").notNull().default(false),
+    suspendedAt: timestamp("suspended_at"),
+    lastWebhookReceivedAt: timestamp("last_webhook_received_at"),
+    lastWebhookSucceededAt: timestamp("last_webhook_succeeded_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_installation_projection_installation_id_unique").on(
+      table.installationId,
+    ),
+    unique("github_installation_projection_id_installation_id_unique").on(
+      table.id,
+      table.installationId,
+    ),
+  ],
+);
+
+export const githubRepoProjection = pgTable(
+  "github_repo_projection",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    installationProjectionId: text("installation_projection_id").notNull(),
+    installationId: bigint("installation_id", { mode: "number" }).notNull(),
+    repoId: bigint("repo_id", { mode: "number" }).notNull(),
+    repoNodeId: text("repo_node_id"),
+    currentSlug: text("current_slug").notNull(),
+    defaultBranch: text("default_branch"),
+    isPrivate: boolean("is_private").notNull().default(false),
+    hasReadAccess: boolean("has_read_access").notNull().default(false),
+    hasWriteAccess: boolean("has_write_access").notNull().default(false),
+    hasAdminAccess: boolean("has_admin_access").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_repo_projection_repo_id_unique").on(table.repoId),
+    unique("github_repo_projection_id_repo_id_unique").on(
+      table.id,
+      table.repoId,
+    ),
+    index("github_repo_projection_installation_id_index").on(
+      table.installationId,
+    ),
+    index("github_repo_projection_installation_projection_id_index").on(
+      table.installationProjectionId,
+    ),
+    index("github_repo_projection_current_slug_index").on(table.currentSlug),
+    foreignKey({
+      columns: [table.installationProjectionId, table.installationId],
+      foreignColumns: [
+        githubInstallationProjection.id,
+        githubInstallationProjection.installationId,
+      ],
+      name: "github_repo_projection_installation_projection_id_installation_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const githubPrProjection = pgTable(
+  "github_pr_projection",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    repoProjectionId: text("repo_projection_id").notNull(),
+    repoId: bigint("repo_id", { mode: "number" }).notNull(),
+    prNodeId: text("pr_node_id").notNull(),
+    number: integer("number").notNull(),
+    status: text("status").$type<GithubPRStatus>().notNull().default("open"),
+    isDraft: boolean("is_draft").notNull().default(false),
+    baseRef: text("base_ref"),
+    headRef: text("head_ref"),
+    headSha: text("head_sha"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_pr_projection_pr_node_id_unique").on(table.prNodeId),
+    unique("github_pr_projection_id_repo_id_unique").on(table.id, table.repoId),
+    uniqueIndex("github_pr_projection_repo_id_number_unique").on(
+      table.repoId,
+      table.number,
+    ),
+    index("github_pr_projection_repo_projection_id_index").on(
+      table.repoProjectionId,
+    ),
+    foreignKey({
+      columns: [table.repoProjectionId, table.repoId],
+      foreignColumns: [githubRepoProjection.id, githubRepoProjection.repoId],
+      name: "github_pr_projection_repo_projection_id_repo_id_fk",
+    }).onDelete("cascade"),
+    check(
+      "github_pr_projection_status_is_draft_consistent",
+      sql`(("status" = 'draft' AND "is_draft" = true) OR ("status" <> 'draft' AND "is_draft" = false))`,
+    ),
+  ],
+);
+
+export const githubPrWorkspace = pgTable(
+  "github_pr_workspace",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    installationProjectionId: text("installation_projection_id").notNull(),
+    installationId: bigint("installation_id", { mode: "number" }).notNull(),
+    repoProjectionId: text("repo_projection_id").notNull(),
+    repoId: bigint("repo_id", { mode: "number" }).notNull(),
+    prProjectionId: text("pr_projection_id").notNull(),
+    prNodeId: text("pr_node_id").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    status: text("status").$type<GithubPRStatus>().notNull().default("open"),
+    headSha: text("head_sha"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_pr_workspace_pr_projection_id_unique").on(
+      table.prProjectionId,
+    ),
+    uniqueIndex("github_pr_workspace_installation_repo_pr_node_id_unique").on(
+      table.installationId,
+      table.repoId,
+      table.prNodeId,
+    ),
+    index("github_pr_workspace_installation_projection_id_index").on(
+      table.installationProjectionId,
+    ),
+    index("github_pr_workspace_repo_projection_id_index").on(
+      table.repoProjectionId,
+    ),
+    index("github_pr_workspace_pr_projection_id_index").on(
+      table.prProjectionId,
+    ),
+    foreignKey({
+      columns: [table.installationProjectionId, table.installationId],
+      foreignColumns: [
+        githubInstallationProjection.id,
+        githubInstallationProjection.installationId,
+      ],
+      name: "github_pr_workspace_installation_projection_id_installation_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.repoProjectionId, table.repoId],
+      foreignColumns: [githubRepoProjection.id, githubRepoProjection.repoId],
+      name: "github_pr_workspace_repo_projection_id_repo_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.prProjectionId, table.repoId],
+      foreignColumns: [githubPrProjection.id, githubPrProjection.repoId],
+      name: "github_pr_workspace_pr_projection_id_repo_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const githubSurfaceBinding = pgTable(
+  "github_surface_binding",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => githubPrWorkspace.id, { onDelete: "cascade" }),
+    surfaceKind: text("surface_kind")
+      .$type<GithubSurfaceBindingKind>()
+      .notNull(),
+    surfaceGitHubId: text("surface_github_id").notNull(),
+    surfaceMetadata:
+      jsonb("surface_metadata").$type<GithubSurfaceBindingMetadata>(),
+    lane: text("lane").$type<GithubWorkspaceLane>().notNull(),
+    routingReason: text("routing_reason")
+      .$type<GithubSurfaceBindingRoutingReason>()
+      .notNull(),
+    boundHeadSha: text("bound_head_sha").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex(
+      "github_surface_binding_surface_kind_surface_github_id_unique",
+    ).on(table.surfaceKind, table.surfaceGitHubId),
+    check(
+      "github_surface_binding_surface_metadata_kind_check",
+      sql`
+        (
+          "surface_kind" = 'issue_comment_mention'
+          AND "surface_metadata" IS NOT NULL
+        )
+        OR (
+          "surface_kind" <> 'issue_comment_mention'
+          AND "surface_metadata" IS NULL
+        )
+      `,
+    ),
+    index("github_surface_binding_workspace_id_index").on(table.workspaceId),
+  ],
 );
 
 export const githubPR = pgTable(
@@ -1924,9 +2162,55 @@ export const deliveryWorkflow = pgTable(
       table.threadId,
       table.generation,
     ),
+    unique("delivery_workflow_id_thread_id_unique").on(
+      table.id,
+      table.threadId,
+    ),
     index("delivery_workflow_kind_index").on(table.kind),
     index("delivery_workflow_thread_id_index").on(table.threadId),
     index("delivery_workflow_user_id_index").on(table.userId),
+  ],
+);
+
+export const githubWorkspaceRun = pgTable(
+  "github_workspace_run",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => githubPrWorkspace.id, { onDelete: "cascade" }),
+    lane: text("lane").$type<GithubWorkspaceLane>().notNull(),
+    headSha: text("head_sha").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status")
+      .$type<GithubWorkspaceRunStatus>()
+      .notNull()
+      .default("pending"),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    workflowId: text("workflow_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex(
+      "github_workspace_run_workspace_lane_head_sha_attempt_unique",
+    ).on(table.workspaceId, table.lane, table.headSha, table.attempt),
+    index("github_workspace_run_workspace_id_index").on(table.workspaceId),
+    index("github_workspace_run_thread_id_index").on(table.threadId),
+    index("github_workspace_run_workflow_id_index").on(table.workflowId),
+    foreignKey({
+      columns: [table.workflowId, table.threadId],
+      foreignColumns: [deliveryWorkflow.id, deliveryWorkflow.threadId],
+      name: "github_workspace_run_workflow_id_thread_id_fk",
+    }),
+    check("github_workspace_run_attempt_positive", sql`"attempt" > 0`),
   ],
 );
 

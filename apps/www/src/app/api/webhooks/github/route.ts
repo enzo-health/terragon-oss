@@ -34,28 +34,57 @@
  * - Check suites: Updates PR check status when check suites are completed or rerequested
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { headers } from "next/headers";
-import {
-  handlePullRequestStatusChange,
-  handleIssueCommentEvent,
-  handlePullRequestReviewCommentEvent,
-  handlePullRequestReviewEvent,
-  handleCheckRunEvent,
-  handleCheckSuiteEvent,
-  handlePullRequestUpdated,
-  handleIssueEvent,
-} from "./handlers";
 import { Webhooks } from "@octokit/webhooks";
 import { env } from "@terragon/env/apps-www";
-import { randomUUID } from "crypto";
 import {
   claimGithubWebhookDelivery,
   completeGithubWebhookDelivery,
   getGithubWebhookClaimHttpStatus,
   releaseGithubWebhookDeliveryClaim,
 } from "@terragon/shared/delivery-loop/store/webhook-delivery-store";
+import { randomUUID } from "crypto";
+import { headers } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import {
+  handleCheckRunEvent,
+  handleCheckSuiteEvent,
+  handleIssueCommentEvent,
+  handleIssueEvent,
+  handlePullRequestReviewCommentEvent,
+  handlePullRequestReviewEvent,
+  handlePullRequestStatusChange,
+  handlePullRequestUpdated,
+} from "./handlers";
+import {
+  getShadowRefreshWebhookEvent,
+  shadowRefreshGitHubProjectionsForWebhook,
+} from "./shadow-refresh";
+
+type SupportedGitHubWebhookName =
+  | "pull_request"
+  | "issue_comment"
+  | "pull_request_review"
+  | "pull_request_review_comment"
+  | "check_run"
+  | "check_suite"
+  | "issues";
+
+const supportedGitHubWebhookNames = new Set<string>([
+  "pull_request",
+  "issue_comment",
+  "pull_request_review",
+  "pull_request_review_comment",
+  "check_run",
+  "check_suite",
+  "issues",
+]);
+
+function isSupportedGitHubWebhookName(
+  name: string,
+): name is SupportedGitHubWebhookName {
+  return supportedGitHubWebhookNames.has(name);
+}
 
 export async function POST(request: NextRequest) {
   const webhooks = new Webhooks({
@@ -65,6 +94,12 @@ export async function POST(request: NextRequest) {
   const signature = headersList.get("x-hub-signature-256") ?? "";
   const eventType = headersList.get("x-github-event") ?? "";
   const requestId = headersList.get("x-github-delivery") ?? "";
+  let parsedPayload: unknown = null;
+  try {
+    parsedPayload = JSON.parse(body);
+  } catch {
+    // Let webhook verification surface malformed JSON when needed.
+  }
   webhooks.on(
     [
       "pull_request.opened",
@@ -72,19 +107,29 @@ export async function POST(request: NextRequest) {
       "pull_request.closed",
       "pull_request.ready_for_review",
       "pull_request.converted_to_draft",
-    ],
-    async ({ payload }) => {
-      await handlePullRequestStatusChange(payload, requestId);
-    },
-  );
-  webhooks.on(
-    [
-      "pull_request.opened",
-      "pull_request.ready_for_review",
       "pull_request.synchronize",
     ],
     async ({ payload }) => {
-      await handlePullRequestUpdated(payload);
+      switch (payload.action) {
+        case "opened":
+        case "reopened":
+        case "closed":
+        case "ready_for_review":
+        case "converted_to_draft": {
+          await handlePullRequestStatusChange(payload, requestId);
+          break;
+        }
+        default:
+      }
+      switch (payload.action) {
+        case "opened":
+        case "ready_for_review":
+        case "synchronize": {
+          await handlePullRequestUpdated(payload);
+          break;
+        }
+        default:
+      }
     },
   );
   webhooks.on("issue_comment.created", async ({ payload }) => {
@@ -166,6 +211,11 @@ export async function POST(request: NextRequest) {
       // Malformed payload — let verify/receive below surface the real error.
     }
 
+    const shadowRefreshEvent = getShadowRefreshWebhookEvent(
+      eventType,
+      parsedPayload,
+    );
+
     const claimantToken = `github-webhook:${randomUUID()}`;
     const claim = await claimGithubWebhookDelivery({
       db,
@@ -184,10 +234,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (shadowRefreshEvent) {
+      await shadowRefreshGitHubProjectionsForWebhook(shadowRefreshEvent);
+    }
+
+    if (
+      parsedPayload === null ||
+      typeof parsedPayload !== "object" ||
+      Array.isArray(parsedPayload)
+    ) {
+      throw new Error("Invalid GitHub webhook payload");
+    }
+
+    if (!isSupportedGitHubWebhookName(eventType)) {
+      throw new Error(`Unsupported GitHub webhook event: ${eventType}`);
+    }
+
     try {
       await webhooks.receive({
         id: requestId,
-        name: eventType as any,
+        name: eventType,
         payload: JSON.parse(body),
       });
     } catch (error) {

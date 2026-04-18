@@ -1,0 +1,1 @@
+ALTER TABLE "github_surface_binding" ADD CONSTRAINT "github_surface_binding_surface_metadata_kind_check" CHECK (("surface_kind" = 'issue_comment_mention' AND "surface_metadata" IS NOT NULL) OR ("surface_kind" <> 'issue_comment_mention' AND "surface_metadata" IS NULL));--> statement-breakpoint

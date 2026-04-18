@@ -218,6 +218,34 @@
       "when": 1776729600000,
       "tag": "0030_resurrection_cooldown",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1776816000000,
+      "tag": "0031_github_projection_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1776902400000,
+      "tag": "0032_github_workspace_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1776988800000,
+      "tag": "0033_github_surface_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1777075200000,
+      "tag": "0034_github_surface_binding_metadata_kind_check",
+      "breakpoints": true
     }
   ]
 }

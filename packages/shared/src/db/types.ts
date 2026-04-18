@@ -358,7 +358,60 @@ export type ThreadFailureMetadata = {
   failureSignatureHash: number | null;
   failureTerminalReason: string | null;
 };
+export type GithubInstallationPermissionLevel = "read" | "write" | "admin";
+export type GithubInstallationAccountType =
+  | "Organization"
+  | "User"
+  | "Enterprise";
+export type GithubInstallationPermissions = Record<
+  string,
+  GithubInstallationPermissionLevel
+>;
 export type GithubPRStatus = "draft" | "open" | "closed" | "merged";
+export type GithubWorkspaceLane =
+  | "authoring"
+  | "mention_follow_up"
+  | "ci_repair"
+  | "review_response"
+  | "automation";
+export type GithubSurfaceBindingKind =
+  | "pull_request"
+  | "review_thread"
+  | "review_comment"
+  | "issue_comment_mention"
+  | "check_run"
+  | "check_suite";
+export type GithubSurfaceBindingMetadataByKind = {
+  pull_request: null;
+  review_thread: null;
+  review_comment: null;
+  issue_comment_mention: {
+    issueOrPrType: "issue" | "pull_request";
+  };
+  check_run: null;
+  check_suite: null;
+};
+export type GithubSurfaceBindingMetadata =
+  GithubSurfaceBindingMetadataByKind[GithubSurfaceBindingKind];
+export type GithubSurfaceBindingMetadataForKind<
+  K extends GithubSurfaceBindingKind,
+> = GithubSurfaceBindingMetadataByKind[K];
+export type GithubSurfaceBindingRoutingReason =
+  | "input-user-id"
+  | "github-pr-thread-id"
+  | "existing-unarchived-thread"
+  | "existing-thread"
+  | "pr-author-fallback"
+  | "ambiguous-unarchived-thread-owners"
+  | "ambiguous-thread-owners"
+  | "no-owner-found";
+export type GithubWorkspaceRunStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 export type GithubCheckRunConclusion =
   | "success"
   | "failure"
@@ -544,6 +597,33 @@ export type LinearMentionThreadInsert = Omit<ThreadInsert, "sourceMetadata"> & {
   sourceMetadata: LinearMentionSourceMetadataInsert;
 };
 
+export type GithubInstallationProjection =
+  typeof schema.githubInstallationProjection.$inferSelect;
+export type GithubInstallationProjectionInsert =
+  typeof schema.githubInstallationProjection.$inferInsert;
+export type GithubRepoProjection =
+  typeof schema.githubRepoProjection.$inferSelect;
+export type GithubRepoProjectionInsert =
+  typeof schema.githubRepoProjection.$inferInsert;
+export type GithubPrProjection = typeof schema.githubPrProjection.$inferSelect;
+export type GithubPrProjectionInsert =
+  typeof schema.githubPrProjection.$inferInsert;
+export type GithubPrWorkspace = typeof schema.githubPrWorkspace.$inferSelect;
+export type GithubPrWorkspaceInsert =
+  typeof schema.githubPrWorkspace.$inferInsert;
+export type GithubSurfaceBinding =
+  typeof schema.githubSurfaceBinding.$inferSelect;
+export type GithubSurfaceBindingInsert =
+  typeof schema.githubSurfaceBinding.$inferInsert;
+export type GithubSurfaceBindingRecordForKind<
+  K extends GithubSurfaceBindingKind,
+> = Omit<GithubSurfaceBinding, "surfaceKind" | "surfaceMetadata"> & {
+  surfaceKind: K;
+  surfaceMetadata: GithubSurfaceBindingMetadataForKind<K>;
+};
+export type GithubWorkspaceRun = typeof schema.githubWorkspaceRun.$inferSelect;
+export type GithubWorkspaceRunInsert =
+  typeof schema.githubWorkspaceRun.$inferInsert;
 export type GitHubPR = typeof schema.githubPR.$inferSelect;
 export type GitHubPRInsert = typeof schema.githubPR.$inferInsert;
 

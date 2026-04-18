@@ -1,6 +1,4 @@
 import { db } from "@/lib/db";
-import { getGithubPRStatus } from "@terragon/shared/github-api/helpers";
-import { upsertGithubPR } from "@terragon/shared/model/github";
 import { updateThread, getThread } from "@terragon/shared/model/threads";
 import {
   gitCommitAndPushBranch,
@@ -18,9 +16,11 @@ import {
 } from "@/server-lib/generate-pr-content";
 import { generateCommitMessage } from "@/server-lib/generate-commit-message";
 import {
+  associateThreadWithPullRequest,
   getOctokitForUserOrThrow,
   parseRepoFullName,
   getExistingPRForBranch,
+  toPullRequestAssociationIdentity,
 } from "@/lib/github";
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
@@ -36,6 +36,7 @@ export async function openPullRequestForThread({
   skipCommitAndPush,
   prType,
   session,
+  associateThreadWithPullRequestFn = associateThreadWithPullRequest,
 }: {
   threadId: string;
   userId: string;
@@ -43,6 +44,7 @@ export async function openPullRequestForThread({
   skipCommitAndPush: boolean;
   prType: "draft" | "ready";
   session: ISandboxSession;
+  associateThreadWithPullRequestFn?: typeof associateThreadWithPullRequest;
 }) {
   console.log("openPullRequestForThread", {
     threadId,
@@ -155,25 +157,20 @@ export async function openPullRequestForThread({
     }),
   ]);
   if (existingPr) {
-    await Promise.all([
-      updateThread({
-        db,
-        userId,
-        threadId,
-        updates: {
-          branchName: currentBranch,
-          githubPRNumber: existingPr.number,
-        },
-      }),
-      upsertGithubPR({
-        db,
-        repoFullName: thread.githubRepoFullName,
-        number: existingPr.number,
-        updates: {
-          status: getGithubPRStatus(existingPr),
-        },
-      }),
-    ]);
+    await associateThreadWithPullRequestFn({
+      userId,
+      threadId,
+      repoFullName: thread.githubRepoFullName,
+      pullRequest: toPullRequestAssociationIdentity(existingPr),
+    });
+    await updateThread({
+      db,
+      userId,
+      threadId,
+      updates: {
+        branchName: currentBranch,
+      },
+    });
     await maybeLinkThreadLoopToPr({
       prNumber: existingPr.number,
     });
@@ -229,14 +226,11 @@ export async function openPullRequestForThread({
   });
 
   await Promise.all([
-    upsertGithubPR({
-      db,
+    associateThreadWithPullRequestFn({
+      userId,
+      threadId,
       repoFullName: thread.githubRepoFullName,
-      number: pr.data.number,
-      threadId: threadId,
-      updates: {
-        status: getGithubPRStatus(pr.data),
-      },
+      pullRequest: toPullRequestAssociationIdentity(pr.data),
     }),
     updateThread({
       db,
