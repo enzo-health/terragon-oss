@@ -358,7 +358,15 @@ export type ThreadFailureMetadata = {
   failureSignatureHash: number | null;
   failureTerminalReason: string | null;
 };
-export type GithubInstallationPermissions = Record<string, string>;
+export type GithubInstallationPermissionLevel = "read" | "write" | "admin";
+export type GithubInstallationAccountType =
+  | "Organization"
+  | "User"
+  | "Enterprise";
+export type GithubInstallationPermissions = Record<
+  string,
+  GithubInstallationPermissionLevel
+>;
 export type GithubPRStatus = "draft" | "open" | "closed" | "merged";
 export type GithubWorkspaceLane =
   | "authoring"
@@ -373,9 +381,21 @@ export type GithubSurfaceBindingKind =
   | "issue_comment_mention"
   | "check_run"
   | "check_suite";
-export type GithubSurfaceBindingMetadata = {
-  issueOrPrType?: "pull_request";
+export type GithubSurfaceBindingMetadataByKind = {
+  pull_request: null;
+  review_thread: null;
+  review_comment: null;
+  issue_comment_mention: {
+    issueOrPrType: "issue" | "pull_request";
+  };
+  check_run: null;
+  check_suite: null;
 };
+export type GithubSurfaceBindingMetadata =
+  GithubSurfaceBindingMetadataByKind[GithubSurfaceBindingKind];
+export type GithubSurfaceBindingMetadataForKind<
+  K extends GithubSurfaceBindingKind,
+> = GithubSurfaceBindingMetadataByKind[K];
 export type GithubSurfaceBindingRoutingReason =
   | "input-user-id"
   | "github-pr-thread-id"
@@ -595,6 +615,12 @@ export type GithubSurfaceBinding =
   typeof schema.githubSurfaceBinding.$inferSelect;
 export type GithubSurfaceBindingInsert =
   typeof schema.githubSurfaceBinding.$inferInsert;
+export type GithubSurfaceBindingRecordForKind<
+  K extends GithubSurfaceBindingKind,
+> = Omit<GithubSurfaceBinding, "surfaceKind" | "surfaceMetadata"> & {
+  surfaceKind: K;
+  surfaceMetadata: GithubSurfaceBindingMetadataForKind<K>;
+};
 export type GithubWorkspaceRun = typeof schema.githubWorkspaceRun.$inferSelect;
 export type GithubWorkspaceRunInsert =
   typeof schema.githubWorkspaceRun.$inferInsert;

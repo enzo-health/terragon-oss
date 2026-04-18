@@ -1,9 +1,11 @@
 import type { DB } from "@terragon/shared/db";
 import type {
   GithubPrWorkspace,
-  GithubSurfaceBinding,
+  GithubSurfaceBindingKind,
+  GithubSurfaceBindingRecordForKind,
 } from "@terragon/shared/db/types";
 import {
+  type GithubSurfaceBindingMutableFields,
   getGithubSurfaceBindingBySurface,
   resolveGithubSurfaceBinding,
   upsertGithubSurfaceBinding,
@@ -14,6 +16,10 @@ import { db as defaultDb } from "@/lib/db";
 type GitHubSurfaceBindingCoordinatorDependencies = {
   db: DB;
 };
+type GithubSurfaceBindingKindWithoutMetadata = Exclude<
+  GithubSurfaceBindingKind,
+  "issue_comment_mention"
+>;
 
 export type GitHubSurfaceBindingWorkspaceIdentity = {
   installationId: number;
@@ -21,38 +27,119 @@ export type GitHubSurfaceBindingWorkspaceIdentity = {
   prNodeId: string;
 };
 
-export type UpsertGitHubSurfaceBindingForWorkspaceParams =
-  GitHubSurfaceBindingWorkspaceIdentity & {
-    surfaceKind: GithubSurfaceBinding["surfaceKind"];
+type UpsertGitHubSurfaceBindingForWorkspaceParamsByKind = {
+  [K in GithubSurfaceBindingKind]: GitHubSurfaceBindingWorkspaceIdentity & {
+    surfaceKind: K;
     surfaceGitHubId: string;
-    surfaceMetadata?: GithubSurfaceBinding["surfaceMetadata"];
-    lane: GithubSurfaceBinding["lane"];
-    routingReason: GithubSurfaceBinding["routingReason"];
-    boundHeadSha: GithubSurfaceBinding["boundHeadSha"];
-  };
+    workspaceHeadSha?: GithubPrWorkspace["headSha"];
+  } & GithubSurfaceBindingMutableFields<K>;
+};
 
-export type GitHubSurfaceBindingLookupParams = Pick<
-  GithubSurfaceBinding,
-  "surfaceKind" | "surfaceGitHubId"
->;
+export type UpsertGitHubSurfaceBindingForWorkspaceParams<
+  K extends GithubSurfaceBindingKind = GithubSurfaceBindingKind,
+> = UpsertGitHubSurfaceBindingForWorkspaceParamsByKind[K];
+
+export type GitHubSurfaceBindingLookupParams<
+  K extends GithubSurfaceBindingKind = GithubSurfaceBindingKind,
+> = {
+  surfaceKind: K;
+  surfaceGitHubId: string;
+};
 
 export type GitHubSurfaceBindingCoordinator = {
-  getBinding(
-    params: GitHubSurfaceBindingLookupParams,
-  ): Promise<GithubSurfaceBinding | null>;
-  resolveWorkspace(params: GitHubSurfaceBindingLookupParams): Promise<{
-    binding: GithubSurfaceBinding;
+  getBinding<K extends GithubSurfaceBindingKind>(
+    params: GitHubSurfaceBindingLookupParams<K>,
+  ): Promise<GithubSurfaceBindingRecordForKind<K> | null>;
+  resolveWorkspace<K extends GithubSurfaceBindingKind>(
+    params: GitHubSurfaceBindingLookupParams<K>,
+  ): Promise<{
+    binding: GithubSurfaceBindingRecordForKind<K>;
     workspace: GithubPrWorkspace;
+    headSha: string;
   } | null>;
-  upsertBindingForWorkspace(
-    params: UpsertGitHubSurfaceBindingForWorkspaceParams,
-  ): Promise<{ binding: GithubSurfaceBinding; workspace: GithubPrWorkspace }>;
+  upsertBindingForWorkspace<K extends GithubSurfaceBindingKind>(
+    params: UpsertGitHubSurfaceBindingForWorkspaceParams<K>,
+  ): Promise<{
+    binding: GithubSurfaceBindingRecordForKind<K>;
+    workspace: GithubPrWorkspace;
+  }>;
 };
 
 export function createGitHubSurfaceBindingCoordinator(
   dependencies?: Partial<GitHubSurfaceBindingCoordinatorDependencies>,
 ): GitHubSurfaceBindingCoordinator {
   const resolvedDb = dependencies?.db ?? defaultDb;
+
+  function upsertBindingForWorkspace<
+    K extends GithubSurfaceBindingKindWithoutMetadata,
+  >(
+    params: UpsertGitHubSurfaceBindingForWorkspaceParams<K>,
+  ): Promise<{
+    binding: GithubSurfaceBindingRecordForKind<K>;
+    workspace: GithubPrWorkspace;
+  }>;
+  function upsertBindingForWorkspace(
+    params: UpsertGitHubSurfaceBindingForWorkspaceParams<"issue_comment_mention">,
+  ): Promise<{
+    binding: GithubSurfaceBindingRecordForKind<"issue_comment_mention">;
+    workspace: GithubPrWorkspace;
+  }>;
+  async function upsertBindingForWorkspace(
+    params: UpsertGitHubSurfaceBindingForWorkspaceParams,
+  ): Promise<{
+    binding: GithubSurfaceBindingRecordForKind<GithubSurfaceBindingKind>;
+    workspace: GithubPrWorkspace;
+  }> {
+    const workspace = await upsertGithubPrWorkspace({
+      db: resolvedDb,
+      installationId: params.installationId,
+      repoId: params.repoId,
+      prNodeId: params.prNodeId,
+      fields:
+        params.workspaceHeadSha !== undefined
+          ? {
+              headSha: params.workspaceHeadSha,
+            }
+          : undefined,
+    });
+
+    if (params.surfaceKind === "issue_comment_mention") {
+      const binding = await upsertGithubSurfaceBinding({
+        db: resolvedDb,
+        workspaceId: workspace.id,
+        surfaceKind: "issue_comment_mention",
+        surfaceGitHubId: params.surfaceGitHubId,
+        fields: {
+          lane: params.lane,
+          routingReason: params.routingReason,
+          boundHeadSha: params.boundHeadSha,
+          surfaceMetadata: params.surfaceMetadata,
+        },
+      });
+
+      return {
+        binding,
+        workspace,
+      };
+    }
+
+    const binding = await upsertGithubSurfaceBinding({
+      db: resolvedDb,
+      workspaceId: workspace.id,
+      surfaceKind: params.surfaceKind,
+      surfaceGitHubId: params.surfaceGitHubId,
+      fields: {
+        lane: params.lane,
+        routingReason: params.routingReason,
+        boundHeadSha: params.boundHeadSha,
+      },
+    });
+
+    return {
+      binding,
+      workspace,
+    };
+  }
 
   return {
     async getBinding(params) {
@@ -69,37 +156,7 @@ export function createGitHubSurfaceBindingCoordinator(
         surfaceGitHubId: params.surfaceGitHubId,
       });
     },
-    async upsertBindingForWorkspace(params) {
-      const workspace = await upsertGithubPrWorkspace({
-        db: resolvedDb,
-        installationId: params.installationId,
-        repoId: params.repoId,
-        prNodeId: params.prNodeId,
-        fields: {
-          headSha: params.boundHeadSha,
-        },
-      });
-
-      const binding = await upsertGithubSurfaceBinding({
-        db: resolvedDb,
-        workspaceId: workspace.id,
-        surfaceKind: params.surfaceKind,
-        surfaceGitHubId: params.surfaceGitHubId,
-        fields: {
-          lane: params.lane,
-          routingReason: params.routingReason,
-          boundHeadSha: params.boundHeadSha,
-          ...(params.surfaceMetadata !== undefined
-            ? { surfaceMetadata: params.surfaceMetadata }
-            : {}),
-        },
-      });
-
-      return {
-        binding,
-        workspace,
-      };
-    },
+    upsertBindingForWorkspace,
   };
 }
 

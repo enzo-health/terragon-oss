@@ -1,5 +1,6 @@
 import type { DB } from "@terragon/shared/db";
 import type {
+  GithubInstallationAccountType,
   GithubInstallationPermissions,
   GithubInstallationProjection,
   GithubPrProjection,
@@ -18,7 +19,7 @@ export type GitHubInstallationSnapshot = {
   installationId: number;
   targetAccountId: number | null;
   targetAccountLogin: string | null;
-  targetAccountType: string | null;
+  targetAccountType: GithubInstallationAccountType | null;
   permissions: GithubInstallationPermissions | null;
   suspendedAt: Date | null;
 };
@@ -61,10 +62,7 @@ type RefreshPrProjectionResult = RefreshRepoProjectionResult & {
 };
 
 export interface GitHubProjectionAppClient {
-  getInstallationIdForRepo(params: {
-    owner: string;
-    repo: string;
-  }): Promise<number>;
+  getInstallationIdForRepo(params: RepoCoordinates): Promise<number>;
   getInstallationSnapshot(params: {
     installationId: number;
   }): Promise<GitHubInstallationSnapshot>;
@@ -85,10 +83,7 @@ export interface GitHubProjectionRepoClient {
 type GitHubProjectionRefreshClientDependencies = {
   db: DB;
   appClient: GitHubProjectionAppClient;
-  getRepoClient(params: {
-    owner: string;
-    repo: string;
-  }): Promise<GitHubProjectionRepoClient>;
+  getRepoClient(params: RepoCoordinates): Promise<GitHubProjectionRepoClient>;
 };
 
 function getRepoCoordinates(repoFullName: string): RepoCoordinates {
@@ -98,8 +93,8 @@ function getRepoCoordinates(repoFullName: string): RepoCoordinates {
 
 function normalizeInstallationPermissions(
   permissions:
-    | Record<string, string | undefined>
-    | Record<string, string>
+    | Record<string, "read" | "write" | "admin" | undefined>
+    | Record<string, "read" | "write" | "admin">
     | null
     | undefined,
 ): GithubInstallationPermissions | null {
@@ -108,9 +103,13 @@ function normalizeInstallationPermissions(
   }
 
   const normalized = Object.fromEntries(
-    Object.entries(permissions).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === "string";
-    }),
+    Object.entries(permissions).filter(
+      (entry): entry is [string, "read" | "write" | "admin"] => {
+        return (
+          entry[1] === "read" || entry[1] === "write" || entry[1] === "admin"
+        );
+      },
+    ),
   );
 
   return Object.keys(normalized).length > 0 ? normalized : null;
@@ -131,17 +130,22 @@ function getInstallationAccountLogin(
 }
 
 function getInstallationAccountType(
-  account: { type: string } | { slug: string } | null | undefined,
-): string | null {
+  account: { type?: string | null; slug?: string | null } | null | undefined,
+): GithubInstallationAccountType | null {
   if (!account) {
     return null;
   }
 
-  if ("type" in account) {
-    return account.type;
+  switch (account.type) {
+    case "Organization":
+      return "Organization";
+    case "User":
+      return "User";
+    case "Enterprise":
+      return "Enterprise";
+    default:
+      return account.slug ? "Enterprise" : null;
   }
-
-  return "Enterprise";
 }
 
 function getPullRequestStatus(
@@ -178,12 +182,15 @@ function getRepoAccessFlags(
   }
 
   const permissionLevels = Object.values(permissions);
-  const hasWriteAccess = permissionLevels.includes("write");
+  const hasWriteAccess =
+    permissionLevels.includes("write") || permissionLevels.includes("admin");
 
   return {
     hasReadAccess: hasWriteAccess || permissionLevels.includes("read"),
     hasWriteAccess,
-    hasAdminAccess: permissions.administration === "write",
+    hasAdminAccess:
+      permissions.administration === "write" ||
+      permissions.administration === "admin",
   };
 }
 

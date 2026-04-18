@@ -224,10 +224,11 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await webhooks.receive({
+      await webhooks.verifyAndReceive({
         id: requestId,
-        name: eventType as any,
-        payload: JSON.parse(body),
+        name: eventType,
+        payload: body,
+        signature,
       });
     } catch (error) {
       try {

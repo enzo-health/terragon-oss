@@ -5,23 +5,56 @@ import type {
   GithubPrWorkspace,
   GithubSurfaceBinding,
   GithubSurfaceBindingInsert,
+  GithubSurfaceBindingKind,
+  GithubSurfaceBindingMetadataForKind,
+  GithubSurfaceBindingRecordForKind,
 } from "../db/types";
 import { getGithubPrWorkspaceById } from "./github-workspaces";
 
-type GithubSurfaceBindingLookupKey = Pick<
-  GithubSurfaceBinding,
-  "surfaceKind" | "surfaceGitHubId"
->;
-
-type GithubSurfaceBindingMutableFields = Pick<
-  GithubSurfaceBindingInsert,
-  "lane" | "routingReason" | "boundHeadSha" | "surfaceMetadata"
->;
-
-export type GithubSurfaceBindingResolution = {
-  binding: GithubSurfaceBinding;
-  workspace: GithubPrWorkspace;
+type GithubSurfaceBindingLookupKey<
+  K extends GithubSurfaceBindingKind = GithubSurfaceBindingKind,
+> = {
+  surfaceKind: K;
+  surfaceGitHubId: string;
 };
+
+type GithubSurfaceBindingMutableFieldsBase = Pick<
+  GithubSurfaceBindingInsert,
+  "lane" | "routingReason" | "boundHeadSha"
+>;
+
+type GithubSurfaceBindingMutableFieldsByKind = {
+  [K in GithubSurfaceBindingKind]: GithubSurfaceBindingMutableFieldsBase &
+    (GithubSurfaceBindingMetadataForKind<K> extends null
+      ? {
+          surfaceMetadata?: undefined;
+        }
+      : {
+          surfaceMetadata: GithubSurfaceBindingMetadataForKind<K>;
+        });
+};
+
+export type GithubSurfaceBindingMutableFields<
+  K extends GithubSurfaceBindingKind = GithubSurfaceBindingKind,
+> = GithubSurfaceBindingMutableFieldsByKind[K];
+
+export type GithubSurfaceBindingResolution<
+  K extends GithubSurfaceBindingKind = GithubSurfaceBindingKind,
+> = {
+  binding: GithubSurfaceBindingRecordForKind<K>;
+  workspace: GithubPrWorkspace & {
+    headSha: string;
+  };
+  headSha: string;
+};
+
+type GithubSurfaceBindingRecord = {
+  [K in GithubSurfaceBindingKind]: GithubSurfaceBindingRecordForKind<K>;
+}[GithubSurfaceBindingKind];
+type GithubMetadataFreeSurfaceBindingKind = Exclude<
+  GithubSurfaceBindingKind,
+  "issue_comment_mention"
+>;
 
 async function requireGithubPrWorkspace({
   db,
@@ -39,15 +72,92 @@ async function requireGithubPrWorkspace({
   return workspace;
 }
 
-export async function getGithubSurfaceBindingBySurface({
+function requireWorkspaceHeadSha(
+  workspace: GithubPrWorkspace,
+  expectedHeadSha?: string,
+): GithubPrWorkspace & { headSha: string } {
+  if (!workspace.headSha) {
+    throw new Error(
+      `GitHub PR workspace ${workspace.id} is missing a head SHA`,
+    );
+  }
+
+  if (expectedHeadSha && workspace.headSha !== expectedHeadSha) {
+    throw new Error(
+      `GitHub PR workspace ${workspace.id} head SHA mismatch: expected ${expectedHeadSha}, found ${workspace.headSha}`,
+    );
+  }
+
+  return {
+    ...workspace,
+    headSha: workspace.headSha,
+  };
+}
+
+function normalizeGithubSurfaceBinding<K extends GithubSurfaceBindingKind>(
+  binding: GithubSurfaceBinding,
+  surfaceKind: K,
+): GithubSurfaceBindingRecordForKind<K>;
+function normalizeGithubSurfaceBinding(
+  binding: GithubSurfaceBinding,
+  surfaceKind: GithubSurfaceBindingKind,
+): GithubSurfaceBindingRecord {
+  if (surfaceKind === "issue_comment_mention") {
+    return normalizeIssueCommentMentionBinding(binding);
+  }
+
+  return normalizeMetadataFreeSurfaceBinding(binding, surfaceKind);
+}
+
+function normalizeIssueCommentMentionBinding(
+  binding: GithubSurfaceBinding,
+): GithubSurfaceBindingRecordForKind<"issue_comment_mention"> {
+  if (!binding.surfaceMetadata) {
+    throw new Error(
+      "GitHub surface binding issue_comment_mention requires issue comment metadata",
+    );
+  }
+
+  return {
+    ...binding,
+    surfaceKind: "issue_comment_mention",
+    surfaceMetadata: binding.surfaceMetadata,
+  };
+}
+
+function normalizeMetadataFreeSurfaceBinding<
+  K extends GithubMetadataFreeSurfaceBindingKind,
+>(
+  binding: GithubSurfaceBinding,
+  surfaceKind: K,
+): GithubSurfaceBindingRecordForKind<K> {
+  if (
+    binding.surfaceMetadata !== null &&
+    binding.surfaceMetadata !== undefined
+  ) {
+    throw new Error(
+      `GitHub surface binding ${surfaceKind} does not accept surface metadata`,
+    );
+  }
+
+  return {
+    ...binding,
+    surfaceKind,
+    surfaceMetadata: null,
+  };
+}
+
+export async function getGithubSurfaceBindingBySurface<
+  K extends GithubSurfaceBindingKind,
+>({
   db,
   surfaceKind,
   surfaceGitHubId,
 }: {
   db: DB;
-  surfaceKind: GithubSurfaceBinding["surfaceKind"];
+  surfaceKind: K;
   surfaceGitHubId: string;
-}): Promise<GithubSurfaceBinding | null> {
+}): Promise<GithubSurfaceBindingRecordForKind<K> | null> {
   const binding = await db.query.githubSurfaceBinding.findFirst({
     where: and(
       eq(schema.githubSurfaceBinding.surfaceKind, surfaceKind),
@@ -55,23 +165,25 @@ export async function getGithubSurfaceBindingBySurface({
     ),
   });
 
-  return binding ?? null;
+  return binding ? normalizeGithubSurfaceBinding(binding, surfaceKind) : null;
 }
 
-export async function createGithubSurfaceBinding({
+export async function createGithubSurfaceBinding<
+  K extends GithubSurfaceBindingKind,
+>({
   db,
   workspaceId,
   surfaceKind,
   surfaceGitHubId,
   fields,
-}: {
+}: GithubSurfaceBindingLookupKey & {
   db: DB;
   workspaceId: string;
-  surfaceKind: GithubSurfaceBinding["surfaceKind"];
-  surfaceGitHubId: string;
-  fields: GithubSurfaceBindingMutableFields;
-}): Promise<GithubSurfaceBinding> {
-  await requireGithubPrWorkspace({ db, workspaceId });
+  surfaceKind: K;
+  fields: GithubSurfaceBindingMutableFields<K>;
+}): Promise<GithubSurfaceBindingRecordForKind<K>> {
+  const workspace = await requireGithubPrWorkspace({ db, workspaceId });
+  requireWorkspaceHeadSha(workspace, fields.boundHeadSha);
 
   const [binding] = await db
     .insert(schema.githubSurfaceBinding)
@@ -89,23 +201,25 @@ export async function createGithubSurfaceBinding({
     );
   }
 
-  return binding;
+  return normalizeGithubSurfaceBinding(binding, surfaceKind);
 }
 
-export async function upsertGithubSurfaceBinding({
+export async function upsertGithubSurfaceBinding<
+  K extends GithubSurfaceBindingKind,
+>({
   db,
   workspaceId,
   surfaceKind,
   surfaceGitHubId,
   fields,
-}: {
+}: GithubSurfaceBindingLookupKey & {
   db: DB;
   workspaceId: string;
-  surfaceKind: GithubSurfaceBinding["surfaceKind"];
-  surfaceGitHubId: string;
-  fields: GithubSurfaceBindingMutableFields;
-}): Promise<GithubSurfaceBinding> {
-  await requireGithubPrWorkspace({ db, workspaceId });
+  surfaceKind: K;
+  fields: GithubSurfaceBindingMutableFields<K>;
+}): Promise<GithubSurfaceBindingRecordForKind<K>> {
+  const workspace = await requireGithubPrWorkspace({ db, workspaceId });
+  requireWorkspaceHeadSha(workspace, fields.boundHeadSha);
 
   const existingBinding = await getGithubSurfaceBindingBySurface({
     db,
@@ -163,18 +277,20 @@ export async function upsertGithubSurfaceBinding({
     );
   }
 
-  return binding;
+  return normalizeGithubSurfaceBinding(binding, surfaceKind);
 }
 
-export async function resolveGithubSurfaceBinding({
+export async function resolveGithubSurfaceBinding<
+  K extends GithubSurfaceBindingKind,
+>({
   db,
   surfaceKind,
   surfaceGitHubId,
 }: {
   db: DB;
-  surfaceKind: GithubSurfaceBinding["surfaceKind"];
+  surfaceKind: K;
   surfaceGitHubId: string;
-}): Promise<GithubSurfaceBindingResolution | null> {
+}): Promise<GithubSurfaceBindingResolution<K> | null> {
   const binding = await getGithubSurfaceBindingBySurface({
     db,
     surfaceKind,
@@ -185,14 +301,18 @@ export async function resolveGithubSurfaceBinding({
     return null;
   }
 
-  const workspace = await requireGithubPrWorkspace({
-    db,
-    workspaceId: binding.workspaceId,
-  });
+  const workspace = requireWorkspaceHeadSha(
+    await requireGithubPrWorkspace({
+      db,
+      workspaceId: binding.workspaceId,
+    }),
+    binding.boundHeadSha,
+  );
 
   return {
     binding,
     workspace,
+    headSha: workspace.headSha,
   };
 }
 

@@ -8,6 +8,7 @@ import {
 } from "@terragon/shared/model/github";
 import * as schema from "@terragon/shared/db/schema";
 import { Octokit } from "octokit";
+import type { Endpoints } from "@octokit/types";
 import {
   getGithubPRMergeableState,
   getGithubPRStatus,
@@ -25,6 +26,32 @@ import {
   getUserSettings,
 } from "@terragon/shared/model/user";
 import { UserFacingError } from "./server-actions";
+import { bootstrapThreadGithubWorkspace } from "@/server-lib/github-workspace-bootstrap";
+import type { GithubPRStatus } from "@terragon/shared/db/types";
+
+type PullRequestAssociationSource =
+  | Endpoints["GET /repos/{owner}/{repo}/pulls"]["response"]["data"][number]
+  | Endpoints["POST /repos/{owner}/{repo}/pulls"]["response"]["data"];
+
+export type PullRequestAssociationIdentity = {
+  number: number;
+  nodeId: string;
+  status: GithubPRStatus;
+  headRef: string;
+  headSha: string;
+};
+
+export function toPullRequestAssociationIdentity(
+  pullRequest: PullRequestAssociationSource,
+): PullRequestAssociationIdentity {
+  return {
+    number: pullRequest.number,
+    nodeId: pullRequest.node_id,
+    status: getGithubPRStatus(pullRequest),
+    headRef: pullRequest.head.ref,
+    headSha: pullRequest.head.sha,
+  };
+}
 
 export function parseRepoFullName(repoFullName: string): [string, string] {
   const [owner, repo] = repoFullName.split("/");
@@ -54,9 +81,14 @@ export async function ensureBranchExists({
     if (!branch || branch.data.name !== branchName) {
       throw new BranchDoesNotExistError({ repoFullName, branchName });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     // If we get a 404, check if the repo has no branches at all
-    if (error.status === 404) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      (error as { status?: unknown }).status === 404
+    ) {
       try {
         // Check if the repository exists and has any branches
         const { data: branches } = await octokit.rest.repos.listBranches({
@@ -689,23 +721,53 @@ export async function findAndAssociatePR({
   if (!existingPr) {
     return null;
   }
+  return await associateThreadWithPullRequest({
+    userId,
+    threadId,
+    repoFullName,
+    pullRequest: toPullRequestAssociationIdentity(existingPr),
+  });
+}
+
+export async function associateThreadWithPullRequest({
+  userId,
+  threadId,
+  repoFullName,
+  pullRequest,
+  bootstrapThreadGithubWorkspaceFn = bootstrapThreadGithubWorkspace,
+}: {
+  userId: string;
+  threadId: string;
+  repoFullName: string;
+  pullRequest: PullRequestAssociationIdentity;
+  bootstrapThreadGithubWorkspaceFn?: typeof bootstrapThreadGithubWorkspace;
+}): Promise<number> {
   await Promise.all([
     updateThread({
       db,
       userId,
       threadId,
       updates: {
-        githubPRNumber: existingPr.number,
+        githubPRNumber: pullRequest.number,
       },
     }),
     upsertGithubPR({
       db,
       repoFullName,
-      number: existingPr.number,
+      number: pullRequest.number,
       updates: {
-        status: getGithubPRStatus(existingPr),
+        status: pullRequest.status,
       },
     }),
   ]);
-  return existingPr.number;
+  await bootstrapThreadGithubWorkspaceFn({
+    repoFullName,
+    prNumber: pullRequest.number,
+    threadId,
+    pullRequestIdentity: {
+      prNodeId: pullRequest.nodeId,
+      headSha: pullRequest.headSha,
+    },
+  });
+  return pullRequest.number;
 }
