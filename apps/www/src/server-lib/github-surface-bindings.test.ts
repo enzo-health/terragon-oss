@@ -67,7 +67,7 @@ async function createProjectionChain(params?: { projectionHeadSha?: string }) {
 }
 
 describe("github surface binding coordinator", () => {
-  it("returns a workspace whose head sha matches the bound surface sha", async () => {
+  it("does not let a non-canonical surface overwrite the workspace head sha", async () => {
     const { installationId, repoId, prNodeId } = await createProjectionChain({
       projectionHeadSha: "projection-sha",
     });
@@ -81,11 +81,11 @@ describe("github surface binding coordinator", () => {
       surfaceGitHubId: "12345",
       lane: "ci_repair",
       routingReason: "github-pr-thread-id",
-      boundHeadSha: "binding-sha",
+      boundHeadSha: "projection-sha",
     });
 
-    expect(result.workspace.headSha).toBe("binding-sha");
-    expect(result.binding.boundHeadSha).toBe("binding-sha");
+    expect(result.workspace.headSha).toBe("projection-sha");
+    expect(result.binding.boundHeadSha).toBe("projection-sha");
 
     const persistedWorkspace = await getGithubPrWorkspaceByCanonicalId({
       db,
@@ -104,8 +104,8 @@ describe("github surface binding coordinator", () => {
       surfaceGitHubId: "12345",
     });
 
-    expect(persistedWorkspace?.headSha).toBe("binding-sha");
-    expect(persistedBinding?.boundHeadSha).toBe("binding-sha");
-    expect(resolution?.workspace.headSha).toBe("binding-sha");
+    expect(persistedWorkspace?.headSha).toBe("projection-sha");
+    expect(persistedBinding?.boundHeadSha).toBe("projection-sha");
+    expect(resolution?.headSha).toBe("projection-sha");
   });
 });

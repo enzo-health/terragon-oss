@@ -93,7 +93,7 @@ describe("github surface binding helpers", () => {
       fields: {
         lane: "review_response",
         routingReason: "existing-thread",
-        boundHeadSha: "abc123",
+        boundHeadSha: workspace.headSha!,
       },
     });
 
@@ -111,9 +111,10 @@ describe("github surface binding helpers", () => {
     expect(lookedUpBinding?.id).toBe(binding.id);
     expect(resolution?.binding.id).toBe(binding.id);
     expect(resolution?.workspace.id).toBe(workspace.id);
+    expect(resolution?.headSha).toBe(workspace.headSha);
     expect(resolution?.binding.lane).toBe("review_response");
     expect(resolution?.binding.routingReason).toBe("existing-thread");
-    expect(resolution?.binding.boundHeadSha).toBe("abc123");
+    expect(resolution?.binding.boundHeadSha).toBe(workspace.headSha);
   });
 
   it("upserts one stable surface binding row while refreshing lane, reason, and head sha", async () => {
@@ -127,7 +128,7 @@ describe("github surface binding helpers", () => {
       fields: {
         lane: "ci_repair",
         routingReason: "github-pr-thread-id",
-        boundHeadSha: "abc123",
+        boundHeadSha: workspace.headSha!,
       },
     });
 
@@ -139,7 +140,7 @@ describe("github surface binding helpers", () => {
       fields: {
         lane: "automation",
         routingReason: "existing-unarchived-thread",
-        boundHeadSha: "def456",
+        boundHeadSha: workspace.headSha!,
       },
     });
 
@@ -150,7 +151,7 @@ describe("github surface binding helpers", () => {
     expect(updatedBinding.id).toBe(initialBinding.id);
     expect(updatedBinding.lane).toBe("automation");
     expect(updatedBinding.routingReason).toBe("existing-unarchived-thread");
-    expect(updatedBinding.boundHeadSha).toBe("def456");
+    expect(updatedBinding.boundHeadSha).toBe(workspace.headSha);
     expect(persistedBindings).toHaveLength(1);
   });
 
@@ -172,7 +173,7 @@ describe("github surface binding helpers", () => {
       fields: {
         lane: "review_response",
         routingReason: "existing-thread",
-        boundHeadSha: "sha-one",
+        boundHeadSha: firstWorkspace.workspace.headSha!,
       },
     });
 
@@ -198,7 +199,9 @@ describe("github surface binding helpers", () => {
 
     expect(resolution?.binding.id).toBe(initialBinding.id);
     expect(resolution?.workspace.id).toBe(firstWorkspace.workspace.id);
-    expect(resolution?.binding.boundHeadSha).toBe("sha-one");
+    expect(resolution?.binding.boundHeadSha).toBe(
+      firstWorkspace.workspace.headSha,
+    );
   });
 
   it("persists PR-backed issue comment mention metadata", async () => {
@@ -215,15 +218,36 @@ describe("github surface binding helpers", () => {
       fields: {
         lane: "mention_follow_up",
         routingReason: "input-user-id",
-        boundHeadSha: "sha-three",
+        boundHeadSha: workspace.headSha!,
         surfaceMetadata: {
-          issueOrPrType: "pull_request",
+          issueOrPrType: "issue",
         },
       },
     });
 
     expect(binding.surfaceMetadata).toEqual({
-      issueOrPrType: "pull_request",
+      issueOrPrType: "issue",
     });
+  });
+
+  it("rejects a surface binding when the workspace head sha disagrees", async () => {
+    const { workspace } = await createWorkspace({
+      prNumber: 21,
+      headSha: "sha-four",
+    });
+
+    await expect(
+      createGithubSurfaceBinding({
+        db,
+        workspaceId: workspace.id,
+        surfaceKind: "review_thread",
+        surfaceGitHubId: "RT_999",
+        fields: {
+          lane: "review_response",
+          routingReason: "existing-thread",
+          boundHeadSha: "mismatched-sha",
+        },
+      }),
+    ).rejects.toThrow("head SHA mismatch");
   });
 });
