@@ -29,9 +29,6 @@ export type GitHubRepoSnapshot = {
   currentSlug: string;
   defaultBranch: string | null;
   isPrivate: boolean;
-  hasReadAccess: boolean;
-  hasWriteAccess: boolean;
-  hasAdminAccess: boolean;
 };
 
 export type GitHubPullRequestSnapshot = {
@@ -165,6 +162,31 @@ function getPullRequestStatus(
   return "open";
 }
 
+function getRepoAccessFlags(
+  permissions: GithubInstallationPermissions | null | undefined,
+): {
+  hasReadAccess: boolean;
+  hasWriteAccess: boolean;
+  hasAdminAccess: boolean;
+} {
+  if (!permissions) {
+    return {
+      hasReadAccess: false,
+      hasWriteAccess: false,
+      hasAdminAccess: false,
+    };
+  }
+
+  const permissionLevels = Object.values(permissions);
+  const hasWriteAccess = permissionLevels.includes("write");
+
+  return {
+    hasReadAccess: hasWriteAccess || permissionLevels.includes("read"),
+    hasWriteAccess,
+    hasAdminAccess: permissions.administration === "write",
+  };
+}
+
 function createDefaultAppClient(): GitHubProjectionAppClient {
   return {
     async getInstallationIdForRepo({ owner, repo }) {
@@ -221,9 +243,6 @@ async function createDefaultRepoClient({
         currentSlug: data.full_name,
         defaultBranch: data.default_branch ?? null,
         isPrivate: data.private,
-        hasReadAccess: data.permissions?.pull ?? false,
-        hasWriteAccess: data.permissions?.push ?? false,
-        hasAdminAccess: data.permissions?.admin ?? false,
       };
     },
     async getPullRequestSnapshot({
@@ -326,9 +345,7 @@ export function createGitHubProjectionRefreshClient(
         currentSlug: repoSnapshot.currentSlug,
         defaultBranch: repoSnapshot.defaultBranch,
         isPrivate: repoSnapshot.isPrivate,
-        hasReadAccess: repoSnapshot.hasReadAccess,
-        hasWriteAccess: repoSnapshot.hasWriteAccess,
-        hasAdminAccess: repoSnapshot.hasAdminAccess,
+        ...getRepoAccessFlags(installationProjection.permissionsJson),
       },
     });
 

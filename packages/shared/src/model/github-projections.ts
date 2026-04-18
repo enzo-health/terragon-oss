@@ -11,6 +11,8 @@ import type {
   GithubRepoProjectionInsert,
 } from "../db/types";
 
+const POSTGRES_UNIQUE_VIOLATION = "23505";
+
 type GithubInstallationProjectionUpsertFields = Omit<
   GithubInstallationProjectionInsert,
   "id" | "installationId" | "createdAt" | "updatedAt"
@@ -185,6 +187,17 @@ function getGithubPrIsDraft(status: GithubPRStatus): boolean {
   return status === "draft";
 }
 
+function isPostgresUniqueViolation(
+  error: unknown,
+): error is { code: string; constraint?: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === POSTGRES_UNIQUE_VIOLATION
+  );
+}
+
 export async function getGithubPrProjectionByPrNodeId({
   db,
   prNodeId,
@@ -233,32 +246,72 @@ export async function upsertGithubPrProjection({
     db,
     repoId,
   });
+  const existingProjectionByRepoAndNumber =
+    await getGithubPrProjectionByRepoIdAndNumber({
+      db,
+      repoId,
+      number: fields.number,
+    });
+
+  if (
+    existingProjectionByRepoAndNumber &&
+    existingProjectionByRepoAndNumber.prNodeId !== prNodeId
+  ) {
+    throw new Error(
+      `GitHub PR projection identity mismatch for ${prNodeId}: repo ${repoId}#${fields.number} is already bound to ${existingProjectionByRepoAndNumber.prNodeId}`,
+    );
+  }
+
   const isDraft = getGithubPrIsDraft(fields.status);
 
-  const [projection] = await db
-    .insert(schema.githubPrProjection)
-    .values({
-      prNodeId,
-      repoId,
-      repoProjectionId: repoProjection.id,
-      ...fields,
-      isDraft,
-    })
-    .onConflictDoUpdate({
-      target: schema.githubPrProjection.prNodeId,
-      set: {
+  let projection: GithubPrProjection | undefined;
+
+  try {
+    [projection] = await db
+      .insert(schema.githubPrProjection)
+      .values({
+        prNodeId,
         repoId,
         repoProjectionId: repoProjection.id,
         ...fields,
         isDraft,
-        updatedAt: new Date(),
-      },
-      setWhere: and(
-        eq(schema.githubPrProjection.repoId, repoId),
-        eq(schema.githubPrProjection.number, fields.number),
-      ),
-    })
-    .returning();
+      })
+      .onConflictDoUpdate({
+        target: schema.githubPrProjection.prNodeId,
+        set: {
+          repoId,
+          repoProjectionId: repoProjection.id,
+          ...fields,
+          isDraft,
+          updatedAt: new Date(),
+        },
+        setWhere: and(
+          eq(schema.githubPrProjection.repoId, repoId),
+          eq(schema.githubPrProjection.number, fields.number),
+        ),
+      })
+      .returning();
+  } catch (error) {
+    if (isPostgresUniqueViolation(error)) {
+      const conflictingProjection =
+        await getGithubPrProjectionByRepoIdAndNumber({
+          db,
+          repoId,
+          number: fields.number,
+        });
+
+      if (
+        conflictingProjection &&
+        conflictingProjection.prNodeId !== prNodeId
+      ) {
+        throw new Error(
+          `GitHub PR projection identity mismatch for ${prNodeId}: repo ${repoId}#${fields.number} is already bound to ${conflictingProjection.prNodeId}`,
+        );
+      }
+    }
+
+    throw error;
+  }
 
   if (!projection) {
     const existingProjection = await getGithubPrProjectionByPrNodeId({

@@ -57,9 +57,6 @@ function createRepoSnapshot({
     currentSlug: slug,
     defaultBranch: "main",
     isPrivate: true,
-    hasReadAccess: true,
-    hasWriteAccess: true,
-    hasAdminAccess: false,
   };
 }
 
@@ -187,6 +184,8 @@ describe("github projection refresh client", () => {
     expect(result.repoProjection.repoId).toBe(repoId);
     expect(result.repoProjection.defaultBranch).toBe("main");
     expect(result.repoProjection.hasWriteAccess).toBe(true);
+    expect(result.repoProjection.hasReadAccess).toBe(true);
+    expect(result.repoProjection.hasAdminAccess).toBe(false);
 
     const persistedRepoProjection = await getGithubRepoProjectionByRepoId({
       db,
@@ -257,5 +256,73 @@ describe("github projection refresh client", () => {
     expect(persistedPrProjection?.number).toBe(prNumber);
     expect(persistedPrProjection?.status).toBe("merged");
     expect(persistedPrProjection?.isDraft).toBe(false);
+  });
+
+  it("rejects PR refresh when repo and number already belong to a different node id", async () => {
+    const installationId = nextGithubId();
+    const repoId = nextGithubId();
+    const repoFullName = `terragon/test-mismatch-${repoId}`;
+    const existingNodeId = `PR_${repoId}_existing`;
+    const incomingNodeId = `PR_${repoId}_incoming`;
+    const prNumber = 52;
+    const refreshClient = createGitHubProjectionRefreshClient({
+      db,
+      appClient: {
+        getInstallationIdForRepo: vi.fn().mockResolvedValue(installationId),
+        getInstallationSnapshot: vi
+          .fn()
+          .mockResolvedValue(createInstallationSnapshot({ installationId })),
+      },
+      getRepoClient: vi.fn().mockResolvedValue({
+        getRepoSnapshot: vi.fn().mockResolvedValue(
+          createRepoSnapshot({
+            repoId,
+            slug: repoFullName,
+          }),
+        ),
+        getPullRequestSnapshot: vi.fn().mockResolvedValue(
+          createPullRequestSnapshot({
+            prNodeId: existingNodeId,
+            prNumber,
+          }),
+        ),
+      }),
+    });
+
+    await refreshClient.refreshPrProjection({
+      repoFullName,
+      prNumber,
+    });
+
+    const mismatchedRefreshClient = createGitHubProjectionRefreshClient({
+      db,
+      appClient: {
+        getInstallationIdForRepo: vi.fn().mockResolvedValue(installationId),
+        getInstallationSnapshot: vi
+          .fn()
+          .mockResolvedValue(createInstallationSnapshot({ installationId })),
+      },
+      getRepoClient: vi.fn().mockResolvedValue({
+        getRepoSnapshot: vi.fn().mockResolvedValue(
+          createRepoSnapshot({
+            repoId,
+            slug: repoFullName,
+          }),
+        ),
+        getPullRequestSnapshot: vi.fn().mockResolvedValue(
+          createPullRequestSnapshot({
+            prNodeId: incomingNodeId,
+            prNumber,
+          }),
+        ),
+      }),
+    });
+
+    await expect(
+      mismatchedRefreshClient.refreshPrProjection({
+        repoFullName,
+        prNumber,
+      }),
+    ).rejects.toThrow("identity mismatch");
   });
 });
