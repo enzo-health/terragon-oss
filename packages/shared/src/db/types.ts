@@ -360,6 +360,19 @@ export type ThreadFailureMetadata = {
 };
 export type GithubInstallationPermissions = Record<string, string>;
 export type GithubPRStatus = "draft" | "open" | "closed" | "merged";
+export type GithubWorkspaceLane =
+  | "authoring"
+  | "mention_follow_up"
+  | "ci_repair"
+  | "review_response"
+  | "automation";
+export type GithubWorkspaceRunStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 export type GithubCheckRunConclusion =
   | "success"
   | "failure"
@@ -549,12 +562,19 @@ export type GithubInstallationProjection =
   typeof schema.githubInstallationProjection.$inferSelect;
 export type GithubInstallationProjectionInsert =
   typeof schema.githubInstallationProjection.$inferInsert;
-export type GithubRepoProjection = typeof schema.githubRepoProjection.$inferSelect;
+export type GithubRepoProjection =
+  typeof schema.githubRepoProjection.$inferSelect;
 export type GithubRepoProjectionInsert =
   typeof schema.githubRepoProjection.$inferInsert;
 export type GithubPrProjection = typeof schema.githubPrProjection.$inferSelect;
 export type GithubPrProjectionInsert =
   typeof schema.githubPrProjection.$inferInsert;
+export type GithubPrWorkspace = typeof schema.githubPrWorkspace.$inferSelect;
+export type GithubPrWorkspaceInsert =
+  typeof schema.githubPrWorkspace.$inferInsert;
+export type GithubWorkspaceRun = typeof schema.githubWorkspaceRun.$inferSelect;
+export type GithubWorkspaceRunInsert =
+  typeof schema.githubWorkspaceRun.$inferInsert;
 export type GitHubPR = typeof schema.githubPR.$inferSelect;
 export type GitHubPRInsert = typeof schema.githubPR.$inferInsert;
 

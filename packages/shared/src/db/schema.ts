@@ -76,6 +76,8 @@ import {
   GithubInstallationPermissions,
   GithubPRMergeableState,
   GithubPRStatus,
+  GithubWorkspaceLane,
+  GithubWorkspaceRunStatus,
   ThreadErrorMessage,
   ThreadFailureSource,
   ThreadSource,
@@ -638,6 +640,7 @@ export const githubPrProjection = pgTable(
   },
   (table) => [
     uniqueIndex("github_pr_projection_pr_node_id_unique").on(table.prNodeId),
+    unique("github_pr_projection_id_repo_id_unique").on(table.id, table.repoId),
     uniqueIndex("github_pr_projection_repo_id_number_unique").on(
       table.repoId,
       table.number,
@@ -654,6 +657,66 @@ export const githubPrProjection = pgTable(
       "github_pr_projection_status_is_draft_consistent",
       sql`(("status" = 'draft' AND "is_draft" = true) OR ("status" <> 'draft' AND "is_draft" = false))`,
     ),
+  ],
+);
+
+export const githubPrWorkspace = pgTable(
+  "github_pr_workspace",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    installationProjectionId: text("installation_projection_id").notNull(),
+    installationId: bigint("installation_id", { mode: "number" }).notNull(),
+    repoProjectionId: text("repo_projection_id").notNull(),
+    repoId: bigint("repo_id", { mode: "number" }).notNull(),
+    prProjectionId: text("pr_projection_id").notNull(),
+    prNodeId: text("pr_node_id").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    status: text("status").$type<GithubPRStatus>().notNull().default("open"),
+    headSha: text("head_sha"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_pr_workspace_pr_projection_id_unique").on(
+      table.prProjectionId,
+    ),
+    uniqueIndex("github_pr_workspace_installation_repo_pr_node_id_unique").on(
+      table.installationId,
+      table.repoId,
+      table.prNodeId,
+    ),
+    index("github_pr_workspace_installation_projection_id_index").on(
+      table.installationProjectionId,
+    ),
+    index("github_pr_workspace_repo_projection_id_index").on(
+      table.repoProjectionId,
+    ),
+    index("github_pr_workspace_pr_projection_id_index").on(
+      table.prProjectionId,
+    ),
+    foreignKey({
+      columns: [table.installationProjectionId, table.installationId],
+      foreignColumns: [
+        githubInstallationProjection.id,
+        githubInstallationProjection.installationId,
+      ],
+      name: "github_pr_workspace_installation_projection_id_installation_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.repoProjectionId, table.repoId],
+      foreignColumns: [githubRepoProjection.id, githubRepoProjection.repoId],
+      name: "github_pr_workspace_repo_projection_id_repo_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.prProjectionId, table.repoId],
+      foreignColumns: [githubPrProjection.id, githubPrProjection.repoId],
+      name: "github_pr_workspace_pr_projection_id_repo_id_fk",
+    }).onDelete("cascade"),
   ],
 );
 
@@ -2049,9 +2112,55 @@ export const deliveryWorkflow = pgTable(
       table.threadId,
       table.generation,
     ),
+    unique("delivery_workflow_id_thread_id_unique").on(
+      table.id,
+      table.threadId,
+    ),
     index("delivery_workflow_kind_index").on(table.kind),
     index("delivery_workflow_thread_id_index").on(table.threadId),
     index("delivery_workflow_user_id_index").on(table.userId),
+  ],
+);
+
+export const githubWorkspaceRun = pgTable(
+  "github_workspace_run",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => githubPrWorkspace.id, { onDelete: "cascade" }),
+    lane: text("lane").$type<GithubWorkspaceLane>().notNull(),
+    headSha: text("head_sha").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status")
+      .$type<GithubWorkspaceRunStatus>()
+      .notNull()
+      .default("pending"),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    workflowId: text("workflow_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex(
+      "github_workspace_run_workspace_lane_head_sha_attempt_unique",
+    ).on(table.workspaceId, table.lane, table.headSha, table.attempt),
+    index("github_workspace_run_workspace_id_index").on(table.workspaceId),
+    index("github_workspace_run_thread_id_index").on(table.threadId),
+    index("github_workspace_run_workflow_id_index").on(table.workflowId),
+    foreignKey({
+      columns: [table.workflowId, table.threadId],
+      foreignColumns: [deliveryWorkflow.id, deliveryWorkflow.threadId],
+      name: "github_workspace_run_workflow_id_thread_id_fk",
+    }),
+    check("github_workspace_run_attempt_positive", sql`"attempt" > 0`),
   ],
 );
 
