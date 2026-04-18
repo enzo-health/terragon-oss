@@ -201,7 +201,7 @@ describe("github surface binding helpers", () => {
     expect(resolution?.binding.boundHeadSha).toBe("sha-one");
   });
 
-  it("persists issue comment mention metadata for issue versus pull request context", async () => {
+  it("persists PR-backed issue comment mention metadata", async () => {
     const { workspace } = await createWorkspace({
       prNumber: 20,
       headSha: "sha-three",

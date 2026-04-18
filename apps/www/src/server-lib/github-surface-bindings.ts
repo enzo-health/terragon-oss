@@ -75,6 +75,9 @@ export function createGitHubSurfaceBindingCoordinator(
         installationId: params.installationId,
         repoId: params.repoId,
         prNodeId: params.prNodeId,
+        fields: {
+          headSha: params.boundHeadSha,
+        },
       });
 
       const binding = await upsertGithubSurfaceBinding({

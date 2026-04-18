@@ -366,7 +366,6 @@ export type GithubWorkspaceLane =
   | "ci_repair"
   | "review_response"
   | "automation";
-export type GithubSurfaceBindingIssueOrPrType = "issue" | "pull_request";
 export type GithubSurfaceBindingKind =
   | "pull_request"
   | "review_thread"
@@ -375,7 +374,7 @@ export type GithubSurfaceBindingKind =
   | "check_run"
   | "check_suite";
 export type GithubSurfaceBindingMetadata = {
-  issueOrPrType?: GithubSurfaceBindingIssueOrPrType;
+  issueOrPrType?: "pull_request";
 };
 export type GithubSurfaceBindingRoutingReason =
   | "input-user-id"
