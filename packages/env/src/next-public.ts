@@ -1,5 +1,14 @@
 import { devDefaultAppUrl, devDefaultBroadcastPort } from "./common";
 
+function getVercelPublicHost(): string | null {
+  return (
+    process.env.NEXT_PUBLIC_VERCEL_BRANCH_URL ??
+    process.env.VERCEL_BRANCH_URL ??
+    process.env.VERCEL_URL ??
+    null
+  );
+}
+
 export function publicBroadcastUrl() {
   if (process.env.NODE_ENV === "development") {
     return (
@@ -14,8 +23,12 @@ export function publicBroadcastUrl() {
 }
 
 export function publicAppUrl() {
-  if (process.env.NEXT_PUBLIC_VERCEL_ENV === "preview") {
-    return `https://${process.env.NEXT_PUBLIC_VERCEL_BRANCH_URL}`;
+  const vercelEnv =
+    process.env.NEXT_PUBLIC_VERCEL_ENV ?? process.env.VERCEL_ENV;
+  const vercelPublicHost = getVercelPublicHost();
+
+  if (vercelEnv === "preview" && vercelPublicHost) {
+    return `https://${vercelPublicHost}`;
   }
   if (process.env.NODE_ENV === "development") {
     if (process.env.NEXT_PUBLIC_APP_URL) {
@@ -29,6 +42,9 @@ export function publicAppUrl() {
     return devDefaultAppUrl;
   }
   if (!process.env.NEXT_PUBLIC_APP_URL) {
+    if (vercelPublicHost) {
+      return `https://${vercelPublicHost}`;
+    }
     throw new Error("NEXT_PUBLIC_APP_URL is not set");
   }
   return process.env.NEXT_PUBLIC_APP_URL;
